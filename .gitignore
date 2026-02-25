@@ -1,0 +1,16 @@
+# Build artifacts
+/target
+
+# Config with secrets
+/config.toml
+!/config.example.toml
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/

@@ -1,0 +1,17 @@
+[server]
+listen = "0.0.0.0:9090"
+
+[security]
+webhook_secrets = ["your-secret-here"]
+allow_unsigned = true  # 开发阶段
+
+[[agents]]
+id = "david"
+name = "David"
+agent_type = "openclaw"
+message_template = "🔔 [{project}] {event}: {key} {title}\n👤 {actor} | Trigger: {reason}"
+
+[agents.openclaw]
+command = "openclaw message send"
+channel = "signal"
+target = "uuid:your-user-uuid"
