@@ -155,8 +155,8 @@ CMD ["openpr-webhook"]
 ## Related
 
 - [OpenPR](https://github.com/openprx/openpr) — Project management platform
-- [OpenPRX](https://github.com/openprx/openprx) — AI assistant framework
+- [PRX](https://github.com/openprx/prx) — AI assistant framework
 
 ## License
 
-MIT
+Apache-2.0
