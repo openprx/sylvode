@@ -27,6 +27,7 @@ pub struct AgentConfig {
     pub name: String,
     pub agent_type: String,
     pub openclaw: Option<OpenClawConfig>,
+    pub openprx: Option<OpenPRXConfig>,
     pub webhook: Option<WebhookAgentConfig>,
     pub custom: Option<CustomConfig>,
     pub message_template: Option<String>,
@@ -43,6 +44,25 @@ pub struct OpenClawConfig {
 pub struct WebhookAgentConfig {
     pub url: String,
     pub secret: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct OpenPRXConfig {
+    /// Signal daemon HTTP API base URL (e.g. http://127.0.0.1:8686)
+    pub signal_api: Option<String>,
+    /// Target recipient (phone number or uuid)
+    pub target: String,
+    /// Account phone number for signal-cli
+    pub account: Option<String>,
+    /// Or use CLI command (e.g. "openprx message send")
+    pub command: Option<String>,
+    /// Channel name (signal, wacli, etc.)
+    #[serde(default = "default_channel")]
+    pub channel: String,
+}
+
+fn default_channel() -> String {
+    "signal".into()
 }
 
 #[derive(Deserialize, Clone, Debug)]

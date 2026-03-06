@@ -22,6 +22,7 @@ OpenPR ──webhook POST──▶ openpr-webhook ──dispatch──▶ OpenCl
 - **Multi-agent dispatch** — Route events to multiple agents simultaneously
 - **Agent types**:
   - `openclaw` — Send via OpenClaw CLI (`openclaw message send`)
+  - `openprx` — Send via OpenPRX Signal API or CLI
   - `webhook` — Forward to HTTP endpoints
   - `custom` — Execute arbitrary commands
 - **Message templates** — Customizable notification format with placeholders
@@ -71,6 +72,21 @@ message_template = "🔔 [{project}] {event}: {key} {title}\n👤 {actor} | Trig
 command = "openclaw message send"
 channel = "signal"
 target = "uuid:your-user-uuid"
+
+# Agent: OpenPRX (AI assistant via Signal)
+[[agents]]
+id = "vano"
+name = "Vano"
+agent_type = "openprx"
+message_template = "[{project}] {event}: {key} {title}\n{actor} | {reason}"
+
+[agents.openprx]
+signal_api = "http://127.0.0.1:8686"
+account = "+1234567890"
+target = "uuid:your-user-uuid"
+# Or use CLI instead:
+# command = "openprx message send"
+# channel = "signal"
 
 # Agent: Forward to HTTP endpoint
 [[agents]]

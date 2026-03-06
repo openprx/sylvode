@@ -4,6 +4,7 @@ use serde_json::Value;
 pub async fn dispatch(agent: &AgentConfig, payload: &Value) -> String {
     match agent.agent_type.as_str() {
         "openclaw" => dispatch_openclaw(agent, payload).await,
+        "openprx" => dispatch_openprx(agent, payload).await,
         "webhook" => dispatch_webhook(agent, payload).await,
         "custom" => dispatch_custom(agent, payload).await,
         other => format!("unknown agent type: {}", other),
@@ -46,6 +47,74 @@ async fn dispatch_openclaw(agent: &AgentConfig, payload: &Value) -> String {
             format!("exec_error: {}", e)
         }
     }
+}
+
+async fn dispatch_openprx(agent: &AgentConfig, payload: &Value) -> String {
+    let cfg = match &agent.openprx {
+        Some(c) => c,
+        None => return "missing openprx config".into(),
+    };
+
+    let message = format_message(agent, payload);
+
+    // Method 1: Direct Signal API call (preferred — no CLI dependency)
+    if let Some(signal_api) = &cfg.signal_api {
+        let account = cfg.account.as_deref().unwrap_or("");
+        let url = format!("{}/api/v1/send/{}", signal_api.trim_end_matches('/'), account);
+
+        let body = serde_json::json!({
+            "recipients": [&cfg.target],
+            "message": message
+        });
+
+        let client = reqwest::Client::new();
+        return match client.post(&url).json(&body).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!("openprx signal ok");
+                "ok".into()
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                tracing::error!("openprx signal {}: {}", status, text);
+                format!("error: {} {}", status, text)
+            }
+            Err(e) => {
+                tracing::error!("openprx signal request failed: {}", e);
+                format!("error: {}", e)
+            }
+        };
+    }
+
+    // Method 2: CLI fallback
+    if let Some(command) = &cfg.command {
+        let output = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "{} --channel {} --target \"{}\" --message \"{}\"",
+                command,
+                cfg.channel,
+                cfg.target,
+                message.replace('\\', "\\\\").replace('"', "\\\"")
+            ))
+            .output()
+            .await;
+
+        return match output {
+            Ok(o) if o.status.success() => {
+                tracing::info!("openprx cli ok");
+                "ok".into()
+            }
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                tracing::error!("openprx cli failed: {}", err.trim());
+                format!("error: {}", err.trim())
+            }
+            Err(e) => format!("exec_error: {}", e),
+        };
+    }
+
+    "openprx config needs either signal_api or command".into()
 }
 
 async fn dispatch_webhook(agent: &AgentConfig, payload: &Value) -> String {
