@@ -14,6 +14,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  BINARY_NAME: openpr-webhook
 
 jobs:
   build:
@@ -24,25 +25,19 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             suffix: linux-amd64
-            use_cross: false
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             suffix: linux-arm64
             use_cross: true
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-13
             suffix: macos-amd64
-            use_cross: false
           - target: aarch64-apple-darwin
             os: macos-latest
             suffix: macos-arm64
-            use_cross: false
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            suffix: windows-amd64
-            use_cross: false
 
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.use_cross || false }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,7 +50,7 @@ jobs:
         if: matrix.use_cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Install system deps (Linux native)
+      - name: Install system deps (Linux)
         if: runner.os == 'Linux' && !matrix.use_cross
         run: |
           sudo apt-get update
@@ -70,26 +65,16 @@ jobs:
         run: cross build --release --target ${{ matrix.target }}
 
       - name: Build (native)
-        if: "!matrix.use_cross"
+        if: ${{ !matrix.use_cross }}
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package (Unix)
-        if: runner.os != 'Windows'
+      - name: Package
         run: |
           cd target/${{ matrix.target }}/release
-          chmod +x openpr-webhook
+          chmod +x openpr-webhook || true
           tar czf ../../../openpr-webhook-${{ matrix.suffix }}.tar.gz openpr-webhook
           cd ../../..
           sha256sum openpr-webhook-${{ matrix.suffix }}.tar.gz > openpr-webhook-${{ matrix.suffix }}.tar.gz.sha256
-
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cd target/${{ matrix.target }}/release
-          Compress-Archive -Path openpr-webhook.exe -DestinationPath ../../../openpr-webhook-${{ matrix.suffix }}.zip
-          cd ../../..
-          Get-FileHash openpr-webhook-${{ matrix.suffix }}.zip -Algorithm SHA256 | Format-List Hash | Out-File openpr-webhook-${{ matrix.suffix }}.zip.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -101,6 +86,7 @@ jobs:
 
   release:
     needs: build
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -116,14 +102,16 @@ jobs:
           else
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
-      - name: Create Release
+      - name: Create or Update Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: openpr-webhook ${{ steps.tag.outputs.tag }}
+          name: OpenPR Webhook ${{ steps.tag.outputs.tag }}
           files: artifacts/*
           body: |
-            ## OpenPR Webhook Server ${{ steps.tag.outputs.tag }}
+            ## OpenPR Webhook ${{ steps.tag.outputs.tag }}
+
+            GitHub webhook dispatcher for OpenPR.
 
             | Platform | Architecture | File |
             |----------|-------------|------|
@@ -131,4 +119,3 @@ jobs:
             | Linux | ARM64 | `openpr-webhook-linux-arm64.tar.gz` |
             | macOS | Intel | `openpr-webhook-macos-amd64.tar.gz` |
             | macOS | Apple Silicon | `openpr-webhook-macos-arm64.tar.gz` |
-            | Windows | x86_64 | `openpr-webhook-windows-amd64.zip` |
