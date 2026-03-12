@@ -15,19 +15,48 @@ pub async fn dispatch(agent: &AgentConfig, payload: &Value) -> String {
 }
 
 async fn dispatch_cli(agent: &AgentConfig, payload: &Value) -> String {
+    let report = execute_cli_task(agent, payload, None).await;
+    format!(
+        "cli {} run_id={} issue_id={}",
+        report.status, report.run_id, report.issue_id
+    )
+}
+
+#[derive(Debug, Clone)]
+pub struct CliExecutionReport {
+    pub run_id: String,
+    pub issue_id: String,
+    pub status: String,
+    pub summary: String,
+}
+
+pub async fn execute_cli_task(
+    agent: &AgentConfig,
+    payload: &Value,
+    run_id_override: Option<String>,
+) -> CliExecutionReport {
     let cfg = match &agent.cli {
         Some(c) => c,
-        None => return "missing cli config".into(),
+        None => {
+            return CliExecutionReport {
+                run_id: run_id_override.unwrap_or_else(|| "run-invalid".to_string()),
+                issue_id: "unknown".to_string(),
+                status: "failed".to_string(),
+                summary: "missing cli config".to_string(),
+            }
+        }
     };
 
     let issue_id = extract_issue_id(payload).unwrap_or_else(|| "unknown".to_string());
-    let run_id = format!(
-        "run-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    );
+    let run_id = run_id_override.unwrap_or_else(|| {
+        format!(
+            "run-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        )
+    });
     let prompt = build_cli_prompt(agent, payload, &issue_id);
 
     let start_state = cfg.update_state_on_start.clone();
@@ -66,11 +95,11 @@ async fn dispatch_cli(agent: &AgentConfig, payload: &Value) -> String {
     };
 
     let callback_payload = callback::build_callback_payload(
-        issue_id,
-        run_id,
+        issue_id.clone(),
+        run_id.clone(),
         cfg.executor.clone(),
         run.status.clone(),
-        summary,
+        summary.clone(),
         run.exit_code,
         run.duration_ms,
         run.stdout_tail.clone(),
@@ -82,10 +111,12 @@ async fn dispatch_cli(agent: &AgentConfig, payload: &Value) -> String {
         tracing::warn!("final callback failed: {}", e);
     }
 
-    format!(
-        "cli {} exit={:?} duration_ms={}",
-        run.status, run.exit_code, run.duration_ms
-    )
+    CliExecutionReport {
+        run_id,
+        issue_id,
+        status: run.status,
+        summary,
+    }
 }
 
 #[derive(Debug)]
@@ -140,7 +171,8 @@ async fn run_cli_executor(
         }
     };
 
-    let output_result = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await;
+    let output_result =
+        tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await;
 
     match output_result {
         Ok(Ok(output)) => {
@@ -175,9 +207,15 @@ async fn run_cli_executor(
     }
 }
 
-fn build_executor_command(executor: &str, prompt: &str) -> Result<(&'static str, Vec<String>), String> {
+fn build_executor_command(
+    executor: &str,
+    prompt: &str,
+) -> Result<(&'static str, Vec<String>), String> {
     match executor {
-        "codex" => Ok(("codex", vec!["exec".into(), "--full-auto".into(), prompt.into()])),
+        "codex" => Ok((
+            "codex",
+            vec!["exec".into(), "--full-auto".into(), prompt.into()],
+        )),
         "claude-code" => Ok((
             "claude",
             vec![
@@ -216,7 +254,7 @@ fn build_cli_prompt(agent: &AgentConfig, payload: &Value, issue_id: &str) -> Str
         .replace("{reason}", reason)
 }
 
-fn extract_issue_id(payload: &Value) -> Option<String> {
+pub fn extract_issue_id(payload: &Value) -> Option<String> {
     let issue_id = payload
         .get("data")
         .and_then(|d| d.get("issue"))
@@ -291,7 +329,11 @@ async fn dispatch_openprx(agent: &AgentConfig, payload: &Value) -> String {
 
     if let Some(signal_api) = &cfg.signal_api {
         let account = cfg.account.as_deref().unwrap_or("");
-        let url = format!("{}/api/v1/send/{}", signal_api.trim_end_matches('/'), account);
+        let url = format!(
+            "{}/api/v1/send/{}",
+            signal_api.trim_end_matches('/'),
+            account
+        );
 
         let body = serde_json::json!({
             "recipients": [&cfg.target],

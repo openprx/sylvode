@@ -39,7 +39,10 @@ pub async fn send_callback(cfg: &CliAgentConfig, payload: &CallbackPayload) -> R
         }
     }
 
-    let resp = req.send().await.map_err(|e| format!("callback request failed: {e}"))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("callback request failed: {e}"))?;
     if resp.status().is_success() {
         Ok(())
     } else {

@@ -59,7 +59,13 @@ pub async fn handle_webhook(
         .agents
         .iter()
         .find(|a| a.id == bot_name || a.name.to_lowercase() == bot_name.to_lowercase())
-        .or_else(|| state.config.agents.iter().find(|a| a.agent_type == agent_type));
+        .or_else(|| {
+            state
+                .config
+                .agents
+                .iter()
+                .find(|a| a.agent_type == agent_type)
+        });
 
     match agent {
         Some(a) => {

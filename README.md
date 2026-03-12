@@ -28,7 +28,9 @@ OpenPR ──webhook POST──▶ openpr-webhook ──dispatch──▶ OpenCl
   - `custom` — Execute arbitrary commands
   - `cli` — Execute codex/claude-code/opencode via strict whitelist templates
 - **CLI callback loop** — Send issue execution result back via MCP/API (comment write-back ready)
-- **Optional tunnel config skeleton** — `tunnel` section reserved for Phase B WSS client
+- **WSS tunnel client (Phase B MVP)** — Active ws/wss connection with Bearer auth, heartbeat, auto-reconnect
+- **Tunnel envelope + HMAC** — Minimal envelope (`id/type/ts/agent_id/payload/sig`) with optional HMAC-SHA256
+- **Task bridge** — Handles `task.dispatch` -> immediate `task.ack` -> async `task.result`
 - **Message templates** — Customizable notification format with placeholders
 - **Configurable** — TOML-based configuration
 
@@ -140,6 +142,46 @@ When forwarding via `agent_type = "webhook"` and `agents.webhook.secret` is conf
 
 - Header: `X-Webhook-Signature`
 - Value format: `sha256=<hex_hmac>`
+
+## Phase B: Tunnel (WSS) MVP
+
+Enable `[tunnel]` in `config.toml` to let `openpr-webhook` actively connect to a control plane.
+
+```toml
+[tunnel]
+enabled = true
+url = "wss://openpr.example.com/api/v1/agent-tunnel"   # ws:// also supported for LAN/dev
+agent_id = "vano-qa"
+auth_token = "opr_xxx"                                 # Authorization: Bearer <token>
+reconnect_secs = 3
+heartbeat_secs = 20
+hmac_secret = "shared-hmac-secret"                     # optional, signs envelope body
+```
+
+Envelope schema (minimal):
+
+```json
+{
+  "id": "uuid",
+  "type": "task.dispatch|task.ack|task.result|heartbeat|error",
+  "ts": 1710000000,
+  "agent_id": "vano-qa",
+  "payload": {},
+  "sig": "sha256=<hex>"
+}
+```
+
+Current task bridge behavior:
+
+1. Receive `task.dispatch`
+2. Send `task.ack` immediately (`run_id`, `issue_id`, `status=accepted`)
+3. Reuse existing `cli` executor
+4. Send `task.result` when done (`run_id`, `issue_id`, `status`, `summary`)
+
+Signature behavior (MVP):
+
+- If `tunnel.hmac_secret` is set: outbound envelopes include `sig` (HMAC-SHA256 over unsigned envelope body).
+- Inbound verification is optional framework: when `sig` exists it is verified, missing `sig` is currently accepted.
 
 ### Template Placeholders
 

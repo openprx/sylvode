@@ -10,6 +10,7 @@ mod config;
 mod dispatcher;
 mod handler;
 mod signature;
+mod tunnel;
 
 pub struct AppState {
     pub config: config::Config,
@@ -33,6 +34,11 @@ async fn main() {
     tracing::info!("Loaded {} agent(s)", config.agents.len());
 
     let state = Arc::new(AppState { config });
+
+    let tunnel_state = Arc::new(state.config.clone());
+    tokio::spawn(async move {
+        tunnel::run_tunnel_loop(tunnel_state).await;
+    });
 
     let app = Router::new()
         .route("/webhook", post(handler::handle_webhook))

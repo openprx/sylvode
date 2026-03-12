@@ -5,14 +5,19 @@ listen = "0.0.0.0:9090"
 webhook_secrets = ["your-secret-here"]
 allow_unsigned = true  # dev only
 
-# Optional: tunnel config skeleton for Phase B
+# Optional: tunnel config (Phase B minimal viable)
 [tunnel]
 enabled = false
+# supports ws:// and wss://, production should use wss://
 url = "wss://openpr.example.com/api/v1/agent-tunnel"
 agent_id = "vano-qa"
+# sent as Authorization: Bearer <token>
 auth_token = "opr_xxx"
+# auto reconnect interval after disconnect/failure
 reconnect_secs = 3
+# heartbeat send interval
 heartbeat_secs = 20
+# optional: sign outgoing envelopes and verify incoming envelopes
 hmac_secret = "shared-hmac-secret"
 
 [[agents]]

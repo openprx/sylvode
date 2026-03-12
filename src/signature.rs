@@ -15,8 +15,8 @@ pub fn extract_signature_from_headers(headers: &HeaderMap) -> Option<String> {
 }
 
 pub fn sign_payload(payload: &[u8], secret: &str) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC-SHA256 accepts any key length");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC-SHA256 accepts any key length");
     mac.update(payload);
     hex::encode(mac.finalize().into_bytes())
 }
@@ -40,7 +40,10 @@ mod tests {
     #[test]
     fn extracts_signature_from_x_webhook_signature() {
         let mut headers = HeaderMap::new();
-        headers.insert("x-webhook-signature", HeaderValue::from_static("sha256=abc123"));
+        headers.insert(
+            "x-webhook-signature",
+            HeaderValue::from_static("sha256=abc123"),
+        );
 
         let sig = extract_signature_from_headers(&headers);
         assert_eq!(sig.as_deref(), Some("abc123"));
@@ -49,7 +52,10 @@ mod tests {
     #[test]
     fn extracts_signature_from_x_openpr_signature() {
         let mut headers = HeaderMap::new();
-        headers.insert("x-openpr-signature", HeaderValue::from_static("sha256=def456"));
+        headers.insert(
+            "x-openpr-signature",
+            HeaderValue::from_static("sha256=def456"),
+        );
 
         let sig = extract_signature_from_headers(&headers);
         assert_eq!(sig.as_deref(), Some("def456"));
