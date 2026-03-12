@@ -14,14 +14,10 @@ pub async fn handle_webhook(
 ) -> Result<Json<Value>, StatusCode> {
     // 1. Signature verification
     if !state.config.security.allow_unsigned {
-        let sig_header = headers
-            .get("x-webhook-signature")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        let sig = sig_header.strip_prefix("sha256=").unwrap_or(sig_header);
+        let sig = signature::extract_signature_from_headers(&headers).unwrap_or_default();
         if !signature::verify_signature(
             body.as_bytes(),
-            sig,
+            &sig,
             &state.config.security.webhook_secrets,
         ) {
             tracing::warn!("Invalid webhook signature");

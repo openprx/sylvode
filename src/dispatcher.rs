@@ -117,14 +117,26 @@ async fn dispatch_openprx(agent: &AgentConfig, payload: &Value) -> String {
     "openprx config needs either signal_api or command".into()
 }
 
+fn outbound_signature_header_value(payload: &Value, secret: Option<&str>) -> Option<String> {
+    secret.and_then(|secret| {
+        serde_json::to_vec(payload)
+            .ok()
+            .map(|bytes| format!("sha256={}", crate::signature::sign_payload(&bytes, secret)))
+    })
+}
+
 async fn dispatch_webhook(agent: &AgentConfig, payload: &Value) -> String {
     let cfg = match &agent.webhook {
         Some(c) => c,
         None => return "missing webhook config".into(),
     };
 
-    let client = reqwest::Client::new();
-    match client.post(&cfg.url).json(payload).send().await {
+    let mut request = reqwest::Client::new().post(&cfg.url).json(payload);
+    if let Some(signature_value) = outbound_signature_header_value(payload, cfg.secret.as_deref()) {
+        request = request.header(crate::signature::OUTBOUND_SIGNATURE_HEADER, signature_value);
+    }
+
+    match request.send().await {
         Ok(resp) => format!("webhook: {}", resp.status()),
         Err(e) => format!("webhook_error: {}", e),
     }
@@ -222,4 +234,24 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
         .replace("{priority}", priority)
         .replace("{issue_id}", issue_id)
         .replace("{url}", &format!("issue/{}", issue_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::outbound_signature_header_value;
+    use serde_json::json;
+
+    #[test]
+    fn builds_outbound_signature_header_when_secret_exists() {
+        let payload = json!({"event":"issue.created","value":1});
+        let header = outbound_signature_header_value(&payload, Some("top-secret"));
+
+        assert!(header.as_deref().unwrap_or_default().starts_with("sha256="));
+
+        let expected_sig = crate::signature::sign_payload(
+            serde_json::to_vec(&payload).unwrap().as_slice(),
+            "top-secret",
+        );
+        assert_eq!(header, Some(format!("sha256={}", expected_sig)));
+    }
 }

@@ -14,7 +14,8 @@ OpenPR ──webhook POST──▶ openpr-webhook ──dispatch──▶ OpenCl
 
 1. OpenPR fires a webhook on events (issue created, proposal submitted, comment added, etc.)
 2. openpr-webhook verifies the HMAC-SHA256 signature
-3. Dispatches formatted notifications to configured agents
+3. Only processes bot tasks where `bot_context.is_bot_task=true` (non-bot events are ignored)
+4. Dispatches formatted notifications to configured agents
 
 ## Features
 
@@ -97,6 +98,7 @@ message_template = "{event}: {title}"
 
 [agents.webhook]
 url = "https://hooks.slack.com/services/xxx"
+secret = "optional-shared-secret" # if set, outbound header x-webhook-signature is added
 method = "POST"
 
 # Agent: Custom command
@@ -110,6 +112,11 @@ message_template = "{event} {key}"
 command = "echo"
 args = ["{message}"]
 ```
+
+When forwarding via `agent_type = "webhook"` and `agents.webhook.secret` is configured, openpr-webhook signs the outbound JSON body and sends:
+
+- Header: `X-Webhook-Signature`
+- Value format: `sha256=<hex_hmac>`
 
 ### Template Placeholders
 
@@ -133,7 +140,8 @@ args = ["{message}"]
 
 | Header | Description |
 |--------|-------------|
-| `X-OpenPR-Signature` | HMAC-SHA256 signature (`sha256=...`) |
+| `X-Webhook-Signature` | HMAC-SHA256 signature (`sha256=...`) |
+| `X-OpenPR-Signature` | Also accepted for backward compatibility |
 | `X-OpenPR-Event` | Event type |
 
 ## Deployment
