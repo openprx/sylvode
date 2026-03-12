@@ -67,6 +67,19 @@ listen = "0.0.0.0:9090"
 webhook_secrets = ["your-secret-here"]
 allow_unsigned = false  # Set true only for development
 
+# Feature gates (safe defaults)
+# Keep new paths OFF unless you are explicitly enabling them.
+[features]
+tunnel_enabled = false
+cli_enabled = false
+callback_enabled = false
+
+# Runtime guardrails
+[runtime]
+cli_max_concurrency = 1
+http_timeout_secs = 15
+tunnel_reconnect_backoff_max_secs = 60
+
 # Agent: OpenClaw (AI assistant via Signal/Telegram)
 [[agents]]
 id = "david"
@@ -145,7 +158,7 @@ When forwarding via `agent_type = "webhook"` and `agents.webhook.secret` is conf
 
 ## Phase B: Tunnel (WSS) MVP
 
-Enable `[tunnel]` in `config.toml` to let `openpr-webhook` actively connect to a control plane.
+Enable both `[features].tunnel_enabled = true` and `[tunnel].enabled = true` in `config.toml` to let `openpr-webhook` actively connect to a control plane.
 
 ```toml
 [tunnel]
@@ -182,6 +195,11 @@ Signature behavior (MVP):
 
 - If `tunnel.hmac_secret` is set: outbound envelopes include `sig` (HMAC-SHA256 over unsigned envelope body).
 - Inbound verification is optional framework: when `sig` exists it is verified, missing `sig` is currently accepted.
+
+Safety toggles:
+
+- `OPENPR_WEBHOOK_SAFE_MODE=1` forces `tunnel/cli/callback` off at runtime.
+- This provides one-command rollback to legacy webhook-only behavior.
 
 ### Template Placeholders
 
