@@ -3,7 +3,17 @@ listen = "0.0.0.0:9090"
 
 [security]
 webhook_secrets = ["your-secret-here"]
-allow_unsigned = true  # 开发阶段
+allow_unsigned = true  # dev only
+
+# Optional: tunnel config skeleton for Phase B
+[tunnel]
+enabled = false
+url = "wss://openpr.example.com/api/v1/agent-tunnel"
+agent_id = "vano-qa"
+auth_token = "opr_xxx"
+reconnect_secs = 3
+heartbeat_secs = 20
+hmac_secret = "shared-hmac-secret"
 
 [[agents]]
 id = "david"
@@ -15,3 +25,22 @@ message_template = "🔔 [{project}] {event}: {key} {title}\n👤 {actor} | Trig
 command = "openclaw message send"
 channel = "signal"
 target = "uuid:your-user-uuid"
+
+[[agents]]
+id = "vano-cli"
+name = "Vano CLI"
+agent_type = "cli"
+message_template = "[{project}] {event}: {key} {title}"
+
+[agents.cli]
+executor = "codex" # codex | claude-code | opencode
+workdir = "/opt/worker/code/openpr"
+timeout_secs = 900
+max_output_chars = 12000
+prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
+callback = "mcp" # mcp | api
+callback_url = "http://127.0.0.1:8090/mcp/rpc"
+callback_token = "opr_xxx"
+update_state_on_start = "in_progress"
+update_state_on_success = "done"
+update_state_on_fail = "todo"

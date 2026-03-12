@@ -5,6 +5,7 @@ use axum::{
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
+mod callback;
 mod config;
 mod dispatcher;
 mod handler;

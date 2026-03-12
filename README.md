@@ -26,6 +26,9 @@ OpenPR ──webhook POST──▶ openpr-webhook ──dispatch──▶ OpenCl
   - `openprx` — Send via OpenPRX Signal API or CLI
   - `webhook` — Forward to HTTP endpoints
   - `custom` — Execute arbitrary commands
+  - `cli` — Execute codex/claude-code/opencode via strict whitelist templates
+- **CLI callback loop** — Send issue execution result back via MCP/API (comment write-back ready)
+- **Optional tunnel config skeleton** — `tunnel` section reserved for Phase B WSS client
 - **Message templates** — Customizable notification format with placeholders
 - **Configurable** — TOML-based configuration
 
@@ -111,6 +114,26 @@ message_template = "{event} {key}"
 [agents.custom]
 command = "echo"
 args = ["{message}"]
+
+# Agent: CLI executor (Phase A)
+[[agents]]
+id = "vano-cli"
+name = "Vano CLI"
+agent_type = "cli"
+message_template = "[{project}] {event}: {key} {title}"
+
+[agents.cli]
+executor = "codex" # codex | claude-code | opencode
+workdir = "/opt/worker/code/openpr"
+timeout_secs = 900
+max_output_chars = 12000
+prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
+callback = "mcp" # mcp | api
+callback_url = "http://127.0.0.1:8090/mcp/rpc"
+callback_token = "opr_xxx"
+update_state_on_start = "in_progress"
+update_state_on_success = "done"
+update_state_on_fail = "todo"
 ```
 
 When forwarding via `agent_type = "webhook"` and `agents.webhook.secret` is configured, openpr-webhook signs the outbound JSON body and sends:
@@ -128,6 +151,7 @@ When forwarding via `agent_type = "webhook"` and `agents.webhook.secret` is conf
 | `{title}` | Item title |
 | `{actor}` | User who triggered the event |
 | `{reason}` | Trigger reason |
+| `{issue_id}` | Issue ID (from webhook payload) |
 
 ## API
 

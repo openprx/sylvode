@@ -5,6 +5,8 @@ pub struct Config {
     pub server: ServerConfig,
     pub security: SecurityConfig,
     #[serde(default)]
+    pub tunnel: Option<TunnelConfig>,
+    #[serde(default)]
     pub agents: Vec<AgentConfig>,
 }
 
@@ -30,6 +32,7 @@ pub struct AgentConfig {
     pub openprx: Option<OpenPRXConfig>,
     pub webhook: Option<WebhookAgentConfig>,
     pub custom: Option<CustomConfig>,
+    pub cli: Option<CliAgentConfig>,
     pub message_template: Option<String>,
 }
 
@@ -71,10 +74,95 @@ pub struct CustomConfig {
     pub args: Option<Vec<String>>,
 }
 
+#[derive(Deserialize, Clone, Debug)]
+pub struct CliAgentConfig {
+    pub executor: String,
+    pub workdir: Option<String>,
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default = "default_max_output_chars")]
+    pub max_output_chars: usize,
+    pub prompt_template: Option<String>,
+    pub callback: Option<String>,
+    pub callback_url: Option<String>,
+    pub callback_token: Option<String>,
+    pub update_state_on_start: Option<String>,
+    pub update_state_on_success: Option<String>,
+    pub update_state_on_fail: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct TunnelConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub url: Option<String>,
+    pub agent_id: Option<String>,
+    pub auth_token: Option<String>,
+    #[serde(default = "default_reconnect_secs")]
+    pub reconnect_secs: u64,
+    #[serde(default = "default_heartbeat_secs")]
+    pub heartbeat_secs: u64,
+    pub hmac_secret: Option<String>,
+}
+
+fn default_timeout_secs() -> u64 {
+    900
+}
+
+fn default_max_output_chars() -> usize {
+    12000
+}
+
+fn default_reconnect_secs() -> u64 {
+    3
+}
+
+fn default_heartbeat_secs() -> u64 {
+    20
+}
+
 impl Config {
     pub fn load(path: &str) -> Self {
         let content = std::fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("Failed to read config {}: {}", path, e));
         toml::from_str(&content).unwrap_or_else(|e| panic!("Failed to parse config: {}", e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn parses_cli_agent_config() {
+        let toml = r#"
+[server]
+listen = "0.0.0.0:9090"
+
+[security]
+webhook_secrets = ["s"]
+allow_unsigned = false
+
+[[agents]]
+id = "vano-cli"
+name = "Vano CLI"
+agent_type = "cli"
+
+[agents.cli]
+executor = "codex"
+workdir = "/tmp"
+callback = "mcp"
+callback_url = "http://127.0.0.1:8090/mcp/rpc"
+"#;
+
+        let cfg: Config = toml::from_str(toml).expect("should parse config");
+        let agent = &cfg.agents[0];
+        let cli = agent.cli.as_ref().expect("cli config should exist");
+
+        assert_eq!(agent.agent_type, "cli");
+        assert_eq!(cli.executor, "codex");
+        assert_eq!(cli.timeout_secs, 900);
+        assert_eq!(cli.max_output_chars, 12000);
+        assert_eq!(cli.callback.as_deref(), Some("mcp"));
     }
 }
