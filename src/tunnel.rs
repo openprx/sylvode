@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore};
 use tokio::time::{sleep, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::http::Request, tungstenite::Message};
 use uuid::Uuid;
@@ -46,7 +46,7 @@ pub fn verify_envelope_signature(envelope: &Envelope, secret: &str) -> bool {
         Some(sig) => sign_envelope_body(envelope, secret)
             .map(|expected| expected == sig.trim_start_matches("sha256="))
             .unwrap_or(false),
-        None => true, // optional verification framework
+        None => true,
     }
 }
 
@@ -80,31 +80,55 @@ fn build_envelope(
 }
 
 pub async fn run_tunnel_loop(config: Arc<Config>) {
+    if !config.tunnel_enabled() {
+        return;
+    }
+
     let Some(tunnel) = config.tunnel.clone() else {
         return;
     };
-
-    if !tunnel.enabled {
-        return;
-    }
 
     let Some(url) = tunnel.url.clone() else {
         tracing::warn!("tunnel enabled but url is missing");
         return;
     };
 
+    if tunnel.agent_id.as_deref().unwrap_or(" ").trim().is_empty() {
+        tracing::warn!("tunnel enabled but agent_id is missing");
+        return;
+    }
+
+    if tunnel
+        .auth_token
+        .as_deref()
+        .unwrap_or(" ")
+        .trim()
+        .is_empty()
+    {
+        tracing::warn!("tunnel enabled but auth_token is missing");
+        return;
+    }
+
     let agent_id = tunnel
         .agent_id
         .clone()
         .unwrap_or_else(|| "openpr-webhook".to_string());
-    let reconnect_secs = tunnel.reconnect_secs.max(1);
+    let base_reconnect_secs = tunnel.reconnect_secs.max(1);
     let heartbeat_secs = tunnel.heartbeat_secs.max(3);
     let hmac_secret = tunnel.hmac_secret.clone();
+    let require_inbound_sig = tunnel.require_inbound_sig;
+    let max_backoff_secs = config
+        .runtime
+        .tunnel_reconnect_backoff_max_secs
+        .max(base_reconnect_secs);
+    let semaphore = Arc::new(Semaphore::new(config.runtime.cli_max_concurrency.max(1)));
+    let mut retry_secs = base_reconnect_secs;
 
     loop {
         if !(url.starts_with("wss://") || url.starts_with("ws://")) {
             tracing::error!("tunnel url must start with ws:// or wss://: {}", url);
-            sleep(Duration::from_secs(reconnect_secs)).await;
+            sleep(Duration::from_secs(retry_secs)).await;
+            retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
             continue;
         }
 
@@ -121,13 +145,15 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!("build tunnel request failed: {}", e);
-                sleep(Duration::from_secs(reconnect_secs)).await;
+                sleep(Duration::from_secs(retry_secs)).await;
+                retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
                 continue;
             }
         };
 
         match connect_async(request).await {
             Ok((ws_stream, _)) => {
+                retry_secs = base_reconnect_secs;
                 tracing::info!("tunnel connected: {}", url);
                 let (mut writer, mut reader) = ws_stream.split();
                 let (tx, mut rx) = mpsc::channel::<Envelope>(128);
@@ -186,6 +212,22 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                             continue;
                         }
                     };
+
+                    if require_inbound_sig && envelope.sig.is_none() {
+                        tracing::warn!(
+                            "tunnel missing signature while require_inbound_sig=true for msg_id={}",
+                            envelope.id
+                        );
+                        let _ = tx
+                            .send(build_envelope(
+                                "error",
+                                &agent_id,
+                                json!({"reason":"missing_signature","msg_id":envelope.id}),
+                                hmac_secret.as_deref(),
+                            ))
+                            .await;
+                        continue;
+                    }
 
                     if let Some(secret) = &hmac_secret {
                         if !verify_envelope_signature(&envelope, secret) {
@@ -249,7 +291,13 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                     let body = dispatch.body.unwrap_or_else(|| envelope.payload.clone());
                     let route_agent = dispatch.agent.clone();
                     let run_id_for_task = run_id.clone();
+                    let limiter = semaphore.clone();
                     tokio::spawn(async move {
+                        let permit = match limiter.acquire_owned().await {
+                            Ok(p) => p,
+                            Err(_) => return,
+                        };
+
                         let selected = if let Some(target_id) = route_agent {
                             task_cfg
                                 .agents
@@ -273,12 +321,19 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                                     task_secret.as_deref(),
                                 ))
                                 .await;
+                            drop(permit);
                             return;
                         };
 
-                        let report =
-                            dispatcher::execute_cli_task(cli_agent, &body, Some(run_id_for_task))
-                                .await;
+                        let report = dispatcher::execute_cli_task(
+                            task_cfg.as_ref(),
+                            cli_agent,
+                            &body,
+                            Some(run_id_for_task),
+                        )
+                        .await;
+                        drop(permit);
+
                         let _ = task_tx
                             .send(build_envelope(
                                 "task.result",
@@ -297,14 +352,15 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
 
                 heartbeat_task.abort();
                 let _ = writer_task.await;
-                tracing::warn!("tunnel disconnected, reconnecting in {}s", reconnect_secs);
+                tracing::warn!("tunnel disconnected, reconnecting in {}s", retry_secs);
             }
             Err(e) => {
                 tracing::warn!("tunnel connect failed: {}", e);
             }
         }
 
-        sleep(Duration::from_secs(reconnect_secs)).await;
+        sleep(Duration::from_secs(retry_secs)).await;
+        retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
     }
 }
 

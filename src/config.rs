@@ -5,9 +5,43 @@ pub struct Config {
     pub server: ServerConfig,
     pub security: SecurityConfig,
     #[serde(default)]
+    pub features: FeatureConfig,
+    #[serde(default)]
+    pub runtime: RuntimeConfig,
+    #[serde(default)]
     pub tunnel: Option<TunnelConfig>,
     #[serde(default)]
     pub agents: Vec<AgentConfig>,
+}
+
+#[derive(Deserialize, Clone, Debug, Default)]
+pub struct FeatureConfig {
+    #[serde(default)]
+    pub tunnel_enabled: bool,
+    #[serde(default)]
+    pub cli_enabled: bool,
+    #[serde(default)]
+    pub callback_enabled: bool,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct RuntimeConfig {
+    #[serde(default = "default_cli_max_concurrency")]
+    pub cli_max_concurrency: usize,
+    #[serde(default = "default_http_timeout_secs")]
+    pub http_timeout_secs: u64,
+    #[serde(default = "default_tunnel_reconnect_backoff_max_secs")]
+    pub tunnel_reconnect_backoff_max_secs: u64,
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        Self {
+            cli_max_concurrency: default_cli_max_concurrency(),
+            http_timeout_secs: default_http_timeout_secs(),
+            tunnel_reconnect_backoff_max_secs: default_tunnel_reconnect_backoff_max_secs(),
+        }
+    }
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -103,6 +137,8 @@ pub struct TunnelConfig {
     #[serde(default = "default_heartbeat_secs")]
     pub heartbeat_secs: u64,
     pub hmac_secret: Option<String>,
+    #[serde(default)]
+    pub require_inbound_sig: bool,
 }
 
 fn default_timeout_secs() -> u64 {
@@ -121,11 +157,47 @@ fn default_heartbeat_secs() -> u64 {
     20
 }
 
+fn default_cli_max_concurrency() -> usize {
+    1
+}
+
+fn default_http_timeout_secs() -> u64 {
+    15
+}
+
+fn default_tunnel_reconnect_backoff_max_secs() -> u64 {
+    60
+}
+
 impl Config {
     pub fn load(path: &str) -> Self {
         let content = std::fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("Failed to read config {}: {}", path, e));
         toml::from_str(&content).unwrap_or_else(|e| panic!("Failed to parse config: {}", e))
+    }
+
+    pub fn safe_mode_enabled() -> bool {
+        std::env::var("OPENPR_WEBHOOK_SAFE_MODE")
+            .ok()
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn cli_enabled(&self) -> bool {
+        !Self::safe_mode_enabled() && self.features.cli_enabled
+    }
+
+    pub fn callback_enabled(&self) -> bool {
+        !Self::safe_mode_enabled() && self.features.callback_enabled
+    }
+
+    pub fn tunnel_enabled(&self) -> bool {
+        !Self::safe_mode_enabled()
+            && self.features.tunnel_enabled
+            && self.tunnel.as_ref().map(|t| t.enabled).unwrap_or(false)
     }
 }
 
@@ -164,5 +236,8 @@ callback_url = "http://127.0.0.1:8090/mcp/rpc"
         assert_eq!(cli.timeout_secs, 900);
         assert_eq!(cli.max_output_chars, 12000);
         assert_eq!(cli.callback.as_deref(), Some("mcp"));
+        assert!(!cfg.features.cli_enabled);
+        assert_eq!(cfg.runtime.http_timeout_secs, 15);
+        assert_eq!(cfg.runtime.cli_max_concurrency, 1);
     }
 }

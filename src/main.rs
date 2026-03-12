@@ -36,9 +36,13 @@ async fn main() {
     let state = Arc::new(AppState { config });
 
     let tunnel_state = Arc::new(state.config.clone());
-    tokio::spawn(async move {
-        tunnel::run_tunnel_loop(tunnel_state).await;
-    });
+    if tunnel_state.tunnel_enabled() {
+        tokio::spawn(async move {
+            tunnel::run_tunnel_loop(tunnel_state).await;
+        });
+    } else {
+        tracing::info!("tunnel subsystem disabled (feature flag or safe mode)");
+    }
 
     let app = Router::new()
         .route("/webhook", post(handler::handle_webhook))

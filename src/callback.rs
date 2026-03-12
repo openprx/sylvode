@@ -1,5 +1,6 @@
 use crate::config::CliAgentConfig;
 use serde::Serialize;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct CallbackPayload {
@@ -15,14 +16,21 @@ pub struct CallbackPayload {
     pub state: Option<String>,
 }
 
-pub async fn send_callback(cfg: &CliAgentConfig, payload: &CallbackPayload) -> Result<(), String> {
+pub async fn send_callback(
+    cfg: &CliAgentConfig,
+    payload: &CallbackPayload,
+    http_timeout_secs: u64,
+) -> Result<(), String> {
     let callback_url = match &cfg.callback_url {
         Some(u) if !u.is_empty() => u,
         _ => return Ok(()),
     };
 
     let callback_mode = cfg.callback.as_deref().unwrap_or("mcp");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(http_timeout_secs))
+        .build()
+        .map_err(|e| format!("build callback client failed: {e}"))?;
 
     let mut req = match callback_mode {
         "mcp" => client.post(callback_url).json(&serde_json::json!({
@@ -52,6 +60,7 @@ pub async fn send_callback(cfg: &CliAgentConfig, payload: &CallbackPayload) -> R
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_callback_payload(
     issue_id: String,
     run_id: String,

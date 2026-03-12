@@ -1,21 +1,25 @@
-use crate::{callback, config::AgentConfig};
+use crate::{callback, config::AgentConfig, config::Config};
 use serde_json::Value;
 use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub async fn dispatch(agent: &AgentConfig, payload: &Value) -> String {
+pub async fn dispatch(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
     match agent.agent_type.as_str() {
         "openclaw" => dispatch_openclaw(agent, payload).await,
-        "openprx" => dispatch_openprx(agent, payload).await,
-        "webhook" => dispatch_webhook(agent, payload).await,
+        "openprx" => dispatch_openprx(config, agent, payload).await,
+        "webhook" => dispatch_webhook(config, agent, payload).await,
         "custom" => dispatch_custom(agent, payload).await,
-        "cli" => dispatch_cli(agent, payload).await,
+        "cli" => dispatch_cli(config, agent, payload).await,
         other => format!("unknown agent type: {}", other),
     }
 }
 
-async fn dispatch_cli(agent: &AgentConfig, payload: &Value) -> String {
-    let report = execute_cli_task(agent, payload, None).await;
+async fn dispatch_cli(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
+    if !config.cli_enabled() {
+        return "cli disabled by feature flag or safe mode".into();
+    }
+
+    let report = execute_cli_task(config, agent, payload, None).await;
     format!(
         "cli {} run_id={} issue_id={}",
         report.status, report.run_id, report.issue_id
@@ -31,6 +35,7 @@ pub struct CliExecutionReport {
 }
 
 pub async fn execute_cli_task(
+    config: &Config,
     agent: &AgentConfig,
     payload: &Value,
     run_id_override: Option<String>,
@@ -47,6 +52,15 @@ pub async fn execute_cli_task(
         }
     };
 
+    if !config.cli_enabled() {
+        return CliExecutionReport {
+            run_id: run_id_override.unwrap_or_else(|| "run-disabled".to_string()),
+            issue_id: extract_issue_id(payload).unwrap_or_else(|| "unknown".to_string()),
+            status: "failed".to_string(),
+            summary: "cli disabled by feature flag or safe mode".to_string(),
+        };
+    }
+
     let issue_id = extract_issue_id(payload).unwrap_or_else(|| "unknown".to_string());
     let run_id = run_id_override.unwrap_or_else(|| {
         format!(
@@ -60,7 +74,7 @@ pub async fn execute_cli_task(
     let prompt = build_cli_prompt(agent, payload, &issue_id);
 
     let start_state = cfg.update_state_on_start.clone();
-    if start_state.is_some() {
+    if config.callback_enabled() && start_state.is_some() {
         let start_payload = callback::build_callback_payload(
             issue_id.clone(),
             run_id.clone(),
@@ -73,7 +87,9 @@ pub async fn execute_cli_task(
             String::new(),
             start_state,
         );
-        if let Err(e) = callback::send_callback(cfg, &start_payload).await {
+        if let Err(e) =
+            callback::send_callback(cfg, &start_payload, config.runtime.http_timeout_secs).await
+        {
             tracing::warn!("start callback failed: {}", e);
         }
     }
@@ -94,21 +110,25 @@ pub async fn execute_cli_task(
         format!("cli execution {}", run.status)
     };
 
-    let callback_payload = callback::build_callback_payload(
-        issue_id.clone(),
-        run_id.clone(),
-        cfg.executor.clone(),
-        run.status.clone(),
-        summary.clone(),
-        run.exit_code,
-        run.duration_ms,
-        run.stdout_tail.clone(),
-        run.stderr_tail.clone(),
-        final_state,
-    );
+    if config.callback_enabled() {
+        let callback_payload = callback::build_callback_payload(
+            issue_id.clone(),
+            run_id.clone(),
+            cfg.executor.clone(),
+            run.status.clone(),
+            summary.clone(),
+            run.exit_code,
+            run.duration_ms,
+            run.stdout_tail.clone(),
+            run.stderr_tail.clone(),
+            final_state,
+        );
 
-    if let Err(e) = callback::send_callback(cfg, &callback_payload).await {
-        tracing::warn!("final callback failed: {}", e);
+        if let Err(e) =
+            callback::send_callback(cfg, &callback_payload, config.runtime.http_timeout_secs).await
+        {
+            tracing::warn!("final callback failed: {}", e);
+        }
     }
 
     CliExecutionReport {
@@ -319,7 +339,7 @@ async fn dispatch_openclaw(agent: &AgentConfig, payload: &Value) -> String {
     }
 }
 
-async fn dispatch_openprx(agent: &AgentConfig, payload: &Value) -> String {
+async fn dispatch_openprx(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
     let cfg = match &agent.openprx {
         Some(c) => c,
         None => return "missing openprx config".into(),
@@ -340,7 +360,13 @@ async fn dispatch_openprx(agent: &AgentConfig, payload: &Value) -> String {
             "message": message
         });
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
+            .build();
+        let Ok(client) = client else {
+            return "error: failed to build http client".into();
+        };
+
         return match client.post(&url).json(&body).send().await {
             Ok(resp) if resp.status().is_success() => {
                 tracing::info!("openprx signal ok");
@@ -397,13 +423,20 @@ fn outbound_signature_header_value(payload: &Value, secret: Option<&str>) -> Opt
     })
 }
 
-async fn dispatch_webhook(agent: &AgentConfig, payload: &Value) -> String {
+async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
     let cfg = match &agent.webhook {
         Some(c) => c,
         None => return "missing webhook config".into(),
     };
 
-    let mut request = reqwest::Client::new().post(&cfg.url).json(payload);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
+        .build();
+    let Ok(client) = client else {
+        return "webhook_error: failed to build http client".into();
+    };
+
+    let mut request = client.post(&cfg.url).json(payload);
     if let Some(signature_value) = outbound_signature_header_value(payload, cfg.secret.as_deref()) {
         request = request.header(crate::signature::OUTBOUND_SIGNATURE_HEADER, signature_value);
     }
@@ -505,8 +538,25 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_executor_command, extract_issue_id, outbound_signature_header_value};
+    use super::{
+        build_executor_command, dispatch, extract_issue_id, outbound_signature_header_value,
+    };
+    use crate::config::Config;
     use serde_json::json;
+
+    fn base_config() -> Config {
+        toml::from_str(
+            r#"
+[server]
+listen = "127.0.0.1:9090"
+
+[security]
+allow_unsigned = true
+webhook_secrets = []
+"#,
+        )
+        .expect("parse base config")
+    }
 
     #[test]
     fn builds_outbound_signature_header_when_secret_exists() {
@@ -534,5 +584,51 @@ mod tests {
     fn extracts_issue_id_from_payload() {
         let payload = json!({"data": {"issue": {"id": "42"}}});
         assert_eq!(extract_issue_id(&payload).as_deref(), Some("42"));
+    }
+
+    #[tokio::test]
+    async fn cli_path_is_blocked_when_feature_disabled() {
+        let config = base_config();
+        let agent: crate::config::AgentConfig = toml::from_str(
+            r#"
+id = "a1"
+name = "CLI"
+agent_type = "cli"
+[cli]
+executor = "codex"
+"#,
+        )
+        .expect("parse agent");
+
+        let result = dispatch(&config, &agent, &json!({})).await;
+        assert!(result.contains("disabled"));
+    }
+
+    #[tokio::test]
+    async fn legacy_four_dispatch_paths_are_not_blocked_by_new_flags() {
+        let config = base_config();
+        let payload = json!({"event":"issue.created"});
+
+        let openclaw: crate::config::AgentConfig =
+            toml::from_str("id='o1'\nname='OpenClaw'\nagent_type='openclaw'").unwrap();
+        let openprx: crate::config::AgentConfig =
+            toml::from_str("id='o2'\nname='OpenPRX'\nagent_type='openprx'").unwrap();
+        let webhook: crate::config::AgentConfig =
+            toml::from_str("id='o3'\nname='Webhook'\nagent_type='webhook'").unwrap();
+        let custom: crate::config::AgentConfig =
+            toml::from_str("id='o4'\nname='Custom'\nagent_type='custom'").unwrap();
+
+        assert!(dispatch(&config, &openclaw, &payload)
+            .await
+            .contains("missing openclaw config"));
+        assert!(dispatch(&config, &openprx, &payload)
+            .await
+            .contains("missing openprx config"));
+        assert!(dispatch(&config, &webhook, &payload)
+            .await
+            .contains("missing webhook config"));
+        assert!(dispatch(&config, &custom, &payload)
+            .await
+            .contains("missing custom config"));
     }
 }

@@ -5,6 +5,18 @@ listen = "0.0.0.0:9090"
 webhook_secrets = ["your-secret-here"]
 allow_unsigned = true  # dev only
 
+# Feature flags: all new Phase-B paths default OFF.
+[features]
+tunnel_enabled = false
+cli_enabled = false
+callback_enabled = false
+
+# Runtime guardrails
+[runtime]
+cli_max_concurrency = 1
+http_timeout_secs = 15
+tunnel_reconnect_backoff_max_secs = 60
+
 # Optional: tunnel config (Phase B minimal viable)
 [tunnel]
 enabled = false
@@ -19,6 +31,8 @@ reconnect_secs = 3
 heartbeat_secs = 20
 # optional: sign outgoing envelopes and verify incoming envelopes
 hmac_secret = "shared-hmac-secret"
+# if true, inbound tunnel messages without sig are rejected
+require_inbound_sig = false
 
 [[agents]]
 id = "david"

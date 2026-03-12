@@ -70,7 +70,7 @@ pub async fn handle_webhook(
     match agent {
         Some(a) => {
             tracing::info!("Dispatching to agent: {} ({})", a.name, a.agent_type);
-            let result = dispatcher::dispatch(a, &payload).await;
+            let result = dispatcher::dispatch(&state.config, a, &payload).await;
             Ok(Json(
                 json!({"status": "dispatched", "agent": a.id, "result": result}),
             ))
