@@ -2,6 +2,10 @@
 name = "openpr-webhook"
 version = "0.1.0"
 edition = "2021"
+authors = ["g1e2x87"]
+license = "MIT OR Apache-2.0"
+description = "GitHub webhook relay service for OpenPR"
+repository = "https://github.com/openprx/openpr-webhook"
 
 [dependencies]
 axum = "0.8"
