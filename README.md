@@ -260,6 +260,11 @@ COPY config.toml /etc/openpr-webhook/
 CMD ["openpr-webhook"]
 ```
 
+## Links
+
+- [Documentation](https://docs.openprx.dev/en/openpr-webhook/) — Full documentation (10 languages)
+- [Community](https://community.openprx.dev) — OpenPRX community forum
+
 ## Related
 
 - [OpenPR](https://github.com/openprx/openpr) — Project management platform
