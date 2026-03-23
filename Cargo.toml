@@ -1,7 +1,7 @@
 [package]
 name = "openpr-webhook"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
 authors = ["g1e2x87"]
 license = "MIT OR Apache-2.0"
 description = "GitHub webhook relay service for OpenPR"

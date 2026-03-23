@@ -2,7 +2,7 @@ use crate::config::CliAgentConfig;
 use serde::Serialize;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CallbackPayload {
     pub issue_id: String,
     pub run_id: String,
@@ -41,27 +41,24 @@ pub async fn send_callback(
         other => return Err(format!("unsupported callback mode: {other}")),
     };
 
-    if let Some(token) = &cfg.callback_token {
-        if !token.is_empty() {
-            req = req.bearer_auth(token);
-        }
+    if let Some(token) = &cfg.callback_token
+        && !token.is_empty()
+    {
+        req = req.bearer_auth(token);
     }
 
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("callback request failed: {e}"))?;
+    let resp = req.send().await.map_err(|e| format!("callback request failed: {e}"))?;
     if resp.status().is_success() {
         Ok(())
     } else {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        Err(format!("callback failed: {} {}", status, body))
+        Err(format!("callback failed: {status} {body}"))
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn build_callback_payload(
+pub const fn build_callback_payload(
     issue_id: String,
     run_id: String,
     executor: String,

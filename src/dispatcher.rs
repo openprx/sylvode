@@ -3,14 +3,16 @@ use serde_json::Value;
 use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+const DEFAULT_SUBPROCESS_TIMEOUT_SECS: u64 = 60;
+
 pub async fn dispatch(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
     match agent.agent_type.as_str() {
-        "openclaw" => dispatch_openclaw(agent, payload).await,
+        "openclaw" => dispatch_openclaw(config, agent, payload).await,
         "openprx" => dispatch_openprx(config, agent, payload).await,
         "webhook" => dispatch_webhook(config, agent, payload).await,
-        "custom" => dispatch_custom(agent, payload).await,
+        "custom" => dispatch_custom(config, agent, payload).await,
         "cli" => dispatch_cli(config, agent, payload).await,
-        other => format!("unknown agent type: {}", other),
+        other => format!("unknown agent type: {other}"),
     }
 }
 
@@ -40,16 +42,13 @@ pub async fn execute_cli_task(
     payload: &Value,
     run_id_override: Option<String>,
 ) -> CliExecutionReport {
-    let cfg = match &agent.cli {
-        Some(c) => c,
-        None => {
-            return CliExecutionReport {
-                run_id: run_id_override.unwrap_or_else(|| "run-invalid".to_string()),
-                issue_id: "unknown".to_string(),
-                status: "failed".to_string(),
-                summary: "missing cli config".to_string(),
-            }
-        }
+    let Some(cfg) = &agent.cli else {
+        return CliExecutionReport {
+            run_id: run_id_override.unwrap_or_else(|| "run-invalid".to_string()),
+            issue_id: "unknown".to_string(),
+            status: "failed".to_string(),
+            summary: "missing cli config".to_string(),
+        };
     };
 
     if !config.cli_enabled() {
@@ -87,10 +86,8 @@ pub async fn execute_cli_task(
             String::new(),
             start_state,
         );
-        if let Err(e) =
-            callback::send_callback(cfg, &start_payload, config.runtime.http_timeout_secs).await
-        {
-            tracing::warn!("start callback failed: {}", e);
+        if let Err(e) = callback::send_callback(cfg, &start_payload, config.runtime.http_timeout_secs).await {
+            tracing::warn!("start callback failed: {e}");
         }
     }
 
@@ -124,10 +121,8 @@ pub async fn execute_cli_task(
             final_state,
         );
 
-        if let Err(e) =
-            callback::send_callback(cfg, &callback_payload, config.runtime.http_timeout_secs).await
-        {
-            tracing::warn!("final callback failed: {}", e);
+        if let Err(e) = callback::send_callback(cfg, &callback_payload, config.runtime.http_timeout_secs).await {
+            tracing::warn!("final callback failed: {e}");
         }
     }
 
@@ -164,7 +159,7 @@ async fn run_cli_executor(
                 duration_ms: 0,
                 stdout_tail: String::new(),
                 stderr_tail: err,
-            }
+            };
         }
     };
 
@@ -186,13 +181,12 @@ async fn run_cli_executor(
                 exit_code: None,
                 duration_ms: started.elapsed().as_millis(),
                 stdout_tail: String::new(),
-                stderr_tail: format!("spawn failed: {}", e),
-            }
+                stderr_tail: format!("spawn failed: {e}"),
+            };
         }
     };
 
-    let output_result =
-        tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await;
+    let output_result = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await;
 
     match output_result {
         Ok(Ok(output)) => {
@@ -215,27 +209,21 @@ async fn run_cli_executor(
             exit_code: None,
             duration_ms: started.elapsed().as_millis(),
             stdout_tail: String::new(),
-            stderr_tail: format!("wait failed: {}", e),
+            stderr_tail: format!("wait failed: {e}"),
         },
         Err(_) => CliRunResult {
             status: "timeout".into(),
             exit_code: None,
             duration_ms: started.elapsed().as_millis(),
             stdout_tail: String::new(),
-            stderr_tail: format!("timeout after {}s", timeout_secs),
+            stderr_tail: format!("timeout after {timeout_secs}s"),
         },
     }
 }
 
-fn build_executor_command(
-    executor: &str,
-    prompt: &str,
-) -> Result<(&'static str, Vec<String>), String> {
+fn build_executor_command(executor: &str, prompt: &str) -> Result<(&'static str, Vec<String>), String> {
     match executor {
-        "codex" => Ok((
-            "codex",
-            vec!["exec".into(), "--full-auto".into(), prompt.into()],
-        )),
+        "codex" => Ok(("codex", vec!["exec".into(), "--full-auto".into(), prompt.into()])),
         "claude-code" => Ok((
             "claude",
             vec![
@@ -246,27 +234,29 @@ fn build_executor_command(
             ],
         )),
         "opencode" => Ok(("opencode", vec!["run".into(), prompt.into()])),
-        _ => Err(format!("executor not allowed: {}", executor)),
+        _ => Err(format!("executor not allowed: {executor}")),
     }
 }
 
+#[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
 fn build_cli_prompt(agent: &AgentConfig, payload: &Value, issue_id: &str) -> String {
     let base = agent
         .cli
         .as_ref()
         .and_then(|c| c.prompt_template.as_deref())
-        .unwrap_or("Fix issue {issue_id}: {title}\nContext: {reason}");
+        // Template placeholders — not format args
+        .unwrap_or("Fix issue ISSUE_ID: TITLE\nContext: REASON");
 
     let title = payload
         .get("data")
         .and_then(|d| d.get("issue"))
         .and_then(|i| i.get("title"))
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("untitled");
     let reason = payload
         .get("bot_context")
         .and_then(|bc| bc.get("trigger_reason"))
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("unknown");
 
     base.replace("{issue_id}", issue_id)
@@ -280,48 +270,63 @@ pub fn extract_issue_id(payload: &Value) -> Option<String> {
         .and_then(|d| d.get("issue"))
         .and_then(|i| i.get("id"))?;
 
-    if let Some(id) = issue_id.as_str() {
-        Some(id.to_string())
-    } else {
-        issue_id.as_i64().map(|n| n.to_string())
-    }
+    issue_id
+        .as_str()
+        .map(ToString::to_string)
+        .or_else(|| issue_id.as_i64().map(|n| n.to_string()))
 }
 
 fn tail_chars(input: &str, max_chars: usize) -> String {
-    if input.chars().count() <= max_chars {
+    let char_count = input.chars().count();
+    if char_count <= max_chars {
         return input.to_string();
     }
-    input
-        .chars()
-        .rev()
-        .take(max_chars)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect()
+    input.chars().skip(char_count - max_chars).collect()
 }
 
-async fn dispatch_openclaw(agent: &AgentConfig, payload: &Value) -> String {
-    let cfg = match &agent.openclaw {
-        Some(c) => c,
-        None => return "missing openclaw config".into(),
+// --- Security: all subprocess dispatchers use direct args, no sh -c ---
+
+async fn run_subprocess_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout_secs: u64,
+) -> Result<std::process::Output, String> {
+    let child = tokio::process::Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("spawn {program} failed: {e}"))?;
+
+    tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
+        .await
+        .map_err(|_| format!("subprocess {program} timed out after {timeout_secs}s"))?
+        .map_err(|e| format!("subprocess {program} wait failed: {e}"))
+}
+
+async fn dispatch_openclaw(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
+    let Some(cfg) = &agent.openclaw else {
+        return "missing openclaw config".into();
     };
 
     let message = format_message(agent, payload);
+    let timeout = config.runtime.http_timeout_secs.max(DEFAULT_SUBPROCESS_TIMEOUT_SECS);
 
-    let output = tokio::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!(
-            "{} --channel {} --target \"{}\" --message \"{}\"",
-            cfg.command,
-            cfg.channel,
-            cfg.target,
-            message.replace('\\', "\\\\").replace('"', "\\\"")
-        ))
-        .output()
-        .await;
-
-    match output {
+    match run_subprocess_with_timeout(
+        &cfg.command,
+        &[
+            "--channel",
+            &cfg.channel,
+            "--target",
+            &cfg.target,
+            "--message",
+            &message,
+        ],
+        timeout,
+    )
+    .await
+    {
         Ok(o) if o.status.success() => {
             let out = String::from_utf8_lossy(&o.stdout);
             tracing::info!("openclaw ok: {}", out.trim());
@@ -333,27 +338,22 @@ async fn dispatch_openclaw(agent: &AgentConfig, payload: &Value) -> String {
             format!("error: {}", err.trim())
         }
         Err(e) => {
-            tracing::error!("exec failed: {}", e);
-            format!("exec_error: {}", e)
+            tracing::error!("openclaw exec failed: {e}");
+            format!("exec_error: {e}")
         }
     }
 }
 
 async fn dispatch_openprx(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
-    let cfg = match &agent.openprx {
-        Some(c) => c,
-        None => return "missing openprx config".into(),
+    let Some(cfg) = &agent.openprx else {
+        return "missing openprx config".into();
     };
 
     let message = format_message(agent, payload);
 
     if let Some(signal_api) = &cfg.signal_api {
         let account = cfg.account.as_deref().unwrap_or("");
-        let url = format!(
-            "{}/api/v1/send/{}",
-            signal_api.trim_end_matches('/'),
-            account
-        );
+        let url = format!("{}/api/v1/send/{account}", signal_api.trim_end_matches('/'));
 
         let body = serde_json::json!({
             "recipients": [&cfg.target],
@@ -375,30 +375,33 @@ async fn dispatch_openprx(config: &Config, agent: &AgentConfig, payload: &Value)
             Ok(resp) => {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
-                tracing::error!("openprx signal {}: {}", status, text);
-                format!("error: {} {}", status, text)
+                tracing::error!("openprx signal {status}: {text}");
+                format!("error: {status} {text}")
             }
             Err(e) => {
-                tracing::error!("openprx signal request failed: {}", e);
-                format!("error: {}", e)
+                tracing::error!("openprx signal request failed: {e}");
+                format!("error: {e}")
             }
         };
     }
 
     if let Some(command) = &cfg.command {
-        let output = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(format!(
-                "{} --channel {} --target \"{}\" --message \"{}\"",
-                command,
-                cfg.channel,
-                cfg.target,
-                message.replace('\\', "\\\\").replace('"', "\\\"")
-            ))
-            .output()
-            .await;
+        let timeout = config.runtime.http_timeout_secs.max(DEFAULT_SUBPROCESS_TIMEOUT_SECS);
 
-        return match output {
+        return match run_subprocess_with_timeout(
+            command,
+            &[
+                "--channel",
+                &cfg.channel,
+                "--target",
+                &cfg.target,
+                "--message",
+                &message,
+            ],
+            timeout,
+        )
+        .await
+        {
             Ok(o) if o.status.success() => {
                 tracing::info!("openprx cli ok");
                 "ok".into()
@@ -408,7 +411,7 @@ async fn dispatch_openprx(config: &Config, agent: &AgentConfig, payload: &Value)
                 tracing::error!("openprx cli failed: {}", err.trim());
                 format!("error: {}", err.trim())
             }
-            Err(e) => format!("exec_error: {}", e),
+            Err(e) => format!("exec_error: {e}"),
         };
     }
 
@@ -419,14 +422,14 @@ fn outbound_signature_header_value(payload: &Value, secret: Option<&str>) -> Opt
     secret.and_then(|secret| {
         serde_json::to_vec(payload)
             .ok()
-            .map(|bytes| format!("sha256={}", crate::signature::sign_payload(&bytes, secret)))
+            .and_then(|bytes| crate::signature::sign_payload(&bytes, secret).ok())
+            .map(|sig| format!("sha256={sig}"))
     })
 }
 
 async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
-    let cfg = match &agent.webhook {
-        Some(c) => c,
-        None => return "missing webhook config".into(),
+    let Some(cfg) = &agent.webhook else {
+        return "missing webhook config".into();
     };
 
     let client = reqwest::Client::builder()
@@ -443,83 +446,80 @@ async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value)
 
     match request.send().await {
         Ok(resp) => format!("webhook: {}", resp.status()),
-        Err(e) => format!("webhook_error: {}", e),
+        Err(e) => format!("webhook_error: {e}"),
     }
 }
 
-async fn dispatch_custom(agent: &AgentConfig, payload: &Value) -> String {
-    let cfg = match &agent.custom {
-        Some(c) => c,
-        None => return "missing custom config".into(),
+async fn dispatch_custom(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
+    let Some(cfg) = &agent.custom else {
+        return "missing custom config".into();
     };
 
     let message = format_message(agent, payload);
-    let full_cmd = format!("{} \"{}\"", cfg.command, message.replace('"', "\\\""));
+    let timeout = config.runtime.http_timeout_secs.max(DEFAULT_SUBPROCESS_TIMEOUT_SECS);
 
-    match tokio::process::Command::new("sh")
-        .arg("-c")
-        .arg(&full_cmd)
-        .output()
-        .await
-    {
+    // Build args: use configured args or default to passing message as single arg
+    let configured_args: Vec<String> = cfg.args.clone().unwrap_or_default();
+    let mut final_args: Vec<&str> = configured_args.iter().map(String::as_str).collect();
+    final_args.push(&message);
+
+    match run_subprocess_with_timeout(&cfg.command, &final_args, timeout).await {
         Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
-        Err(e) => format!("custom_error: {}", e),
+        Err(e) => format!("custom_error: {e}"),
     }
 }
 
+#[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
 fn format_message(agent: &AgentConfig, payload: &Value) -> String {
-    let tmpl = agent
-        .message_template
-        .as_deref()
-        .unwrap_or("🔔 [{project}] {event}: {key} {title}\n👤 {actor} | Trigger: {reason}");
+    let tmpl = agent.message_template.as_deref().unwrap_or(
+        // Template placeholders — not format args
+        "[TPL_PROJECT] TPL_EVENT: TPL_KEY TPL_TITLE\nTPL_ACTOR | Trigger: TPL_REASON",
+    );
 
-    let event = payload
-        .get("event")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
+    let event = payload.get("event").and_then(Value::as_str).unwrap_or("unknown");
     let title = payload
         .get("data")
         .and_then(|d| d.get("issue"))
         .and_then(|i| i.get("title"))
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("untitled");
     let issue_key = payload
         .get("data")
         .and_then(|d| d.get("issue"))
         .and_then(|i| i.get("key"))
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("");
     let reason = payload
         .get("bot_context")
         .and_then(|bc| bc.get("trigger_reason"))
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("unknown");
     let actor = payload
         .get("actor")
         .and_then(|a| a.get("name"))
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("unknown");
     let workspace = payload
         .get("workspace")
         .and_then(|w| w.get("name"))
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("");
     let project = payload
         .get("project")
         .and_then(|p| p.get("name"))
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("");
     let state = payload
         .get("data")
         .and_then(|d| d.get("issue"))
         .and_then(|i| i.get("state"))
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("");
     let priority = payload
         .get("data")
         .and_then(|d| d.get("issue"))
         .and_then(|i| i.get("priority"))
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("");
     let issue_id = extract_issue_id(payload).unwrap_or_default();
 
@@ -533,14 +533,12 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
         .replace("{state}", state)
         .replace("{priority}", priority)
         .replace("{issue_id}", &issue_id)
-        .replace("{url}", &format!("issue/{}", issue_id))
+        .replace("{url}", &format!("issue/{issue_id}"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_executor_command, dispatch, extract_issue_id, outbound_signature_header_value,
-    };
+    use super::{build_executor_command, dispatch, extract_issue_id, outbound_signature_header_value};
     use crate::config::Config;
     use serde_json::json;
 
@@ -565,11 +563,10 @@ webhook_secrets = []
 
         assert!(header.as_deref().unwrap_or_default().starts_with("sha256="));
 
-        let expected_sig = crate::signature::sign_payload(
-            serde_json::to_vec(&payload).unwrap().as_slice(),
-            "top-secret",
-        );
-        assert_eq!(header, Some(format!("sha256={}", expected_sig)));
+        let expected_sig =
+            crate::signature::sign_payload(serde_json::to_vec(&payload).unwrap().as_slice(), "top-secret")
+                .expect("sign should succeed");
+        assert_eq!(header, Some(format!("sha256={expected_sig}")));
     }
 
     #[test]
@@ -615,20 +612,27 @@ executor = "codex"
             toml::from_str("id='o2'\nname='OpenPRX'\nagent_type='openprx'").unwrap();
         let webhook: crate::config::AgentConfig =
             toml::from_str("id='o3'\nname='Webhook'\nagent_type='webhook'").unwrap();
-        let custom: crate::config::AgentConfig =
-            toml::from_str("id='o4'\nname='Custom'\nagent_type='custom'").unwrap();
+        let custom: crate::config::AgentConfig = toml::from_str("id='o4'\nname='Custom'\nagent_type='custom'").unwrap();
 
-        assert!(dispatch(&config, &openclaw, &payload)
-            .await
-            .contains("missing openclaw config"));
-        assert!(dispatch(&config, &openprx, &payload)
-            .await
-            .contains("missing openprx config"));
-        assert!(dispatch(&config, &webhook, &payload)
-            .await
-            .contains("missing webhook config"));
-        assert!(dispatch(&config, &custom, &payload)
-            .await
-            .contains("missing custom config"));
+        assert!(
+            dispatch(&config, &openclaw, &payload)
+                .await
+                .contains("missing openclaw config")
+        );
+        assert!(
+            dispatch(&config, &openprx, &payload)
+                .await
+                .contains("missing openprx config")
+        );
+        assert!(
+            dispatch(&config, &webhook, &payload)
+                .await
+                .contains("missing webhook config")
+        );
+        assert!(
+            dispatch(&config, &custom, &payload)
+                .await
+                .contains("missing custom config")
+        );
     }
 }

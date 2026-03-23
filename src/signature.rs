@@ -14,18 +14,19 @@ pub fn extract_signature_from_headers(headers: &HeaderMap) -> Option<String> {
         .map(|value| value.strip_prefix("sha256=").unwrap_or(value).to_string())
 }
 
-pub fn sign_payload(payload: &[u8], secret: &str) -> String {
-    let mut mac =
-        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC-SHA256 accepts any key length");
+pub fn sign_payload(payload: &[u8], secret: &str) -> Result<String, String> {
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).map_err(|e| format!("HMAC init failed: {e}"))?;
     mac.update(payload);
-    hex::encode(mac.finalize().into_bytes())
+    Ok(hex::encode(mac.finalize().into_bytes()))
 }
 
 pub fn verify_signature(payload: &[u8], signature: &str, secrets: &[String]) -> bool {
     let sig_hex = signature.strip_prefix("sha256=").unwrap_or(signature);
 
     for secret in secrets {
-        if sign_payload(payload, secret) == sig_hex {
+        if let Ok(computed) = sign_payload(payload, secret)
+            && computed == sig_hex
+        {
             return true;
         }
     }
@@ -40,10 +41,7 @@ mod tests {
     #[test]
     fn extracts_signature_from_x_webhook_signature() {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-webhook-signature",
-            HeaderValue::from_static("sha256=abc123"),
-        );
+        headers.insert("x-webhook-signature", HeaderValue::from_static("sha256=abc123"));
 
         let sig = extract_signature_from_headers(&headers);
         assert_eq!(sig.as_deref(), Some("abc123"));
@@ -52,10 +50,7 @@ mod tests {
     #[test]
     fn extracts_signature_from_x_openpr_signature() {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-openpr-signature",
-            HeaderValue::from_static("sha256=def456"),
-        );
+        headers.insert("x-openpr-signature", HeaderValue::from_static("sha256=def456"));
 
         let sig = extract_signature_from_headers(&headers);
         assert_eq!(sig.as_deref(), Some("def456"));

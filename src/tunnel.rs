@@ -1,12 +1,12 @@
 use crate::{config::Config, dispatcher, signature};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::{mpsc, Semaphore};
-use tokio::time::{sleep, Duration};
-use tokio_tungstenite::{connect_async, tungstenite::http::Request, tungstenite::Message};
+use tokio::sync::{Semaphore, mpsc};
+use tokio::time::{Duration, sleep};
+use tokio_tungstenite::{connect_async, tungstenite::Message, tungstenite::http::Request};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,16 +38,13 @@ pub fn sign_envelope_body(envelope: &Envelope, secret: &str) -> Option<String> {
     unsigned.sig = None;
     serde_json::to_vec(&unsigned)
         .ok()
-        .map(|bytes| signature::sign_payload(&bytes, secret))
+        .and_then(|bytes| signature::sign_payload(&bytes, secret).ok())
 }
 
 pub fn verify_envelope_signature(envelope: &Envelope, secret: &str) -> bool {
-    match &envelope.sig {
-        Some(sig) => sign_envelope_body(envelope, secret)
-            .map(|expected| expected == sig.trim_start_matches("sha256="))
-            .unwrap_or(false),
-        None => true,
-    }
+    envelope.sig.as_ref().is_some_and(|sig| {
+        sign_envelope_body(envelope, secret).is_some_and(|expected| expected == sig.trim_start_matches("sha256="))
+    })
 }
 
 fn now_ts() -> u64 {
@@ -57,12 +54,7 @@ fn now_ts() -> u64 {
         .unwrap_or(0)
 }
 
-fn build_envelope(
-    msg_type: &str,
-    agent_id: &str,
-    payload: Value,
-    hmac_secret: Option<&str>,
-) -> Envelope {
+fn build_envelope(msg_type: &str, agent_id: &str, payload: Value, hmac_secret: Option<&str>) -> Envelope {
     let mut env = Envelope {
         id: Uuid::new_v4().to_string(),
         msg_type: msg_type.to_string(),
@@ -73,7 +65,7 @@ fn build_envelope(
     };
 
     if let Some(secret) = hmac_secret {
-        env.sig = sign_envelope_body(&env, secret).map(|s| format!("sha256={}", s));
+        env.sig = sign_envelope_body(&env, secret).map(|s| format!("sha256={s}"));
     }
 
     env
@@ -98,21 +90,12 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
         return;
     }
 
-    if tunnel
-        .auth_token
-        .as_deref()
-        .unwrap_or(" ")
-        .trim()
-        .is_empty()
-    {
+    if tunnel.auth_token.as_deref().unwrap_or(" ").trim().is_empty() {
         tracing::warn!("tunnel enabled but auth_token is missing");
         return;
     }
 
-    let agent_id = tunnel
-        .agent_id
-        .clone()
-        .unwrap_or_else(|| "openpr-webhook".to_string());
+    let agent_id = tunnel.agent_id.clone().unwrap_or_else(|| "openpr-webhook".to_string());
     let base_reconnect_secs = tunnel.reconnect_secs.max(1);
     let heartbeat_secs = tunnel.heartbeat_secs.max(3);
     let hmac_secret = tunnel.hmac_secret.clone();
@@ -126,7 +109,7 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
 
     loop {
         if !(url.starts_with("wss://") || url.starts_with("ws://")) {
-            tracing::error!("tunnel url must start with ws:// or wss://: {}", url);
+            tracing::error!("tunnel url must start with ws:// or wss://: {url}");
             sleep(Duration::from_secs(retry_secs)).await;
             retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
             continue;
@@ -138,13 +121,13 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
 
         let mut req_builder = Request::builder().uri(&url);
         if let Some(token) = &tunnel.auth_token {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", token));
+            req_builder = req_builder.header("Authorization", format!("Bearer {token}"));
         }
 
         let request = match req_builder.body(()) {
             Ok(r) => r,
             Err(e) => {
-                tracing::error!("build tunnel request failed: {}", e);
+                tracing::error!("build tunnel request failed: {e}");
                 sleep(Duration::from_secs(retry_secs)).await;
                 retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
                 continue;
@@ -154,7 +137,7 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
         match connect_async(request).await {
             Ok((ws_stream, _)) => {
                 retry_secs = base_reconnect_secs;
-                tracing::info!("tunnel connected: {}", url);
+                tracing::info!("tunnel connected: {url}");
                 let (mut writer, mut reader) = ws_stream.split();
                 let (tx, mut rx) = mpsc::channel::<Envelope>(128);
 
@@ -163,7 +146,7 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                         let text = match serde_json::to_string(&msg) {
                             Ok(t) => t,
                             Err(e) => {
-                                tracing::warn!("serialize envelope failed: {}", e);
+                                tracing::warn!("serialize envelope failed: {e}");
                                 continue;
                             }
                         };
@@ -179,12 +162,7 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                 let heartbeat_task = tokio::spawn(async move {
                     loop {
                         sleep(Duration::from_secs(heartbeat_secs)).await;
-                        let hb = build_envelope(
-                            "heartbeat",
-                            &hb_agent,
-                            json!({"alive": true}),
-                            hb_secret.as_deref(),
-                        );
+                        let hb = build_envelope("heartbeat", &hb_agent, json!({"alive": true}), hb_secret.as_deref());
                         if hb_tx.send(hb).await.is_err() {
                             break;
                         }
@@ -200,7 +178,7 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                     let envelope: Envelope = match serde_json::from_str(&text) {
                         Ok(v) => v,
                         Err(e) => {
-                            tracing::warn!("invalid tunnel message: {}", e);
+                            tracing::warn!("invalid tunnel message: {e}");
                             let _ = tx
                                 .send(build_envelope(
                                     "error",
@@ -229,22 +207,19 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                         continue;
                     }
 
-                    if let Some(secret) = &hmac_secret {
-                        if !verify_envelope_signature(&envelope, secret) {
-                            tracing::warn!(
-                                "tunnel signature verify failed for msg_id={}",
-                                envelope.id
-                            );
-                            let _ = tx
-                                .send(build_envelope(
-                                    "error",
-                                    &agent_id,
-                                    json!({"reason":"bad_signature","msg_id":envelope.id}),
-                                    hmac_secret.as_deref(),
-                                ))
-                                .await;
-                            continue;
-                        }
+                    if let Some(secret) = &hmac_secret
+                        && !verify_envelope_signature(&envelope, secret)
+                    {
+                        tracing::warn!("tunnel signature verify failed for msg_id={}", envelope.id);
+                        let _ = tx
+                            .send(build_envelope(
+                                "error",
+                                &agent_id,
+                                json!({"reason":"bad_signature","msg_id":envelope.id}),
+                                hmac_secret.as_deref(),
+                            ))
+                            .await;
+                        continue;
                     }
 
                     if envelope.msg_type != "task.dispatch" {
@@ -252,24 +227,20 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                     }
 
                     let dispatch =
-                        serde_json::from_value::<DispatchPayload>(envelope.payload.clone())
-                            .unwrap_or(DispatchPayload {
+                        serde_json::from_value::<DispatchPayload>(envelope.payload.clone()).unwrap_or_else(|_| {
+                            DispatchPayload {
                                 run_id: None,
                                 issue_id: None,
                                 agent: None,
                                 body: Some(envelope.payload.clone()),
-                            });
+                            }
+                        });
 
-                    let run_id = dispatch
-                        .run_id
-                        .unwrap_or_else(|| format!("run-{}", Uuid::new_v4()));
+                    let run_id = dispatch.run_id.unwrap_or_else(|| format!("run-{}", Uuid::new_v4()));
 
-                    let issue_id = dispatch.issue_id.or_else(|| {
-                        dispatch
-                            .body
-                            .as_ref()
-                            .and_then(dispatcher::extract_issue_id)
-                    });
+                    let issue_id = dispatch
+                        .issue_id
+                        .or_else(|| dispatch.body.as_ref().and_then(dispatcher::extract_issue_id));
 
                     let _ = tx
                         .send(build_envelope(
@@ -293,19 +264,19 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                     let run_id_for_task = run_id.clone();
                     let limiter = semaphore.clone();
                     tokio::spawn(async move {
-                        let permit = match limiter.acquire_owned().await {
-                            Ok(p) => p,
-                            Err(_) => return,
+                        let Ok(permit) = limiter.acquire_owned().await else {
+                            return;
                         };
 
-                        let selected = if let Some(target_id) = route_agent {
-                            task_cfg
-                                .agents
-                                .iter()
-                                .find(|a| a.id == target_id && a.agent_type == "cli")
-                        } else {
-                            task_cfg.agents.iter().find(|a| a.agent_type == "cli")
-                        };
+                        let selected = route_agent.map_or_else(
+                            || task_cfg.agents.iter().find(|a| a.agent_type == "cli"),
+                            |target_id| {
+                                task_cfg
+                                    .agents
+                                    .iter()
+                                    .find(|a| a.id == target_id && a.agent_type == "cli")
+                            },
+                        );
 
                         let Some(cli_agent) = selected else {
                             let _ = task_tx
@@ -325,13 +296,9 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                             return;
                         };
 
-                        let report = dispatcher::execute_cli_task(
-                            task_cfg.as_ref(),
-                            cli_agent,
-                            &body,
-                            Some(run_id_for_task),
-                        )
-                        .await;
+                        let report =
+                            dispatcher::execute_cli_task(task_cfg.as_ref(), cli_agent, &body, Some(run_id_for_task))
+                                .await;
                         drop(permit);
 
                         let _ = task_tx
@@ -352,10 +319,10 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
 
                 heartbeat_task.abort();
                 let _ = writer_task.await;
-                tracing::warn!("tunnel disconnected, reconnecting in {}s", retry_secs);
+                tracing::warn!("tunnel disconnected, reconnecting in {retry_secs}s");
             }
             Err(e) => {
-                tracing::warn!("tunnel connect failed: {}", e);
+                tracing::warn!("tunnel connect failed: {e}");
             }
         }
 
@@ -370,12 +337,7 @@ mod tests {
 
     #[test]
     fn envelope_serialization_contains_required_fields() {
-        let env = build_envelope(
-            "task.ack",
-            "agent-1",
-            json!({"run_id":"r1","status":"accepted"}),
-            None,
-        );
+        let env = build_envelope("task.ack", "agent-1", json!({"run_id":"r1","status":"accepted"}), None);
         let s = serde_json::to_string(&env).expect("serialize envelope");
         assert!(s.contains("\"id\""));
         assert!(s.contains("\"type\":\"task.ack\""));
@@ -388,9 +350,15 @@ mod tests {
     fn envelope_signature_sign_and_verify() {
         let mut env = build_envelope("heartbeat", "agent-1", json!({"alive":true}), None);
         let sig = sign_envelope_body(&env, "secret").expect("sign");
-        env.sig = Some(format!("sha256={}", sig));
+        env.sig = Some(format!("sha256={sig}"));
 
         assert!(verify_envelope_signature(&env, "secret"));
         assert!(!verify_envelope_signature(&env, "wrong-secret"));
+    }
+
+    #[test]
+    fn unsigned_envelope_fails_verification() {
+        let env = build_envelope("heartbeat", "agent-1", json!({"alive":true}), None);
+        assert!(!verify_envelope_signature(&env, "secret"));
     }
 }

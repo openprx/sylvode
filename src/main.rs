@@ -1,6 +1,6 @@
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -20,15 +20,18 @@ pub struct AppState {
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "openpr_webhook=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "openpr_webhook=info".into()),
         )
         .init();
 
-    let config_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "config.toml".into());
-    let config = config::Config::load(&config_path);
+    let config_path = std::env::args().nth(1).unwrap_or_else(|| "config.toml".into());
+    let config = match config::Config::load(&config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("failed to load config from {config_path}: {e}");
+            std::process::exit(1);
+        }
+    };
 
     let listen = config.server.listen.clone();
     tracing::info!("Loaded {} agent(s)", config.agents.len());
@@ -50,7 +53,16 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    tracing::info!("openpr-webhook listening on {}", listen);
-    let listener = tokio::net::TcpListener::bind(&listen).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    tracing::info!("openpr-webhook listening on {listen}");
+    let listener = match tokio::net::TcpListener::bind(&listen).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("failed to bind {listen}: {e}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!("server error: {e}");
+        std::process::exit(1);
+    }
 }

@@ -85,7 +85,7 @@ pub struct WebhookAgentConfig {
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct OpenPRXConfig {
-    /// Signal daemon HTTP API base URL (e.g. http://127.0.0.1:8686)
+    /// Signal daemon HTTP API base URL (e.g. `<http://127.0.0.1:8686>`)
     pub signal_api: Option<String>,
     /// Target recipient (phone number or uuid)
     pub target: String,
@@ -141,49 +141,45 @@ pub struct TunnelConfig {
     pub require_inbound_sig: bool,
 }
 
-fn default_timeout_secs() -> u64 {
+const fn default_timeout_secs() -> u64 {
     900
 }
 
-fn default_max_output_chars() -> usize {
+const fn default_max_output_chars() -> usize {
     12000
 }
 
-fn default_reconnect_secs() -> u64 {
+const fn default_reconnect_secs() -> u64 {
     3
 }
 
-fn default_heartbeat_secs() -> u64 {
+const fn default_heartbeat_secs() -> u64 {
     20
 }
 
-fn default_cli_max_concurrency() -> usize {
+const fn default_cli_max_concurrency() -> usize {
     1
 }
 
-fn default_http_timeout_secs() -> u64 {
+const fn default_http_timeout_secs() -> u64 {
     15
 }
 
-fn default_tunnel_reconnect_backoff_max_secs() -> u64 {
+const fn default_tunnel_reconnect_backoff_max_secs() -> u64 {
     60
 }
 
 impl Config {
-    pub fn load(path: &str) -> Self {
-        let content = std::fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("Failed to read config {}: {}", path, e));
-        toml::from_str(&content).unwrap_or_else(|e| panic!("Failed to parse config: {}", e))
+    pub fn load(path: &str) -> Result<Self, String> {
+        let content = std::fs::read_to_string(path).map_err(|e| format!("failed to read config {path}: {e}"))?;
+        toml::from_str(&content).map_err(|e| format!("failed to parse config: {e}"))
     }
 
     pub fn safe_mode_enabled() -> bool {
-        std::env::var("OPENPR_WEBHOOK_SAFE_MODE")
-            .ok()
-            .map(|v| {
-                let normalized = v.trim().to_ascii_lowercase();
-                matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-            })
-            .unwrap_or(false)
+        std::env::var("OPENPR_WEBHOOK_SAFE_MODE").ok().is_some_and(|v| {
+            let normalized = v.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
     }
 
     pub fn cli_enabled(&self) -> bool {
@@ -195,9 +191,7 @@ impl Config {
     }
 
     pub fn tunnel_enabled(&self) -> bool {
-        !Self::safe_mode_enabled()
-            && self.features.tunnel_enabled
-            && self.tunnel.as_ref().map(|t| t.enabled).unwrap_or(false)
+        !Self::safe_mode_enabled() && self.features.tunnel_enabled && self.tunnel.as_ref().is_some_and(|t| t.enabled)
     }
 }
 
@@ -228,7 +222,7 @@ callback_url = "http://127.0.0.1:8090/mcp/rpc"
 "#;
 
         let cfg: Config = toml::from_str(toml).expect("should parse config");
-        let agent = &cfg.agents[0];
+        let agent = cfg.agents.first().expect("should have agent");
         let cli = agent.cli.as_ref().expect("cli config should exist");
 
         assert_eq!(agent.agent_type, "cli");
