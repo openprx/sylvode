@@ -123,6 +123,18 @@ pub struct CliAgentConfig {
     pub update_state_on_start: Option<String>,
     pub update_state_on_success: Option<String>,
     pub update_state_on_fail: Option<String>,
+    /// MCP instructions appended to the CLI prompt, enabling AI agents
+    /// to read full issue context and write results back via MCP tools.
+    pub mcp_instructions: Option<String>,
+    /// When true, the callback will not include a state update field,
+    /// because the AI agent updates issue state directly via MCP.
+    #[serde(default)]
+    pub skip_callback_state: bool,
+    /// Path to an MCP config file passed to claude-code via `--mcp-config`.
+    pub mcp_config_path: Option<String>,
+    /// Extra environment variables injected into the executor subprocess.
+    #[serde(default)]
+    pub env_vars: std::collections::HashMap<String, String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]

@@ -63,3 +63,39 @@ callback_token = "opr_xxx"
 update_state_on_start = "in_progress"
 update_state_on_success = "done"
 update_state_on_fail = "todo"
+
+# --- MCP closed-loop example (AI reads full issue context via MCP) ---
+
+[[agents]]
+id = "ai-fixer"
+name = "AI Issue Fixer"
+agent_type = "cli"
+
+[agents.cli]
+executor = "claude-code"
+workdir = "/opt/worker/code/openpr"
+timeout_secs = 900
+max_output_chars = 12000
+prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
+
+# MCP closed-loop: AI updates issue state directly via MCP tools,
+# so we skip the callback state update to avoid duplication.
+skip_callback_state = true
+callback = "mcp"
+callback_url = "http://127.0.0.1:8090/mcp/rpc"
+callback_token = "opr_xxx"
+
+# Optional: path to MCP config for claude-code (--mcp-config flag).
+# If omitted, claude-code uses its global ~/.claude.json MCP config.
+# mcp_config_path = "/path/to/mcp-config.json"
+
+# Custom MCP instructions appended to the prompt. If omitted, a sensible
+# default is used that instructs the AI to read/write via OpenPR MCP tools.
+# mcp_instructions = "Use work_items.get to read issue {issue_id}, then fix it."
+
+# Extra environment variables injected into the executor subprocess.
+# Useful for per-agent API URLs, bot tokens, or workspace IDs.
+[agents.cli.env_vars]
+OPENPR_API_URL = "http://localhost:3000"
+OPENPR_BOT_TOKEN = "opr_xxx"
+OPENPR_WORKSPACE_ID = "e5166fd1-..."

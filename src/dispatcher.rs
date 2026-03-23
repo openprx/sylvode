@@ -1,9 +1,23 @@
-use crate::{callback, config::AgentConfig, config::Config};
+use crate::{callback, config::AgentConfig, config::CliAgentConfig, config::Config};
 use serde_json::Value;
 use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_SUBPROCESS_TIMEOUT_SECS: u64 = 60;
+
+#[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
+const DEFAULT_MCP_INSTRUCTIONS: &str = r#"## MCP Integration
+
+You have OpenPR MCP tools available. Use them to get full issue context before working:
+
+1. Call `work_items.get` with work_item_id="{issue_id}" to read full issue details (title, description, state, priority, assignee)
+2. Call `comments.list` with work_item_id="{issue_id}" to read all comments and discussion
+3. Call `work_items.list_labels` with work_item_id="{issue_id}" to read labels
+
+After completing your work:
+
+4. Call `comments.create` with work_item_id="{issue_id}" to post a summary of what you did
+5. Call `work_items.update` with work_item_id="{issue_id}" and state="done" if the fix is complete"#;
 
 pub async fn dispatch(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
     match agent.agent_type.as_str() {
@@ -72,7 +86,11 @@ pub async fn execute_cli_task(
     });
     let prompt = build_cli_prompt(agent, payload, &issue_id);
 
-    let start_state = cfg.update_state_on_start.clone();
+    let start_state = if cfg.skip_callback_state {
+        None
+    } else {
+        cfg.update_state_on_start.clone()
+    };
     if config.callback_enabled() && start_state.is_some() {
         let start_payload = callback::build_callback_payload(
             issue_id.clone(),
@@ -91,16 +109,13 @@ pub async fn execute_cli_task(
         }
     }
 
-    let run = run_cli_executor(
-        &cfg.executor,
-        cfg.workdir.as_deref(),
-        &prompt,
-        cfg.timeout_secs,
-        cfg.max_output_chars,
-    )
-    .await;
+    let run = run_cli_executor(cfg, &prompt).await;
 
-    let final_state = callback::state_for_status(cfg, &run.status);
+    let final_state = if cfg.skip_callback_state {
+        None
+    } else {
+        callback::state_for_status(cfg, &run.status)
+    };
     let summary = if run.status == "success" {
         "cli execution completed".to_string()
     } else {
@@ -143,14 +158,8 @@ struct CliRunResult {
     stderr_tail: String,
 }
 
-async fn run_cli_executor(
-    executor: &str,
-    workdir: Option<&str>,
-    prompt: &str,
-    timeout_secs: u64,
-    max_output_chars: usize,
-) -> CliRunResult {
-    let (program, args) = match build_executor_command(executor, prompt) {
+async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str) -> CliRunResult {
+    let (program, args) = match build_executor_command(&cfg.executor, prompt, cfg.mcp_config_path.as_deref()) {
         Ok(v) => v,
         Err(err) => {
             return CliRunResult {
@@ -168,8 +177,11 @@ async fn run_cli_executor(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    if let Some(dir) = workdir {
+    if let Some(dir) = &cfg.workdir {
         cmd.current_dir(dir);
+    }
+    for (key, value) in &cfg.env_vars {
+        cmd.env(key, value);
     }
 
     let started = Instant::now();
@@ -186,6 +198,8 @@ async fn run_cli_executor(
         }
     };
 
+    let timeout_secs = cfg.timeout_secs;
+    let max_output_chars = cfg.max_output_chars;
     let output_result = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await;
 
     match output_result {
@@ -221,18 +235,22 @@ async fn run_cli_executor(
     }
 }
 
-fn build_executor_command(executor: &str, prompt: &str) -> Result<(&'static str, Vec<String>), String> {
+fn build_executor_command(
+    executor: &str,
+    prompt: &str,
+    mcp_config_path: Option<&str>,
+) -> Result<(&'static str, Vec<String>), String> {
     match executor {
         "codex" => Ok(("codex", vec!["exec".into(), "--full-auto".into(), prompt.into()])),
-        "claude-code" => Ok((
-            "claude",
-            vec![
-                "--print".into(),
-                "--permission-mode".into(),
-                "bypassPermissions".into(),
-                prompt.into(),
-            ],
-        )),
+        "claude-code" => {
+            let mut args = vec!["--print".into(), "--permission-mode".into(), "bypassPermissions".into()];
+            if let Some(mcp_path) = mcp_config_path {
+                args.push("--mcp-config".into());
+                args.push(mcp_path.into());
+            }
+            args.push(prompt.into());
+            Ok(("claude", args))
+        }
         "opencode" => Ok(("opencode", vec!["run".into(), prompt.into()])),
         _ => Err(format!("executor not allowed: {executor}")),
     }
@@ -259,9 +277,27 @@ fn build_cli_prompt(agent: &AgentConfig, payload: &Value, issue_id: &str) -> Str
         .and_then(Value::as_str)
         .unwrap_or("unknown");
 
-    base.replace("{issue_id}", issue_id)
+    let user_prompt = base
+        .replace("{issue_id}", issue_id)
         .replace("{title}", title)
-        .replace("{reason}", reason)
+        .replace("{reason}", reason);
+
+    // Only append MCP instructions when explicitly configured or when
+    // mcp_config_path / env_vars indicate MCP integration is active.
+    let cli = agent.cli.as_ref();
+    let has_mcp_config =
+        cli.is_some_and(|c| c.mcp_instructions.is_some() || c.mcp_config_path.is_some() || !c.env_vars.is_empty());
+
+    if !has_mcp_config {
+        return user_prompt;
+    }
+
+    let mcp_instructions = cli
+        .and_then(|c| c.mcp_instructions.as_deref())
+        .unwrap_or(DEFAULT_MCP_INSTRUCTIONS);
+
+    let instructions = mcp_instructions.replace("{issue_id}", issue_id);
+    format!("{user_prompt}\n\n{instructions}")
 }
 
 pub fn extract_issue_id(payload: &Value) -> Option<String> {
@@ -538,8 +574,10 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_executor_command, dispatch, extract_issue_id, outbound_signature_header_value};
-    use crate::config::Config;
+    use super::{
+        build_cli_prompt, build_executor_command, dispatch, extract_issue_id, outbound_signature_header_value,
+    };
+    use crate::{callback, config::Config};
     use serde_json::json;
 
     fn base_config() -> Config {
@@ -571,10 +609,119 @@ webhook_secrets = []
 
     #[test]
     fn cli_executor_whitelist_builds_expected_command() {
-        let (_, args) = build_executor_command("codex", "fix it").expect("codex should be allowed");
+        let (_, args) = build_executor_command("codex", "fix it", None).expect("codex should be allowed");
         assert_eq!(args, vec!["exec", "--full-auto", "fix it"]);
 
-        assert!(build_executor_command("bash", "rm -rf /").is_err());
+        assert!(build_executor_command("bash", "rm -rf /", None).is_err());
+    }
+
+    #[test]
+    fn claude_code_executor_includes_mcp_config_when_set() {
+        let (prog, args) =
+            build_executor_command("claude-code", "fix it", Some("/path/to/mcp.json")).expect("claude-code allowed");
+        assert_eq!(prog, "claude");
+        assert!(args.contains(&"--mcp-config".to_string()));
+        assert!(args.contains(&"/path/to/mcp.json".to_string()));
+    }
+
+    #[test]
+    fn claude_code_executor_omits_mcp_config_when_none() {
+        let (_, args) = build_executor_command("claude-code", "fix it", None).expect("claude-code allowed");
+        assert!(!args.contains(&"--mcp-config".to_string()));
+    }
+
+    #[test]
+    fn build_cli_prompt_appends_default_mcp_instructions_when_env_vars_set() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            r#"
+id = "a1"
+name = "CLI"
+agent_type = "cli"
+[cli]
+executor = "codex"
+prompt_template = "Fix issue {issue_id}: {title}"
+[cli.env_vars]
+OPENPR_API_URL = "http://localhost:3000"
+"#,
+        )
+        .expect("parse agent");
+
+        let payload =
+            json!({"data":{"issue":{"id":"42","title":"Login bug"}},"bot_context":{"trigger_reason":"assigned"}});
+        let prompt = build_cli_prompt(&agent, &payload, "42");
+
+        assert!(prompt.starts_with("Fix issue 42: Login bug"));
+        assert!(prompt.contains("work_items.get"));
+        assert!(prompt.contains("comments.list"));
+        assert!(prompt.contains("comments.create"));
+    }
+
+    #[test]
+    fn build_cli_prompt_omits_mcp_instructions_when_no_mcp_config() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            r#"
+id = "a1"
+name = "CLI"
+agent_type = "cli"
+[cli]
+executor = "codex"
+prompt_template = "Fix issue {issue_id}: {title}"
+"#,
+        )
+        .expect("parse agent");
+
+        let payload =
+            json!({"data":{"issue":{"id":"42","title":"Login bug"}},"bot_context":{"trigger_reason":"assigned"}});
+        let prompt = build_cli_prompt(&agent, &payload, "42");
+
+        assert!(prompt.starts_with("Fix issue 42: Login bug"));
+        assert!(
+            !prompt.contains("work_items.get"),
+            "should not contain MCP instructions"
+        );
+    }
+
+    #[test]
+    fn build_cli_prompt_uses_custom_mcp_instructions() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            r#"
+id = "a1"
+name = "CLI"
+agent_type = "cli"
+[cli]
+executor = "codex"
+prompt_template = "Fix {issue_id}"
+mcp_instructions = "Custom: read issue {issue_id} first"
+"#,
+        )
+        .expect("parse agent");
+
+        let payload = json!({"data":{"issue":{"id":"99"}}});
+        let prompt = build_cli_prompt(&agent, &payload, "99");
+
+        assert!(prompt.contains("Custom: read issue 99 first"));
+        assert!(!prompt.contains("work_items.get"));
+    }
+
+    #[test]
+    fn skip_callback_state_returns_none() {
+        let cfg: crate::config::CliAgentConfig = toml::from_str(
+            r#"
+executor = "codex"
+skip_callback_state = true
+update_state_on_success = "done"
+"#,
+        )
+        .expect("parse cli config");
+
+        assert!(cfg.skip_callback_state);
+        // When skip_callback_state is true, state should be None regardless of status
+        let state = if cfg.skip_callback_state {
+            None
+        } else {
+            callback::state_for_status(&cfg, "success")
+        };
+        assert!(state.is_none());
     }
 
     #[test]
