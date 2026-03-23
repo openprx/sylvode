@@ -10,6 +10,11 @@ Built with **Rust** (Axum).
 OpenPR ──webhook POST──▶ openpr-webhook ──dispatch──▶ OpenClaw (Signal/Telegram)
                                          ──dispatch──▶ HTTP endpoint
                                          ──dispatch──▶ Custom command
+                                         ──dispatch──▶ CLI agent (codex/claude-code)
+                                                           │
+                                                           ▼
+                                                      OpenPR MCP Server
+                                                      (read issue → fix → write back)
 ```
 
 1. OpenPR fires a webhook on events (issue created, proposal submitted, comment added, etc.)
@@ -27,7 +32,9 @@ OpenPR ──webhook POST──▶ openpr-webhook ──dispatch──▶ OpenCl
   - `webhook` — Forward to HTTP endpoints
   - `custom` — Execute arbitrary commands
   - `cli` — Execute codex/claude-code/opencode via strict whitelist templates
+- **MCP closed-loop automation** — AI agents read full issue context (description, comments, labels) via OpenPR MCP tools and write results back directly
 - **CLI callback loop** — Send issue execution result back via MCP/API (comment write-back ready)
+- **Per-agent environment variables** — Inject `OPENPR_BOT_TOKEN`, `OPENPR_API_URL`, etc. per agent
 - **WSS tunnel client (Phase B MVP)** — Active ws/wss connection with Bearer auth, heartbeat, auto-reconnect
 - **Tunnel envelope + HMAC** — Minimal envelope (`id/type/ts/agent_id/payload/sig`) with optional HMAC-SHA256
 - **Task bridge** — Handles `task.dispatch` -> immediate `task.ack` -> async `task.result`
@@ -130,15 +137,15 @@ message_template = "{event} {key}"
 command = "echo"
 args = ["{message}"]
 
-# Agent: CLI executor (Phase A)
+# Agent: CLI executor with MCP closed-loop
 [[agents]]
-id = "vano-cli"
-name = "Vano CLI"
+id = "ai-fixer"
+name = "AI Issue Fixer"
 agent_type = "cli"
 message_template = "[{project}] {event}: {key} {title}"
 
 [agents.cli]
-executor = "codex" # codex | claude-code | opencode
+executor = "claude-code" # codex | claude-code | opencode
 workdir = "/opt/worker/code/openpr"
 timeout_secs = 900
 max_output_chars = 12000
@@ -146,10 +153,63 @@ prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
 callback = "mcp" # mcp | api
 callback_url = "http://127.0.0.1:8090/mcp/rpc"
 callback_token = "opr_xxx"
-update_state_on_start = "in_progress"
-update_state_on_success = "done"
-update_state_on_fail = "todo"
+
+# MCP closed-loop: AI reads full issue context and updates state via MCP tools,
+# so skip_callback_state prevents duplicate state updates from the callback.
+skip_callback_state = true
+
+# Optional: custom MCP instructions (overrides built-in default).
+# mcp_instructions = "Use work_items.get to read issue {issue_id}, then fix it."
+
+# Optional: path to MCP config for claude-code (--mcp-config flag).
+# mcp_config_path = "/path/to/mcp-config.json"
+
+# Extra environment variables injected into the executor subprocess.
+[agents.cli.env_vars]
+OPENPR_API_URL = "http://localhost:3000"
+OPENPR_BOT_TOKEN = "opr_xxx"
+OPENPR_WORKSPACE_ID = "e5166fd1-..."
 ```
+
+## MCP Closed-Loop Automation
+
+When a CLI agent has OpenPR MCP tools available (via global config or `mcp_config_path`), it can autonomously:
+
+1. **Read full issue context** — title, description, comments, labels, state, priority via `work_items.get` / `comments.list`
+2. **Fix the problem** — analyze context, write code, run tests
+3. **Write results back** — post a summary comment via `comments.create`, update state via `work_items.update`
+
+This eliminates the need for the webhook callback to update issue state (use `skip_callback_state = true`).
+
+Default MCP instructions are injected automatically when the agent has MCP-related config (`mcp_instructions`, `mcp_config_path`, or `env_vars`). You can customize them via `mcp_instructions` in the agent config.
+
+### MCP Setup
+
+For **Codex**, add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.openpr]
+type = "stdio"
+command = "/path/to/mcp-server"
+args = ["--transport", "stdio"]
+env = { OPENPR_API_URL = "http://localhost:3000", OPENPR_BOT_TOKEN = "opr_xxx" }
+```
+
+For **Claude Code**, add to `~/.claude.json`:
+
+```json
+"openpr": {
+  "type": "stdio",
+  "command": "/path/to/mcp-server",
+  "args": ["--transport", "stdio"],
+  "env": {
+    "OPENPR_API_URL": "http://localhost:3000",
+    "OPENPR_BOT_TOKEN": "opr_xxx"
+  }
+}
+```
+
+---
 
 When forwarding via `agent_type = "webhook"` and `agents.webhook.secret` is configured, openpr-webhook signs the outbound JSON body and sends:
 
@@ -249,7 +309,7 @@ WantedBy=multi-user.target
 ### Docker
 
 ```dockerfile
-FROM rust:1.75 AS builder
+FROM rust:1.86 AS builder
 WORKDIR /app
 COPY . .
 RUN cargo build --release
