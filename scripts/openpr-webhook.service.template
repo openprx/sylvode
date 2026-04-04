@@ -1,0 +1,24 @@
+[Unit]
+Description=OpenPR Webhook Service
+Documentation=https://github.com/openprx/openpr-webhook
+After=network.target
+Wants=network-online.target
+
+[Service]
+# PATH includes common locations for node, cargo binaries, and system tools.
+# Populated at install time from the installing user's shell PATH.
+Environment=PATH={{PATH}}
+Type=simple
+WorkingDirectory={{CONFIG_DIR}}
+ExecStart={{BINARY_PATH}} {{CONFIG_DIR}}/config.toml
+Restart=on-failure
+RestartSec=5
+# Limit restart attempts to 5 within a 2-minute window to avoid tight loops.
+StartLimitInterval=120
+StartLimitBurst=5
+# Write logs to the systemd journal; view with: journalctl --user -u openpr-webhook
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd user agent for openpr-webhook.
+  Installed to: ~/Library/LaunchAgents/dev.openpr.webhook.plist
+  Load:   launchctl load ~/Library/LaunchAgents/dev.openpr.webhook.plist
+  Unload: launchctl unload ~/Library/LaunchAgents/dev.openpr.webhook.plist
+-->
+<plist version="1.0">
+<dict>
+    <!-- Unique reverse-DNS label for this agent -->
+    <key>Label</key>
+    <string>dev.openpr.webhook</string>
+
+    <!-- Full command line: binary followed by the config file path -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{BINARY_PATH}}</string>
+        <string>{{CONFIG_DIR}}/config.toml</string>
+    </array>
+
+    <!-- Working directory; the binary resolves relative paths against this -->
+    <key>WorkingDirectory</key>
+    <string>{{CONFIG_DIR}}</string>
+
+    <!--
+      PATH environment variable.
+      Includes common locations for Homebrew, cargo, nvm, and system tools.
+      Populated at install time from the installing user's shell PATH.
+    -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{{PATH}}</string>
+    </dict>
+
+    <!--
+      KeepAlive with SuccessfulExit=false: launchd restarts the process only
+      when it exits with a non-zero status, matching systemd Restart=on-failure.
+    -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Delay (seconds) before the first launch after the agent is loaded -->
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <!-- Start automatically when the user logs in -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Redirect stdout to a log file under ~/Library/Logs/ -->
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/openpr-webhook.log</string>
+
+    <!-- Redirect stderr to a separate error log file -->
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/openpr-webhook.error.log</string>
+</dict>
+</plist>

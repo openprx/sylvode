@@ -35,10 +35,106 @@ async fn dispatch_cli(config: &Config, agent: &AgentConfig, payload: &Value) -> 
         return "cli disabled by feature flag or safe mode".into();
     }
 
-    let report = execute_cli_task(config, agent, payload, None).await;
+    let Some(cfg) = &agent.cli else {
+        return "missing cli config".into();
+    };
+
+    let issue_id = extract_issue_id(payload).unwrap_or_else(|| "unknown".to_string());
+    let run_id = format!(
+        "run-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    let prompt = build_cli_prompt(agent, payload, &issue_id);
+    let executor = cfg.executor.clone();
+
+    // 1. Send start callback synchronously (wait for it)
+    let start_state = if cfg.skip_callback_state {
+        None
+    } else {
+        cfg.update_state_on_start.clone()
+    };
+    if config.callback_enabled() && start_state.is_some() {
+        let start_payload = callback::build_callback_payload(
+            issue_id.clone(),
+            run_id.clone(),
+            executor.clone(),
+            "started".into(),
+            "task started".into(),
+            None,
+            0,
+            String::new(),
+            String::new(),
+            start_state,
+        );
+        if let Err(e) = callback::send_callback(cfg, &start_payload, config.runtime.http_timeout_secs).await {
+            tracing::warn!("start callback failed: {e}");
+        }
+    }
+
+    // 2. Clone what the background task needs
+    let bg_cfg = cfg.clone();
+    let bg_issue_id = issue_id.clone();
+    let bg_run_id = run_id.clone();
+    let bg_executor = executor.clone();
+    let callback_enabled = config.callback_enabled();
+    let http_timeout_secs = config.runtime.http_timeout_secs;
+
+    // 3. Spawn CLI process in background — do NOT await
+    tokio::spawn(async move {
+        tracing::info!(executor = %bg_executor, "CLI agent spawned");
+
+        let run = run_cli_executor(&bg_cfg, &prompt).await;
+
+        if run.status == "success" {
+            tracing::info!(
+                executor = %bg_executor,
+                status = %run.status,
+                exit_code = ?run.exit_code,
+                duration_ms = %run.duration_ms,
+                "CLI agent completed"
+            );
+        } else {
+            tracing::error!(
+                executor = %bg_executor,
+                status = %run.status,
+                exit_code = ?run.exit_code,
+                duration_ms = %run.duration_ms,
+                stderr = %run.stderr_tail,
+                stdout = %run.stdout_tail,
+                "CLI agent failed"
+            );
+        }
+
+        // Send final callback only on failure/timeout when skip_callback_state is false
+        // (on success the agent handles state updates via MCP itself)
+        if callback_enabled && !bg_cfg.skip_callback_state && run.status != "success" {
+            let final_state = callback::state_for_status(&bg_cfg, &run.status);
+            let summary = format!("cli execution {}", run.status);
+            let callback_payload = callback::build_callback_payload(
+                bg_issue_id,
+                bg_run_id,
+                bg_executor,
+                run.status,
+                summary,
+                run.exit_code,
+                run.duration_ms,
+                run.stdout_tail,
+                run.stderr_tail,
+                final_state,
+            );
+
+            if let Err(e) = callback::send_callback(&bg_cfg, &callback_payload, http_timeout_secs).await {
+                tracing::warn!("final callback failed: {e}");
+            }
+        }
+    });
+
+    // 4. Return immediately
     format!(
-        "cli {} run_id={} issue_id={}",
-        report.status, report.run_id, report.issue_id
+        "cli agent spawned in background run_id={run_id} issue_id={issue_id} executor={executor}"
     )
 }
 
@@ -111,6 +207,14 @@ pub async fn execute_cli_task(
 
     let run = run_cli_executor(cfg, &prompt).await;
 
+    tracing::info!(
+        executor = %cfg.executor,
+        status = %run.status,
+        exit_code = ?run.exit_code,
+        duration_ms = %run.duration_ms,
+        "CLI execution completed"
+    );
+
     let final_state = if cfg.skip_callback_state {
         None
     } else {
@@ -174,9 +278,12 @@ async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str) -> CliRunResult {
 
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .kill_on_drop(true)
+        .env_remove("CLAUDECODE")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT");
     if let Some(dir) = &cfg.workdir {
         cmd.current_dir(dir);
     }
@@ -188,6 +295,7 @@ async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str) -> CliRunResult {
     let child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
+            tracing::error!(executor = %cfg.executor, error = %e, "Failed to spawn CLI process");
             return CliRunResult {
                 status: "failed".into(),
                 exit_code: None,
@@ -241,14 +349,13 @@ fn build_executor_command(
     mcp_config_path: Option<&str>,
 ) -> Result<(&'static str, Vec<String>), String> {
     match executor {
-        "codex" => Ok(("codex", vec!["exec".into(), "--full-auto".into(), prompt.into()])),
+        "codex" => Ok(("codex", vec!["exec".into(), "--dangerously-bypass-approvals-and-sandbox".into(), "--skip-git-repo-check".into(), prompt.into()])),
         "claude-code" => {
-            let mut args = vec!["--print".into(), "--permission-mode".into(), "bypassPermissions".into()];
+            let mut args = vec!["-p".into(), prompt.into(), "--permission-mode".into(), "bypassPermissions".into()];
             if let Some(mcp_path) = mcp_config_path {
                 args.push("--mcp-config".into());
                 args.push(mcp_path.into());
             }
-            args.push(prompt.into());
             Ok(("claude", args))
         }
         "opencode" => Ok(("opencode", vec!["run".into(), prompt.into()])),
@@ -610,7 +717,7 @@ webhook_secrets = []
     #[test]
     fn cli_executor_whitelist_builds_expected_command() {
         let (_, args) = build_executor_command("codex", "fix it", None).expect("codex should be allowed");
-        assert_eq!(args, vec!["exec", "--full-auto", "fix it"]);
+        assert_eq!(args, vec!["exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "fix it"]);
 
         assert!(build_executor_command("bash", "rm -rf /", None).is_err());
     }
@@ -620,14 +727,22 @@ webhook_secrets = []
         let (prog, args) =
             build_executor_command("claude-code", "fix it", Some("/path/to/mcp.json")).expect("claude-code allowed");
         assert_eq!(prog, "claude");
+        // prompt must come immediately after -p, not as a trailing positional
+        assert_eq!(args.first().map(String::as_str), Some("-p"));
+        assert_eq!(args.get(1).map(String::as_str), Some("fix it"));
         assert!(args.contains(&"--mcp-config".to_string()));
         assert!(args.contains(&"/path/to/mcp.json".to_string()));
+        // prompt must not be the last element (that would make claude treat it as a project dir)
+        assert_ne!(args.last().map(String::as_str), Some("fix it"));
     }
 
     #[test]
     fn claude_code_executor_omits_mcp_config_when_none() {
         let (_, args) = build_executor_command("claude-code", "fix it", None).expect("claude-code allowed");
         assert!(!args.contains(&"--mcp-config".to_string()));
+        // prompt must come immediately after -p flag
+        assert_eq!(args.first().map(String::as_str), Some("-p"));
+        assert_eq!(args.get(1).map(String::as_str), Some("fix it"));
     }
 
     #[test]

@@ -34,6 +34,7 @@ pub async fn handle_webhook(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     if !is_bot_task {
+        tracing::debug!(event = %event, "Webhook event dropped: is_bot_task=false");
         return Ok(Json(json!({"status": "ignored", "reason": "not_bot_task"})));
     }
 
