@@ -62,12 +62,34 @@ pub struct AgentConfig {
     pub id: String,
     pub name: String,
     pub agent_type: String,
+    #[serde(default)]
+    pub route: Option<RouteConfig>,
     pub openclaw: Option<OpenClawConfig>,
     pub openprx: Option<OpenPRXConfig>,
     pub webhook: Option<WebhookAgentConfig>,
     pub custom: Option<CustomConfig>,
     pub cli: Option<CliAgentConfig>,
     pub message_template: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, Default)]
+pub struct RouteConfig {
+    #[serde(default)]
+    pub bot_names: Vec<String>,
+    #[serde(default)]
+    pub bot_ids: Vec<String>,
+    #[serde(default)]
+    pub bot_agent_types: Vec<String>,
+    #[serde(default)]
+    pub project_types: Vec<String>,
+    #[serde(default)]
+    pub trigger_kinds: Vec<String>,
+    #[serde(default)]
+    pub events: Vec<String>,
+    #[serde(default)]
+    pub form_keys: Vec<String>,
+    #[serde(default)]
+    pub connector_kinds: Vec<String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -245,5 +267,48 @@ callback_url = "http://127.0.0.1:8090/mcp/rpc"
         assert!(!cfg.features.cli_enabled);
         assert_eq!(cfg.runtime.http_timeout_secs, 15);
         assert_eq!(cfg.runtime.cli_max_concurrency, 1);
+    }
+
+    #[test]
+    fn parses_agent_route_config() {
+        let toml = r#"
+[server]
+listen = "0.0.0.0:9090"
+
+[security]
+allow_unsigned = true
+
+[[agents]]
+id = "contract-review"
+name = "Contract Review"
+agent_type = "webhook"
+
+[agents.route]
+bot_names = ["Document review connection"]
+bot_agent_types = ["webhook"]
+project_types = ["contract_review"]
+trigger_kinds = ["mention"]
+events = ["form.record.created"]
+form_keys = ["order"]
+connector_kinds = ["rest"]
+
+[agents.webhook]
+url = "http://127.0.0.1:9000/hook"
+"#;
+
+        let cfg: Config = toml::from_str(toml).expect("should parse config");
+        let route = cfg
+            .agents
+            .first()
+            .and_then(|agent| agent.route.as_ref())
+            .expect("route config");
+
+        assert_eq!(route.bot_names, vec!["Document review connection"]);
+        assert_eq!(route.bot_agent_types, vec!["webhook"]);
+        assert_eq!(route.project_types, vec!["contract_review"]);
+        assert_eq!(route.trigger_kinds, vec!["mention"]);
+        assert_eq!(route.events, vec!["form.record.created"]);
+        assert_eq!(route.form_keys, vec!["order"]);
+        assert_eq!(route.connector_kinds, vec!["rest"]);
     }
 }

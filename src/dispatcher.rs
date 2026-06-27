@@ -17,7 +17,18 @@ You have OpenPR MCP tools available. Use them to get full issue context before w
 After completing your work:
 
 4. Call `comments.create` with work_item_id="{issue_id}" to post a summary of what you did
-5. Call `work_items.update` with work_item_id="{issue_id}" and state="done" if the fix is complete"#;
+5. Call `work_items.update` with work_item_id="{issue_id}" and state="done" if the fix is complete
+6. If an invocation_id is provided below, call `invocations.complete` with that invocation_id and a result object that summarizes the outcome. If the task cannot be completed, call `invocations.fail` with the invocation_id, error_message, and any useful result details."#;
+
+#[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
+const DEFAULT_FORM_MCP_INSTRUCTIONS: &str = r#"## MCP Integration
+
+You have OpenPR MCP tools available. This webhook is linked to a universal-form event:
+
+1. Call `forms.get` with form_id="{form_id}" when a form_id is available, or call `forms.list` with project_id="{project_id}" and match form_key="{form_key}".
+2. Call `form_records.get` with record_id="{record_id}" when a record_id is available.
+3. Call `events.tail` with form_id="{form_id}" or record_id="{record_id}" to inspect the recent business-event stream.
+4. If an invocation_id is provided below, call `invocations.complete` with that invocation_id and a result object containing status, summary, form_key, and record_id. If the task cannot be completed, call `invocations.fail` with the invocation_id, error_message, and useful result details."#;
 
 pub async fn dispatch(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
     match agent.agent_type.as_str() {
@@ -49,6 +60,7 @@ async fn dispatch_cli(config: &Config, agent: &AgentConfig, payload: &Value) -> 
     );
     let prompt = build_cli_prompt(agent, payload, &issue_id);
     let executor = cfg.executor.clone();
+    let invocation_id = extract_invocation_id(payload).map(ToString::to_string);
 
     // 1. Send start callback synchronously (wait for it)
     let start_state = if cfg.skip_callback_state {
@@ -73,12 +85,36 @@ async fn dispatch_cli(config: &Config, agent: &AgentConfig, payload: &Value) -> 
             tracing::warn!("start callback failed: {e}");
         }
     }
+    if config.callback_enabled()
+        && let Some(invocation_id) = invocation_id.as_deref()
+    {
+        let result = serde_json::json!({
+            "run_id": &run_id,
+            "issue_id": &issue_id,
+            "executor": &executor,
+            "status": "started",
+            "summary": "cli task started",
+        });
+        if let Err(e) = callback::send_invocation_status(
+            cfg,
+            invocation_id,
+            "started",
+            result,
+            None,
+            config.runtime.http_timeout_secs,
+        )
+        .await
+        {
+            tracing::warn!("invocation start callback failed: {e}");
+        }
+    }
 
     // 2. Clone what the background task needs
     let bg_cfg = cfg.clone();
     let bg_issue_id = issue_id.clone();
     let bg_run_id = run_id.clone();
     let bg_executor = executor.clone();
+    let bg_invocation_id = invocation_id.clone();
     let callback_enabled = config.callback_enabled();
     let http_timeout_secs = config.runtime.http_timeout_secs;
 
@@ -108,6 +144,38 @@ async fn dispatch_cli(config: &Config, agent: &AgentConfig, payload: &Value) -> 
             );
         }
 
+        if callback_enabled && let Some(invocation_id) = bg_invocation_id.as_deref() {
+            let summary = if run.status == "success" {
+                "cli execution completed".to_string()
+            } else {
+                format!("cli execution {}", run.status)
+            };
+            let result = serde_json::json!({
+                "run_id": &bg_run_id,
+                "issue_id": &bg_issue_id,
+                "executor": &bg_executor,
+                "status": &run.status,
+                "summary": &summary,
+                "exit_code": run.exit_code,
+                "duration_ms": run.duration_ms,
+                "stdout_tail": &run.stdout_tail,
+                "stderr_tail": &run.stderr_tail,
+            });
+            let error_message = if run.status == "success" { None } else { Some(summary) };
+            if let Err(e) = callback::send_invocation_status(
+                &bg_cfg,
+                invocation_id,
+                &run.status,
+                result,
+                error_message,
+                http_timeout_secs,
+            )
+            .await
+            {
+                tracing::warn!("invocation final callback failed: {e}");
+            }
+        }
+
         // Send final callback only on failure/timeout when skip_callback_state is false
         // (on success the agent handles state updates via MCP itself)
         if callback_enabled && !bg_cfg.skip_callback_state && run.status != "success" {
@@ -133,9 +201,7 @@ async fn dispatch_cli(config: &Config, agent: &AgentConfig, payload: &Value) -> 
     });
 
     // 4. Return immediately
-    format!(
-        "cli agent spawned in background run_id={run_id} issue_id={issue_id} executor={executor}"
-    )
+    format!("cli agent spawned in background run_id={run_id} issue_id={issue_id} executor={executor}")
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +247,7 @@ pub async fn execute_cli_task(
         )
     });
     let prompt = build_cli_prompt(agent, payload, &issue_id);
+    let invocation_id = extract_invocation_id(payload).map(ToString::to_string);
 
     let start_state = if cfg.skip_callback_state {
         None
@@ -202,6 +269,29 @@ pub async fn execute_cli_task(
         );
         if let Err(e) = callback::send_callback(cfg, &start_payload, config.runtime.http_timeout_secs).await {
             tracing::warn!("start callback failed: {e}");
+        }
+    }
+    if config.callback_enabled()
+        && let Some(invocation_id) = invocation_id.as_deref()
+    {
+        let result = serde_json::json!({
+            "run_id": &run_id,
+            "issue_id": &issue_id,
+            "executor": &cfg.executor,
+            "status": "started",
+            "summary": "cli task started",
+        });
+        if let Err(e) = callback::send_invocation_status(
+            cfg,
+            invocation_id,
+            "started",
+            result,
+            None,
+            config.runtime.http_timeout_secs,
+        )
+        .await
+        {
+            tracing::warn!("invocation start callback failed: {e}");
         }
     }
 
@@ -227,6 +317,37 @@ pub async fn execute_cli_task(
     };
 
     if config.callback_enabled() {
+        if let Some(invocation_id) = invocation_id.as_deref() {
+            let result = serde_json::json!({
+                "run_id": &run_id,
+                "issue_id": &issue_id,
+                "executor": &cfg.executor,
+                "status": &run.status,
+                "summary": &summary,
+                "exit_code": run.exit_code,
+                "duration_ms": run.duration_ms,
+                "stdout_tail": &run.stdout_tail,
+                "stderr_tail": &run.stderr_tail,
+            });
+            let error_message = if run.status == "success" {
+                None
+            } else {
+                Some(summary.clone())
+            };
+            if let Err(e) = callback::send_invocation_status(
+                cfg,
+                invocation_id,
+                &run.status,
+                result,
+                error_message,
+                config.runtime.http_timeout_secs,
+            )
+            .await
+            {
+                tracing::warn!("invocation final callback failed: {e}");
+            }
+        }
+
         let callback_payload = callback::build_callback_payload(
             issue_id.clone(),
             run_id.clone(),
@@ -349,9 +470,22 @@ fn build_executor_command(
     mcp_config_path: Option<&str>,
 ) -> Result<(&'static str, Vec<String>), String> {
     match executor {
-        "codex" => Ok(("codex", vec!["exec".into(), "--dangerously-bypass-approvals-and-sandbox".into(), "--skip-git-repo-check".into(), prompt.into()])),
+        "codex" => Ok((
+            "codex",
+            vec![
+                "exec".into(),
+                "--dangerously-bypass-approvals-and-sandbox".into(),
+                "--skip-git-repo-check".into(),
+                prompt.into(),
+            ],
+        )),
         "claude-code" => {
-            let mut args = vec!["-p".into(), prompt.into(), "--permission-mode".into(), "bypassPermissions".into()];
+            let mut args = vec![
+                "-p".into(),
+                prompt.into(),
+                "--permission-mode".into(),
+                "bypassPermissions".into(),
+            ];
             if let Some(mcp_path) = mcp_config_path {
                 args.push("--mcp-config".into());
                 args.push(mcp_path.into());
@@ -372,22 +506,25 @@ fn build_cli_prompt(agent: &AgentConfig, payload: &Value, issue_id: &str) -> Str
         // Template placeholders — not format args
         .unwrap_or("Fix issue ISSUE_ID: TITLE\nContext: REASON");
 
-    let title = payload
-        .get("data")
-        .and_then(|d| d.get("issue"))
-        .and_then(|i| i.get("title"))
-        .and_then(Value::as_str)
-        .unwrap_or("untitled");
-    let reason = payload
-        .get("bot_context")
-        .and_then(|bc| bc.get("trigger_reason"))
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
+    let title = extract_issue_title(payload).unwrap_or("untitled");
+    let reason = extract_trigger_reason(payload).unwrap_or("unknown");
+    let event = extract_event(payload).unwrap_or("unknown");
+    let project_id = extract_project_id(payload).unwrap_or("<project_id>");
+    let form_id = extract_form_id(payload).unwrap_or("<form_id>");
+    let form_key = extract_form_key(payload).unwrap_or("<form_key>");
+    let record_id = extract_record_id(payload).unwrap_or("<record_id>");
+    let connector_kind = extract_connector_kind(payload).unwrap_or("<connector_kind>");
 
     let user_prompt = base
         .replace("{issue_id}", issue_id)
         .replace("{title}", title)
-        .replace("{reason}", reason);
+        .replace("{reason}", reason)
+        .replace("{event}", event)
+        .replace("{project_id}", project_id)
+        .replace("{form_id}", form_id)
+        .replace("{form_key}", form_key)
+        .replace("{record_id}", record_id)
+        .replace("{connector_kind}", connector_kind);
 
     // Only append MCP instructions when explicitly configured or when
     // mcp_config_path / env_vars indicate MCP integration is active.
@@ -399,24 +536,243 @@ fn build_cli_prompt(agent: &AgentConfig, payload: &Value, issue_id: &str) -> Str
         return user_prompt;
     }
 
-    let mcp_instructions = cli
-        .and_then(|c| c.mcp_instructions.as_deref())
-        .unwrap_or(DEFAULT_MCP_INSTRUCTIONS);
+    let mcp_instructions = cli.and_then(|c| c.mcp_instructions.as_deref()).unwrap_or_else(|| {
+        if is_form_event(payload) {
+            DEFAULT_FORM_MCP_INSTRUCTIONS
+        } else {
+            DEFAULT_MCP_INSTRUCTIONS
+        }
+    });
 
-    let instructions = mcp_instructions.replace("{issue_id}", issue_id);
-    format!("{user_prompt}\n\n{instructions}")
+    let instructions = mcp_instructions
+        .replace("{issue_id}", issue_id)
+        .replace("{project_id}", project_id)
+        .replace("{form_id}", form_id)
+        .replace("{form_key}", form_key)
+        .replace("{record_id}", record_id)
+        .replace("{event}", event)
+        .replace("{connector_kind}", connector_kind);
+
+    let mut prompt = format!("{user_prompt}\n\n{instructions}");
+    if let Some(project_context_instructions) = build_project_context_instructions(payload) {
+        prompt.push_str("\n\n");
+        prompt.push_str(&project_context_instructions);
+    }
+    if let Some(ledger_instructions) = build_invocation_ledger_instructions(payload) {
+        prompt.push_str("\n\n");
+        prompt.push_str(&ledger_instructions);
+    }
+    if let Some(form_context_instructions) = build_form_context_instructions(payload) {
+        prompt.push_str("\n\n");
+        prompt.push_str(&form_context_instructions);
+    }
+    prompt
+}
+
+fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str).filter(|value| !value.is_empty())
+}
+
+fn nested_string_field<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
+    let mut cursor = value;
+    for key in path {
+        cursor = cursor.get(*key)?;
+    }
+    cursor.as_str().filter(|value| !value.is_empty())
 }
 
 pub fn extract_issue_id(payload: &Value) -> Option<String> {
-    let issue_id = payload
+    let direct_issue_id = payload
         .get("data")
         .and_then(|d| d.get("issue"))
-        .and_then(|i| i.get("id"))?;
+        .and_then(|i| i.get("id"))
+        .or_else(|| payload.get("payload").and_then(|p| p.get("issue_id")))
+        .or_else(|| payload.get("issue_id"));
 
-    issue_id
-        .as_str()
-        .map(ToString::to_string)
-        .or_else(|| issue_id.as_i64().map(|n| n.to_string()))
+    if let Some(issue_id) = direct_issue_id {
+        return issue_id
+            .as_str()
+            .map(ToString::to_string)
+            .or_else(|| issue_id.as_i64().map(|n| n.to_string()));
+    }
+
+    let reference_type = payload.get("reference_type").and_then(Value::as_str);
+    if reference_type == Some("work_item") {
+        return payload
+            .get("reference_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+    }
+
+    None
+}
+
+fn extract_issue_title(payload: &Value) -> Option<&str> {
+    payload
+        .get("data")
+        .and_then(|d| d.get("issue"))
+        .and_then(|i| i.get("title"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            payload
+                .get("payload")
+                .and_then(|p| p.get("issue_title"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| payload.get("issue_title").and_then(Value::as_str))
+        .or_else(|| payload.get("title").and_then(Value::as_str))
+}
+
+fn extract_event(payload: &Value) -> Option<&str> {
+    string_field(payload, "event")
+        .or_else(|| string_field(payload, "event_type"))
+        .or_else(|| nested_string_field(payload, &["payload", "event"]))
+        .or_else(|| nested_string_field(payload, &["payload", "event_type"]))
+        .or_else(|| nested_string_field(payload, &["payload", "envelope", "event_type"]))
+        .or_else(|| string_field(payload, "task_type"))
+}
+
+fn extract_trigger_reason(payload: &Value) -> Option<&str> {
+    payload
+        .get("bot_context")
+        .and_then(|bc| bc.get("trigger_reason"))
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("trigger_kind").and_then(Value::as_str))
+        .or_else(|| {
+            payload
+                .get("payload")
+                .and_then(|p| p.get("trigger"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| payload.get("task_type").and_then(Value::as_str))
+}
+
+fn extract_invocation_id(payload: &Value) -> Option<&str> {
+    payload
+        .get("invocation_id")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            payload
+                .get("payload")
+                .and_then(|p| p.get("invocation_id"))
+                .and_then(Value::as_str)
+        })
+        .filter(|value| !value.is_empty())
+}
+
+fn extract_project_id(payload: &Value) -> Option<&str> {
+    payload
+        .get("project_id")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            payload
+                .get("payload")
+                .and_then(|p| p.get("project_id"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| nested_string_field(payload, &["payload", "envelope", "project_id"]))
+        .or_else(|| nested_string_field(payload, &["payload", "envelope", "metadata", "project_id"]))
+        .or_else(|| nested_string_field(payload, &["payload", "envelope", "payload", "project_id"]))
+        .or_else(|| payload.get("project").and_then(|p| p.get("id")).and_then(Value::as_str))
+        .filter(|value| !value.is_empty())
+}
+
+fn extract_form_id(payload: &Value) -> Option<&str> {
+    string_field(payload, "form_id")
+        .or_else(|| nested_string_field(payload, &["payload", "form_id"]))
+        .or_else(|| nested_string_field(payload, &["metadata", "form_id"]))
+        .or_else(|| nested_string_field(payload, &["payload", "metadata", "form_id"]))
+        .or_else(|| nested_string_field(payload, &["payload", "envelope", "metadata", "form_id"]))
+        .or_else(|| nested_string_field(payload, &["payload", "envelope", "payload", "form_id"]))
+}
+
+fn extract_form_key(payload: &Value) -> Option<&str> {
+    string_field(payload, "form_key")
+        .or_else(|| nested_string_field(payload, &["payload", "form_key"]))
+        .or_else(|| nested_string_field(payload, &["metadata", "form_key"]))
+        .or_else(|| nested_string_field(payload, &["payload", "metadata", "form_key"]))
+        .or_else(|| nested_string_field(payload, &["payload", "envelope", "metadata", "form_key"]))
+        .or_else(|| nested_string_field(payload, &["payload", "envelope", "payload", "form_key"]))
+        .or_else(|| {
+            nested_string_field(payload, &["payload", "envelope", "aggregate", "type"])
+                .and_then(|value| value.strip_prefix("form."))
+                .filter(|value| !value.is_empty())
+        })
+}
+
+fn extract_record_id(payload: &Value) -> Option<&str> {
+    string_field(payload, "record_id")
+        .or_else(|| nested_string_field(payload, &["payload", "record_id"]))
+        .or_else(|| nested_string_field(payload, &["metadata", "record_id"]))
+        .or_else(|| nested_string_field(payload, &["payload", "metadata", "record_id"]))
+        .or_else(|| nested_string_field(payload, &["payload", "envelope", "metadata", "record_id"]))
+        .or_else(|| nested_string_field(payload, &["payload", "envelope", "payload", "record_id"]))
+        .or_else(|| nested_string_field(payload, &["payload", "envelope", "aggregate", "id"]))
+}
+
+fn extract_connector_kind(payload: &Value) -> Option<&str> {
+    string_field(payload, "connector_kind").or_else(|| nested_string_field(payload, &["payload", "connector_kind"]))
+}
+
+fn is_form_event(payload: &Value) -> bool {
+    extract_form_key(payload).is_some()
+        || extract_form_id(payload).is_some()
+        || extract_event(payload).is_some_and(|event| event.starts_with("form.") || event.starts_with("print_job."))
+}
+
+fn build_project_context_instructions(payload: &Value) -> Option<String> {
+    let project_id = extract_project_id(payload)?;
+    Some(format!(
+        "## Project MCP Context\n\nBefore changing state or posting final output, call `context.get_project` with project_id=\"{project_id}\" to read the project type, resources, connectors, governance context, and effective agent policy. When your MCP client supports project-scoped discovery, call `tools/list` with project_id=\"{project_id}\" and only use tools enabled by that project policy."
+    ))
+}
+
+fn build_invocation_ledger_instructions(payload: &Value) -> Option<String> {
+    let invocation_id = extract_invocation_id(payload)?;
+    let mut instructions = format!(
+        "## Invocation Ledger\n\nThis task is linked to OpenPR invocation `{invocation_id}`. Call `invocations.report_progress` when you start meaningful work. Before finishing, call `invocations.complete` with invocation_id=\"{invocation_id}\" and a result object containing status, summary, and changed_files if applicable. If you cannot complete the task, call `invocations.fail` with invocation_id=\"{invocation_id}\" and an error_message."
+    );
+
+    if let Some(project_id) = extract_project_id(payload) {
+        instructions.push_str("\nUse project_id=\"");
+        instructions.push_str(project_id);
+        instructions.push_str("\" when listing project context or invocation records.");
+    }
+
+    Some(instructions)
+}
+
+fn build_form_context_instructions(payload: &Value) -> Option<String> {
+    if !is_form_event(payload) {
+        return None;
+    }
+
+    let project_id = extract_project_id(payload).unwrap_or("<project_id>");
+    let form_id = extract_form_id(payload).unwrap_or("<form_id>");
+    let form_key = extract_form_key(payload).unwrap_or("<form_key>");
+    let record_id = extract_record_id(payload).unwrap_or("<record_id>");
+    let event = extract_event(payload).unwrap_or("<event>");
+    let connector_kind = extract_connector_kind(payload).unwrap_or("<connector_kind>");
+
+    Some(format!(
+        "## Universal Form Context\n\nThis is OpenPR universal-form event `{event}` for project_id=\"{project_id}\", form_id=\"{form_id}\", form_key=\"{form_key}\", record_id=\"{record_id}\", connector_kind=\"{connector_kind}\". Treat custom fields as schema-defined business data: inspect the form schema before assuming field meaning, preserve decimal strings for amount fields, and write any operational result through MCP or the invocation ledger instead of mutating local webhook state."
+    ))
+}
+
+fn issue_field<'a>(payload: &'a Value, key: &str) -> Option<&'a str> {
+    let payload_key = format!("issue_{key}");
+    payload
+        .get("data")
+        .and_then(|d| d.get("issue"))
+        .and_then(|i| i.get(key))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            payload
+                .get("payload")
+                .and_then(|p| p.get(&payload_key))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| payload.get(&payload_key).and_then(Value::as_str))
 }
 
 fn tail_chars(input: &str, max_chars: usize) -> String {
@@ -619,24 +975,10 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
         "[TPL_PROJECT] TPL_EVENT: TPL_KEY TPL_TITLE\nTPL_ACTOR | Trigger: TPL_REASON",
     );
 
-    let event = payload.get("event").and_then(Value::as_str).unwrap_or("unknown");
-    let title = payload
-        .get("data")
-        .and_then(|d| d.get("issue"))
-        .and_then(|i| i.get("title"))
-        .and_then(Value::as_str)
-        .unwrap_or("untitled");
-    let issue_key = payload
-        .get("data")
-        .and_then(|d| d.get("issue"))
-        .and_then(|i| i.get("key"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let reason = payload
-        .get("bot_context")
-        .and_then(|bc| bc.get("trigger_reason"))
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
+    let event = extract_event(payload).unwrap_or("unknown");
+    let title = extract_issue_title(payload).unwrap_or("untitled");
+    let issue_key = issue_field(payload, "key").unwrap_or("");
+    let reason = extract_trigger_reason(payload).unwrap_or("unknown");
     let actor = payload
         .get("actor")
         .and_then(|a| a.get("name"))
@@ -652,19 +994,14 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
         .and_then(|p| p.get("name"))
         .and_then(Value::as_str)
         .unwrap_or("");
-    let state = payload
-        .get("data")
-        .and_then(|d| d.get("issue"))
-        .and_then(|i| i.get("state"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let priority = payload
-        .get("data")
-        .and_then(|d| d.get("issue"))
-        .and_then(|i| i.get("priority"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let state = issue_field(payload, "state").unwrap_or("");
+    let priority = issue_field(payload, "priority").unwrap_or("");
     let issue_id = extract_issue_id(payload).unwrap_or_default();
+    let project_id = extract_project_id(payload).unwrap_or("");
+    let form_id = extract_form_id(payload).unwrap_or("");
+    let form_key = extract_form_key(payload).unwrap_or("");
+    let record_id = extract_record_id(payload).unwrap_or("");
+    let connector_kind = extract_connector_kind(payload).unwrap_or("");
 
     tmpl.replace("{event}", event)
         .replace("{title}", title)
@@ -676,13 +1013,20 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
         .replace("{state}", state)
         .replace("{priority}", priority)
         .replace("{issue_id}", &issue_id)
+        .replace("{project_id}", project_id)
+        .replace("{form_id}", form_id)
+        .replace("{form_key}", form_key)
+        .replace("{record_id}", record_id)
+        .replace("{connector_kind}", connector_kind)
         .replace("{url}", &format!("issue/{issue_id}"))
 }
 
 #[cfg(test)]
+#[allow(clippy::literal_string_with_formatting_args)]
 mod tests {
     use super::{
-        build_cli_prompt, build_executor_command, dispatch, extract_issue_id, outbound_signature_header_value,
+        build_cli_prompt, build_executor_command, dispatch, extract_issue_id, format_message,
+        outbound_signature_header_value,
     };
     use crate::{callback, config::Config};
     use serde_json::json;
@@ -717,7 +1061,15 @@ webhook_secrets = []
     #[test]
     fn cli_executor_whitelist_builds_expected_command() {
         let (_, args) = build_executor_command("codex", "fix it", None).expect("codex should be allowed");
-        assert_eq!(args, vec!["exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "fix it"]);
+        assert_eq!(
+            args,
+            vec![
+                "exec",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--skip-git-repo-check",
+                "fix it"
+            ]
+        );
 
         assert!(build_executor_command("bash", "rm -rf /", None).is_err());
     }
@@ -843,6 +1195,242 @@ update_state_on_success = "done"
     fn extracts_issue_id_from_payload() {
         let payload = json!({"data": {"issue": {"id": "42"}}});
         assert_eq!(extract_issue_id(&payload).as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn extracts_issue_id_from_worker_ai_task_envelope() {
+        let payload = json!({
+            "task_id": "task-1",
+            "ai_participant_id": "bot-1",
+            "task_type": "issue_assigned",
+            "reference_type": "work_item",
+            "reference_id": "issue-99",
+            "payload": {
+                "project_id": "project-1",
+                "trigger": "issue.create"
+            }
+        });
+
+        assert_eq!(extract_issue_id(&payload).as_deref(), Some("issue-99"));
+    }
+
+    #[test]
+    fn build_cli_prompt_uses_worker_ai_task_envelope_context() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            r#"
+id = "bot-1"
+name = "CLI"
+agent_type = "cli"
+[cli]
+executor = "codex"
+prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
+[cli.env_vars]
+OPENPR_API_URL = "http://localhost:3000"
+"#,
+        )
+        .expect("parse agent");
+
+        let payload = json!({
+            "task_id": "task-1",
+            "ai_participant_id": "bot-1",
+            "task_type": "issue_assigned",
+            "reference_type": "work_item",
+            "reference_id": "issue-99",
+            "payload": {
+                "project_id": "project-1",
+                "issue_title": "Worker envelope issue",
+                "trigger": "issue.create"
+            }
+        });
+        let issue_id = extract_issue_id(&payload).expect("issue id");
+        let prompt = build_cli_prompt(&agent, &payload, &issue_id);
+
+        assert!(prompt.starts_with("Fix issue issue-99: Worker envelope issue"));
+        assert!(prompt.contains("Context: issue.create"));
+        assert!(prompt.contains("work_items.get"));
+        assert!(prompt.contains("Project MCP Context"));
+        assert!(prompt.contains("context.get_project"));
+        assert!(prompt.contains("tools/list"));
+        assert!(prompt.contains("project_id=\"project-1\""));
+    }
+
+    #[test]
+    fn build_cli_prompt_replaces_project_id_placeholder_in_custom_mcp_instructions() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            r#"
+id = "bot-1"
+name = "CLI"
+agent_type = "cli"
+[cli]
+executor = "codex"
+prompt_template = "Fix issue {issue_id}: {title}"
+mcp_instructions = "Read project {project_id}, then issue {issue_id}."
+"#,
+        )
+        .expect("parse agent");
+
+        let payload = json!({
+            "project_id": "project-1",
+            "data": {
+                "issue": {
+                    "id": "issue-1",
+                    "title": "Project scoped issue"
+                }
+            }
+        });
+        let issue_id = extract_issue_id(&payload).expect("issue id");
+        let prompt = build_cli_prompt(&agent, &payload, &issue_id);
+
+        assert!(prompt.contains("Read project project-1, then issue issue-1."));
+        assert!(prompt.contains("context.get_project"));
+    }
+
+    #[test]
+    fn build_cli_prompt_includes_invocation_ledger_instructions_when_available() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            r#"
+id = "bot-1"
+name = "CLI"
+agent_type = "cli"
+[cli]
+executor = "codex"
+prompt_template = "Fix issue {issue_id}: {title}"
+mcp_instructions = "Read issue {issue_id} before writing."
+"#,
+        )
+        .expect("parse agent");
+
+        let payload = json!({
+            "task_id": "task-1",
+            "project_id": "project-1",
+            "ai_participant_id": "bot-1",
+            "task_type": "issue_assigned",
+            "reference_type": "work_item",
+            "reference_id": "issue-99",
+            "invocation_id": "invocation-1",
+            "payload": {
+                "issue_title": "Ledger issue"
+            }
+        });
+        let issue_id = extract_issue_id(&payload).expect("issue id");
+        let prompt = build_cli_prompt(&agent, &payload, &issue_id);
+
+        assert!(prompt.contains("Read issue issue-99 before writing."));
+        assert!(prompt.contains("OpenPR invocation `invocation-1`"));
+        assert!(prompt.contains("invocations.report_progress"));
+        assert!(prompt.contains("invocations.complete"));
+        assert!(prompt.contains("invocations.fail"));
+        assert!(prompt.contains("project_id=\"project-1\""));
+    }
+
+    #[test]
+    fn build_cli_prompt_uses_form_context_for_connector_envelope() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            r#"
+id = "print-agent"
+name = "Print Agent"
+agent_type = "cli"
+[cli]
+executor = "codex"
+prompt_template = "Handle {event} {form_key}/{record_id} via {connector_kind}"
+[cli.env_vars]
+OPENPR_API_URL = "http://localhost:3000"
+"#,
+        )
+        .expect("parse agent");
+
+        let payload = json!({
+            "event": "form.record.created",
+            "invocation_id": "invocation-1",
+            "connector_kind": "print",
+            "payload": {
+                "envelope": {
+                    "version": "openpr.event.v1",
+                    "event_type": "form.record.created",
+                    "project_id": "project-1",
+                    "metadata": {
+                        "form_id": "form-1",
+                        "form_key": "order",
+                        "record_id": "record-1"
+                    }
+                }
+            }
+        });
+        let prompt = build_cli_prompt(&agent, &payload, "unknown");
+
+        assert!(prompt.starts_with("Handle form.record.created order/record-1 via print"));
+        assert!(prompt.contains("forms.get"));
+        assert!(prompt.contains("form_records.get"));
+        assert!(prompt.contains("events.tail"));
+        assert!(prompt.contains("Universal Form Context"));
+        assert!(prompt.contains("project_id=\"project-1\""));
+        assert!(prompt.contains("form_id=\"form-1\""));
+        assert!(prompt.contains("form_key=\"order\""));
+        assert!(prompt.contains("record_id=\"record-1\""));
+        assert!(prompt.contains("connector_kind=\"print\""));
+        assert!(prompt.contains("OpenPR invocation `invocation-1`"));
+    }
+
+    #[test]
+    fn format_message_replaces_form_placeholders() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            r#"
+id = "printer"
+name = "Printer"
+agent_type = "webhook"
+message_template = "{event} {project_id} {form_key} {record_id} {connector_kind}"
+"#,
+        )
+        .expect("parse agent");
+        let payload = json!({
+            "connector_kind": "print",
+            "payload": {
+                "envelope": {
+                    "version": "openpr.event.v1",
+                    "event_type": "print_job.created",
+                    "project_id": "project-1",
+                    "metadata": {
+                        "form_key": "print_job",
+                        "record_id": "record-1"
+                    }
+                }
+            }
+        });
+
+        assert_eq!(
+            format_message(&agent, &payload),
+            "print_job.created project-1 print_job record-1 print"
+        );
+    }
+
+    #[test]
+    fn build_cli_prompt_omits_invocation_ledger_instructions_without_invocation_id() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            r#"
+id = "bot-1"
+name = "CLI"
+agent_type = "cli"
+[cli]
+executor = "codex"
+prompt_template = "Fix issue {issue_id}: {title}"
+mcp_instructions = "Read issue {issue_id} before writing."
+"#,
+        )
+        .expect("parse agent");
+
+        let payload = json!({
+            "data": {
+                "issue": {
+                    "id": "issue-1",
+                    "title": "No invocation"
+                }
+            }
+        });
+        let issue_id = extract_issue_id(&payload).expect("issue id");
+        let prompt = build_cli_prompt(&agent, &payload, &issue_id);
+
+        assert!(!prompt.contains("Invocation Ledger"));
+        assert!(!prompt.contains("invocations.complete"));
     }
 
     #[tokio::test]
