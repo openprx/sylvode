@@ -88,8 +88,6 @@ pub struct RouteConfig {
     pub events: Vec<String>,
     #[serde(default)]
     pub form_keys: Vec<String>,
-    #[serde(default)]
-    pub connector_kinds: Vec<String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -290,7 +288,6 @@ project_types = ["contract_review"]
 trigger_kinds = ["mention"]
 events = ["form.record.created"]
 form_keys = ["order"]
-connector_kinds = ["rest"]
 
 [agents.webhook]
 url = "http://127.0.0.1:9000/hook"
@@ -309,6 +306,5 @@ url = "http://127.0.0.1:9000/hook"
         assert_eq!(route.trigger_kinds, vec!["mention"]);
         assert_eq!(route.events, vec!["form.record.created"]);
         assert_eq!(route.form_keys, vec!["order"]);
-        assert_eq!(route.connector_kinds, vec!["rest"]);
     }
 }

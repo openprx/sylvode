@@ -17,8 +17,7 @@ You have OpenPR MCP tools available. Use them to get full issue context before w
 After completing your work:
 
 4. Call `comments.create` with work_item_id="{issue_id}" to post a summary of what you did
-5. Call `work_items.update` with work_item_id="{issue_id}" and state="done" if the fix is complete
-6. If an invocation_id is provided below, call `invocations.complete` with that invocation_id and a result object that summarizes the outcome. If the task cannot be completed, call `invocations.fail` with the invocation_id, error_message, and any useful result details."#;
+5. Call `work_items.update` with work_item_id="{issue_id}" and state="done" if the fix is complete"#;
 
 #[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
 const DEFAULT_FORM_MCP_INSTRUCTIONS: &str = r#"## MCP Integration
@@ -28,7 +27,7 @@ You have OpenPR MCP tools available. This webhook is linked to a universal-form 
 1. Call `forms.get` with form_id="{form_id}" when a form_id is available, or call `forms.list` with project_id="{project_id}" and match form_key="{form_key}".
 2. Call `form_records.get` with record_id="{record_id}" when a record_id is available.
 3. Call `events.tail` with form_id="{form_id}" or record_id="{record_id}" to inspect the recent business-event stream.
-4. If an invocation_id is provided below, call `invocations.complete` with that invocation_id and a result object containing status, summary, form_key, and record_id. If the task cannot be completed, call `invocations.fail` with the invocation_id, error_message, and useful result details."#;
+4. Call `comments.create` on the linked work item, when there is one, to report what you did."#;
 
 pub async fn dispatch(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
     match agent.agent_type.as_str() {
@@ -55,12 +54,10 @@ async fn dispatch_cli(config: &Config, agent: &AgentConfig, payload: &Value) -> 
         "run-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
+            .map_or(0, |d| d.as_millis())
     );
     let prompt = build_cli_prompt(agent, payload, &issue_id);
     let executor = cfg.executor.clone();
-    let invocation_id = extract_invocation_id(payload).map(ToString::to_string);
 
     // 1. Send start callback synchronously (wait for it)
     let start_state = if cfg.skip_callback_state {
@@ -85,36 +82,11 @@ async fn dispatch_cli(config: &Config, agent: &AgentConfig, payload: &Value) -> 
             tracing::warn!("start callback failed: {e}");
         }
     }
-    if config.callback_enabled()
-        && let Some(invocation_id) = invocation_id.as_deref()
-    {
-        let result = serde_json::json!({
-            "run_id": &run_id,
-            "issue_id": &issue_id,
-            "executor": &executor,
-            "status": "started",
-            "summary": "cli task started",
-        });
-        if let Err(e) = callback::send_invocation_status(
-            cfg,
-            invocation_id,
-            "started",
-            result,
-            None,
-            config.runtime.http_timeout_secs,
-        )
-        .await
-        {
-            tracing::warn!("invocation start callback failed: {e}");
-        }
-    }
-
     // 2. Clone what the background task needs
     let bg_cfg = cfg.clone();
     let bg_issue_id = issue_id.clone();
     let bg_run_id = run_id.clone();
     let bg_executor = executor.clone();
-    let bg_invocation_id = invocation_id.clone();
     let callback_enabled = config.callback_enabled();
     let http_timeout_secs = config.runtime.http_timeout_secs;
 
@@ -142,38 +114,6 @@ async fn dispatch_cli(config: &Config, agent: &AgentConfig, payload: &Value) -> 
                 stdout = %run.stdout_tail,
                 "CLI agent failed"
             );
-        }
-
-        if callback_enabled && let Some(invocation_id) = bg_invocation_id.as_deref() {
-            let summary = if run.status == "success" {
-                "cli execution completed".to_string()
-            } else {
-                format!("cli execution {}", run.status)
-            };
-            let result = serde_json::json!({
-                "run_id": &bg_run_id,
-                "issue_id": &bg_issue_id,
-                "executor": &bg_executor,
-                "status": &run.status,
-                "summary": &summary,
-                "exit_code": run.exit_code,
-                "duration_ms": run.duration_ms,
-                "stdout_tail": &run.stdout_tail,
-                "stderr_tail": &run.stderr_tail,
-            });
-            let error_message = if run.status == "success" { None } else { Some(summary) };
-            if let Err(e) = callback::send_invocation_status(
-                &bg_cfg,
-                invocation_id,
-                &run.status,
-                result,
-                error_message,
-                http_timeout_secs,
-            )
-            .await
-            {
-                tracing::warn!("invocation final callback failed: {e}");
-            }
         }
 
         // Send final callback only on failure/timeout when skip_callback_state is false
@@ -242,12 +182,10 @@ pub async fn execute_cli_task(
             "run-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0)
+                .map_or(0, |d| d.as_millis())
         )
     });
     let prompt = build_cli_prompt(agent, payload, &issue_id);
-    let invocation_id = extract_invocation_id(payload).map(ToString::to_string);
 
     let start_state = if cfg.skip_callback_state {
         None
@@ -271,30 +209,6 @@ pub async fn execute_cli_task(
             tracing::warn!("start callback failed: {e}");
         }
     }
-    if config.callback_enabled()
-        && let Some(invocation_id) = invocation_id.as_deref()
-    {
-        let result = serde_json::json!({
-            "run_id": &run_id,
-            "issue_id": &issue_id,
-            "executor": &cfg.executor,
-            "status": "started",
-            "summary": "cli task started",
-        });
-        if let Err(e) = callback::send_invocation_status(
-            cfg,
-            invocation_id,
-            "started",
-            result,
-            None,
-            config.runtime.http_timeout_secs,
-        )
-        .await
-        {
-            tracing::warn!("invocation start callback failed: {e}");
-        }
-    }
-
     let run = run_cli_executor(cfg, &prompt).await;
 
     tracing::info!(
@@ -317,37 +231,6 @@ pub async fn execute_cli_task(
     };
 
     if config.callback_enabled() {
-        if let Some(invocation_id) = invocation_id.as_deref() {
-            let result = serde_json::json!({
-                "run_id": &run_id,
-                "issue_id": &issue_id,
-                "executor": &cfg.executor,
-                "status": &run.status,
-                "summary": &summary,
-                "exit_code": run.exit_code,
-                "duration_ms": run.duration_ms,
-                "stdout_tail": &run.stdout_tail,
-                "stderr_tail": &run.stderr_tail,
-            });
-            let error_message = if run.status == "success" {
-                None
-            } else {
-                Some(summary.clone())
-            };
-            if let Err(e) = callback::send_invocation_status(
-                cfg,
-                invocation_id,
-                &run.status,
-                result,
-                error_message,
-                config.runtime.http_timeout_secs,
-            )
-            .await
-            {
-                tracing::warn!("invocation final callback failed: {e}");
-            }
-        }
-
         let callback_payload = callback::build_callback_payload(
             issue_id.clone(),
             run_id.clone(),
@@ -513,7 +396,6 @@ fn build_cli_prompt(agent: &AgentConfig, payload: &Value, issue_id: &str) -> Str
     let form_id = extract_form_id(payload).unwrap_or("<form_id>");
     let form_key = extract_form_key(payload).unwrap_or("<form_key>");
     let record_id = extract_record_id(payload).unwrap_or("<record_id>");
-    let connector_kind = extract_connector_kind(payload).unwrap_or("<connector_kind>");
 
     let user_prompt = base
         .replace("{issue_id}", issue_id)
@@ -523,8 +405,7 @@ fn build_cli_prompt(agent: &AgentConfig, payload: &Value, issue_id: &str) -> Str
         .replace("{project_id}", project_id)
         .replace("{form_id}", form_id)
         .replace("{form_key}", form_key)
-        .replace("{record_id}", record_id)
-        .replace("{connector_kind}", connector_kind);
+        .replace("{record_id}", record_id);
 
     // Only append MCP instructions when explicitly configured or when
     // mcp_config_path / env_vars indicate MCP integration is active.
@@ -550,17 +431,12 @@ fn build_cli_prompt(agent: &AgentConfig, payload: &Value, issue_id: &str) -> Str
         .replace("{form_id}", form_id)
         .replace("{form_key}", form_key)
         .replace("{record_id}", record_id)
-        .replace("{event}", event)
-        .replace("{connector_kind}", connector_kind);
+        .replace("{event}", event);
 
     let mut prompt = format!("{user_prompt}\n\n{instructions}");
     if let Some(project_context_instructions) = build_project_context_instructions(payload) {
         prompt.push_str("\n\n");
         prompt.push_str(&project_context_instructions);
-    }
-    if let Some(ledger_instructions) = build_invocation_ledger_instructions(payload) {
-        prompt.push_str("\n\n");
-        prompt.push_str(&ledger_instructions);
     }
     if let Some(form_context_instructions) = build_form_context_instructions(payload) {
         prompt.push_str("\n\n");
@@ -647,19 +523,6 @@ fn extract_trigger_reason(payload: &Value) -> Option<&str> {
         .or_else(|| payload.get("task_type").and_then(Value::as_str))
 }
 
-fn extract_invocation_id(payload: &Value) -> Option<&str> {
-    payload
-        .get("invocation_id")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            payload
-                .get("payload")
-                .and_then(|p| p.get("invocation_id"))
-                .and_then(Value::as_str)
-        })
-        .filter(|value| !value.is_empty())
-}
-
 fn extract_project_id(payload: &Value) -> Option<&str> {
     payload
         .get("project_id")
@@ -710,10 +573,6 @@ fn extract_record_id(payload: &Value) -> Option<&str> {
         .or_else(|| nested_string_field(payload, &["payload", "envelope", "aggregate", "id"]))
 }
 
-fn extract_connector_kind(payload: &Value) -> Option<&str> {
-    string_field(payload, "connector_kind").or_else(|| nested_string_field(payload, &["payload", "connector_kind"]))
-}
-
 fn is_form_event(payload: &Value) -> bool {
     extract_form_key(payload).is_some()
         || extract_form_id(payload).is_some()
@@ -723,23 +582,8 @@ fn is_form_event(payload: &Value) -> bool {
 fn build_project_context_instructions(payload: &Value) -> Option<String> {
     let project_id = extract_project_id(payload)?;
     Some(format!(
-        "## Project MCP Context\n\nBefore changing state or posting final output, call `context.get_project` with project_id=\"{project_id}\" to read the project type, resources, connectors, governance context, and effective agent policy. When your MCP client supports project-scoped discovery, call `tools/list` with project_id=\"{project_id}\" and only use tools enabled by that project policy."
+        "## Project MCP Context\n\nBefore changing state or posting final output, call `context.get_project` with project_id=\"{project_id}\" to read the project type, resources, governance context, and effective agent policy. When your MCP client supports project-scoped discovery, call `tools/list` with project_id=\"{project_id}\" and only use tools enabled by that project policy."
     ))
-}
-
-fn build_invocation_ledger_instructions(payload: &Value) -> Option<String> {
-    let invocation_id = extract_invocation_id(payload)?;
-    let mut instructions = format!(
-        "## Invocation Ledger\n\nThis task is linked to OpenPR invocation `{invocation_id}`. Call `invocations.report_progress` when you start meaningful work. Before finishing, call `invocations.complete` with invocation_id=\"{invocation_id}\" and a result object containing status, summary, and changed_files if applicable. If you cannot complete the task, call `invocations.fail` with invocation_id=\"{invocation_id}\" and an error_message."
-    );
-
-    if let Some(project_id) = extract_project_id(payload) {
-        instructions.push_str("\nUse project_id=\"");
-        instructions.push_str(project_id);
-        instructions.push_str("\" when listing project context or invocation records.");
-    }
-
-    Some(instructions)
 }
 
 fn build_form_context_instructions(payload: &Value) -> Option<String> {
@@ -752,10 +596,9 @@ fn build_form_context_instructions(payload: &Value) -> Option<String> {
     let form_key = extract_form_key(payload).unwrap_or("<form_key>");
     let record_id = extract_record_id(payload).unwrap_or("<record_id>");
     let event = extract_event(payload).unwrap_or("<event>");
-    let connector_kind = extract_connector_kind(payload).unwrap_or("<connector_kind>");
 
     Some(format!(
-        "## Universal Form Context\n\nThis is OpenPR universal-form event `{event}` for project_id=\"{project_id}\", form_id=\"{form_id}\", form_key=\"{form_key}\", record_id=\"{record_id}\", connector_kind=\"{connector_kind}\". Treat custom fields as schema-defined business data: inspect the form schema before assuming field meaning, preserve decimal strings for amount fields, and write any operational result through MCP or the invocation ledger instead of mutating local webhook state."
+        "## Universal Form Context\n\nThis is OpenPR universal-form event `{event}` for project_id=\"{project_id}\", form_id=\"{form_id}\", form_key=\"{form_key}\", record_id=\"{record_id}\". Treat custom fields as schema-defined business data: inspect the form schema before assuming field meaning, preserve decimal strings for amount fields, and write any operational result through MCP instead of mutating local webhook state."
     ))
 }
 
@@ -1001,7 +844,6 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
     let form_id = extract_form_id(payload).unwrap_or("");
     let form_key = extract_form_key(payload).unwrap_or("");
     let record_id = extract_record_id(payload).unwrap_or("");
-    let connector_kind = extract_connector_kind(payload).unwrap_or("");
 
     tmpl.replace("{event}", event)
         .replace("{title}", title)
@@ -1017,7 +859,6 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
         .replace("{form_id}", form_id)
         .replace("{form_key}", form_key)
         .replace("{record_id}", record_id)
-        .replace("{connector_kind}", connector_kind)
         .replace("{url}", &format!("issue/{issue_id}"))
 }
 
@@ -1286,7 +1127,7 @@ mcp_instructions = "Read project {project_id}, then issue {issue_id}."
     }
 
     #[test]
-    fn build_cli_prompt_includes_invocation_ledger_instructions_when_available() {
+    fn build_cli_prompt_never_instructs_the_retired_invocation_tools() {
         let agent: crate::config::AgentConfig = toml::from_str(
             r#"
 id = "bot-1"
@@ -1316,15 +1157,15 @@ mcp_instructions = "Read issue {issue_id} before writing."
         let prompt = build_cli_prompt(&agent, &payload, &issue_id);
 
         assert!(prompt.contains("Read issue issue-99 before writing."));
-        assert!(prompt.contains("OpenPR invocation `invocation-1`"));
-        assert!(prompt.contains("invocations.report_progress"));
-        assert!(prompt.contains("invocations.complete"));
-        assert!(prompt.contains("invocations.fail"));
         assert!(prompt.contains("project_id=\"project-1\""));
+        // OpenPR retired agent invocations. An old deployment may still send the id, but the
+        // tools it named are gone, so an agent must never be told to call them.
+        assert!(!prompt.contains("Invocation Ledger"));
+        assert!(!prompt.contains("invocations."));
     }
 
     #[test]
-    fn build_cli_prompt_uses_form_context_for_connector_envelope() {
+    fn build_cli_prompt_uses_form_context_for_a_form_event() {
         let agent: crate::config::AgentConfig = toml::from_str(
             r#"
 id = "print-agent"
@@ -1332,7 +1173,7 @@ name = "Print Agent"
 agent_type = "cli"
 [cli]
 executor = "codex"
-prompt_template = "Handle {event} {form_key}/{record_id} via {connector_kind}"
+prompt_template = "Handle {event} {form_key}/{record_id}"
 [cli.env_vars]
 OPENPR_API_URL = "http://localhost:3000"
 "#,
@@ -1341,8 +1182,6 @@ OPENPR_API_URL = "http://localhost:3000"
 
         let payload = json!({
             "event": "form.record.created",
-            "invocation_id": "invocation-1",
-            "connector_kind": "print",
             "payload": {
                 "envelope": {
                     "version": "openpr.event.v1",
@@ -1358,7 +1197,7 @@ OPENPR_API_URL = "http://localhost:3000"
         });
         let prompt = build_cli_prompt(&agent, &payload, "unknown");
 
-        assert!(prompt.starts_with("Handle form.record.created order/record-1 via print"));
+        assert!(prompt.starts_with("Handle form.record.created order/record-1"));
         assert!(prompt.contains("forms.get"));
         assert!(prompt.contains("form_records.get"));
         assert!(prompt.contains("events.tail"));
@@ -1367,8 +1206,6 @@ OPENPR_API_URL = "http://localhost:3000"
         assert!(prompt.contains("form_id=\"form-1\""));
         assert!(prompt.contains("form_key=\"order\""));
         assert!(prompt.contains("record_id=\"record-1\""));
-        assert!(prompt.contains("connector_kind=\"print\""));
-        assert!(prompt.contains("OpenPR invocation `invocation-1`"));
     }
 
     #[test]
@@ -1378,12 +1215,11 @@ OPENPR_API_URL = "http://localhost:3000"
 id = "printer"
 name = "Printer"
 agent_type = "webhook"
-message_template = "{event} {project_id} {form_key} {record_id} {connector_kind}"
+message_template = "{event} {project_id} {form_key} {record_id}"
 "#,
         )
         .expect("parse agent");
         let payload = json!({
-            "connector_kind": "print",
             "payload": {
                 "envelope": {
                     "version": "openpr.event.v1",
@@ -1399,12 +1235,12 @@ message_template = "{event} {project_id} {form_key} {record_id} {connector_kind}
 
         assert_eq!(
             format_message(&agent, &payload),
-            "print_job.created project-1 print_job record-1 print"
+            "print_job.created project-1 print_job record-1"
         );
     }
 
     #[test]
-    fn build_cli_prompt_omits_invocation_ledger_instructions_without_invocation_id() {
+    fn build_cli_prompt_stays_free_of_invocation_instructions() {
         let agent: crate::config::AgentConfig = toml::from_str(
             r#"
 id = "bot-1"

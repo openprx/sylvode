@@ -18,7 +18,6 @@ struct BotDispatchTarget {
     trigger_kind: Option<String>,
     event: Option<String>,
     form_key: Option<String>,
-    connector_kind: Option<String>,
 }
 
 fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
@@ -81,12 +80,6 @@ fn form_key_from_payload(payload: &Value) -> Option<String> {
         })
 }
 
-fn connector_kind_from_payload(payload: &Value) -> Option<String> {
-    string_field(payload, "connector_kind")
-        .or_else(|| nested_string_field(payload, &["payload", "connector_kind"]))
-        .map(ToString::to_string)
-}
-
 fn bot_context_target(payload: &Value) -> Option<BotDispatchTarget> {
     let bot_context = payload.get("bot_context")?;
     let is_bot_task = bot_context.get("is_bot_task").and_then(Value::as_bool).unwrap_or(false);
@@ -113,7 +106,6 @@ fn bot_context_target(payload: &Value) -> Option<BotDispatchTarget> {
             .or_else(|| trigger_kind_from_payload(payload)),
         event: event_from_payload(payload),
         form_key: form_key_from_payload(payload),
-        connector_kind: connector_kind_from_payload(payload),
     })
 }
 
@@ -145,46 +137,11 @@ fn ai_task_envelope_target(payload: &Value) -> Option<BotDispatchTarget> {
         trigger_kind: trigger_kind_from_payload(payload),
         event: event_from_payload(payload),
         form_key: form_key_from_payload(payload),
-        connector_kind: connector_kind_from_payload(payload),
-    })
-}
-
-fn connector_envelope_target(payload: &Value) -> Option<BotDispatchTarget> {
-    let connector_kind = connector_kind_from_payload(payload);
-    let event = event_from_payload(payload);
-    let has_connector_shape = connector_kind.is_some()
-        || string_field(payload, "connector_id").is_some()
-        || nested_string_field(payload, &["payload", "business_event_id"]).is_some()
-        || nested_string_field(payload, &["payload", "outbox_id"]).is_some()
-        || nested_string_field(payload, &["payload", "envelope", "version"]) == Some("openpr.event.v1");
-    if !has_connector_shape {
-        return None;
-    }
-
-    Some(BotDispatchTarget {
-        bot_key: connector_kind
-            .clone()
-            .or_else(|| form_key_from_payload(payload))
-            .or_else(|| event.clone())
-            .unwrap_or_else(|| "connector".to_string()),
-        has_bot_identity: false,
-        bot_name: None,
-        bot_id: None,
-        agent_type: string_field(payload, "agent_type")
-            .or_else(|| nested_string_field(payload, &["payload", "agent_type"]))
-            .map(ToString::to_string),
-        project_type: project_type_from_payload(payload),
-        trigger_kind: trigger_kind_from_payload(payload).or_else(|| event.clone()),
-        event,
-        form_key: form_key_from_payload(payload),
-        connector_kind,
     })
 }
 
 fn bot_dispatch_target(payload: &Value) -> Option<BotDispatchTarget> {
-    bot_context_target(payload)
-        .or_else(|| ai_task_envelope_target(payload))
-        .or_else(|| connector_envelope_target(payload))
+    bot_context_target(payload).or_else(|| ai_task_envelope_target(payload))
 }
 
 fn list_matches_constraint(values: &[String], actual: Option<&str>) -> bool {
@@ -214,7 +171,6 @@ fn agent_matches_route(agent: &AgentConfig, target: &BotDispatchTarget) -> bool 
         && list_matches_constraint(&route.trigger_kinds, target.trigger_kind.as_deref())
         && list_matches_constraint(&route.events, target.event.as_deref())
         && list_matches_constraint(&route.form_keys, target.form_key.as_deref())
-        && list_matches_constraint(&route.connector_kinds, target.connector_kind.as_deref())
 }
 
 fn select_agent<'a>(agents: &'a [AgentConfig], target: &BotDispatchTarget) -> Option<&'a AgentConfig> {
@@ -278,7 +234,6 @@ pub async fn handle_webhook(
         "trigger_kind": target.trigger_kind.as_deref(),
         "event": target.event.as_deref(),
         "form_key": target.form_key.as_deref(),
-        "connector_kind": target.connector_kind.as_deref(),
     });
 
     if let Some(a) = select_agent(&state.config.agents, &target) {
@@ -396,36 +351,26 @@ mod tests {
         assert_eq!(target.event.as_deref(), None);
     }
 
+    /// `OpenPR` retired connectors, so a delivery shaped like one carries no bot identity and
+    /// must not be routed to an agent by its connector kind any more.
     #[test]
-    fn extracts_openpr_connector_form_event_target() {
+    fn ignores_a_connector_shaped_payload() {
         let payload = json!({
             "event": "form.record.created",
-            "invocation_id": "invocation-1",
             "connector_id": "connector-1",
             "connector_kind": "print",
             "payload": {
                 "business_event_id": "event-1",
-                "outbox_id": "outbox-1",
                 "envelope": {
                     "version": "openpr.event.v1",
-                    "event_type": "form.record.created",
-                    "project_id": "project-1",
                     "metadata": {
-                        "project_type": "restaurant",
-                        "form_key": "order",
-                        "record_id": "record-1"
+                        "form_key": "order"
                     }
                 }
             }
         });
 
-        let target = bot_dispatch_target(&payload).expect("target");
-        assert!(!target.has_bot_identity);
-        assert_eq!(target.bot_key, "print");
-        assert_eq!(target.event.as_deref(), Some("form.record.created"));
-        assert_eq!(target.project_type.as_deref(), Some("restaurant"));
-        assert_eq!(target.form_key.as_deref(), Some("order"));
-        assert_eq!(target.connector_kind.as_deref(), Some("print"));
+        assert!(bot_dispatch_target(&payload).is_none());
     }
 
     #[test]
@@ -580,52 +525,5 @@ agent_type = "webhook"
 
         let selected = select_agent(&agents, &target).expect("selected agent");
         assert_eq!(selected.id, "legacy-webhook");
-    }
-
-    #[test]
-    fn selects_connector_route_by_event_form_and_connector_kind() {
-        let agents = vec![
-            agent(
-                r#"
-id = "print-orders"
-name = "Print Orders"
-agent_type = "webhook"
-
-[route]
-events = ["form.record.created"]
-form_keys = ["order"]
-connector_kinds = ["print"]
-"#,
-            ),
-            agent(
-                r#"
-id = "print-lines"
-name = "Print Lines"
-agent_type = "webhook"
-
-[route]
-events = ["form.record.created"]
-form_keys = ["order_line"]
-connector_kinds = ["print"]
-"#,
-            ),
-        ];
-        let target = bot_dispatch_target(&json!({
-            "event": "form.record.created",
-            "connector_kind": "print",
-            "payload": {
-                "business_event_id": "event-1",
-                "envelope": {
-                    "version": "openpr.event.v1",
-                    "metadata": {
-                        "form_key": "order"
-                    }
-                }
-            }
-        }))
-        .expect("target");
-
-        let selected = select_agent(&agents, &target).expect("selected agent");
-        assert_eq!(selected.id, "print-orders");
     }
 }

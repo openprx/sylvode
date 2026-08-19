@@ -42,31 +42,6 @@ pub async fn send_callback(
     }
 }
 
-pub async fn send_invocation_status(
-    cfg: &CliAgentConfig,
-    invocation_id: &str,
-    status: &str,
-    result: serde_json::Value,
-    error_message: Option<String>,
-    http_timeout_secs: u64,
-) -> Result<(), String> {
-    let callback_url = match &cfg.callback_url {
-        Some(u) if !u.is_empty() => u,
-        _ => return Ok(()),
-    };
-
-    let callback_mode = cfg.callback.as_deref().unwrap_or("mcp");
-    if callback_mode != "mcp" {
-        return Ok(());
-    }
-
-    let (tool_name, args) = invocation_status_call(status, invocation_id, &result, error_message);
-    let client = build_client(http_timeout_secs)?;
-    let token = cfg.callback_token.as_deref();
-    let body = jsonrpc_tools_call(tool_name, &args);
-    send_jsonrpc_request(&client, callback_url, token, &body).await
-}
-
 /// Build an HTTP client with the configured timeout.
 fn build_client(http_timeout_secs: u64) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
@@ -113,39 +88,6 @@ fn jsonrpc_tools_call(name: &str, arguments: &serde_json::Value) -> serde_json::
     })
 }
 
-fn invocation_status_call(
-    status: &str,
-    invocation_id: &str,
-    result: &serde_json::Value,
-    error_message: Option<String>,
-) -> (&'static str, serde_json::Value) {
-    match status {
-        "success" | "completed" => (
-            "invocations.complete",
-            serde_json::json!({
-                "invocation_id": invocation_id,
-                "result": result,
-            }),
-        ),
-        "failed" | "timeout" => (
-            "invocations.fail",
-            serde_json::json!({
-                "invocation_id": invocation_id,
-                "error_message": error_message.unwrap_or_else(|| format!("cli execution {status}")),
-                "result": result,
-            }),
-        ),
-        _ => (
-            "invocations.report_progress",
-            serde_json::json!({
-                "invocation_id": invocation_id,
-                "payload": result,
-            }),
-        ),
-    }
-}
-
-/// Format the agent execution report comment body.
 fn format_comment_body(payload: &CallbackPayload) -> String {
     let exit_code_str = payload.exit_code.map_or_else(|| "N/A".to_string(), |c| c.to_string());
 
@@ -308,65 +250,5 @@ mod tests {
         assert_eq!(payload.run_id, "run-1");
         assert_eq!(payload.status, "success");
         assert_eq!(payload.state.as_deref(), Some("done"));
-    }
-
-    #[test]
-    fn invocation_status_maps_success_to_complete_tool() {
-        let (tool, args) = invocation_status_call("success", "inv-1", &serde_json::json!({"summary": "done"}), None);
-
-        assert_eq!(tool, "invocations.complete");
-        assert_eq!(
-            args.get("invocation_id").and_then(serde_json::Value::as_str),
-            Some("inv-1")
-        );
-        assert_eq!(
-            args.get("result")
-                .and_then(|value| value.get("summary"))
-                .and_then(serde_json::Value::as_str),
-            Some("done")
-        );
-    }
-
-    #[test]
-    fn invocation_status_maps_failure_to_fail_tool() {
-        let (tool, args) = invocation_status_call(
-            "timeout",
-            "inv-1",
-            &serde_json::json!({"status": "timeout"}),
-            Some("timed out".to_string()),
-        );
-
-        assert_eq!(tool, "invocations.fail");
-        assert_eq!(
-            args.get("invocation_id").and_then(serde_json::Value::as_str),
-            Some("inv-1")
-        );
-        assert_eq!(
-            args.get("error_message").and_then(serde_json::Value::as_str),
-            Some("timed out")
-        );
-        assert_eq!(
-            args.get("result")
-                .and_then(|value| value.get("status"))
-                .and_then(serde_json::Value::as_str),
-            Some("timeout")
-        );
-    }
-
-    #[test]
-    fn invocation_status_maps_started_to_progress_tool() {
-        let (tool, args) = invocation_status_call("started", "inv-1", &serde_json::json!({"run_id": "run-1"}), None);
-
-        assert_eq!(tool, "invocations.report_progress");
-        assert_eq!(
-            args.get("invocation_id").and_then(serde_json::Value::as_str),
-            Some("inv-1")
-        );
-        assert_eq!(
-            args.get("payload")
-                .and_then(|value| value.get("run_id"))
-                .and_then(serde_json::Value::as_str),
-            Some("run-1")
-        );
     }
 }

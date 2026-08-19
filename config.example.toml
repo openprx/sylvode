@@ -51,17 +51,17 @@ name = "Vano CLI"
 agent_type = "cli"
 message_template = "[{project}] {event}: {key} {title}"
 
-# Optional scenario route constraints. When present, OpenPR bot_context
-# or OpenPR connector envelopes must match these fields before the agent
-# is selected. Empty lists mean "no constraint" for that dimension.
+# Optional scenario route constraints. When present, the OpenPR bot task or
+# worker AI task must match these fields before the agent is selected.
+# Empty lists mean "no constraint" for that dimension.
 [agents.route]
 bot_agent_types = ["cli"]
 project_types = ["code_delivery"]
 trigger_kinds = ["mention", "assignment"]
-# Universal form / connector envelope routing:
-# events = ["form.record.created", "print_job.created"]
+# Event routing. Only events a webhook subscription can request are ever
+# delivered; see WEBHOOK_EVENTS in the OpenPR API.
+# events = ["issue.assigned", "comment.created"]
 # form_keys = ["order", "print_job"]
-# connector_kinds = ["rest", "webhook", "print", "device"]
 
 [agents.cli]
 executor = "codex" # codex | claude-code | opencode

@@ -19,7 +19,7 @@ OpenPR ──webhook POST──▶ openpr-webhook ──dispatch──▶ OpenCl
 
 1. OpenPR fires a webhook on events (issue created, proposal submitted, comment added, etc.)
 2. openpr-webhook verifies the HMAC-SHA256 signature
-3. Processes bot tasks where `bot_context.is_bot_task=true`, worker AI task envelopes, and OpenPR connector envelopes such as universal-form print/webhook/device events
+3. Processes bot tasks where `bot_context.is_bot_task=true` and worker AI task envelopes
 4. Dispatches formatted notifications to configured agents
 
 ## Features
@@ -126,16 +126,15 @@ url = "https://hooks.slack.com/services/xxx"
 secret = "optional-shared-secret" # if set, outbound header x-webhook-signature is added
 method = "POST"
 
-# Optional: route this agent only for a scenario-aware OpenPR bot task
-# or a connector envelope. Empty lists mean "no constraint".
+# Optional: route this agent only for a scenario-aware OpenPR bot task.
+# Empty lists mean "no constraint".
 [agents.route]
 bot_names = ["Document review connection"]
 bot_agent_types = ["webhook"]
 project_types = ["contract_review"]
 trigger_kinds = ["mention"]
-events = ["form.record.created", "print_job.created"]
+events = ["issue.assigned", "comment.created"]
 form_keys = ["order", "print_job"]
-connector_kinds = ["rest", "print", "device"]
 
 # Agent: Custom command
 [[agents]]
