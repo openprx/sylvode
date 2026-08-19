@@ -48,10 +48,7 @@ pub fn verify_envelope_signature(envelope: &Envelope, secret: &str) -> bool {
 }
 
 fn now_ts() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 fn build_envelope(msg_type: &str, agent_id: &str, payload: Value, hmac_secret: Option<&str>) -> Envelope {
