@@ -3,6 +3,9 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+/// Identifies this dispatcher in `OpenPR`'s bot operation ledger.
+const MCP_SURFACE_HEADER: &str = "X-OpenPR-MCP-Surface";
+
 /// Monotonically increasing JSON-RPC request ID counter.
 static JSONRPC_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -66,12 +69,68 @@ async fn send_jsonrpc_request(
 
     let resp = req.send().await.map_err(|e| format!("callback request failed: {e}"))?;
 
-    if resp.status().is_success() {
-        Ok(())
-    } else {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        Err(format!("callback failed: {status} {body}"))
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("callback failed: {status} {body}"));
+    }
+    interpret_jsonrpc_body(&body)
+}
+
+/// Reads the JSON-RPC body a `tools/call` answered with.
+///
+/// An MCP server reports both protocol errors (`error`) and tool errors (`result.isError`)
+/// inside a 200 response, so the transport status says nothing about whether the write landed.
+fn interpret_jsonrpc_body(body: &str) -> Result<(), String> {
+    let Some(value) = parse_jsonrpc_response(body) else {
+        // A transport that answered 200 with something other than a JSON-RPC envelope is not
+        // evidence of failure, and treating it as one would fail every non-MCP receiver.
+        return Ok(());
+    };
+    if let Some(error) = value.get("error") {
+        return Err(format!("callback rejected: {error}"));
+    }
+    let result = value.get("result");
+    if result
+        .and_then(|result| result.get("isError"))
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        let detail = result
+            .and_then(|result| result.get("content"))
+            .map_or_else(|| "no detail".to_string(), ToString::to_string);
+        return Err(format!("callback tool reported an error: {detail}"));
+    }
+    Ok(())
+}
+
+/// Accepts both a plain JSON body and the `data:` frames of an SSE transport.
+fn parse_jsonrpc_response(body: &str) -> Option<serde_json::Value> {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
+        return Some(value);
+    }
+    body.lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .filter_map(|frame| serde_json::from_str::<serde_json::Value>(frame.trim()).ok())
+        .next_back()
+}
+
+/// Reads the `{code, message, data}` envelope the `OpenPR` REST API answers with.
+///
+/// A receiver that is not the `OpenPR` API answers something else, which is left alone.
+fn interpret_api_body(body: &str) -> Result<(), String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Ok(());
+    };
+    match value.get("code").and_then(serde_json::Value::as_i64) {
+        Some(0) | None => Ok(()),
+        Some(code) => {
+            let message = value
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("no message");
+            Err(format!("callback rejected with code {code}: {message}"))
+        }
     }
 }
 
@@ -173,7 +232,9 @@ async fn send_api_callback(
     http_timeout_secs: u64,
 ) -> Result<(), String> {
     let client = build_client(http_timeout_secs)?;
-    let mut req = client.post(url).json(payload);
+    // OpenPR's bot operation ledger groups a request by this header. Without it every write
+    // from here is recorded as an anonymous REST call. The MCP path sets its own headers.
+    let mut req = client.post(url).header(MCP_SURFACE_HEADER, "cli").json(payload);
 
     if let Some(token) = &cfg.callback_token
         && !token.is_empty()
@@ -183,13 +244,12 @@ async fn send_api_callback(
 
     let resp = req.send().await.map_err(|e| format!("callback request failed: {e}"))?;
 
-    if resp.status().is_success() {
-        Ok(())
-    } else {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        Err(format!("callback failed: {status} {body}"))
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("callback failed: {status} {body}"));
     }
+    interpret_api_body(&body)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -250,5 +310,45 @@ mod tests {
         assert_eq!(payload.run_id, "run-1");
         assert_eq!(payload.status, "success");
         assert_eq!(payload.state.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn jsonrpc_tool_error_inside_a_200_is_a_failure() {
+        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"isError":true,"content":[{"type":"text","text":"work item not found"}]}}"#;
+
+        let error = interpret_jsonrpc_body(body).expect_err("a tool error must not read as success");
+        assert!(error.contains("work item not found"), "{error}");
+    }
+
+    #[test]
+    fn jsonrpc_protocol_error_inside_a_200_is_a_failure() {
+        let body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown tool"}}"#;
+
+        let error = interpret_jsonrpc_body(body).expect_err("a protocol error must not read as success");
+        assert!(error.contains("unknown tool"), "{error}");
+    }
+
+    #[test]
+    fn jsonrpc_success_and_non_envelope_bodies_pass() {
+        assert!(interpret_jsonrpc_body(r#"{"jsonrpc":"2.0","id":1,"result":{"content":[]}}"#).is_ok());
+        assert!(interpret_jsonrpc_body("OK").is_ok());
+    }
+
+    #[test]
+    fn jsonrpc_result_is_read_from_an_sse_frame() {
+        let body = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"isError\":true,\"content\":\"denied\"}}\n\n";
+
+        let error = interpret_jsonrpc_body(body).expect_err("an SSE-framed tool error must be read");
+        assert!(error.contains("denied"), "{error}");
+    }
+
+    #[test]
+    fn rest_business_code_inside_a_200_is_a_failure() {
+        let error = interpret_api_body(r#"{"code":403,"message":"forbidden"}"#)
+            .expect_err("a non-zero business code must not read as success");
+        assert!(error.contains("forbidden"), "{error}");
+
+        assert!(interpret_api_body(r#"{"code":0,"message":"success"}"#).is_ok());
+        assert!(interpret_api_body("not json").is_ok());
     }
 }
