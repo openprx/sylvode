@@ -1,12 +1,16 @@
-# OpenPR configuration — annotated example.
+# Legacy OpenPR-named configuration example, retained for Sylvode compatibility.
 #
-# Copy this file to config/openpr.toml, replace every replace_with_* placeholder, and start the
+# New installs should copy config/sylvode.example.toml to config/sylvode.toml. Existing installs
+# may continue using config/openpr.toml; when both default paths exist the service fails closed
+# until --config explicitly selects one.
+#
+# To exercise the legacy path, copy this file to config/openpr.toml, replace every placeholder, and start the
 # services from the directory that holds it, or pass --config <path>.
 #
 #     cp config/openpr.example.toml config/openpr.toml
 #     $EDITOR config/openpr.toml
 #
-# OpenPR reads NO environment variables. This file is the only source of configuration for the
+# Sylvode reads NO application configuration from environment variables. This legacy-named file remains a source of configuration for the
 # API, the worker and the MCP server; each binary reads the sections it needs and ignores the
 # rest. A missing file is a startup error — the services never invent defaults for a database URL
 # or a signing key.
