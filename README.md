@@ -405,19 +405,22 @@ sylvode-webhook signs the outbound JSON body and sends:
 ## Phase B: Tunnel (WSS) MVP
 
 Enable both `[features].tunnel_enabled = true` and `[tunnel].enabled = true` in `config.toml` to
-let `sylvode-webhook` actively connect to a control plane. The tunnel needs `url` (`ws://`
-or `wss://`), `agent_id` and `auth_token`, and its tasks also need `[features].cli_enabled = true`.
+let `sylvode-webhook` actively connect to a control plane. The tunnel needs `url` (`wss://`, or
+`ws://`), `agent_id` and `auth_token`, and its tasks also need `[features].cli_enabled = true`.
+`ws://` sends the bearer token and every task unencrypted, so a `ws://` URL whose host is not
+loopback refuses start-up unless `allow_insecure_transport = true` acknowledges it.
 
 ```toml
 [tunnel]
 enabled = true
-url = "wss://sylvode.example.com/api/v1/agent-tunnel" # ws:// also supported for LAN/dev
+url = "wss://sylvode.example.com/api/v1/agent-tunnel" # ws:// only to loopback, or see below
 agent_id = "vano-qa"                                  # required; there is no default
 auth_token = "opr_xxx"                                # Authorization: Bearer <token>
 reconnect_secs = 3
 heartbeat_secs = 20
-hmac_secret = "shared-hmac-secret"                    # optional; see "Signature behavior"
-require_inbound_sig = false                           # refuse inbound envelopes without sig; needs hmac_secret
+hmac_secret = "a-long-random-shared-secret"           # optional; see "Signature behavior"
+require_inbound_sig = false                           # only changes the error reason; see below
+# allow_insecure_transport = true                     # acknowledge ws:// to a host other than loopback
 ```
 
 Reconnects back off from `reconnect_secs`, doubling up to
@@ -453,9 +456,17 @@ Signature behavior:
   envelope without `sig`), and every inbound envelope must carry a valid `sig`: one that is
   missing or wrong is answered with an `error` envelope (`reason: bad_signature`, or
   `missing_signature` when `require_inbound_sig` is also set) and dropped.
+- With `hmac_secret` set, a validly signed envelope is also refused (and answered with an `error`
+  envelope) when its `ts` is more than 300 seconds from the receiver's clock (`stale_envelope`) or
+  its `id` repeats one accepted on this connection (`duplicate_envelope`, the last 4,096 ids are
+  remembered).
+- Every inbound envelope whose `agent_id` is not this agent's is refused (`wrong_agent`).
 - Without `hmac_secret`, inbound `sig` is not verified and inbound envelopes are not
-  authenticated. `require_inbound_sig = true` needs a non-empty `hmac_secret`: an enabled tunnel
-  with `require_inbound_sig = true` and no `hmac_secret` is refused at start-up.
+  authenticated: anyone who can impersonate the control plane can dispatch tasks. Use `wss://` and
+  set `hmac_secret`. A blank or example `hmac_secret` refuses start-up.
+- `require_inbound_sig` adds nothing to security: with `hmac_secret` every envelope must already
+  carry a valid `sig`, and without it start-up is refused. It only makes a missing `sig` reported
+  as `missing_signature` instead of `bad_signature`.
 
 Safety toggles:
 

@@ -189,6 +189,10 @@ pub struct TunnelConfig {
     pub hmac_secret: Option<String>,
     #[serde(default)]
     pub require_inbound_sig: bool,
+    /// Acknowledges a `ws://` (unencrypted) `url` to a host other than loopback, which sends the
+    /// bearer token and every task in clear text. Without it that is refused.
+    #[serde(default)]
+    pub allow_insecure_transport: bool,
 }
 
 const fn default_max_delivery_age_secs() -> u64 {
@@ -248,6 +252,25 @@ fn is_loopback_listen(listen: &str) -> bool {
     listen
         .rsplit_once(':')
         .is_some_and(|(host, _)| host.eq_ignore_ascii_case("localhost"))
+}
+
+/// Whether `url` is a `ws://` URL whose host is not loopback.
+fn is_remote_plain_ws(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("ws") {
+        return false;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let host = host_port.strip_prefix('[').map_or_else(
+        || host_port.split_once(':').map_or(host_port, |(host, _)| host),
+        |bracketed| bracketed.split_once(']').map_or(bracketed, |(host, _)| host),
+    );
+    let loopback =
+        host.eq_ignore_ascii_case("localhost") || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
+    !loopback
 }
 
 /// Every trigger kind a Sylvode deployment sends, the closed set `route.trigger_kinds` may name.
@@ -418,6 +441,16 @@ impl Config {
         else {
             return Ok(());
         };
+        if let Some(url) = &tunnel.url
+            && !tunnel.allow_insecure_transport
+            && is_remote_plain_ws(url)
+        {
+            return Err(format!(
+                "tunnel.url = \"{url}\" uses unencrypted ws:// to a host other than loopback, which sends the \
+                 bearer token and every task in clear text; use wss://, or set \
+                 tunnel.allow_insecure_transport = true if the network path is trusted"
+            ));
+        }
         let has_secret = tunnel.hmac_secret.as_deref().is_some_and(|s| !s.trim().is_empty());
         if tunnel.require_inbound_sig && !has_secret {
             return Err(
@@ -852,6 +885,34 @@ url = "http://127.0.0.1:9000/hook"
 
         let fine = load_str(&security_config("0.0.0.0:9090", "webhook_secrets = [\"real\"]")).expect("loads");
         assert!(fine.startup_warnings().is_empty(), "{:?}", fine.startup_warnings());
+    }
+
+    /// `ws://` sends the bearer token in clear text, so it is refused for a host other than
+    /// loopback unless acknowledged.
+    #[test]
+    fn refuses_plain_ws_to_a_non_loopback_host_without_acknowledgement() {
+        let with_url =
+            |url: &str, extra: &str| tunnel_config(true, true, extra).replace("wss://example.invalid/tunnel", url);
+        for url in [
+            "ws://control.example.com/tunnel",
+            "ws://10.0.0.5:8080/t",
+            "WS://example.com",
+        ] {
+            let err = load_str(&with_url(url, "")).expect_err("plain ws to a remote host is refused");
+            assert!(err.contains("tunnel.url"), "{url}: {err}");
+            assert!(err.contains("tunnel.allow_insecure_transport"), "{url}: {err}");
+            load_str(&with_url(url, "allow_insecure_transport = true")).expect("acknowledged");
+        }
+        for url in [
+            "ws://127.0.0.1:8080/t",
+            "ws://localhost/t",
+            "ws://[::1]:9/t",
+            "wss://control.example.com/t",
+        ] {
+            load_str(&with_url(url, "")).expect("loopback or TLS is accepted");
+        }
+        load_str(&tunnel_config(true, false, "").replace("wss://example.invalid/tunnel", "ws://example.com"))
+            .expect("a disabled tunnel is not checked");
     }
 
     /// Without `require_inbound_sig`, or with the tunnel off, a missing secret is still accepted.

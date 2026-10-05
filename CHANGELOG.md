@@ -3,6 +3,24 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.33
+
+### Security
+
+- **`ws://` to a host other than loopback refuses start-up** for an enabled tunnel, unless
+  `tunnel.allow_insecure_transport = true` acknowledges that the bearer token and every task
+  travel unencrypted. `wss://` and `ws://` to `127.0.0.0/8`, `::1` or `localhost` are unchanged.
+- **Signed tunnel envelopes are checked for freshness and replay.** With `hmac_secret` set, an
+  envelope whose `ts` is more than 300 seconds from now is refused as `stale_envelope`, and one
+  whose `id` repeats an envelope accepted on the same connection as `duplicate_envelope`. Before,
+  a captured signed `task.dispatch` could be replayed to run the task again.
+- An envelope addressed to another `agent_id` is refused as `wrong_agent`.
+
+### Documentation
+
+- `require_inbound_sig` is documented as what it is: with `hmac_secret` every envelope must carry
+  a valid `sig` anyway, so the setting only changes the reported reason for a missing one.
+
 ## 0.3.32
 
 ### Fixed
