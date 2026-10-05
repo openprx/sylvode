@@ -193,3 +193,48 @@ async fn a_worker_task_payload_cannot_choose_the_agent_type() {
     assert_eq!(answer["status"], "no_agent", "{answer}");
     assert_eq!(answer["route"]["agent_type"], serde_json::Value::Null, "{answer}");
 }
+
+/// Safe mode, through either environment variable, really turns the `cli` path off in the
+/// running service; without it the same delivery starts the executor.
+#[tokio::test(flavor = "multi_thread")]
+async fn safe_mode_variables_turn_the_cli_path_off() {
+    for (env, disabled, notice) in [
+        (Some("SYLVODE_WEBHOOK_SAFE_MODE"), true, false),
+        (Some("OPENPR_WEBHOOK_SAFE_MODE"), true, true),
+        (None, false, false),
+    ] {
+        let bin = TempDir::new("bin");
+        let marker = bin.file("ran");
+        write_script(bin.path(), "codex", &format!("echo ran > '{}'", marker.display()));
+        let api = StubApi::start().await;
+        let path = path_with(bin.path());
+        let mut vars = vec![("PATH", path.as_str())];
+        if let Some(name) = env {
+            vars.push((name, "1"));
+        }
+        let mut server = Server::start(CANONICAL, &cli_config(&api, 30), &vars).expect("server starts");
+
+        let (status, answer) = post_signed(&server.url("/webhook"), &bot_task("Fixer", "safe").to_string()).await;
+        assert_eq!(status, 200, "{answer}");
+        let result = answer["result"].as_str().unwrap_or_default().to_owned();
+        if disabled {
+            assert_eq!(result, "cli disabled by feature flag or safe mode", "{env:?}");
+            assert!(
+                wait_lines(&marker, 1, Duration::from_millis(500)).is_empty(),
+                "{env:?}: executor ran"
+            );
+        } else {
+            assert!(result.starts_with("cli agent spawned"), "{result}");
+            assert_eq!(wait_lines(&marker, 1, Duration::from_secs(10)), ["ran"]);
+        }
+        server.terminate();
+        let (_, stderr) = server.wait_exit(Duration::from_secs(20)).expect("server exits");
+        assert_eq!(
+            stderr
+                .iter()
+                .any(|line| line.contains("`OPENPR_WEBHOOK_SAFE_MODE` is deprecated")),
+            notice,
+            "{env:?}: {stderr:?}"
+        );
+    }
+}
