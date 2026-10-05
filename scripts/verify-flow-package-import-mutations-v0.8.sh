@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CACHE_ROOT=/opt/worker/.cache/openpr-v08-package-import-mutations
+CACHE_ROOT="${SYLVODE_SCRATCH}/flow-v08-package-import-mutations"
 WORKTREE="$CACHE_ROOT/worktree"
-TARGET_DIR=/opt/worker/.cache/openpr-v08-shared-target
+TARGET_DIR="${SYLVODE_SCRATCH}/flow-v08-shared-target"
 LOG_DIR="$CACHE_ROOT/logs"
 IMPORT_REL=apps/api/src/flow/package_import.rs
 EXPORT_REL=apps/api/src/flow/export.rs

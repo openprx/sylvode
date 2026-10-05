@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 gate-result.json verifier.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md ("verify" role)
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md ("verify" role)
 # -- "不运行产品动作，只校验 JSON schema、required keys、命令 exit、evidence
 # path/checksum 与 source HEAD；成功 0，漂移 1."
 #
@@ -27,8 +27,8 @@ set -euo pipefail
 # malformed.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 REPO_ROOT="$ROOT_DIR"
 SCHEMA_PATH="$ROOT_DIR/docs/schemas/sylvode-flow-gate-v0.4.schema.json"
 RECEIPT_STATE_FILTER="$ROOT_DIR/scripts/lib/flow_gate_v0_4_receipt_state.jq"
@@ -49,14 +49,14 @@ Arguments:
 
 Options:
   --evidence-root DIR   Root the artifact relative paths resolve against.
-                        Default: /opt/working/sylvode-flow/evidence/v0.4
+                        Default: .flow-gate/evidence/v0.4
   --repo-root DIR       Repository whose HEAD is compared against
                         source.head, and whose migrations/ directory is
                         scanned for legacy_pages_drop_requires_separate_adr.
                         Default: this checkout.
   --contracts-root DIR  Root containing gates/v0.4-gate.yaml. Its artifacts,
                         required_commands and hard_gates key sets must exactly
-                        match the schema. Default: /opt/working/sylvode-flow
+                        match the schema. Default: $SYLVODE_CONTRACTS_ROOT
   --schema PATH         Path to the v0.4 gate schema (structural
                         required-key check only -- this script does not
                         implement a general JSON Schema validator).
@@ -85,6 +85,8 @@ while [[ $# -gt 0 ]]; do
       GATE_RESULT_PATH="$1"; shift ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
+[[ -n $GATE_YAML ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.4-gate.yaml"
 
 if [[ -z "$GATE_RESULT_PATH" ]]; then
   echo "FAIL: GATE_RESULT_JSON argument is required" >&2
@@ -114,7 +116,7 @@ if [[ ! -f "$SCHEMA_PATH" ]]; then
   echo "FAIL: schema file not found: $SCHEMA_PATH" >&2
   exit 2
 fi
-GATE_YAML="$CONTRACTS_ROOT/gates/v0.4-gate.yaml"
+GATE_YAML=""
 if [[ ! -f "$GATE_YAML" ]]; then
   echo "FAIL: v0.4 gate contract not found: $GATE_YAML" >&2
   exit 2

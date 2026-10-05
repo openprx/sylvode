@@ -3,11 +3,11 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 collab transport-auth verifier.
 #
-# Contract: /opt/working/sylvode-flow/decisions/ADR-0007-collab-transport-auth.md
+# Contract: $SYLVODE_CONTRACTS_ROOT/decisions/ADR-0007-collab-transport-auth.md
 # ("签发契约", "Upgrade 与一次性消费", "Cookie `Secure` 补齐", "Gate"),
-# /opt/working/sylvode-flow/security/threat-model.md rows "长期 token 泄漏",
+# $SYLVODE_CONTRACTS_ROOT/security/threat-model.md rows "长期 token 泄漏",
 # "ticket 重放/串用", "WebSocket CSRF/cross-origin", "伪造 actor/origin", and
-# /opt/working/sylvode-flow/gates/gate-commands.md:232-247 (why
+# $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md:232-247 (why
 # `unauthorized_update_rejected` moved from v0.3 to v0.4: only v0.4's
 # ticket-bound session has an assertable authorization semantic at all).
 #
@@ -36,7 +36,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 ADR_PATH=""
 DATABASE_URL="${OPENPR_TEST_DATABASE_URL:-}"
 JSON_MODE=0
@@ -58,7 +58,7 @@ Options:
   --database-url URL     Postgres DSN. Default: $OPENPR_TEST_DATABASE_URL
   --repo-root DIR        Repository containing apps/api. Default: this checkout.
   --evidence-root DIR    Where transport-auth-result.json is written.
-                         Default: /opt/working/sylvode-flow/evidence/v0.4
+                         Default: .flow-gate/evidence/v0.4
   --json                 Required for CLI-contract compatibility.
   -h, --help             Show this help and exit 0.
 

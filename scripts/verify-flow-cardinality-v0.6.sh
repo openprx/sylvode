@@ -7,8 +7,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.6"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.6"
 ADR_PATH=""
 SINCE_RELEASE=""
 JSON_MODE=0
@@ -22,8 +22,8 @@ Usage: scripts/verify-flow-cardinality-v0.6.sh --adr PATH --since-release 0.5 --
 Options:
   --adr PATH                    ADR-0013 path (absolute, cwd-relative, or contracts-root-relative).
   --since-release 0.5          Required exact predecessor; no v0.5 extrapolation is accepted.
-  --contracts-root DIR         Default: /opt/working/sylvode-flow
-  --evidence-root DIR          Default: <contracts-root>/evidence/v0.6
+  --contracts-root DIR         Default: $SYLVODE_CONTRACTS_ROOT
+  --evidence-root DIR          Default: .flow-gate/evidence/v0.6
   --repo-root DIR              Default: this checkout
   --json                       Required; emit JSON and write cardinality-result.json
   --test-drop-declaration NAME Test-only falsification hook for one v0.6 wire command
@@ -56,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 [[ -n "$ADR_PATH" ]] || { echo "FAIL: --adr is required" >&2; exit 2; }
 [[ "$SINCE_RELEASE" == "0.5" ]] || { echo "FAIL: --since-release must be exactly 0.5" >&2; exit 2; }

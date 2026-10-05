@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORT_DIR="/opt/worker/report/openpr/docs"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
 READINESS_JSON_PATH="$REPORT_DIR/openpr-universal-form-readiness-2026-05-31.json"
 DEVELOPMENT_STATUS_JSON_PATH="$REPORT_DIR/openpr-universal-form-development-status-2026-05-31.json"
 SIGNOFF_STATUS_JSON_PATH="$REPORT_DIR/openpr-universal-form-signoff-status-2026-05-31.json"

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 CLI JSON-envelope and exit-code contract verifier.
 #
-# Contract: /opt/working/sylvode-flow/contracts/cli-surface-v1.md ("命名与格式":
+# Contract: $SYLVODE_CONTRACTS_ROOT/contracts/cli-surface-v1.md ("命名与格式":
 # the `sylvode.cli.v1` success/failure envelope, "JSON 成功/失败均只写 stdout，
 # 诊断日志只写 stderr", "全局 --format json|table 只决定 CLI envelope/显示") and
 # contracts/error-mapping-v1.md "CLI 退出码全集" (the 0/2/3/4/5/6/7/8/9/10
@@ -54,7 +54,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib/flow_contract_path.sh
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 CONTRACT_PATH=""
 RELEASE="0.4"
@@ -78,7 +78,7 @@ Options:
   --database-url URL     Postgres DSN this script may CREATE DATABASE on.
                          Default: $OPENPR_TEST_DATABASE_URL
   --repo-root DIR        Default: this checkout.
-  --contracts-root DIR   Default: /opt/working/sylvode-flow
+  --contracts-root DIR   Default: $SYLVODE_CONTRACTS_ROOT
   --evidence-root DIR    Required. Evidence output directory.
   --json                 Required for CLI-contract compatibility.
   -h, --help             Show this help and exit 0.
@@ -102,6 +102,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 [[ -n "$CONTRACT_PATH" ]] || CONTRACT_PATH="$CONTRACTS_ROOT/contracts/error-mapping-v1.md"
 

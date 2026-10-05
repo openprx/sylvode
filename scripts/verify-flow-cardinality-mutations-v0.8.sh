@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CACHE_ROOT=/opt/worker/.cache/openpr-v08-cardinality-mutations
+CACHE_ROOT="${SYLVODE_SCRATCH}/flow-v08-cardinality-mutations"
 WORKTREE="$CACHE_ROOT/worktree"
-TARGET_DIR=/opt/worker/.cache/openpr-v08-shared-target
+TARGET_DIR="${SYLVODE_SCRATCH}/flow-v08-shared-target"
 LOG_DIR="$CACHE_ROOT/logs"
 TEST_NAME=flow::command::cardinality_gate_tests::v0_8_hardening_registry_declares_every_new_command_cardinality
 

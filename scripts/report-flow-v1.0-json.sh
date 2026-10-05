@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CONTRACTS=/opt/working/sylvode-flow
+CONTRACTS="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE="$ROOT/.flow-gate/evidence/v1.0"
-GATE="$CONTRACTS/gates/v1.0-gate.yaml"
-PREDECESSOR=/opt/worker/evidence/v0.9/gate-result.json
+GATE=""
+PREDECESSOR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.9/gate-result.json
 MANUAL_FROM=
-ORCHESTRATION_CONFIG=${OPENPR_FLOW_V1_ORCHESTRATION_CONFIG:-/opt/worker/.cache/v10-flow-gate.toml}
+ORCHESTRATION_CONFIG=${OPENPR_FLOW_V1_ORCHESTRATION_CONFIG:-"${SYLVODE_SCRATCH}/v10-flow-gate.toml"}
 while (($#)); do
  case "$1" in
   --repo-root) ROOT=${2:?}; shift 2;; --contracts-root) CONTRACTS=${2:?}; shift 2;;
@@ -17,6 +19,8 @@ while (($#)); do
   *) echo "FAIL: unsupported argument: $1" >&2; exit 2;;
  esac
 done
+[[ -n $CONTRACTS && -d $CONTRACTS ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
+[[ -n $GATE ]] || GATE="$CONTRACTS/gates/v1.0-gate.yaml"
 [[ -n $MANUAL_FROM ]] || MANUAL_FROM="$EVIDENCE/gate-result.json"
 mapfile -t ORCHESTRATION_DATABASE_URLS < <(python3 - "$ORCHESTRATION_CONFIG" <<'PY'
 import pathlib

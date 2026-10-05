@@ -9,8 +9,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 DATABASE_URL="${OPENPR_TEST_DATABASE_URL:-}"
 JSON_MODE=0
 
@@ -27,8 +27,8 @@ Options:
   --database-url URL    PostgreSQL DSN on which a scratch database may be created.
                         Default: $OPENPR_TEST_DATABASE_URL
   --repo-root DIR       Default: this checkout.
-  --contracts-root DIR  Default: /opt/working/sylvode-flow
-  --evidence-root DIR   Default: /opt/working/sylvode-flow/evidence/v0.4
+  --contracts-root DIR  Default: $SYLVODE_CONTRACTS_ROOT
+  --evidence-root DIR   Default: .flow-gate/evidence/v0.4
   --json                Required.
 
 Exit codes: 0 both gates passed, 1 observed failure/environment unavailable,
@@ -48,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 : "$CONTRACTS_ROOT"
 
 [[ $JSON_MODE -eq 1 ]] || { echo "FAIL: --json is required" >&2; exit 2; }
@@ -349,7 +350,7 @@ VITE_REACHABLE=false
 UI_PROBE_RAN=false
 if [[ -n "$PROJECT_ID" && "$PROJECT_ID" != null && -n "$OBJECT_ID" && "$OBJECT_ID" != null ]]; then
   echo "=== starting live Vite frontend ===" >&2
-  PATH="/home/ck/.bun/bin:$PATH" VITE_API_BASE_URL="" bun run --cwd "$REPO_ROOT/frontend" dev -- --host 127.0.0.1 --port "$VITE_PORT" >"$TMP_DIR/vite.log" 2>&1 & VITE_PID=$!
+  PATH="$HOME/.bun/bin:$PATH" VITE_API_BASE_URL="" bun run --cwd "$REPO_ROOT/frontend" dev -- --host 127.0.0.1 --port "$VITE_PORT" >"$TMP_DIR/vite.log" 2>&1 & VITE_PID=$!
   for _ in $(seq 1 120); do curl -fsS "http://127.0.0.1:$VITE_PORT/" >/dev/null 2>&1 && break; kill -0 "$VITE_PID" 2>/dev/null || break; sleep 0.5; done
   if curl -fsS "http://127.0.0.1:$VITE_PORT/" >/dev/null 2>&1; then
     VITE_REACHABLE=true

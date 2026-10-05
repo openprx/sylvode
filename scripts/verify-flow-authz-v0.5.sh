@@ -13,7 +13,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
 
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 ADR_PATH=""
 LIMITS_PATH=""
 EVIDENCE_ROOT=""
@@ -29,8 +29,8 @@ Verifies all ten v0.5 authorization hard gates and writes authz-result.json.
 Options:
   --adr PATH              ADR-0012 path (required).
   --limits PATH           limits-v1.md path (required).
-  --contracts-root DIR    Contract checkout (default: /opt/working/sylvode-flow).
-  --evidence-root DIR     Output directory (default: /tmp/openpr-flow-evidence/v0.5).
+  --contracts-root DIR    Contract checkout (default: $SYLVODE_CONTRACTS_ROOT).
+  --evidence-root DIR     Output directory (default: .flow-gate/evidence/v0.5).
   --repo-root DIR         Source checkout (default: this checkout).
   --database-url URL      PostgreSQL test authority (default: fixed Flow test DSN).
   --json                  Required; emit the artifact on stdout.
@@ -55,6 +55,12 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
+# The v0.5 contract-gap register (G5: root Page archive tier) lives outside this repository. Name it
+# explicitly, or say "none" when no register applies; an unset value is not read as "no conflict".
+CONTRACT_GAPS_PATH="${SYLVODE_FLOW_V05_CONTRACT_GAPS:-}"
+[[ $CONTRACT_GAPS_PATH == none || -f $CONTRACT_GAPS_PATH ]] || { echo "FAIL: SYLVODE_FLOW_V05_CONTRACT_GAPS must name the v0.5 contract-gap register or be \"none\" (got: ${CONTRACT_GAPS_PATH:-unset})" >&2; exit 2; }
+export CONTRACT_GAPS_PATH
 
 if [[ -z "$ADR_PATH" || -z "$LIMITS_PATH" || $JSON_MODE -ne 1 ]]; then
   echo "FAIL: --adr, --limits, and --json are required" >&2
@@ -74,7 +80,7 @@ git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
 }
 
 if [[ -z "$EVIDENCE_ROOT" ]]; then
-  EVIDENCE_ROOT="${TMPDIR:-/tmp}/openpr-flow-evidence/v0.5"
+  EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.5"
 fi
 CONTRACTS_REAL="$(realpath -m "$CONTRACTS_ROOT")"
 EVIDENCE_REAL="$(realpath -m "$EVIDENCE_ROOT")"
@@ -460,6 +466,7 @@ STATIC_DYNAMIC_JSON="$(python3 - \
   "$MUTATION_DEPTH_BUDGET_LOG" "$MUTATION_DEPTH_BUDGET_EXIT" "$MUTATION_DEPTH_BUDGET_MS" "$DEPTH_BUDGET_TEST" \
   "$MUTATION_NUMERIC_BUDGET_LOG" "$MUTATION_NUMERIC_BUDGET_EXIT" "$MUTATION_NUMERIC_BUDGET_MS" <<'PY'
 import json
+import os
 import pathlib
 import re
 import sys
@@ -1022,8 +1029,9 @@ add(gate, "v0_4_member_baseline_fixture_reused", baseline_passed,
      "restore_result": (member_baseline.get("writes") or {}).get("restore")},
     [baseline_result_s, baseline_log_s, commands_s],
     baseline_reason)
-gap_path = pathlib.Path("/opt/worker/task/openpr/contract-gaps-v05-2026-09-09.md")
-gap_text = read(gap_path) if gap_path.is_file() else ""
+gap_setting = os.environ.get("CONTRACT_GAPS_PATH", "")
+gap_path = pathlib.Path(gap_setting)
+gap_text = "" if gap_setting == "none" else read(gap_path)
 g5 = "G5" in gap_text and "root Page" in gap_text and "v0.4" in gap_text and "v0.5" in gap_text
 if g5:
     add_not_covered(gate, "root_page_policy_is_contract_consistent",

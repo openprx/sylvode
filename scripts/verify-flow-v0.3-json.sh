@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Sylvode Flow v0.3 gate verifier.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md ("verify" role) +
-# /opt/working/sylvode-flow/decisions/ADR-0014-isolated-apply-host.md section 9.
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md ("verify" role) +
+# $SYLVODE_CONTRACTS_ROOT/decisions/ADR-0014-isolated-apply-host.md section 9.
 #
 # "verify" never runs product actions. It only checks: JSON Schema shape,
 # artifact path/checksum, source HEAD, and the numeric relationships that
@@ -21,17 +21,17 @@ SCHEMA_DIR="$ROOT_DIR/docs/schemas"
 # Non-evidence contract docs (decisions/, contracts/, security/, testing/,
 # gates/) live in the read-only spec repo, never in this repository. This root is
 # not ambiguous: those directories do not exist under $ROOT_DIR.
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 
 # Evidence root is ambiguous between two frozen docs (see report). We resolve
 # it explicitly instead of guessing: gate-commands.md's relative
 # "evidence/v0.3/..." paths are joined to this root *after* stripping the
 # leading "evidence/v0.3/" segment, so the default here reproduces exactly
 # what versions/v0.3-foundation.md:116 pins ("证据固定写入
-# /opt/working/sylvode-flow/evidence/v0.3/"). Pass --evidence-root to point
+# .flow-gate/evidence/v0.3/"). Pass --evidence-root to point
 # at a different tree (e.g. ROOT_DIR/evidence/v0.3, the other legal reading).
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.3"
-GATE_YAML="/opt/working/sylvode-flow/gates/v0.3-gate.yaml"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.3"
+GATE_YAML=""
 REPO_FOR_HEAD="$ROOT_DIR"
 
 # Per-machine ITIMER_PROF / wall-watchdog overshoot calibration (ADR-0014
@@ -95,13 +95,13 @@ Options:
   --evidence-root DIR    Root that "evidence/v0.3/<name>" artifact paths in
                           gate-result.json resolve to after the literal
                           "evidence/v0.3/" prefix is stripped.
-                          Default: /opt/working/sylvode-flow/evidence/v0.3
+                          Default: .flow-gate/evidence/v0.3
                           (see the "evidence root ambiguity" note above).
   --contracts-root DIR   Root for decisions/, contracts/, security/, testing/
-                          artifact paths. Default: /opt/working/sylvode-flow
+                          artifact paths. Default: $SYLVODE_CONTRACTS_ROOT
   --gate-yaml PATH        Path to v0.3-gate.yaml (source of the budgets: block
                           and required_commands:). Default:
-                          /opt/working/sylvode-flow/gates/v0.3-gate.yaml
+                          $SYLVODE_CONTRACTS_ROOT/gates/v0.3-gate.yaml
   --schema-dir DIR        Directory holding the sylvode-flow-*.schema.json
                           files. Default: <repo>/docs/schemas
   --repo-root DIR         Repository whose HEAD is compared against
@@ -189,6 +189,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
+[[ -n $GATE_YAML ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.3-gate.yaml"
 
 if [[ -z "$JSON_PATH" ]]; then
   echo "Missing required JSON_PATH argument." >&2

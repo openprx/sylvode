@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 legacy `pages` table inventory collector.
 #
-# Contract: /opt/working/sylvode-flow/contracts/legacy-pages-import-v1.md
+# Contract: $SYLVODE_CONTRACTS_ROOT/contracts/legacy-pages-import-v1.md
 # "无条件 inventory evidence" + ADR-0003 "进入 v0.4 前的门禁" item 1.
 #
 # Collects row_count / workspace_distribution / max_body_md_bytes for the
@@ -32,7 +32,7 @@ set -euo pipefail
 # evidence written), 2 = usage/tool error.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 REPO_ROOT="$ROOT_DIR"
 ENVIRONMENTS_ARG="development,test,target_deployment"
 JSON_MODE=0
@@ -64,7 +64,7 @@ Options:
                           development,test,target_deployment (order
                           does not matter). Default: all three.
   --evidence-root DIR     Where legacy-pages-inventory.json is written.
-                          Default: /opt/working/sylvode-flow/evidence/v0.4
+                          Default: .flow-gate/evidence/v0.4
   --repo-root DIR         Repository whose HEAD becomes source_head.
                           Default: this checkout.
   --executor-name NAME    Recorded as executor.name. Default:

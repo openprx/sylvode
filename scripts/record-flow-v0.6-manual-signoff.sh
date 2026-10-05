@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sole supported writer for the v0.6 field_secrecy_denial manual row.
 
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.6"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.6"
 GATE_RESULT=""
 KEY=""
 STATUS_VALUE=""
@@ -19,7 +19,7 @@ Usage: scripts/record-flow-v0.6-manual-signoff.sh --key field_secrecy_denial --s
 Statuses: pending, passed, failed, needs_rework
 Options:
   --gate-result PATH   Default: <evidence-root>/gate-result.json
-  --evidence-root DIR  Default: /opt/working/sylvode-flow/evidence/v0.6
+  --evidence-root DIR  Default: .flow-gate/evidence/v0.6
   --force              Permit replacing a passed/failed signed row
   --dry-run            Validate and print without writing
   --list-keys          Print field_secrecy_denial

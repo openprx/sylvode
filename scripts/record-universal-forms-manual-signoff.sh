@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_RUNBOOK_PATH="/opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md"
-DEFAULT_EVIDENCE_PATH="/opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md"
+DEFAULT_RUNBOOK_PATH="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md"
+DEFAULT_EVIDENCE_PATH="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md"
 RUNBOOK_PATH="$DEFAULT_RUNBOOK_PATH"
 EVIDENCE_PATH="$DEFAULT_EVIDENCE_PATH"
 ITEM_KEY=""
@@ -404,7 +404,7 @@ if [[ "$RUNBOOK_PATH" == "$DEFAULT_RUNBOOK_PATH" && "$EVIDENCE_PATH" == "$DEFAUL
   "$ROOT_DIR/scripts/verify-universal-forms-ui-review-gallery.sh" >/dev/null
   "$ROOT_DIR/scripts/smoke-universal-forms-ui-review-gallery-render.sh" >/dev/null
   "$ROOT_DIR/scripts/report-universal-forms-signoff-status.sh" \
-    --output "/opt/worker/report/openpr/docs/openpr-universal-form-signoff-status-2026-05-31.md" >/dev/null
+    --output "${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-signoff-status-2026-05-31.md" >/dev/null
   "$ROOT_DIR/scripts/report-universal-forms-signoff-status-json.sh" >/dev/null
   "$ROOT_DIR/scripts/verify-universal-forms-signoff-status-json.sh" >/dev/null
   "$ROOT_DIR/scripts/smoke-universal-forms-signoff-status-json-contract.sh" >/dev/null

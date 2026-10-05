@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 # Sylvode Flow v0.4 authz-baseline verifier.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md, "Authz-
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md, "Authz-
 # baseline verifier" paragraph, and ADR-0012 §2-3.
 #
 # This script covers `flow_parent_authority_in_postgres` and the live
@@ -47,8 +49,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib/flow_contract_path.sh
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 ADR_PATH=""
 DATABASE_URL="${OPENPR_TEST_DATABASE_URL:-}"
 JSON_MODE=0
@@ -68,12 +70,12 @@ Options:
                           are resolved against the current directory
                           first, then against --contracts-root.
   --contracts-root DIR     Root containing decisions/. Default:
-                          /opt/working/sylvode-flow
+                          $SYLVODE_CONTRACTS_ROOT
   --database-url URL       Postgres DSN. Default: $OPENPR_TEST_DATABASE_URL
   --repo-root DIR         Repository containing apps/api. Default: this
                           checkout.
   --evidence-root DIR     Where authz-baseline-result.json is written.
-                          Default: /opt/working/sylvode-flow/evidence/v0.4
+                          Default: .flow-gate/evidence/v0.4
   --json                  Required for CLI-contract compatibility.
   --static-check-3-only   Run only the committed-source v0.4 registry check;
                           writes no evidence artifact and does not use a DB.
@@ -101,6 +103,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$ADR_PATH" ]]; then
   echo "FAIL: --adr is required" >&2
@@ -590,7 +593,7 @@ echo "=== prerequisite: cargo build -p collab-core --bin collab-isolated-apply-w
 API_BIN="$CARGO_OUTPUT_DIR/debug/api"
 
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-TMP_DIR="$(mktemp -d "/opt/worker/.cache/openpr-authz-baseline-verify.XXXXXX")"
+TMP_DIR="$(mktemp -d "${SYLVODE_SCRATCH}/flow-authz-baseline-verify.XXXXXX")"
 API_PORT=$((22000 + RANDOM % 20000))
 API_LOG="$TMP_DIR/api.log"
 API_PID=""

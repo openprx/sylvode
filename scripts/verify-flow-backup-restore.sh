@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CONTRACTS_ROOT=/opt/working/sylvode-flow
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=
 JSON_MODE=0
 while (($#)); do
@@ -14,12 +14,14 @@ while (($#)); do
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
+[[ -n $GATE_YAML ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.8-gate.yaml"
 [[ $JSON_MODE -eq 1 ]] || { echo 'FAIL: --json is required' >&2; exit 2; }
 for name in OPENPR_TEST_DATABASE_URL OPENPR_BACKUP_SOURCE_DATABASE_URL OPENPR_BACKUP_RESTORE_ADMIN_URL; do
   [[ -n ${!name:-} ]] || { echo "FAIL: $name is required" >&2; exit 2; }
 done
 [[ -n $EVIDENCE_ROOT ]] || EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v0.8"
-GATE_YAML="$CONTRACTS_ROOT/gates/v0.8-gate.yaml"
+GATE_YAML=""
 [[ -s $GATE_YAML ]] || { echo "FAIL: authoritative v0.8 gate missing: $GATE_YAML" >&2; exit 2; }
 mkdir -p "$EVIDENCE_ROOT/logs"
 DRILL="$EVIDENCE_ROOT/backup-restore-drill.json"

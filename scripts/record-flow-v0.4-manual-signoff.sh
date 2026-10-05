@@ -18,7 +18,7 @@ set -euo pipefail
 # reviewer/evidence, overwrite of an already-signed row without --force),
 # 2 = usage/tool/evidence malformed.
 
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 GATE_RESULT_PATH=""
 KEY=""
 STATUS_VALUE=""
@@ -77,7 +77,7 @@ Options:
   --gate-result PATH    Path to gate-result.json to edit.
                         Default: <evidence-root>/gate-result.json
   --evidence-root DIR   Used only to compute the default --gate-result path.
-                        Default: /opt/working/sylvode-flow/evidence/v0.4
+                        Default: .flow-gate/evidence/v0.4
   --force               Allow overwriting a row that is already "passed" or
                         "failed" (normally rejected -- a signed record is
                         not silently replaced).

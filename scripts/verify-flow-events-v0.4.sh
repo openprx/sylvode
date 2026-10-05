@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 events/dispatch verifier.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md, the v0.4
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md, the v0.4
 # section's "Events/dispatch verifier" paragraphs (the long
 # `business_event_dispatch_same_transaction` / `dispatch_expansion_...` /
 # `no_subscribers_...` / `dispatcher_liveness_...` /
@@ -116,8 +116,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # unresolvable -> FAIL naming both attempted paths).
 # shellcheck source=scripts/lib/flow_contract_path.sh
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 REPO_ROOT="$ROOT_DIR"
 CONTRACT_PATH=""
 JSON_MODE=0
@@ -141,9 +141,9 @@ Options:
                           current directory first, then against
                           --contracts-root.
   --contracts-root DIR     Root containing contracts/. Default:
-                          /opt/working/sylvode-flow
+                          $SYLVODE_CONTRACTS_ROOT
   --evidence-root DIR     Where flow-events-result.json is written.
-                          Default: /opt/working/sylvode-flow/evidence/v0.4
+                          Default: .flow-gate/evidence/v0.4
   --repo-root DIR         Repository containing apps/api and the cargo
                           workspace. Default: this checkout.
   --skip-cargo-test        Skip the dispatcher database test run (fast
@@ -173,6 +173,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ $JSON_MODE -ne 1 ]]; then
   echo "FAIL: --json is required" >&2

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 ADR_PATH=""
 SINCE_RELEASE=""
@@ -22,6 +22,7 @@ while (($#)); do
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 [[ "$SINCE_RELEASE" == "0.6" && "$JSON_MODE" == 1 ]] || {
   echo 'FAIL: require --since-release 0.6 --json' >&2
@@ -32,7 +33,7 @@ done
   exit 2
 }
 [[ -n "$ADR_PATH" ]] || ADR_PATH="$CONTRACTS_ROOT/decisions/ADR-0013-multi-document-atomicity.md"
-[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$CONTRACTS_ROOT/evidence/v0.7"
+[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.7"
 [[ -f "$ADR_PATH" && -d "$REPO_ROOT/.git" ]] || {
   echo 'FAIL: repository or ADR missing' >&2
   exit 2

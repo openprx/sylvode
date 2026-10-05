@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.3 report generator.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md ("report" role,
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md ("report" role,
 # generic command bundle, and the v0.3 section's candidate runner sequence).
 #
 # "report" runs only read-only checks and product-provided runners; it never
@@ -20,9 +20,9 @@ set -euo pipefail
 # written only if it would be schema-valid), 2 = usage/tool/evidence malformed.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.3"
-GATE_YAML="/opt/working/sylvode-flow/gates/v0.3-gate.yaml"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.3"
+GATE_YAML=""
 REPO_ROOT="$ROOT_DIR"
 
 usage() {
@@ -49,13 +49,13 @@ Options:
                           read from (paths already contain the "evidence/v0.3/"
                           prefix; see verify-flow-v0.3-json.sh --help for the
                           same root-resolution convention).
-                          Default: /opt/working/sylvode-flow/evidence/v0.3
+                          Default: .flow-gate/evidence/v0.3
   --contracts-root DIR   Root for decisions/, contracts/, security/, testing/
-                          artifact paths. Default: /opt/working/sylvode-flow
+                          artifact paths. Default: $SYLVODE_CONTRACTS_ROOT
   --repo-root DIR         Repository the cargo/bun commands run in and whose
                           HEAD becomes source.head. Default: this checkout.
   --gate-yaml PATH        Path to v0.3-gate.yaml. Default:
-                          /opt/working/sylvode-flow/gates/v0.3-gate.yaml
+                          $SYLVODE_CONTRACTS_ROOT/gates/v0.3-gate.yaml
   -h, --help              Show this help and exit 0.
 
 Exit codes: 0 all green and gate-result.json written, 1 one or more checks
@@ -75,6 +75,8 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
+[[ -n $GATE_YAML ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.3-gate.yaml"
 
 for tool in jq sha256sum git; do
   if ! command -v "$tool" >/dev/null 2>&1; then

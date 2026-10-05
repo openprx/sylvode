@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORT_DIR="/opt/worker/report/openpr/docs"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
 TRACKER_PATH="$REPORT_DIR/openpr-universal-form-development-execution-tracker-2026-05-31.md"
 EVIDENCE_PATH="$REPORT_DIR/openpr-universal-form-acceptance-evidence-2026-05-31.md"
 RUNBOOK_PATH="$REPORT_DIR/openpr-universal-form-user-acceptance-runbook-2026-05-31.md"
@@ -266,10 +266,10 @@ fi
   printf 'Final acceptance must run these commands after every manual signoff row is marked passed or accepted:\n\n'
   printf '```bash\n'
   printf 'scripts/verify-universal-forms-manual-signoff-consistency.sh \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md\n'
+  printf '  %s/openpr-universal-form-user-acceptance-runbook-2026-05-31.md \\\n' "$REPORT_DIR"
+  printf '  %s/openpr-universal-form-acceptance-evidence-2026-05-31.md\n' "$REPORT_DIR"
   printf 'scripts/verify-universal-forms-acceptance-signoff.sh \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md\n'
+  printf '  %s/openpr-universal-form-acceptance-evidence-2026-05-31.md\n' "$REPORT_DIR"
   printf 'scripts/finalize-universal-forms-acceptance.sh\n'
   printf 'scripts/audit-universal-forms-delivery-state.sh --strict\n'
   printf 'scripts/audit-universal-forms-delivery-bundle.sh\n'

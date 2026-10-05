@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 MCP tool-registry count verifier.
 #
-# Contract: /opt/working/sylvode-flow/contracts/tool-count-baseline.md
+# Contract: $SYLVODE_CONTRACTS_ROOT/contracts/tool-count-baseline.md
 # ("版本预期" table + "必须同步的活动面" + "自查新增的活动面") and
 # gates/v0.4-gate.yaml's `tool_registry_expected_107_or_rebased`.
 #
@@ -45,7 +45,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib/flow_contract_path.sh
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 BASELINE_PATH=""
 RELEASE="0.4"
@@ -66,7 +66,7 @@ Options:
                          <contracts-root>/contracts/tool-count-baseline.md
   --release X.Y          Row of the baseline's "版本预期" table to read.
                          Default: 0.4
-  --contracts-root DIR   Default: /opt/working/sylvode-flow
+  --contracts-root DIR   Default: $SYLVODE_CONTRACTS_ROOT
   --evidence-root DIR    Required. Evidence output directory.
   --repo-root DIR        Repository containing apps/mcp-server. Default:
                          this checkout.
@@ -90,6 +90,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 [[ -n "$BASELINE_PATH" ]] || BASELINE_PATH="$CONTRACTS_ROOT/contracts/tool-count-baseline.md"
 

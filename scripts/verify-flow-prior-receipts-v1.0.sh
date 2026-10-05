@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CONTRACTS=/opt/working/sylvode-flow
+CONTRACTS="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE="$ROOT/.flow-gate/evidence/v1.0"
-PRIOR=/opt/worker/evidence
+PRIOR="${SYLVODE_FLOW_PRIOR_EVIDENCE_ROOT:-$ROOT/.flow-gate/evidence}"
 BASELINE="$ROOT/scripts/contracts/flow-v1.0-prior-evidence-baseline.json"
 BASELINE_SHA256=d24911b25f84723baef66a4aaad4a2b687eeee059aa1d382e1232e95960fdc9f
 JSON=0
@@ -22,6 +24,7 @@ while (($#)); do
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS && -d $CONTRACTS ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 [[ $JSON -eq 1 ]] || { echo 'FAIL: --json required' >&2; exit 2; }
 mkdir -p "$EVIDENCE"
 
@@ -207,7 +210,7 @@ if [[ $SKIP_MUTATIONS -eq 1 ]]; then
   exit "$BASE_EXIT"
 fi
 
-RUN=$(mktemp -d /opt/worker/.cache/v10-prior-receipts.XXXXXX)
+RUN=$(mktemp -d "${SYLVODE_SCRATCH}/v10-prior-receipts.XXXXXX")
 trap 'rm -rf -- "$RUN"' EXIT
 MUTATION_ROWS="$RUN/mutations.tsv"
 : >"$MUTATION_ROWS"

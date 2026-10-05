@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 integrity-record fail-closed verifier.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md, "Integrity-
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md, "Integrity-
 # record verifier" paragraph, and ADR-0013 §4.
 #
 # This is a LIVE end-to-end check, not a static/schema check: it builds
@@ -50,8 +50,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib/flow_contract_path.sh
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 ADR_PATH=""
 DATABASE_URL="${OPENPR_TEST_DATABASE_URL:-}"
 JSON_MODE=0
@@ -71,14 +71,14 @@ Options:
                           A relative path is resolved against the current
                           directory first, then against --contracts-root.
   --contracts-root DIR     Root containing decisions/. Default:
-                          /opt/working/sylvode-flow
+                          $SYLVODE_CONTRACTS_ROOT
   --database-url URL       Postgres DSN the api binary and this script's
                           own assertions connect to. Default:
                           $OPENPR_TEST_DATABASE_URL
   --repo-root DIR         Repository containing apps/api. Default: this
                           checkout.
   --evidence-root DIR     Where integrity-records-result.json is written.
-                          Default: /opt/working/sylvode-flow/evidence/v0.4
+                          Default: .flow-gate/evidence/v0.4
   --json                  Required for CLI-contract compatibility.
   -h, --help              Show this help and exit 0.
 
@@ -100,6 +100,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$ADR_PATH" ]]; then
   echo "FAIL: --adr is required" >&2

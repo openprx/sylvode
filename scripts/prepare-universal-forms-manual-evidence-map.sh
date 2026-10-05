@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORT_DIR="/opt/worker/report/openpr/docs"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
 EVIDENCE_PATH="$REPORT_DIR/openpr-universal-form-acceptance-evidence-2026-05-31.md"
 RUNBOOK_PATH="$REPORT_DIR/openpr-universal-form-user-acceptance-runbook-2026-05-31.md"
 UI_ARTIFACT_MANIFEST_PATH="$REPORT_DIR/openpr-universal-form-ui-artifacts-2026-05-31.md"
@@ -145,15 +145,15 @@ trap 'rm -f "$output_tmp"' EXIT
   printf '## Reviewer Commands\n\n'
   printf '```bash\n'
   printf 'scripts/report-universal-forms-signoff-status.sh --reviewer "<name>"\n'
-  printf 'scripts/report-universal-forms-signoff-status.sh /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md --reviewer "<name>"\n'
+  printf 'scripts/report-universal-forms-signoff-status.sh %s/openpr-universal-form-acceptance-evidence-2026-05-31.md --reviewer "<name>"\n' "$REPORT_DIR"
   printf 'scripts/record-universal-forms-manual-signoff.sh --list-items\n'
   printf 'scripts/record-universal-forms-manual-signoff.sh --item restaurant_template --status accepted --reviewer "<name>" --evidence "<note>"\n'
   printf 'scripts/verify-universal-forms-ui-artifacts.sh\n'
   printf 'scripts/verify-universal-forms-manual-signoff-consistency.sh \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md\n'
+  printf '  %s/openpr-universal-form-user-acceptance-runbook-2026-05-31.md \\\n' "$REPORT_DIR"
+  printf '  %s/openpr-universal-form-acceptance-evidence-2026-05-31.md\n' "$REPORT_DIR"
   printf 'scripts/verify-universal-forms-acceptance-signoff.sh \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md\n'
+  printf '  %s/openpr-universal-form-acceptance-evidence-2026-05-31.md\n' "$REPORT_DIR"
   printf 'scripts/finalize-universal-forms-acceptance.sh\n'
   printf 'scripts/audit-universal-forms-delivery-state.sh --strict\n'
   printf 'scripts/audit-universal-forms-delivery-bundle.sh\n'

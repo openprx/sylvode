@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.4/v0.5 collab-architecture verifier.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md, the v0.4
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md, the v0.4
 # section's "Architecture verifier" paragraph, and
 # decisions/ADR-0010-collab-server-architecture.md ("量化接受与推翻门槛").
 #
@@ -82,7 +82,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # unresolvable -> FAIL naming both attempted paths).
 # shellcheck source=scripts/lib/flow_contract_path.sh
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 REPO_ROOT="$ROOT_DIR"
 RELEASE="0.4"
@@ -126,7 +126,7 @@ Options:
                           text itself are cross-checked against source
                           today). Required.
   --contracts-root DIR     Root containing decisions/. Default:
-                          /opt/working/sylvode-flow
+                          $SYLVODE_CONTRACTS_ROOT
   --evidence-root DIR     Where collab-architecture-result.json is
                           written. Default: evidence/v<release> under
                           --contracts-root.
@@ -173,9 +173,10 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$EVIDENCE_ROOT" ]]; then
-  EVIDENCE_ROOT="${TMPDIR:-/tmp}/openpr-flow-evidence/v$RELEASE"
+  EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v$RELEASE"
 fi
 if [[ "$RELEASE" == "0.5" ]]; then
   [[ "$CLIENTS" =~ ^[1-9][0-9]*$ ]] || { echo "FAIL: v0.5 requires --clients N" >&2; exit 2; }

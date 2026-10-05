@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPORT_DIR="/opt/worker/report/openpr/docs"
-ARTIFACT_DIR="${OPENPR_UI_ARTIFACT_DIR:-/opt/worker/report/openpr/artifacts/universal-forms-ui-2026-05-31}"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
+ARTIFACT_DIR="${OPENPR_UI_ARTIFACT_DIR:-${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/artifacts/universal-forms-ui-2026-05-31}"
 OUTPUT_PATH="${OPENPR_UI_REVIEW_GALLERY:-$REPORT_DIR/openpr-universal-form-ui-review-gallery-2026-05-31.html}"
 
 usage() {

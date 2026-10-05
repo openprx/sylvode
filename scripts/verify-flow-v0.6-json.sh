@@ -7,7 +7,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 GATE_YAML=""
 PREDECESSOR_GATE_RESULT=""
@@ -20,7 +20,7 @@ Usage: scripts/verify-flow-v0.6-json.sh GATE_RESULT_JSON [OPTIONS]
 
 Options:
   --evidence-root DIR   Default: directory containing GATE_RESULT_JSON
-  --contracts-root DIR  Default: /opt/working/sylvode-flow
+  --contracts-root DIR  Default: $SYLVODE_CONTRACTS_ROOT
   --repo-root DIR       Default: this checkout
   --gate-yaml PATH      Default: <contracts-root>/gates/v0.6-gate.yaml
   --predecessor-gate-result PATH
@@ -47,6 +47,7 @@ while [[ $# -gt 0 ]]; do
       RESULT_PATH="$1"; shift ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 [[ -n "$RESULT_PATH" ]] || { echo "FAIL: GATE_RESULT_JSON is required" >&2; exit 2; }
 for tool in git python3; do

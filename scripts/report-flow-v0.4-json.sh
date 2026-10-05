@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 report generator.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md ("report" role,
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md ("report" role,
 # generic command bundle, and the v0.4 section's required_commands list)
-# and /opt/working/sylvode-flow/gates/v0.4-gate.yaml.
+# and $SYLVODE_CONTRACTS_ROOT/gates/v0.4-gate.yaml.
 #
 # "report" runs only read-only checks and the product-provided verify
 # scripts; it never marks anything passed that it did not itself observe,
@@ -36,7 +36,7 @@ set -euo pipefail
 # required artifacts exist), 2 = usage/tool/evidence malformed.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 REPO_ROOT="$ROOT_DIR"
 SKIP_GENERIC=0
@@ -65,7 +65,7 @@ explicit blockers and make report exit 1.
 Options:
   --evidence-root DIR    Required. Where evidence artifacts are written and read.
   --contracts-root DIR   Root for decisions/, contracts/, security/
-                          artifact paths. Default: /opt/working/sylvode-flow
+                          artifact paths. Default: $SYLVODE_CONTRACTS_ROOT
   --repo-root DIR         Repository the cargo/bun commands run in and
                           whose HEAD becomes source.head. Default: this
                           checkout.
@@ -108,6 +108,8 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
+[[ -n $GATE_YAML ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.4-gate.yaml"
 
 if [[ -z "$EVIDENCE_ROOT" ]]; then
   echo "FAIL: --evidence-root is required; evidence must never default into the contract repository" >&2
@@ -129,7 +131,7 @@ if [[ ! -f "$SCHEMA_PATH" ]]; then
   echo "FAIL: v0.4 gate schema not found: $SCHEMA_PATH" >&2
   exit 2
 fi
-GATE_YAML="$CONTRACTS_ROOT/gates/v0.4-gate.yaml"
+GATE_YAML=""
 if [[ ! -f "$GATE_YAML" ]]; then
   echo "FAIL: v0.4 gate contract not found: $GATE_YAML" >&2
   exit 2

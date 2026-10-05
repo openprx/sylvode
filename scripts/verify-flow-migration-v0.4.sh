@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 migration forward/rollback strategy verifier.
 #
-# Contract: /opt/working/sylvode-flow/versions/v0.4-flow-alpha.md "升级与回滚"
+# Contract: $SYLVODE_CONTRACTS_ROOT/versions/v0.4-flow-alpha.md "升级与回滚"
 # ("migration 只新增表。回滚先关闭 flag、拒绝新 REST/WebSocket 写入、等待
 # active transaction 与 outbound broadcast drain，再回退应用；数据表保留以便
 # 恢复，不自动 drop。回滚前后都运行 document head/projection integrity
@@ -74,8 +74,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 MIGRATION_REL="migrations/0054_flow_data_layer.sql"
 DATABASE_URL="${OPENPR_TEST_DATABASE_URL:-}"
 JSON_MODE=0
@@ -97,8 +97,8 @@ Options:
   --database-url URL     Postgres DSN of a server this script may CREATE
                          DATABASE on. Default: $OPENPR_TEST_DATABASE_URL
   --repo-root DIR        Default: this checkout.
-  --contracts-root DIR   Default: /opt/working/sylvode-flow
-  --evidence-root DIR    Default: /opt/working/sylvode-flow/evidence/v0.4
+  --contracts-root DIR   Default: $SYLVODE_CONTRACTS_ROOT
+  --evidence-root DIR    Default: .flow-gate/evidence/v0.4
   --json                 Required for CLI-contract compatibility.
   -h, --help             Show this help and exit 0.
 
@@ -120,6 +120,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 : "$CONTRACTS_ROOT"
 
 if [[ $JSON_MODE -ne 1 ]]; then

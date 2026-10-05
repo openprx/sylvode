@@ -56,6 +56,10 @@ cd frontend && bun run smoke:project-template && bun run smoke:template-work-ite
 cd frontend && bun run smoke:forms-ui && bun run smoke:restaurant-ordering
 ```
 
+Generated reports and screenshots go to `.flow-gate/universal-forms/` in the checkout (`docs/`
+for reports, `artifacts/` for screenshots); set `SYLVODE_UF_REPORT_ROOT` to use another
+directory. The paths below are the defaults, relative to the repository root.
+
 For a single generated evidence report:
 
 ```bash
@@ -68,7 +72,7 @@ scripts/audit-universal-forms-delivery-state.sh
 scripts/report-universal-forms-completion-audit.sh
 scripts/prepare-universal-forms-manual-evidence-map.sh
 scripts/report-universal-forms-signoff-status.sh \
-  --output /opt/worker/report/openpr/docs/openpr-universal-form-signoff-status-2026-05-31.md
+  --output .flow-gate/universal-forms/docs/openpr-universal-form-signoff-status-2026-05-31.md
 scripts/prepare-universal-forms-user-acceptance-packet.sh
 scripts/report-universal-forms-readiness-summary.sh
 scripts/report-universal-forms-readiness-json.sh
@@ -198,9 +202,9 @@ The signoff status report is the fastest reviewer prompt for the next manual row
 ```bash
 scripts/report-universal-forms-signoff-status.sh --reviewer "<name>"
 scripts/report-universal-forms-signoff-status.sh \
-  --output /opt/worker/report/openpr/docs/openpr-universal-form-signoff-status-2026-05-31.md
+  --output .flow-gate/universal-forms/docs/openpr-universal-form-signoff-status-2026-05-31.md
 scripts/report-universal-forms-signoff-status.sh \
-  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md \
+  .flow-gate/universal-forms/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md \
   --reviewer "<name>"
 ```
 
@@ -214,7 +218,7 @@ command without changing signoff state:
 ```bash
 scripts/prepare-universal-forms-next-signoff-review.sh
 scripts/prepare-universal-forms-next-signoff-review.sh \
-  --output /opt/worker/report/openpr/docs/openpr-universal-form-next-signoff-review-2026-05-31.md
+  --output .flow-gate/universal-forms/docs/openpr-universal-form-next-signoff-review-2026-05-31.md
 ```
 
 The report output boundary smoke verifies that generated handoff reports are
@@ -246,7 +250,7 @@ The manual signoff status JSON is the machine-readable mirror of the reviewer-fa
 
 `scripts/prepare-universal-forms-signoff-dashboard.sh` turns that same
 `pending_queue` into
-`/opt/worker/report/openpr/docs/openpr-universal-form-signoff-dashboard-2026-05-31.html`,
+`.flow-gate/universal-forms/docs/openpr-universal-form-signoff-dashboard-2026-05-31.html`,
 a reviewer-facing dashboard with a Start Here section, evidence links,
 screenshots, and recorder commands for all pending rows. Verify it with
 `scripts/verify-universal-forms-signoff-dashboard.sh`, then browser-render it
@@ -374,7 +378,7 @@ Before changing the tracker to `已验收`, verify the signed evidence report:
 ```bash
 scripts/report-universal-forms-signoff-status.sh --reviewer "<name>"
 scripts/report-universal-forms-signoff-status.sh \
-  --output /opt/worker/report/openpr/docs/openpr-universal-form-signoff-status-2026-05-31.md
+  --output .flow-gate/universal-forms/docs/openpr-universal-form-signoff-status-2026-05-31.md
 scripts/report-universal-forms-signoff-status-json.sh
 scripts/verify-universal-forms-signoff-status-json.sh
 scripts/smoke-universal-forms-signoff-status-json-contract.sh
@@ -383,8 +387,8 @@ scripts/smoke-universal-forms-next-signoff-review-contract.sh
 scripts/smoke-universal-forms-next-signoff-command.sh
 scripts/smoke-universal-forms-manual-signoff-progression.sh
 scripts/verify-universal-forms-acceptance-signoff.sh \
-  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md \
-  --runbook /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md
+  .flow-gate/universal-forms/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md \
+  --runbook .flow-gate/universal-forms/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md
 ```
 
 The verifier fails if the runbook is missing, the runbook and evidence manual tables disagree, automated checks failed, PASS status lines do not match the automated check total, the manual signoff section is missing, or any signoff row is still pending or marked for rework.
@@ -393,7 +397,7 @@ After the verifier passes, finalize the tracker with:
 
 ```bash
 scripts/finalize-universal-forms-acceptance.sh \
-  --runbook /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md
+  --runbook .flow-gate/universal-forms/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md
 scripts/audit-universal-forms-delivery-state.sh --strict
 scripts/audit-universal-forms-delivery-bundle.sh
 scripts/report-universal-forms-completion-audit-json.sh

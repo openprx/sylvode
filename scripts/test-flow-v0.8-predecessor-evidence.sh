@@ -2,9 +2,8 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-WORKSPACE_ROOT=$(cd "$REPO_ROOT/../.." && pwd)
 EVIDENCE_ROOT=${1:-"$REPO_ROOT/.flow-gate/evidence/v0.8"}
-REAL_PREDECESSOR=${2:-"$WORKSPACE_ROOT/evidence/v0.7/gate-result.json"}
+REAL_PREDECESSOR=${2:-"$(dirname "$EVIDENCE_ROOT")/v0.7/gate-result.json"}
 RESULT="$EVIDENCE_ROOT/gate-result.json"
 
 [[ -f $REAL_PREDECESSOR ]] || { echo "FAIL: missing accepted predecessor: $REAL_PREDECESSOR" >&2; exit 2; }

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 MCP three-transport contract verifier.
 #
-# Contract: /opt/working/sylvode-flow/contracts/mcp-surface-v1.md
+# Contract: $SYLVODE_CONTRACTS_ROOT/contracts/mcp-surface-v1.md
 # ("HTTP/stdio/SSE"; "Transport -> actor/origin"; "同一 semantic request 跨
 # HTTP/stdio/SSE 不得改变 primary event type"; "只让 `tools/list` 出现名称而调用
 # 返回 unknown/未授权假成功，gate 必须失败"), versions/v0.4-flow-alpha.md
@@ -46,8 +46,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 DATABASE_URL="${OPENPR_TEST_DATABASE_URL:-}"
 TRANSPORTS="http,sse,stdio"
 JSON_MODE=0
@@ -66,8 +66,8 @@ Options:
   --database-url URL     Postgres DSN this script may CREATE DATABASE on.
                          Default: $OPENPR_TEST_DATABASE_URL
   --repo-root DIR        Default: this checkout.
-  --contracts-root DIR   Default: /opt/working/sylvode-flow
-  --evidence-root DIR    Default: /opt/working/sylvode-flow/evidence/v0.4
+  --contracts-root DIR   Default: $SYLVODE_CONTRACTS_ROOT
+  --evidence-root DIR    Default: .flow-gate/evidence/v0.4
   --json                 Required for CLI-contract compatibility.
   -h, --help             Show this help and exit 0.
 
@@ -89,6 +89,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 : "$CONTRACTS_ROOT"
 
 if [[ $JSON_MODE -ne 1 ]]; then

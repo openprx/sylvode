@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.3 CSP bundle verifier -- SKELETON.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md v0.3 section
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md v0.3 section
 # ("scripts/verify-flow-csp-bundle-v0.3.sh --policy deploy/caddy/Caddyfile
 # --json"). Runs a production build of BOTH candidates, serves each behind
 # the real Caddy CSP header, loads a cold deep route in a real browser,
@@ -27,7 +27,7 @@ set -euo pipefail
 # missing, 2 = usage/tool error.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.3"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.3"
 SCHEMA_DIR="$ROOT_DIR/docs/schemas"
 POLICY_PATH=""
 JSON_MODE=0
@@ -54,7 +54,7 @@ Options:
                           required_commands entry); output is always
                           machine-readable regardless of this flag.
   --evidence-root DIR    Reserved for future use by the real runner.
-                          Default: /opt/working/sylvode-flow/evidence/v0.3
+                          Default: .flow-gate/evidence/v0.3
   --schema-dir DIR        Reserved for future use once a
                           csp-bundle-result schema is frozen.
                           Default: <repo>/docs/schemas

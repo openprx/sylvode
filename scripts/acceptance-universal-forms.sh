@@ -54,7 +54,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$REPORT_PATH" ]]; then
-  REPORT_PATH="/opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-$(date +%Y%m%d-%H%M%S).md"
+  REPORT_PATH="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-acceptance-evidence-$(date +%Y%m%d-%H%M%S).md"
 fi
 
 mkdir -p "$(dirname "$REPORT_PATH")"

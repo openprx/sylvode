@@ -45,6 +45,9 @@ jobs:
       - name: Demo bootstrap input checks
         run: bash scripts/test-bootstrap-demo-env.sh
 
+      - name: No machine-specific paths in scripts
+        run: bash scripts/test-no-machine-paths.sh
+
   test:
     name: Test
     needs: lint

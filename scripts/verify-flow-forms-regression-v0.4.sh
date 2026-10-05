@@ -42,7 +42,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 JSON_MODE=0
 
 usage() {
@@ -60,7 +60,7 @@ Options:
                           gates.sh. Default: this checkout.
   --evidence-root DIR     Where forms-regression-result.json and the run log
                           are written. Default:
-                          /opt/working/sylvode-flow/evidence/v0.4
+                          .flow-gate/evidence/v0.4
   --json                  Required for CLI-contract compatibility.
   -h, --help              Show this help and exit 0.
 

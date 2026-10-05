@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WEBHOOK_DIR="${OPENPR_WEBHOOK_DIR:-/opt/worker/code/openpr-webhook}"
+WEBHOOK_DIR="${SYLVODE_WEBHOOK_DIR:-${OPENPR_WEBHOOK_DIR:-}}"
+[[ -n $WEBHOOK_DIR && -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: webhook checkout not found (${WEBHOOK_DIR:-unset}); set SYLVODE_WEBHOOK_DIR to the webhook checkout" >&2; exit 2; }
 POSTGRES_PORT="${OPENPR_SMOKE_PG_PORT:-5366}"
 PG_SUPERUSER="${OPENPR_SMOKE_PG_SUPERUSER:-postgres}"
 DB_NAME="openpr_mention_smoke_$$_$(date +%s)"

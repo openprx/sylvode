@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v0.9"
@@ -29,7 +31,7 @@ done
 [[ $JSON_MODE -eq 1 ]] || { echo 'FAIL: --json is required' >&2; exit 2; }
 
 DATABASE_URL=${OPENPR_TEST_DATABASE_URL:-postgresql://flowtest:flowtest@127.0.0.1:25433/postgres}
-CACHE_ROOT=/opt/worker/.cache/openpr-v09-export-roundtrip
+CACHE_ROOT="${SYLVODE_SCRATCH}/flow-v09-export-roundtrip"
 LOG_ROOT="$CACHE_ROOT/logs"
 mkdir -p "$LOG_ROOT" "$EVIDENCE_ROOT"
 

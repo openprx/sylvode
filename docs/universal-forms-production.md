@@ -48,6 +48,10 @@ cargo build --workspace --release
 cd frontend && bun run check && bun run build
 ```
 
+Generated reports and screenshots go to `.flow-gate/universal-forms/` in the checkout (`docs/`
+for reports, `artifacts/` for screenshots); set `SYLVODE_UF_REPORT_ROOT` to use another
+directory. The paths below are the defaults, relative to the repository root.
+
 Then run the universal business gates:
 
 ```bash
@@ -56,12 +60,12 @@ scripts/audit-universal-forms-security-scope.sh
 scripts/audit-universal-forms-production-readiness.sh
 scripts/ci-universal-forms-gates.sh
 scripts/acceptance-universal-forms.sh --full \
-  --output /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md
+  --output .flow-gate/universal-forms/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md
 scripts/collect-universal-forms-ui-artifacts.sh
 scripts/report-universal-forms-completion-audit.sh
 scripts/prepare-universal-forms-manual-evidence-map.sh
 scripts/report-universal-forms-signoff-status.sh \
-  --output /opt/worker/report/openpr/docs/openpr-universal-form-signoff-status-2026-05-31.md
+  --output .flow-gate/universal-forms/docs/openpr-universal-form-signoff-status-2026-05-31.md
 scripts/report-universal-forms-signoff-status-json.sh
 scripts/verify-universal-forms-signoff-status-json.sh
 scripts/smoke-universal-forms-signoff-status-json-contract.sh
@@ -515,29 +519,29 @@ scripts/smoke-universal-forms-ui-review-gallery-render.sh
 
 Reviewer handoff files:
 
-- `/opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md`
-- `/opt/worker/report/openpr/docs/openpr-universal-form-manual-evidence-map-2026-05-31.md`
-- `/opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-packet-2026-05-31.md`
-- `/opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md`
+- `.flow-gate/universal-forms/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md`
+- `.flow-gate/universal-forms/docs/openpr-universal-form-manual-evidence-map-2026-05-31.md`
+- `.flow-gate/universal-forms/docs/openpr-universal-form-user-acceptance-packet-2026-05-31.md`
+- `.flow-gate/universal-forms/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md`
 
 Finalization commands after all seven manual rows are accepted:
 
 ```bash
 scripts/report-universal-forms-signoff-status.sh --reviewer "<name>"
 scripts/report-universal-forms-signoff-status.sh --output \
-  /opt/worker/report/openpr/docs/openpr-universal-form-signoff-status-2026-05-31.md
+  .flow-gate/universal-forms/docs/openpr-universal-form-signoff-status-2026-05-31.md
 scripts/report-universal-forms-signoff-status.sh \
-  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md \
+  .flow-gate/universal-forms/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md \
   --reviewer "<name>"
 scripts/record-universal-forms-manual-signoff.sh --list-items
 scripts/verify-universal-forms-manual-signoff-consistency.sh \
-  /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md \
-  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md
+  .flow-gate/universal-forms/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md \
+  .flow-gate/universal-forms/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md
 scripts/verify-universal-forms-acceptance-signoff.sh \
-  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md \
-  --runbook /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md
+  .flow-gate/universal-forms/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md \
+  --runbook .flow-gate/universal-forms/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md
 scripts/finalize-universal-forms-acceptance.sh \
-  --runbook /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md
+  --runbook .flow-gate/universal-forms/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md
 scripts/audit-universal-forms-delivery-state.sh --strict
 scripts/audit-universal-forms-delivery-bundle.sh
 scripts/report-universal-forms-completion-audit-json.sh
@@ -605,7 +609,7 @@ next reviewer task without opening the larger signoff report. It also carries
 `review_surfaces`, a stable set of reviewer-facing paths for the runbook,
 automated evidence, manual evidence map, user acceptance packet, signoff status
 report, next-row review, signoff dashboard, and UI review gallery.
-`/opt/worker/report/openpr/docs/openpr-universal-form-signoff-dashboard-2026-05-31.html`
+`.flow-gate/universal-forms/docs/openpr-universal-form-signoff-dashboard-2026-05-31.html`
 is the reviewer-facing HTML view of that same queue, including a Start Here
 section with the next key, status command, and recorder command. Generate it with
 `scripts/prepare-universal-forms-signoff-dashboard.sh` and verify it with

@@ -15,8 +15,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCHEMA_DIR="$ROOT_DIR/docs/schemas"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.3"
-GATE_YAML="/opt/working/sylvode-flow/gates/v0.3-gate.yaml"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.3"
+GATE_YAML=""
 JSON_MODE=0
 
 usage() {
@@ -39,14 +39,14 @@ Options:
   --json                  Required for contract compatibility.
   --evidence-root DIR    Directory holding benchmark-loro.json /
                           benchmark-yrs-yjs.json; merged output is written
-                          here too. Default: /opt/working/sylvode-flow/evidence/v0.3
+                          here too. Default: .flow-gate/evidence/v0.3
   --gate-yaml PATH        Path to v0.3-gate.yaml; its budgets: block is
                           recomputed (same extraction as
                           verify-flow-v0.3-json.sh) and used as the merged
                           file's authoritative "budgets" block -- a
                           per-candidate file that disagrees with it fails
                           the merge rather than being silently overwritten.
-                          Default: /opt/working/sylvode-flow/gates/v0.3-gate.yaml
+                          Default: $SYLVODE_CONTRACTS_ROOT/gates/v0.3-gate.yaml
   --schema-dir DIR        Directory holding sylvode-flow-*.schema.json.
                           Default: <repo>/docs/schemas
   -h, --help              Show this help and exit 0.
@@ -66,6 +66,8 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $GATE_YAML ]] || GATE_YAML="${SYLVODE_CONTRACTS_ROOT:+$SYLVODE_CONTRACTS_ROOT/gates/v0.3-gate.yaml}"
+[[ -n $GATE_YAML && -f $GATE_YAML ]] || { echo "FAIL: gate yaml not found (${GATE_YAML:-unset}); pass --gate-yaml PATH or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "FAIL: missing required command: jq" >&2

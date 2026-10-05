@@ -7,7 +7,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 GATE_YAML=""
 MANUAL_SIGNOFFS_FROM=""
@@ -19,8 +19,8 @@ usage() {
 Usage: scripts/report-flow-v0.6-json.sh [OPTIONS]
 
 Options:
-  --evidence-root DIR   Default: <contracts-root>/evidence/v0.6
-  --contracts-root DIR  Default: /opt/working/sylvode-flow
+  --evidence-root DIR   Default: .flow-gate/evidence/v0.6
+  --contracts-root DIR  Default: $SYLVODE_CONTRACTS_ROOT
   --repo-root DIR       Default: this checkout
   --gate-yaml PATH      Default: <contracts-root>/gates/v0.6-gate.yaml
   --manual-signoffs-from PATH
@@ -50,13 +50,14 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 for tool in cargo git jq python3 sha256sum; do
   command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: missing required command: $tool" >&2; exit 2; }
 done
 [[ -n "${OPENPR_TEST_DATABASE_URL:-}" ]] || { echo "FAIL: OPENPR_TEST_DATABASE_URL is required" >&2; exit 2; }
 [[ -d "$REPO_ROOT/.git" ]] || { echo "FAIL: --repo-root is not a git checkout: $REPO_ROOT" >&2; exit 2; }
-[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$CONTRACTS_ROOT/evidence/v0.6"
+[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.6"
 [[ -n "$GATE_YAML" ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.6-gate.yaml"
 [[ -n "$MANUAL_SIGNOFFS_FROM" ]] || MANUAL_SIGNOFFS_FROM="$EVIDENCE_ROOT/gate-result.json"
 [[ -n "$PREDECESSOR_GATE_RESULT" ]] || PREDECESSOR_GATE_RESULT="$(dirname "$EVIDENCE_ROOT")/v0.5/gate-result.json"

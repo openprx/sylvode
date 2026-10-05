@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Sylvode Flow REST/MCP/CLI/UI surface-coverage parser and cross-checker.
 
-Contract: /opt/working/sylvode-flow/gates/gate-commands.md, "Surface coverage
+Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md, "Surface coverage
 verifier (v0.4-v1.0 共用)" section, and
-/opt/working/sylvode-flow/contracts/surface-coverage-v1.md.
+$SYLVODE_CONTRACTS_ROOT/contracts/surface-coverage-v1.md.
 
 This module parses the five frozen markdown contract files and recomputes
 their internal cross-reference matrix.  The shell verifier then combines

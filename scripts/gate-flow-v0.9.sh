@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 EVIDENCE="$ROOT/.flow-gate/evidence/v0.9"
-CONTRACTS=/opt/working/sylvode-flow
+CONTRACTS="${SYLVODE_CONTRACTS_ROOT:-}"
 REPO=$ROOT
 RESULT=
 JSON_MODE=0
@@ -17,6 +17,7 @@ while (($#)); do
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS && -d $CONTRACTS ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 [[ $JSON_MODE -eq 1 ]] || { echo 'FAIL: --json is required' >&2; exit 2; }
 [[ -n $RESULT ]] || RESULT="$EVIDENCE/gate-result.json"
 set +e

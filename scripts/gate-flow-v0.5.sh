@@ -7,7 +7,7 @@ set -euo pipefail
 # either passed or pending; failed/needs_rework is never accepted.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 REPO_ROOT="$ROOT_DIR"
 GATE_YAML=""
@@ -25,8 +25,8 @@ Options:
   --allow-pending        Exit 0 when automation is green and manual rows are
                          only passed/pending. Never accepts failed/rework.
   --gate-result PATH     Default: <evidence-root>/gate-result.json
-  --evidence-root DIR    Default: <contracts-root>/evidence/v0.5
-  --contracts-root DIR   Default: /opt/working/sylvode-flow
+  --evidence-root DIR    Default: .flow-gate/evidence/v0.5
+  --contracts-root DIR   Default: $SYLVODE_CONTRACTS_ROOT
   --repo-root DIR        Default: this checkout
   --gate-yaml PATH       Default: <contracts-root>/gates/v0.5-gate.yaml
   --json                 Required; emit JSON.
@@ -50,10 +50,11 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 [[ $JSON_MODE -eq 1 ]] || { echo "FAIL: --json is required" >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "FAIL: missing required command: jq" >&2; exit 2; }
-[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$CONTRACTS_ROOT/evidence/v0.5"
+[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.5"
 [[ -n "$GATE_YAML" ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.5-gate.yaml"
 [[ -n "$GATE_RESULT_PATH" ]] || GATE_RESULT_PATH="$EVIDENCE_ROOT/gate-result.json"
 VERIFY_SCRIPT="$ROOT_DIR/scripts/verify-flow-v0.5-json.sh"

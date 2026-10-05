@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FROM=
@@ -21,9 +23,9 @@ command -v curl >/dev/null
 command -v psql >/dev/null
 
 OLD_HEAD=d881462957e3ffde4d6782cf578348de021208a8
-CACHE_ROOT=/opt/worker/.cache/openpr-v08-upgrade-rollback
+CACHE_ROOT="${SYLVODE_SCRATCH}/flow-v08-upgrade-rollback"
 OLD_WORKTREE="$CACHE_ROOT/v07"
-TARGET_DIR=/opt/worker/.cache/openpr-v08-shared-target
+TARGET_DIR="${SYLVODE_SCRATCH}/flow-v08-shared-target"
 DB_NAME=v08_upgrade_rollback
 ADMIN_URL=$OPENPR_TEST_DATABASE_URL
 DB_URL="${ADMIN_URL%/*}/$DB_NAME"

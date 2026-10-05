@@ -20,7 +20,7 @@ set -euo pipefail
 # usage/tool/malformed evidence.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 REPO_ROOT="$ROOT_DIR"
 COLLECT_ONLY=0
@@ -38,9 +38,9 @@ blocking states; none is converted to passed.
 
 Options:
   --evidence-root DIR   Evidence directory. Default:
-                        <contracts-root>/evidence/v0.5
+                        .flow-gate/evidence/v0.5
   --contracts-root DIR Contract repository. Default:
-                        /opt/working/sylvode-flow
+                        $SYLVODE_CONTRACTS_ROOT
   --repo-root DIR       Source repository. Default: this checkout.
   --gate-yaml PATH      v0.5 gate YAML. Default:
                         <contracts-root>/gates/v0.5-gate.yaml
@@ -67,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 for tool in jq sha256sum git awk sed xargs; do
   if ! command -v "$tool" >/dev/null 2>&1; then
@@ -79,7 +80,7 @@ if [[ ! -d "$REPO_ROOT" ]] || ! git -C "$REPO_ROOT" rev-parse --is-inside-work-t
   exit 2
 fi
 REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
-[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$CONTRACTS_ROOT/evidence/v0.5"
+[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.5"
 [[ -n "$GATE_YAML" ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.5-gate.yaml"
 if [[ ! -f "$GATE_YAML" ]]; then
   echo "FAIL: gate YAML not found: $GATE_YAML" >&2

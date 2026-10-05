@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"; EVIDENCE_ROOT=""; GATE_YAML=""; PREDECESSOR=""; MANUAL_FROM=""
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"; EVIDENCE_ROOT=""; GATE_YAML=""; PREDECESSOR=""; MANUAL_FROM=""
 while [[ $# -gt 0 ]]; do case "$1" in
   --repo-root) REPO_ROOT="${2:?}"; shift 2;; --contracts-root) CONTRACTS_ROOT="${2:?}"; shift 2;;
   --evidence-root) EVIDENCE_ROOT="${2:?}"; shift 2;; --gate-yaml) GATE_YAML="${2:?}"; shift 2;;
   --predecessor-gate-result) PREDECESSOR="${2:?}"; shift 2;; --manual-signoffs-from) MANUAL_FROM="${2:?}"; shift 2;;
   --json) shift;; *) echo "FAIL: unsupported argument $1" >&2; exit 2;; esac; done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 [[ -n "${OPENPR_TEST_DATABASE_URL:-}" ]] || { echo "FAIL: OPENPR_TEST_DATABASE_URL is required" >&2; exit 2; }
-[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$CONTRACTS_ROOT/evidence/v0.7"; [[ -n "$GATE_YAML" ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.7-gate.yaml"
+[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$ROOT_DIR/.flow-gate/evidence/v0.7"; [[ -n "$GATE_YAML" ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.7-gate.yaml"
 [[ -n "$PREDECESSOR" ]] || PREDECESSOR="$(dirname "$EVIDENCE_ROOT")/v0.6/gate-result.json"; [[ -n "$MANUAL_FROM" ]] || MANUAL_FROM="$EVIDENCE_ROOT/gate-result.json"
 mkdir -p "$EVIDENCE_ROOT/logs"
 python3 - "$REPO_ROOT" "$CONTRACTS_ROOT" "$EVIDENCE_ROOT" "$GATE_YAML" "$PREDECESSOR" "$MANUAL_FROM" <<'PY'

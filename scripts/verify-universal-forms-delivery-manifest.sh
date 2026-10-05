@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MANIFEST_PATH="${1:-/opt/worker/report/openpr/docs/openpr-universal-form-delivery-manifest-2026-05-31.md}"
+MANIFEST_PATH="${1:-${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-delivery-manifest-2026-05-31.md}"
 
 usage() {
   cat <<'EOF'

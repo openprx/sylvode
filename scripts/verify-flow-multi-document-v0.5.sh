@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.5 multi-document lock-order and atomicity verifier.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md, "Multi-document
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md, "Multi-document
 # verifier" (including the 2026-08-31 R17 reachability refinement), and
 # ADR-0013 section 2 plus its Gate wiring table.
 #
@@ -25,8 +25,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
 
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="${TMPDIR:-/tmp}/openpr-flow-evidence/v0.5"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.5"
 ADR_PATH=""
 JSON_MODE=0
 STATIC_ONLY=0
@@ -44,9 +44,9 @@ Options:
                           resolved against the current directory first, then
                           against --contracts-root.
   --contracts-root DIR    Root containing decisions/. Default:
-                          /opt/working/sylvode-flow
+                          $SYLVODE_CONTRACTS_ROOT
   --evidence-root DIR     Where multi-document-result.json is written.
-                          Default: /tmp/openpr-flow-evidence/v0.5
+                          Default: .flow-gate/evidence/v0.5
   --repo-root DIR         Repository containing apps/api and the Cargo
                           workspace. Default: this checkout.
   --json                  Required for CLI-contract compatibility.
@@ -72,6 +72,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$ADR_PATH" ]]; then
   echo "FAIL: --adr is required" >&2

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="$CONTRACTS_ROOT/evidence/v0.5"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT=""
 CLIENTS=""
 JSON_MODE=0
 
@@ -20,7 +22,7 @@ the built-in dropped-client negative control.
 Options:
   --clients N          Required; the v0.5 hard gate passes only for N=10.
   --repo-root DIR      Repository root. Default: this checkout.
-  --contracts-root DIR Read-only contract root. Default: /opt/working/sylvode-flow.
+  --contracts-root DIR Read-only contract root. Default: $SYLVODE_CONTRACTS_ROOT.
   --evidence-root DIR  Output directory. Default: contract evidence/v0.5.
   --json               Required.
 EOF
@@ -37,6 +39,8 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
+[[ -n $EVIDENCE_ROOT ]] || EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.5"
 
 [[ $JSON_MODE -eq 1 ]] || { echo "FAIL: --json is required" >&2; exit 2; }
 [[ "$CLIENTS" =~ ^[1-9][0-9]*$ ]] || { echo "FAIL: --clients must be a positive integer" >&2; exit 2; }
@@ -45,8 +49,8 @@ for tool in cargo git jq sha256sum; do
 done
 if command -v bun >/dev/null 2>&1; then
   BUN_BIN="$(command -v bun)"
-elif [[ -x /home/ck/.bun/bin/bun ]]; then
-  BUN_BIN="/home/ck/.bun/bin/bun"
+elif [[ -x "$HOME/.bun/bin/bun" ]]; then
+  BUN_BIN="$HOME/.bun/bin/bun"
 else
   echo "FAIL: missing required command: bun" >&2
   exit 2
@@ -59,7 +63,7 @@ SOURCE_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 SOURCE_DIRTY=false
 [[ -z "$(git -C "$REPO_ROOT" status --porcelain)" ]] || SOURCE_DIRTY=true
 GENERATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-WORK_DIR="$(mktemp -d /opt/worker/.cache/flow-v05-convergence.XXXXXX)"
+WORK_DIR="$(mktemp -d "${SYLVODE_SCRATCH}/flow-v05-convergence.XXXXXX")"
 cleanup() { rm -rf "$WORK_DIR"; }
 trap cleanup EXIT
 

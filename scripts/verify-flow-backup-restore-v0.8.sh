@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 : "${OPENPR_BACKUP_SOURCE_DATABASE_URL:?OPENPR_BACKUP_SOURCE_DATABASE_URL is required}"
 : "${OPENPR_BACKUP_RESTORE_ADMIN_URL:?OPENPR_BACKUP_RESTORE_ADMIN_URL is required}"
 
 RESTORE_DATABASE_NAME=${OPENPR_BACKUP_RESTORE_DATABASE_NAME:-v08_restore_drill}
-RESULT_PATH=${1:-/opt/worker/.cache/openpr-v08-backup-restore/result.json}
-WORK_DIR=/opt/worker/.cache/openpr-v08-backup-restore
+RESULT_PATH=${1:-"${SYLVODE_SCRATCH}/flow-v08-backup-restore"/result.json}
+WORK_DIR="${SYLVODE_SCRATCH}/flow-v08-backup-restore"
 DUMP_PATH="$WORK_DIR/source.sql"
 BEFORE_PATH="$WORK_DIR/before.json"
 AFTER_PATH="$WORK_DIR/after.json"

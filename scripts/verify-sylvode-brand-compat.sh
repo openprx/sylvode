@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 JSON_MODE=0
@@ -15,14 +17,14 @@ done
 for command_name in cargo python3; do command -v "$command_name" >/dev/null || { echo "FAIL: missing $command_name" >&2; exit 2; }; done
 if command -v bun >/dev/null; then
   BUN=$(command -v bun)
-elif [[ -x /home/ck/.bun/bin/bun ]]; then
-  BUN=/home/ck/.bun/bin/bun
+elif [[ -x "$HOME/.bun/bin/bun" ]]; then
+  BUN=$HOME/.bun/bin/bun
 else
   echo "FAIL: missing bun" >&2
   exit 2
 fi
 
-CACHE_ROOT=/opt/worker/.cache/v09-brand-compat
+CACHE_ROOT="${SYLVODE_SCRATCH}/v09-brand-compat"
 LOG_ROOT="$CACHE_ROOT/logs"
 mkdir -p "$LOG_ROOT" "$EVIDENCE_ROOT"
 

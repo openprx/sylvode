@@ -53,7 +53,9 @@ echo "PASS: MCP bare-object and wrapped-object shapes normalize identically; a n
 
 grep -Fq 'reason_code:"owned_by_v0_5_relation_gate"' "$ROOT_DIR/scripts/verify-flow-rest-contract-v0.4.sh" \
   || fail "v0.5 relation criterion has no paired v0.4 exclusion reason"
-grep -q '^  relation_pagination_reauthorization_no_leak:' /opt/working/sylvode-flow/gates/v0.5-gate.yaml \
+[[ -n ${SYLVODE_CONTRACTS_ROOT:-} && -f $SYLVODE_CONTRACTS_ROOT/gates/v0.5-gate.yaml ]] \
+  || fail "set SYLVODE_CONTRACTS_ROOT to the contracts checkout (needed for gates/v0.5-gate.yaml)"
+grep -q '^  relation_pagination_reauthorization_no_leak:' "$SYLVODE_CONTRACTS_ROOT/gates/v0.5-gate.yaml" \
   || fail "the paired v0.5 relation gate anchor does not exist"
 if grep -q 'INSERT INTO flow_objects' "$ROOT_DIR/scripts/verify-flow-integrity-records-v0.4.sh"; then
   fail "integrity fixture still inserts a second navigator root"

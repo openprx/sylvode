@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd);CONTRACTS=/opt/working/sylvode-flow;EVIDENCE="$ROOT/.flow-gate/evidence/v1.0";CAPACITY=${OPENPR_V10_CAPACITY_RESULT:-/opt/worker/evidence/v1.0-w1-final-f01d344/capacity-result.json};BACKUP=;DROP_CONTROL=${OPENPR_V10_DROP_LINE_CONTROL:-};DECISION=;JSON=0
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd);CONTRACTS="${SYLVODE_CONTRACTS_ROOT:-}";EVIDENCE="$ROOT/.flow-gate/evidence/v1.0";CAPACITY=${OPENPR_V10_CAPACITY_RESULT:-};BACKUP=;DROP_CONTROL=${OPENPR_V10_DROP_LINE_CONTROL:-};DECISION=;JSON=0
 while (($#));do case "$1" in --repo-root) ROOT=${2:?};shift 2;;--contracts-root) CONTRACTS=${2:?};shift 2;;--evidence-root) EVIDENCE=${2:?};shift 2;;--capacity-result) CAPACITY=${2:?};shift 2;;--backup-restore-result) BACKUP=${2:?};shift 2;;--drop-line-control) DROP_CONTROL=${2:?};shift 2;;--target-environment-decision) DECISION=${2:?};shift 2;;--json) JSON=1;shift;;*) echo "FAIL: unsupported argument: $1" >&2;exit 2;;esac;done
+[[ -n $CONTRACTS && -d $CONTRACTS ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
+[[ -n $CAPACITY ]] || { echo "FAIL: capacity result not configured; pass --capacity-result PATH or set OPENPR_V10_CAPACITY_RESULT" >&2; exit 2; }
 [[ -n $BACKUP ]] || BACKUP="$EVIDENCE/backup-restore-result.json"
 [[ $JSON -eq 1 ]]||{ echo 'FAIL: --json required' >&2;exit 2;};mkdir -p "$EVIDENCE"
 python3 - "$ROOT" "$CONTRACTS" "$EVIDENCE" "$CAPACITY" "$BACKUP" "$DROP_CONTROL" "$DECISION" <<'PY'

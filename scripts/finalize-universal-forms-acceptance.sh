@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_REPORT_PATH="/opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md"
-DEFAULT_TRACKER_PATH="/opt/worker/report/openpr/docs/openpr-universal-form-development-execution-tracker-2026-05-31.md"
-RUNBOOK_PATH="${OPENPR_UNIVERSAL_FORMS_RUNBOOK:-/opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md}"
+DEFAULT_REPORT_PATH="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md"
+DEFAULT_TRACKER_PATH="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-development-execution-tracker-2026-05-31.md"
+RUNBOOK_PATH="${OPENPR_UNIVERSAL_FORMS_RUNBOOK:-${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md}"
 REPORT_PATH="$DEFAULT_REPORT_PATH"
 TRACKER_PATH="$DEFAULT_TRACKER_PATH"
 DRY_RUN=0
@@ -112,7 +112,7 @@ refresh_default_handoff_after_finalization() {
   "$ROOT_DIR/scripts/verify-universal-forms-ui-review-gallery.sh" >/dev/null
   "$ROOT_DIR/scripts/smoke-universal-forms-ui-review-gallery-render.sh" >/dev/null
   "$ROOT_DIR/scripts/report-universal-forms-signoff-status.sh" \
-    --output "/opt/worker/report/openpr/docs/openpr-universal-form-signoff-status-2026-05-31.md" >/dev/null
+    --output "${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-signoff-status-2026-05-31.md" >/dev/null
   "$ROOT_DIR/scripts/report-universal-forms-signoff-status-json.sh" >/dev/null
   "$ROOT_DIR/scripts/verify-universal-forms-signoff-status-json.sh" >/dev/null
   "$ROOT_DIR/scripts/smoke-universal-forms-signoff-status-json-contract.sh" >/dev/null

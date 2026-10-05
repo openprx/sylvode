@@ -5,7 +5,7 @@ set -euo pipefail
 # program recomputes all derived receipt state after an atomic row update.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.5"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.5"
 GATE_RESULT_PATH=""
 KEY=""
 STATUS_VALUE=""
@@ -28,7 +28,7 @@ Statuses: pending, passed, failed, needs_rework
 
 Options:
   --gate-result PATH    Default: <evidence-root>/gate-result.json
-  --evidence-root DIR   Default: /opt/working/sylvode-flow/evidence/v0.5
+  --evidence-root DIR   Default: .flow-gate/evidence/v0.5
   --force               Permit replacing a passed/failed signed row.
   --dry-run             Validate and show the update without writing.
   --list-keys           Print valid keys.

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v0.9"
@@ -12,8 +14,8 @@ while (($#)); do
   esac
 done
 
-mkdir -p /opt/worker/.cache "$EVIDENCE_ROOT/logs"
-WORKTREE=$(mktemp -d /opt/worker/.cache/v09-source-dirty.XXXXXX)
+mkdir -p "${SYLVODE_SCRATCH}" "$EVIDENCE_ROOT/logs"
+WORKTREE=$(mktemp -d "${SYLVODE_SCRATCH}/v09-source-dirty.XXXXXX")
 LOG="$EVIDENCE_ROOT/logs/source-dirty-scope.log"
 cleanup() {
   git -C "$REPO_ROOT" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true

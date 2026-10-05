@@ -2,10 +2,10 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CONTRACTS_ROOT=/opt/working/sylvode-flow
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v0.9"
-GATE_YAML="$CONTRACTS_ROOT/gates/v0.9-gate.yaml"
-PREDECESSOR=/opt/worker/evidence/v0.8/gate-result.json
+GATE_YAML=""
+PREDECESSOR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.8/gate-result.json
 MANUAL_FROM=
 while (($#)); do
   case "$1" in
@@ -19,6 +19,8 @@ while (($#)); do
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
+[[ -n $GATE_YAML ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.9-gate.yaml"
 [[ -n $MANUAL_FROM ]] || MANUAL_FROM="$EVIDENCE_ROOT/gate-result.json"
 mkdir -p "$EVIDENCE_ROOT/logs"
 ROWS=$(mktemp "$EVIDENCE_ROOT/.report-rows.XXXXXX")

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 # Sylvode Flow v0.4 error-contract verifier.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md, the v0.4
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md, the v0.4
 # section's "Error verifier" paragraph ("Error verifier 必须用同一
 # producer fixture 在 REST、MCP HTTP/SSE/stdio、CLI JSON/table 与 UI
 # state tests 分别注入 server_draining.details.reason=drain|contention:
@@ -51,7 +53,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # unresolvable -> FAIL naming both attempted paths).
 # shellcheck source=scripts/lib/flow_contract_path.sh
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 REPO_ROOT="$ROOT_DIR"
 CONTRACT_PATH=""
@@ -77,7 +79,7 @@ Options:
                           current directory first, then against
                           --contracts-root.
   --contracts-root DIR     Root containing contracts/. Default:
-                          /opt/working/sylvode-flow
+                          $SYLVODE_CONTRACTS_ROOT
   --evidence-root DIR     Required. Where error-contract-result.json is written.
   --repo-root DIR         Repository containing apps/api, apps/mcp-server,
                           frontend/ and the cargo workspace. Default: this
@@ -106,6 +108,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ $JSON_MODE -ne 1 ]]; then
   echo "FAIL: --json is required" >&2
@@ -125,8 +128,8 @@ for tool in jq git python3 cargo sha256sum; do
 done
 if command -v bun >/dev/null 2>&1; then
   BUN_BIN="$(command -v bun)"
-elif [[ -x /home/ck/.bun/bin/bun ]]; then
-  BUN_BIN="/home/ck/.bun/bin/bun"
+elif [[ -x "$HOME/.bun/bin/bun" ]]; then
+  BUN_BIN="$HOME/.bun/bin/bun"
 else
   echo "FAIL: missing required command: bun" >&2
   exit 2
@@ -166,8 +169,8 @@ for f in "$ERROR_RS" "$RESPONSE_RS" "$COMMAND_RS" "$WRITE_RS" "$SESSION_RS" "$FR
 done
 
 mkdir -p "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/logs"
-FLOW_ERROR_SCRATCH="${FLOW_ERROR_SCRATCH:-/opt/worker/.cache/flow-v04-error-surface}"
-FLOW_ERROR_TARGET="${CARGO_TARGET_DIR:-/opt/worker/.cache/flow-v04-error-target}"
+FLOW_ERROR_SCRATCH="${FLOW_ERROR_SCRATCH:-"${SYLVODE_SCRATCH}/flow-v04-error-surface"}"
+FLOW_ERROR_TARGET="${CARGO_TARGET_DIR:-"${SYLVODE_SCRATCH}/flow-v04-error-target"}"
 mkdir -p "$FLOW_ERROR_SCRATCH" "$FLOW_ERROR_TARGET"
 export CARGO_TARGET_DIR="$FLOW_ERROR_TARGET"
 SOURCE_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
@@ -428,7 +431,7 @@ fi
 
 UI_RESULT_FILE="$LOG_DIR/errors.ui-flow-v0.4.json"
 UI_LOG_FILE="$LOG_DIR/errors.dyn.ui-flow-v0.4.log"
-UI_SCRATCH="${FLOW_V04_SCRATCH:-/opt/worker/.cache/flow-v04-errors}"
+UI_SCRATCH="${FLOW_V04_SCRATCH:-"${SYLVODE_SCRATCH}/flow-v04-errors"}"
 mkdir -p "$UI_SCRATCH"
 echo "  running: bun run --cwd frontend test:flow-v0.4" >&2
 set +e

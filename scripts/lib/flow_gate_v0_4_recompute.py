@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Sylvode Flow v0.4 hard-gate recomputation.
 
-Contract: /opt/working/sylvode-flow/gates/gate-commands.md ("verify" role)
-and /opt/working/sylvode-flow/gates/v0.4-gate.yaml's 52 hard_gates.
+Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md ("verify" role)
+and $SYLVODE_CONTRACTS_ROOT/gates/v0.4-gate.yaml's 52 hard_gates.
 
 This module NEVER trusts a gate-result.json's own self-reported
 `hard_gates` block. It independently recomputes each hard gate's verdict

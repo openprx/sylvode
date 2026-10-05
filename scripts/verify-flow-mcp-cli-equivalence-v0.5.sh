@@ -8,11 +8,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
 
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 MCP_CONTRACT=""
 SURFACE_CONTRACT=""
 ADR_PATH=""
-EVIDENCE_ROOT="${TMPDIR:-/tmp}/openpr-flow-evidence/v0.5"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.5"
 DATABASE_URL="postgresql://flowtest:flowtest@127.0.0.1:25433/postgres"
 JSON_MODE=0
 
@@ -50,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$MCP_CONTRACT" || -z "$SURFACE_CONTRACT" || -z "$ADR_PATH" || $JSON_MODE -ne 1 ]]; then
   echo "FAIL: --mcp-contract, --surface-contract, --adr, and --json are required" >&2

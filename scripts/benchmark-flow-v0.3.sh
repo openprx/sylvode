@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Sylvode Flow v0.3 P1 native benchmark runner -- SKELETON.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md v0.3 section
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md v0.3 section
 # ("scripts/benchmark-flow-v0.3.sh --candidate X --out evidence/v0.3/benchmark-X.json"),
-# /opt/working/sylvode-flow/testing/benchmark-spec.md, and the
+# $SYLVODE_CONTRACTS_ROOT/testing/benchmark-spec.md, and the
 # sylvode-flow-benchmark-result-v1.schema.json "hostile_input_safety" block
 # (decode_apply_cpu_ms / decode_apply_wall_ms / isolated_apply_memory_bytes),
 # which per ADR-0014-isolated-apply-host.md section 4 must be measured by the
@@ -21,8 +21,8 @@ set -euo pipefail
 # capability missing (documented below), 2 = usage/tool error.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.3"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.3"
 CANDIDATE=""
 OUT_PATH=""
 
@@ -46,9 +46,9 @@ Required options:
 Options:
   --evidence-root DIR   Root used to resolve contract/status file lookups
                           (does not need to match verify's evidence root for
-                          this skeleton). Default: /opt/working/sylvode-flow/evidence/v0.3
+                          this skeleton). Default: .flow-gate/evidence/v0.3
   --contracts-root DIR  Root for decisions/*.md lookups.
-                          Default: /opt/working/sylvode-flow
+                          Default: $SYLVODE_CONTRACTS_ROOT
   -h, --help             Show this help and exit 0.
 
 Exit codes: 0 written, 1 capability missing, 2 usage/tool error.
@@ -66,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$CANDIDATE" ]]; then
   echo "FAIL: --candidate is required (loro or yrs-yjs)" >&2

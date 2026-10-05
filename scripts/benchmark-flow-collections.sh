@@ -7,7 +7,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.6"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.6"
 RECORDS=""
 JSON_MODE=0
 
@@ -17,7 +17,7 @@ Usage: scripts/benchmark-flow-collections.sh --records 10000 --json [OPTIONS]
 
 Options:
   --records 10000       Required exact contractual scale
-  --evidence-root DIR   Default: /opt/working/sylvode-flow/evidence/v0.6
+  --evidence-root DIR   Default: .flow-gate/evidence/v0.6
   --repo-root DIR       Default: this checkout
   --json                Required; emit JSON and write collection-10k-result.json
   -h, --help            Show help
