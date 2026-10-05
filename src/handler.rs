@@ -1,4 +1,4 @@
-use crate::{AppState, config::AgentConfig, dispatcher, signature};
+use crate::{AppState, compat, config::AgentConfig, dispatcher, signature};
 use axum::{
     Json,
     extract::State,
@@ -204,7 +204,17 @@ pub async fn handle_webhook(
 ) -> Result<Json<Value>, StatusCode> {
     // 1. Signature verification
     if !state.config.security.allow_unsigned {
-        let sig = signature::extract_signature_from_headers(&headers).unwrap_or_default();
+        let inbound = match signature::extract_signature_from_headers(&headers) {
+            Ok(inbound) => inbound,
+            Err(e) => {
+                tracing::warn!("Refused webhook signature headers: {e}");
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        };
+        if inbound.used_legacy_header {
+            compat::warn_once(compat::LegacyEntry::SignatureHeader);
+        }
+        let sig = inbound.value.unwrap_or_default();
         if !signature::verify_signature(body.as_bytes(), &sig, &state.config.security.webhook_secrets) {
             tracing::warn!("Invalid webhook signature");
             return Err(StatusCode::UNAUTHORIZED);
