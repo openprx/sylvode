@@ -454,7 +454,7 @@ contains "nginx supports SvelteKit fallback" "$FRONTEND_NGINX" 'try_files $uri $
 
 printf '\nProduction runbook coverage:\n'
 contains "runbook states minimum production services" "$PRODUCTION_DOC" "Minimum production services:"
-contains "runbook states worker is required for connector delivery" "$PRODUCTION_DOC" "If the worker is not running"
+contains "runbook states what stops without the worker" "$PRODUCTION_DOC" "If the worker is not running"
 contains "runbook states runtime configuration section" "$PRODUCTION_DOC" "## Runtime Configuration"
 contains "runbook states PostgreSQL password must be concrete" "$PRODUCTION_DOC" '`POSTGRES_PASSWORD` and the password inside `database.url` must be the same'
 contains "runbook states PostgreSQL is internal-only" "$PRODUCTION_DOC" "PostgreSQL is exposed only inside the compose network"
@@ -482,7 +482,11 @@ contains "runbook states JWT secret must be concrete" "$PRODUCTION_DOC" '`auth.j
 contains "runbook states MCP compose API URL" "$PRODUCTION_DOC" 'api_url = "http://api:8080"'
 contains "runbook forbids shipping demo MCP credentials" "$PRODUCTION_DOC" "must not ship with demo MCP credentials"
 contains "runbook states PostgreSQL-only path" "$PRODUCTION_DOC" "Production is PostgreSQL-only for this delivery path"
-contains "runbook includes event outbox audit requirement" "$PRODUCTION_DOC" 'Verify `event_outbox` has no growing backlog'
+contains "runbook includes webhook delivery audit requirement" "$PRODUCTION_DOC" 'Verify `webhook_deliveries` has no growing number'
+# Connectors, agent invocations and the event outbox were removed in 0.2.21 (migrations 0052, 0053).
+not_contains "runbook does not require the removed event outbox" "$PRODUCTION_DOC" 'Verify `event_outbox`'
+not_contains "runbook does not list the removed connector tools" "$PRODUCTION_DOC" '`connectors.*`'
+not_contains "runbook does not describe connector receipts" "$PRODUCTION_DOC" "connector invocation"
 contains "runbook includes restaurant acceptance scenario" "$PRODUCTION_DOC" 'Use `restaurant_ordering_default`'
 contains "runbook includes MCP smoke" "$PRODUCTION_DOC" "scripts/smoke-forms-mcp.sh"
 contains "runbook includes production object-storage smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-production-object-storage.mjs"

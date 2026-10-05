@@ -54,8 +54,14 @@ bash scripts/start.sh
 `config/sylvode.compose.mcp.toml` for the MCP server, plus a compose-only `.env`
 — filling in random non-production bootstrap secrets without echoing any of them
 to the terminal. It then builds release binaries for `Dockerfile.prebuilt` and
-runs `docker compose up -d --build`. The generated files are `chmod 600` and
-hold real secrets: replace them before production use, and never commit them.
+runs `docker compose up -d --build`. The generated files hold real secrets:
+replace them before production use, and never commit them. `.env` is written
+mode `600`. The two compose configuration files are written mode `644` on
+purpose: they are bind-mounted into containers that run as uid 1000, and under
+a rootless runtime an owner-only file is unreadable inside the container. Any
+local user who can traverse `config/` can therefore read them, so protect the
+directory instead, for example `chmod 750 config` (or the deployment directory
+above it) with the deploying user as owner.
 Services publish on `${SYLVODE_BIND_HOST:-127.0.0.1}`: frontend `:3000`, API
 `:8081`, MCP `:8090`. `scripts/start.sh` maps the documented legacy environment
 aliases to these canonical compose inputs. `bash scripts/start.sh --check-config`
