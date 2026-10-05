@@ -43,7 +43,7 @@ warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 # deprecated KIND OLD NEW
 deprecated() {
-    warn "the $1 $2 is deprecated, use $3 instead; $2 is not removed before v2.0"
+    warn "the $1 $2 is deprecated, use $3 instead; $2 is not removed before Sylvode v2.0"
 }
 
 CANONICAL_NAME="sylvode-webhook"

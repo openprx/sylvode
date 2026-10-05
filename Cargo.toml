@@ -1,6 +1,6 @@
 [package]
 name = "sylvode-webhook"
-version = "0.3.13"
+version = "0.3.14"
 edition = "2024"
 authors = ["g1e2x87"]
 license = "MIT OR Apache-2.0"
@@ -11,7 +11,7 @@ repository = "https://github.com/openprx/openpr-webhook"
 name = "sylvode_webhook"
 path = "src/lib.rs"
 
-# One library entry point, two executables: the canonical name and the legacy name kept for 1.x.
+# One library entry point, two executables: the canonical name and the legacy name kept for Sylvode 1.x.
 [[bin]]
 name = "sylvode-webhook"
 path = "src/bin/sylvode-webhook.rs"

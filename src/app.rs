@@ -27,7 +27,7 @@ Options:
   -h, --help     Print this help and exit
   -V, --version  Print the version and exit
 
-The legacy executable name openpr-webhook runs the same program and is not removed before v2.0.
+The legacy executable name openpr-webhook runs the same program and is not removed before Sylvode v2.0.
 ";
 
 #[derive(Debug, PartialEq, Eq)]

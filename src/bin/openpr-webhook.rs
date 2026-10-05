@@ -1,4 +1,4 @@
-//! Legacy executable name of Sylvode Webhook, kept for the whole 1.x line.
+//! Legacy executable name of Sylvode Webhook, kept for the whole Sylvode 1.x line.
 //!
 //! Runs the same code as `sylvode-webhook` and additionally writes one deprecation line to stderr.
 

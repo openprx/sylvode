@@ -17,7 +17,7 @@ use std::process::{Command, Output};
 const CANONICAL: &str = env!("CARGO_BIN_EXE_sylvode-webhook");
 const LEGACY: &str = env!("CARGO_BIN_EXE_openpr-webhook");
 const NOTICE: &str = "warning: the executable name `openpr-webhook` is deprecated, use `sylvode-webhook` instead; \
-                      `openpr-webhook` is not removed before v2.0";
+                      `openpr-webhook` is not removed before Sylvode v2.0";
 
 fn run(binary: &str, args: &[&str]) -> Output {
     Command::new(binary)
@@ -61,6 +61,10 @@ fn help_is_byte_identical_and_only_the_legacy_name_warns() {
     assert!(
         help.contains("Usage: sylvode-webhook [CONFIG]"),
         "unexpected help: {help}"
+    );
+    assert!(
+        help.contains("is not removed before Sylvode v2.0."),
+        "help must name the Sylvode release: {help}"
     );
     assert_eq!(legacy.stdout, canonical.stdout, "help stdout must be byte-identical");
     assert_notice_only_for_legacy(&canonical, &legacy);
