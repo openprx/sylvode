@@ -4,13 +4,9 @@
 //! `--format json` is the stable machine contract; `--format table` is a human display that
 //! may evolve.
 
-// This is a CLI output module: writing to stdout/stderr is its entire job, matching
-// `apps/mcp-server/src/cli.rs`'s existing `#![allow(clippy::print_stdout, clippy::print_stderr)]`
-// for the same reason.
-#![allow(clippy::print_stdout, clippy::print_stderr)]
-
 use super::error::CliError;
 use serde_json::{Value, json};
+use std::io::Write;
 
 pub const SCHEMA_VERSION: &str = "sylvode.cli.v1";
 
@@ -21,6 +17,15 @@ pub enum OutputFormat {
     Table,
 }
 
+/// Exit status of a command that succeeded but whose output could not be written to stdout.
+///
+/// Deliberately outside `error-mapping-v1.md`'s business exit codes: none of them describes a
+/// local output device failing after the API already answered, and reusing one would tell a
+/// script something false (`2` says nothing was sent, `9` says a retry is safe). `1` is the
+/// conventional generic failure, so the caller sees a non-zero status instead of a success it
+/// never received the result of.
+pub const UNDELIVERED_OUTPUT_EXIT: i32 = 1;
+
 /// Renders one command outcome to `stdout`/`stderr` and returns the process exit code.
 ///
 /// `--format json` writes the whole envelope to stdout on both success and failure — "JSON
@@ -28,23 +33,45 @@ pub enum OutputFormat {
 /// is a human display: success renders `data` as a table on stdout, failure renders a short
 /// human line on stderr and nothing on stdout, matching this binary's `mcp-server` sibling
 /// CLI's existing convention for a failed call.
+///
+/// Nothing here panics on an unwritable stream. A failure keeps its own exit code whether or
+/// not its report could be written; a success whose output could not be written exits
+/// [`UNDELIVERED_OUTPUT_EXIT`], with a best-effort line on stderr.
 pub fn render(format: OutputFormat, command: &str, outcome: Result<Value, CliError>, request_id: &str) -> i32 {
+    let mut stdout = std::io::stdout().lock();
     match (format, outcome) {
         (OutputFormat::Json, Ok(data)) => {
-            println!("{}", success_envelope(command, &data, request_id));
-            0
+            let written = writeln!(stdout, "{}", success_envelope(command, &data, request_id));
+            delivered(written.and_then(|()| stdout.flush()), 0)
         }
         (OutputFormat::Json, Err(error)) => {
-            println!("{}", failure_envelope(command, &error, request_id));
+            let written = writeln!(stdout, "{}", failure_envelope(command, &error, request_id));
+            drop(written.and_then(|()| stdout.flush()));
             error.exit
         }
         (OutputFormat::Table, Ok(data)) => {
-            print_table(&data);
-            0
+            let written = write_table(&mut stdout, &data);
+            delivered(written.and_then(|()| stdout.flush()), 0)
         }
         (OutputFormat::Table, Err(error)) => {
-            eprintln!("Error [{}]: {}", error.code, error.message);
+            let mut stderr = std::io::stderr().lock();
+            let written = writeln!(stderr, "Error [{}]: {}", error.code, error.message);
+            drop(written.and_then(|()| stderr.flush()));
             error.exit
+        }
+    }
+}
+
+/// `exit` when the output was written; otherwise [`UNDELIVERED_OUTPUT_EXIT`], after telling
+/// stderr why if stderr can still be written.
+fn delivered(written: std::io::Result<()>, exit: i32) -> i32 {
+    match written {
+        Ok(()) => exit,
+        Err(error) => {
+            let mut stderr = std::io::stderr().lock();
+            let reported = writeln!(stderr, "Error: failed to write the result to stdout: {error}");
+            drop(reported.and_then(|()| stderr.flush()));
+            UNDELIVERED_OUTPUT_EXIT
         }
     }
 }
@@ -86,38 +113,43 @@ fn fmt_val(value: &Value) -> String {
     }
 }
 
-fn print_table(value: &Value) {
+fn write_table(out: &mut impl Write, value: &Value) -> std::io::Result<()> {
     match value {
         Value::Object(obj) if obj.contains_key("items") && obj.get("items").is_some_and(Value::is_array) => {
-            print_table(obj.get("items").unwrap_or(&Value::Null));
+            write_table(out, obj.get("items").unwrap_or(&Value::Null))?;
         }
         Value::Array(items) if !items.is_empty() => {
             if let Some(Value::Object(first)) = items.first() {
                 let keys: Vec<String> = first.keys().cloned().collect();
                 for (index, item) in items.iter().enumerate() {
                     if index > 0 {
-                        println!("---");
+                        writeln!(out, "---")?;
                     }
                     if let Value::Object(obj) = item {
                         let max_key = keys.iter().map(String::len).max().unwrap_or(0);
                         for key in &keys {
-                            println!("{key:<max_key$}  {}", fmt_val(obj.get(key).unwrap_or(&Value::Null)));
+                            writeln!(
+                                out,
+                                "{key:<max_key$}  {}",
+                                fmt_val(obj.get(key).unwrap_or(&Value::Null))
+                            )?;
                         }
                     }
                 }
             } else {
                 for item in items {
-                    println!("{}", fmt_val(item));
+                    writeln!(out, "{}", fmt_val(item))?;
                 }
             }
         }
-        Value::Array(_) => println!("(empty)"),
+        Value::Array(_) => writeln!(out, "(empty)")?,
         Value::Object(obj) => {
             let max_key = obj.keys().map(String::len).max().unwrap_or(0);
             for (key, val) in obj {
-                println!("{key:<max_key$}  {}", fmt_val(val));
+                writeln!(out, "{key:<max_key$}  {}", fmt_val(val))?;
             }
         }
-        _ => println!("{}", fmt_val(value)),
+        _ => writeln!(out, "{}", fmt_val(value))?,
     }
+    Ok(())
 }

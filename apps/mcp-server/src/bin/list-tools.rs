@@ -1,8 +1,7 @@
 // Standalone tool listing binary — does not require a database connection.
-// It is a CLI, so writing the failure reason to stderr is the expected behaviour.
-#![allow(clippy::print_stderr)]
 use mcp_server::get_all_tool_definitions;
 use std::io::{self, Write};
+use std::process::ExitCode;
 
 /// Writes the tool catalogue. A closed pipe (`| head`) is a normal end of output,
 /// not a failure, so it stops quietly instead of panicking inside `println!`.
@@ -21,12 +20,19 @@ fn write_tools(out: &mut impl Write) -> io::Result<()> {
     out.flush()
 }
 
-fn main() {
+/// Any other write failure (a full device, an I/O error) means the listing is incomplete, so
+/// it exits non-zero. The reason goes to stderr if stderr can still be written; it is dropped
+/// otherwise, because `eprintln!` would panic instead.
+fn main() -> ExitCode {
     let stdout = io::stdout();
     let mut out = stdout.lock();
-    if let Err(error) = write_tools(&mut out)
-        && error.kind() != io::ErrorKind::BrokenPipe
-    {
-        eprintln!("Failed to write tool list: {error}");
+    match write_tools(&mut out) {
+        Err(error) if error.kind() != io::ErrorKind::BrokenPipe => {
+            let mut stderr = io::stderr().lock();
+            let reported = writeln!(stderr, "Failed to write tool list: {error}");
+            drop(reported.and_then(|()| stderr.flush()));
+            ExitCode::FAILURE
+        }
+        _ => ExitCode::SUCCESS,
     }
 }
