@@ -599,7 +599,16 @@ pub fn prepare_runtime(global: &GlobalArgs, serve: Option<&ServeArgs>) -> anyhow
     let mut config = OpenPrConfig::load(global.config.as_deref())?;
     // stdio frames JSON-RPC on stdout, so the log stream is reserved to stderr no
     // matter what the file asks for.
-    platform::logging::init_reserving_stdout(&config.logging, SERVICE_NAME)?;
+    // Logged here, under this crate's target, because that is the target the default filter
+    // enables; emitted inside `platform` it was filtered out.
+    if let Some(overridden) = platform::logging::init_reserving_stdout(&config.logging, SERVICE_NAME)? {
+        tracing::warn!(
+            configured = overridden.configured.as_str(),
+            effective = overridden.effective.as_str(),
+            "{}",
+            platform::logging::StreamOverride::MESSAGE
+        );
+    }
     // Emitted only now: the logger it goes through did not exist while the file was loading.
     if let Some(notice) = platform::config::take_legacy_discovery_notice() {
         tracing::warn!("{notice}");

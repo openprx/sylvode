@@ -659,3 +659,46 @@ async fn an_unwritable_stream_never_panics_a_command() -> TestResult {
     assert_eq!(listing.status.code(), Some(1), "{listing:?}");
     Ok(())
 }
+
+/// `[logging] output = "stdout"` cannot be honoured by a process whose stdout is its result, so
+/// logs go to stderr and the process says so. Under the default filter (no `logging.filter`) that
+/// notice must reach stderr, while stdout stays exactly the command's JSON, under both names.
+#[tokio::test]
+async fn an_overridden_log_stream_is_reported_under_the_default_filter() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let dir = fixture.dir()?;
+    let source = std::fs::read_to_string(fixture.config.path())?;
+    // The shared sections pin `filter = "error"`; this file keeps the binary's default filter.
+    let logging = "[logging]\nfilter = \"error\"\nformat = \"text\"\n";
+    let rewritten = source.replace(logging, "[logging]\nformat = \"text\"\noutput = \"stdout\"\n");
+    assert_ne!(rewritten, source, "the fixture's [logging] section moved");
+    let config = dir.join("stdout-logging.toml");
+    std::fs::write(&config, rewritten)?;
+    let config = config.display().to_string();
+
+    let args = [
+        "projects".to_string(),
+        "list".to_string(),
+        "--config".to_string(),
+        config,
+    ];
+    let legacy = run(MCP_SERVER, dir, &args).await?;
+    let canonical = run(SYLVODE, dir, &args).await?;
+    for (name, output) in [("mcp-server", &legacy), ("sylvode", &canonical)] {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "{name}: {stderr}");
+        assert!(
+            stderr.contains("logging.output was overridden"),
+            "{name}: the override notice is missing from stderr:\n{stderr}"
+        );
+        let stdout = String::from_utf8(output.stdout.clone())?;
+        assert!(
+            !stdout.contains("overridden"),
+            "{name}: a log line reached stdout:\n{stdout}"
+        );
+        let parsed: Value = serde_json::from_str(&stdout)?;
+        assert!(parsed.is_object(), "{name}: {stdout}");
+    }
+    assert_eq!(legacy.stdout, canonical.stdout);
+    Ok(())
+}
