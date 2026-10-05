@@ -14,7 +14,8 @@ Minimum production services:
 - Sylvode worker.
 - Sylvode frontend.
 - Sylvode MCP server if AI assistants or external MCP clients are enabled.
-- Optional connector receivers such as webhook, print, device, REST, CLI, or tunnel gateways.
+- Optional: the Sylvode Webhook receiver (`sylvode-webhook`, compose profile `connectors`) when
+  inbound webhook handling is wanted.
 
 Universal forms production features require these subsystems to be running
 together:
@@ -22,16 +23,21 @@ together:
 ```text
 API writes
   -> project_forms / form_records / form_record_links
-  -> business_events
-  -> event_outbox
-  -> worker delivery
-  -> connector invocation / receipt
-  -> event_inbox
+  -> business_events (read through events.tail and the activity views)
+  -> outbound webhook deliveries to the configured endpoints (webhook_deliveries)
   -> MCP/API/frontend reads
+
+worker
+  -> form import, export and attachment packaging jobs
+  -> AI task dispatch
+  -> Flow event dispatch (event_dispatch -> event_deliveries), search, projection,
+     compaction, integrity and retention ticks
 ```
 
-If the worker is not running, records can still be created, but connector
-delivery, print jobs, retries, and receipt handling are not production-ready.
+If the worker is not running, records can still be created, but form import,
+export and attachment packaging jobs, AI task dispatch and Flow event delivery do
+not run. Connectors, agent invocations and the event outbox were removed in
+0.2.21; there is no connector delivery or receipt path.
 
 ## Preflight
 
@@ -262,7 +268,7 @@ outside compose, set `VITE_API_BASE_URL=http://localhost:8081`.
 
 PostgreSQL is exposed only inside the compose network. Do not publish the
 database port unless an operator has a separate firewall, backup, and access
-control plan. API, MCP, frontend, and optional connector receiver host ports bind
+control plan. API, MCP, frontend, and optional webhook receiver host ports bind
 to `127.0.0.1` by default. Put a deployment-owned reverse proxy or tunnel in
 front of the frontend and any intentional API/MCP endpoint, and terminate TLS
 there. Optional receivers, such as the Sylvode Webhook receiver (`sylvode-webhook`), run under the
@@ -270,7 +276,7 @@ there. Optional receivers, such as the Sylvode Webhook receiver (`sylvode-webhoo
 machine-specific `/opt/...` paths.
 
 The repository includes `config/openpr-webhook.example.toml` so the optional
-connector receiver profile has a portable starter config. For production, copy
+webhook receiver has a portable starter config. For production, copy
 it to a deployment-owned path, set a concrete `webhook_secrets` value, keep
 `allow_unsigned = false`, and point `SYLVODE_WEBHOOK_CONFIG` (legacy `OPENPR_WEBHOOK_CONFIG`) at that
 file. The default image is `ghcr.io/openprx/sylvode-webhook:latest`, which mounts the file at
@@ -292,17 +298,16 @@ depends on:
 - `form_record_links`
 - `form_record_field_index`
 - `business_events`
-- `event_outbox`
-- `event_inbox`
+- `webhooks` and `webhook_deliveries`
 - `plugins`
 - `plugin_invocations`
 
 Operational requirements:
 
 - Back up PostgreSQL before migrations and before plugin/runtime upgrades.
-- Treat `business_events`, `event_outbox`, `event_inbox`, `agent_invocations`, and `plugin_invocations` as audit data.
+- Treat `business_events`, `webhook_deliveries`, `bot_operation_logs` and `plugin_invocations` as audit data.
 - Do not truncate event or invocation tables during incident recovery unless the business accepts loss of audit history.
-- Verify `event_outbox` has no growing backlog before declaring connector delivery healthy.
+- Verify `webhook_deliveries` has no growing number of rows with an `error` and no `delivered_at` before declaring webhook delivery healthy.
 
 ## First Business Scenario
 
@@ -322,7 +327,6 @@ The project should initialize:
 
 - Forms: `menu_category`, `sku`, `table`, `order`, `order_line`, `print_job`, `business_report`.
 - Grid/detail views for each form.
-- Print and webhook connector suggestions.
 - Active `restaurant_calc` WASM plugin with an `order_line` formula hook.
 
 Production acceptance flow:
@@ -334,7 +338,7 @@ Production acceptance flow:
 5. Link order lines to the order with `parent_child`.
 6. Change table and confirm `order.table_changed` event exists.
 7. Create kitchen and receipt `print_job` records.
-8. Confirm print connector invocation and receipt path.
+8. Confirm the `print_job.created` business event exists for each print job.
 9. Create `business_report`.
 10. Query revenue through MCP `form_records.aggregate`.
 
@@ -344,7 +348,7 @@ MCP is the business automation interface for AI assistants and external tools.
 In production, verify:
 
 - MCP server health endpoint responds.
-- `tools/list` includes `forms.*`, `form_records.*`, `events.tail`, `plugins.*`, `connectors.*`, project type, and scenario template tools.
+- `tools/list` includes `forms.*`, `form_records.*`, `events.tail`, `plugins.*`, project type, and scenario template tools.
 - The bot token in use — the caller's own `Authorization: Bearer opr_...` token for `http`/`sse`, or `mcp.bot_token` for `stdio`/CLI — belongs to the production workspace named by `mcp.workspace_id`; a token from another workspace gets `403`.
 - Project-aware capability filtering still exposes forms tools for the restaurant project.
 - Generic CLI tool calls work for `forms.list` and `form_records.aggregate`.

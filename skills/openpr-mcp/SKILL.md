@@ -99,7 +99,8 @@ comments.delete                    → remove test comments
 1. `search.all` with keywords to check for duplicates.
 2. `labels.list` to find existing labels (don't create duplicates).
 3. `members.list` if assigning (get valid `assignee_id`).
-4. Create with appropriate `state` and `priority`.
+4. Create with an appropriate `priority`; set `state` only when the item should not start in the
+   project workflow's initial state.
 
 ### File attachments
 1. Upload file first: `files.upload { filename, content_base64 }`.
@@ -107,10 +108,12 @@ comments.delete                    → remove test comments
 3. Attachments are appended to description/content as markdown links.
 
 ### Issue lifecycle
-```
-backlog → todo → in_progress → done
-```
-- Priority: `none` | `low` | `medium` | `high` | `urgent`
+States come from the project's workflow, not from a fixed list. Each project uses its own
+workflow, its workspace's, or the system default (`backlog` → `todo` → `in_progress` → `done`);
+scenario templates install others (the code delivery template, for example, uses `backlog`,
+`ready`, `in_progress`, `review`, `release_approval`, `done`). To learn a project's states, read
+the `state` of its existing work items, or send a state and read the list in the `400` answer.
+- Priority: `low` | `medium` | `high` | `urgent` (default `medium`)
 - Use `work_items.update` to transition state.
 
 ## Field reference
@@ -121,8 +124,8 @@ backlog → todo → in_progress → done
 | `project_id` | Yes | UUID | From `projects.list` |
 | `title` | Yes | string | Issue title |
 | `description` | No | string | Markdown description |
-| `state` | No | enum | `backlog` / `todo` / `in_progress` / `done` |
-| `priority` | No | enum | `none` / `low` / `medium` / `high` / `urgent` |
+| `state` | No | string | A state key of the project's workflow; omitted means the workflow's initial state |
+| `priority` | No | enum | `low` / `medium` / `high` / `urgent` (default `medium`) |
 | `assignee_id` | No | UUID | From `members.list` |
 | `due_at` | No | ISO 8601 | e.g. `2026-03-15T00:00:00Z` |
 | `attachments` | No | string[] | URLs from `files.upload` |
@@ -158,7 +161,7 @@ All tools return:
 
 Errors:
 ```json
-{ "code": 400, "message": "state must be one of: backlog, todo, in_progress, done" }
+{ "code": 400, "message": "state must be one of: <the project's workflow states>" }
 ```
 
 ## Workflow templates
@@ -172,7 +175,6 @@ work_items.create {
   project_id: "...",
   title: "Login fails with 500",
   description: "Steps to reproduce:\n1. ...\n2. ...",
-  state: "backlog",
   priority: "high",
   attachments: ["/api/v1/uploads/uuid.log"]
 }

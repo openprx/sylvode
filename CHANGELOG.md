@@ -260,6 +260,13 @@ replacement and the earliest removal.
   write") and a missing one is an error, the render smokes and the screenshot collector refuse a
   non-empty target directory without `--overwrite`, and `scripts/test-no-machine-paths.sh` runs
   in CI.
+- The README said the files `scripts/start.sh` generates are `chmod 600`; only `.env` is. The two
+  compose configuration files are `644` so the container user can read the bind mount, and the
+  README now says so and recommends restricting the `config/` directory instead.
+  `docs/universal-forms-production.md` no longer describes connector receivers, connector
+  receipts, the event outbox or the `connectors.*` tools, all removed in 0.2.21, and its audit
+  stopped requiring the outbox sentence. The bundled MCP skill no longer lists a fixed work-item
+  state enum or the `none` priority: states come from the project's workflow.
 
 ## [0.2.21] - 2026-08-19
 
