@@ -598,17 +598,49 @@ async fn all_resource_aliases_are_identical_over_stdio_http_and_sse() -> TestRes
                 alias_response.get("error").is_none(),
                 "{transport} alias {registered}: {alias_response}"
             );
+            // ADR-0020 D2: the alias read carries `_meta.deprecation` naming the canonical URI
+            // and the earliest removal release; with that one key removed it is the canonical
+            // read byte for byte, and the canonical read carries no deprecation at all.
+            let mut alias_result = alias_response
+                .get("result")
+                .cloned()
+                .ok_or("alias read had no result")?;
+            let contents = alias_result
+                .get_mut("contents")
+                .and_then(Value::as_array_mut)
+                .ok_or("alias read had no contents")?;
+            assert!(
+                !contents.is_empty(),
+                "{transport} alias read of {registered} returned no contents"
+            );
+            for content in contents {
+                let deprecation = content
+                    .get_mut("_meta")
+                    .and_then(Value::as_object_mut)
+                    .and_then(|meta| meta.remove("deprecation"));
+                assert_eq!(
+                    deprecation,
+                    Some(json!({"replaced_by": canonical, "earliest_removal": "2.0"})),
+                    "{transport} alias read of {registered} lacks the deprecation metadata"
+                );
+            }
             assert_eq!(
                 canonical_response.get("result"),
-                alias_response.get("result"),
-                "{transport} alias payload differs for {registered}"
+                Some(&alias_result),
+                "{transport} alias payload differs for {registered} beyond _meta.deprecation"
             );
             assert_eq!(
                 json_at(&canonical_response, "/result/contents/0/_meta/canonical_uri")?,
-                json_at(&canonical_response, "/result/contents/0/uri")?,
+                &json!(canonical),
                 "{transport} canonical metadata differs for {registered}"
             );
-            rows.push(json!({"resource":registered,"transport":transport,"passed":true}));
+            assert!(
+                canonical_response
+                    .pointer("/result/contents/0/_meta/deprecation")
+                    .is_none(),
+                "{transport} canonical read of {registered} carries deprecation metadata"
+            );
+            rows.push(json!({"resource":registered,"transport":transport,"passed":true,"deprecation_checked":true}));
         }
     }
     println!(

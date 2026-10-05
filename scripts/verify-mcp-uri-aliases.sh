@@ -67,6 +67,7 @@ passed = bool(
     and len(matrix) == registry_count * transport_count
     and parsed.get("executed_count") == len(matrix)
     and all(row.get("passed") is True for row in matrix)
+    and all(row.get("deprecation_checked") is True for row in matrix)
     and {row.get("transport") for row in matrix} == {"http", "stdio", "sse"}
     and drop_red
     and break_red

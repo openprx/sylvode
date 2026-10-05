@@ -608,7 +608,8 @@ impl McpServer {
             "resources/list" => self.handle_resources_list(req.id),
             "resources/templates/list" => self.handle_resources_templates_list(req.id),
             "resources/read" => {
-                attach_canonical_resource_metadata(self.handle_resources_read(req.id, req.params).await)
+                let legacy_alias = requested_through_legacy_alias(req.params.as_ref());
+                attach_canonical_resource_metadata(self.handle_resources_read(req.id, req.params).await, legacy_alias)
             }
             _ => JsonRpcResponse::error(
                 req.id,
@@ -2100,10 +2101,25 @@ fn resource_read_success(id: Option<Value>, uri: &str, mime_type: &str, text: &s
     JsonRpcResponse::success(id, json!({"contents":[{"uri":uri,"mimeType":mime_type,"text":text}]}))
 }
 
+/// Whether a `resources/read` addressed its resource through the legacy `openpr://` scheme.
+fn requested_through_legacy_alias(params: Option<&Value>) -> bool {
+    params
+        .and_then(|params| params.get("uri"))
+        .and_then(Value::as_str)
+        .is_some_and(|uri| uri.starts_with(LEGACY_RESOURCE_SCHEME))
+}
+
+/// The scheme of the deprecated resource URI alias.
+const LEGACY_RESOURCE_SCHEME: &str = "openpr://";
+
 /// Every successful resource payload names the canonical identity, including reads addressed
 /// through the legacy `openpr://` alias. Keeping this at the one JSON-RPC dispatch boundary makes
 /// it impossible for a newly registered read branch to forget the migration metadata.
-fn attach_canonical_resource_metadata(mut response: JsonRpcResponse) -> JsonRpcResponse {
+///
+/// A read through the alias additionally carries `_meta.deprecation` (ADR-0020 D2): the
+/// canonical URI that replaces it and the earliest release that may remove the alias. A read
+/// through the canonical URI carries no deprecation, and the resource body is never touched.
+fn attach_canonical_resource_metadata(mut response: JsonRpcResponse, legacy_alias: bool) -> JsonRpcResponse {
     if let Some(contents) = response
         .result
         .as_mut()
@@ -2114,8 +2130,19 @@ fn attach_canonical_resource_metadata(mut response: JsonRpcResponse) -> JsonRpcR
             let Some(uri) = content.get("uri").and_then(Value::as_str).map(str::to_string) else {
                 continue;
             };
+            let meta = if legacy_alias {
+                json!({
+                    "canonical_uri": uri,
+                    "deprecation": {
+                        "replaced_by": uri,
+                        "earliest_removal": platform::deprecation::EARLIEST_REMOVAL,
+                    },
+                })
+            } else {
+                json!({"canonical_uri": uri})
+            };
             if let Some(object) = content.as_object_mut() {
-                object.insert("_meta".to_string(), json!({"canonical_uri":uri}));
+                object.insert("_meta".to_string(), meta);
             }
         }
     }
@@ -2297,7 +2324,8 @@ fn canonical_resource_uri(uri: &str) -> Option<String> {
     if uri.starts_with("sylvode://") {
         Some(uri.to_string())
     } else {
-        uri.strip_prefix("openpr://").map(|rest| format!("sylvode://{rest}"))
+        uri.strip_prefix(LEGACY_RESOURCE_SCHEME)
+            .map(|rest| format!("sylvode://{rest}"))
     }
 }
 
@@ -2789,17 +2817,38 @@ mod tests {
                 "canonical read failed: {canonical_response:?}"
             );
             assert!(alias_response.error.is_none(), "alias read failed: {alias_response:?}");
-            assert_eq!(
-                canonical_response.result, alias_response.result,
-                "alias bytes differ for {registered}"
-            );
             let result = canonical_response.result.ok_or("resource read had no result")?;
+            let mut alias_result = alias_response.result.ok_or("alias read had no result")?;
+            let contents = alias_result
+                .get_mut("contents")
+                .and_then(Value::as_array_mut)
+                .ok_or("alias read had no contents")?;
+            assert!(!contents.is_empty(), "alias read of {registered} returned no contents");
+            for content in contents {
+                let deprecation = content
+                    .get_mut("_meta")
+                    .and_then(Value::as_object_mut)
+                    .and_then(|meta| meta.remove("deprecation"));
+                assert_eq!(
+                    deprecation,
+                    Some(json!({"replaced_by": canonical, "earliest_removal": "2.0"})),
+                    "alias read of {registered} lacks the deprecation metadata"
+                );
+            }
+            assert_eq!(
+                result, alias_result,
+                "alias bytes differ for {registered} beyond _meta.deprecation"
+            );
             assert_eq!(
                 result
                     .pointer("/contents/0/_meta/canonical_uri")
                     .and_then(Value::as_str),
-                result.pointer("/contents/0/uri").and_then(Value::as_str),
+                Some(canonical.as_str()),
                 "canonical metadata missing for {registered}"
+            );
+            assert!(
+                result.pointer("/contents/0/_meta/deprecation").is_none(),
+                "canonical read of {registered} carries deprecation metadata"
             );
         }
         Ok(())
