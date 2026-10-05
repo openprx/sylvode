@@ -253,7 +253,8 @@ async fn assert_same(fixture: &Fixture, args: &[&str], expect: Expect) -> TestRe
 }
 
 /// `sylvode <group> --help` exits 0 and prints the help `mcp-server <group> --help` prints, with
-/// only the program name changed.
+/// only the program name changed and the shared options' sentences about `serve`, which `sylvode`
+/// does not have, rewritten (`cli::sylvode_help_prose`).
 async fn assert_help(fixture: &Fixture, group: &str) -> TestResult {
     let args = vec![group.to_string(), "--help".to_string()];
     let canonical = run(SYLVODE, fixture.dir()?, &args).await?;
@@ -272,9 +273,16 @@ async fn assert_help(fixture: &Fixture, group: &str) -> TestResult {
     assert_eq!(legacy.status.code(), Some(0));
     let legacy_help = String::from_utf8(legacy.stdout)?;
     assert_eq!(
-        legacy_help.replace("mcp-server", "sylvode"),
+        mcp_server::cli::sylvode_help_prose(&legacy_help),
         canonical_help,
-        "{group} help differs beyond the program name"
+        "{group} help differs beyond the program name and the serve sentences"
+    );
+    let mentions_serve = canonical_help
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+        .any(|word| word == "serve");
+    assert!(
+        !mentions_serve,
+        "sylvode {group} --help mentions serve:\n{canonical_help}"
     );
     Ok(())
 }
