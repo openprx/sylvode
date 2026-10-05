@@ -44,10 +44,15 @@ pass `--config <path>`:
 mcp-server serve --config config/sylvode.toml
 ```
 
-New installations should invoke the `sylvode` CLI for Flow commands. The
-`mcp-server` executable, legacy `config/openpr.toml` default, and existing MCP
-tool names remain compatible in v0.9; see the
-[compatibility matrix](../../docs/sylvode-v0.9-compatibility.md).
+New installations should invoke the `sylvode` CLI, which carries both the Flow
+commands and the workspace commands (`projects`, `work-items`, `comments`,
+`labels`, `sprints`, `search`, `files`, `operation-logs`, `tools`). Those
+workspace commands under `mcp-server` are the same commands with the same output
+and exit codes, but print a deprecation warning on stderr; `mcp-server serve`
+does not warn. The legacy `config/openpr.toml` default also warns when it is
+discovered. None of these is removed before Sylvode v2.0, and MCP tool names are
+not renamed; see the
+[compatibility matrix](../../docs/sylvode-v1.0-compatibility.md).
 
 | Config key | Required | Purpose |
 | --- | --- | --- |

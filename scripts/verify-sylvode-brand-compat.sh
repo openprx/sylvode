@@ -157,6 +157,20 @@ missing_surfaces = [surface for surface in required_surfaces if f"| {surface} |"
 checks.append({"name": "compatibility-matrix-complete", "status": "passed" if not missing_surfaces else "failed",
                "surface_count": len(required_surfaces), "missing": missing_surfaces})
 
+matrix_v1 = (repo / "docs/sylvode-v1.0-compatibility.md").read_text()
+v1_surfaces = required_surfaces + ["MCP attribution headers", "Attachment count headers", "Webhook `User-Agent`"]
+v1_tokens = ["not removed before Sylvode v2.0", "_meta.deprecation", "X-Sylvode-MCP-Tool", "X-OpenPR-MCP-Tool",
+             "X-Sylvode-Attachment-Count", "X-OpenPR-Attachment-Count",
+             "Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)", "**exactly** or as a **prefix**",
+             "openpr_plugin_abi_version", "`opr_`", "OPENPR_TEST_DATABASE_URL"]
+missing_v1 = [surface for surface in v1_surfaces if f"| {surface} |" not in matrix_v1]
+missing_v1 += [token for token in v1_tokens if token not in matrix_v1]
+# R17: the v0.9 row claimed `mcp-server` had "the same commands" as `sylvode`; v1.0 must not.
+false_claim = "remains a shipped executable with the same commands" in matrix_v1
+checks.append({"name": "compatibility-matrix-v1.0-complete",
+               "status": "passed" if not missing_v1 and not false_claim else "failed",
+               "surface_count": len(v1_surfaces), "missing": missing_v1, "false_same_commands_claim": false_claim})
+
 release = (repo / ".github/workflows/release.yml").read_text()
 obsolete_release = repo / ".github/workflows/release-mcp.yml"
 release_tokens = ["sylvode-${{ matrix.suffix }}", "openpr-${{ matrix.suffix }}", "Matching `openpr-*` archive names"]
