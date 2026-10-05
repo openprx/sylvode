@@ -118,6 +118,9 @@ fn invoke_wasm_plugin_sync(
 fn build_engine() -> Result<Engine, String> {
     let mut config = Config::new();
     config.consume_fuel(true);
+    // Wasmtime 49 turned the wide-arithmetic proposal on by default. Keep the guest-visible
+    // feature set identical to what plugins were validated against before the upgrade.
+    config.wasm_wide_arithmetic(false);
     Engine::new(&config).map_err(|err| format!("failed to build wasm engine: {err}"))
 }
 
@@ -219,6 +222,104 @@ mod tests {
             .expect_err("imports should fail");
 
         assert!(err.contains("failed to instantiate wasm"));
+    }
+
+    fn memory_grow_probe_wasm(initial_pages: u32) -> Vec<u8> {
+        wat::parse_str(format!(
+            r#"
+            (module
+              (memory (export "memory") {initial_pages})
+              (data (i32.const 1024) "{{\"grow\":\"denied\"}}")
+              (data (i32.const 2048) "{{\"grow\":\"allowed\"}}")
+              (func (export "openpr_alloc") (param i32) (result i32) i32.const 4096)
+              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+                i32.const 4
+                memory.grow
+                i32.const -1
+                i32.eq
+                if (result i64)
+                  i64.const 1024
+                  i64.const 32
+                  i64.shl
+                  i64.const 17
+                  i64.or
+                else
+                  i64.const 2048
+                  i64.const 32
+                  i64.shl
+                  i64.const 18
+                  i64.or
+                end))
+            "#
+        ))
+        .expect("wat should compile")
+    }
+
+    #[tokio::test]
+    async fn memory_limit_denies_growth_beyond_policy() {
+        let policy = PluginRuntimePolicy {
+            timeout_ms: 500,
+            fuel: 100_000,
+            memory_bytes: 2 * 65_536,
+        };
+        let output = invoke_wasm_plugin(memory_grow_probe_wasm(1), json!({}), policy)
+            .await
+            .expect("probe should run");
+
+        assert_eq!(
+            output.output.get("grow").and_then(serde_json::Value::as_str),
+            Some("denied")
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_limit_allows_growth_within_policy() {
+        let policy = PluginRuntimePolicy {
+            timeout_ms: 500,
+            fuel: 100_000,
+            memory_bytes: 8 * 65_536,
+        };
+        let output = invoke_wasm_plugin(memory_grow_probe_wasm(1), json!({}), policy)
+            .await
+            .expect("probe should run");
+
+        assert_eq!(
+            output.output.get("grow").and_then(serde_json::Value::as_str),
+            Some("allowed")
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_limit_rejects_initial_memory_beyond_policy() {
+        let policy = PluginRuntimePolicy {
+            timeout_ms: 500,
+            fuel: 100_000,
+            memory_bytes: 2 * 65_536,
+        };
+        let err = invoke_wasm_plugin(memory_grow_probe_wasm(4), json!({}), policy)
+            .await
+            .expect_err("oversized initial memory should fail");
+
+        assert!(err.contains("failed to instantiate wasm"));
+    }
+
+    #[test]
+    fn rejects_wide_arithmetic_proposal_modules() {
+        let wasm = wat::parse_str(
+            r"
+            (module
+              (func (param i64 i64 i64 i64) (result i64 i64)
+                local.get 0
+                local.get 1
+                local.get 2
+                local.get 3
+                i64.add128))
+            ",
+        )
+        .expect("wat should compile");
+        let err = validate_wasm_module(&wasm).expect_err("wide-arithmetic must stay disabled");
+
+        assert!(err.contains("invalid wasm module"));
     }
 
     #[tokio::test]
