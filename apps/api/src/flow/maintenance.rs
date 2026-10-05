@@ -353,7 +353,7 @@ mod database_tests {
         let admin = Database::connect(&admin_url)
             .await
             .unwrap_or_else(|error| panic!("{TEST_DATABASE_URL_ENV} is unusable: {error}"));
-        let name = "openpr_flow_projection_rebuild_v08".to_string();
+        let name = "sylvode_flow_projection_rebuild_v08".to_string();
         admin
             .execute_unprepared(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
             .await

@@ -147,7 +147,7 @@ fi
 
 uuid() { python3 -c 'import uuid; print(uuid.uuid4())'; }
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/openpr-cross-workspace-verify.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sylvode-cross-workspace-verify.XXXXXX")"
 WS_A="$(uuid)"; WS_B="$(uuid)"; WS_C="$(uuid)"
 USER_A="$(uuid)"; USER_B="$(uuid)"
 BOT_RW="$(uuid)"; BOT_RO="$(uuid)"
@@ -238,7 +238,7 @@ jwt_secret = "cross-workspace-verify-not-a-real-secret"
 collab_allowed_origins = ["$ORIGIN_A"]
 
 [logging]
-filter = "api=info,openpr=info"
+filter = "api=info"
 format = "text"
 EOF
 

@@ -54,7 +54,7 @@ else
   fail "canonical implementation map JSON passes verifier"
 fi
 
-tmp_dir="$(mktemp -d /tmp/openpr-uf-implementation-map-json-contract.XXXXXX)"
+tmp_dir="$(mktemp -d /tmp/sylvode-uf-implementation-map-json-contract.XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 expect_reject() {

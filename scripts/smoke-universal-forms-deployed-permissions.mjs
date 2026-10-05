@@ -7,12 +7,12 @@ const require = createRequire(import.meta.url);
 const WebSocket = require('ws');
 
 const frontendUrl = process.env.OPENPR_FRONTEND_URL ?? 'http://10.72.0.3:3000';
-const email = process.env.OPENPR_DEMO_EMAIL ?? 'demo@openpr.local';
-const password = process.env.OPENPR_DEMO_PASSWORD ?? 'OpenPRDemo123!';
+const email = process.env.OPENPR_DEMO_EMAIL ?? 'demo@sylvode.local';
+const password = process.env.OPENPR_DEMO_PASSWORD ?? 'SylvodeDemo123!';
 const chromium = process.env.CHROMIUM_BIN ?? '/usr/bin/chromium';
 const suffix = Date.now().toString(36);
 const memberEmail = `phase9_permissions_${suffix}@openpr.local`;
-const memberPassword = `OpenPRPerms${suffix}!`;
+const memberPassword = `SylvodePerms${suffix}!`;
 const formKey = `perms_${suffix}`;
 const formName = `Permissions Smoke ${suffix}`;
 
@@ -239,7 +239,7 @@ function connect(wsUrl) {
 
 async function openBrowser(targetUrl) {
 	const port = 22500 + Math.floor(Math.random() * 300);
-	const profile = `/tmp/openpr-phase9-permissions-${process.pid}`;
+	const profile = `/tmp/sylvode-phase9-permissions-${process.pid}`;
 	rmSync(profile, { recursive: true, force: true });
 	child = spawn(
 		chromium,

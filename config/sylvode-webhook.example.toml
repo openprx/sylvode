@@ -1,4 +1,4 @@
-# Example configuration for the Sylvode Webhook receiver, sylvode-webhook (formerly openpr-webhook;
+# Example configuration for the Sylvode Webhook receiver, sylvode-webhook (formerly OpenPR Webhook;
 # https://github.com/openprx/openpr-webhook), pointed at this deployment. docker-compose.yml mounts
 # it at /etc/sylvode-webhook/config.toml in the optional `webhook` service.
 #
@@ -11,7 +11,7 @@ listen = "0.0.0.0:9090"
 [security]
 # Must equal the `secret` of the webhook subscription created in Sylvode. Both the API's own
 # deliveries and the worker's AI-task dispatch sign the exact request body with it.
-webhook_secrets = ["replace_with_openpr_webhook_secret"]
+webhook_secrets = ["replace_with_webhook_secret"]
 allow_unsigned = false
 
 [features]

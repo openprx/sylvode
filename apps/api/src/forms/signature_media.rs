@@ -1677,7 +1677,7 @@ mod tests {
     }
 
     fn test_upload_root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("openpr-signature-media-test-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("sylvode-signature-media-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("test upload root should be created");
         root
     }

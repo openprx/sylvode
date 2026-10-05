@@ -62,7 +62,7 @@ require_file() {
 
 run_quiet() {
   local output_path
-  output_path="$(mktemp /tmp/openpr-uf-delivery-status-check.XXXXXX)"
+  output_path="$(mktemp /tmp/sylvode-uf-delivery-status-check.XXXXXX)"
   if "$@" >"$output_path" 2>&1; then
     rm -f "$output_path"
   else

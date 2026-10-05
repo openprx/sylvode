@@ -320,7 +320,7 @@ else
   fi
   API_BIN="$TARGET_DIR/debug/api"
   RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-  SCRATCH_DB="openpr_flow_cardinality_verify_$RUN_ID"
+  SCRATCH_DB="sylvode_flow_cardinality_verify_$RUN_ID"
   SCRATCH_URL="${DATABASE_URL%/*}/$SCRATCH_DB"
   TMP_DIR="$(mktemp -d "${SYLVODE_SCRATCH}/flow-cardinality-verify.XXXXXX")"
   API_PORT=$((22000 + RANDOM % 12000))
@@ -329,7 +329,7 @@ else
   }
   if [[ -n "$SCRATCH_DB" ]]; then
     JWT_SECRET="cardinality-verify-not-a-real-secret"
-    API_CONFIG="$TMP_DIR/openpr.toml"
+    API_CONFIG="$TMP_DIR/sylvode.toml"
     cat > "$API_CONFIG" <<EOF
 [server]
 app_name = "api"
@@ -339,7 +339,7 @@ url = "$SCRATCH_URL"
 [auth]
 jwt_secret = "$JWT_SECRET"
 [logging]
-filter = "api=warn,openpr=warn"
+filter = "api=warn"
 format = "text"
 EOF
     "$API_BIN" --config "$API_CONFIG" >"$TMP_DIR/api.log" 2>&1 & API_PID=$!

@@ -240,7 +240,7 @@ for path in "${official_paths[@]}"; do
   official_before["$path"]="$(sha256sum "$path" | awk '{print $1}')"
 done
 
-tmp_dir="$(mktemp -d /tmp/openpr-uf-dashboard-progression.XXXXXX)"
+tmp_dir="$(mktemp -d /tmp/sylvode-uf-dashboard-progression.XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
 tmp_runbook="$tmp_dir/runbook.md"
 tmp_evidence="$tmp_dir/evidence.md"

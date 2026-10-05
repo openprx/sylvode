@@ -624,7 +624,7 @@ SQL
 }
 trap cleanup EXIT
 
-APP_CONFIG="$TMP_DIR/openpr.toml"
+APP_CONFIG="$TMP_DIR/sylvode.toml"
 cat > "$APP_CONFIG" <<EOF
 [server]
 app_name = "api"
@@ -637,7 +637,7 @@ url = "$DATABASE_URL"
 jwt_secret = "authz-baseline-verify-not-a-real-secret"
 
 [logging]
-filter = "api=info,openpr=info"
+filter = "api=info"
 format = "text"
 EOF
 

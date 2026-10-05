@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
 ARTIFACT_DIR="${OPENPR_UI_ARTIFACT_DIR:-${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/artifacts/universal-forms-ui-2026-05-31}"
 MANIFEST_PATH="${OPENPR_UI_ARTIFACT_MANIFEST:-$REPORT_DIR/openpr-universal-form-ui-artifacts-2026-05-31.md}"
-FRONTEND_LOCK="${OPENPR_FRONTEND_BUILD_LOCK:-/tmp/openpr-frontend-build.lock}"
+FRONTEND_LOCK="${OPENPR_FRONTEND_BUILD_LOCK:-/tmp/sylvode-frontend-build.lock}"
 
 OVERWRITE=0
 

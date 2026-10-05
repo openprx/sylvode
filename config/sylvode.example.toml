@@ -130,7 +130,7 @@ dir = "./uploads"
 # filled in while running on local storage and switch by editing one line above.
 # [storage.s3]
 # endpoint = "https://s3.eu-central-1.amazonaws.com"  # REQUIRED, http:// or https://
-# bucket = "openpr-uploads"                           # REQUIRED, 3-63 chars, lowercase
+# bucket = "sylvode-uploads"                           # REQUIRED, 3-63 chars, lowercase
 # region = "us-east-1"                                # default: us-east-1
 # access_key_id = "replace_with_s3_access_key_id"          # REQUIRED, never logged
 # secret_access_key = "replace_with_s3_secret_access_key"  # REQUIRED, never logged

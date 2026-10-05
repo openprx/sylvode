@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 const frontendUrl = (process.env.OPENPR_FRONTEND_URL ?? 'http://10.72.0.3:3000').replace(/\/+$/, '');
-const email = process.env.OPENPR_DEMO_EMAIL ?? 'demo@openpr.local';
-const password = process.env.OPENPR_DEMO_PASSWORD ?? 'OpenPRDemo123!';
+const email = process.env.OPENPR_DEMO_EMAIL ?? 'demo@sylvode.local';
+const password = process.env.OPENPR_DEMO_PASSWORD ?? 'SylvodeDemo123!';
 const workspaceOverride = process.env.OPENPR_WORKSPACE_ID;
 const projectOverride = process.env.OPENPR_PROJECT_ID;
 const expectedBackend = process.env.OPENPR_EXPECT_OBJECT_STORAGE_BACKEND;

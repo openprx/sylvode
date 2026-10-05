@@ -3,7 +3,7 @@
 ## 🚀 启动开发服务器
 
 ```bash
-cd /opt/worker/code/openpr/frontend
+cd frontend
 bun run dev
 ```
 
@@ -11,10 +11,8 @@ bun run dev
 
 ## 📝 测试账号（需后端运行）
 
-```
-邮箱：demo@openpr.io
-密码：password123
-```
+没有预置账号：首次运行时在 http://localhost:5173 注册一个账号，或运行
+`scripts/bootstrap-restaurant-demo.sh` 创建演示账号（见仓库根目录 README）。
 
 ## 🎨 核心页面路由
 

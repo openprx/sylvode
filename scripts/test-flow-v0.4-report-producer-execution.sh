@@ -10,7 +10,7 @@ REPORT="$ROOT_DIR/scripts/report-flow-v0.4-json.sh"
 GATE_YAML="${SYLVODE_CONTRACTS_ROOT:+$SYLVODE_CONTRACTS_ROOT/gates/v0.4-gate.yaml}"
 [[ -n $GATE_YAML && -f $GATE_YAML ]] || { echo "FAIL: gate yaml not found (${GATE_YAML:-unset}); set SYLVODE_CONTRACTS_ROOT to the contracts checkout" >&2; exit 2; }
 SCHEMA="$ROOT_DIR/docs/schemas/sylvode-flow-gate-v0.4.schema.json"
-TMP_DIR="$(mktemp -d /tmp/openpr-flow-v04-producers.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/sylvode-flow-v04-producers.XXXXXX)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 fail() {

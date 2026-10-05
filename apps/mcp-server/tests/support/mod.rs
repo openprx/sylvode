@@ -82,7 +82,7 @@ pub fn write_config_with_extra_mcp_keys(
 ) -> Result<ConfigFile, Box<dyn Error>> {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let unique = format!(
-        "openpr-mcp-e2e-{}-{}",
+        "sylvode-mcp-e2e-{}-{}",
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::Relaxed)
     );

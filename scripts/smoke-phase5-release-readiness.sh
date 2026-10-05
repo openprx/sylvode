@@ -4,13 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POSTGRES_PORT="${OPENPR_SMOKE_PG_PORT:-5366}"
 PG_SUPERUSER="${OPENPR_SMOKE_PG_SUPERUSER:-postgres}"
-DB_NAME="openpr_phase5_smoke_$$_$(date +%s)"
-DB_USER="openpr_phase5_smoke_$$_$(date +%s)"
+DB_NAME="sylvode_phase5_smoke_$$_$(date +%s)"
+DB_USER="sylvode_phase5_smoke_$$_$(date +%s)"
 DB_PASSWORD="$(openssl rand -hex 12)"
 API_PORT="${OPENPR_SMOKE_API_PORT:-$((17480 + ($$ % 1000)))}"
-TMP_DIR="$(mktemp -d /tmp/openpr-phase5-smoke.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/sylvode-phase5-smoke.XXXXXX)"
 API_LOG="$TMP_DIR/api.log"
-SMOKE_JWT_SECRET="openpr-phase5-smoke-secret"
+SMOKE_JWT_SECRET="sylvode-phase5-smoke-secret"
 
 OWNER_ID="11111111-1111-4111-8111-111111111111"
 WORKSPACE_ID="22222222-2222-4222-8222-222222222222"
@@ -85,7 +85,7 @@ SMOKE_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@127.0.0.1:$POSTGRES_PORT/$D
 # refuse to start without one. It is written inside the 0700 directory mktemp made for this run
 # and is removed with it, so the generated database password never lands in the repository.
 # text logging rather than json: the only reader of the log file is a human debugging a failure.
-APP_CONFIG="$TMP_DIR/openpr.toml"
+APP_CONFIG="$TMP_DIR/sylvode.toml"
 cat >"$APP_CONFIG" <<EOF
 [server]
 app_name = "api"
@@ -98,7 +98,7 @@ url = "$SMOKE_DATABASE_URL"
 jwt_secret = "$SMOKE_JWT_SECRET"
 
 [logging]
-filter = "${OPENPR_SMOKE_LOG_FILTER:-api=info,openpr=info}"
+filter = "${OPENPR_SMOKE_LOG_FILTER:-api=info}"
 format = "text"
 EOF
 
@@ -109,7 +109,7 @@ wait_http "http://127.0.0.1:$API_PORT/health" "Sylvode API"
 # The mcp-server reads no environment variables either, and refuses to start without a
 # configuration file. Its identity still arrives per call through --api-url/--bot-token/
 # --workspace-id, so this file only has to keep the log stream out of the JSON-RPC client's way.
-MCP_CONFIG="$TMP_DIR/openpr.mcp.toml"
+MCP_CONFIG="$TMP_DIR/sylvode.mcp.toml"
 cat >"$MCP_CONFIG" <<'TOML'
 [logging]
 filter = "error"

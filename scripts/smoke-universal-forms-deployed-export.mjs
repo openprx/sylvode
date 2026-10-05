@@ -7,8 +7,8 @@ const require = createRequire(import.meta.url);
 const WebSocket = require('ws');
 
 const frontendUrl = process.env.OPENPR_FRONTEND_URL ?? 'http://10.72.0.3:3000';
-const email = process.env.OPENPR_DEMO_EMAIL ?? 'demo@openpr.local';
-const password = process.env.OPENPR_DEMO_PASSWORD ?? 'OpenPRDemo123!';
+const email = process.env.OPENPR_DEMO_EMAIL ?? 'demo@sylvode.local';
+const password = process.env.OPENPR_DEMO_PASSWORD ?? 'SylvodeDemo123!';
 const chromium = process.env.CHROMIUM_BIN ?? '/usr/bin/chromium';
 const suffix = Date.now().toString(36);
 const formKey = `export_${suffix}`;
@@ -148,7 +148,7 @@ function connect(wsUrl) {
 
 async function openBrowser(targetUrl) {
 	const port = 21900 + Math.floor(Math.random() * 300);
-	const profile = `/tmp/openpr-phase9-export-${process.pid}`;
+	const profile = `/tmp/sylvode-phase9-export-${process.pid}`;
 	rmSync(profile, { recursive: true, force: true });
 	child = spawn(
 		chromium,
@@ -218,10 +218,10 @@ async function runBrowserFlow({ workspaceId, projectId }) {
 	await waitForPage(`document.body?.innerText.includes('导出当前视图') && document.body?.innerText.includes(${JSON.stringify(viewName)})`, 'export button and saved view');
 	await evalPage(`
 		(() => {
-			window.__openprLastExportText = '';
+			window.__sylvodeLastExportText = '';
 			const originalCreateObjectURL = URL.createObjectURL.bind(URL);
 			URL.createObjectURL = (blob) => {
-				blob.text().then((text) => { window.__openprLastExportText = text; });
+				blob.text().then((text) => { window.__sylvodeLastExportText = text; });
 				return originalCreateObjectURL(blob);
 			};
 			const button = Array.from(document.querySelectorAll('button')).find((item) => item.textContent.includes('导出当前视图'));
@@ -230,7 +230,7 @@ async function runBrowserFlow({ workspaceId, projectId }) {
 			return true;
 		})()
 	`);
-	const csv = await waitForPage(`window.__openprLastExportText || ''`, 'browser export csv');
+	const csv = await waitForPage(`window.__sylvodeLastExportText || ''`, 'browser export csv');
 	if (!csv.includes('菜品,数量')) throw new Error(`browser export missing saved view labels: ${csv}`);
 	if (csv.includes('状态')) throw new Error(`browser export included excluded status column: ${csv}`);
 	if (!csv.includes('"米饭,大\n加急"')) throw new Error(`browser export did not escape comma/newline: ${csv}`);

@@ -119,7 +119,7 @@ if [[ "$failures" -ne 0 ]]; then
 fi
 
 if [[ -z "$AUDIT_JSON" ]]; then
-  AUDIT_JSON="$(mktemp -t openpr-cargo-audit.XXXXXX.json)"
+  AUDIT_JSON="$(mktemp -t sylvode-cargo-audit.XXXXXX.json)"
   trap 'rm -f "$AUDIT_JSON"' EXIT
 else
   mkdir -p "$(dirname "$AUDIT_JSON")"

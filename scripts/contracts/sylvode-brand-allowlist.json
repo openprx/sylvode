@@ -1,0 +1,667 @@
+{
+  "schema": "sylvode.brand-residue-allowlist.v1",
+  "description": "Allow-list of the brand residue gate (scripts/verify-sylvode-brand-residue.sh, ADR-0020 判据 4). Each entry covers the hits of its pattern in the files its paths match, within one repository; anything else named OpenPR/openpr is a failure. Reason codes: stable_identifier, legacy_alias_documented, formerly_note, migration_page, redirect_rule, historical_document, frozen_evidence, legacy_behaviour_test, kept_repository_url.",
+  "entries": [
+    {
+      "id": "sylvode-schema-version-ids",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "openpr\\.[a-z0-9_]+(?:[.-][a-z0-9_]+)*\\.v[0-9]+(?:\\.[0-9]+)?",
+      "explanation": "Schema and version identifiers carried in API payloads, receipts, cursors and gate files (openpr.form.schema.v1, openpr.event.v1, openpr.plugin.v1, ...). ADR-0020 D3 keeps REST /api/v1 and its schema identifiers unchanged with no removal planned."
+    },
+    {
+      "id": "sylvode-schema-file-ids",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "https://openpr\\.(?:dev|local)/schemas/[A-Za-z0-9._-]+|openpr-(?:universal-forms-[a-z-]+|project-release-readiness)\\.schema\\.json",
+      "explanation": "JSON Schema $id URLs and the schema file names they resolve to; the v0.9 matrix (testing/fixtures/v09-openpr-schema-ids.json) freezes them and D3 keeps schema identifiers."
+    },
+    {
+      "id": "sylvode-plugin-abi",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "openpr_alloc|openpr_invoke|openpr_plugin_abi_version|openpr-plugin(?:-v1(?:\\.wit)?)?\\b|openpr:plugin(?:@1\\.0\\.0)?",
+      "explanation": "The WASM plugin ABI exports and WIT package/world names; ADR-0020 D3 lists the plugin ABI (openpr_alloc, openpr_invoke, openpr_plugin_abi_version, openpr-plugin-v1.wit) as not renamed."
+    },
+    {
+      "id": "sylvode-legacy-protocol-headers",
+      "reason": "legacy_alias_documented",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "[Xx]-(?:OpenPR|openpr)-[A-Za-z*-]*",
+      "explanation": "Legacy X-OpenPR-MCP-* attribution and X-OpenPR-Attachment-* count headers, sent and accepted next to the X-Sylvode-* spelling throughout 1.x (ADR-0020 D3; CHANGELOG Deprecated table)."
+    },
+    {
+      "id": "sylvode-webhook-user-agent",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "OpenPR-Webhook/(?:1\\.0)?",
+      "explanation": "The compatibility token kept in the outbound webhook User-Agent comment section (`Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)`), required by ADR-0020 D3."
+    },
+    {
+      "id": "sylvode-legacy-config-files",
+      "reason": "legacy_alias_documented",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "(?:[\\w.$/{}-]*/)?openpr\\.(?:compose|mcp|example|toml)[\\w.*:]*|`openpr\\.\\*`",
+      "explanation": "The legacy config/openpr.toml and config/openpr.compose*.toml names, still discovered with a deprecation warning until v2.0 (ADR-0020 D1/D2), and the documentation and tests that name them."
+    },
+    {
+      "id": "sylvode-legacy-resource-uris",
+      "reason": "legacy_alias_documented",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "openpr://[\\w{}/<>.?=&$-]*",
+      "explanation": "The openpr:// MCP resource URI alias, still answered with _meta.deprecation until v2.0 (ADR-0020 D1/D2)."
+    },
+    {
+      "id": "sylvode-legacy-release-archives",
+      "reason": "legacy_alias_documented",
+      "repo": "sylvode",
+      "paths": [
+        ".github/workflows/release.yml",
+        "CHANGELOG.md",
+        "SECURITY.md",
+        "README.md",
+        "docs/sylvode-v0.9-compatibility.md",
+        "docs/sylvode-v1.0-compatibility.md",
+        "scripts/verify-sylvode-install-upgrade.sh",
+        "scripts/verify-sylvode-brand-compat.sh"
+      ],
+      "pattern": "openpr-(?:<target>|\\*|frontend\\.tar\\.gz|\\$\\{\\{ matrix\\.suffix \\}\\}[\\w.]*|mcp-server-<target>)|`openpr-\\*`",
+      "explanation": "The openpr-<target> and openpr-frontend.tar.gz release archive aliases published next to the sylvode-* archives (ADR-0020 D1), and the removed openpr-mcp-server-<target> archives in the release notes."
+    },
+    {
+      "id": "sylvode-database-names",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "postgres(?:ql)?://[^\\s\\\"'`]*openpr[^\\s\\\"'`]*|-U openpr(?: -d (?:openpr|postgres))?|-d openpr|pg_dump -U openpr openpr|POSTGRES_(?:DB|USER|PASSWORD)[:=] ?openpr\\w*|(?:DROP|CREATE) DATABASE (?:IF EXISTS )?openpr|openpr_backup_|openpr_dev_password|DATABASE_URL=postgres://openpr[^\\s\\\"]*|\\$\\{POSTGRES_PORT\\}/openpr|openpr_api_test|openpr_e2e|PG(?:DATABASE|USER):-openpr",
+      "explanation": "Database, role and backup names: ADR-0020 D3 keeps database names, roles, tables, columns and the migration history; backups carry the database name."
+    },
+    {
+      "id": "sylvode-compose-network",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "docker-compose.yml",
+        "docs/sylvode-v0.9-compatibility.md",
+        "docs/sylvode-v1.0-compatibility.md",
+        "CHANGELOG.md"
+      ],
+      "pattern": "openpr-network",
+      "explanation": "The compose network name, kept with the compose service labels by ADR-0020 D3."
+    },
+    {
+      "id": "sylvode-postgres-notify-channels",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "apps/api/src/flow/collab/authz.rs",
+        "apps/api/src/flow/collab/fanout.rs"
+      ],
+      "pattern": "'openpr_flow_(?:fanout|authz)'",
+      "explanation": "PostgreSQL LISTEN/NOTIFY channel names shared by every API process of a deployment; a rename would split a rolling upgrade, so they are database-level identifiers kept under D3."
+    },
+    {
+      "id": "sylvode-stored-identities",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "[\\w${}+-]*@(?:bot\\.)?openpr\\.local\\b",
+      "explanation": "Synthetic identities stored in the users table: bot users (`<id>@bot.openpr.local`), the bot JWT subject email and the built-in admin seeded by migration 0008 (`admin@openpr.local`). Existing rows carry these values; D3 keeps database data unchanged."
+    },
+    {
+      "id": "sylvode-skill-resource-id",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "openpr-mcp(?![\\w-])",
+      "explanation": "The governed skill key `openpr-mcp`: served as the MCP resource sylvode://skills/openpr-mcp, stored in scenario templates by migration 0029, and the path of the skill package. Renaming it is a resource-URI change that needs its own compatibility alias."
+    },
+    {
+      "id": "sylvode-webhook-repository-url",
+      "reason": "kept_repository_url",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "github\\.com/openprx/openpr-webhook[\\w./#-]*",
+      "explanation": "The Sylvode Webhook repository keeps its URL github.com/openprx/openpr-webhook (ADR-0020 D4 renames only the main repository)."
+    },
+    {
+      "id": "sylvode-webhook-legacy-names",
+      "reason": "legacy_alias_documented",
+      "repo": "sylvode",
+      "paths": [
+        "docker-compose.yml",
+        "CHANGELOG.md",
+        "README.md",
+        "docs/sylvode-v0.9-compatibility.md",
+        "docs/sylvode-v1.0-compatibility.md",
+        "config/sylvode-webhook.example.toml",
+        "scripts/smoke-sylvode-webhook-routing.sh",
+        "scripts/smoke-browser-mention-sylvode-webhook.sh",
+        "scripts/audit-universal-forms-production-readiness.sh"
+      ],
+      "pattern": "(?:ghcr\\.io/openprx/|/app/|/target/debug/)?openpr-webhook(?:[:\\w<>.-]*)?|OPENPR_WEBHOOK_\\w+",
+      "explanation": "The legacy Sylvode Webhook executable and image names (openpr-webhook, ghcr.io/openprx/openpr-webhook, /app/openpr-webhook) kept through 1.x by ADR-0020 D4."
+    },
+    {
+      "id": "sylvode-browser-storage-key",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte"
+      ],
+      "pattern": "openpr:forms:import-mapping:",
+      "explanation": "The browser localStorage key under which users' saved import column mappings live; renaming it silently discards every saved mapping."
+    },
+    {
+      "id": "sylvode-template-integration-provider",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "frontend/scripts/smoke-project-template-wizard.mjs"
+      ],
+      "pattern": "provider: 'openpr-webhook'",
+      "explanation": "The integration provider value the built-in scenario templates store (migration 0029); the smoke asserts what the API returns."
+    },
+    {
+      "id": "sylvode-migration-history",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "migrations/*.sql"
+      ],
+      "pattern": "OpenPR|openpr",
+      "explanation": "Applied migrations are immutable history (ADR-0020 D3: database names and the migration history are not renamed)."
+    },
+    {
+      "id": "sylvode-acceptance-bundle-names",
+      "reason": "frozen_evidence",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "openpr-(?:universal-form|local-audit)[\\w.-]*|openpr-[a-z0-9-]+-2026-05-3[01]\\.(?:md|json|html)|openpr-webhook starter 配置已补齐",
+      "explanation": "File names of the signed 2026-05-31 Universal Forms acceptance bundle; its manifest, checksums and the report generators identify the bundle by these names."
+    },
+    {
+      "id": "sylvode-v09-frozen-matrix",
+      "reason": "frozen_evidence",
+      "repo": "sylvode",
+      "paths": [
+        "**"
+      ],
+      "pattern": "v09-openpr-[\\w.-]+|openpr_uri_alias_all_resources_three_transports|v08_openpr_registry",
+      "explanation": "The frozen v0.9 compatibility matrix fixture and gate keys (testing/fixtures/v09-openpr-schema-ids.json, the v0.9 rc compose project, the v0.9 gate check ids)."
+    },
+    {
+      "id": "sylvode-frozen-receipt-repository",
+      "reason": "frozen_evidence",
+      "repo": "sylvode",
+      "paths": [
+        "docs/schemas/sylvode-flow-gate-v0.4.schema.json",
+        "docs/schemas/sylvode-flow-gate-v1.schema.json",
+        "scripts/report-flow-v0.3-json.sh",
+        "scripts/test-no-machine-paths.sh"
+      ],
+      "pattern": "\\/opt\\/worker\\/code\\/openpr\\b",
+      "explanation": "The repository path pinned as a const in the frozen v0.3/v0.4 gate receipt schemas, and the producer and exemption that must match it."
+    },
+    {
+      "id": "sylvode-migration-pages",
+      "reason": "migration_page",
+      "repo": "sylvode",
+      "paths": [
+        "docs/sylvode-v0.9-compatibility.md",
+        "docs/sylvode-v1.0-compatibility.md",
+        "docs/upgrade-0.2.1.md"
+      ],
+      "pattern": "OpenPR|openpr",
+      "explanation": "Compatibility matrices and the upgrade guide: they exist to name every OpenPR-era identifier next to its replacement."
+    },
+    {
+      "id": "sylvode-changelog",
+      "reason": "historical_document",
+      "repo": "sylvode",
+      "paths": [
+        "CHANGELOG.md"
+      ],
+      "pattern": "OpenPR|openpr",
+      "explanation": "Release history: releases up to 0.2.21 were published as OpenPR, and the rename entries name the legacy identifiers they deprecate."
+    },
+    {
+      "id": "sylvode-historical-plans",
+      "reason": "historical_document",
+      "repo": "sylvode",
+      "paths": [
+        "docs/universal-forms-huoban-alignment-plan.md",
+        "docs/universal-forms-regression-audit-2026-06-02.md"
+      ],
+      "pattern": "OpenPR|openpr",
+      "explanation": "Dated plan and audit records of the OpenPR era (container names, commands as run then); kept as written, not current instructions."
+    },
+    {
+      "id": "sylvode-spikes",
+      "reason": "frozen_evidence",
+      "repo": "sylvode",
+      "paths": [
+        "spikes/**"
+      ],
+      "pattern": "OpenPR|openpr",
+      "explanation": "Frozen Flow engine and legacy-pages spikes with their recorded evidence (bundle metafiles, environment topology, inventories), captured under the OpenPR name."
+    },
+    {
+      "id": "sylvode-formerly-notes",
+      "reason": "formerly_note",
+      "repo": "sylvode",
+      "paths": [
+        "README.md",
+        "CONTRIBUTING.md",
+        "SECURITY.md",
+        "CHANGELOG.md",
+        "apps/mcp-server/AGENTS.md",
+        "docs/universal-forms-production.md",
+        "config/sylvode-webhook.example.toml",
+        ".github/workflows/release.yml"
+      ],
+      "pattern": "\\(formerly OpenPR(?: Webhook)?;?\\)?|Formerly OpenPR\\.|published as OpenPR|OpenPR-era|Legacy OpenPR names|legacy OpenPR filenames|OpenPR names \\(|OpenPR compatibility names",
+      "explanation": "Notes that Sylvode was formerly OpenPR and that OpenPR-era names keep working (ADR-0020 D4: documentation keeps the 'formerly OpenPR' note)."
+    },
+    {
+      "id": "sylvode-legacy-behaviour-tests",
+      "reason": "legacy_behaviour_test",
+      "repo": "sylvode",
+      "paths": [
+        "scripts/verify-sylvode-brand-compat.sh",
+        "scripts/verify-no-undocumented-renames-v0.9.sh",
+        "scripts/verify-mcp-uri-aliases.sh",
+        "scripts/verify-sylvode-install-upgrade.sh"
+      ],
+      "pattern": "OpenPR|openpr",
+      "explanation": "Tests and gates whose subject is the legacy behaviour: legacy config discovery, the deprecation notices, the URI aliases, the v0.9 rename matrix and the install/upgrade path from OpenPR releases."
+    },
+    {
+      "id": "sylvode-legacy-config-example",
+      "reason": "legacy_alias_documented",
+      "repo": "sylvode",
+      "paths": [
+        "config/openpr.example.toml"
+      ],
+      "pattern": "OpenPR|openpr",
+      "explanation": "The retained legacy configuration example for deployments that keep config/openpr.toml (ADR-0020 D1); it describes the legacy path as such."
+    },
+    {
+      "id": "sylvode-legacy-alias-tests",
+      "reason": "legacy_behaviour_test",
+      "repo": "sylvode",
+      "paths": [
+        "apps/mcp-server/src/server.rs",
+        "apps/mcp-server/tests/flow_policy_bypass_stdio_e2e.rs",
+        "crates/platform/src/config/tests.rs"
+      ],
+      "pattern": "openpr_alias|byte_identical_openpr|openpr://|openpr-broken://|OpenPR",
+      "explanation": "Tests that the openpr:// alias and the legacy configuration name keep working."
+    },
+    {
+      "id": "sylvode-legacy-negative-checks",
+      "reason": "legacy_behaviour_test",
+      "repo": "sylvode",
+      "paths": [
+        "scripts/audit-universal-forms-production-readiness.sh",
+        "scripts/test-no-machine-paths.sh"
+      ],
+      "pattern": "openpr-mcp-server:8090|openpr-api:8080|\\/opt\\/opsx\\/openpr-webhook|POSTGRES_PASSWORD[:=] ?openpr|default openpr password",
+      "explanation": "Static checks that forbid OpenPR-era container aliases, a machine path and the old default database password from returning."
+    },
+    {
+      "id": "sylvode-brand-residue-gate",
+      "reason": "legacy_behaviour_test",
+      "repo": "sylvode",
+      "paths": [
+        "scripts/verify-sylvode-brand-residue.sh",
+        "scripts/lib/sylvode_brand_residue.py",
+        "scripts/contracts/sylvode-brand-allowlist.json"
+      ],
+      "pattern": "OpenPR|openpr",
+      "explanation": "The brand residue gate itself: its pattern, probes, mutation controls and allow-list must spell out the names they look for."
+    },
+    {
+      "id": "sylvode-brand-residue-gate-docs",
+      "reason": "legacy_behaviour_test",
+      "repo": "sylvode",
+      "paths": [
+        "CONTRIBUTING.md"
+      ],
+      "pattern": "`OpenPR` \\(case-sensitive|lowercase `openpr` \\(not part",
+      "explanation": "CONTRIBUTING's description of the brand residue gate names the strings it searches for."
+    },
+    {
+      "id": "sylvode-webhook-checkout-name",
+      "reason": "kept_repository_url",
+      "repo": "sylvode",
+      "paths": [
+        "CONTRIBUTING.md",
+        "scripts/verify-sylvode-brand-residue.sh"
+      ],
+      "pattern": "--repo openpr-webhook=\\.\\./openpr-webhook",
+      "explanation": "The release form of the gate names the webhook checkout by its kept repository name (ADR-0020 D4)."
+    },
+    {
+      "id": "webhook-repository-url",
+      "reason": "kept_repository_url",
+      "repo": "openpr-webhook",
+      "paths": [
+        "**"
+      ],
+      "pattern": "github\\.com/openprx/openpr-webhook[\\w./#-]*|#migrating-from-openpr-webhook",
+      "explanation": "The webhook repository keeps the URL github.com/openprx/openpr-webhook (ADR-0020 D4), including its README anchors."
+    },
+    {
+      "id": "webhook-formerly-notes",
+      "reason": "formerly_note",
+      "repo": "openpr-webhook",
+      "paths": [
+        "**"
+      ],
+      "pattern": "[Ff]ormerly (?:`OpenPR`|OpenPR) Webhook|called OpenPR Webhook|Migrating from OpenPR Webhook|from OpenPR Webhook|Display name OpenPR Webhook",
+      "explanation": "Notes that Sylvode Webhook was formerly OpenPR Webhook (ADR-0020 D4)."
+    },
+    {
+      "id": "webhook-legacy-names",
+      "reason": "legacy_alias_documented",
+      "repo": "openpr-webhook",
+      "paths": [
+        "**"
+      ],
+      "pattern": "(?:ghcr\\.io/openprx/|/app/|target/release/|src/bin/)?openpr-webhook(?:[\\w.<>${}:-]*)?|openpr_webhook[\\w:\\[\\]=]*|dev\\.openpr\\.webhook|[Xx]-(?:OpenPR|openpr)-[A-Za-z-]+|LEGACY_\\w+|legacy_openpr_header\\w*",
+      "explanation": "Legacy executable, image, archive, service, launch agent, log target and signature/attribution header names kept through 1.x by ADR-0020 D4, with the code that resolves them."
+    },
+    {
+      "id": "webhook-event-envelope-version",
+      "reason": "stable_identifier",
+      "repo": "openpr-webhook",
+      "paths": [
+        "src/dispatcher.rs",
+        "src/handler.rs"
+      ],
+      "pattern": "openpr\\.event\\.v1",
+      "explanation": "The event envelope version the Sylvode API sends (events-v1 schema identifier, D3)."
+    },
+    {
+      "id": "webhook-legacy-header-tests",
+      "reason": "legacy_behaviour_test",
+      "repo": "openpr-webhook",
+      "paths": [
+        "tests/*.rs",
+        "tests/**/*.rs",
+        "src/signature.rs",
+        "src/compat.rs"
+      ],
+      "pattern": "\\\"openpr (?:good|bad)\\\"|good sylvode \\+ bad openpr|bad openpr",
+      "explanation": "Test cases of the legacy x-openpr-signature header."
+    },
+    {
+      "id": "docs-redirect-rules",
+      "reason": "redirect_rule",
+      "repo": "docs",
+      "paths": [
+        "site/public/_redirects"
+      ],
+      "pattern": "OpenPR|openpr",
+      "explanation": "Cloudflare Pages redirects from the old /openpr and /openpr-webhook paths (ADR-0020 D4: old documentation paths must redirect, not 404)."
+    },
+    {
+      "id": "docs-migration-pages",
+      "reason": "migration_page",
+      "repo": "docs",
+      "paths": [
+        "site/*/sylvode/getting-started/migrating-from-openpr.md"
+      ],
+      "pattern": "OpenPR|openpr",
+      "explanation": "The migration guide in every locale; it exists to list the OpenPR names and their replacements."
+    },
+    {
+      "id": "docs-migration-links",
+      "reason": "migration_page",
+      "repo": "docs",
+      "paths": [
+        "site/**"
+      ],
+      "pattern": "migrating-from-openpr(?:-webhook)?",
+      "explanation": "Links to the migration guide page (its slug names the old product)."
+    },
+    {
+      "id": "docs-migration-link-text",
+      "reason": "migration_page",
+      "repo": "docs",
+      "paths": [
+        "site/**"
+      ],
+      "pattern": "\\[[^\\]]*OpenPR[^\\]]*\\]\\([^)]*migrating-from-openpr[^)]*\\)|text: '[^']*OpenPR[^']*', link: '[^']*migrating-from-openpr'",
+      "explanation": "Link texts and sidebar entries that point at the migration guide ('Migrating from OpenPR')."
+    },
+    {
+      "id": "docs-formerly-notes",
+      "reason": "formerly_note",
+      "repo": "docs",
+      "paths": [
+        "site/**"
+      ],
+      "pattern": "[Ff]ormerly (?:named |documented as )?(?:\\*\\*)?OpenPR(?: Webhook)?|OpenPR-named",
+      "explanation": "'Sylvode was formerly named OpenPR' notes (ADR-0020 D4)."
+    },
+    {
+      "id": "docs-webhook-repository-url",
+      "reason": "kept_repository_url",
+      "repo": "docs",
+      "paths": [
+        "site/**"
+      ],
+      "pattern": "github\\.com/openprx/openpr-webhook[\\w./#-]*",
+      "explanation": "The webhook repository URL is kept (ADR-0020 D4)."
+    },
+    {
+      "id": "docs-user-agent-token",
+      "reason": "stable_identifier",
+      "repo": "docs",
+      "paths": [
+        "site/**"
+      ],
+      "pattern": "OpenPR-Webhook/(?:1\\.0)?",
+      "explanation": "The compatibility token in the outbound webhook User-Agent (ADR-0020 D3)."
+    },
+    {
+      "id": "docs-legacy-headers",
+      "reason": "legacy_alias_documented",
+      "repo": "docs",
+      "paths": [
+        "site/**"
+      ],
+      "pattern": "[Xx]-(?:OpenPR|openpr)-[A-Za-z*-]+",
+      "explanation": "Legacy X-OpenPR-* headers documented as accepted or sent through 1.x (ADR-0020 D3/D4)."
+    },
+    {
+      "id": "docs-legacy-config-and-uris",
+      "reason": "legacy_alias_documented",
+      "repo": "docs",
+      "paths": [
+        "site/**"
+      ],
+      "pattern": "(?:[\\w./-]*/)?openpr\\.(?:compose|mcp|example|toml)[\\w.*]*|openpr://[\\w{}/<>.?=&$-]*|openpr-<target>|`OPENPR_\\*`",
+      "explanation": "Legacy config files and openpr:// URIs, still accepted with deprecation warnings until v2.0 (ADR-0020 D1/D2)."
+    },
+    {
+      "id": "docs-webhook-legacy-names",
+      "reason": "legacy_alias_documented",
+      "repo": "docs",
+      "paths": [
+        "site/*/sylvode-webhook/**",
+        "site/*/sylvode/getting-started/migrating-from-openpr.md"
+      ],
+      "pattern": "(?:ghcr\\.io/openprx/|/app/|target/release/)?openpr-webhook(?:[\\w.<>${}:-]*)?|openpr_webhook[\\w=.]*|dev\\.openpr\\.webhook|cd openpr-webhook",
+      "explanation": "Legacy Sylvode Webhook executable, image, archive, service and log-target names kept through 1.x (ADR-0020 D4)."
+    },
+    {
+      "id": "docs-database-names",
+      "reason": "stable_identifier",
+      "repo": "docs",
+      "paths": [
+        "site/**"
+      ],
+      "pattern": "postgres(?:ql)?://[^\\s\\\"'`]*openpr[^\\s\\\"'`]*|-U openpr(?: -d openpr)?|-d openpr|POSTGRES_(?:DB|USER): openpr|role `openpr`|`openpr` database|database and role `openpr`|named `openpr`|openpr_backup_|openpr-network",
+      "explanation": "Database, role, backup and compose network names kept by ADR-0020 D3."
+    },
+    {
+      "id": "docs-skill-resource-id",
+      "reason": "stable_identifier",
+      "repo": "docs",
+      "paths": [
+        "site/**"
+      ],
+      "pattern": "openpr-mcp(?![\\w-])",
+      "explanation": "The skill key openpr-mcp served as sylvode://skills/openpr-mcp (see the matching sylvode entry)."
+    },
+    {
+      "id": "docs-index-formerly-note",
+      "reason": "formerly_note",
+      "repo": "docs",
+      "paths": [
+        "site/*/sylvode/index.md"
+      ],
+      "pattern": "^> .{0,80}?OpenPR",
+      "explanation": "The opening note of the Sylvode index page in every locale says the product was formerly OpenPR."
+    },
+    {
+      "id": "docs-upgrade-from-openpr-note",
+      "reason": "migration_page",
+      "repo": "docs",
+      "paths": [
+        "site/*/sylvode/deployment/production.md"
+      ],
+      "pattern": "OpenPR[^\\[\\]\\n]{0,120}\\[[^\\]]*\\]\\(\\.\\./getting-started/migrating-from-openpr\\)",
+      "explanation": "The upgrade section points releases published under the OpenPR name at the migration guide."
+    },
+    {
+      "id": "docs-database-name-prose",
+      "reason": "stable_identifier",
+      "repo": "docs",
+      "paths": [
+        "site/*/sylvode/deployment/production.md",
+        "site/*/sylvode/getting-started/installation.md"
+      ],
+      "pattern": "`openpr`",
+      "explanation": "The database and role name `openpr` in the installation and backup instructions (ADR-0020 D3)."
+    },
+    {
+      "id": "docs-webhook-repository-link",
+      "reason": "kept_repository_url",
+      "repo": "docs",
+      "paths": [
+        "site/*/sylvode/index.md"
+      ],
+      "pattern": "\\[openpr-webhook\\]\\(https://github\\.com/openprx/openpr-webhook\\)",
+      "explanation": "The related-repositories table names the webhook repository by its kept name and URL (ADR-0020 D4)."
+    },
+    {
+      "id": "site-redirect-rules",
+      "reason": "redirect_rule",
+      "repo": "site",
+      "paths": [
+        "public/_redirects",
+        "astro.config.mjs",
+        "README.md"
+      ],
+      "pattern": "/(?:(?:zh|ka|ru)/)?openpr/?|`/openpr`|'/(?:(?:zh|ka|ru)/)?openpr'",
+      "explanation": "Redirects from the old /openpr product pages to /sylvode (ADR-0020 D4)."
+    },
+    {
+      "id": "site-formerly-notes",
+      "reason": "formerly_note",
+      "repo": "site",
+      "paths": [
+        "public/_redirects",
+        "astro.config.mjs",
+        "src/**"
+      ],
+      "pattern": "formerly (?:named )?OpenPR|Formerly OpenPR|原名 OpenPR|ადრე OpenPR|ყოფილი სახელი: OpenPR|Прежнее название — OpenPR|when OpenPR was renamed Sylvode|OpenPR 更名为 Sylvode|OpenPR-ის Sylvode-ად",
+      "explanation": "'Formerly OpenPR' notes in every locale (ADR-0020 D4)."
+    },
+    {
+      "id": "site-webhook-repository-url",
+      "reason": "kept_repository_url",
+      "repo": "site",
+      "paths": [
+        "src/**"
+      ],
+      "pattern": "github\\.com/openprx/openpr-webhook[\\w./#-]*|cd openpr-webhook|openpr-webhook (?:repository|რეპოზიტორიის|仓库)",
+      "explanation": "The webhook repository URL and checkout directory are kept (ADR-0020 D4)."
+    },
+    {
+      "id": "site-webhook-legacy-names",
+      "reason": "legacy_alias_documented",
+      "repo": "site",
+      "paths": [
+        "src/content/docs/**/build/webhook-dispatcher.md"
+      ],
+      "pattern": "(?:ghcr\\.io/openprx/)?openpr-webhook",
+      "explanation": "The legacy Sylvode Webhook executable and image names kept through 1.x (ADR-0020 D4)."
+    },
+    {
+      "id": "site-user-agent-token",
+      "reason": "stable_identifier",
+      "repo": "site",
+      "paths": [
+        "src/content/docs/**/plan/webhooks.md"
+      ],
+      "pattern": "OpenPR-Webhook/(?:1\\.0)?",
+      "explanation": "The compatibility token in the outbound webhook User-Agent (ADR-0020 D3)."
+    },
+    {
+      "id": "github-formerly-note",
+      "reason": "formerly_note",
+      "repo": ".github",
+      "paths": [
+        "profile/README.md"
+      ],
+      "pattern": "Formerly OpenPR\\.",
+      "explanation": "The organisation profile notes that Sylvode was formerly OpenPR (ADR-0020 D4)."
+    },
+    {
+      "id": "github-webhook-repository-url",
+      "reason": "kept_repository_url",
+      "repo": ".github",
+      "paths": [
+        "profile/README.md"
+      ],
+      "pattern": "github\\.com/openprx/openpr-webhook",
+      "explanation": "The webhook repository keeps its URL (ADR-0020 D4)."
+    }
+  ]
+}

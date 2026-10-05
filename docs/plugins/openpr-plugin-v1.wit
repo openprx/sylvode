@@ -1,6 +1,7 @@
 package openpr:plugin@1.0.0;
 
-/// OpenPR plugin ABI v1.
+/// Sylvode plugin ABI v1. The package and world names (`openpr:plugin`, `openpr-plugin`) are kept
+/// for compatibility.
 ///
 /// Current runtime support uses the equivalent core WebAssembly ABI:
 ///

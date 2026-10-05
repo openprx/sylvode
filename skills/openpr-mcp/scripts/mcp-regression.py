@@ -11,14 +11,17 @@ MCP_HTTP = "http://localhost:8090"
 TOKEN = "opr_0a5bc81ea108dad8077decc880abced0d923aa873b9ff774575ec152aecf15d5"
 WS = "e5166fd1-3bb7-46d9-b907-273b1eef3f44"
 PID = "adc627bf-15fe-418b-8948-d3c343f9e4f5"
-MCP_BIN = "/opt/worker/code/openpr/target/release/mcp-server"
+MCP_BIN = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    "target", "release", "mcp-server",
+)
 
 # The MCP server reads no environment variables and refuses to start without a configuration
 # file, so the stdio transport gets one instead of an env dict. It is written 0600 into a
 # temporary directory removed at exit, because it carries the bot token.
-_CONFIG_DIR = tempfile.mkdtemp(prefix="openpr-mcp-regression-")
+_CONFIG_DIR = tempfile.mkdtemp(prefix="sylvode-mcp-regression-")
 atexit.register(shutil.rmtree, _CONFIG_DIR, True)
-MCP_CONFIG = os.path.join(_CONFIG_DIR, "openpr.toml")
+MCP_CONFIG = os.path.join(_CONFIG_DIR, "sylvode.toml")
 with open(os.open(MCP_CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as _handle:
     _handle.write(
         '[logging]\nfilter = "error"\nformat = "text"\n\n'

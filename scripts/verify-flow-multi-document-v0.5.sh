@@ -487,7 +487,9 @@ echo "  exit=$COORDINATOR_EXIT wall_ms=$COORDINATOR_WALL_MS log=$COORDINATOR_LOG
 
 # Falsification runs use the committed source in a detached worktree so the artifact proves that
 # the boundary/order detectors distinguish the protected implementation from a concrete fault.
-MUTATION_PARENT="$(mktemp -d "$(dirname "$REPO_ROOT")/openpr-multi-mutations.XXXXXX")"
+MUTATION_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$REPO_ROOT/.flow-gate/cache}"
+mkdir -p "$MUTATION_SCRATCH"
+MUTATION_PARENT="$(mktemp -d "$MUTATION_SCRATCH/sylvode-multi-mutations.XXXXXX")"
 MUTATION_REPO="$MUTATION_PARENT/source"
 cleanup_mutation_worktree() {
   if git -C "$REPO_ROOT" worktree list --porcelain | grep -Fxq "worktree $MUTATION_REPO"; then

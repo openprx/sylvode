@@ -19,7 +19,7 @@ use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQuer
 use serde_json::json;
 use uuid::Uuid;
 
-const DATABASE_NAME: &str = "openpr_v10_backup_source";
+const DATABASE_NAME: &str = "sylvode_v10_backup_source";
 const ADMIN_URL_ENV: &str = "OPENPR_BACKUP_RESTORE_ADMIN_URL";
 const SOURCE_URL_ENV: &str = "OPENPR_BACKUP_SOURCE_DATABASE_URL";
 

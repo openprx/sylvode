@@ -136,10 +136,10 @@ mod tests {
     #[test]
     fn not_found_message_names_the_path_and_how_to_create_it() {
         let rendered = ConfigError::NotFound {
-            path: PathBuf::from("/srv/openpr/config/openpr.toml"),
+            path: PathBuf::from("/srv/sylvode/config/sylvode.toml"),
         }
         .to_string();
-        assert!(rendered.contains("/srv/openpr/config/openpr.toml"), "{rendered}");
+        assert!(rendered.contains("/srv/sylvode/config/sylvode.toml"), "{rendered}");
         assert!(rendered.contains("config/sylvode.example.toml"), "{rendered}");
         assert!(rendered.contains("--config"), "{rendered}");
     }
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn invalid_message_lists_every_issue() {
         let rendered = ConfigError::Invalid {
-            path: PathBuf::from("openpr.toml"),
+            path: PathBuf::from("sylvode.toml"),
             issues: vec!["first".to_string(), "second".to_string(), "third".to_string()],
         }
         .to_string();
@@ -161,7 +161,7 @@ mod tests {
     fn malformed_message_keeps_the_position_but_not_the_source_line() {
         let source = "[auth]\njwt_secret = \"top-secret-value\"\n";
         let error = toml::from_str::<toml::Value>("[auth]\njwt_secret = \n").expect_err("should fail");
-        let rendered = ConfigError::from_toml(&PathBuf::from("openpr.toml"), source, &error).to_string();
+        let rendered = ConfigError::from_toml(&PathBuf::from("sylvode.toml"), source, &error).to_string();
         assert!(!rendered.contains("top-secret-value"), "{rendered}");
         assert!(rendered.contains("line"), "{rendered}");
     }
@@ -169,11 +169,11 @@ mod tests {
     #[test]
     fn converts_into_the_platform_error_type() {
         let error: AppError = ConfigError::NotFound {
-            path: PathBuf::from("openpr.toml"),
+            path: PathBuf::from("sylvode.toml"),
         }
         .into();
         assert!(matches!(error, AppError::Config(_)));
-        assert!(error.to_string().contains("openpr.toml"));
+        assert!(error.to_string().contains("sylvode.toml"));
     }
 
     #[test]

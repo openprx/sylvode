@@ -209,10 +209,10 @@ CLI_BIN="$TARGET_DIR/debug/sylvode"
 [[ -x "$CLI_BIN" ]] || { echo "FAIL: sylvode binary not found: $CLI_BIN" >&2; exit 2; }
 
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-SCRATCH_DB="openpr_flow_cli_verify_$RUN_ID"
+SCRATCH_DB="sylvode_flow_cli_verify_$RUN_ID"
 DB_PREFIX="${DATABASE_URL%/*}"
 SCRATCH_URL="$DB_PREFIX/$SCRATCH_DB"
-TMP_DIR="$(mktemp -d "/tmp/openpr-flow-cli-verify.XXXXXX")"
+TMP_DIR="$(mktemp -d "/tmp/sylvode-flow-cli-verify.XXXXXX")"
 API_PORT=$((20000 + RANDOM % 20000))
 # A port nothing listens on: the fixture that must NOT reach the network and the
 # fixture that must fail to connect both point here.
@@ -236,7 +236,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS \"$SCRATC
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"$SCRATCH_DB\"" >/dev/null
 
 JWT_SECRET="flow-cli-contract-verify-not-a-real-secret"
-API_CONFIG="$TMP_DIR/openpr-api.toml"
+API_CONFIG="$TMP_DIR/sylvode-api.toml"
 cat > "$API_CONFIG" <<EOF
 [server]
 app_name = "api"
@@ -249,7 +249,7 @@ url = "$SCRATCH_URL"
 jwt_secret = "$JWT_SECRET"
 
 [logging]
-filter = "api=warn,openpr=warn"
+filter = "api=warn"
 format = "text"
 EOF
 
@@ -325,7 +325,7 @@ UNKNOWN_OBJECT_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 # Its `[mcp]` values deliberately point nowhere useful: every fixture supplies
 # the values it actually needs on the command line, so a broken override would
 # show up as a failed fixture instead of silently passing.
-CLI_CONFIG="$TMP_DIR/openpr-cli.toml"
+CLI_CONFIG="$TMP_DIR/sylvode-cli.toml"
 cat > "$CLI_CONFIG" <<EOF
 [database]
 url = "postgres://unused:unused@127.0.0.1:5432/unused"

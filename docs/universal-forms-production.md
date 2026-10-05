@@ -275,7 +275,7 @@ there. Optional receivers, such as the Sylvode Webhook receiver (`sylvode-webhoo
 `connectors` profile and must use deployment-local image and config values, not
 machine-specific `/opt/...` paths.
 
-The repository includes `config/openpr-webhook.example.toml` so the optional
+The repository includes `config/sylvode-webhook.example.toml` so the optional
 webhook receiver has a portable starter config. For production, copy
 it to a deployment-owned path, set a concrete `webhook_secrets` value, keep
 `allow_unsigned = false`, and point `SYLVODE_WEBHOOK_CONFIG` (legacy `OPENPR_WEBHOOK_CONFIG`) at that
@@ -381,7 +381,7 @@ backend = "s3"
 
 [storage.s3]
 endpoint = "https://s3.eu-central-1.amazonaws.com"
-bucket = "openpr-uploads"
+bucket = "sylvode-uploads"
 region = "us-east-1"
 access_key_id = "replace_with_s3_access_key_id"
 secret_access_key = "replace_with_s3_secret_access_key"

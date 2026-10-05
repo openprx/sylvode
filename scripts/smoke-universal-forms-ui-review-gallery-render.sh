@@ -86,7 +86,7 @@ run_chromium() {
   local screenshot="$2"
   local dom_output="$3"
   local stderr_path
-  stderr_path="$(mktemp /tmp/openpr-uf-ui-review-gallery-render.stderr.XXXXXX)"
+  stderr_path="$(mktemp /tmp/sylvode-uf-ui-review-gallery-render.stderr.XXXXXX)"
 
   if "$CHROMIUM_BIN" \
     --headless=new \

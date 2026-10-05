@@ -51,7 +51,7 @@ impl Scratch {
             return Ok(None);
         };
         let admin = Database::connect(&admin_url).await?;
-        let name = format!("openpr_work_item_state_{}", Uuid::new_v4().simple());
+        let name = format!("sylvode_work_item_state_{}", Uuid::new_v4().simple());
         admin.execute_unprepared(&format!("CREATE DATABASE \"{name}\"")).await?;
         let (prefix, _) = admin_url
             .rsplit_once('/')

@@ -48,6 +48,13 @@ jobs:
       - name: No machine-specific paths in scripts
         run: bash scripts/test-no-machine-paths.sh
 
+      # Single-repository form only: the sibling repositories are not checked out here. The
+      # five-repository release form runs locally (see CONTRIBUTING, "Brand residue gate").
+      - name: Brand residue gate (this repository)
+        run: |
+          bash scripts/verify-sylvode-brand-residue.sh --json --strict >/dev/null
+          bash scripts/verify-sylvode-brand-residue.sh --json --self-test >/dev/null
+
   test:
     name: Test
     needs: lint
@@ -57,13 +64,13 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: openpr_ci
-          POSTGRES_PASSWORD: openpr_ci_local_only
+          POSTGRES_USER: sylvode_ci
+          POSTGRES_PASSWORD: sylvode_ci_local_only
           POSTGRES_DB: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U openpr_ci -d postgres"
+          --health-cmd "pg_isready -U sylvode_ci -d postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
@@ -73,7 +80,7 @@ jobs:
       # migrations/*.sql, which need CREATE EXTENSION pgcrypto. The superuser created
       # by the image holds both privileges. Keep the path a bare database name: the
       # tests swap the last path segment for the scratch database name.
-      OPENPR_TEST_DATABASE_URL: postgres://openpr_ci:openpr_ci_local_only@127.0.0.1:5432/postgres
+      OPENPR_TEST_DATABASE_URL: postgres://sylvode_ci:sylvode_ci_local_only@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -111,13 +118,13 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: openpr_ci
-          POSTGRES_PASSWORD: openpr_ci_local_only
+          POSTGRES_USER: sylvode_ci
+          POSTGRES_PASSWORD: sylvode_ci_local_only
           POSTGRES_DB: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U openpr_ci -d postgres"
+          --health-cmd "pg_isready -U sylvode_ci -d postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
@@ -127,7 +134,7 @@ jobs:
       # migrations/*.sql, which need CREATE EXTENSION pgcrypto. The superuser created
       # by the image holds both privileges. Keep the path a bare database name: the
       # tests swap the last path segment for the scratch database name.
-      OPENPR_TEST_DATABASE_URL: postgres://openpr_ci:openpr_ci_local_only@127.0.0.1:5432/postgres
+      OPENPR_TEST_DATABASE_URL: postgres://sylvode_ci:sylvode_ci_local_only@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

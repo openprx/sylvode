@@ -56,7 +56,10 @@ args = ["maintenance-route"]
 EOF
 
 (cd "${WEBHOOK_DIR}" && cargo build --quiet)
-"${WEBHOOK_DIR}/target/debug/openpr-webhook" "${TMP_DIR}/config.toml" > "${TMP_DIR}/webhook.log" 2>&1 &
+# Releases up to 0.3.3 ship only the legacy executable name.
+WEBHOOK_BIN="${WEBHOOK_DIR}/target/debug/sylvode-webhook"
+[[ -x ${WEBHOOK_BIN} ]] || WEBHOOK_BIN="${WEBHOOK_DIR}/target/debug/openpr-webhook"
+"${WEBHOOK_BIN}" "${TMP_DIR}/config.toml" > "${TMP_DIR}/webhook.log" 2>&1 &
 SERVER_PID="$!"
 
 python3 - "${PORT}" <<'PY'
@@ -79,7 +82,7 @@ def wait_health():
                     return
         except (urllib.error.URLError, TimeoutError):
             time.sleep(0.2)
-    raise AssertionError("openpr-webhook did not become healthy")
+    raise AssertionError("sylvode-webhook did not become healthy")
 
 
 def post(payload):
@@ -137,5 +140,5 @@ assert maintenance["status"] == "dispatched", maintenance
 assert maintenance["agent"] == "maintenance-dispatch", maintenance
 assert "maintenance-route" in maintenance["result"], maintenance
 
-print("openpr-webhook routing smoke passed")
+print("Sylvode Webhook routing smoke passed")
 PY

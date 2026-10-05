@@ -114,10 +114,10 @@ CLI_BIN="$TARGET_DIR/debug/sylvode"
 [[ -x "$API_BIN" && -x "$MCP_BIN" && -x "$CLI_BIN" ]] || write_environment_failure "one or more shipped binaries are missing"
 
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-SCRATCH_DB="openpr_flow_feature_verify_$RUN_ID"
+SCRATCH_DB="sylvode_flow_feature_verify_$RUN_ID"
 DB_PREFIX="${DATABASE_URL%/*}"
 SCRATCH_URL="$DB_PREFIX/$SCRATCH_DB"
-TMP_DIR="$(mktemp -d /tmp/openpr-flow-feature-verify.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/sylvode-flow-feature-verify.XXXXXX)"
 API_PORT=$((21000 + RANDOM % 5000))
 VITE_PORT=$((31000 + RANDOM % 5000))
 PUBLIC_PORT=$((47000 + RANDOM % 5000))
@@ -139,7 +139,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS \"$SCRATC
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"$SCRATCH_DB\"" >/dev/null || write_environment_failure "could not create scratch database"
 
 JWT_SECRET="flow-feature-verify-not-a-real-secret"
-API_CONFIG="$TMP_DIR/openpr-api.toml"
+API_CONFIG="$TMP_DIR/sylvode-api.toml"
 cat > "$API_CONFIG" <<EOF
 [server]
 app_name = "api"
@@ -149,7 +149,7 @@ url = "$SCRATCH_URL"
 [auth]
 jwt_secret = "$JWT_SECRET"
 [logging]
-filter = "api=warn,openpr=warn"
+filter = "api=warn"
 format = "text"
 EOF
 "$API_BIN" --config "$API_CONFIG" >"$TMP_DIR/api.log" 2>&1 & API_PID=$!

@@ -6,7 +6,7 @@ CHECKER="$ROOT_DIR/scripts/verify-flow-binary-provenance.sh"
 SCHEMA="$ROOT_DIR/docs/schemas/sylvode-flow-binary-provenance-v1.schema.json"
 AJV_MODULE="$ROOT_DIR/frontend/node_modules/ajv"
 TMP_ROOT="$(mktemp -d)"
-DIRTY_MARKER="$ROOT_DIR/apps/api/src/.openpr-provenance-test-untracked"
+DIRTY_MARKER="$ROOT_DIR/apps/api/src/.sylvode-provenance-test-untracked"
 trap 'rm -f "$DIRTY_MARKER"; rm -rf "$TMP_ROOT"' EXIT
 REPO_ROOT="$TMP_ROOT/repo"
 PROBE_ROOT="$TMP_ROOT/probes"

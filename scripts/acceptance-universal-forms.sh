@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="quick"
 REPORT_PATH="${OPENPR_ACCEPTANCE_REPORT:-}"
-FRONTEND_LOCK="${OPENPR_FRONTEND_BUILD_LOCK:-/tmp/openpr-frontend-build.lock}"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$ROOT_DIR/.flow-gate/universal-forms}/docs"
+FRONTEND_LOCK="${OPENPR_FRONTEND_BUILD_LOCK:-/tmp/sylvode-frontend-build.lock}"
 
 usage() {
   cat <<'EOF'
@@ -58,7 +59,7 @@ if [[ -z "$REPORT_PATH" ]]; then
 fi
 
 mkdir -p "$(dirname "$REPORT_PATH")"
-TMP_DIR="$(mktemp -d /tmp/openpr-universal-forms-acceptance.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/sylvode-universal-forms-acceptance.XXXXXX)"
 CHECK_INDEX_PATH="$TMP_DIR/automated-check-index.tsv"
 REPORT_TARGET_PATH="$REPORT_PATH"
 output_tmp="$(mktemp "$(dirname "$REPORT_TARGET_PATH")/.acceptance-evidence.XXXXXX")"
@@ -97,7 +98,7 @@ init_report() {
   append_report "This report collects automated evidence. It does not replace the manual user acceptance runbook:"
   append_report ""
   append_report '```text'
-  append_report "report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md"
+  append_report "$REPORT_DIR/openpr-universal-form-user-acceptance-runbook-2026-05-31.md"
   append_report '```'
   append_report ""
   append_report "## Automated Checks"

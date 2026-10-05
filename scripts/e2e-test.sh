@@ -7,7 +7,7 @@ set -euo pipefail
 #
 # THIS SCRIPT DESTROYS AND RECREATES THE LOCAL TEST ENVIRONMENT.
 # It runs `docker compose down -v` both before and after the test run, which
-# deletes the `pgdata` volume of THIS compose project (the openpr stack defined
+# deletes the `pgdata` volume of THIS compose project (the Sylvode stack defined
 # by ./docker-compose.yml). Volumes belonging to any other project are never
 # touched. The up-front reset is what makes the script repeatable: test-api.sh
 # registers the very first account of an empty database, and registration is
@@ -71,9 +71,9 @@ unhealthy_service_present() {
 # Step 0: Reset the environment before starting, so the run does not depend on
 # the previous run having reached its cleanup.
 echo "🧨 Step 0: Resetting the test environment"
-echo "   This removes the containers and the database volume of the openpr compose project."
+echo "   This removes the containers and the database volume of the Sylvode compose project."
 if [ "$ASSUME_YES" != "1" ] && [ -t 0 ]; then
-  read -r -p "   Type 'yes' to erase the local openpr compose data and continue: " reply
+  read -r -p "   Type 'yes' to erase the local Sylvode compose data and continue: " reply
   if [ "$reply" != "yes" ]; then
     echo "❌ Aborted; nothing was changed."
     exit 1

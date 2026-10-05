@@ -4,18 +4,18 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POSTGRES_PORT="${OPENPR_SMOKE_PG_PORT:-5366}"
 PG_SUPERUSER="${OPENPR_SMOKE_PG_SUPERUSER:-postgres}"
-DB_NAME="openpr_bootstrap_mcp_smoke_$$_$(date +%s)"
-DB_USER="openpr_bootstrap_mcp_smoke_$$_$(date +%s)"
+DB_NAME="sylvode_bootstrap_mcp_smoke_$$_$(date +%s)"
+DB_USER="sylvode_bootstrap_mcp_smoke_$$_$(date +%s)"
 DB_PASSWORD="$(openssl rand -hex 12)"
 API_PORT="${OPENPR_SMOKE_API_PORT:-$((26180 + ($$ % 1000)))}"
 MCP_PORT="${OPENPR_SMOKE_MCP_PORT:-$((27180 + ($$ % 1000)))}"
-TMP_DIR="$(mktemp -d /tmp/openpr-bootstrap-mcp-smoke.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/sylvode-bootstrap-mcp-smoke.XXXXXX)"
 API_LOG="$TMP_DIR/api.log"
 MCP_LOG="$TMP_DIR/mcp.log"
 FIRST_BOOTSTRAP_LOG="$TMP_DIR/bootstrap-first.log"
 SECOND_BOOTSTRAP_LOG="$TMP_DIR/bootstrap-second.log"
-MCP_CONFIG="$TMP_DIR/openpr.mcp.toml"
-SMOKE_JWT_SECRET="openpr-bootstrap-mcp-smoke-secret"
+MCP_CONFIG="$TMP_DIR/sylvode.mcp.toml"
+SMOKE_JWT_SECRET="sylvode-bootstrap-mcp-smoke-secret"
 
 api_pid=""
 mcp_pid=""
@@ -110,7 +110,7 @@ SMOKE_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@127.0.0.1:$POSTGRES_PORT/$D
 # refuse to start without one. It is written inside the 0700 directory mktemp made for this run
 # and is removed with it, so the generated database password never lands in the repository.
 # text logging rather than json: the only reader of the log file is a human debugging a failure.
-APP_CONFIG="$TMP_DIR/openpr.toml"
+APP_CONFIG="$TMP_DIR/sylvode.toml"
 cat >"$APP_CONFIG" <<EOF
 [server]
 app_name = "api"
@@ -123,7 +123,7 @@ url = "$SMOKE_DATABASE_URL"
 jwt_secret = "$SMOKE_JWT_SECRET"
 
 [logging]
-filter = "${OPENPR_SMOKE_LOG_FILTER:-api=info,openpr=info}"
+filter = "${OPENPR_SMOKE_LOG_FILTER:-api=info}"
 format = "text"
 EOF
 

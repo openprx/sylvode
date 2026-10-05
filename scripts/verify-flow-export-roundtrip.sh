@@ -38,7 +38,7 @@ mkdir -p "$LOG_ROOT" "$EVIDENCE_ROOT"
 cleanup_scratch() {
   local names
   names=$(PGPASSWORD=flowtest psql -h 127.0.0.1 -p 25433 -U flowtest -d postgres -Atc \
-    "SELECT datname FROM pg_database WHERE datname LIKE 'openpr_v09_roundtrip_%' ORDER BY datname" 2>/dev/null || true)
+    "SELECT datname FROM pg_database WHERE datname LIKE 'sylvode_v09_roundtrip_%' ORDER BY datname" 2>/dev/null || true)
   if [[ -n $names ]]; then
     while IFS= read -r name; do
       PGPASSWORD=flowtest dropdb -h 127.0.0.1 -p 25433 -U flowtest --force "$name" >/dev/null

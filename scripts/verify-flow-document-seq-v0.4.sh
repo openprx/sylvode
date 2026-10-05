@@ -188,10 +188,10 @@ API_BIN="$TARGET_DIR/debug/api"
 [[ -x "$API_BIN" ]] || { echo "FAIL: api binary not found after build: $API_BIN" >&2; exit 2; }
 
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-SCRATCH_DB="openpr_flow_seq_verify_$RUN_ID"
+SCRATCH_DB="sylvode_flow_seq_verify_$RUN_ID"
 DB_PREFIX="${DATABASE_URL%/*}"
 SCRATCH_URL="$DB_PREFIX/$SCRATCH_DB"
-TMP_DIR="$(mktemp -d "/tmp/openpr-flow-seq-verify.XXXXXX")"
+TMP_DIR="$(mktemp -d "/tmp/sylvode-flow-seq-verify.XXXXXX")"
 JWT_SECRET="flow-document-seq-verify-not-a-real-secret"
 API_PORTS=()
 API_PIDS=()
@@ -218,7 +218,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"$SCRATCH_DB\"" 
 # processes race the ledger would be testing the wrong thing here.
 for inst in $(seq 1 "$INSTANCES"); do
   port=$((20000 + RANDOM % 20000))
-  config="$TMP_DIR/openpr-$inst.toml"
+  config="$TMP_DIR/sylvode-$inst.toml"
   cat > "$config" <<EOF
 [server]
 app_name = "api"
@@ -231,7 +231,7 @@ url = "$SCRATCH_URL"
 jwt_secret = "$JWT_SECRET"
 
 [logging]
-filter = "api=warn,openpr=warn"
+filter = "api=warn"
 format = "text"
 EOF
   echo "=== starting api instance $inst on 127.0.0.1:$port (shared database $SCRATCH_DB) ===" >&2

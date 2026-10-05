@@ -1,8 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 
-const email = process.env.TEST_EMAIL ?? 'demo@openpr.local';
-const password = process.env.TEST_PASSWORD ?? 'OpenPRDemo123!';
+const email = process.env.TEST_EMAIL ?? 'demo@sylvode.local';
+const password = process.env.TEST_PASSWORD ?? 'SylvodeDemo123!';
 const workspaceId = process.env.OPENPR_WORKSPACE_ID ?? '07f6e023-6b0a-425c-bdac-442b5d36cd0c';
 const projectId = process.env.OPENPR_PROJECT_ID ?? '8f7f7726-948e-4ea4-b149-06f25753b525';
 
@@ -145,11 +145,11 @@ test.describe('Universal forms / import export', () => {
 			await expect(page.getByText('记录 JSON 已导出')).toBeVisible();
 
 			await page.screenshot({
-				path: '/opt/worker/task/openpr/test/artifacts/universal-forms-import-export/import-export-desktop.png',
+				path: 'test-results/artifacts/universal-forms-import-export/import-export-desktop.png',
 				fullPage: true
 			});
 			await testInfo.attach('import-export-desktop', {
-				path: '/opt/worker/task/openpr/test/artifacts/universal-forms-import-export/import-export-desktop.png',
+				path: 'test-results/artifacts/universal-forms-import-export/import-export-desktop.png',
 				contentType: 'image/png'
 			});
 		} finally {

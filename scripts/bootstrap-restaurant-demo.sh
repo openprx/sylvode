@@ -15,8 +15,8 @@ line, parent-child link, and business report.
 Environment (each SYLVODE_* name also accepts the legacy OPENPR_* name it
 replaces, with a deprecation notice; setting both to different values is an error):
   SYLVODE_API_URL                API base URL. Default: http://localhost:8081
-  SYLVODE_DEMO_EMAIL             Demo login email. Default: demo@openpr.local
-  SYLVODE_DEMO_PASSWORD          Demo login password. Default: OpenPRDemo123!
+  SYLVODE_DEMO_EMAIL             Demo login email. Default: demo@sylvode.local
+  SYLVODE_DEMO_PASSWORD          Demo login password. Default: SylvodeDemo123!
   SYLVODE_DEMO_NAME              Demo user name. Default: Sylvode Demo
   SYLVODE_DEMO_WORKSPACE_SLUG    Workspace slug. Default: restaurant-demo
   SYLVODE_DEMO_WORKSPACE_NAME    Workspace name. Default: Restaurant Demo
@@ -132,7 +132,7 @@ MCP_CALLER_BOT_TOKEN="${OPENPR_MCP_BOT_TOKEN:-}"
 EXISTING_BOT_TOKEN="$(read_config_value mcp.bot_token "$DEMO_CONFIG_PATH")"
 EXISTING_WORKSPACE_ID="$(read_config_value mcp.workspace_id "$DEMO_CONFIG_PATH")"
 
-DEMO_STATE_FILE="$(mktemp "${TMPDIR:-/tmp}/openpr-restaurant-demo.XXXXXX.json")"
+DEMO_STATE_FILE="$(mktemp "${TMPDIR:-/tmp}/sylvode-restaurant-demo.XXXXXX.json")"
 trap 'rm -f "$DEMO_STATE_FILE"' EXIT
 
 API_URL="${OPENPR_API_URL:-http://localhost:8081}"
@@ -149,8 +149,8 @@ case "$API_URL" in
 esac
 
 OPENPR_API_URL="$API_URL" \
-OPENPR_DEMO_EMAIL="${OPENPR_DEMO_EMAIL:-demo@openpr.local}" \
-OPENPR_DEMO_PASSWORD="${OPENPR_DEMO_PASSWORD:-OpenPRDemo123!}" \
+OPENPR_DEMO_EMAIL="${OPENPR_DEMO_EMAIL:-demo@sylvode.local}" \
+OPENPR_DEMO_PASSWORD="${OPENPR_DEMO_PASSWORD:-SylvodeDemo123!}" \
 OPENPR_DEMO_NAME="${OPENPR_DEMO_NAME:-Sylvode Demo}" \
 OPENPR_DEMO_WORKSPACE_SLUG="${OPENPR_DEMO_WORKSPACE_SLUG:-restaurant-demo}" \
 OPENPR_DEMO_WORKSPACE_NAME="${OPENPR_DEMO_WORKSPACE_NAME:-Restaurant Demo}" \
@@ -537,7 +537,7 @@ if [[ "${OPENPR_DEMO_RESTART_MCP:-1}" == "1" ]] && [[ "$CONFIG_WRITTEN" == "1" ]
       # the one container directly: podman-compose 1.3 cannot reliably remove/recreate a service
       # whose dependency containers already exist, while a process restart needs no dependency
       # graph at all. Accept both Compose name separators.
-      compose_project=${COMPOSE_PROJECT_NAME:-openpr}
+      compose_project=${COMPOSE_PROJECT_NAME:-$(basename "$ROOT_DIR" | tr "[:upper:]" "[:lower:]")}
       mapfile -t mcp_container_ids < <(docker ps --format '{{.ID}} {{.Names}}' | awk -v project="$compose_project" \
         '$2 == project "_mcp-server_1" || $2 == project "-mcp-server-1" {print $1}')
       if [[ ${#mcp_container_ids[@]} -ne 1 ]]; then

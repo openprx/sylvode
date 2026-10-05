@@ -4,15 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POSTGRES_PORT="${OPENPR_SMOKE_PG_PORT:-5366}"
 PG_SUPERUSER="${OPENPR_SMOKE_PG_SUPERUSER:-postgres}"
-DB_NAME="openpr_forms_smoke_$$_$(date +%s)"
-DB_USER="openpr_forms_smoke_$$_$(date +%s)"
+DB_NAME="sylvode_forms_smoke_$$_$(date +%s)"
+DB_USER="sylvode_forms_smoke_$$_$(date +%s)"
 DB_PASSWORD="$(openssl rand -hex 12)"
 API_PORT="${OPENPR_SMOKE_API_PORT:-$((18180 + ($$ % 1000)))}"
-TMP_DIR="$(mktemp -d /tmp/openpr-forms-smoke.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/sylvode-forms-smoke.XXXXXX)"
 API_LOG="$TMP_DIR/api.log"
 WORKER_LOG="$TMP_DIR/worker.log"
 RECEIVER_LOG="$TMP_DIR/receiver.ndjson"
-SMOKE_JWT_SECRET="openpr-forms-smoke-secret"
+SMOKE_JWT_SECRET="sylvode-forms-smoke-secret"
 RECEIVER_PORT="${OPENPR_SMOKE_RECEIVER_PORT:-$((19180 + ($$ % 1000)))}"
 
 OWNER_ID="11111111-1111-4111-8111-111111111111"
@@ -111,7 +111,7 @@ SMOKE_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@127.0.0.1:$POSTGRES_PORT/$D
 # refuse to start without one. It is written inside the 0700 directory mktemp made for this run
 # and is removed with it, so the generated database password never lands in the repository.
 # text logging rather than json: the only reader of the log file is a human debugging a failure.
-APP_CONFIG="$TMP_DIR/openpr.toml"
+APP_CONFIG="$TMP_DIR/sylvode.toml"
 cat >"$APP_CONFIG" <<EOF
 [server]
 # app_name is deliberately unset: this file also serves the worker, and a shared name would make
@@ -125,7 +125,7 @@ url = "$SMOKE_DATABASE_URL"
 jwt_secret = "$SMOKE_JWT_SECRET"
 
 [logging]
-filter = "${OPENPR_SMOKE_LOG_FILTER:-api=info,worker=info,openpr=info}"
+filter = "${OPENPR_SMOKE_LOG_FILTER:-api=info,worker=info}"
 format = "text"
 EOF
 

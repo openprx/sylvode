@@ -127,6 +127,32 @@ proves little about anything that touches the database. CI always sets it.
 audits of the source tree followed by the forms regression tests. It requires
 `OPENPR_TEST_DATABASE_URL`.
 
+### Brand residue gate
+
+`scripts/verify-sylvode-brand-residue.sh --json` scans the tracked files of the Sylvode checkouts
+for `OpenPR` (case-sensitive, not part of `OpenPRX`) and lowercase `openpr` (not part of
+`openprx`). Every hit must be covered by an entry of
+`scripts/contracts/sylvode-brand-allowlist.json`: a reason code from a closed set
+(`stable_identifier`, `legacy_alias_documented`, `formerly_note`, `migration_page`,
+`redirect_rule`, `historical_document`, `frozen_evidence`, `legacy_behaviour_test`,
+`kept_repository_url`), one repository, path globs, a pattern and an explanation. Anything not
+covered fails with file:line. The script refuses an entry that waives the bare name across a
+whole repository, reports entries that cover nothing (a failure under `--strict`), and treats a
+requested repository that is missing, empty or not a git checkout as a failure.
+
+CI runs the single-repository form with `--strict` plus `--self-test`, the built-in mutation
+controls. Before a release, run the five-repository form locally from sibling checkouts:
+
+```bash
+bash scripts/verify-sylvode-brand-residue.sh --json --strict --release \
+  --repo openpr-webhook=../openpr-webhook --repo docs=../docs \
+  --repo site=../openprx-site --repo .github=../openprx-github
+```
+
+When a new hit is legitimate (a kept identifier, a legacy alias that is documented, a
+migration note), add or extend the narrowest entry that covers it. When it is leftover product
+naming, rename it instead.
+
 ### Where scripts read and write
 
 Nothing under `scripts/` assumes a particular machine. Generated output defaults to the ignored

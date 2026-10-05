@@ -126,7 +126,7 @@ VITE_API_BASE_URL=http://localhost:8081
 
 ## API 对接
 
-后端 API 文档参考：`/opt/worker/code/openpr/docs/API_ENDPOINTS_PHASE3.md`
+后端 API 文档参考：仓库根目录下的 `docs/API_ENDPOINTS_PHASE3.md`
 
 所有 API 请求通过 `$lib/api/client.ts` 中的 `apiClient` 发送，自动处理：
 

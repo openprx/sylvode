@@ -133,10 +133,10 @@ MCP_BIN="$TARGET_DIR/debug/mcp-server"
 [[ -x "$MCP_BIN" ]] || { echo "FAIL: mcp-server binary not found: $MCP_BIN" >&2; exit 2; }
 
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-SCRATCH_DB="openpr_flow_mcp_verify_$RUN_ID"
+SCRATCH_DB="sylvode_flow_mcp_verify_$RUN_ID"
 DB_PREFIX="${DATABASE_URL%/*}"
 SCRATCH_URL="$DB_PREFIX/$SCRATCH_DB"
-TMP_DIR="$(mktemp -d "/tmp/openpr-flow-mcp-verify.XXXXXX")"
+TMP_DIR="$(mktemp -d "/tmp/sylvode-flow-mcp-verify.XXXXXX")"
 API_PORT=$((20000 + RANDOM % 10000))
 HTTP_PORT=$((30001 + RANDOM % 10000))
 SSE_PORT=$((40001 + RANDOM % 10000))
@@ -161,7 +161,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS \"$SCRATC
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"$SCRATCH_DB\"" >/dev/null
 
 JWT_SECRET="flow-mcp-transport-verify-not-a-real-secret"
-API_CONFIG="$TMP_DIR/openpr-api.toml"
+API_CONFIG="$TMP_DIR/sylvode-api.toml"
 cat > "$API_CONFIG" <<EOF
 [server]
 app_name = "api"
@@ -174,7 +174,7 @@ url = "$SCRATCH_URL"
 jwt_secret = "$JWT_SECRET"
 
 [logging]
-filter = "api=warn,openpr=warn"
+filter = "api=warn"
 format = "text"
 EOF
 

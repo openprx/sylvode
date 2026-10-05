@@ -49,7 +49,7 @@ else
   fail "canonical implementation map passes verifier"
 fi
 
-tmp_dir="$(mktemp -d /tmp/openpr-uf-implementation-map-contract.XXXXXX)"
+tmp_dir="$(mktemp -d /tmp/sylvode-uf-implementation-map-contract.XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 mutate_candidate() {

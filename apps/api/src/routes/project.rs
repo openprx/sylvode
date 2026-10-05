@@ -1431,9 +1431,9 @@ fn constant_json_wasm(output: &JsonValue) -> Result<Vec<u8>, ApiError> {
     let memory_section = wasm_vec(vec![vec![0x00, 0x01]])?;
     let export_section = wasm_vec(vec![
         wasm_export("memory", 0x02, 0)?,
-        wasm_export("openpr_plugin_abi_version", 0x00, 0)?,
-        wasm_export("openpr_alloc", 0x00, 1)?,
-        wasm_export("openpr_invoke", 0x00, 2)?,
+        wasm_export("sylvode_plugin_abi_version", 0x00, 0)?,
+        wasm_export("sylvode_alloc", 0x00, 1)?,
+        wasm_export("sylvode_invoke", 0x00, 2)?,
     ])?;
     let code_section = wasm_vec(vec![
         wasm_body(vec![0x41, 0x01])?,

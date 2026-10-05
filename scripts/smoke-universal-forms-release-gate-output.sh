@@ -95,7 +95,7 @@ verify_text_matches_json() {
   not_contains "$label does not leak JSON nulls" "$text_path" "null"
 }
 
-tmp_dir="$(mktemp -d /tmp/openpr-uf-release-gate-output.XXXXXX)"
+tmp_dir="$(mktemp -d /tmp/sylvode-uf-release-gate-output.XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 allow_text="$tmp_dir/allow-pending.txt"

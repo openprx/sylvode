@@ -36,7 +36,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -z "$JSON_PATH" ]]; then
-  GENERATED_TMP="$(mktemp /tmp/openpr-uf-release-gate.XXXXXX.json)"
+  GENERATED_TMP="$(mktemp /tmp/sylvode-uf-release-gate.XXXXXX.json)"
   "$ROOT_DIR/scripts/gate-universal-forms-release.sh" --allow-pending --json >"$GENERATED_TMP"
   JSON_PATH="$GENERATED_TMP"
 fi

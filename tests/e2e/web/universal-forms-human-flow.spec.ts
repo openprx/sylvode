@@ -1,12 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
-const email = process.env.TEST_EMAIL ?? 'demo@openpr.local';
-const password = process.env.TEST_PASSWORD ?? 'OpenPRDemo123!';
+const email = process.env.TEST_EMAIL ?? 'demo@sylvode.local';
+const password = process.env.TEST_PASSWORD ?? 'SylvodeDemo123!';
 const workspaceId = process.env.OPENPR_WORKSPACE_ID ?? '07f6e023-6b0a-425c-bdac-442b5d36cd0c';
 const projectId = process.env.OPENPR_PROJECT_ID ?? '8f7f7726-948e-4ea4-b149-06f25753b525';
 const codeTaskFormId = process.env.OPENPR_CODE_TASK_FORM_ID ?? 'db4d73cc-9639-44b9-9875-21be69b0831f';
-const artifactDir = '/opt/worker/task/openpr/test/artifacts/universal-forms-human-flow';
+const artifactDir = 'test-results/artifacts/universal-forms-human-flow';
 
 async function login(page: Page) {
 	const response = await page.request.post('/api/v1/auth/login', {

@@ -34,7 +34,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 if [[ -z "$JSON_PATH" ]]; then
-  GENERATED_TMP="$(mktemp /tmp/openpr-uf-delivery-status.XXXXXX.json)"
+  GENERATED_TMP="$(mktemp /tmp/sylvode-uf-delivery-status.XXXXXX.json)"
   "$ROOT_DIR/scripts/status-universal-forms-delivery.sh" --json >"$GENERATED_TMP"
   JSON_PATH="$GENERATED_TMP"
 fi
@@ -52,7 +52,7 @@ expect_reject() {
   local description="$1"
   local filter="$2"
   local tmp
-  tmp="$(mktemp /tmp/openpr-uf-delivery-status-bad.XXXXXX.json)"
+  tmp="$(mktemp /tmp/sylvode-uf-delivery-status-bad.XXXXXX.json)"
   jq "$filter" "$JSON_PATH" >"$tmp"
   if "$VERIFY" "$tmp" >/dev/null 2>&1; then
     echo "FAIL: $description was accepted" >&2

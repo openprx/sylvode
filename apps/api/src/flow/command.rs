@@ -2777,7 +2777,7 @@ mod database_tests {
             .await
             .unwrap_or_else(|err| panic!("{TEST_DATABASE_URL_ENV} is set but unusable: {err}"));
 
-        let name = format!("openpr_flow_command_{label}");
+        let name = format!("sylvode_flow_command_{label}");
         let quoted = format!("\"{name}\"");
         admin
             .execute_unprepared(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
@@ -4715,7 +4715,7 @@ mod idempotency_race_database_tests {
             .await
             .unwrap_or_else(|err| panic!("{TEST_DATABASE_URL_ENV} is set but unusable: {err}"));
 
-        let name = format!("openpr_flow_idem_race_{label}");
+        let name = format!("sylvode_flow_idem_race_{label}");
         let quoted = format!("\"{name}\"");
         admin
             .execute_unprepared(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))

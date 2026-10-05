@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const email = process.env.TEST_EMAIL ?? 'demo@openpr.local';
-const password = process.env.TEST_PASSWORD ?? 'OpenPRDemo123!';
+const email = process.env.TEST_EMAIL ?? 'demo@sylvode.local';
+const password = process.env.TEST_PASSWORD ?? 'SylvodeDemo123!';
 const workspaceId = process.env.OPENPR_WORKSPACE_ID ?? '07f6e023-6b0a-425c-bdac-442b5d36cd0c';
 const projectId = process.env.OPENPR_PROJECT_ID ?? '8f7f7726-948e-4ea4-b149-06f25753b525';
 const codeTaskFormId = process.env.OPENPR_CODE_TASK_FORM_ID ?? 'db4d73cc-9639-44b9-9875-21be69b0831f';
@@ -57,7 +57,7 @@ test.describe('Universal forms / Code Task record CRUD', () => {
 				await expect(page.getByRole('heading', { name: '新建记录' })).toBeVisible();
 
 			await page.getByRole('textbox', { name: 'Repository *' }).fill(repo);
-			await page.getByRole('textbox', { name: 'Directory' }).fill('/opt/worker/code/openpr');
+			await page.getByRole('textbox', { name: 'Directory' }).fill('/srv/repos/sylvode');
 			await page.getByRole('textbox', { name: 'Branch' }).fill(branch);
 			await page.getByRole('combobox', { name: 'CI status' }).selectOption('passing');
 			await page.getByRole('combobox', { name: 'Risk' }).selectOption('low');

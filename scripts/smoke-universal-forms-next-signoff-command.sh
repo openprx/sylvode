@@ -135,7 +135,7 @@ contains_text "next recorder command records accepted status" "$recorder_command
 contains_text "next recorder command includes evidence flag" "$recorder_command" "--evidence"
 contains_file "Markdown signoff status mirrors next key" "$MARKDOWN_STATUS_PATH" "Next row: \`$next_key\`"
 
-tmp_dir="$(mktemp -d /tmp/openpr-uf-next-signoff.XXXXXX)"
+tmp_dir="$(mktemp -d /tmp/sylvode-uf-next-signoff.XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
 tmp_runbook="$tmp_dir/runbook.md"
 tmp_evidence="$tmp_dir/evidence.md"
