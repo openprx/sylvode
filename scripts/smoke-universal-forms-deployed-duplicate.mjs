@@ -8,8 +8,8 @@ const WebSocket = require('ws');
 
 const frontendUrl = process.env.OPENPR_FRONTEND_URL ?? 'http://10.72.0.3:3000';
 const mcpUrl = process.env.OPENPR_MCP_URL ?? 'http://10.72.0.3:8090/mcp/rpc';
-const email = process.env.OPENPR_DEMO_EMAIL ?? 'demo@openpr.local';
-const password = process.env.OPENPR_DEMO_PASSWORD ?? 'OpenPRDemo123!';
+const email = process.env.OPENPR_DEMO_EMAIL ?? 'demo@sylvode.local';
+const password = process.env.OPENPR_DEMO_PASSWORD ?? 'SylvodeDemo123!';
 const chromium = process.env.CHROMIUM_BIN ?? '/usr/bin/chromium';
 const suffix = Date.now().toString(36);
 const sourceKey = `duplicate_${suffix}`;
@@ -166,7 +166,7 @@ function connect(wsUrl) {
 
 async function openBrowser(targetUrl) {
 	const port = 22800 + Math.floor(Math.random() * 300);
-	const profile = `/tmp/openpr-duplicate-smoke-${process.pid}`;
+	const profile = `/tmp/sylvode-duplicate-smoke-${process.pid}`;
 	rmSync(profile, { recursive: true, force: true });
 	child = spawn(
 		chromium,

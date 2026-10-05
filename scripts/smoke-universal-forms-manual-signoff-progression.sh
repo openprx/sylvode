@@ -157,7 +157,7 @@ fi
 runbook_before="$(sha256sum "$RUNBOOK_PATH" | awk '{print $1}')"
 evidence_before="$(sha256sum "$EVIDENCE_PATH" | awk '{print $1}')"
 
-tmp_dir="$(mktemp -d /tmp/openpr-uf-signoff-progression.XXXXXX)"
+tmp_dir="$(mktemp -d /tmp/sylvode-uf-signoff-progression.XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
 tmp_runbook="$tmp_dir/runbook.md"
 tmp_evidence="$tmp_dir/evidence.md"

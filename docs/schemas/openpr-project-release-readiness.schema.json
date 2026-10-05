@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openpr.dev/schemas/openpr-project-release-readiness.schema.json",
-  "title": "OpenPR Project Release Readiness",
+  "title": "Sylvode Project Release Readiness",
   "description": "Machine-readable project release readiness gates, blockers, metrics, and next actions returned by GET /api/v1/projects/{project_id}/release-readiness and MCP release.readiness.get.",
   "type": "object",
   "additionalProperties": false,

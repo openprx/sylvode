@@ -59,7 +59,7 @@ dir = "./uploads"
 
 [storage.s3]
 endpoint = "https://s3.example.com"
-bucket = "openpr-uploads"
+bucket = "sylvode-uploads"
 region = "eu-central-1"
 access_key_id = "AKIAEXAMPLE"
 secret_access_key = "s3-secret-access-key"
@@ -119,7 +119,7 @@ fn a_complete_file_parses_into_every_section() {
     assert_eq!(config.storage.backend, StorageBackend::S3);
     let s3 = config.storage.s3.as_ref().expect("s3 section should be present");
     assert_eq!(s3.endpoint, "https://s3.example.com");
-    assert_eq!(s3.bucket, "openpr-uploads");
+    assert_eq!(s3.bucket, "sylvode-uploads");
     assert_eq!(s3.region, "eu-central-1");
     assert_eq!(s3.secret_access_key.expose(), "s3-secret-access-key");
     assert_eq!(
@@ -443,7 +443,7 @@ fn placeholder_values_are_refused() {
         "",
         "change-me-in-production",
         "replace_with_long_random_secret",
-        "${JWT_SECRET:?set JWT_SECRET for OpenPR services}",
+        "${JWT_SECRET:?set JWT_SECRET for Sylvode services}",
     ] {
         let reported = issues(&format!(
             "[database]\nurl = \"postgres://localhost/openpr\"\n\n[auth]\njwt_secret = \"{placeholder}\"\n"
@@ -721,7 +721,7 @@ jwt_secret = "0123456789abcdef0123456789abcdef"
 
 [storage]
 backend = "local"
-dir = "/var/lib/openpr/uploads"
+dir = "/var/lib/sylvode/uploads"
 
 [storage.s3]
 bucket = "still-here"
@@ -729,7 +729,7 @@ bucket = "still-here"
     )
     .expect("an unread [storage.s3] section must not block the local backend");
     assert_eq!(config.storage.backend, StorageBackend::Local);
-    assert_eq!(config.storage.dir, Path::new("/var/lib/openpr/uploads"));
+    assert_eq!(config.storage.dir, Path::new("/var/lib/sylvode/uploads"));
     assert!(config.storage.s3.is_none());
 }
 
@@ -763,12 +763,12 @@ fn a_parse_failure_never_reproduces_the_offending_line() {
 
 #[test]
 fn a_missing_file_says_where_it_looked_and_how_to_create_it() {
-    let error = OpenPrConfig::load(Some(Path::new("/nonexistent/openpr-does-not-exist.toml")))
+    let error = OpenPrConfig::load(Some(Path::new("/nonexistent/sylvode-does-not-exist.toml")))
         .expect_err("a missing file must not fall back to defaults");
     assert!(matches!(error, ConfigError::NotFound { .. }));
     let rendered = error.to_string();
     assert!(
-        rendered.contains("/nonexistent/openpr-does-not-exist.toml"),
+        rendered.contains("/nonexistent/sylvode-does-not-exist.toml"),
         "{rendered}"
     );
     assert!(rendered.contains(DEFAULT_CONFIG_PATH), "{rendered}");

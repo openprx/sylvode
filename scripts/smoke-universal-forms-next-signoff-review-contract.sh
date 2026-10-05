@@ -61,7 +61,7 @@ expect_reject() {
   local needle="$2"
   local replacement="$3"
   local tmp
-  tmp="$(mktemp /tmp/openpr-uf-next-signoff-review.XXXXXX.md)"
+  tmp="$(mktemp /tmp/sylvode-uf-next-signoff-review.XXXXXX.md)"
   cp "$REVIEW_PATH" "$tmp"
   if ! replace_or_fail "$tmp" "$needle" "$replacement"; then
     rm -f "$tmp"

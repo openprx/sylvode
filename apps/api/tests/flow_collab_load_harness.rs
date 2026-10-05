@@ -382,7 +382,7 @@ async fn scratch(label: &str) -> Option<Scratch> {
         .await
         .unwrap_or_else(|err| panic!("{TEST_DATABASE_URL_ENV} is set but unusable: {err}"));
 
-    let name = format!("openpr_flow_load_{label}");
+    let name = format!("sylvode_flow_load_{label}");
     let quoted = format!("\"{name}\"");
     admin
         .execute_unprepared(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
@@ -2144,7 +2144,7 @@ async fn ten_client_load_harness_round_trip_p95_and_lock_hold_p95() {
     // A unique statement after all writes is the explicit producer/collector synchronization
     // point. The harvest is still required to account for every accepted update and contain no
     // unterminated transaction; seeing the marker alone is not allowed to bless a partial file.
-    let log_sync_marker = format!("openpr_flow_log_sync_{}", Uuid::new_v4().simple());
+    let log_sync_marker = format!("sylvode_flow_log_sync_{}", Uuid::new_v4().simple());
     state
         .db
         .execute_unprepared(&format!("SELECT '{log_sync_marker}'"))

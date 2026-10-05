@@ -1,4 +1,4 @@
-# OpenPR Phase 3 - 新增 API 端点
+# Sylvode Phase 3 - 新增 API 端点
 
 ## Webhook 系统
 

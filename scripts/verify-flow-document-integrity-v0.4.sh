@@ -63,10 +63,10 @@ mkdir -p "$EVIDENCE_ROOT"
 SOURCE_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 GENERATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:10])')"
-SCRATCH_DB="openpr_flow_integrity_$RUN_ID"
+SCRATCH_DB="sylvode_flow_integrity_$RUN_ID"
 DB_PREFIX="${DATABASE_URL%/*}"
 SCRATCH_URL="$DB_PREFIX/$SCRATCH_DB"
-TMP_DIR="$(mktemp -d /tmp/openpr-flow-integrity.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/sylvode-flow-integrity.XXXXXX)"
 API_PORT=$((20000 + RANDOM % 18000))
 JWT_SECRET="flow-document-integrity-not-a-real-secret"
 ORIGIN="http://127.0.0.1:4173"
@@ -134,7 +134,7 @@ jwt_secret = "$JWT_SECRET"
 collab_allowed_origins = ["$ORIGIN"]
 
 [logging]
-filter = "api=warn,openpr=warn"
+filter = "api=warn"
 format = "text"
 EOF
 

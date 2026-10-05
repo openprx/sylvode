@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TMP_DIR="$(mktemp -d /tmp/openpr-uf-report-output-boundaries.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/sylvode-uf-report-output-boundaries.XXXXXX)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 failures=0

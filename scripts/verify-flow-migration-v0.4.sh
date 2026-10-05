@@ -328,10 +328,10 @@ API_BIN="$TARGET_DIR/debug/api"
 [[ -x "$API_BIN" ]] || { echo "FAIL: api binary not found after build: $API_BIN" >&2; exit 2; }
 
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-SCRATCH_DB="openpr_flow_migration_verify_$RUN_ID"
+SCRATCH_DB="sylvode_flow_migration_verify_$RUN_ID"
 DB_PREFIX="${DATABASE_URL%/*}"
 SCRATCH_URL="$DB_PREFIX/$SCRATCH_DB"
-TMP_DIR="$(mktemp -d "/tmp/openpr-flow-migration-verify.XXXXXX")"
+TMP_DIR="$(mktemp -d "/tmp/sylvode-flow-migration-verify.XXXXXX")"
 API_PORT=$((20000 + RANDOM % 20000))
 API_PID=""
 
@@ -352,7 +352,7 @@ echo "=== creating brand-new empty database $SCRATCH_DB ===" >&2
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS \"$SCRATCH_DB\" WITH (FORCE)" >/dev/null
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"$SCRATCH_DB\"" >/dev/null
 
-APP_CONFIG="$TMP_DIR/openpr.toml"
+APP_CONFIG="$TMP_DIR/sylvode.toml"
 cat > "$APP_CONFIG" <<EOF
 [server]
 app_name = "api"
@@ -365,7 +365,7 @@ url = "$SCRATCH_URL"
 jwt_secret = "flow-migration-verify-not-a-real-secret"
 
 [logging]
-filter = "api=info,openpr=info"
+filter = "api=info"
 format = "text"
 EOF
 

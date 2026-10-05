@@ -11,7 +11,7 @@
 
 	let basicSettings = $state({
 		siteName: 'Sylvode',
-		siteUrl: 'https://openpr.local',
+		siteUrl: 'https://sylvode.local',
 		allowWorkspaceCreate: 'admin_only'
 	});
 	let securitySettings = $state({

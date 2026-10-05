@@ -48,7 +48,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -z "$JSON_PATH" ]]; then
-  GENERATED_TMP="$(mktemp /tmp/openpr-uf-delivery-status.XXXXXX.json)"
+  GENERATED_TMP="$(mktemp /tmp/sylvode-uf-delivery-status.XXXXXX.json)"
   "$ROOT_DIR/scripts/status-universal-forms-delivery.sh" --json >"$GENERATED_TMP"
   JSON_PATH="$GENERATED_TMP"
 fi

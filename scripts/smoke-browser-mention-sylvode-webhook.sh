@@ -6,19 +6,19 @@ WEBHOOK_DIR="${SYLVODE_WEBHOOK_DIR:-${OPENPR_WEBHOOK_DIR:-}}"
 [[ -n $WEBHOOK_DIR && -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: webhook checkout not found (${WEBHOOK_DIR:-unset}); set SYLVODE_WEBHOOK_DIR to the webhook checkout" >&2; exit 2; }
 POSTGRES_PORT="${OPENPR_SMOKE_PG_PORT:-5366}"
 PG_SUPERUSER="${OPENPR_SMOKE_PG_SUPERUSER:-postgres}"
-DB_NAME="openpr_mention_smoke_$$_$(date +%s)"
-DB_USER="openpr_mention_smoke_$$_$(date +%s)"
+DB_NAME="sylvode_mention_smoke_$$_$(date +%s)"
+DB_USER="sylvode_mention_smoke_$$_$(date +%s)"
 DB_PASSWORD="$(openssl rand -hex 12)"
 API_PORT="${OPENPR_SMOKE_API_PORT:-$((18180 + ($$ % 1000)))}"
 WEBHOOK_PORT="${OPENPR_SMOKE_WEBHOOK_PORT:-$((19180 + ($$ % 1000)))}"
 BROWSER_PORT="${OPENPR_SMOKE_BROWSER_PORT:-$((20180 + ($$ % 1000)))}"
-TMP_DIR="$(mktemp -d /tmp/openpr-browser-mention-smoke.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/sylvode-browser-mention-smoke.XXXXXX)"
 API_LOG="$TMP_DIR/api.log"
 WORKER_LOG="$TMP_DIR/worker.log"
 WEBHOOK_LOG="$TMP_DIR/webhook.log"
 BROWSER_LOG="$TMP_DIR/browser.log"
 BROWSER_DOM="$TMP_DIR/browser.dom"
-SMOKE_JWT_SECRET="openpr-browser-mention-smoke-secret"
+SMOKE_JWT_SECRET="sylvode-browser-mention-smoke-secret"
 
 OWNER_ID="11111111-1111-4111-8111-111111111111"
 BOT_ID="22222222-2222-4222-8222-222222222222"
@@ -91,6 +91,9 @@ fi
 
 cargo build -q -p api --bin api -p worker --bin worker
 (cd "$WEBHOOK_DIR" && cargo build -q)
+# Releases up to 0.3.3 ship only the legacy executable name.
+WEBHOOK_BIN="$WEBHOOK_DIR/target/debug/sylvode-webhook"
+[[ -x $WEBHOOK_BIN ]] || WEBHOOK_BIN="$WEBHOOK_DIR/target/debug/openpr-webhook"
 
 sudo -n -u "$PG_SUPERUSER" psql -p "$POSTGRES_PORT" -d postgres -v ON_ERROR_STOP=1 -q <<SQL
 CREATE ROLE "$DB_USER" LOGIN PASSWORD '$DB_PASSWORD';
@@ -103,7 +106,7 @@ SMOKE_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@127.0.0.1:$POSTGRES_PORT/$D
 # refuse to start without one. It is written inside the 0700 directory mktemp made for this run
 # and is removed with it, so the generated database password never lands in the repository.
 # text logging rather than json: the only reader of the log file is a human debugging a failure.
-APP_CONFIG="$TMP_DIR/openpr.toml"
+APP_CONFIG="$TMP_DIR/sylvode.toml"
 cat >"$APP_CONFIG" <<EOF
 [server]
 # app_name is deliberately unset: this file also serves the worker, and a shared name would make
@@ -117,7 +120,7 @@ url = "$SMOKE_DATABASE_URL"
 jwt_secret = "$SMOKE_JWT_SECRET"
 
 [logging]
-filter = "${OPENPR_SMOKE_LOG_FILTER:-api=info,worker=info,openpr=info}"
+filter = "${OPENPR_SMOKE_LOG_FILTER:-api=info,worker=info}"
 format = "text"
 EOF
 
@@ -204,7 +207,7 @@ console.log(`${header}.${body}.${sig}`);
 NODE
 )"
 
-cat >"$TMP_DIR/openpr-webhook.toml" <<EOF
+cat >"$TMP_DIR/sylvode-webhook.toml" <<EOF
 [server]
 listen = "127.0.0.1:$WEBHOOK_PORT"
 
@@ -228,9 +231,9 @@ command = "/bin/echo"
 args = ["browser-mention-route-ok"]
 EOF
 
-"$WEBHOOK_DIR/target/debug/openpr-webhook" "$TMP_DIR/openpr-webhook.toml" >"$WEBHOOK_LOG" 2>&1 &
+"$WEBHOOK_BIN" "$TMP_DIR/sylvode-webhook.toml" >"$WEBHOOK_LOG" 2>&1 &
 webhook_pid=$!
-wait_http "http://127.0.0.1:$WEBHOOK_PORT/health" "openpr-webhook"
+wait_http "http://127.0.0.1:$WEBHOOK_PORT/health" "sylvode-webhook"
 
 "$ROOT_DIR/target/debug/worker" --config "$APP_CONFIG" --concurrency 1 >"$WORKER_LOG" 2>&1 &
 worker_pid=$!
@@ -340,7 +343,7 @@ for _ in $(seq 1 60); do
   task_count="$(psql_smoke -tAc "SELECT COUNT(*) FROM ai_tasks WHERE ai_participant_id = '$BOT_ID' AND task_type = 'comment_requested' AND payload->>'project_type' = 'contract_review';" | tr -d '[:space:]')"
   processing_count="$(psql_smoke -tAc "SELECT COUNT(*) FROM ai_tasks WHERE ai_participant_id = '$BOT_ID' AND task_type = 'comment_requested' AND status = 'processing';" | tr -d '[:space:]')"
   if [[ "$task_count" == "1" && "$processing_count" == "1" && -s "$WEBHOOK_LOG" ]]; then
-    echo "Browser mention to openpr-webhook smoke passed"
+    echo "Browser mention to Sylvode Webhook smoke passed"
     exit 0
   fi
   sleep 1

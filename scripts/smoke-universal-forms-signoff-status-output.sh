@@ -46,8 +46,8 @@ run_quiet() {
   shift
 
   local stdout_path stderr_path
-  stdout_path="$(mktemp /tmp/openpr-uf-signoff-status-output-${label//[^A-Za-z0-9_]/_}.stdout.XXXXXX)"
-  stderr_path="$(mktemp /tmp/openpr-uf-signoff-status-output-${label//[^A-Za-z0-9_]/_}.stderr.XXXXXX)"
+  stdout_path="$(mktemp /tmp/sylvode-uf-signoff-status-output-${label//[^A-Za-z0-9_]/_}.stdout.XXXXXX)"
+  stderr_path="$(mktemp /tmp/sylvode-uf-signoff-status-output-${label//[^A-Za-z0-9_]/_}.stderr.XXXXXX)"
 
   if "$@" >"$stdout_path" 2>"$stderr_path"; then
     rm -f "$stdout_path" "$stderr_path"
@@ -182,7 +182,7 @@ run_quiet "verify canonical signoff status JSON" \
   "$ROOT_DIR/scripts/verify-universal-forms-signoff-status-json.sh" "$JSON_PATH"
 pass "canonical signoff status JSON passes verifier"
 
-tmp_status="$(mktemp /tmp/openpr-uf-signoff-status-output.XXXXXX.md)"
+tmp_status="$(mktemp /tmp/sylvode-uf-signoff-status-output.XXXXXX.md)"
 trap 'rm -f "$tmp_status"' EXIT
 run_quiet "render temporary signoff status Markdown" \
   "$ROOT_DIR/scripts/report-universal-forms-signoff-status.sh" --output "$tmp_status"

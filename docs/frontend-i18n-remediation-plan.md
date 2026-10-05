@@ -50,7 +50,7 @@ Route pages audited: 42 `+page.svelte` files.
 
 Low-risk exceptions:
 
-- Brand text such as `OpenPR`.
+- Brand text such as `Sylvode`.
 - Technical protocol labels such as `MCP`, `CLI`, `REST`, `SKU`, `JSON`.
 - User-authored data returned by API, for example project names, form names,
   connector names, and dynamic schema field labels.
@@ -96,7 +96,7 @@ Status after remediation:
 
 Notes:
 
-- Brand and protocol tokens such as `OpenPR`, `MCP`, `REST`, `CLI`, `SKU`,
+- Brand and protocol tokens such as `Sylvode`, `MCP`, `REST`, `CLI`, `SKU`,
   `JSON`, `URL`, and `ID` remain as intentional technical/brand exceptions.
 - API-owned user data such as project names, form names, schema field labels,
   connector names, and tool names remain untranslated by design.

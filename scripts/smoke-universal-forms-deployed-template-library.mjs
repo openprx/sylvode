@@ -7,8 +7,8 @@ const require = createRequire(import.meta.url);
 const WebSocket = require('ws');
 
 const frontendUrl = process.env.OPENPR_FRONTEND_URL ?? 'http://10.72.0.3:3000';
-const email = process.env.OPENPR_DEMO_EMAIL ?? 'demo@openpr.local';
-const password = process.env.OPENPR_DEMO_PASSWORD ?? 'OpenPRDemo123!';
+const email = process.env.OPENPR_DEMO_EMAIL ?? 'demo@sylvode.local';
+const password = process.env.OPENPR_DEMO_PASSWORD ?? 'SylvodeDemo123!';
 const chromium = process.env.CHROMIUM_BIN ?? '/usr/bin/chromium';
 
 let accessToken = '';
@@ -92,7 +92,7 @@ function connect(wsUrl) {
 
 async function openBrowser(targetUrl) {
 	const port = 21300 + Math.floor(Math.random() * 300);
-	const profile = `/tmp/openpr-phase8-${process.pid}`;
+	const profile = `/tmp/sylvode-phase8-${process.pid}`;
 	rmSync(profile, { recursive: true, force: true });
 	child = spawn(
 		chromium,

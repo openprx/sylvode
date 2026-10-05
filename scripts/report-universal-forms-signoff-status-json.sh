@@ -241,7 +241,7 @@ items=(
   "Overall acceptance"
 )
 
-rows_tsv="$(mktemp /tmp/openpr-uf-signoff-rows.XXXXXX.tsv)"
+rows_tsv="$(mktemp /tmp/sylvode-uf-signoff-rows.XXXXXX.tsv)"
 output_tmp=""
 trap 'rm -f "$rows_tsv" "$output_tmp"' EXIT
 

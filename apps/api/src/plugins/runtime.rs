@@ -318,7 +318,7 @@ fn run_guest(
     let instance =
         Instance::new(&mut *store, module, &[]).map_err(|err| guest_error("failed to instantiate wasm", err))?;
 
-    if let Ok(version_fn) = instance.get_typed_func::<(), i32>(&mut *store, "openpr_plugin_abi_version") {
+    if let Ok(version_fn) = instance.get_typed_func::<(), i32>(&mut *store, "sylvode_plugin_abi_version") {
         ensure_not_expired()?;
         let version = version_fn
             .call(&mut *store, ())
@@ -331,10 +331,10 @@ fn run_guest(
     }
 
     let alloc = instance
-        .get_typed_func::<i32, i32>(&mut *store, "openpr_alloc")
+        .get_typed_func::<i32, i32>(&mut *store, "sylvode_alloc")
         .map_err(|_| GuestFailure::failed("plugin must export openpr_alloc(len: i32) -> i32".to_string()))?;
     let invoke = instance
-        .get_typed_func::<(i32, i32), i64>(&mut *store, "openpr_invoke")
+        .get_typed_func::<(i32, i32), i64>(&mut *store, "sylvode_invoke")
         .map_err(|_| GuestFailure::failed("plugin must export openpr_invoke(ptr: i32, len: i32) -> i64".to_string()))?;
     let memory = instance
         .get_memory(&mut *store, "memory")
@@ -409,9 +409,9 @@ mod tests {
               (memory (export "memory") 1)
               (global $heap (mut i32) (i32.const 4096))
               (data (i32.const 1024) "{\"ok\":true,\"total\":\"0.30\"}")
-              (func (export "openpr_plugin_abi_version") (result i32)
+              (func (export "sylvode_plugin_abi_version") (result i32)
                 i32.const 1)
-              (func (export "openpr_alloc") (param $len i32) (result i32)
+              (func (export "sylvode_alloc") (param $len i32) (result i32)
                 (local $ptr i32)
                 global.get $heap
                 local.set $ptr
@@ -420,7 +420,7 @@ mod tests {
                 i32.add
                 global.set $heap
                 local.get $ptr)
-              (func (export "openpr_invoke") (param $ptr i32) (param $len i32) (result i64)
+              (func (export "sylvode_invoke") (param $ptr i32) (param $len i32) (result i64)
                 i64.const 1024
                 i64.const 32
                 i64.shl
@@ -462,7 +462,7 @@ mod tests {
             .await
             .expect_err("missing abi should fail");
 
-        assert!(err.message.contains("openpr_alloc"), "{err}");
+        assert!(err.message.contains("sylvode_alloc"), "{err}");
         assert_eq!(err.kind, PluginFailureKind::Failed);
         // The store existed, so its (zero) fuel use is known.
         assert_eq!(err.fuel_consumed, Some(0), "{err:?}");
@@ -505,8 +505,8 @@ mod tests {
             (module
               (import "wasi_snapshot_preview1" "fd_write" (func $fd_write))
               (memory (export "memory") 1)
-              (func (export "openpr_alloc") (param i32) (result i32) i32.const 0)
-              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+              (func (export "sylvode_alloc") (param i32) (result i32) i32.const 0)
+              (func (export "sylvode_invoke") (param i32) (param i32) (result i64)
                 call $fd_write
                 i64.const 0))
             "#,
@@ -526,8 +526,8 @@ mod tests {
               (memory (export "memory") {initial_pages})
               (data (i32.const 1024) "{{\"grow\":\"denied\"}}")
               (data (i32.const 2048) "{{\"grow\":\"allowed\"}}")
-              (func (export "openpr_alloc") (param i32) (result i32) i32.const 4096)
-              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+              (func (export "sylvode_alloc") (param i32) (result i32) i32.const 4096)
+              (func (export "sylvode_invoke") (param i32) (param i32) (result i64)
                 i32.const 4
                 memory.grow
                 i32.const -1
@@ -622,8 +622,8 @@ mod tests {
             r#"
             (module
               (memory (export "memory") 1)
-              (func (export "openpr_alloc") (param i32) (result i32) i32.const 0)
-              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+              (func (export "sylvode_alloc") (param i32) (result i32) i32.const 0)
+              (func (export "sylvode_invoke") (param i32) (param i32) (result i64)
                 (loop $again
                   br $again)
                 i64.const 0))
@@ -639,8 +639,8 @@ mod tests {
             (module
               (memory (export "memory") 1)
               (data (i32.const 1024) "{{\"done\":true}}")
-              (func (export "openpr_alloc") (param i32) (result i32) i32.const 4096)
-              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+              (func (export "sylvode_alloc") (param i32) (result i32) i32.const 4096)
+              (func (export "sylvode_invoke") (param i32) (param i32) (result i64)
                 (local $n i64)
                 i64.const {iterations}
                 local.set $n
@@ -695,8 +695,8 @@ mod tests {
             r#"
             (module
               (memory (export "memory") 1)
-              (func (export "openpr_alloc") (param i32) (result i32) i32.const 0)
-              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+              (func (export "sylvode_alloc") (param i32) (result i32) i32.const 0)
+              (func (export "sylvode_invoke") (param i32) (param i32) (result i64)
                 unreachable))
             "#,
         )

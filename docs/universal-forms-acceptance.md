@@ -5,13 +5,13 @@ This guide points operators and reviewers to the acceptance process for the univ
 The authoritative execution tracker is outside the repository:
 
 ```text
-report/openpr/docs/openpr-universal-form-development-execution-tracker-2026-05-31.md
+.flow-gate/universal-forms/docs/openpr-universal-form-development-execution-tracker-2026-05-31.md
 ```
 
 The manual user acceptance runbook is:
 
 ```text
-report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md
+.flow-gate/universal-forms/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md
 ```
 
 ## Scope

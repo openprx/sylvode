@@ -8,7 +8,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_FILTER="$ROOT_DIR/scripts/lib/flow_gate_v0_4_receipt_state.jq"
 RECORD_SCRIPT="$ROOT_DIR/scripts/record-flow-v0.4-manual-signoff.sh"
 TEST_MCP_SCRIPT="$ROOT_DIR/scripts/test-mcp.sh"
-TMP_DIR="$(mktemp -d /tmp/openpr-flow-v04-acceptance.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/sylvode-flow-v04-acceptance.XXXXXX)"
 
 cleanup() {
   rm -rf "$TMP_DIR"

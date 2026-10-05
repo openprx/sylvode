@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const email = process.env.TEST_EMAIL ?? 'demo@openpr.local';
-const password = process.env.TEST_PASSWORD ?? 'OpenPRDemo123!';
+const email = process.env.TEST_EMAIL ?? 'demo@sylvode.local';
+const password = process.env.TEST_PASSWORD ?? 'SylvodeDemo123!';
 const workspaceId = process.env.OPENPR_WORKSPACE_ID ?? '07f6e023-6b0a-425c-bdac-442b5d36cd0c';
 const projectId = process.env.OPENPR_PROJECT_ID ?? '8f7f7726-948e-4ea4-b149-06f25753b525';
 const codeTaskFormId = process.env.OPENPR_CODE_TASK_FORM_ID ?? 'db4d73cc-9639-44b9-9875-21be69b0831f';
@@ -68,11 +68,11 @@ test.describe('Universal forms / mobile and dark mode', () => {
 		await expect(await pageHasNoDocumentHorizontalOverflow(page)).toBe(true);
 
 		await page.screenshot({
-			path: '/opt/worker/task/openpr/test/artifacts/universal-forms-mobile-dark/code-task-mobile.png',
+			path: 'test-results/artifacts/universal-forms-mobile-dark/code-task-mobile.png',
 			fullPage: true
 		});
 		await testInfo.attach('code-task-mobile', {
-			path: '/opt/worker/task/openpr/test/artifacts/universal-forms-mobile-dark/code-task-mobile.png',
+			path: 'test-results/artifacts/universal-forms-mobile-dark/code-task-mobile.png',
 			contentType: 'image/png'
 		});
 	});
@@ -91,11 +91,11 @@ test.describe('Universal forms / mobile and dark mode', () => {
 		await page.getByRole('button', { name: '保存设计' }).click({ trial: true });
 
 		await page.screenshot({
-			path: '/opt/worker/task/openpr/test/artifacts/universal-forms-mobile-dark/code-task-field-design-dark.png',
+			path: 'test-results/artifacts/universal-forms-mobile-dark/code-task-field-design-dark.png',
 			fullPage: true
 		});
 		await testInfo.attach('code-task-field-design-dark', {
-			path: '/opt/worker/task/openpr/test/artifacts/universal-forms-mobile-dark/code-task-field-design-dark.png',
+			path: 'test-results/artifacts/universal-forms-mobile-dark/code-task-field-design-dark.png',
 			contentType: 'image/png'
 		});
 	});

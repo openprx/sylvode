@@ -500,9 +500,9 @@ mod tests {
 
     #[test]
     fn rejects_unknown_backends() {
-        assert!(ObjectStorage::local("/tmp/openpr-test", "local").is_ok());
-        assert!(ObjectStorage::local("/tmp/openpr-test", "filesystem").is_ok());
-        assert!(ObjectStorage::local("/tmp/openpr-test", "s3").is_err());
+        assert!(ObjectStorage::local("/tmp/sylvode-test", "local").is_ok());
+        assert!(ObjectStorage::local("/tmp/sylvode-test", "filesystem").is_ok());
+        assert!(ObjectStorage::local("/tmp/sylvode-test", "s3").is_err());
         assert!(matches!(
             normalize_backend("s3-compatible").unwrap(),
             ObjectStorageBackendKind::S3
@@ -512,7 +512,7 @@ mod tests {
     fn s3_config() -> S3Config {
         S3Config {
             endpoint: "https://s3.example.test/".to_string(),
-            bucket: "openpr-uploads".to_string(),
+            bucket: "sylvode-uploads".to_string(),
             region: "eu-central-1".to_string(),
             access_key_id: Secret::new("AKIDEXAMPLE"),
             secret_access_key: Secret::new("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"),
@@ -523,7 +523,7 @@ mod tests {
     fn storage_config(backend: StorageBackend, s3: Option<S3Config>) -> StorageConfig {
         StorageConfig {
             backend,
-            dir: PathBuf::from("/tmp/openpr-test"),
+            dir: PathBuf::from("/tmp/sylvode-test"),
             s3,
         }
     }
@@ -558,8 +558,8 @@ mod tests {
     #[test]
     fn builds_path_style_s3_canonical_uri() {
         assert_eq!(
-            s3_canonical_uri("openpr-forms", "packages/export 1.zip"),
-            "/openpr-forms/packages/export%201.zip"
+            s3_canonical_uri("sylvode-forms", "packages/export 1.zip"),
+            "/sylvode-forms/packages/export%201.zip"
         );
         assert_eq!(
             s3_canonical_uri("bucket", "unicode/附件.csv"),
@@ -572,7 +572,7 @@ mod tests {
         let payload_hash = hex_sha256(b"hello");
         let authorization = s3_authorization(S3AuthorizationInput {
             method: "PUT",
-            canonical_uri: "/openpr-forms/packages/test.txt",
+            canonical_uri: "/sylvode-forms/packages/test.txt",
             host: "s3.example.test",
             payload_hash: &payload_hash,
             access_key_id: "AKIDEXAMPLE",
@@ -606,7 +606,7 @@ mod tests {
             "acceptance/minio-roundtrip-{}.txt",
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         );
-        let body = b"openpr minio acceptance";
+        let body = b"sylvode minio acceptance";
 
         let reference = storage.put(&key, body).await.expect("put should succeed");
         assert_eq!(reference.backend, "s3");

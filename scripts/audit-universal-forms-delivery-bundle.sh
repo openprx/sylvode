@@ -579,7 +579,7 @@ verify_manifest_checksum "prebuilt runtime Dockerfile" "$ROOT_DIR/Dockerfile.pre
 verify_manifest_checksum "frontend Dockerfile" "$ROOT_DIR/frontend/Dockerfile"
 verify_manifest_checksum "frontend nginx config" "$ROOT_DIR/frontend/nginx.conf"
 verify_manifest_checksum "env example" "$ROOT_DIR/.env.example"
-verify_manifest_checksum "webhook example config" "$ROOT_DIR/config/openpr-webhook.example.toml"
+verify_manifest_checksum "webhook example config" "$ROOT_DIR/config/sylvode-webhook.example.toml"
 verify_manifest_checksum "start script" "$ROOT_DIR/scripts/start.sh"
 verify_manifest_checksum "verify script" "$ROOT_DIR/scripts/verify.sh"
 verify_manifest_checksum "e2e test script" "$ROOT_DIR/scripts/e2e-test.sh"
@@ -769,7 +769,7 @@ while IFS='|' read -r item _status; do
 done <<<"$evidence_manual_rows"
 
 printf '\nManual signoff recorder drill:\n'
-recorder_drill_dir="$(mktemp -d /tmp/openpr-uf-recorder.XXXXXX)"
+recorder_drill_dir="$(mktemp -d /tmp/sylvode-uf-recorder.XXXXXX)"
 cp "$RUNBOOK_PATH" "$recorder_drill_dir/runbook.md"
 cp "$EVIDENCE_PATH" "$recorder_drill_dir/evidence.md"
 official_runbook_sha_before="$(sha256sum "$RUNBOOK_PATH" | awk '{print $1}')"
@@ -948,7 +948,7 @@ else
 fi
 
 printf '\nFinalizer drill:\n'
-drill_dir="$(mktemp -d /tmp/openpr-uf-delivery-bundle.XXXXXX)"
+drill_dir="$(mktemp -d /tmp/sylvode-uf-delivery-bundle.XXXXXX)"
 trap 'rm -rf "$drill_dir"' EXIT
 cp "$EVIDENCE_PATH" "$drill_dir/evidence.md"
 cp "$RUNBOOK_PATH" "$drill_dir/runbook.md"

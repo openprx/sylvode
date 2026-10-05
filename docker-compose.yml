@@ -167,7 +167,7 @@ services:
       - connectors
     image: ${SYLVODE_WEBHOOK_IMAGE:-ghcr.io/openprx/sylvode-webhook:latest}
     volumes:
-      - ${SYLVODE_WEBHOOK_CONFIG:-./config/openpr-webhook.example.toml}:/etc/sylvode-webhook/config.toml:ro
+      - ${SYLVODE_WEBHOOK_CONFIG:-./config/sylvode-webhook.example.toml}:/etc/sylvode-webhook/config.toml:ro
     command: ["/app/sylvode-webhook", "/etc/sylvode-webhook/config.toml"]
     ports:
       - "${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_WEBHOOK_PORT:-9090}:9090"

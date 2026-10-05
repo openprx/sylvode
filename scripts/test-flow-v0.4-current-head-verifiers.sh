@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER="$ROOT_DIR/scripts/lib/flow_v0_4_verifier_source_checks.py"
-TMP_DIR="$(mktemp -d /tmp/openpr-flow-v04-current-head.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/sylvode-flow-v04-current-head.XXXXXX)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }

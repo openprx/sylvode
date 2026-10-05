@@ -91,7 +91,7 @@ else
   printf '  actual order:\n%s\n' "$row_keys" >&2
 fi
 
-tmp_dir="$(mktemp -d /tmp/openpr-uf-all-signoff.XXXXXX)"
+tmp_dir="$(mktemp -d /tmp/sylvode-uf-all-signoff.XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
 tmp_runbook="$tmp_dir/runbook.md"
 tmp_evidence="$tmp_dir/evidence.md"

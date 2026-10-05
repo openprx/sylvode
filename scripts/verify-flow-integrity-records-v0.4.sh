@@ -154,7 +154,7 @@ if [[ ! -x "$API_BIN" ]]; then
 fi
 
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-TMP_DIR="$(mktemp -d "/tmp/openpr-integrity-records-verify.XXXXXX")"
+TMP_DIR="$(mktemp -d "/tmp/sylvode-integrity-records-verify.XXXXXX")"
 API_PORT=$((20000 + RANDOM % 20000))
 API_LOG="$TMP_DIR/api.log"
 API_PID=""
@@ -188,7 +188,7 @@ SQL
 }
 trap cleanup EXIT
 
-APP_CONFIG="$TMP_DIR/openpr.toml"
+APP_CONFIG="$TMP_DIR/sylvode.toml"
 cat > "$APP_CONFIG" <<EOF
 [server]
 app_name = "api"
@@ -201,7 +201,7 @@ url = "$DATABASE_URL"
 jwt_secret = "integrity-records-verify-not-a-real-secret"
 
 [logging]
-filter = "api=info,openpr=info"
+filter = "api=info"
 format = "text"
 EOF
 

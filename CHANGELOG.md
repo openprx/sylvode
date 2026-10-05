@@ -80,6 +80,15 @@ OpenPR name keeps working; see **Deprecated**.
   another state got its items in `backlog`. The command now sends a state only when `--state` is
   given, as the `work_items.create` tool does. A script that relied on new items landing in
   `backlog` in a workflow that starts elsewhere must pass `--state backlog`.
+- **The webhook receiver example config is `config/sylvode-webhook.example.toml`.** It was
+  `config/openpr-webhook.example.toml`. The compose `webhook` service and `scripts/start.sh` default
+  to the new path; a `SYLVODE_WEBHOOK_CONFIG` (or legacy `OPENPR_WEBHOOK_CONFIG`) that names the old
+  example file must be updated. Its secret placeholder is now `replace_with_webhook_secret`.
+- **Demo account defaults.** `scripts/bootstrap-restaurant-demo.sh`, the deployed-environment smokes
+  and the Playwright specs default to `demo@sylvode.local` / `SylvodeDemo123!` instead of
+  `demo@openpr.local` / `OpenPRDemo123!`. A demo database bootstrapped earlier keeps its old
+  account; set `SYLVODE_DEMO_EMAIL` and `SYLVODE_DEMO_PASSWORD` (or `TEST_EMAIL` /
+  `TEST_PASSWORD` for the specs) to reuse it.
 
 ### Added
 
@@ -121,6 +130,10 @@ OpenPR name keeps working; see **Deprecated**.
   reference.
 - **Release archives** named `sylvode-<target>` and `sylvode-frontend.tar.gz`, with
   `openpr-<target>` aliases that contain the same binaries.
+- **Brand residue gate** `scripts/verify-sylvode-brand-residue.sh`: every `OpenPR` / `openpr` in
+  the tracked files of this repository and of the webhook, documentation, website and organisation
+  repositories must be covered by a reasoned entry of `scripts/contracts/sylvode-brand-allowlist.json`.
+  CI runs it for this repository; the five-repository form is a local release gate.
 - **Project policies in the repository**: `SECURITY.md` (how to report a vulnerability and what is
   in scope), this `CHANGELOG.md`, and a rewritten `CONTRIBUTING.md`.
 

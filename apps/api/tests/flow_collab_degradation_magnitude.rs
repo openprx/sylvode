@@ -171,7 +171,7 @@ async fn scratch(label: &str) -> Option<Scratch> {
         .await
         .unwrap_or_else(|err| panic!("{TEST_DATABASE_URL_ENV} is set but unusable: {err}"));
 
-    let name = format!("openpr_flow_degradation_{label}");
+    let name = format!("sylvode_flow_degradation_{label}");
     let quoted = format!("\"{name}\"");
     admin
         .execute_unprepared(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))

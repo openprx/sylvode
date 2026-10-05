@@ -174,7 +174,7 @@ fi
 # -------------------------------------------------------------- fixture ids
 uuid() { python3 -c 'import uuid; print(uuid.uuid4())'; }
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/openpr-transport-auth-verify.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sylvode-transport-auth-verify.XXXXXX")"
 WORKSPACE_ID="$(uuid)"
 OWNER_USER="$(uuid)"
 BOT_ID="$(uuid)"
@@ -238,7 +238,7 @@ allow_insecure_cookies = $3
 collab_allowed_origins = ["$ORIGIN_A", "$ORIGIN_B"]
 
 [logging]
-filter = "api=info,openpr=info"
+filter = "api=info"
 format = "text"
 EOF
 }

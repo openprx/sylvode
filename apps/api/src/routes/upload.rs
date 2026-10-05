@@ -1028,7 +1028,7 @@ mod tests {
     fn test_claims(subject: Uuid) -> JwtClaims {
         JwtClaims {
             sub: subject.to_string(),
-            email: "member@openpr.local".to_string(),
+            email: "member@sylvode.local".to_string(),
             token_type: TokenType::Access,
             iat: 0,
             exp: 0,
@@ -1426,7 +1426,7 @@ mod tests {
 
         let source_bytes = test_png(512, 256);
         let boundary = format!(
-            "openpr-minio-upload-{}",
+            "sylvode-minio-upload-{}",
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         );
         let body = multipart_body(&boundary, "source.png", "image/png", &source_bytes);

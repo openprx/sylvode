@@ -12,7 +12,7 @@ const SAFE_DATA_IMAGE_PATTERN = /^data:image\/(?:png|jpeg|jpg|gif|webp|avif|bmp)
 
 // Any base works: it only has to make relative URLs resolvable so that the
 // parser reports the protocol they would inherit from the current origin.
-const RELATIVE_URL_BASE = 'https://openpr.invalid/';
+const RELATIVE_URL_BASE = 'https://sylvode.invalid/';
 
 function normalizeCandidate(value: unknown): string {
 	return typeof value === 'string' ? value.trim() : '';

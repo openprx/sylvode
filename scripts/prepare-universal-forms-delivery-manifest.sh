@@ -318,7 +318,7 @@ manual_status="$(status_for "用户侧人工验收")"
   manifest_row "frontend Dockerfile" "$ROOT_DIR/frontend/Dockerfile"
   manifest_row "frontend nginx config" "$ROOT_DIR/frontend/nginx.conf"
   manifest_row "env example" "$ROOT_DIR/.env.example"
-  manifest_row "webhook example config" "$ROOT_DIR/config/openpr-webhook.example.toml"
+  manifest_row "webhook example config" "$ROOT_DIR/config/sylvode-webhook.example.toml"
   printf '\n'
 
   printf '## Operational Scripts\n\n'

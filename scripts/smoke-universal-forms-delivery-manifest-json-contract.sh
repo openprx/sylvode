@@ -55,7 +55,7 @@ else
   fail "canonical delivery manifest JSON passes verifier"
 fi
 
-tmp_dir="$(mktemp -d /tmp/openpr-uf-delivery-manifest-json-contract.XXXXXX)"
+tmp_dir="$(mktemp -d /tmp/sylvode-uf-delivery-manifest-json-contract.XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 expect_reject() {
@@ -84,7 +84,7 @@ expect_reject "file count drift" '.file_count = (.file_count + 1)'
 expect_reject "missing file row sha256" 'del(.files[0].sha256)'
 expect_reject "file row checksum drift" '.files[0].sha256 = "0000000000000000000000000000000000000000000000000000000000000000"'
 expect_reject "file row order drift" '.files |= (if length > 1 then [.[1], .[0]] + .[2:] else . end)'
-expect_reject "missing markdown manifest" '.markdown_manifest = "/tmp/openpr-missing-delivery-manifest.md"'
+expect_reject "missing markdown manifest" '.markdown_manifest = "/tmp/sylvode-missing-delivery-manifest.md"'
 
 if [[ "$failures" -ne 0 ]]; then
   printf '\nUniversal forms delivery manifest JSON contract smoke failed: %s issue(s)\n' "$failures" >&2

@@ -177,7 +177,7 @@ for path in \
   "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" \
   "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-manifest.schema.json" \
   "$ROOT_DIR/docs/schemas/openpr-universal-forms-release-gate.schema.json" \
-  "$ROOT_DIR/config/openpr-webhook.example.toml" \
+  "$ROOT_DIR/config/sylvode-webhook.example.toml" \
   "$ROOT_DIR/scripts/start.sh" \
   "$ROOT_DIR/scripts/bootstrap-restaurant-demo.sh" \
   "$ROOT_DIR/scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh" \
@@ -794,7 +794,7 @@ contains "production runbook includes internal-only PostgreSQL exposure" "$ROOT_
 contains "production runbook includes localhost app ports" "$ROOT_DIR/docs/universal-forms-production.md" "host ports bind"
 contains "production runbook includes reverse proxy requirement" "$ROOT_DIR/docs/universal-forms-production.md" "reverse proxy or tunnel"
 contains "production runbook includes compose multi-instance guidance" "$ROOT_DIR/docs/universal-forms-production.md" 'avoids fixed `container_name` values'
-contains "production runbook includes webhook starter config" "$ROOT_DIR/docs/universal-forms-production.md" "config/openpr-webhook.example.toml"
+contains "production runbook includes webhook starter config" "$ROOT_DIR/docs/universal-forms-production.md" "config/sylvode-webhook.example.toml"
 contains "production runbook includes local compose bootstrap" "$ROOT_DIR/docs/universal-forms-production.md" "bash scripts/start.sh"
 contains "production runbook includes local restaurant demo bootstrap" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/bootstrap-restaurant-demo.sh"
 contains "production runbook includes local demo MCP credential sync" "$ROOT_DIR/docs/universal-forms-production.md" 'writes `mcp.bot_token` and'
@@ -948,7 +948,7 @@ contains "production readiness audit checks start script env validation" "$ROOT_
 contains "production readiness audit checks dev-up localhost database" "$ROOT_DIR/scripts/audit-universal-forms-production-readiness.sh" "dev-up uses localhost-only PostgreSQL port override"
 contains "production readiness audit checks init-db localhost default" "$ROOT_DIR/scripts/audit-universal-forms-production-readiness.sh" "init-db defaults to localhost development database"
 contains "production readiness audit checks source-build Dockerfile runtime" "$ROOT_DIR/scripts/audit-universal-forms-production-readiness.sh" "source-build image persists APP_BIN for runtime"
-contains "production readiness audit blocks local webhook path" "$ROOT_DIR/scripts/audit-universal-forms-production-readiness.sh" "compose does not hardcode local openpr-webhook binary path"
+contains "production readiness audit blocks local webhook path" "$ROOT_DIR/scripts/audit-universal-forms-production-readiness.sh" "compose does not hardcode a local webhook binary path"
 contains "production readiness audit blocks default PostgreSQL password" "$ROOT_DIR/scripts/audit-universal-forms-production-readiness.sh" "compose does not hardcode PostgreSQL password"
 contains "production readiness audit blocks weak JWT default" "$ROOT_DIR/scripts/audit-universal-forms-production-readiness.sh" "compose does not default JWT secret to change-me"
 contains "production readiness audit checks frontend API base URL" "$ROOT_DIR/scripts/audit-universal-forms-production-readiness.sh" "VITE_API_BASE_URL=http://localhost:8081"

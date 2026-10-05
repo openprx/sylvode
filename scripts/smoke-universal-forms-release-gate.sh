@@ -111,7 +111,7 @@ else
   fail "release gate JSON contract smoke passes"
 fi
 
-strict_output="$(mktemp /tmp/openpr-uf-release-gate-strict.XXXXXX)"
+strict_output="$(mktemp /tmp/sylvode-uf-release-gate-strict.XXXXXX)"
 trap 'rm -f "$strict_output"' EXIT
 if "$ROOT_DIR/scripts/gate-universal-forms-release.sh" >"$strict_output" 2>&1; then
   if [[ "$pending_rows" == "0" ]]; then

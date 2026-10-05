@@ -64,7 +64,7 @@ printf '  evidence: %s\n' "$EVIDENCE_PATH"
 printf '\n'
 
 if [[ "$MODE" == "quick" ]]; then
-  quick_report="$(mktemp /tmp/openpr-universal-forms-quick-preflight.XXXXXX.md)"
+  quick_report="$(mktemp /tmp/sylvode-universal-forms-quick-preflight.XXXXXX.md)"
   "$ROOT_DIR/scripts/acceptance-universal-forms.sh" --quick --output "$quick_report"
   printf 'Quick preflight evidence: %s\n' "$quick_report"
   printf 'Quick mode does not overwrite the formal delivery bundle. Run this script with --full to refresh formal evidence and handoff reports.\n'
@@ -133,8 +133,8 @@ if [[ "$pending_rows" == "0" ]]; then
   "$ROOT_DIR/scripts/verify-universal-forms-acceptance-signoff.sh" "$EVIDENCE_PATH"
   printf 'Manual signoff is complete. Run scripts/finalize-universal-forms-acceptance.sh to finalize the tracker.\n'
 else
-  if "$ROOT_DIR/scripts/verify-universal-forms-acceptance-signoff.sh" "$EVIDENCE_PATH" >/tmp/openpr-universal-forms-signoff-check.log 2>&1; then
-    cat /tmp/openpr-universal-forms-signoff-check.log
+  if "$ROOT_DIR/scripts/verify-universal-forms-acceptance-signoff.sh" "$EVIDENCE_PATH" >/tmp/sylvode-universal-forms-signoff-check.log 2>&1; then
+    cat /tmp/sylvode-universal-forms-signoff-check.log
     echo "Unsigned evidence unexpectedly passed final signoff verification" >&2
     exit 1
   fi

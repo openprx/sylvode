@@ -55,7 +55,7 @@ else
   fail "canonical readiness JSON passes verifier"
 fi
 
-tmp_dir="$(mktemp -d /tmp/openpr-uf-readiness-json-contract.XXXXXX)"
+tmp_dir="$(mktemp -d /tmp/sylvode-uf-readiness-json-contract.XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 expect_reject() {

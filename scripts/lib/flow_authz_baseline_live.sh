@@ -30,7 +30,7 @@ CLI_BIN="$TARGET_DIR/debug/sylvode"
 [[ -x "$API_BIN" && -x "$MCP_BIN" && -x "$CLI_BIN" ]] || failure "one or more authz live-surface binaries are missing"
 
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-SCRATCH_DB="openpr_flow_authz_member_$RUN_ID"
+SCRATCH_DB="sylvode_flow_authz_member_$RUN_ID"
 SCRATCH_URL="${DATABASE_URL%/*}/$SCRATCH_DB"
 API_PORT=$((34000 + RANDOM % 8000))
 API_PID=""
@@ -59,7 +59,7 @@ url = "$SCRATCH_URL"
 [auth]
 jwt_secret = "$JWT_SECRET"
 [logging]
-filter = "api=warn,openpr=warn"
+filter = "api=warn"
 format = "text"
 EOF
 "$API_BIN" --config "$API_CONFIG" >"$WORK_DIR/member-api.log" 2>&1 & API_PID=$!

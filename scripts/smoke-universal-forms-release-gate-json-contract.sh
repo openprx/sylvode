@@ -34,7 +34,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -z "$JSON_PATH" ]]; then
-  GENERATED_TMP="$(mktemp /tmp/openpr-uf-release-gate.XXXXXX.json)"
+  GENERATED_TMP="$(mktemp /tmp/sylvode-uf-release-gate.XXXXXX.json)"
   "$ROOT_DIR/scripts/gate-universal-forms-release.sh" --allow-pending --json >"$GENERATED_TMP"
   JSON_PATH="$GENERATED_TMP"
 fi
@@ -52,7 +52,7 @@ expect_reject() {
   local description="$1"
   local filter="$2"
   local tmp
-  tmp="$(mktemp /tmp/openpr-uf-release-gate-bad.XXXXXX.json)"
+  tmp="$(mktemp /tmp/sylvode-uf-release-gate-bad.XXXXXX.json)"
   jq "$filter" "$JSON_PATH" >"$tmp"
   if "$VERIFY" "$tmp" >/dev/null 2>&1; then
     echo "FAIL: $description was accepted" >&2

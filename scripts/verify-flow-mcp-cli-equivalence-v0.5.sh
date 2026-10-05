@@ -171,7 +171,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 thread = threading.Thread(target=server.serve_forever, daemon=True)
 thread.start()
-with tempfile.TemporaryDirectory(prefix="openpr-wp28-mcp-cli-") as temp:
+with tempfile.TemporaryDirectory(prefix="sylvode-wp28-mcp-cli-") as temp:
     config = pathlib.Path(temp) / "openpr.toml"
     config.write_text(f'''[database]
 url = "postgres://openpr:unused@127.0.0.1:5432/openpr"

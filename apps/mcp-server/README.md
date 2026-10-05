@@ -284,8 +284,8 @@ mcp-server:
 
 The default compose stack uses `Dockerfile.prebuilt`, so build the release
 binary first or use `bash scripts/start.sh`, which performs that build before
-starting compose. `scripts/start.sh` also generates `config/sylvode.compose.mcp.toml`
-from `config/openpr.example.toml`.
+starting compose. `scripts/start.sh` also generates `config/sylvode.compose.mcp.toml`;
+`config/sylvode.example.toml` is the annotated reference for every key.
 
 ## Development
 
@@ -377,9 +377,9 @@ the client config points `--config` at a file carrying `[mcp]` (see Prerequisite
 ```json
 {
   "mcpServers": {
-    "openpr": {
+    "sylvode": {
       "command": "/path/to/mcp-server",
-      "args": ["serve", "--transport", "stdio", "--config", "/absolute/path/to/openpr.toml"]
+      "args": ["serve", "--transport", "stdio", "--config", "/absolute/path/to/sylvode.toml"]
     }
   }
 }

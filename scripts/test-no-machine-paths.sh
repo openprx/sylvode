@@ -14,7 +14,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PATTERN='/opt/(worker|working|opsx)([/"'"'"' ]|$)|/home/[A-Za-z0-9_.-]+/|/Users/[A-Za-z0-9_.-]+/|(^|[^A-Za-z0-9_$}.-])/root/'
 
 # path<TAB>exact line text that may contain a machine path<TAB>reason
-EXEMPTIONS=$'scripts/audit-universal-forms-production-readiness.sh\tnot_contains "compose does not hardcode local openpr-webhook binary path" "$COMPOSE_FILE" "/opt/opsx/openpr-webhook"\tnegative check: asserts the compose file does not contain this path
+EXEMPTIONS=$'scripts/audit-universal-forms-production-readiness.sh\tnot_contains "compose does not hardcode a local webhook binary path" "$COMPOSE_FILE" "/opt/opsx/openpr-webhook"\tnegative check: asserts the compose file does not contain this path
 scripts/report-flow-v0.3-json.sh\t      repository: "/opt/worker/code/openpr",\tfrozen v0.3 receipt: docs/schemas/sylvode-flow-gate-v1.schema.json pins this value as a const
 scripts/report-flow-v0.3-json.sh\t    source: {repository: "/opt/worker/code/openpr", head: $head, dirty: $dirty},\tfrozen v0.3 receipt: docs/schemas/sylvode-flow-gate-v1.schema.json pins this value as a const'
 

@@ -37,7 +37,10 @@ check() {
 
 compose_service_up() {
   local service=$1
-  local container="openpr_${service}_1"
+  # Compose names containers <project>_<service>_1, and the project defaults to the lower-cased
+  # name of the directory that holds docker-compose.yml.
+  local project="${COMPOSE_PROJECT_NAME:-$(basename "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" | tr '[:upper:]' '[:lower:]')}"
+  local container="${project}_${service}_1"
   podman inspect "$container" --format '{{.State.Status}}' 2>/dev/null | grep -q '^running$'
 }
 

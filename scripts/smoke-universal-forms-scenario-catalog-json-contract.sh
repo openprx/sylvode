@@ -38,7 +38,7 @@ expect_reject() {
   local description="$1"
   local filter="$2"
   local tmp
-  tmp="$(mktemp /tmp/openpr-uf-scenario-catalog.XXXXXX.json)"
+  tmp="$(mktemp /tmp/sylvode-uf-scenario-catalog.XXXXXX.json)"
   jq "$filter" "$JSON_PATH" >"$tmp"
   if "$VERIFY" "$tmp" >/dev/null 2>&1; then
     echo "FAIL: $description was accepted" >&2

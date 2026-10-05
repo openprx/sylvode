@@ -120,4 +120,4 @@ bun run smoke:forms-ui
 bun run smoke:restaurant-ordering
 ```
 
-Delivery requires the relevant checklist in `report/openpr/docs/openpr-universal-form-development-execution-tracker-2026-05-31.md` to be marked `已测试` or `已验收` with command evidence.
+Delivery requires the relevant checklist in `.flow-gate/universal-forms/docs/openpr-universal-form-development-execution-tracker-2026-05-31.md` to be marked `已测试` or `已验收` with command evidence.

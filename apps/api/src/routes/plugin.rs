@@ -732,8 +732,8 @@ mod invocation_record_database_tests {
             r#"
             (module
               (memory (export "memory") 1)
-              (func (export "openpr_alloc") (param i32) (result i32) i32.const 0)
-              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+              (func (export "sylvode_alloc") (param i32) (result i32) i32.const 0)
+              (func (export "sylvode_invoke") (param i32) (param i32) (result i64)
                 (loop $again
                   br $again)
                 i64.const 0))
@@ -748,8 +748,8 @@ mod invocation_record_database_tests {
             r#"
             (module
               (memory (export "memory") 1)
-              (func (export "openpr_alloc") (param i32) (result i32) i32.const 0)
-              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+              (func (export "sylvode_alloc") (param i32) (result i32) i32.const 0)
+              (func (export "sylvode_invoke") (param i32) (param i32) (result i64)
                 (local $n i64)
                 i64.const {iterations}
                 local.set $n

@@ -1,4 +1,4 @@
-# Frontend Requirements - OpenPR
+# Frontend Requirements - Sylvode
 
 ## 技术栈
 - **框架**: Svelte + SvelteKit

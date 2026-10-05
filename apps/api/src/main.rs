@@ -3706,7 +3706,7 @@ mod migration_runner_database_tests {
             Err(err) => panic!("{TEST_DATABASE_URL_ENV} is set but unusable: {err}"),
         };
 
-        let name = format!("openpr_mig_{label}");
+        let name = format!("sylvode_mig_{label}");
         let quoted = format!("\"{name}\"");
         if let Err(err) = admin
             .execute_unprepared(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))

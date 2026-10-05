@@ -126,7 +126,7 @@ mod tests {
     async fn scratch() -> Option<Scratch> {
         let admin_url = std::env::var(TEST_DATABASE_URL_ENV).ok()?;
         let admin = Database::connect(&admin_url).await.expect("test database connects");
-        let name = "openpr_worker_v08_compaction".to_string();
+        let name = "sylvode_worker_v08_compaction".to_string();
         admin
             .execute_unprepared(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
             .await

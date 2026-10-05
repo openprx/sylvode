@@ -3033,7 +3033,7 @@ mod database_tests {
         let admin = Database::connect(&admin_url)
             .await
             .unwrap_or_else(|err| panic!("{TEST_DATABASE_URL_ENV} is set but unusable: {err}"));
-        let name = format!("openpr_flow_collection_{label}");
+        let name = format!("sylvode_flow_collection_{label}");
         admin
             .execute_unprepared(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
             .await

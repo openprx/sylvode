@@ -1675,7 +1675,7 @@ mod database_tests {
             .await
             .unwrap_or_else(|err| panic!("{TEST_DATABASE_URL_ENV} is set but unusable: {err}"));
 
-        let name = format!("openpr_collab_write_{label}");
+        let name = format!("sylvode_collab_write_{label}");
         let quoted = format!("\"{name}\"");
         admin
             .execute_unprepared(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
