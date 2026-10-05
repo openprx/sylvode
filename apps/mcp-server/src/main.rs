@@ -12,7 +12,7 @@ use axum::{
     },
     routing::{get, post},
 };
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use mcp_server::cli::{self, Cli, Commands};
 use mcp_server::client::OpenPrClient;
 use mcp_server::protocol::{self, JsonRpcRequest, JsonRpcResponse};
@@ -34,11 +34,21 @@ const MAX_CALLER_TOKEN_LEN: usize = 8 * 1024;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let mut matches = Cli::command().get_matches();
+    // Read before the conversion below, which moves the subcommand out of `matches`.
+    let subcommand = cli::subcommand_path(&matches);
+    let cli = Cli::from_arg_matches_mut(&mut matches)
+        .map_err(|error| error.format(&mut Cli::command()))
+        .unwrap_or_else(|error| error.exit());
 
     match &cli.command {
+        // The executable name is the stable service label of a deployment, so `serve` on any
+        // transport stays silent (ADR-0020 D2).
         Commands::Serve(args) => serve(&cli::prepare_runtime(&cli.global, Some(args))?).await,
-        Commands::Business(command) => cli::run_business(&cli.global, command).await,
+        Commands::Business(command) => {
+            cli::report_legacy_invocation(&subcommand);
+            cli::run_business(&cli.global, command).await
+        }
     }
 }
 

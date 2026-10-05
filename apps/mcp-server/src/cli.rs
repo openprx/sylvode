@@ -11,6 +11,7 @@
 // CLI output functions necessarily use print macros and indexing — allow these for this module.
 #![allow(clippy::print_stdout, clippy::print_stderr, clippy::indexing_slicing)]
 
+use std::io::Write as _;
 use std::path::PathBuf;
 
 use base64::Engine as _;
@@ -527,6 +528,36 @@ fn fmt_val(v: &Value) -> String {
 }
 
 // ---- Dispatch ----
+
+/// The subcommand path a command line selected, as typed: `projects list`, `search`.
+///
+/// Names only, never argument values, so it is safe to print: a value may be a token.
+pub fn subcommand_path(matches: &clap::ArgMatches) -> String {
+    let mut path = Vec::new();
+    let mut current = matches;
+    while let Some((name, next)) = current.subcommand() {
+        path.push(name);
+        current = next;
+    }
+    path.join(" ")
+}
+
+/// Tells the user, on stderr and once per process, that `mcp-server <subcommand>` is deprecated
+/// in favour of `sylvode <subcommand>` (ADR-0020 D2).
+///
+/// Never stdout: a workspace command's stdout is a machine contract, and nothing about it may
+/// change. A failed write is dropped rather than reported, because stderr is the only channel
+/// it could be reported on and D2 forbids the notice from failing the command; `writeln!` is
+/// used instead of `eprintln!` because the latter panics when stderr cannot be written.
+pub fn report_legacy_invocation(subcommand: &str) {
+    static REPORTED: std::sync::Once = std::sync::Once::new();
+    REPORTED.call_once(|| {
+        let notice = platform::deprecation::legacy_cli_invocation(subcommand);
+        let mut stderr = std::io::stderr().lock();
+        let written = writeln!(stderr, "{notice}").and_then(|()| stderr.flush());
+        drop(written);
+    });
+}
 
 /// Runs one workspace command end to end: configuration, identity, the tool call and its
 /// output. The single handler behind every [`BusinessCommands`] variant in both executables.
