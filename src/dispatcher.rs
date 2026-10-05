@@ -376,6 +376,15 @@ fn build_executor_command(
     prompt: &str,
     mcp_config_path: Option<&str>,
 ) -> Result<(&'static str, Vec<String>), String> {
+    // The prompt is a positional argument and contains payload text (an issue title, say), so a
+    // leading `-` would make it an option of the executor, such as codex's `--config=...`.
+    if prompt.starts_with('-') {
+        return Err(
+            "the prompt starts with `-` and would be read as an option of the executor; \
+                    the run was not started (start prompt_template with fixed text)"
+                .to_string(),
+        );
+    }
     match executor {
         "codex" => Ok((
             "codex",
@@ -1044,6 +1053,19 @@ webhook_secrets = []
         );
 
         assert!(build_executor_command("bash", "rm -rf /", None).is_err());
+    }
+
+    /// A prompt is always a positional argument; one that starts with `-` would be read as an
+    /// option of the executor (`--config=...` for codex), so it is refused for every executor.
+    #[test]
+    fn a_prompt_that_starts_with_a_dash_is_refused_for_every_executor() {
+        for executor in ["codex", "claude-code", "opencode"] {
+            for prompt in ["--config=model_provider=evil --oss", "-x", "-"] {
+                let err = build_executor_command(executor, prompt, None).expect_err("refused");
+                assert!(err.contains("starts with `-`"), "{executor} {prompt:?}: {err}");
+            }
+            assert!(build_executor_command(executor, " -x", None).is_ok(), "{executor}");
+        }
     }
 
     #[test]
