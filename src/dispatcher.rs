@@ -1,7 +1,9 @@
+use crate::background::Background;
+use crate::process::{self, End};
 use crate::{callback, config::AgentConfig, config::CliAgentConfig, config::Config};
 use serde_json::Value;
 use std::borrow::Cow;
-use std::process::Stdio;
+use std::future::Future;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_SUBPROCESS_TIMEOUT_SECS: u64 = 60;
@@ -38,18 +40,18 @@ const DEFAULT_MESSAGE_TEMPLATE: &str = "[{project}] {event}: {key} {title}\n{act
 #[allow(clippy::literal_string_with_formatting_args)]
 const DEFAULT_PROMPT_TEMPLATE: &str = "Fix issue {issue_id}: {title}\nContext: {reason}";
 
-pub async fn dispatch(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
+pub async fn dispatch(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
     match agent.agent_type.as_str() {
-        "openclaw" => dispatch_openclaw(config, agent, payload).await,
-        "openprx" => dispatch_openprx(config, agent, payload).await,
+        "openclaw" => dispatch_openclaw(config, background, agent, payload).await,
+        "openprx" => dispatch_openprx(config, background, agent, payload).await,
         "webhook" => dispatch_webhook(config, agent, payload).await,
-        "custom" => dispatch_custom(config, agent, payload).await,
-        "cli" => dispatch_cli(config, agent, payload).await,
+        "custom" => dispatch_custom(config, background, agent, payload).await,
+        "cli" => dispatch_cli(config, background, agent, payload).await,
         other => format!("unknown agent type: {other}"),
     }
 }
 
-async fn dispatch_cli(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
+async fn dispatch_cli(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
     if !config.cli_enabled() {
         return "cli disabled by feature flag or safe mode".into();
     }
@@ -99,11 +101,14 @@ async fn dispatch_cli(config: &Config, agent: &AgentConfig, payload: &Value) -> 
     let callback_enabled = config.callback_enabled();
     let http_timeout_secs = config.runtime.http_timeout_secs;
 
-    // 3. Spawn CLI process in background — do NOT await
-    tokio::spawn(async move {
+    let cancelled = background.cancelled();
+
+    // 3. Run the CLI process in the background — do NOT await. On shutdown the run is cancelled
+    // and still sends its terminal callback below.
+    background.spawn(async move {
         tracing::info!(executor = %bg_executor, "CLI agent spawned");
 
-        let run = run_cli_executor(&bg_cfg, &prompt).await;
+        let run = run_cli_executor(&bg_cfg, &prompt, cancelled).await;
 
         if run.status == "success" {
             tracing::info!(
@@ -166,6 +171,7 @@ pub async fn execute_cli_task(
     agent: &AgentConfig,
     payload: &Value,
     run_id_override: Option<String>,
+    cancelled: impl Future<Output = ()>,
 ) -> CliExecutionReport {
     let Some(cfg) = &agent.cli else {
         return CliExecutionReport {
@@ -218,7 +224,7 @@ pub async fn execute_cli_task(
             tracing::warn!("start callback failed: {e}");
         }
     }
-    let run = run_cli_executor(cfg, &prompt).await;
+    let run = run_cli_executor(cfg, &prompt, cancelled).await;
 
     tracing::info!(
         executor = %cfg.executor,
@@ -275,7 +281,7 @@ struct CliRunResult {
     stderr_tail: String,
 }
 
-async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str) -> CliRunResult {
+async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str, cancelled: impl Future<Output = ()>) -> CliRunResult {
     let (program, args) = match build_executor_command(&cfg.executor, prompt, cfg.mcp_config_path.as_deref()) {
         Ok(v) => v,
         Err(err) => {
@@ -291,10 +297,6 @@ async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str) -> CliRunResult {
 
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
         .env_remove("CLAUDECODE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT");
     if let Some(dir) = &cfg.workdir {
@@ -305,8 +307,17 @@ async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str) -> CliRunResult {
     }
 
     let started = Instant::now();
-    let child = match cmd.spawn() {
-        Ok(c) => c,
+    let timeout_secs = cfg.timeout_secs;
+    let max_output_chars = cfg.max_output_chars;
+    let finished = match process::run(
+        cmd,
+        Duration::from_secs(timeout_secs),
+        process::TERMINATION_GRACE,
+        cancelled,
+    )
+    .await
+    {
+        Ok(finished) => finished,
         Err(e) => {
             tracing::error!(executor = %cfg.executor, error = %e, "Failed to spawn CLI process");
             return CliRunResult {
@@ -319,40 +330,24 @@ async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str) -> CliRunResult {
         }
     };
 
-    let timeout_secs = cfg.timeout_secs;
-    let max_output_chars = cfg.max_output_chars;
-    let output_result = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await;
-
-    match output_result {
-        Ok(Ok(output)) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            CliRunResult {
-                status: if output.status.success() {
-                    "success".into()
-                } else {
-                    "failed".into()
-                },
-                exit_code: output.status.code(),
-                duration_ms: started.elapsed().as_millis(),
-                stdout_tail: tail_chars(&stdout, max_output_chars),
-                stderr_tail: tail_chars(&stderr, max_output_chars),
-            }
-        }
-        Ok(Err(e)) => CliRunResult {
-            status: "failed".into(),
-            exit_code: None,
-            duration_ms: started.elapsed().as_millis(),
-            stdout_tail: String::new(),
-            stderr_tail: format!("wait failed: {e}"),
-        },
-        Err(_) => CliRunResult {
-            status: "timeout".into(),
-            exit_code: None,
-            duration_ms: started.elapsed().as_millis(),
-            stdout_tail: String::new(),
-            stderr_tail: format!("timeout after {timeout_secs}s"),
-        },
+    let stdout_tail = tail_chars(&String::from_utf8_lossy(&finished.stdout), max_output_chars);
+    let stderr_tail = tail_chars(&String::from_utf8_lossy(&finished.stderr), max_output_chars);
+    let (status, exit_code, stderr_tail) = match finished.end {
+        End::Exited(exit) => (
+            if exit.success() { "success" } else { "failed" },
+            exit.code(),
+            stderr_tail,
+        ),
+        End::WaitFailed(e) => ("failed", None, format!("wait failed: {e}")),
+        End::TimedOut => ("timeout", None, format!("{stderr_tail}\ntimeout after {timeout_secs}s")),
+        End::Cancelled => ("cancelled", None, format!("{stderr_tail}\ncancelled by shutdown")),
+    };
+    CliRunResult {
+        status: status.into(),
+        exit_code,
+        duration_ms: started.elapsed().as_millis(),
+        stdout_tail,
+        stderr_tail: stderr_tail.trim_start_matches('\n').to_string(),
     }
 }
 
@@ -643,23 +638,39 @@ fn tail_chars(input: &str, max_chars: usize) -> String {
 
 // --- Security: all subprocess dispatchers use direct args, no sh -c ---
 
+/// The result of a command run by an `openclaw`, `openprx` or `custom` agent.
+struct CommandOutput {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
 async fn run_subprocess_with_timeout(
     program: &str,
     args: &[&str],
     timeout_secs: u64,
-) -> Result<std::process::Output, String> {
-    let child = tokio::process::Command::new(program)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("spawn {program} failed: {e}"))?;
-
-    tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
-        .await
-        .map_err(|_| format!("subprocess {program} timed out after {timeout_secs}s"))?
-        .map_err(|e| format!("subprocess {program} wait failed: {e}"))
+    cancelled: impl Future<Output = ()>,
+) -> Result<CommandOutput, String> {
+    let mut command = tokio::process::Command::new(program);
+    command.args(args);
+    let finished = process::run(
+        command,
+        Duration::from_secs(timeout_secs),
+        process::TERMINATION_GRACE,
+        cancelled,
+    )
+    .await
+    .map_err(|e| format!("spawn {program} failed: {e}"))?;
+    match finished.end {
+        End::Exited(status) => Ok(CommandOutput {
+            success: status.success(),
+            stdout: String::from_utf8_lossy(&finished.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&finished.stderr).into_owned(),
+        }),
+        End::TimedOut => Err(format!("subprocess {program} timed out after {timeout_secs}s")),
+        End::Cancelled => Err(format!("subprocess {program} cancelled by shutdown")),
+        End::WaitFailed(e) => Err(format!("subprocess {program} wait failed: {e}")),
+    }
 }
 
 /// Arguments of an `openclaw` or `openprx` command: the configured fixed arguments, then
@@ -672,7 +683,7 @@ fn channel_command_args<'a>(fixed: &'a [String], channel: &'a str, target: &'a s
         .collect()
 }
 
-async fn dispatch_openclaw(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
+async fn dispatch_openclaw(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
     let Some(cfg) = &agent.openclaw else {
         return "missing openclaw config".into();
     };
@@ -682,16 +693,16 @@ async fn dispatch_openclaw(config: &Config, agent: &AgentConfig, payload: &Value
 
     let args = channel_command_args(&cfg.args, &cfg.channel, &cfg.target, &message);
 
-    match run_subprocess_with_timeout(&cfg.command, &args, timeout).await {
-        Ok(o) if o.status.success() => {
-            let out = String::from_utf8_lossy(&o.stdout);
-            tracing::info!("openclaw ok: {}", out.trim());
-            format!("ok: {}", out.trim())
+    match run_subprocess_with_timeout(&cfg.command, &args, timeout, background.cancelled()).await {
+        Ok(o) if o.success => {
+            let out = o.stdout.trim();
+            tracing::info!("openclaw ok: {out}");
+            format!("ok: {out}")
         }
         Ok(o) => {
-            let err = String::from_utf8_lossy(&o.stderr);
-            tracing::error!("openclaw failed: {}", err.trim());
-            format!("error: {}", err.trim())
+            let err = o.stderr.trim();
+            tracing::error!("openclaw failed: {err}");
+            format!("error: {err}")
         }
         Err(e) => {
             tracing::error!("openclaw exec failed: {e}");
@@ -700,7 +711,7 @@ async fn dispatch_openclaw(config: &Config, agent: &AgentConfig, payload: &Value
     }
 }
 
-async fn dispatch_openprx(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
+async fn dispatch_openprx(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
     let Some(cfg) = &agent.openprx else {
         return "missing openprx config".into();
     };
@@ -746,15 +757,15 @@ async fn dispatch_openprx(config: &Config, agent: &AgentConfig, payload: &Value)
 
         let args = channel_command_args(&cfg.args, &cfg.channel, &cfg.target, &message);
 
-        return match run_subprocess_with_timeout(command, &args, timeout).await {
-            Ok(o) if o.status.success() => {
+        return match run_subprocess_with_timeout(command, &args, timeout, background.cancelled()).await {
+            Ok(o) if o.success => {
                 tracing::info!("openprx cli ok");
                 "ok".into()
             }
             Ok(o) => {
-                let err = String::from_utf8_lossy(&o.stderr);
-                tracing::error!("openprx cli failed: {}", err.trim());
-                format!("error: {}", err.trim())
+                let err = o.stderr.trim();
+                tracing::error!("openprx cli failed: {err}");
+                format!("error: {err}")
             }
             Err(e) => format!("exec_error: {e}"),
         };
@@ -795,7 +806,7 @@ async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value)
     }
 }
 
-async fn dispatch_custom(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
+async fn dispatch_custom(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
     let Some(cfg) = &agent.custom else {
         return "missing custom config".into();
     };
@@ -812,8 +823,8 @@ async fn dispatch_custom(config: &Config, agent: &AgentConfig, payload: &Value) 
     };
     let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
 
-    match run_subprocess_with_timeout(&cfg.command, &args, timeout).await {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+    match run_subprocess_with_timeout(&cfg.command, &args, timeout, background.cancelled()).await {
+        Ok(o) => o.stdout,
         Err(e) => format!("custom_error: {e}"),
     }
 }
@@ -947,6 +958,7 @@ mod tests {
         build_cli_prompt, build_executor_command, dispatch, extract_issue_id, format_message,
         outbound_signature_header_value,
     };
+    use crate::background::Background;
     use crate::{callback, config::Config};
     use serde_json::json;
 
@@ -1443,7 +1455,7 @@ mcp_instructions = "Read issue {issue_id} before writing."
     #[tokio::test]
     async fn custom_args_substitute_the_message_placeholder() {
         let agent = custom_agent(r#"["[%s]", "{message}"]"#, "{key} {title}");
-        let out = dispatch(&base_config(), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(), &agent, &issue_assigned_delivery()).await;
         assert_eq!(out, "[BIL-4C3B2A19 Invoice totals are rounded twice]");
     }
 
@@ -1453,7 +1465,13 @@ mcp_instructions = "Read issue {issue_id} before writing."
     #[tokio::test]
     async fn custom_args_keep_a_substituted_message_as_one_argument() {
         let agent = custom_agent(r#"["[%s]", "--label={message}"]"#, "{title}");
-        let out = dispatch(&base_config(), &agent, &titled("a b \"c\" $(id); d")).await;
+        let out = dispatch(
+            &base_config(),
+            &Background::new(),
+            &agent,
+            &titled("a b \"c\" $(id); d"),
+        )
+        .await;
         assert_eq!(out, "[--label=a b \"c\" $(id); d]");
     }
 
@@ -1462,7 +1480,7 @@ mcp_instructions = "Read issue {issue_id} before writing."
     #[tokio::test]
     async fn custom_args_without_placeholder_append_the_message() {
         let agent = custom_agent(r#"["[%s]"]"#, "{key}");
-        let out = dispatch(&base_config(), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(), &agent, &issue_assigned_delivery()).await;
         assert_eq!(out, "[BIL-4C3B2A19]");
     }
 
@@ -1475,16 +1493,19 @@ mcp_instructions = "Read issue {issue_id} before writing."
         let payload = titled("-v x");
 
         let substituted = custom_agent(r#"["[%s]", "{message}"]"#, "{title}");
-        let out = dispatch(&config, &substituted, &payload).await;
+        let out = dispatch(&config, &Background::new(), &substituted, &payload).await;
         assert!(out.starts_with("custom_error:"), "{out}");
         assert!(out.contains("starts with `-`"), "{out}");
 
         let appended = custom_agent(r#"["[%s]"]"#, "{title}");
-        let out = dispatch(&config, &appended, &payload).await;
+        let out = dispatch(&config, &Background::new(), &appended, &payload).await;
         assert!(out.starts_with("custom_error:"), "{out}");
 
         let separated = custom_agent(r#"["[%s]", "--", "{message}"]"#, "{title}");
-        assert_eq!(dispatch(&config, &separated, &payload).await, "[--][-v x]");
+        assert_eq!(
+            dispatch(&config, &Background::new(), &separated, &payload).await,
+            "[--][-v x]"
+        );
     }
 
     /// `args` of an `openclaw` agent go between the command and `--channel`, so
@@ -1497,7 +1518,7 @@ mcp_instructions = "Read issue {issue_id} before writing."
              [openclaw]\ncommand = 'printf'\nargs = ['[%s]']\nchannel = 'signal'\ntarget = 'uuid:u1'\n",
         )
         .expect("parse agent");
-        let out = dispatch(&base_config(), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(), &agent, &issue_assigned_delivery()).await;
         assert_eq!(
             out,
             "ok: [--channel][signal][--target][uuid:u1][--message][BIL-4C3B2A19]"
@@ -1514,7 +1535,7 @@ mcp_instructions = "Read issue {issue_id} before writing."
              target = 't'\n",
         )
         .expect("parse agent");
-        let out = dispatch(&base_config(), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(), &agent, &issue_assigned_delivery()).await;
         assert_eq!(out, "ok");
     }
 
@@ -1532,7 +1553,7 @@ executor = "codex"
         )
         .expect("parse agent");
 
-        let result = dispatch(&config, &agent, &json!({})).await;
+        let result = dispatch(&config, &Background::new(), &agent, &json!({})).await;
         assert!(result.contains("disabled"));
     }
 
@@ -1550,22 +1571,22 @@ executor = "codex"
         let custom: crate::config::AgentConfig = toml::from_str("id='o4'\nname='Custom'\nagent_type='custom'").unwrap();
 
         assert!(
-            dispatch(&config, &openclaw, &payload)
+            dispatch(&config, &Background::new(), &openclaw, &payload)
                 .await
                 .contains("missing openclaw config")
         );
         assert!(
-            dispatch(&config, &openprx, &payload)
+            dispatch(&config, &Background::new(), &openprx, &payload)
                 .await
                 .contains("missing openprx config")
         );
         assert!(
-            dispatch(&config, &webhook, &payload)
+            dispatch(&config, &Background::new(), &webhook, &payload)
                 .await
                 .contains("missing webhook config")
         );
         assert!(
-            dispatch(&config, &custom, &payload)
+            dispatch(&config, &Background::new(), &custom, &payload)
                 .await
                 .contains("missing custom config")
         );

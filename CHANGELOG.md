@@ -3,6 +3,35 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.21
+
+### Security
+
+- **A timeout stops the executor's whole process tree, not only the executor.** On Linux and
+  macOS every command (`cli` executors and the commands of `openclaw`, `openprx` and `custom`
+  agents) now runs as the leader of its own process group. On timeout the group is sent `SIGTERM`
+  and, if anything is still alive 5 seconds later, `SIGKILL`. Before, only the direct child was
+  killed, so the processes an executor had started (the native binary behind an npm `codex`
+  launcher, an agent's tool calls) kept running with bypassed permissions after the run had been
+  reported as `timeout` and the issue moved back to `update_state_on_fail`. The timeout callback
+  is now sent after the group is gone. Processes left behind by a command that exits by itself
+  are stopped the same way. On other platforms only the direct child is killed, as before.
+- Commands of `openclaw`, `openprx` and `custom` agents get `/dev/null` as stdin instead of the
+  service's stdin (`cli` executors already did).
+
+### Changed
+
+- **Graceful shutdown stops running executors and reports them.** On `SIGTERM` or `SIGINT`
+  every running `cli` executor, webhook-triggered or tunnel task, is stopped as on a timeout and
+  sends its terminal callback with `status = "cancelled"`, which sets `update_state_on_fail`.
+  The service waits for these callbacks up to `5 + 2 × http_timeout_secs + 5` seconds (40 by
+  default) and then exits 0. Before (since 0.3.9, which added graceful shutdown), shutdown killed
+  only the executor's direct child, sent no terminal callback, and left the issue at
+  `update_state_on_start` (for example `in_progress`). The tunnel stops reading new tasks as soon
+  as shutdown begins.
+- A timed-out or cancelled run reports the output it wrote before it was stopped in
+  `stdout_tail` and `stderr_tail`, instead of nothing.
+
 ## 0.3.20
 
 ### Security

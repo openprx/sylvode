@@ -1,6 +1,6 @@
 [package]
 name = "sylvode-webhook"
-version = "0.3.20"
+version = "0.3.21"
 edition = "2024"
 authors = ["g1e2x87"]
 license = "MIT OR Apache-2.0"
@@ -36,6 +36,13 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 futures-util = "0.3"
 tokio-tungstenite = "0.28"
 uuid = { version = "1", features = ["v4", "serde"] }
+# CancellationToken and TaskTracker: stop running executors on shutdown and wait for their
+# terminal callbacks.
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# Signals a whole process group (killpg) through a safe API; the crate forbids `unsafe`.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", default-features = false, features = ["signal"] }
 
 [lints.rust]
 unsafe_code = "deny"

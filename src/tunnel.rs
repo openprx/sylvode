@@ -1,4 +1,4 @@
-use crate::{config::Config, dispatcher, signature};
+use crate::{background::Background, config::Config, dispatcher, signature};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -78,7 +78,15 @@ fn build_envelope(msg_type: &str, agent_id: &str, payload: Value, hmac_secret: O
     env
 }
 
-pub async fn run_tunnel_loop(config: Arc<Config>) {
+/// Sleeps for `secs`, or less when shutdown begins. Returns whether shutdown has begun.
+async fn pause_unless_shutdown(background: &Background, secs: u64) -> bool {
+    tokio::select! {
+        () = sleep(Duration::from_secs(secs)) => background.is_shutting_down(),
+        () = background.cancelled() => true,
+    }
+}
+
+pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
     if !config.tunnel_enabled() {
         return;
     }
@@ -118,7 +126,9 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
     loop {
         if !(url.starts_with("wss://") || url.starts_with("ws://")) {
             tracing::error!("tunnel url must start with ws:// or wss://: {url}");
-            sleep(Duration::from_secs(retry_secs)).await;
+            if pause_unless_shutdown(&background, retry_secs).await {
+                return;
+            }
             retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
             continue;
         }
@@ -136,13 +146,19 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!("build tunnel request failed: {e}");
-                sleep(Duration::from_secs(retry_secs)).await;
+                if pause_unless_shutdown(&background, retry_secs).await {
+                    return;
+                }
                 retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
                 continue;
             }
         };
 
-        match connect_async(request).await {
+        let connected = tokio::select! {
+            connected = connect_async(request) => connected,
+            () = background.cancelled() => return,
+        };
+        match connected {
             Ok((ws_stream, _)) => {
                 retry_secs = base_reconnect_secs;
                 tracing::info!("tunnel connected: {url}");
@@ -177,7 +193,12 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                     }
                 });
 
-                while let Some(message) = reader.next().await {
+                // Shutdown stops reading new tasks; runs already accepted are cancelled by the
+                // same signal and still report their result before the writer closes.
+                while let Some(message) = tokio::select! {
+                    message = reader.next() => message,
+                    () = background.cancelled() => None,
+                } {
                     let Ok(message) = message else { break };
                     let Message::Text(text) = message else {
                         continue;
@@ -271,7 +292,8 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                     let route_agent = dispatch.agent.clone();
                     let run_id_for_task = run_id.clone();
                     let limiter = semaphore.clone();
-                    tokio::spawn(async move {
+                    let cancelled = background.cancelled();
+                    background.spawn(async move {
                         let Ok(permit) = limiter.acquire_owned().await else {
                             return;
                         };
@@ -304,9 +326,14 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                             return;
                         };
 
-                        let report =
-                            dispatcher::execute_cli_task(task_cfg.as_ref(), cli_agent, &body, Some(run_id_for_task))
-                                .await;
+                        let report = dispatcher::execute_cli_task(
+                            task_cfg.as_ref(),
+                            cli_agent,
+                            &body,
+                            Some(run_id_for_task),
+                            cancelled,
+                        )
+                        .await;
                         drop(permit);
 
                         let _ = task_tx
@@ -326,7 +353,12 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
                 }
 
                 heartbeat_task.abort();
+                drop(tx);
                 let _ = writer_task.await;
+                if background.is_shutting_down() {
+                    tracing::info!("tunnel closed for shutdown");
+                    return;
+                }
                 tracing::warn!("tunnel disconnected, reconnecting in {retry_secs}s");
             }
             Err(e) => {
@@ -334,7 +366,9 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
             }
         }
 
-        sleep(Duration::from_secs(retry_secs)).await;
+        if pause_unless_shutdown(&background, retry_secs).await {
+            return;
+        }
         retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
     }
 }

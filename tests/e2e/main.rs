@@ -4,7 +4,8 @@
 
 // Test helpers outside `#[test]` functions may fail loudly; this is test code only.
 #![cfg(unix)]
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 
+mod cli;
 mod startup;
 mod support;

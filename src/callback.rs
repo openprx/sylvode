@@ -302,7 +302,7 @@ pub const fn build_callback_payload(
 pub fn state_for_status(cfg: &CliAgentConfig, status: &str) -> Option<String> {
     match status {
         "success" => cfg.update_state_on_success.clone(),
-        "failed" | "timeout" => cfg.update_state_on_fail.clone(),
+        "failed" | "timeout" | "cancelled" => cfg.update_state_on_fail.clone(),
         _ => None,
     }
 }

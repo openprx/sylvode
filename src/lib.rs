@@ -6,11 +6,13 @@
 //! decides whether the one-line deprecation notice is written to stderr.
 
 mod app;
+mod background;
 mod callback;
 mod compat;
 mod config;
 mod dispatcher;
 mod handler;
+mod process;
 mod signature;
 mod tunnel;
 
@@ -19,4 +21,5 @@ pub use compat::Invocation;
 
 pub(crate) struct AppState {
     pub config: config::Config,
+    pub background: background::Background,
 }
