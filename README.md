@@ -505,8 +505,11 @@ A value that is missing renders as an empty string in `message_template` (`unkno
 
 `/webhook` answers `401` for a missing, invalid or conflicting signature or a stale delivery, `409`
 for a replayed one, and `400` for a body that is not JSON. Otherwise it answers `200` with a JSON status: `ignored` (not a bot task), `no_agent`
-(no agent matched), or `dispatched` with the agent id and the dispatch result (for a `cli` agent,
-the run continues in the background).
+(no agent matched), or `dispatched` with the agent id and a short `result`: `ok`, `error: the
+command exited with status N`, `webhook: 200 OK`, the reason a dispatch was refused, or for a `cli`
+agent the run id (the run continues in the background). The output of a command and the body of a
+remote error are never part of the answer, because the sender stores it in its delivery log; they
+are written to this service's log (`Dispatch result` with `detail=...`).
 
 ### Signature headers
 
