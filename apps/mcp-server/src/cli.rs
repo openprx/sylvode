@@ -72,7 +72,7 @@ pub struct BusinessCli {
 /// The options every workspace command and `serve` accept, wherever they appear on the line.
 #[derive(Debug, Args)]
 pub struct GlobalArgs {
-    /// Path to the configuration file \[default: config/sylvode.toml; legacy config/openpr.toml fallback\]
+    /// Path to the configuration file [default: config/sylvode.toml; legacy config/openpr.toml fallback]
     ///
     /// Global because every subcommand needs it: the settings it carries are read before
     /// the subcommand is dispatched, so `mcp-server projects list --config <path>` has to
@@ -202,10 +202,10 @@ impl From<Transport> for McpTransport {
 // file's own fallbacks are `mcp.transport = stdio` and `DEFAULT_MCP_BIND_ADDR`.
 #[derive(Debug, Args)]
 pub struct ServeArgs {
-    /// Transport protocol (overrides `mcp.transport`) \[default: stdio\]
+    /// Transport protocol (overrides `mcp.transport`) [default: stdio]
     #[arg(long, value_enum)]
     pub transport: Option<Transport>,
-    /// Bind address for HTTP/SSE transports (overrides `mcp.bind_addr`) \[default: 127.0.0.1:8090\]
+    /// Bind address for HTTP/SSE transports (overrides `mcp.bind_addr`) [default: 127.0.0.1:8090]
     #[arg(long)]
     pub bind_addr: Option<String>,
 }
@@ -1084,6 +1084,50 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Every help screen of `command` and its subcommands, short and long.
+    fn help_screens(command: &mut clap::Command, path: &str, out: &mut Vec<(String, String)>) {
+        out.push((path.to_string(), command.render_help().to_string()));
+        out.push((path.to_string(), command.render_long_help().to_string()));
+        for child in command.get_subcommands_mut() {
+            let child_path = format!("{path} {}", child.get_name());
+            help_screens(child, &child_path, out);
+        }
+    }
+
+    /// Help text is shown verbatim: a doc comment that escapes a bracket for Markdown
+    /// (`\[default: …\]`) prints its backslashes to the user. Every help screen of both
+    /// executables is checked, including the `sylvode` overview and its Flow groups.
+    #[test]
+    fn no_help_screen_shows_a_markdown_escape() {
+        let mut screens = Vec::new();
+        let mut legacy = Cli::command();
+        legacy.build();
+        help_screens(&mut legacy, "mcp-server", &mut screens);
+        let mut business = business_cli_command();
+        business.build();
+        help_screens(&mut business, "sylvode", &mut screens);
+        let mut flow = <crate::cli_app::command::Cli as CommandFactory>::command();
+        flow.build();
+        help_screens(&mut flow, "sylvode", &mut screens);
+        let mut overview = crate::cli_app::entry::overview_command();
+        overview.build();
+        help_screens(&mut overview, "sylvode", &mut screens);
+
+        assert!(screens.len() > 100, "only {} help screens were rendered", screens.len());
+        for (path, help) in &screens {
+            assert!(!help.contains('\\'), "`{path} --help` shows a backslash:\n{help}");
+        }
+        let config_help = screens
+            .iter()
+            .find(|(path, _)| path == "sylvode projects list")
+            .map(|(_, help)| help.as_str())
+            .unwrap_or_default();
+        assert!(
+            config_help.contains("[default: config/sylvode.toml; legacy config/openpr.toml fallback]"),
+            "{config_help}"
+        );
     }
 
     #[test]
