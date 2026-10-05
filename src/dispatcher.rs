@@ -1102,15 +1102,17 @@ fn render_template_tracked(template: &str, values: &[(&str, &str)]) -> Rendered 
 }
 
 #[cfg(test)]
-#[allow(clippy::literal_string_with_formatting_args)]
+// `serde_json::Value` indexing returns `Null` for a missing key; it does not panic.
+#[allow(clippy::literal_string_with_formatting_args, clippy::indexing_slicing)]
 mod tests {
     use super::{
-        build_cli_prompt, build_executor_command, dispatch, extract_issue_id, format_message,
+        build_cli_prompt, build_executor_command, dispatch, execute_cli_task, extract_issue_id, format_message,
         outbound_signature_header_value,
     };
     use crate::background::Background;
-    use crate::{callback, config::Config};
+    use crate::config::Config;
     use serde_json::json;
+    use std::time::Duration;
 
     fn base_config() -> Config {
         toml::from_str(
@@ -1264,25 +1266,101 @@ mcp_instructions = "Custom: read issue {issue_id} first"
         assert!(!prompt.contains("work_items.get"));
     }
 
-    #[test]
-    fn skip_callback_state_returns_none() {
-        let cfg: crate::config::CliAgentConfig = toml::from_str(
-            r#"
-executor = "codex"
-skip_callback_state = true
-update_state_on_success = "done"
-"#,
+    fn callback_config() -> Config {
+        toml::from_str(
+            "[server]\nlisten = '127.0.0.1:9090'\n[security]\nallow_unsigned = true\n\
+             [features]\ncli_enabled = true\ncallback_enabled = true\n",
         )
-        .expect("parse cli config");
+        .expect("parse config")
+    }
 
-        assert!(cfg.skip_callback_state);
-        // When skip_callback_state is true, state should be None regardless of status
-        let state = if cfg.skip_callback_state {
-            None
-        } else {
-            callback::state_for_status(&cfg, "success")
-        };
-        assert!(state.is_none());
+    /// An agent whose executor is not on the whitelist, so the run fails at once without
+    /// starting anything, and reports through the API callback at `url`.
+    fn failing_cli_agent(url: &str, skip_callback_state: bool) -> crate::config::AgentConfig {
+        toml::from_str(&format!(
+            "id = 'c'\nname = 'C'\nagent_type = 'cli'\n[cli]\nexecutor = 'not-whitelisted'\ncallback = 'api'\n\
+             callback_url = '{url}'\nupdate_state_on_fail = 'todo'\nskip_callback_state = {skip_callback_state}\n"
+        ))
+        .expect("parse agent")
+    }
+
+    /// With `skip_callback_state = true` the final callback of a tunnel task carries no state;
+    /// without it, the failure state. Exercised through `execute_cli_task` itself.
+    #[tokio::test]
+    async fn skip_callback_state_leaves_the_state_out_of_the_final_callback() {
+        for (skip, expected) in [(true, serde_json::Value::Null), (false, json!("todo"))] {
+            let mut server = crate::test_support::Recorder::start().await;
+            let agent = failing_cli_agent(&server.url, skip);
+            let report = execute_cli_task(
+                &callback_config(),
+                &agent,
+                &json!({"data": {"issue": {"id": "I-1"}}}),
+                Some("run-1".into()),
+                std::future::pending(),
+            )
+            .await;
+            assert_eq!(report.status, "failed");
+            let callback = server.next(Duration::from_secs(5)).await.expect("final callback");
+            assert_eq!(callback.body["status"], "failed");
+            assert_eq!(callback.body["issue_id"], "I-1");
+            assert_eq!(callback.body["state"], expected, "skip_callback_state = {skip}");
+        }
+    }
+
+    /// A webhook-triggered `cli` run sends its failure callback only with
+    /// `[features].callback_enabled`.
+    #[tokio::test]
+    async fn webhook_cli_failure_callback_needs_callback_enabled() {
+        for enabled in [false, true] {
+            let mut server = crate::test_support::Recorder::start().await;
+            let mut config = callback_config();
+            config.features.callback_enabled = enabled;
+            let background = Background::new(1);
+            let agent = failing_cli_agent(&server.url, false);
+            let answer = dispatch(&config, &background, &agent, &json!({"data": {"issue": {"id": "I-2"}}})).await;
+            assert!(answer.summary.starts_with("cli agent spawned"), "{answer:?}");
+            assert!(background.finish(Duration::from_secs(10)).await, "the run finished");
+            let callback = server.next(Duration::from_millis(300)).await;
+            if enabled {
+                let callback = callback.expect("failure callback");
+                assert_eq!(callback.body["status"], "failed");
+                assert_eq!(callback.body["state"], "todo");
+            } else {
+                assert!(callback.is_none(), "callback sent while disabled: {callback:?}");
+            }
+        }
+    }
+
+    /// A `webhook` agent signs the body it forwards with its `secret`, and sends no signature
+    /// without one.
+    #[tokio::test]
+    async fn webhook_agent_signs_what_it_forwards() {
+        let payload = json!({"event": "issue.assigned", "n": 1});
+        for secret in [Some("forward-secret"), None] {
+            let mut server = crate::test_support::Recorder::start().await;
+            let secret_line = secret.map_or_else(String::new, |s| format!("secret = '{s}'\n"));
+            let agent: crate::config::AgentConfig = toml::from_str(&format!(
+                "id = 'w'\nname = 'W'\nagent_type = 'webhook'\n[webhook]\nurl = '{}'\n{secret_line}",
+                server.url
+            ))
+            .expect("parse agent");
+            let answer = dispatch(&base_config(), &Background::new(1), &agent, &payload).await;
+            assert_eq!(answer.summary, "webhook: 200 OK");
+            let forwarded = server.next(Duration::from_secs(5)).await.expect("forwarded request");
+            assert_eq!(forwarded.body, payload);
+            let header = forwarded
+                .headers
+                .get("x-webhook-signature")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
+            match secret {
+                Some(secret) => {
+                    let expected = crate::signature::sign_payload(&forwarded.raw, secret).expect("sign");
+                    assert_eq!(header, Some(format!("sha256={expected}")));
+                }
+                None => assert_eq!(header, None),
+            }
+        }
     }
 
     #[test]

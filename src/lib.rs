@@ -15,6 +15,8 @@ mod handler;
 mod process;
 mod replay;
 mod signature;
+#[cfg(test)]
+mod test_support;
 mod tunnel;
 
 pub use app::run;

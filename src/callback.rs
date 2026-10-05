@@ -308,6 +308,8 @@ pub fn state_for_status(cfg: &CliAgentConfig, status: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+// `serde_json::Value` indexing returns `Null` for a missing key; it does not panic.
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
@@ -377,6 +379,58 @@ mod tests {
             .unwrap();
         assert!(request.headers().get("authorization").is_none());
         assert!(request.headers().get("x-sylvode-mcp-surface").is_some());
+    }
+
+    fn mcp_config(url: &str, token: &str) -> CliAgentConfig {
+        toml::from_str(&format!(
+            "executor = 'codex'\ncallback = 'mcp'\ncallback_url = '{url}'\ncallback_token = '{token}'\n"
+        ))
+        .expect("cli config")
+    }
+
+    fn final_payload(state: Option<&str>) -> CallbackPayload {
+        build_callback_payload(
+            "issue-9".into(),
+            "run-9".into(),
+            "codex".into(),
+            "failed".into(),
+            "cli execution failed".into(),
+            Some(2),
+            5,
+            "out".into(),
+            "err".into(),
+            state.map(Into::into),
+        )
+    }
+
+    /// An MCP callback is a JSON-RPC `tools/call` sent with the bot token as a bearer token: a
+    /// comment with the report, then the state update.
+    #[tokio::test]
+    async fn mcp_callback_sends_the_bearer_token_with_each_tool_call() {
+        let mut server = crate::test_support::Recorder::start().await;
+        let cfg = mcp_config(&server.url, "bot-token");
+        send_callback(&cfg, &final_payload(Some("todo")), 5)
+            .await
+            .expect("callback succeeds");
+
+        let wait = std::time::Duration::from_secs(5);
+        let comment = server.next(wait).await.expect("comment request");
+        assert_eq!(
+            comment.headers.get("authorization").and_then(|v| v.to_str().ok()),
+            Some("Bearer bot-token")
+        );
+        assert_eq!(comment.body["method"], "tools/call");
+        assert_eq!(comment.body["params"]["name"], "comments.create");
+        assert_eq!(comment.body["params"]["arguments"]["work_item_id"], "issue-9");
+
+        let update = server.next(wait).await.expect("state request");
+        assert_eq!(
+            update.headers.get("authorization").and_then(|v| v.to_str().ok()),
+            Some("Bearer bot-token")
+        );
+        assert_eq!(update.body["params"]["name"], "work_items.update");
+        assert_eq!(update.body["params"]["arguments"]["state"], "todo");
+        assert!(server.next(std::time::Duration::from_millis(200)).await.is_none());
     }
 
     #[test]

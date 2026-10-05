@@ -2,8 +2,10 @@
 //!
 //! Each test starts `sylvode-webhook` against a config file that does not exist, so the process
 //! resolves its environment, logs the config error and exits 1 without opening a port. That is
-//! enough to observe whether a setting was honoured (the log line appears or not), whether it
-//! warned (stderr), and whether a conflict was refused (exit code and message).
+//! enough to observe whether a setting was read and warned about (stderr), whether a log filter
+//! selects this service's events, and whether a conflict was refused (exit code and message).
+//! That safe mode actually turns the `cli` path off in a running service is shown by
+//! `tests/e2e/cli.rs` (`safe_mode_variables_turn_the_cli_path_off`).
 
 // Test helpers outside `#[test]` functions may fail loudly; this is test code only.
 #![allow(clippy::expect_used)]
@@ -44,7 +46,7 @@ fn stderr_lines(output: &Output) -> Vec<String> {
 }
 
 #[test]
-fn legacy_safe_mode_variable_works_and_warns() {
+fn legacy_safe_mode_variable_is_read_and_warns() {
     let output = run(&[("OPENPR_WEBHOOK_SAFE_MODE", "1")]);
     assert_eq!(output.status.code(), Some(1));
     assert!(stdout(&output).contains("failed to load config"), "{}", stdout(&output));
@@ -52,7 +54,7 @@ fn legacy_safe_mode_variable_works_and_warns() {
 }
 
 #[test]
-fn canonical_safe_mode_variable_works_without_a_notice() {
+fn canonical_safe_mode_variable_is_read_without_a_notice() {
     let output = run(&[("SYLVODE_WEBHOOK_SAFE_MODE", "1")]);
     assert_eq!(output.status.code(), Some(1));
     assert!(stdout(&output).contains("failed to load config"), "{}", stdout(&output));
