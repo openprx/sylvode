@@ -261,14 +261,16 @@ database port unless an operator has a separate firewall, backup, and access
 control plan. API, MCP, frontend, and optional connector receiver host ports bind
 to `127.0.0.1` by default. Put a deployment-owned reverse proxy or tunnel in
 front of the frontend and any intentional API/MCP endpoint, and terminate TLS
-there. Optional connector receivers, such as `openpr-webhook`, run under the
+there. Optional receivers, such as the Sylvode Webhook receiver (`sylvode-webhook`), run under the
 `connectors` profile and must use deployment-local image and config values, not
 machine-specific `/opt/...` paths.
 
 The repository includes `config/openpr-webhook.example.toml` so the optional
 connector receiver profile has a portable starter config. For production, copy
 it to a deployment-owned path, set a concrete `webhook_secrets` value, keep
-`allow_unsigned = false`, and point `OPENPR_WEBHOOK_CONFIG` at that file.
+`allow_unsigned = false`, and point `SYLVODE_WEBHOOK_CONFIG` (legacy `OPENPR_WEBHOOK_CONFIG`) at that
+file. The default image is `ghcr.io/openprx/sylvode-webhook:latest`, which mounts the file at
+`/etc/sylvode-webhook/config.toml`.
 
 The compose file intentionally avoids fixed `container_name` values. This lets
 operators run multiple Sylvode deployments on the same host by using different
@@ -468,7 +470,7 @@ Smoke commands:
 ```bash
 scripts/smoke-webhook-generic-consumer.sh
 scripts/smoke-universal-forms-api.sh
-bun --cwd frontend run smoke:restaurant-ordering
+bun run --cwd frontend smoke:restaurant-ordering
 ```
 
 ## WASM Plugins

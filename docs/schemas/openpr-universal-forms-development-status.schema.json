@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openpr.dev/schemas/openpr-universal-forms-development-status.schema.json",
-  "title": "OpenPR Universal Forms Development Status",
+  "title": "Sylvode Universal Forms Development Status",
   "type": "object",
   "additionalProperties": false,
   "required": [

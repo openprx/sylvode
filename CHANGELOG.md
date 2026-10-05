@@ -125,6 +125,19 @@ OpenPR name keeps working; see **Deprecated**.
 - When `logging.output = "stdout"` is overridden because stdout carries the command's result or
   the MCP stdio protocol, `mcp-server` and `sylvode` log the notice under their own target, so
   the default filter shows it.
+- The optional `webhook` compose service now defaults to the canonical Sylvode Webhook names:
+  image `ghcr.io/openprx/sylvode-webhook:latest`, executable `/app/sylvode-webhook`, and the
+  configuration mounted at `/etc/sylvode-webhook/config.toml`. `SYLVODE_WEBHOOK_IMAGE` and
+  `SYLVODE_WEBHOOK_CONFIG` still override them, and `scripts/start.sh` still maps
+  `OPENPR_WEBHOOK_IMAGE` / `OPENPR_WEBHOOK_CONFIG` onto them. The canonical executable ships in
+  Sylvode Webhook images after 0.3.3; an image pinned to 0.3.3 or earlier needs its own
+  `command: ["/app/openpr-webhook", "/etc/sylvode-webhook/config.toml"]`.
+- `scripts/bootstrap-restaurant-demo.sh` reads its inputs as `SYLVODE_API_URL`,
+  `SYLVODE_DEMO_*` and `SYLVODE_MCP_BOT_TOKEN`. The `OPENPR_*` names still work with one
+  deprecation notice each; setting both names of one input to different values is an error. The
+  default demo user name is now `Sylvode Demo`.
+- The Universal Forms delivery reports, dashboards and their checkers say Sylvode instead of
+  OpenPR in their headings.
 
 ### Deprecated
 
@@ -221,6 +234,15 @@ replacement and the earliest removal.
   before a request is sent.
 - `sylvode <group> --help` described `--config` and `--bot-token` in terms of a `sylvode serve`
   command that does not exist.
+- `scripts/bootstrap-restaurant-demo.sh` refused `http://[::1]:<port>` as a non-local API URL.
+- The documentation index listed four `docs/prd/` files that are not in the repository, and
+  `docs/universal-forms-and-plugins.md` still described connectors, connector suggestions and the
+  event outbox, all removed in 0.2.21. The documented `bun --cwd frontend run ...` commands only
+  printed bun's usage; they now read `bun run --cwd frontend ...`.
+- The production readiness audit checked for a `localhost:3000` API default in
+  `apps/mcp-server/src/main.rs`, which no longer holds that code, so the check could not fail. It
+  now checks `DEFAULT_MCP_API_URL` and `apps/mcp-server/src/cli.rs`, and every audit's
+  `not_contains` fails when the file it inspects does not exist.
 
 ## [0.2.21] - 2026-08-19
 

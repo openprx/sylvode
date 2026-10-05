@@ -1,5 +1,5 @@
 //! End-to-end proof that the binary's CLI mode works, against the shipped binary and a
-//! counting stand-in for the `OpenPR` API.
+//! counting stand-in for the Sylvode API.
 //!
 //! The same executable is a server and a command line client, and the CLI half has no MCP
 //! client in front of it to make its mistakes obvious: a human types a command and reads what

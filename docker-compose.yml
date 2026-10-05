@@ -157,13 +157,18 @@ services:
     networks:
       - openpr-network
 
+  # The optional Sylvode Webhook receiver (github.com/openprx/openpr-webhook). Its image is published
+  # as ghcr.io/openprx/sylvode-webhook and, with the same digest, under the legacy name
+  # ghcr.io/openprx/openpr-webhook; both carry /app/sylvode-webhook and the legacy /app/openpr-webhook.
+  # SYLVODE_WEBHOOK_IMAGE / SYLVODE_WEBHOOK_CONFIG override the defaults; scripts/start.sh maps the
+  # legacy OPENPR_WEBHOOK_IMAGE / OPENPR_WEBHOOK_CONFIG onto them.
   webhook:
     profiles:
       - connectors
-    image: ${SYLVODE_WEBHOOK_IMAGE:-ghcr.io/openprx/openpr-webhook:latest}
+    image: ${SYLVODE_WEBHOOK_IMAGE:-ghcr.io/openprx/sylvode-webhook:latest}
     volumes:
-      - ${SYLVODE_WEBHOOK_CONFIG:-./config/openpr-webhook.example.toml}:/etc/openpr-webhook/config.toml:ro
-    command: ["/app/openpr-webhook", "/etc/openpr-webhook/config.toml"]
+      - ${SYLVODE_WEBHOOK_CONFIG:-./config/openpr-webhook.example.toml}:/etc/sylvode-webhook/config.toml:ro
+    command: ["/app/sylvode-webhook", "/etc/sylvode-webhook/config.toml"]
     ports:
       - "${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_WEBHOOK_PORT:-9090}:9090"
     networks:

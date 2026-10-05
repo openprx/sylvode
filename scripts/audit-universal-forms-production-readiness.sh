@@ -84,6 +84,14 @@ not_contains() {
   local description="$1"
   local path="$2"
   local needle="$3"
+  # A path that does not exist contains nothing, so without this a check aimed at a moved
+  # or renamed file would pass forever.
+  if [[ ! -e "$path" ]]; then
+    printf 'FAIL: %s\n' "$description" >&2
+    printf '  checked file does not exist: %s\n' "${path#$ROOT_DIR/}" >&2
+    failures=$((failures + 1))
+    return
+  fi
   if rg -q --fixed-strings -- "$needle" "$path"; then
     printf 'FAIL: %s\n' "$description" >&2
     printf '  forbidden in %s: %s\n' "${path#$ROOT_DIR/}" "$needle" >&2
@@ -218,10 +226,11 @@ not_contains "env example does not enable default database URL password" "$ROOT_
 
 printf '\nOptional connector receiver coverage:\n'
 contains "webhook receiver uses connectors profile" "$COMPOSE_FILE" "profiles:"
-contains "webhook receiver image is configurable" "$COMPOSE_FILE" 'image: ${SYLVODE_WEBHOOK_IMAGE:-ghcr.io/openprx/openpr-webhook:latest}'
-contains "webhook receiver config path is configurable" "$COMPOSE_FILE" '${SYLVODE_WEBHOOK_CONFIG:-./config/openpr-webhook.example.toml}:/etc/openpr-webhook/config.toml:ro'
+contains "webhook receiver image is configurable" "$COMPOSE_FILE" 'image: ${SYLVODE_WEBHOOK_IMAGE:-ghcr.io/openprx/sylvode-webhook:latest}'
+contains "webhook receiver config path is configurable" "$COMPOSE_FILE" '${SYLVODE_WEBHOOK_CONFIG:-./config/openpr-webhook.example.toml}:/etc/sylvode-webhook/config.toml:ro'
+contains "webhook receiver runs the canonical executable on the mounted config" "$COMPOSE_FILE" 'command: ["/app/sylvode-webhook", "/etc/sylvode-webhook/config.toml"]'
 contains "webhook receiver binds localhost by default" "$COMPOSE_FILE" '"${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_WEBHOOK_PORT:-9090}:9090"'
-contains "env example documents webhook receiver image" "$ROOT_DIR/.env.example" "SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/openpr-webhook:latest"
+contains "env example documents webhook receiver image" "$ROOT_DIR/.env.example" "SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/sylvode-webhook:latest"
 contains "env example documents webhook receiver config" "$ROOT_DIR/.env.example" "SYLVODE_WEBHOOK_CONFIG=./config/openpr-webhook.example.toml"
 contains "webhook example listens on compose service port" "$WEBHOOK_EXAMPLE_CONFIG" 'listen = "0.0.0.0:9090"'
 contains "webhook example keeps unsigned webhooks disabled" "$WEBHOOK_EXAMPLE_CONFIG" "allow_unsigned = false"
@@ -255,7 +264,10 @@ contains "MCP server reads its own generated configuration" "$COMPOSE_FILE" '${S
 not_contains "MCP server is handed no credential through the environment" "$COMPOSE_FILE" "OPENPR_BOT_TOKEN"
 contains "MCP server rejects unexpanded shell templates on the command line" "$ROOT_DIR/apps/mcp-server/src/cli.rs" "rejects_unexpanded_shell_templates_on_the_command_line"
 contains "MCP server rejects a placeholder token and the nil workspace" "$ROOT_DIR/apps/mcp-server/src/cli.rs" "rejects_placeholder_token_and_nil_workspace_on_the_command_line"
-not_contains "MCP server default API URL does not target frontend port" "$ROOT_DIR/apps/mcp-server/src/main.rs" '"http://localhost:3000"'
+# The default moved out of the binary's main.rs: the configuration layer owns it, and cli.rs owns
+# the --api-url override, so both are checked where they now live.
+contains "MCP server default API URL targets the API port" "$ROOT_DIR/crates/platform/src/config/mod.rs" 'pub const DEFAULT_MCP_API_URL: &str = "http://localhost:8081";'
+not_contains "MCP command line does not default the API URL to the frontend port" "$ROOT_DIR/apps/mcp-server/src/cli.rs" '"http://localhost:3000"'
 contains "MCP bind address defaults to loopback" "$ROOT_DIR/apps/mcp-server/src/cli.rs" "Bind address for HTTP/SSE transports"
 contains "MCP CLI tests pin the configuration-file default" "$ROOT_DIR/apps/mcp-server/src/cli.rs" "an_unspecified_transport_and_bind_address_defer_to_the_configuration_file"
 not_contains "README local MCP HTTP example does not bind all interfaces" "$ROOT_README" "mcp-server serve --transport http --bind-addr 0.0.0.0:8090"
@@ -389,8 +401,8 @@ contains "restaurant demo bootstrap creates MCP bot token" "$ROOT_DIR/scripts/bo
 contains "restaurant demo bootstrap writes the MCP workspace into the configuration" "$ROOT_DIR/scripts/bootstrap-restaurant-demo.sh" "mcp.workspace_id"
 contains "restaurant demo bootstrap reloads the exact running MCP container" "$ROOT_DIR/scripts/bootstrap-restaurant-demo.sh" 'docker restart "${mcp_container_ids[0]}"'
 contains "restaurant demo bootstrap verifies MCP HTTP projects.list" "$ROOT_DIR/scripts/bootstrap-restaurant-demo.sh" "projects.list"
-contains "restaurant demo bootstrap supports required MCP HTTP verification" "$ROOT_DIR/scripts/bootstrap-restaurant-demo.sh" "OPENPR_DEMO_VERIFY_MCP_HTTP=1"
-contains "restaurant demo MCP HTTP smoke uses temporary config file" "$ROOT_DIR/scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh" "OPENPR_DEMO_CONFIG_PATH"
+contains "restaurant demo bootstrap supports required MCP HTTP verification" "$ROOT_DIR/scripts/bootstrap-restaurant-demo.sh" "SYLVODE_DEMO_VERIFY_MCP_HTTP=1"
+contains "restaurant demo MCP HTTP smoke uses temporary config file" "$ROOT_DIR/scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh" "SYLVODE_DEMO_CONFIG_PATH"
 contains "restaurant demo MCP HTTP smoke starts local MCP HTTP" "$ROOT_DIR/scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh" "serve --transport http"
 contains "restaurant demo MCP HTTP smoke requires RESTDEMO through MCP" "$ROOT_DIR/scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh" "projects.list includes RESTDEMO"
 contains "verify script uses docker compose v2" "$VERIFY_SCRIPT" "docker compose version"

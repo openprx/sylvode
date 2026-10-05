@@ -72,6 +72,14 @@ not_contains() {
   local description="$1"
   local path="$2"
   local needle="$3"
+  # A path that does not exist contains nothing, so without this a check aimed at a moved
+  # or renamed file would pass forever.
+  if [[ ! -e "$ROOT_DIR/$path" ]]; then
+    printf 'FAIL: %s\n' "$description" >&2
+    printf '  checked file does not exist: %s\n' "$path" >&2
+    failures=$((failures + 1))
+    return
+  fi
   if rg -q --fixed-strings -- "$needle" "$ROOT_DIR/$path"; then
     printf 'FAIL: %s\n' "$description" >&2
     printf '  forbidden in %s: %s\n' "$path" "$needle" >&2
@@ -582,7 +590,7 @@ contains "scenario template smoke covers runtime usage MCP tools" "scripts/smoke
 contains "scenario template smoke covers initialization business events" "scripts/smoke-scenario-template-forms.sh" "scenario template initialization business events and outbox smoke passed"
 contains "restaurant demo bootstrap uses public API" "scripts/bootstrap-restaurant-demo.sh" "/api/v1/workspaces"
 contains "restaurant demo bootstrap creates restaurant template project" "scripts/bootstrap-restaurant-demo.sh" "restaurant_ordering_default"
-contains "restaurant demo bootstrap refuses remote API by default" "scripts/bootstrap-restaurant-demo.sh" "OPENPR_DEMO_ALLOW_REMOTE"
+contains "restaurant demo bootstrap refuses remote API by default" "scripts/bootstrap-restaurant-demo.sh" "SYLVODE_DEMO_ALLOW_REMOTE"
 contains "restaurant demo bootstrap verifies formula output" "scripts/bootstrap-restaurant-demo.sh" "restaurant_calc should calculate order_line.line_total"
 contains "restaurant demo bootstrap creates MCP bot token" "scripts/bootstrap-restaurant-demo.sh" "/bots"
 contains "restaurant demo bootstrap writes MCP config credentials" "scripts/bootstrap-restaurant-demo.sh" "mcp.workspace_id"
@@ -590,7 +598,7 @@ contains "restaurant demo bootstrap reloads the exact running MCP container" "sc
 contains "restaurant demo bootstrap verifies MCP HTTP projects.list" "scripts/bootstrap-restaurant-demo.sh" "projects.list"
 contains "restaurant demo bootstrap checks demo project through MCP HTTP" "scripts/bootstrap-restaurant-demo.sh" "MCP HTTP verification passed"
 contains "restaurant demo MCP HTTP smoke starts real MCP server" "scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh" "/target/debug/mcp-server\" --config"
-contains "restaurant demo MCP HTTP smoke forces JSON-RPC verification" "scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh" "OPENPR_DEMO_VERIFY_MCP_HTTP=1"
+contains "restaurant demo MCP HTTP smoke forces JSON-RPC verification" "scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh" "SYLVODE_DEMO_VERIFY_MCP_HTTP=1"
 contains "restaurant demo MCP HTTP smoke proves RESTDEMO over MCP" "scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh" "projects.list includes RESTDEMO"
 contains "acceptance includes restaurant demo MCP HTTP smoke" "scripts/acceptance-universal-forms.sh" "Restaurant demo bootstrap MCP HTTP smoke"
 contains "acceptance includes PostgreSQL-only security scope audit" "scripts/acceptance-universal-forms.sh" "PostgreSQL-only security scope audit"

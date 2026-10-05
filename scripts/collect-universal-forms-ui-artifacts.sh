@@ -124,7 +124,7 @@ for path in "${required_files[@]}"; do
 done
 
 {
-  printf '# OpenPR Universal Forms UI Acceptance Artifacts\n\n'
+  printf '# Sylvode Universal Forms UI Acceptance Artifacts\n\n'
   printf '%s\n' "- Generated at: $(date -Is)"
   printf '%s\n' "- Repository: \`$ROOT_DIR\`"
   printf '%s\n' "- Artifact directory: \`$ARTIFACT_DIR\`"

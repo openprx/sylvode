@@ -134,7 +134,7 @@ require_command jq
 run_generator \
   "completion audit" \
   markdown \
-  "# OpenPR Universal Forms Completion Audit" \
+  "# Sylvode Universal Forms Completion Audit" \
   "$TMP_DIR/completion-audit.md" \
   "$ROOT_DIR/scripts/report-universal-forms-completion-audit.sh" --output "$TMP_DIR/completion-audit.md"
 
@@ -148,14 +148,14 @@ run_generator \
 run_generator \
   "manual evidence map" \
   markdown \
-  "# OpenPR Universal Forms Manual Evidence Map" \
+  "# Sylvode Universal Forms Manual Evidence Map" \
   "$TMP_DIR/manual-evidence-map.md" \
   "$ROOT_DIR/scripts/prepare-universal-forms-manual-evidence-map.sh" --output "$TMP_DIR/manual-evidence-map.md"
 
 run_generator \
   "manual signoff status" \
   markdown \
-  "# OpenPR Universal Forms Manual Signoff Status" \
+  "# Sylvode Universal Forms Manual Signoff Status" \
   "$TMP_DIR/manual-signoff-status.md" \
   "$ROOT_DIR/scripts/report-universal-forms-signoff-status.sh" --output "$TMP_DIR/manual-signoff-status.md"
 
@@ -186,21 +186,21 @@ run_generator \
 run_generator \
   "next signoff review" \
   markdown \
-  "# OpenPR Universal Forms Next Signoff Review" \
+  "# Sylvode Universal Forms Next Signoff Review" \
   "$TMP_DIR/next-signoff-review.md" \
   "$ROOT_DIR/scripts/prepare-universal-forms-next-signoff-review.sh" --output "$TMP_DIR/next-signoff-review.md"
 
 run_generator \
   "user acceptance packet" \
   markdown \
-  "# OpenPR Universal Forms User Acceptance Packet" \
+  "# Sylvode Universal Forms User Acceptance Packet" \
   "$TMP_DIR/user-acceptance-packet.md" \
   "$ROOT_DIR/scripts/prepare-universal-forms-user-acceptance-packet.sh" --output "$TMP_DIR/user-acceptance-packet.md"
 
 run_generator \
   "readiness summary" \
   markdown \
-  "# OpenPR Universal Forms Readiness Summary" \
+  "# Sylvode Universal Forms Readiness Summary" \
   "$TMP_DIR/readiness-summary.md" \
   "$ROOT_DIR/scripts/report-universal-forms-readiness-summary.sh" --output "$TMP_DIR/readiness-summary.md"
 
@@ -242,7 +242,7 @@ run_generator \
 run_generator \
   "delivery manifest" \
   markdown \
-  "# OpenPR Universal Forms Delivery Manifest" \
+  "# Sylvode Universal Forms Delivery Manifest" \
   "$TMP_DIR/delivery-manifest.md" \
   "$ROOT_DIR/scripts/prepare-universal-forms-delivery-manifest.sh" --output "$TMP_DIR/delivery-manifest.md"
 

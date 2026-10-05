@@ -92,6 +92,14 @@ not_contains() {
   local description="$1"
   local path="$2"
   local needle="$3"
+  # A path that does not exist contains nothing, so without this a check aimed at a moved
+  # or renamed file would pass forever.
+  if [[ ! -e "$path" ]]; then
+    printf 'FAIL: %s\n' "$description" >&2
+    printf '  checked file does not exist: %s\n' "$path" >&2
+    failures=$((failures + 1))
+    return
+  fi
   if rg -q --fixed-strings -- "$needle" "$path"; then
     printf 'FAIL: %s\n' "$description" >&2
     printf '  forbidden in %s: %s\n' "$path" "$needle" >&2
@@ -354,12 +362,12 @@ if [[ "$SKIP_EVIDENCE" != "1" ]]; then
   check_file "$UI_ARTIFACT_DIR/signoff-dashboard/signoff-dashboard-mobile.png"
 
   printf '\nGenerated report header coverage:\n'
-  first_line_equals "completion audit starts with Markdown heading" "$COMPLETION_AUDIT_PATH" "# OpenPR Universal Forms Completion Audit"
-  first_line_equals "user acceptance packet starts with Markdown heading" "$USER_ACCEPTANCE_PACKET_PATH" "# OpenPR Universal Forms User Acceptance Packet"
-  first_line_equals "manual evidence map starts with Markdown heading" "$MANUAL_EVIDENCE_MAP_PATH" "# OpenPR Universal Forms Manual Evidence Map"
-  first_line_equals "readiness summary starts with Markdown heading" "$READINESS_SUMMARY_PATH" "# OpenPR Universal Forms Readiness Summary"
-  first_line_equals "signoff status starts with Markdown heading" "$SIGNOFF_STATUS_PATH" "# OpenPR Universal Forms Manual Signoff Status"
-  first_line_equals "delivery manifest starts with Markdown heading" "$DELIVERY_MANIFEST_PATH" "# OpenPR Universal Forms Delivery Manifest"
+  first_line_equals "completion audit starts with Markdown heading" "$COMPLETION_AUDIT_PATH" "# Sylvode Universal Forms Completion Audit"
+  first_line_equals "user acceptance packet starts with Markdown heading" "$USER_ACCEPTANCE_PACKET_PATH" "# Sylvode Universal Forms User Acceptance Packet"
+  first_line_equals "manual evidence map starts with Markdown heading" "$MANUAL_EVIDENCE_MAP_PATH" "# Sylvode Universal Forms Manual Evidence Map"
+  first_line_equals "readiness summary starts with Markdown heading" "$READINESS_SUMMARY_PATH" "# Sylvode Universal Forms Readiness Summary"
+  first_line_equals "signoff status starts with Markdown heading" "$SIGNOFF_STATUS_PATH" "# Sylvode Universal Forms Manual Signoff Status"
+  first_line_equals "delivery manifest starts with Markdown heading" "$DELIVERY_MANIFEST_PATH" "# Sylvode Universal Forms Delivery Manifest"
   contains "readiness summary points to implementation map" "$READINESS_SUMMARY_PATH" "docs/universal-forms-implementation-map.md"
   contains "readiness summary has implementation map section" "$READINESS_SUMMARY_PATH" "## Implementation Map"
   contains "user acceptance packet points to implementation map" "$USER_ACCEPTANCE_PACKET_PATH" "docs/universal-forms-implementation-map.md"
@@ -418,7 +426,7 @@ contains "README uses start script for quick start" "$ROOT_DIR/README.md" "bash 
 contains "README documents restaurant demo bootstrap" "$ROOT_DIR/README.md" "scripts/bootstrap-restaurant-demo.sh"
 contains "README documents demo MCP credential sync" "$ROOT_DIR/README.md" '`mcp.bot_token` and `mcp.workspace_id`'
 contains "README documents demo MCP HTTP verification" "$ROOT_DIR/README.md" '`projects.list` through `/mcp/rpc`'
-contains "README documents demo remote API safety" "$ROOT_DIR/README.md" "OPENPR_DEMO_ALLOW_REMOTE=1"
+contains "README documents demo remote API safety" "$ROOT_DIR/README.md" "SYLVODE_DEMO_ALLOW_REMOTE=1"
 contains "README documents delivery acceptance state" "$ROOT_DIR/README.md" "## Delivery Acceptance State"
 contains "README documents universal forms CI gates" "$ROOT_DIR/README.md" "Universal Forms Gates"
 contains "README exposes local universal forms CI wrapper" "$ROOT_DIR/README.md" "scripts/ci-universal-forms-gates.sh"
@@ -627,9 +635,10 @@ contains "implementation map covers WASM runtime" "$ROOT_DIR/docs/universal-form
 contains "implementation map covers MCP surface" "$ROOT_DIR/docs/universal-forms-implementation-map.md" "MCP business surface"
 contains "implementation map covers user-side manual acceptance" "$ROOT_DIR/docs/universal-forms-implementation-map.md" "User-side manual acceptance"
 contains "implementation map records strict release gate" "$ROOT_DIR/docs/universal-forms-implementation-map.md" "scripts/gate-universal-forms-release.sh --json"
-contains "universal forms docs list event tables" "$ROOT_DIR/docs/universal-forms-and-plugins.md" 'business_events`, `event_outbox`, and `event_inbox'
-contains "universal forms docs list connector kinds" "$ROOT_DIR/docs/universal-forms-and-plugins.md" "Print, device, REST, webhook, MCP, CLI, and tunnel connectors"
-contains "universal forms docs include smoke commands" "$ROOT_DIR/docs/universal-forms-and-plugins.md" "bun --cwd frontend run smoke:restaurant-ordering"
+contains "universal forms docs list event tables" "$ROOT_DIR/docs/universal-forms-and-plugins.md" 'business_events` and `event_inbox'
+contains "universal forms docs state that connectors were removed" "$ROOT_DIR/docs/universal-forms-and-plugins.md" "Connectors and agent invocations were removed in 0.2.21"
+not_contains "universal forms docs do not describe connector kinds" "$ROOT_DIR/docs/universal-forms-and-plugins.md" "tunnel connectors"
+contains "universal forms docs include smoke commands" "$ROOT_DIR/docs/universal-forms-and-plugins.md" "bun run --cwd frontend smoke:restaurant-ordering"
 contains "universal forms docs link scenario catalog" "$ROOT_DIR/docs/universal-forms-and-plugins.md" "docs/scenario-templates.md"
 contains "universal forms docs include demo bootstrap" "$ROOT_DIR/docs/universal-forms-and-plugins.md" "scripts/bootstrap-restaurant-demo.sh"
 contains "universal forms docs include demo MCP bot token" "$ROOT_DIR/docs/universal-forms-and-plugins.md" "workspace-scoped MCP bot token"
@@ -1515,7 +1524,7 @@ else
   contains "manual signoff status report lists next action" "$SIGNOFF_STATUS_PATH" "## Next Action"
   contains "manual signoff status report lists pending rows" "$SIGNOFF_STATUS_PATH" "Remaining manual rows before finalization: 7"
   check_file "$NEXT_SIGNOFF_REVIEW_PATH"
-  contains "next signoff review starts with Markdown heading" "$NEXT_SIGNOFF_REVIEW_PATH" "# OpenPR Universal Forms Next Signoff Review"
+  contains "next signoff review starts with Markdown heading" "$NEXT_SIGNOFF_REVIEW_PATH" "# Sylvode Universal Forms Next Signoff Review"
   contains "next signoff review lists current key" "$NEXT_SIGNOFF_REVIEW_PATH" '| Key | `restaurant_template` |'
   contains "next signoff review links user acceptance packet" "$NEXT_SIGNOFF_REVIEW_PATH" "$USER_ACCEPTANCE_PACKET_PATH"
   contains "next signoff review links UI review gallery" "$NEXT_SIGNOFF_REVIEW_PATH" "$UI_REVIEW_GALLERY_PATH"

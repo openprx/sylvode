@@ -418,7 +418,7 @@ if [[ "$OUTPUT_JSON" -eq 1 ]]; then
   exit 0
 fi
 
-printf 'OpenPR universal forms delivery status\n'
+printf 'Sylvode universal forms delivery status\n'
 printf '  stage: %s\n' "$stage"
 printf '  automated checks: %s total, %s failed\n' "$automated_checks" "$failed_automated_checks"
 printf '  non-manual unresolved items: %s\n' "$non_manual_unresolved"

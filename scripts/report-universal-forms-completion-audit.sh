@@ -200,7 +200,7 @@ else
 fi
 
 {
-  printf '# OpenPR Universal Forms Completion Audit\n\n'
+  printf '# Sylvode Universal Forms Completion Audit\n\n'
   printf '%s\n' "- Generated at: $(date -Is)"
   printf '%s\n' "- Repository: \`$ROOT_DIR\`"
   printf '%s\n' "- Tracker: \`$TRACKER_PATH\`"

@@ -82,10 +82,12 @@ sylvode_configured_env_value() {
 }
 
 # Assigns the resolved value of a compose variable to the variable named by $1, reporting the
-# legacy name when it is set.
+# legacy name when it is set. An optional sixth argument names the kind of variable in that
+# notice (default "compose variable"); a script reading its own inputs passes
+# "environment variable".
 sylvode_resolve_env_into() {
   local -n sylvode_resolved_value="$1"
-  local env_file="$2" canonical_key="$3" legacy_key="$4" fallback="$5"
+  local env_file="$2" canonical_key="$3" legacy_key="$4" fallback="$5" kind="${6:-compose variable}"
   local canonical_value legacy_value
   canonical_value=$(sylvode_configured_env_value "$env_file" "$canonical_key")
   legacy_value=$(sylvode_configured_env_value "$env_file" "$legacy_key")
@@ -94,7 +96,7 @@ sylvode_resolve_env_into() {
     return 1
   fi
   if [[ -n "$legacy_value" ]]; then
-    sylvode_report_legacy "compose variable" "$legacy_key" "$canonical_key"
+    sylvode_report_legacy "$kind" "$legacy_key" "$canonical_key"
   fi
   # shellcheck disable=SC2034 # assigned through the nameref
   sylvode_resolved_value=${canonical_value:-${legacy_value:-$fallback}}

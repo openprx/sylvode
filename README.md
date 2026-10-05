@@ -70,7 +70,7 @@ empty, which refuses every live-editing session.
 For demo data once healthy, `scripts/bootstrap-restaurant-demo.sh` creates a
 demo account, workspace, `restaurant_ordering_default` project with sample
 records, and a workspace-scoped bot token; it refuses non-local API URLs unless
-`OPENPR_DEMO_ALLOW_REMOTE=1`.
+`SYLVODE_DEMO_ALLOW_REMOTE=1` (legacy `OPENPR_DEMO_ALLOW_REMOTE` still accepted).
 
 ### Local development
 
@@ -460,7 +460,7 @@ All under `scripts/`.
 | Database    | `init-db.sh` (apply migrations in order), `backup-db.sh` (gzipped dump into `backups/`), `restore-db.sh`                                                                                                                              |
 | Verification | `e2e-test.sh` (one-shot end-to-end with automatic teardown), `test-api.sh`, `test-mcp.sh` (legacy v0.4 integration checks), `verify.sh` (component health check)                                                                            |
 | Development | `dev-check.sh` (`cargo fmt --check`, `check`, `clippy -D warnings`, `test`), `ci-universal-forms-gates.sh` (reproduce the CI-only `Universal Forms Gates` bundle locally)                                                              |
-| Demo data   | `bootstrap-restaurant-demo.sh`, `bun --cwd frontend run smoke:restaurant-ordering`                                                                                                                                                   |
+| Demo data   | `bootstrap-restaurant-demo.sh`, `bun run --cwd frontend smoke:restaurant-ordering`                                                                                                                                                   |
 | Other       | `benchmark.sh` (API latency/throughput), `bump-version.sh` (`major\|minor\|patch`, syncs `Cargo.toml` and `frontend/package.json`)                                                                                                     |
 
 > The remaining ~80 `scripts/*universal-forms*` files are historical delivery

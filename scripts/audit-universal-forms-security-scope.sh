@@ -64,6 +64,13 @@ not_contains() {
   local description="$1"
   local path="$2"
   local needle="$3"
+  # A path that does not exist contains nothing, so without this a check aimed at a moved
+  # or renamed file would pass forever.
+  if [[ ! -e "$path" ]]; then
+    fail "$description"
+    printf '  checked file does not exist: %s\n' "$path" >&2
+    return
+  fi
   if rg -q --fixed-strings -- "$needle" "$path"; then
     fail "$description"
     printf '  unexpected in %s: %s\n' "$path" "$needle" >&2

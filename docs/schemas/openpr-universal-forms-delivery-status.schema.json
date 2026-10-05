@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "openpr-universal-forms-delivery-status.schema.json",
-  "title": "OpenPR Universal Forms Delivery Status JSON",
+  "title": "Sylvode Universal Forms Delivery Status JSON",
   "description": "Compact machine-readable handoff status emitted by scripts/status-universal-forms-delivery.sh --json.",
   "type": "object",
   "additionalProperties": false,

@@ -169,9 +169,9 @@ echo ""
 # config/sylvode.compose.mcp.toml, and restarts the mcp-server container so it picks them up —
 # after which step 4 can authenticate as that bot.
 echo "📋 Step 3b: Seeding a workspace and the MCP bot the server is reached as"
-OPENPR_DEMO_EMAIL="$E2E_ACCOUNT_EMAIL" \
-OPENPR_DEMO_PASSWORD="$E2E_ACCOUNT_PASSWORD" \
-OPENPR_DEMO_VERIFY_MCP_HTTP=1 \
+SYLVODE_DEMO_EMAIL="$E2E_ACCOUNT_EMAIL" \
+SYLVODE_DEMO_PASSWORD="$E2E_ACCOUNT_PASSWORD" \
+SYLVODE_DEMO_VERIFY_MCP_HTTP=1 \
 bash "$PROJECT_ROOT/scripts/bootstrap-restaurant-demo.sh"
 echo ""
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openpr.dev/schemas/openpr-universal-forms-release-gate.schema.json",
-  "title": "OpenPR Universal Forms Release Gate JSON",
+  "title": "Sylvode Universal Forms Release Gate JSON",
   "description": "Machine-readable output emitted by scripts/gate-universal-forms-release.sh --json.",
   "type": "object",
   "additionalProperties": false,

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openpr.dev/schemas/openpr-universal-forms-scenario-catalog.schema.json",
-  "title": "OpenPR Universal Forms Scenario Catalog",
+  "title": "Sylvode Universal Forms Scenario Catalog",
   "type": "object",
   "additionalProperties": false,
   "required": [

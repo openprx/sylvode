@@ -154,7 +154,7 @@ action_verify_signoff_command="$(jq -r '.next_actions[3].command' "$JSON_OUTPUT"
 action_finalize_enabled="$(jq -r '.next_actions[4].enabled | if . then "enabled" else "disabled" end' "$JSON_OUTPUT")"
 action_finalize_command="$(jq -r '.next_actions[4].command' "$JSON_OUTPUT")"
 
-contains "text output has title" "OpenPR universal forms delivery status"
+contains "text output has title" "Sylvode universal forms delivery status"
 contains "text output mirrors stage" "  stage: $stage"
 contains "text output mirrors automated check counts" "  automated checks: $automated_checks total, $failed_checks failed"
 contains "text output mirrors non-manual unresolved count" "  non-manual unresolved items: $non_manual_unresolved"

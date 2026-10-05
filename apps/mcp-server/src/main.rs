@@ -29,7 +29,7 @@ use uuid::Uuid;
 /// Longest inbound caller bot token accepted, in bytes.
 ///
 /// A bound on a value that is copied into an outbound header and held for the life of one
-/// request. Comfortably above any real `OpenPR` bot token, which is tens of bytes.
+/// request. Comfortably above any real Sylvode bot token, which is tens of bytes.
 const MAX_CALLER_TOKEN_LEN: usize = 8 * 1024;
 
 #[tokio::main]
@@ -436,7 +436,7 @@ mod sse_delivery_tests {
     const CALLER_TOKEN: &str = "opr_caller_bot_token_example";
     const WORKSPACE: &str = "11111111-1111-4111-8111-111111111111";
 
-    /// A counting stand-in for the `OpenPR` API.
+    /// A counting stand-in for the Sylvode API.
     ///
     /// One accepted connection is one outbound call this process made, which is what "the
     /// tool ran" looks like from outside it. Asserting on the count rather than on the

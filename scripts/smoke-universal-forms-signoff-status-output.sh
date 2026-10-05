@@ -109,7 +109,7 @@ validate_status_report() {
   local label="$2"
 
   require_file "$path"
-  contains "$label starts with Markdown heading" "$path" "# OpenPR Universal Forms Manual Signoff Status"
+  contains "$label starts with Markdown heading" "$path" "# Sylvode Universal Forms Manual Signoff Status"
   contains "$label mirrors automated checks" "$path" "| Automated checks | $(json_value '.gate_summary.automated_checks') |"
   contains "$label mirrors PASS status lines" "$path" "| PASS status lines | $(json_value '.gate_summary.pass_status_lines') |"
   contains "$label mirrors failed checks" "$path" "| Failed automated checks | $(json_value '.gate_summary.failed_automated_checks') |"
