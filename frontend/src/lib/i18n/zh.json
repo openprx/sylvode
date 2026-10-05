@@ -687,7 +687,40 @@
     "deliveryDetailTitle": "记录详情",
     "loadingDetail": "加载详情中...",
     "request": "请求",
-    "response": "响应"
+    "response": "响应",
+    "eventGroup": {
+      "issue": "工作项",
+      "comment": "评论",
+      "label": "标签",
+      "sprint": "迭代",
+      "ai": "AI 任务"
+    },
+    "eventLabel": {
+      "issue": {
+        "created": "工作项已创建",
+        "updated": "工作项已更新",
+        "assigned": "工作项已分配",
+        "deleted": "工作项已删除",
+        "state_changed": "工作项状态已变更"
+      },
+      "comment": {
+        "created": "评论已添加",
+        "updated": "评论已编辑",
+        "deleted": "评论已删除"
+      },
+      "label": {
+        "added": "工作项已添加标签",
+        "removed": "工作项已移除标签"
+      },
+      "sprint": {
+        "started": "迭代已开始",
+        "completed": "迭代已完成"
+      },
+      "ai": {
+        "task_completed": "AI 任务已完成",
+        "task_failed": "AI 任务失败"
+      }
+    }
   },
   "governance": {
     "title": "治理提案",
