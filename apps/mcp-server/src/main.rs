@@ -1,8 +1,5 @@
-mod cli;
-mod client;
-mod protocol;
-mod server;
-mod tools;
+//! `mcp-server` — the Sylvode MCP server, plus the workspace command groups it shares with
+//! `sylvode` (`mcp_server::cli`).
 
 use axum::{
     Extension, Json, Router,
@@ -16,27 +13,18 @@ use axum::{
     routing::{get, post},
 };
 use clap::Parser;
-use cli::{Cli, Commands, ServeArgs};
-use client::{ClientConfig, OpenPrClient, TRANSPORT_LABEL_CLI, transport_label};
-use platform::config::{MCP_BOT_TOKEN_REQUIRED, McpConfig, McpRuntime, McpTransport, OpenPrConfig, Secret};
-use protocol::{JsonRpcRequest, JsonRpcResponse};
+use mcp_server::cli::{self, Cli, Commands};
+use mcp_server::client::OpenPrClient;
+use mcp_server::protocol::{self, JsonRpcRequest, JsonRpcResponse};
+use mcp_server::server::McpServer;
+use platform::config::{McpRuntime, McpTransport, Secret};
 use serde::Deserialize;
 use serde_json::json;
-use server::McpServer;
 use std::{collections::HashMap, convert::Infallible, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::{StreamExt, wrappers::UnboundedReceiverStream};
 use uuid::Uuid;
-
-/// Tracing target of this binary, and the scope of the default `[logging]` filter.
-///
-/// The module path `tracing` stamps on every event is `mcp_server`, so a filter written
-/// against the binary's hyphenated name would silence the whole process.
-const SERVICE_NAME: &str = "mcp_server";
-
-/// Configuration key carrying the identity `stdio` and the CLI subcommands act as.
-const BOT_TOKEN_KEY: &str = "mcp.bot_token";
 
 /// Longest inbound caller bot token accepted, in bytes.
 ///
@@ -48,161 +36,10 @@ const MAX_CALLER_TOKEN_LEN: usize = 8 * 1024;
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // The file is the only source of configuration; nothing below reads the environment.
-    let mut config = OpenPrConfig::load(cli.config.as_deref())?;
-    // stdio frames JSON-RPC on stdout, so the log stream is reserved to stderr no
-    // matter what the file asks for.
-    platform::logging::init_reserving_stdout(&config.logging, SERVICE_NAME)?;
-
-    let serve_args = match &cli.command {
-        Commands::Serve(args) => Some(args),
-        _ => None,
-    };
-    apply_cli_overrides(&mut config.mcp, &cli, serve_args)?;
-
-    // Lazy validation: `[mcp]` is optional for the other binaries, so the fields this one
-    // cannot run without are reported here, all of them in one pass.
-    let mcp = config.mcp_runtime()?;
-
-    if serve_args.is_some() {
-        serve(&mcp).await
-    } else {
-        // A CLI subcommand is a local process with no caller to act on behalf of, so it
-        // speaks to the API as the configured identity and cannot run without one.
-        let client = build_client(&mcp, Some(configured_bot_token(&mcp)?))?.with_transport_label(TRANSPORT_LABEL_CLI);
-        cli::run_cli_command(&cli.command, &cli.format, client).await
+    match &cli.command {
+        Commands::Serve(args) => serve(&cli::prepare_runtime(&cli.global, Some(args))?).await,
+        Commands::Business(command) => cli::run_business(&cli.global, command).await,
     }
-}
-
-/// The configured identity, or the refusal that names the key which supplies it.
-///
-/// Reported here rather than at load time because an `http`/`sse` deployment is *expected*
-/// to have no `mcp.bot_token`: it never speaks to the API as itself.
-fn configured_bot_token(mcp: &McpRuntime) -> anyhow::Result<Secret> {
-    mcp.bot_token
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("{MCP_BOT_TOKEN_REQUIRED} (missing {BOT_TOKEN_KEY})"))
-}
-
-/// Builds the API client every request of one transport starts from.
-///
-/// `credential` is `None` for the networked transports. That is the structural half of the
-/// invariant this server rests on: there is no server-side identity in the process for a
-/// networked request to fall back to, so a request that somehow reached a tool without a
-/// caller credential fails closed instead of quietly acting as a workspace bot.
-fn build_client(mcp: &McpRuntime, credential: Option<Secret>) -> anyhow::Result<OpenPrClient> {
-    OpenPrClient::new(ClientConfig {
-        base_url: mcp.api_url.clone(),
-        credential,
-        workspace_id: mcp.workspace_id.to_string(),
-        transport_label: transport_label(mcp.transport),
-    })
-    .map_err(|e| anyhow::anyhow!(e))
-}
-
-/// Layers the CLI overrides onto the file's `[mcp]` section.
-///
-/// A flag wins over the file: the file is the deployment's configuration, a flag is a
-/// deliberate one-off. A value that arrives through a flag has not passed the file's
-/// validation, so it is checked here — against the same rules, reported against the flag
-/// that carried it. Values that came from the file are left alone: they are already
-/// validated, and checking them twice is how one bad value grows two different messages.
-fn apply_cli_overrides(mcp: &mut McpConfig, cli: &Cli, serve: Option<&ServeArgs>) -> anyhow::Result<()> {
-    if let Some(api_url) = cli.api_url.as_deref() {
-        mcp.api_url = Some(checked_api_url(api_url)?);
-    }
-    if let Some(bot_token) = cli.bot_token.as_deref() {
-        mcp.bot_token = Some(checked_bot_token(bot_token)?);
-    }
-    if let Some(workspace_id) = cli.workspace_id.as_deref() {
-        mcp.workspace_id = Some(checked_workspace_id(workspace_id)?);
-    }
-    if let Some(serve) = serve {
-        if let Some(transport) = serve.transport {
-            mcp.transport = transport.into();
-        }
-        if let Some(bind_addr) = serve.bind_addr.as_deref() {
-            mcp.bind_addr = Some(checked_bind_addr(bind_addr)?);
-        }
-    }
-    Ok(())
-}
-
-/// Validates an `--api-url`, mirroring the rules `mcp.api_url` is held to.
-fn checked_api_url(value: &str) -> anyhow::Result<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed.contains("${") {
-        anyhow::bail!("--api-url must be a concrete URL, not a placeholder");
-    }
-    let parsed =
-        reqwest::Url::parse(trimmed).map_err(|error| anyhow::anyhow!("--api-url is not a valid URL: {error}"))?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        anyhow::bail!("--api-url must start with http:// or https://");
-    }
-    if parsed.host_str().is_none_or(str::is_empty) {
-        anyhow::bail!("--api-url names no host");
-    }
-    Ok(trimmed.to_string())
-}
-
-/// Validates a `--bot-token`, mirroring the rules `mcp.bot_token` is held to.
-///
-/// The token itself is never echoed, not even its prefix.
-fn checked_bot_token(value: &str) -> anyhow::Result<Secret> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed.contains("${") || trimmed.contains("replace_with") {
-        anyhow::bail!("--bot-token must be a concrete bot token");
-    }
-    if !trimmed.starts_with("opr_") {
-        anyhow::bail!("--bot-token must use the opr_ token prefix");
-    }
-    Ok(Secret::new(trimmed))
-}
-
-/// Validates a `--workspace-id`, mirroring the rules `mcp.workspace_id` is held to.
-fn checked_workspace_id(value: &str) -> anyhow::Result<Uuid> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed.contains("${") || trimmed.contains("replace_with") {
-        anyhow::bail!("--workspace-id must be a concrete UUID, not a placeholder");
-    }
-    let parsed =
-        Uuid::parse_str(trimmed).map_err(|error| anyhow::anyhow!("--workspace-id is not a valid UUID: {error}"))?;
-    if parsed.is_nil() {
-        anyhow::bail!("--workspace-id must not be the nil UUID placeholder");
-    }
-    Ok(parsed)
-}
-
-/// Validates a `--bind-addr`, mirroring the rules `mcp.bind_addr` is held to.
-///
-/// A host without a port is refused rather than completed with one: an invented port would
-/// put the listener somewhere the operator did not ask for and did not publish.
-fn checked_bind_addr(value: &str) -> anyhow::Result<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed.contains("${") {
-        anyhow::bail!("--bind-addr must be a concrete host:port, not a placeholder");
-    }
-    if trimmed.chars().any(char::is_whitespace) {
-        anyhow::bail!("--bind-addr must not contain whitespace");
-    }
-    let (host, port) = split_host_port(trimmed)
-        .ok_or_else(|| anyhow::anyhow!("--bind-addr must be host:port, e.g. 127.0.0.1:8090"))?;
-    if host.is_empty() {
-        anyhow::bail!("--bind-addr names no host");
-    }
-    match port.parse::<u16>() {
-        Ok(0) | Err(_) => anyhow::bail!("--bind-addr has an invalid port {port}, expected 1-65535"),
-        Ok(_) => Ok(trimmed.to_string()),
-    }
-}
-
-/// Splits an authority into host and port, tolerating a bracketed IPv6 literal.
-fn split_host_port(authority: &str) -> Option<(&str, &str)> {
-    if let Some(end) = authority.rfind(']') {
-        let port = authority.get(end + 1..)?.strip_prefix(':')?;
-        return Some((authority.get(..=end)?, port));
-    }
-    authority.rsplit_once(':')
 }
 
 /// Starts the transport `[mcp]` selected.
@@ -216,15 +53,15 @@ fn split_host_port(authority: &str) -> Option<(&str, &str)> {
 /// * `http` and `sse` are shared listeners, where a single configured bot would make every
 ///   caller indistinguishable. Every request carries its own caller's bot token in
 ///   `Authorization: Bearer` and is served as that bot; the process itself holds no
-///   identity, which is why [`build_client`] is handed `None` here.
+///   identity, which is why [`cli::build_client`] is handed `None` here.
 ///
 /// Both paths then do the same thing with the token they hold: forward it to the API
 /// verbatim and let the API authenticate it. Neither one parses or validates its contents.
 async fn serve(mcp: &McpRuntime) -> anyhow::Result<()> {
     match mcp.transport {
-        McpTransport::Stdio => run_stdio(build_client(mcp, Some(configured_bot_token(mcp)?))?).await,
-        McpTransport::Http => run_http(&mcp.bind_addr, build_client(mcp, None)?).await,
-        McpTransport::Sse => run_sse(&mcp.bind_addr, build_client(mcp, None)?).await,
+        McpTransport::Stdio => run_stdio(cli::build_client(mcp, Some(cli::configured_bot_token(mcp)?))?).await,
+        McpTransport::Http => run_http(&mcp.bind_addr, cli::build_client(mcp, None)?).await,
+        McpTransport::Sse => run_sse(&mcp.bind_addr, cli::build_client(mcp, None)?).await,
     }
 }
 
@@ -492,79 +329,10 @@ async fn health_check() -> impl IntoResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        MAX_CALLER_TOKEN_LEN, bearer_token, caller_token, checked_api_url, checked_bind_addr, checked_bot_token,
-        checked_workspace_id, header,
-    };
-    use platform::config::{DEFAULT_MCP_API_URL, Secret};
+    use super::{MAX_CALLER_TOKEN_LEN, bearer_token, caller_token, header};
+    use platform::config::Secret;
 
     const TOKEN: &str = "opr_caller_bot_token_example";
-
-    #[test]
-    fn accepts_concrete_cli_overrides() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(checked_api_url(" http://api:8080 ")?, "http://api:8080");
-        assert_eq!(
-            checked_bot_token("opr_forms_mcp_test_token")?.expose(),
-            "opr_forms_mcp_test_token"
-        );
-        assert_eq!(
-            checked_workspace_id("550e8400-e29b-41d4-a716-446655440000")?.to_string(),
-            "550e8400-e29b-41d4-a716-446655440000"
-        );
-        assert_eq!(checked_bind_addr("0.0.0.0:8090")?, "0.0.0.0:8090");
-        assert_eq!(checked_bind_addr("[::1]:8090")?, "[::1]:8090");
-        Ok(())
-    }
-
-    #[test]
-    fn the_api_url_default_still_targets_the_compose_api_port() {
-        assert_eq!(DEFAULT_MCP_API_URL, "http://localhost:8081");
-    }
-
-    /// The shell templates a compose file used to interpolate are values, not configuration:
-    /// reaching the process unexpanded means the deployment is broken, so they are refused
-    /// rather than used as a hostname or a token.
-    #[test]
-    fn rejects_unexpanded_shell_templates_on_the_command_line() {
-        assert!(checked_api_url("${OPENPR_API_URL:-http://api:8080}").is_err());
-        assert!(checked_bot_token("${OPENPR_BOT_TOKEN:?set OPENPR_BOT_TOKEN}").is_err());
-        assert!(checked_workspace_id("${OPENPR_WORKSPACE_ID:?set OPENPR_WORKSPACE_ID}").is_err());
-        assert!(checked_bind_addr("${OPENPR_MCP_BIND_ADDR}").is_err());
-    }
-
-    #[test]
-    fn rejects_placeholder_token_and_nil_workspace_on_the_command_line() {
-        assert!(checked_bot_token("opr_replace_with_workspace_bot_token").is_err());
-        assert!(checked_bot_token("some_other_prefix_token").is_err());
-        assert!(checked_bot_token("").is_err());
-        assert!(checked_workspace_id("00000000-0000-0000-0000-000000000000").is_err());
-        assert!(checked_workspace_id("not-a-uuid").is_err());
-    }
-
-    /// A `--bot-token` failure must not print the token it rejected.
-    #[test]
-    fn a_rejected_bot_token_is_never_echoed() {
-        let Err(error) = checked_bot_token("nope_secret_material_here") else {
-            panic!("a token without the opr_ prefix must be refused");
-        };
-        assert!(!error.to_string().contains("secret_material"), "{error}");
-    }
-
-    #[test]
-    fn rejects_api_urls_that_are_not_absolute_http_urls() {
-        assert!(checked_api_url("ftp://api:8080").is_err());
-        assert!(checked_api_url("api:8080").is_err());
-        assert!(checked_api_url("").is_err());
-    }
-
-    #[test]
-    fn rejects_bind_addresses_without_a_usable_port() {
-        assert!(checked_bind_addr("0.0.0.0").is_err());
-        assert!(checked_bind_addr("0.0.0.0:0").is_err());
-        assert!(checked_bind_addr("0.0.0.0:not-a-port").is_err());
-        assert!(checked_bind_addr(":8090").is_err());
-        assert!(checked_bind_addr("0.0.0.0 :8090").is_err());
-    }
 
     #[test]
     fn bearer_parsing_accepts_only_a_well_formed_bearer_header() {
@@ -637,14 +405,14 @@ mod tests {
 #[cfg(test)]
 mod sse_delivery_tests {
     use super::{CallerToken, MessagesQuery, SseServerEvent, SseState, handle_sse_message};
-    use crate::client::{ClientConfig, OpenPrClient};
-    use crate::protocol::JsonRpcRequest;
     use axum::{
         Extension, Json,
         extract::{Query, State},
         http::StatusCode,
         response::IntoResponse,
     };
+    use mcp_server::client::{ClientConfig, OpenPrClient};
+    use mcp_server::protocol::JsonRpcRequest;
     use platform::config::Secret;
     use serde_json::json;
     use std::collections::HashMap;

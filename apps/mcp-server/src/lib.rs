@@ -2,6 +2,7 @@
 pub mod protocol;
 pub mod server;
 
+pub mod cli;
 pub mod cli_app;
 pub mod client;
 pub mod tools;

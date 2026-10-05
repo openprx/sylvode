@@ -1,16 +1,37 @@
+//! The workspace command groups shared by the `mcp-server` and `sylvode` executables.
+//!
+//! `projects`, `work-items`, `comments`, `labels`, `sprints`, `search`, `files`,
+//! `operation-logs` and `tools` are defined exactly once, here, as [`BusinessCommands`], and run
+//! by exactly one handler, [`run_business`]. `mcp-server` mounts them beside `serve` through
+//! [`Cli`]; `sylvode` mounts the very same enum through [`BusinessCli`] (ADR-0020 D5). Both
+//! executables therefore parse the same arguments, resolve configuration the same way, print
+//! the same bytes and exit with the same codes for every one of these commands; only the
+//! program name in `--help` differs.
+
 // CLI output functions necessarily use print macros and indexing — allow these for this module.
 #![allow(clippy::print_stdout, clippy::print_stderr, clippy::indexing_slicing)]
 
 use std::path::PathBuf;
 
 use base64::Engine as _;
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use platform::config::McpTransport;
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
+use platform::config::{MCP_BOT_TOKEN_REQUIRED, McpConfig, McpRuntime, McpTransport, OpenPrConfig, Secret};
 use serde_json::{Value, json};
+use uuid::Uuid;
 
-use crate::client::OpenPrClient;
+use crate::client::{ClientConfig, OpenPrClient, TRANSPORT_LABEL_CLI, transport_label};
 use crate::protocol::{CallToolResult, ToolContent};
 use crate::server::McpServer;
+
+/// Tracing target of the MCP server and of the workspace commands, and the scope of the
+/// default `[logging]` filter.
+///
+/// The module path `tracing` stamps on every event is `mcp_server`, so a filter written
+/// against the binary's hyphenated name would silence the whole process.
+pub const SERVICE_NAME: &str = "mcp_server";
+
+/// Configuration key carrying the identity `stdio` and the CLI subcommands act as.
+const BOT_TOKEN_KEY: &str = "mcp.bot_token";
 
 #[derive(Debug, Clone, ValueEnum, Default)]
 pub enum OutputFormat {
@@ -27,6 +48,29 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 
+    #[command(flatten)]
+    pub global: GlobalArgs,
+}
+
+/// The workspace command groups as `sylvode` mounts them: the same [`BusinessCommands`] and
+/// [`GlobalArgs`] as [`Cli`], without `serve`.
+///
+/// Build the parser with [`business_cli_command`], which only adjusts help prose that names
+/// the program.
+#[derive(Debug, Parser)]
+#[command(name = "sylvode", about = "Sylvode workspace commands")]
+#[command(arg_required_else_help = true)]
+pub struct BusinessCli {
+    #[command(subcommand)]
+    pub command: BusinessCommands,
+
+    #[command(flatten)]
+    pub global: GlobalArgs,
+}
+
+/// The options every workspace command and `serve` accept, wherever they appear on the line.
+#[derive(Debug, Args)]
+pub struct GlobalArgs {
     /// Path to the configuration file \[default: config/sylvode.toml; legacy config/openpr.toml fallback\]
     ///
     /// Global because every subcommand needs it: the settings it carries are read before
@@ -59,6 +103,13 @@ pub struct Cli {
 pub enum Commands {
     /// Run the MCP server (default mode)
     Serve(ServeArgs),
+    #[command(flatten)]
+    Business(BusinessCommands),
+}
+
+/// The nine workspace command groups, shared verbatim by `mcp-server` and `sylvode`.
+#[derive(Debug, Subcommand)]
+pub enum BusinessCommands {
     /// Manage projects
     Projects(ProjectsCmd),
     /// Manage work items
@@ -81,6 +132,50 @@ pub enum Commands {
     Tools(ToolsCmd),
 }
 
+/// The top-level names of [`BusinessCommands`], in declaration order.
+pub const BUSINESS_GROUPS: [&str; 9] = [
+    "projects",
+    "work-items",
+    "comments",
+    "labels",
+    "sprints",
+    "search",
+    "files",
+    "operation-logs",
+    "tools",
+];
+
+/// The `sylvode` parser for the workspace command groups.
+///
+/// Identical to [`BusinessCli::command`] except that help prose naming `mcp-server` names
+/// `sylvode` instead, so the only difference between the two executables' help is the program
+/// name (ADR-0020 D5).
+pub fn business_cli_command() -> clap::Command {
+    BusinessCli::command().mut_arg("config", |arg| {
+        let renamed = arg
+            .get_long_help()
+            .map(|help| help.to_string().replace("mcp-server ", "sylvode "));
+        match renamed {
+            Some(help) => arg.long_help(help),
+            None => arg,
+        }
+    })
+}
+
+/// Parses `args` with [`business_cli_command`], exiting the way [`Parser::parse_from`] does on
+/// a usage error or a help request.
+pub fn parse_business_cli<I, T>(args: I) -> BusinessCli
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let mut command = business_cli_command();
+    let mut matches = command.clone().get_matches_from(args);
+    BusinessCli::from_arg_matches_mut(&mut matches)
+        .map_err(|error| error.format(&mut command))
+        .unwrap_or_else(|error| error.exit())
+}
+
 // ---- Serve ----
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -100,10 +195,10 @@ impl From<Transport> for McpTransport {
     }
 }
 
-/// Both fields are optional rather than defaulted by `clap`: a clap default is
-/// indistinguishable from a value the operator typed, so defaulting here would silently
-/// override whatever `[mcp]` says. `None` means "the configuration file decides", and the
-/// file's own fallbacks are `mcp.transport = stdio` and `DEFAULT_MCP_BIND_ADDR`.
+// Both fields are optional rather than defaulted by `clap`: a clap default is
+// indistinguishable from a value the operator typed, so defaulting here would silently
+// override whatever `[mcp]` says. `None` means "the configuration file decides", and the
+// file's own fallbacks are `mcp.transport = stdio` and `DEFAULT_MCP_BIND_ADDR`.
 #[derive(Debug, Args)]
 pub struct ServeArgs {
     /// Transport protocol (overrides `mcp.transport`) \[default: stdio\]
@@ -433,22 +528,182 @@ fn fmt_val(v: &Value) -> String {
 
 // ---- Dispatch ----
 
-pub async fn run_cli_command(command: &Commands, format: &OutputFormat, client: OpenPrClient) -> anyhow::Result<()> {
+/// Runs one workspace command end to end: configuration, identity, the tool call and its
+/// output. The single handler behind every [`BusinessCommands`] variant in both executables.
+pub async fn run_business(global: &GlobalArgs, command: &BusinessCommands) -> anyhow::Result<()> {
+    let mcp = prepare_runtime(global, None)?;
+    // A CLI subcommand is a local process with no caller to act on behalf of, so it speaks to
+    // the API as the configured identity and cannot run without one.
+    let client = build_client(&mcp, Some(configured_bot_token(&mcp)?))?.with_transport_label(TRANSPORT_LABEL_CLI);
+    run_cli_command(command, &global.format, client).await
+}
+
+/// Loads the configuration, installs the logger and layers the command-line overrides onto
+/// `[mcp]`, returning the validated runtime settings.
+///
+/// Shared by `serve` and the workspace commands so that both resolve configuration in exactly
+/// one way.
+pub fn prepare_runtime(global: &GlobalArgs, serve: Option<&ServeArgs>) -> anyhow::Result<McpRuntime> {
+    // The file is the only source of configuration; nothing below reads the environment.
+    let mut config = OpenPrConfig::load(global.config.as_deref())?;
+    // stdio frames JSON-RPC on stdout, so the log stream is reserved to stderr no
+    // matter what the file asks for.
+    platform::logging::init_reserving_stdout(&config.logging, SERVICE_NAME)?;
+
+    apply_cli_overrides(&mut config.mcp, global, serve)?;
+
+    // Lazy validation: `[mcp]` is optional for the other binaries, so the fields this one
+    // cannot run without are reported here, all of them in one pass.
+    Ok(config.mcp_runtime()?)
+}
+
+/// The configured identity, or the refusal that names the key which supplies it.
+///
+/// Reported here rather than at load time because an `http`/`sse` deployment is *expected*
+/// to have no `mcp.bot_token`: it never speaks to the API as itself.
+pub fn configured_bot_token(mcp: &McpRuntime) -> anyhow::Result<Secret> {
+    mcp.bot_token
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("{MCP_BOT_TOKEN_REQUIRED} (missing {BOT_TOKEN_KEY})"))
+}
+
+/// Builds the API client every request of one transport starts from.
+///
+/// `credential` is `None` for the networked transports. That is the structural half of the
+/// invariant this server rests on: there is no server-side identity in the process for a
+/// networked request to fall back to, so a request that somehow reached a tool without a
+/// caller credential fails closed instead of quietly acting as a workspace bot.
+pub fn build_client(mcp: &McpRuntime, credential: Option<Secret>) -> anyhow::Result<OpenPrClient> {
+    OpenPrClient::new(ClientConfig {
+        base_url: mcp.api_url.clone(),
+        credential,
+        workspace_id: mcp.workspace_id.to_string(),
+        transport_label: transport_label(mcp.transport),
+    })
+    .map_err(|e| anyhow::anyhow!(e))
+}
+
+/// Layers the CLI overrides onto the file's `[mcp]` section.
+///
+/// A flag wins over the file: the file is the deployment's configuration, a flag is a
+/// deliberate one-off. A value that arrives through a flag has not passed the file's
+/// validation, so it is checked here — against the same rules, reported against the flag
+/// that carried it. Values that came from the file are left alone: they are already
+/// validated, and checking them twice is how one bad value grows two different messages.
+fn apply_cli_overrides(mcp: &mut McpConfig, global: &GlobalArgs, serve: Option<&ServeArgs>) -> anyhow::Result<()> {
+    if let Some(api_url) = global.api_url.as_deref() {
+        mcp.api_url = Some(checked_api_url(api_url)?);
+    }
+    if let Some(bot_token) = global.bot_token.as_deref() {
+        mcp.bot_token = Some(checked_bot_token(bot_token)?);
+    }
+    if let Some(workspace_id) = global.workspace_id.as_deref() {
+        mcp.workspace_id = Some(checked_workspace_id(workspace_id)?);
+    }
+    if let Some(serve) = serve {
+        if let Some(transport) = serve.transport {
+            mcp.transport = transport.into();
+        }
+        if let Some(bind_addr) = serve.bind_addr.as_deref() {
+            mcp.bind_addr = Some(checked_bind_addr(bind_addr)?);
+        }
+    }
+    Ok(())
+}
+
+/// Validates an `--api-url`, mirroring the rules `mcp.api_url` is held to.
+fn checked_api_url(value: &str) -> anyhow::Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.contains("${") {
+        anyhow::bail!("--api-url must be a concrete URL, not a placeholder");
+    }
+    let parsed =
+        reqwest::Url::parse(trimmed).map_err(|error| anyhow::anyhow!("--api-url is not a valid URL: {error}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        anyhow::bail!("--api-url must start with http:// or https://");
+    }
+    if parsed.host_str().is_none_or(str::is_empty) {
+        anyhow::bail!("--api-url names no host");
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Validates a `--bot-token`, mirroring the rules `mcp.bot_token` is held to.
+///
+/// The token itself is never echoed, not even its prefix.
+fn checked_bot_token(value: &str) -> anyhow::Result<Secret> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.contains("${") || trimmed.contains("replace_with") {
+        anyhow::bail!("--bot-token must be a concrete bot token");
+    }
+    if !trimmed.starts_with("opr_") {
+        anyhow::bail!("--bot-token must use the opr_ token prefix");
+    }
+    Ok(Secret::new(trimmed))
+}
+
+/// Validates a `--workspace-id`, mirroring the rules `mcp.workspace_id` is held to.
+fn checked_workspace_id(value: &str) -> anyhow::Result<Uuid> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.contains("${") || trimmed.contains("replace_with") {
+        anyhow::bail!("--workspace-id must be a concrete UUID, not a placeholder");
+    }
+    let parsed =
+        Uuid::parse_str(trimmed).map_err(|error| anyhow::anyhow!("--workspace-id is not a valid UUID: {error}"))?;
+    if parsed.is_nil() {
+        anyhow::bail!("--workspace-id must not be the nil UUID placeholder");
+    }
+    Ok(parsed)
+}
+
+/// Validates a `--bind-addr`, mirroring the rules `mcp.bind_addr` is held to.
+///
+/// A host without a port is refused rather than completed with one: an invented port would
+/// put the listener somewhere the operator did not ask for and did not publish.
+fn checked_bind_addr(value: &str) -> anyhow::Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.contains("${") {
+        anyhow::bail!("--bind-addr must be a concrete host:port, not a placeholder");
+    }
+    if trimmed.chars().any(char::is_whitespace) {
+        anyhow::bail!("--bind-addr must not contain whitespace");
+    }
+    let (host, port) = split_host_port(trimmed)
+        .ok_or_else(|| anyhow::anyhow!("--bind-addr must be host:port, e.g. 127.0.0.1:8090"))?;
+    if host.is_empty() {
+        anyhow::bail!("--bind-addr names no host");
+    }
+    match port.parse::<u16>() {
+        Ok(0) | Err(_) => anyhow::bail!("--bind-addr has an invalid port {port}, expected 1-65535"),
+        Ok(_) => Ok(trimmed.to_string()),
+    }
+}
+
+/// Splits an authority into host and port, tolerating a bracketed IPv6 literal.
+fn split_host_port(authority: &str) -> Option<(&str, &str)> {
+    if let Some(end) = authority.rfind(']') {
+        let port = authority.get(end + 1..)?.strip_prefix(':')?;
+        return Some((authority.get(..=end)?, port));
+    }
+    authority.rsplit_once(':')
+}
+
+async fn run_cli_command(
+    command: &BusinessCommands,
+    format: &OutputFormat,
+    client: OpenPrClient,
+) -> anyhow::Result<()> {
     let server = McpServer::new(client);
 
     // Files upload requires async disk I/O before calling execute_tool, handle it separately
-    if let Commands::Files(files_cmd) = command {
+    if let BusinessCommands::Files(files_cmd) = command {
         let result = run_file_upload(files_cmd, &server).await?;
         print_result(format, &result);
         return Ok(());
     }
 
     let (tool_name, args): (&str, Value) = match command {
-        // `serve` is dispatched by `main` before this function is reached; reporting the
-        // mistake is an error return, never a panic.
-        Commands::Serve(_) => anyhow::bail!("serve is not a tool call and is handled before run_cli_command"),
-
-        Commands::Projects(cmd) => match &cmd.action {
+        BusinessCommands::Projects(cmd) => match &cmd.action {
             ProjectsAction::List => ("projects.list", json!({})),
             ProjectsAction::Get { id } => ("projects.get", json!({ "project_id": id })),
             ProjectsAction::Create { name, description } => {
@@ -460,7 +715,7 @@ pub async fn run_cli_command(command: &Commands, format: &OutputFormat, client: 
             }
         },
 
-        Commands::WorkItems(cmd) => match &cmd.action {
+        BusinessCommands::WorkItems(cmd) => match &cmd.action {
             WorkItemsAction::List { project, state } => {
                 let mut args = json!({ "project_id": project });
                 if let Some(s) = state {
@@ -515,7 +770,7 @@ pub async fn run_cli_command(command: &Commands, format: &OutputFormat, client: 
             }
         },
 
-        Commands::Comments(cmd) => match &cmd.action {
+        BusinessCommands::Comments(cmd) => match &cmd.action {
             CommentsAction::List { work_item } => ("comments.list", json!({ "work_item_id": work_item })),
             CommentsAction::Create { work_item, content } => (
                 "comments.create",
@@ -523,23 +778,23 @@ pub async fn run_cli_command(command: &Commands, format: &OutputFormat, client: 
             ),
         },
 
-        Commands::Labels(cmd) => match &cmd.action {
+        BusinessCommands::Labels(cmd) => match &cmd.action {
             LabelsAction::List { project } => project.as_ref().map_or_else(
                 || ("labels.list", json!({})),
                 |pid| ("labels.list_by_project", json!({ "project_id": pid })),
             ),
         },
 
-        Commands::Sprints(cmd) => match &cmd.action {
+        BusinessCommands::Sprints(cmd) => match &cmd.action {
             SprintsAction::List { project } => ("sprints.list", json!({ "project_id": project })),
         },
 
-        Commands::Search(search_args) => ("search.all", json!({ "query": search_args.query })),
+        BusinessCommands::Search(search_args) => ("search.all", json!({ "query": search_args.query })),
 
         // Files is handled above via `run_file_upload`, which returns before this match.
-        Commands::Files(_) => anyhow::bail!("files is handled by run_file_upload before this match"),
+        BusinessCommands::Files(_) => anyhow::bail!("files is handled by run_file_upload before this match"),
 
-        Commands::OperationLogs(cmd) => match &cmd.action {
+        BusinessCommands::OperationLogs(cmd) => match &cmd.action {
             OperationLogsAction::List {
                 bot_id,
                 tool_name,
@@ -564,7 +819,7 @@ pub async fn run_cli_command(command: &Commands, format: &OutputFormat, client: 
             }
         },
 
-        Commands::Tools(cmd) => match &cmd.action {
+        BusinessCommands::Tools(cmd) => match &cmd.action {
             ToolsAction::Call { name, args_json } => (name.as_str(), parse_tool_args_json(args_json)?),
         },
     };
@@ -612,8 +867,13 @@ async fn run_file_upload(cmd: &FilesCmd, server: &McpServer) -> anyhow::Result<C
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, McpTransport, OperationLogsAction, ToolsAction, Transport, parse_tool_args_json};
-    use clap::Parser;
+    use super::{
+        BUSINESS_GROUPS, BusinessCli, BusinessCommands, Cli, Commands, McpTransport, OperationLogsAction, ToolsAction,
+        Transport, business_cli_command, checked_api_url, checked_bind_addr, checked_bot_token, checked_workspace_id,
+        parse_tool_args_json,
+    };
+    use clap::{CommandFactory, Parser};
+    use platform::config::DEFAULT_MCP_API_URL;
     use serde_json::json;
 
     #[test]
@@ -630,7 +890,7 @@ mod tests {
         .expect("generic tools call command should parse");
 
         match cli.command {
-            Commands::Tools(cmd) => match cmd.action {
+            Commands::Business(BusinessCommands::Tools(cmd)) => match cmd.action {
                 ToolsAction::Call { name, args_json } => {
                     assert_eq!(name, "forms.list");
                     assert_eq!(
@@ -659,7 +919,7 @@ mod tests {
         .expect("operation log command should parse");
 
         match cli.command {
-            Commands::OperationLogs(command) => match command.action {
+            Commands::Business(BusinessCommands::OperationLogs(command)) => match command.action {
                 OperationLogsAction::List {
                     tool_name,
                     outcome,
@@ -695,7 +955,7 @@ mod tests {
                 assert!(matches!(args.transport, Some(Transport::Http)));
                 assert_eq!(args.bind_addr, None);
             }
-            _ => panic!("expected serve command"),
+            Commands::Business(_) => panic!("expected serve command"),
         }
 
         let bare = Cli::try_parse_from(["mcp-server", "serve"]).expect("bare serve should parse");
@@ -704,7 +964,7 @@ mod tests {
                 assert!(args.transport.is_none());
                 assert!(args.bind_addr.is_none());
             }
-            _ => panic!("expected serve command"),
+            Commands::Business(_) => panic!("expected serve command"),
         }
     }
 
@@ -738,7 +998,7 @@ mod tests {
         ] {
             let cli = Cli::try_parse_from(&args).unwrap_or_else(|error| panic!("{args:?} should parse: {error}"));
             assert_eq!(
-                cli.config.as_deref(),
+                cli.global.config.as_deref(),
                 Some(std::path::Path::new("/etc/openpr.toml")),
                 "{args:?} did not carry the config path"
             );
@@ -750,5 +1010,99 @@ mod tests {
         assert_eq!(McpTransport::from(Transport::Stdio), McpTransport::Stdio);
         assert_eq!(McpTransport::from(Transport::Http), McpTransport::Http);
         assert_eq!(McpTransport::from(Transport::Sse), McpTransport::Sse);
+    }
+
+    /// `BUSINESS_GROUPS` is what `sylvode` routes on, so it has to name exactly the groups the
+    /// shared enum defines, in both parsers, and `serve` must stay `mcp-server`'s alone.
+    #[test]
+    fn the_business_group_list_matches_both_parsers() {
+        let legacy: Vec<String> = Cli::command()
+            .get_subcommands()
+            .map(|command| command.get_name().to_string())
+            .filter(|name| name != "serve")
+            .collect();
+        let sylvode: Vec<String> = BusinessCli::command()
+            .get_subcommands()
+            .map(|command| command.get_name().to_string())
+            .collect();
+        assert_eq!(legacy, BUSINESS_GROUPS);
+        assert_eq!(sylvode, BUSINESS_GROUPS);
+        assert!(Cli::command().find_subcommand("serve").is_some());
+        assert!(BusinessCli::command().find_subcommand("serve").is_none());
+    }
+
+    /// The `sylvode` parser renames the program in help prose and nothing else.
+    #[test]
+    fn the_sylvode_parser_only_renames_the_program_in_the_config_help() {
+        let mut command = business_cli_command();
+        let help = command.render_long_help().to_string();
+        assert!(help.contains("`sylvode projects list --config <path>`"), "{help}");
+        assert!(!help.contains("mcp-server projects list"), "{help}");
+    }
+
+    #[test]
+    fn accepts_concrete_cli_overrides() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(checked_api_url(" http://api:8080 ")?, "http://api:8080");
+        assert_eq!(
+            checked_bot_token("opr_forms_mcp_test_token")?.expose(),
+            "opr_forms_mcp_test_token"
+        );
+        assert_eq!(
+            checked_workspace_id("550e8400-e29b-41d4-a716-446655440000")?.to_string(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(checked_bind_addr("0.0.0.0:8090")?, "0.0.0.0:8090");
+        assert_eq!(checked_bind_addr("[::1]:8090")?, "[::1]:8090");
+        Ok(())
+    }
+
+    #[test]
+    fn the_api_url_default_still_targets_the_compose_api_port() {
+        assert_eq!(DEFAULT_MCP_API_URL, "http://localhost:8081");
+    }
+
+    /// The shell templates a compose file used to interpolate are values, not configuration:
+    /// reaching the process unexpanded means the deployment is broken, so they are refused
+    /// rather than used as a hostname or a token.
+    #[test]
+    fn rejects_unexpanded_shell_templates_on_the_command_line() {
+        assert!(checked_api_url("${OPENPR_API_URL:-http://api:8080}").is_err());
+        assert!(checked_bot_token("${OPENPR_BOT_TOKEN:?set OPENPR_BOT_TOKEN}").is_err());
+        assert!(checked_workspace_id("${OPENPR_WORKSPACE_ID:?set OPENPR_WORKSPACE_ID}").is_err());
+        assert!(checked_bind_addr("${OPENPR_MCP_BIND_ADDR}").is_err());
+    }
+
+    #[test]
+    fn rejects_placeholder_token_and_nil_workspace_on_the_command_line() {
+        assert!(checked_bot_token("opr_replace_with_workspace_bot_token").is_err());
+        assert!(checked_bot_token("some_other_prefix_token").is_err());
+        assert!(checked_bot_token("").is_err());
+        assert!(checked_workspace_id("00000000-0000-0000-0000-000000000000").is_err());
+        assert!(checked_workspace_id("not-a-uuid").is_err());
+    }
+
+    /// A `--bot-token` failure must not print the token it rejected.
+    #[test]
+    fn a_rejected_bot_token_is_never_echoed() {
+        let Err(error) = checked_bot_token("nope_secret_material_here") else {
+            panic!("a token without the opr_ prefix must be refused");
+        };
+        assert!(!error.to_string().contains("secret_material"), "{error}");
+    }
+
+    #[test]
+    fn rejects_api_urls_that_are_not_absolute_http_urls() {
+        assert!(checked_api_url("ftp://api:8080").is_err());
+        assert!(checked_api_url("api:8080").is_err());
+        assert!(checked_api_url("").is_err());
+    }
+
+    #[test]
+    fn rejects_bind_addresses_without_a_usable_port() {
+        assert!(checked_bind_addr("0.0.0.0").is_err());
+        assert!(checked_bind_addr("0.0.0.0:0").is_err());
+        assert!(checked_bind_addr("0.0.0.0:not-a-port").is_err());
+        assert!(checked_bind_addr(":8090").is_err());
+        assert!(checked_bind_addr("0.0.0.0 :8090").is_err());
     }
 }
