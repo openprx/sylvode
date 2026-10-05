@@ -624,7 +624,7 @@ pub async fn run_business(global: &GlobalArgs, command: &BusinessCommands) -> an
 /// "Transport → actor/origin"): `tools call` is the `cli_tools_call` escape hatch, every native
 /// command is `cli`. The API binds a bot token to one surface, so a token made for `cli` does not
 /// serve `tools call` and the other way round.
-fn business_transport_label(command: &BusinessCommands) -> &'static str {
+const fn business_transport_label(command: &BusinessCommands) -> &'static str {
     match command {
         BusinessCommands::Tools(_) => TRANSPORT_LABEL_CLI_TOOLS_CALL,
         BusinessCommands::Projects(_)
