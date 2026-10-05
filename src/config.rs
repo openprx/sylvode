@@ -12,6 +12,10 @@ pub struct Config {
     pub tunnel: Option<TunnelConfig>,
     #[serde(default)]
     pub agents: Vec<AgentConfig>,
+    /// Safe mode, resolved once at start-up from `SYLVODE_WEBHOOK_SAFE_MODE` (or the legacy
+    /// `OPENPR_WEBHOOK_SAFE_MODE`). Not read from the file.
+    #[serde(skip)]
+    pub safe_mode: bool,
 }
 
 #[derive(Deserialize, Clone, Debug, Default)]
@@ -207,23 +211,16 @@ impl Config {
         toml::from_str(&content).map_err(|e| format!("failed to parse config: {e}"))
     }
 
-    pub fn safe_mode_enabled() -> bool {
-        std::env::var("OPENPR_WEBHOOK_SAFE_MODE").is_ok_and(|v| {
-            let normalized = v.trim().to_ascii_lowercase();
-            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-        })
+    pub const fn cli_enabled(&self) -> bool {
+        !self.safe_mode && self.features.cli_enabled
     }
 
-    pub fn cli_enabled(&self) -> bool {
-        !Self::safe_mode_enabled() && self.features.cli_enabled
-    }
-
-    pub fn callback_enabled(&self) -> bool {
-        !Self::safe_mode_enabled() && self.features.callback_enabled
+    pub const fn callback_enabled(&self) -> bool {
+        !self.safe_mode && self.features.callback_enabled
     }
 
     pub fn tunnel_enabled(&self) -> bool {
-        !Self::safe_mode_enabled() && self.features.tunnel_enabled && self.tunnel.as_ref().is_some_and(|t| t.enabled)
+        !self.safe_mode && self.features.tunnel_enabled && self.tunnel.as_ref().is_some_and(|t| t.enabled)
     }
 }
 
@@ -265,6 +262,33 @@ callback_url = "http://127.0.0.1:8090/mcp/rpc"
         assert!(!cfg.features.cli_enabled);
         assert_eq!(cfg.runtime.http_timeout_secs, 15);
         assert_eq!(cfg.runtime.cli_max_concurrency, 1);
+    }
+
+    #[test]
+    fn safe_mode_turns_every_gated_path_off() {
+        let toml = r#"
+[server]
+listen = "0.0.0.0:9090"
+
+[security]
+allow_unsigned = true
+
+[features]
+tunnel_enabled = true
+cli_enabled = true
+callback_enabled = true
+
+[tunnel]
+enabled = true
+"#;
+        let mut cfg: Config = toml::from_str(toml).expect("should parse config");
+        assert!(!cfg.safe_mode, "safe mode is never read from the file");
+        assert!(cfg.cli_enabled() && cfg.callback_enabled() && cfg.tunnel_enabled());
+
+        cfg.safe_mode = true;
+        assert!(!cfg.cli_enabled());
+        assert!(!cfg.callback_enabled());
+        assert!(!cfg.tunnel_enabled());
     }
 
     #[test]
