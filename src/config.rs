@@ -208,7 +208,7 @@ impl Config {
     }
 
     pub fn safe_mode_enabled() -> bool {
-        std::env::var("OPENPR_WEBHOOK_SAFE_MODE").ok().is_some_and(|v| {
+        std::env::var("OPENPR_WEBHOOK_SAFE_MODE").is_ok_and(|v| {
             let normalized = v.trim().to_ascii_lowercase();
             matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
         })
