@@ -1,0 +1,196 @@
+use crate::{AppState, compat, config, handler, tunnel};
+use axum::{
+    Router,
+    routing::{get, post},
+};
+use std::ffi::OsString;
+use std::io::Write;
+use std::process::ExitCode;
+use std::sync::Arc;
+use tower_http::trace::TraceLayer;
+
+const DEFAULT_CONFIG_PATH: &str = "config.toml";
+const DEFAULT_LOG_FILTER: &str = "sylvode_webhook=info";
+
+/// Help text. It names the canonical executable whichever name the process was started under,
+/// so stdout is byte-for-byte identical for both names.
+const HELP: &str = "\
+Sylvode Webhook (formerly OpenPR Webhook): receives Sylvode webhook deliveries and dispatches them to agents.
+
+Usage: sylvode-webhook [CONFIG]
+       sylvode-webhook --help | --version
+
+Arguments:
+  [CONFIG]       Path to the TOML configuration file [default: config.toml]
+
+Options:
+  -h, --help     Print this help and exit
+  -V, --version  Print the version and exit
+
+The legacy executable name openpr-webhook runs the same program and is not removed before v2.0.
+";
+
+#[derive(Debug, PartialEq, Eq)]
+enum Command {
+    Help,
+    Version,
+    Serve { config_path: String },
+}
+
+fn parse_command(first_arg: Option<OsString>) -> Result<Command, String> {
+    let Some(arg) = first_arg else {
+        return Ok(Command::Serve {
+            config_path: DEFAULT_CONFIG_PATH.to_string(),
+        });
+    };
+    let arg = arg
+        .into_string()
+        .map_err(|raw| format!("config path is not valid UTF-8: {}", raw.to_string_lossy()))?;
+    Ok(match arg.as_str() {
+        "-h" | "--help" => Command::Help,
+        "-V" | "--version" => Command::Version,
+        _ => Command::Serve { config_path: arg },
+    })
+}
+
+fn version_line() -> String {
+    format!("{} {}\n", compat::CANONICAL_NAME, env!("CARGO_PKG_VERSION"))
+}
+
+fn write_stdout(text: &str) -> ExitCode {
+    let mut stdout = std::io::stdout().lock();
+    if stdout.write_all(text.as_bytes()).and_then(|()| stdout.flush()).is_ok() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn write_stderr_line(text: &str) {
+    let mut stderr = std::io::stderr().lock();
+    // Nothing else is left to report a failed write on.
+    let _ = writeln!(stderr, "{text}");
+}
+
+/// Runs the service. Both executables call this; `invocation` only decides whether the
+/// deprecation notice for the legacy executable name is written.
+pub fn run(invocation: compat::Invocation) -> ExitCode {
+    if invocation == compat::Invocation::Legacy {
+        compat::warn_once(compat::LegacyEntry::ExecutableName);
+    }
+
+    let command = match parse_command(std::env::args_os().nth(1)) {
+        Ok(command) => command,
+        Err(e) => {
+            write_stderr_line(&format!("error: {e}"));
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match command {
+        Command::Help => write_stdout(HELP),
+        Command::Version => write_stdout(&version_line()),
+        Command::Serve { config_path } => serve_blocking(&config_path),
+    }
+}
+
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| DEFAULT_LOG_FILTER.into());
+    if let Err(e) = tracing_subscriber::fmt().with_env_filter(filter).try_init() {
+        write_stderr_line(&format!("error: failed to initialise logging: {e}"));
+    }
+}
+
+fn serve_blocking(config_path: &str) -> ExitCode {
+    init_tracing();
+
+    let config = match config::Config::load(config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("failed to load config from {config_path}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            tracing::error!("failed to start the async runtime: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    runtime.block_on(serve(config))
+}
+
+async fn serve(config: config::Config) -> ExitCode {
+    let listen = config.server.listen.clone();
+    tracing::info!("Loaded {} agent(s)", config.agents.len());
+
+    let state = Arc::new(AppState { config });
+
+    let tunnel_state = Arc::new(state.config.clone());
+    if tunnel_state.tunnel_enabled() {
+        tokio::spawn(async move {
+            tunnel::run_tunnel_loop(tunnel_state).await;
+        });
+    } else {
+        tracing::info!("tunnel subsystem disabled (feature flag or safe mode)");
+    }
+
+    let app = Router::new()
+        .route("/webhook", post(handler::handle_webhook))
+        .route("/health", get(|| async { "ok" }))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state);
+
+    tracing::info!("{} listening on {listen}", compat::CANONICAL_NAME);
+    let listener = match tokio::net::TcpListener::bind(&listen).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("failed to bind {listen}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!("server error: {e}");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_argument_serves_the_default_config() {
+        assert_eq!(
+            parse_command(None),
+            Ok(Command::Serve {
+                config_path: "config.toml".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn flags_and_paths_are_told_apart() {
+        assert_eq!(parse_command(Some("--help".into())), Ok(Command::Help));
+        assert_eq!(parse_command(Some("-h".into())), Ok(Command::Help));
+        assert_eq!(parse_command(Some("--version".into())), Ok(Command::Version));
+        assert_eq!(parse_command(Some("-V".into())), Ok(Command::Version));
+        assert_eq!(
+            parse_command(Some("/etc/sylvode-webhook/config.toml".into())),
+            Ok(Command::Serve {
+                config_path: "/etc/sylvode-webhook/config.toml".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn version_line_uses_the_canonical_name_and_crate_version() {
+        assert_eq!(
+            version_line(),
+            format!("sylvode-webhook {}\n", env!("CARGO_PKG_VERSION"))
+        );
+    }
+}
