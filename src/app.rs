@@ -94,23 +94,55 @@ pub fn run(invocation: compat::Invocation) -> ExitCode {
     }
 }
 
-fn init_tracing() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| DEFAULT_LOG_FILTER.into());
+/// Sets up logging from `RUST_LOG`, honouring directives for the legacy `openpr_webhook` target.
+fn init_tracing() -> Result<(), String> {
+    let resolved = compat::resolve_log_filter(std::env::var("RUST_LOG").ok().as_deref())?;
+    if resolved.used_legacy {
+        compat::warn_once(compat::LegacyEntry::LogTarget);
+    }
+    let filter = resolved
+        .value
+        .and_then(|directives| tracing_subscriber::EnvFilter::try_new(directives).ok())
+        .unwrap_or_else(|| DEFAULT_LOG_FILTER.into());
     if let Err(e) = tracing_subscriber::fmt().with_env_filter(filter).try_init() {
         write_stderr_line(&format!("error: failed to initialise logging: {e}"));
     }
+    Ok(())
+}
+
+fn resolve_safe_mode() -> Result<bool, String> {
+    let canonical = std::env::var(compat::SAFE_MODE_ENV).ok();
+    let legacy = std::env::var(compat::LEGACY_SAFE_MODE_ENV).ok();
+    let resolved = compat::resolve_safe_mode(canonical.as_deref(), legacy.as_deref())?;
+    if resolved.used_legacy {
+        compat::warn_once(compat::LegacyEntry::SafeModeEnv);
+    }
+    Ok(resolved.value)
 }
 
 fn serve_blocking(config_path: &str) -> ExitCode {
-    init_tracing();
+    // Logging is not up yet when its own configuration is refused, so that error goes to stderr.
+    if let Err(e) = init_tracing() {
+        write_stderr_line(&format!("error: {e}"));
+        return ExitCode::FAILURE;
+    }
 
-    let config = match config::Config::load(config_path) {
+    let safe_mode = match resolve_safe_mode() {
+        Ok(safe_mode) => safe_mode,
+        Err(e) => {
+            tracing::error!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut config = match config::Config::load(config_path) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("failed to load config from {config_path}: {e}");
             return ExitCode::FAILURE;
         }
     };
+    config.safe_mode = safe_mode;
 
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(runtime) => runtime,
