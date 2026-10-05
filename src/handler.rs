@@ -199,13 +199,14 @@ pub async fn handle_webhook(
                 return Err(StatusCode::UNAUTHORIZED);
             }
         };
-        if inbound.used_legacy_header {
-            compat::warn_once(compat::LegacyEntry::SignatureHeader);
-        }
         let sig = inbound.value.unwrap_or_default();
         if !signature::verify_signature(body.as_bytes(), &sig, &state.config.security.webhook_secrets) {
             tracing::warn!("Invalid webhook signature");
             return Err(StatusCode::UNAUTHORIZED);
+        }
+        // Only a verified request may use up the once-per-process notice.
+        if inbound.used_legacy_header {
+            compat::warn_once(compat::LegacyEntry::SignatureHeader);
         }
     }
 

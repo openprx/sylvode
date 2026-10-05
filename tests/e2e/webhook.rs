@@ -88,3 +88,33 @@ async fn the_answer_does_not_echo_command_output() {
         assert!(!answer.to_string().contains("-detail"), "{bot}: {answer}");
     }
 }
+
+/// The once-per-process notice for the legacy signature header is written only for a request
+/// that passed verification, so an unauthenticated peer cannot use it up.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_legacy_header_notice_needs_a_verified_request() {
+    use crate::support::{post_with, sign};
+
+    let mut server = Server::start(CANONICAL, &config(), &[]).expect("server starts");
+    let body = bot_task("Nobody", "legacy").to_string();
+    let bad = sign(&body, "not-the-secret");
+    let (status, _) = post_with(&server.url("/webhook"), &body, &[("x-openpr-signature", &bad)]).await;
+    assert_eq!(status, 401);
+    server.terminate();
+    let (_, stderr) = server.wait_exit(std::time::Duration::from_secs(10)).expect("exits");
+    assert!(stderr.is_empty(), "an unverified request wrote the notice: {stderr:?}");
+
+    let mut server = Server::start(CANONICAL, &config(), &[]).expect("server starts");
+    let good = sign(&body, SECRET);
+    let (status, _) = post_with(&server.url("/webhook"), &body, &[("x-openpr-signature", &good)]).await;
+    assert_eq!(status, 200);
+    server.terminate();
+    let (_, stderr) = server.wait_exit(std::time::Duration::from_secs(10)).expect("exits");
+    assert_eq!(stderr.len(), 1, "{stderr:?}");
+    assert!(
+        stderr
+            .iter()
+            .all(|line| line.contains("`x-openpr-signature` is deprecated")),
+        "{stderr:?}"
+    );
+}
