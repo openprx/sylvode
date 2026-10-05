@@ -1,0 +1,32 @@
+{
+  "comment": "The configuration keys the api, worker and mcp-server binaries accept (crates/platform/src/config/raw.rs; every section denies unknown keys). Read by scripts/start.sh --check-config. The platform test config::schema_tests compares this file with the Rust types and fails when either side gains or loses a key.",
+  "sections": {
+    "server": ["app_name", "bind_addr"],
+    "database": [
+      "url",
+      "max_connections",
+      "min_connections",
+      "connect_timeout_seconds",
+      "idle_timeout_seconds",
+      "acquire_timeout_seconds"
+    ],
+    "auth": [
+      "jwt_secret",
+      "access_ttl_seconds",
+      "refresh_ttl_seconds",
+      "default_author_id",
+      "allow_insecure_cookies"
+    ],
+    "logging": ["filter", "format", "output"],
+    "storage": ["backend", "dir", "s3"],
+    "storage.s3": ["endpoint", "bucket", "region", "access_key_id", "secret_access_key", "session_token"],
+    "audit": ["operation_log_retention_days"],
+    "migrations": ["replay", "continue_on_error"],
+    "outbound": ["allowed_hosts", "allow_private"],
+    "mcp": ["api_url", "bot_token", "workspace_id", "transport", "bind_addr"],
+    "flow": ["dispatch_max_attempts", "collab_allowed_origins"]
+  },
+  "retired": {
+    "mcp.auth_token": "the shared inbound secret has been removed and the MCP server refuses to start while the key is present. An http/sse caller now presents its own workspace bot token in the Authorization: Bearer opr_... header, which the server forwards to the API unchanged. Fix: delete the auth_token line from the [mcp] section"
+  }
+}

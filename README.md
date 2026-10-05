@@ -61,6 +61,12 @@ Services publish on `${SYLVODE_BIND_HOST:-127.0.0.1}`: frontend `:3000`, API
 aliases to these canonical compose inputs. `bash scripts/start.sh --check-config`
 only generates and validates the configuration, without building or starting
 anything.
+The generated `[flow] collab_allowed_origins` lists the addresses the frontend
+is published at (for the default bind, `http://localhost:3000` and
+`http://127.0.0.1:3000`), so live editing works on first start; replace it with
+the origin users actually open once the frontend is behind a domain or proxy.
+An existing file is never rewritten, and `--check-config` warns when its list is
+empty, which refuses every live-editing session.
 For demo data once healthy, `scripts/bootstrap-restaurant-demo.sh` creates a
 demo account, workspace, `restaurant_ordering_default` project with sample
 records, and a workspace-scoped bot token; it refuses non-local API URLs unless

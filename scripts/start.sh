@@ -131,6 +131,41 @@ if password:
   echo "🔐 Set POSTGRES_PASSWORD in $ENV_FILE (value not printed)."
 fi
 
+# The browser origins the generated stack is reachable at, as a TOML array, for
+# [flow] collab_allowed_origins. An empty list refuses every live-editing session, so a fresh
+# deployment needs the origins its own frontend is served from: the published frontend port on the
+# bind host. A browser sends the port in Origin unless it is the scheme default, and it sends the
+# host exactly as typed, so a loopback bind lists both localhost and 127.0.0.1. A wildcard bind
+# (0.0.0.0 or ::) is reachable at every address of this host, which only the operator can name for
+# certain; it lists loopback plus the host's own IPv4 addresses. Never a wildcard origin.
+collab_origins_toml() {
+  local host="${SYLVODE_BIND_HOST#[}" port="$SYLVODE_FRONTEND_PORT" suffix="" address
+  local -a hosts=()
+  host="${host%]}"
+  [[ "$port" == 80 ]] || suffix=":$port"
+  case "$host" in
+    '' | 0.0.0.0 | '::' | '*')
+      hosts=(localhost 127.0.0.1)
+      if command -v hostname >/dev/null 2>&1; then
+        for address in $(hostname -I 2>/dev/null || true); do
+          [[ "$address" =~ ^[0-9]+(\.[0-9]+){3}$ && "$address" != 127.* ]] && hosts+=("$address")
+        done
+      fi
+      ;;
+    localhost | 127.* | ::1)
+      hosts=(localhost 127.0.0.1)
+      [[ "$host" == ::1 ]] && hosts+=("[::1]")
+      ;;
+    *:*) hosts=("[$host]") ;;
+    *) hosts=("$host") ;;
+  esac
+  local out="" entry
+  for entry in "${hosts[@]}"; do
+    out+="${out:+, }\"http://${entry}${suffix}\""
+  done
+  printf '[%s]' "$out"
+}
+
 # ---------------------------------------------------------------------------------------------
 # config/sylvode.compose.toml — read by the api and the worker (legacy filename is auto-discovered).
 # ---------------------------------------------------------------------------------------------
@@ -192,6 +227,14 @@ continue_on_error = false
 allowed_hosts = ["webhook:9090", "api:8080", "mcp-server:8090", "frontend:80"]
 allow_private = false
 
+[flow]
+# Browser origins allowed to open live-editing (collaboration) sessions. An empty list refuses every
+# session, so these were derived from SYLVODE_BIND_HOST and SYLVODE_FRONTEND_PORT: the addresses
+# this stack's frontend is published at. REPLACE THEM with the origin your users actually type
+# (for example "https://sylvode.example.com") as soon as the frontend sits behind a domain or a
+# reverse proxy. Exact scheme://host[:port] literals only; there are no wildcards.
+collab_allowed_origins = $(collab_origins_toml)
+
 EOF
   # 0644, not 0600: the containers run as their own uid and a rootless runtime maps the
   # host owner to a different one inside, so an owner-only file is unreadable there.
@@ -251,7 +294,9 @@ fi
 # Validation. Mirrors crates/platform/src/config/raw.rs so a bad file is reported here rather than
 # as a container that exits during \`compose up\`. Nothing below prints a value.
 # ---------------------------------------------------------------------------------------------
-if ! OPENPR_APP_CONFIG="$APP_CONFIG" OPENPR_MCP_CONFIG="$MCP_CONFIG" OPENPR_ENV_FILE="$ENV_FILE" python3 -c '
+if ! OPENPR_APP_CONFIG="$APP_CONFIG" OPENPR_MCP_CONFIG="$MCP_CONFIG" OPENPR_ENV_FILE="$ENV_FILE" \
+  SYLVODE_CONFIG_SCHEMA="$PROJECT_ROOT/scripts/lib/sylvode_config_schema.json" python3 -c '
+import json
 import os
 import re
 import sys
@@ -259,47 +304,25 @@ import tomllib
 from urllib.parse import urlsplit, unquote
 
 # The key sets accepted by crates/platform/src/config/raw.rs. Every Raw* struct carries
-# deny_unknown_fields, so a misspelled key is a hard startup failure rather than a default.
-SCHEMA = {
-    "server": {"app_name", "bind_addr"},
-    "database": {
-        "url",
-        "max_connections",
-        "min_connections",
-        "connect_timeout_seconds",
-        "idle_timeout_seconds",
-        "acquire_timeout_seconds",
-    },
-    "auth": {"jwt_secret", "access_ttl_seconds", "refresh_ttl_seconds", "default_author_id"},
-    "logging": {"filter", "format", "output"},
-    "storage": {"backend", "dir", "s3"},
-    "migrations": {"replay", "continue_on_error"},
-    "outbound": {"allowed_hosts", "allow_private"},
-    "mcp": {
-        "api_url",
-        "bot_token",
-        "workspace_id",
-        "transport",
-        "bind_addr",
-    },
-}
-# Keys the binaries used to accept and now reject outright. A file that still carries one is not a
-# file with a stale comment in it: the process refuses to start, so this has to be reported as the
-# removal it is, with the edit that fixes it, rather than as a generic unknown key.
-RETIRED = {
-    ("mcp", "auth_token"): (
-        "the shared inbound secret has been removed and the MCP server refuses to start while the key "
-        "is present. An http/sse caller now presents its own workspace bot token in the "
-        "Authorization: Bearer opr_... header, which the server forwards to the API unchanged. "
-        "Fix: delete the auth_token line from the [mcp] section"
-    ),
-}
-S3_KEYS = {"endpoint", "bucket", "region", "access_key_id", "secret_access_key", "session_token"}
+# deny_unknown_fields, so a misspelled key is a hard startup failure rather than a default. The
+# table lives in scripts/lib/sylvode_config_schema.json, which a platform test compares with the
+# Rust types, so a key the binaries accept cannot be refused here (or the other way round).
+# Keys the binaries used to accept and now reject outright are listed there as "retired": a file
+# that still carries one is not a file with a stale comment in it, the process refuses to start,
+# so it is reported as the removal it is, with the edit that fixes it.
+with open(os.environ["SYLVODE_CONFIG_SCHEMA"], "r", encoding="utf-8") as handle:
+    _schema = json.load(handle)
+SCHEMA = {name: set(keys) for name, keys in _schema["sections"].items() if "." not in name}
+S3_KEYS = set(_schema["sections"]["storage.s3"])
+RETIRED = {tuple(dotted.split(".", 1)): why for dotted, why in _schema["retired"].items()}
 PLACEHOLDERS = ("${", "replace_with", "change-me-in-production")
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
+ORIGIN_RE = re.compile(r"^https?://(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(:[0-9]{1,5})?$")
 
 issues = []
+# Valid but almost certainly not what the operator wants; printed, never fatal.
+warnings = []
 
 
 def load(path, label):
@@ -374,6 +397,24 @@ if app is not None:
                     f"{label}: outbound.allowed_hosts entry {entry!r} must be a host or host:port"
                 )
 
+    origins = get(app, "flow", "collab_allowed_origins")
+    if origins is not None and not isinstance(origins, list):
+        issues.append(f"{label}: flow.collab_allowed_origins must be an array of origins")
+    elif not origins:
+        warnings.append(
+            f"{label}: [flow] collab_allowed_origins is empty, so the api refuses every live-editing "
+            "(collaboration) session and Flow pages open without live editing. List the origin "
+            "users reach the frontend at, for example collab_allowed_origins = "
+            "[\"http://localhost:3000\"] or [\"https://sylvode.example.com\"]"
+        )
+    else:
+        for entry in origins:
+            if not isinstance(entry, str) or not ORIGIN_RE.match(entry.strip()):
+                issues.append(
+                    f"{label}: flow.collab_allowed_origins entry {entry!r} must be "
+                    "http(s)://host[:port] with no path and no wildcard"
+                )
+
 if mcp is not None:
     label = "mcp config"
     check_keys(mcp, label, mcp_path)
@@ -424,6 +465,9 @@ elif app is not None:
                 "the password in database.url does not match POSTGRES_PASSWORD in .env; "
                 "postgres would reject every connection"
             )
+
+for warning in warnings:
+    print(f"⚠️  {warning}", file=sys.stderr)
 
 if issues:
     for issue in issues:
