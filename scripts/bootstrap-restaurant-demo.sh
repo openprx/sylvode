@@ -251,7 +251,12 @@ async function tokenCanAccessWorkspace(botToken, workspaceId) {
     `/api/v1/workspaces/${workspaceId}/projects`,
     undefined,
     botToken,
-    { 'X-OpenPR-MCP-Surface': 'mcp_http', 'X-OpenPR-MCP-Tool': 'projects.list' },
+    {
+      'X-Sylvode-MCP-Surface': 'mcp_http',
+      'X-Sylvode-MCP-Tool': 'projects.list',
+      'X-OpenPR-MCP-Surface': 'mcp_http',
+      'X-OpenPR-MCP-Tool': 'projects.list',
+    },
   );
   return result.response.ok && result.payload?.code === 0;
 }

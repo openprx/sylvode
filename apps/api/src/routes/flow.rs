@@ -630,8 +630,8 @@ pub async fn post_flow_conversion_retry(
 /// REST-returning helper here. That was only half a fix, and the contract now says so in as many
 /// words: "把 surface 变成一个参数**并不等于**修好了它——如果 handler 仍然无条件填一个常量，只是把
 /// 写死从 producer 挪到了 route 层". `flow.feature_set` is a **registered, in-use MCP tool**
-/// (`apps/mcp-server/src/tools/mod.rs`) whose client already sends `X-OpenPR-MCP-Surface` and
-/// `X-OpenPR-MCP-Tool` (`apps/mcp-server/src/client/mod.rs`), and `middleware::bot_auth` already
+/// (`apps/mcp-server/src/tools/mod.rs`) whose client already sends `X-Sylvode-MCP-Surface` and
+/// `X-Sylvode-MCP-Tool` (`apps/mcp-server/src/client/mod.rs`), and `middleware::bot_auth` already
 /// parsed both — then spent them on the bot-operation log and dropped them. So every real MCP
 /// call through these routes was still recorded as `rest`. The defect this whole work package
 /// exists to fix was, for the one caller that actually exercises it today, not fixed at all.
@@ -8834,6 +8834,206 @@ mod flow_database_tests {
             "both sides must record one resolved transport"
         );
         assert_eq!(joined.tool_name.as_deref(), Some("flow.object_create"));
+
+        scratch.drop_self().await;
+    }
+
+    /// ADR-0020 D3 through the production `bot_or_user_auth_middleware` and a real
+    /// `workspace_bots` row: the canonical `X-Sylvode-MCP-*` headers, the legacy
+    /// `X-OpenPR-MCP-*` headers (a pre-1.0 `mcp-server` against this API), and both together with
+    /// equal values all reach `business_events.source` with the same attribution; any
+    /// disagreement — across spellings or between repeated occurrences — is refused with the
+    /// envelope's `401` and writes nothing.
+    // The axum route pattern below contains `{workspace_id}`, which is axum's path-parameter
+    // syntax and not a format argument, but is indistinguishable from one to the lint.
+    #[allow(clippy::literal_string_with_formatting_args)]
+    #[tokio::test]
+    async fn mcp_attribution_headers_accept_either_spelling_and_refuse_disagreement() {
+        #[derive(FromQueryResult)]
+        struct SourceRow {
+            source: Value,
+        }
+
+        let scratch = scratch_or_skip!("mcp-attribution-spellings");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, _owner_id) = seed_workspace(&state, true).await;
+
+        let raw_token = format!("opr_{}", Uuid::new_v4().simple());
+        let token_hash = {
+            use sha2::{Digest as _, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(raw_token.as_bytes());
+            format!("{:x}", hasher.finalize())
+        };
+        exec(
+            &state,
+            "INSERT INTO workspace_bots \
+             (id, workspace_id, name, token_hash, token_prefix, permissions, transport_surface, is_active) \
+             VALUES ($1, $2, 'attribution-spellings-bot', $3, $4, '[\"read\",\"write\"]'::jsonb, \
+             'mcp_stdio', true)",
+            vec![
+                Uuid::new_v4().into(),
+                workspace_id.into(),
+                token_hash.into(),
+                raw_token[..8].to_string().into(),
+            ],
+        )
+        .await;
+
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/flow/workspaces/{workspace_id}/objects",
+                axum::routing::post(create_flow_object),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::middleware::bot_auth::bot_or_user_auth_middleware,
+            ))
+            .with_state(state.clone());
+
+        let create = |headers: &'static [(&'static str, &'static str)]| {
+            let app = app.clone();
+            let raw_token = raw_token.clone();
+            async move {
+                use tower::ServiceExt as _;
+                let mut request = axum::http::Request::builder()
+                    .method(axum::http::Method::POST)
+                    .uri(format!("/api/v1/flow/workspaces/{workspace_id}/objects"))
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .header(axum::http::header::AUTHORIZATION, format!("Bearer {raw_token}"));
+                for (name, value) in headers {
+                    request = request.header(*name, *value);
+                }
+                let response = app
+                    .oneshot(
+                        request
+                            .body(axum::body::Body::from(
+                                json!({
+                                    "object_type": "page",
+                                    "title": "Attribution spelling",
+                                    "idempotency_key": Uuid::new_v4().to_string(),
+                                })
+                                .to_string(),
+                            ))
+                            .expect("the request builds"),
+                    )
+                    .await
+                    .expect("the router responds");
+                assert_eq!(response.status(), axum::http::StatusCode::OK);
+                body_json(response).await
+            }
+        };
+
+        let accepted: [(&str, &'static [(&'static str, &'static str)]); 3] = [
+            (
+                "canonical only",
+                &[
+                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
+                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
+                ],
+            ),
+            (
+                "legacy only",
+                &[
+                    ("X-OpenPR-MCP-Surface", "mcp_stdio"),
+                    ("X-OpenPR-MCP-Tool", "flow.object_create"),
+                ],
+            ),
+            (
+                "both equal",
+                &[
+                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
+                    ("X-OpenPR-MCP-Surface", "mcp_stdio"),
+                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
+                    ("X-OpenPR-MCP-Tool", "flow.object_create"),
+                ],
+            ),
+        ];
+        for (case, headers) in accepted {
+            let body = create(headers).await;
+            assert_eq!(body["code"], 0, "{case}: the request must be accepted: {body}");
+            let object_id = body["data"]["object"]["id"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{case}: object id missing: {body}"))
+                .to_string();
+            let event = SourceRow::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT source FROM business_events WHERE workspace_id = $1 AND aggregate_id = $2 \
+                  AND event_type = 'flow.object.created'",
+                vec![workspace_id.into(), object_id.into()],
+            ))
+            .one(&state.db)
+            .await
+            .expect("business_events query runs")
+            .unwrap_or_else(|| panic!("{case}: the create wrote no event"));
+            assert_eq!(event.source["surface"], "mcp_stdio", "{case}: {:?}", event.source);
+            assert_eq!(event.source["tool"], "flow.object_create", "{case}: {:?}", event.source);
+        }
+
+        let events_before = SourceRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT source FROM business_events WHERE workspace_id = $1",
+            vec![workspace_id.into()],
+        ))
+        .all(&state.db)
+        .await
+        .expect("business_events query runs")
+        .len();
+
+        let refused: [(&str, &'static [(&'static str, &'static str)]); 4] = [
+            (
+                "surface spellings disagree",
+                &[
+                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
+                    ("X-OpenPR-MCP-Surface", "mcp_http"),
+                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
+                ],
+            ),
+            (
+                "tool spellings disagree",
+                &[
+                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
+                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
+                    ("X-OpenPR-MCP-Tool", "flow.object_delete"),
+                ],
+            ),
+            (
+                "repeated canonical tool disagrees",
+                &[
+                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
+                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
+                    ("X-Sylvode-MCP-Tool", "flow.object_delete"),
+                ],
+            ),
+            (
+                "repeated legacy surface disagrees",
+                &[
+                    ("X-OpenPR-MCP-Surface", "mcp_stdio"),
+                    ("X-OpenPR-MCP-Surface", "mcp_http"),
+                ],
+            ),
+        ];
+        for (case, headers) in refused {
+            let body = create(headers).await;
+            assert_eq!(body["code"], 401, "{case}: a disagreement must be refused: {body}");
+            assert!(
+                body["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("conflicting MCP attribution headers")),
+                "{case}: {body}"
+            );
+        }
+
+        let events_after = SourceRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT source FROM business_events WHERE workspace_id = $1",
+            vec![workspace_id.into()],
+        ))
+        .all(&state.db)
+        .await
+        .expect("business_events query runs")
+        .len();
+        assert_eq!(events_after, events_before, "a refused request must write no event");
 
         scratch.drop_self().await;
     }
