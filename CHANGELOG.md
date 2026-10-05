@@ -11,6 +11,28 @@ Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are
   removed before Sylvode v2.0" instead of "v2.0". The deprecation window follows the Sylvode
   product's releases, not this crate's version.
 
+### Documentation
+
+The README was checked against the code and the Sylvode API and corrected:
+
+- It listed "proposal submitted" as an event. It now lists the 14 events a Sylvode webhook can
+  subscribe to, and says a delivery carries `bot_context` only when the webhook has a bot user that
+  is assigned to the issue or mentioned in the comment.
+- It promised "multi-agent dispatch". A bot task goes to exactly one agent; the selection order and
+  the route matching rules are now described, including the trigger kind values and which route
+  fields current Sylvode tasks actually carry.
+- It said a tunnel envelope without `sig` is accepted. With `hmac_secret` set, every inbound
+  envelope must carry a valid `sig`; without it, `sig` is not verified and `require_inbound_sig`
+  (now documented) only refuses envelopes that have none.
+- The `webhook` agent example set a `message_template` and pointed at Slack. A `webhook` agent
+  forwards the delivery JSON unchanged and renders no message.
+- The placeholder table missed most placeholders and did not say which apply to prompts. It now
+  lists all of them, the defaults, and how missing values render.
+- Newly documented: what each agent type runs or sends, callback timing and formats, what
+  `[runtime]` settings limit, tunnel task routing and requirements, and the `/webhook` response
+  codes.
+- The documentation link points at `https://docs.openprx.dev/en/sylvode-webhook/`.
+
 ## 0.3.13
 
 ### Added
