@@ -58,3 +58,33 @@ async fn delivery_text_cannot_forge_a_log_line() {
         "a payload newline started a log line of its own: {lines:?}"
     );
 }
+
+fn command_agents_config() -> String {
+    format!(
+        "{}\n[[agents]]\nid = \"printer\"\nname = \"Printer\"\nagent_type = \"custom\"\nmessage_template = \"{{key}}\"\n\
+         [agents.custom]\ncommand = \"sh\"\nargs = [\"-c\", \"echo stdout-detail; echo stderr-detail >&2; exit $0\", \"0\"]\n\n\
+         [[agents]]\nid = \"failer\"\nname = \"Failer\"\nagent_type = \"custom\"\nmessage_template = \"{{key}}\"\n\
+         [agents.custom]\ncommand = \"sh\"\nargs = [\"-c\", \"echo stdout-detail; echo stderr-detail >&2; exit $0\", \"3\"]\n\n\
+         [[agents]]\nid = \"notifier\"\nname = \"Notifier\"\nagent_type = \"openclaw\"\nmessage_template = \"{{key}}\"\n\
+         [agents.openclaw]\ncommand = \"sh\"\nargs = [\"-c\", \"echo stderr-detail >&2; exit 1\", \"sh\"]\nchannel = \"c\"\ntarget = \"t\"\n",
+        config()
+    )
+}
+
+/// The `/webhook` answer reports how the dispatch went, never the output of the command or the
+/// body of a remote error: the sender stores the answer in its delivery log.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_answer_does_not_echo_command_output() {
+    let server = Server::start(CANONICAL, &command_agents_config(), &[]).expect("server starts");
+    for (bot, expected) in [
+        ("Printer", "ok"),
+        ("Failer", "error: the command exited with status 3"),
+        ("Notifier", "error: the command exited with status 1"),
+    ] {
+        let (status, answer) = post_signed(&server.url("/webhook"), &bot_task(bot, "t").to_string()).await;
+        assert_eq!(status, 200, "{answer}");
+        assert_eq!(answer["status"], "dispatched", "{answer}");
+        assert_eq!(answer["result"], expected, "{bot}: {answer}");
+        assert!(!answer.to_string().contains("-detail"), "{bot}: {answer}");
+    }
+}

@@ -3,6 +3,20 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.29
+
+### Security
+
+- **The `/webhook` answer no longer echoes command output or remote error bodies.** The `result`
+  field carried the stdout of a `custom` command, the stdout or stderr of an `openclaw` or
+  `openprx` command and the body of a Signal API error, and the sender stores the answer in its
+  delivery log, where it was visible to anyone who can read webhook deliveries. `result` is now a
+  short status written by this service: `ok`, `error: the command exited with status N`,
+  `error: the Signal API answered 500 ...`, `webhook: 200 OK`, the reason a dispatch was refused,
+  or the `cli` run line. The full result is logged as `Dispatch result detail=...`. A `custom`
+  agent whose consumer read the command's stdout from the answer must read it from the log
+  instead.
+
 ## 0.3.28
 
 ### Security

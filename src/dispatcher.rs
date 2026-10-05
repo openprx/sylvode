@@ -40,15 +40,51 @@ const DEFAULT_MESSAGE_TEMPLATE: &str = "[{project}] {event}: {key} {title}\n{act
 #[allow(clippy::literal_string_with_formatting_args)]
 const DEFAULT_PROMPT_TEMPLATE: &str = "Fix issue {issue_id}: {title}\nContext: {reason}";
 
-pub async fn dispatch(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
+/// How a dispatch went.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Dispatched {
+    /// What the `/webhook` answer reports. The sender stores the answer in its delivery log, so
+    /// this never contains command output or the body of a remote error.
+    pub summary: String,
+    /// The full result, for this service's own log: command output, remote error bodies.
+    pub detail: String,
+}
+
+impl Dispatched {
+    /// A result written by this service, safe to report as it is.
+    fn plain(text: impl Into<String>) -> Self {
+        let text = text.into();
+        Self {
+            summary: text.clone(),
+            detail: text,
+        }
+    }
+
+    fn new(summary: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            summary: summary.into(),
+            detail: detail.into(),
+        }
+    }
+}
+
+pub async fn dispatch(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> Dispatched {
     match agent.agent_type.as_str() {
         "openclaw" => dispatch_openclaw(config, background, agent, payload).await,
         "openprx" => dispatch_openprx(config, background, agent, payload).await,
         "webhook" => dispatch_webhook(config, agent, payload).await,
         "custom" => dispatch_custom(config, background, agent, payload).await,
-        "cli" => dispatch_cli(config, background, agent, payload).await,
-        other => format!("unknown agent type: {other}"),
+        "cli" => Dispatched::plain(dispatch_cli(config, background, agent, payload).await),
+        other => Dispatched::plain(format!("unknown agent type: {other}")),
     }
+}
+
+/// The summary of a command that exited unsuccessfully.
+fn exit_summary(code: Option<i32>) -> String {
+    code.map_or_else(
+        || "error: the command was terminated by a signal".to_string(),
+        |code| format!("error: the command exited with status {code}"),
+    )
 }
 
 async fn dispatch_cli(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
@@ -691,6 +727,7 @@ fn tail_chars(input: &str, max_chars: usize) -> String {
 /// The result of a command run by an `openclaw`, `openprx` or `custom` agent.
 struct CommandOutput {
     success: bool,
+    code: Option<i32>,
     stdout: String,
     stderr: String,
 }
@@ -714,6 +751,7 @@ async fn run_subprocess_with_timeout(
     match finished.end {
         End::Exited(status) => Ok(CommandOutput {
             success: status.success(),
+            code: status.code(),
             stdout: String::from_utf8_lossy(&finished.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&finished.stderr).into_owned(),
         }),
@@ -733,9 +771,14 @@ fn channel_command_args<'a>(fixed: &'a [String], channel: &'a str, target: &'a s
         .collect()
 }
 
-async fn dispatch_openclaw(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
+async fn dispatch_openclaw(
+    config: &Config,
+    background: &Background,
+    agent: &AgentConfig,
+    payload: &Value,
+) -> Dispatched {
     let Some(cfg) = &agent.openclaw else {
-        return "missing openclaw config".into();
+        return Dispatched::plain("missing openclaw config");
     };
 
     let message = format_message(agent, payload);
@@ -747,23 +790,28 @@ async fn dispatch_openclaw(config: &Config, background: &Background, agent: &Age
         Ok(o) if o.success => {
             let out = o.stdout.trim();
             tracing::info!(stdout = ?out, "openclaw ok");
-            format!("ok: {out}")
+            Dispatched::new("ok", format!("ok: {out}"))
         }
         Ok(o) => {
             let err = o.stderr.trim();
             tracing::error!(stderr = ?err, "openclaw failed");
-            format!("error: {err}")
+            Dispatched::new(exit_summary(o.code), format!("error: {err}"))
         }
         Err(e) => {
             tracing::error!(error = ?e, "openclaw exec failed");
-            format!("exec_error: {e}")
+            Dispatched::plain(format!("exec_error: {e}"))
         }
     }
 }
 
-async fn dispatch_openprx(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
+async fn dispatch_openprx(
+    config: &Config,
+    background: &Background,
+    agent: &AgentConfig,
+    payload: &Value,
+) -> Dispatched {
     let Some(cfg) = &agent.openprx else {
-        return "missing openprx config".into();
+        return Dispatched::plain("missing openprx config");
     };
 
     let message = format_message(agent, payload);
@@ -781,23 +829,26 @@ async fn dispatch_openprx(config: &Config, background: &Background, agent: &Agen
             .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
             .build();
         let Ok(client) = client else {
-            return "error: failed to build http client".into();
+            return Dispatched::plain("error: failed to build http client");
         };
 
         return match client.post(&url).json(&body).send().await {
             Ok(resp) if resp.status().is_success() => {
                 tracing::info!("openprx signal ok");
-                "ok".into()
+                Dispatched::plain("ok")
             }
             Ok(resp) => {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
                 tracing::error!(%status, body = ?text, "openprx signal request refused");
-                format!("error: {status} {text}")
+                Dispatched::new(
+                    format!("error: the Signal API answered {status}"),
+                    format!("error: {status} {text}"),
+                )
             }
             Err(e) => {
                 tracing::error!(error = ?e.to_string(), "openprx signal request failed");
-                format!("error: {e}")
+                Dispatched::new("error: the Signal API request failed", format!("error: {e}"))
             }
         };
     }
@@ -810,18 +861,18 @@ async fn dispatch_openprx(config: &Config, background: &Background, agent: &Agen
         return match run_subprocess_with_timeout(command, &args, timeout, background.cancelled()).await {
             Ok(o) if o.success => {
                 tracing::info!("openprx cli ok");
-                "ok".into()
+                Dispatched::plain("ok")
             }
             Ok(o) => {
                 let err = o.stderr.trim();
                 tracing::error!(stderr = ?err, "openprx cli failed");
-                format!("error: {err}")
+                Dispatched::new(exit_summary(o.code), format!("error: {err}"))
             }
-            Err(e) => format!("exec_error: {e}"),
+            Err(e) => Dispatched::plain(format!("exec_error: {e}")),
         };
     }
 
-    "openprx config needs either signal_api or command".into()
+    Dispatched::plain("openprx config needs either signal_api or command")
 }
 
 fn outbound_signature_header_value(payload: &Value, secret: Option<&str>) -> Option<String> {
@@ -833,16 +884,16 @@ fn outbound_signature_header_value(payload: &Value, secret: Option<&str>) -> Opt
     })
 }
 
-async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
+async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value) -> Dispatched {
     let Some(cfg) = &agent.webhook else {
-        return "missing webhook config".into();
+        return Dispatched::plain("missing webhook config");
     };
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
         .build();
     let Ok(client) = client else {
-        return "webhook_error: failed to build http client".into();
+        return Dispatched::plain("webhook_error: failed to build http client");
     };
 
     let mut request = client.post(&cfg.url).json(payload);
@@ -851,14 +902,17 @@ async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value)
     }
 
     match request.send().await {
-        Ok(resp) => format!("webhook: {}", resp.status()),
-        Err(e) => format!("webhook_error: {e}"),
+        Ok(resp) => Dispatched::plain(format!("webhook: {}", resp.status())),
+        Err(e) => {
+            tracing::warn!(error = ?e.to_string(), "webhook agent request failed");
+            Dispatched::new("webhook_error: the request failed", format!("webhook_error: {e}"))
+        }
     }
 }
 
-async fn dispatch_custom(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
+async fn dispatch_custom(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> Dispatched {
     let Some(cfg) = &agent.custom else {
-        return "missing custom config".into();
+        return Dispatched::plain("missing custom config");
     };
 
     let message = format_message_tracked(agent, payload);
@@ -872,14 +926,21 @@ async fn dispatch_custom(config: &Config, background: &Background, agent: &Agent
         Ok(args) => args,
         Err(e) => {
             tracing::warn!(agent = ?agent.id, reason = ?e, "custom agent not run");
-            return format!("custom_error: {e}");
+            return Dispatched::plain(format!("custom_error: {e}"));
         }
     };
     let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
 
     match run_subprocess_with_timeout(&cfg.command, &args, timeout, background.cancelled()).await {
-        Ok(o) => o.stdout,
-        Err(e) => format!("custom_error: {e}"),
+        Ok(o) => {
+            let summary = if o.success {
+                "ok".to_string()
+            } else {
+                exit_summary(o.code)
+            };
+            Dispatched::new(summary, o.stdout)
+        }
+        Err(e) => Dispatched::plain(format!("custom_error: {e}")),
     }
 }
 
@@ -1592,7 +1653,9 @@ mcp_instructions = "Read issue {issue_id} before writing."
     #[tokio::test]
     async fn custom_args_substitute_the_message_placeholder() {
         let agent = custom_agent(r#"["[%s]", "{message}"]"#, "{key} {title}");
-        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery())
+            .await
+            .detail;
         assert_eq!(out, "[BIL-4C3B2A19 Invoice totals are rounded twice]");
     }
 
@@ -1608,7 +1671,8 @@ mcp_instructions = "Read issue {issue_id} before writing."
             &agent,
             &titled("a b \"c\" $(id); d"),
         )
-        .await;
+        .await
+        .detail;
         assert_eq!(out, "[--label=a b \"c\" $(id); d]");
     }
 
@@ -1617,7 +1681,9 @@ mcp_instructions = "Read issue {issue_id} before writing."
     #[tokio::test]
     async fn custom_args_without_placeholder_append_the_message() {
         let agent = custom_agent(r#"["[%s]"]"#, "{key}");
-        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery())
+            .await
+            .detail;
         assert_eq!(out, "[BIL-4C3B2A19]");
     }
 
@@ -1630,17 +1696,21 @@ mcp_instructions = "Read issue {issue_id} before writing."
         let payload = titled("-v x");
 
         let substituted = custom_agent(r#"["[%s]", "{message}"]"#, "{title}");
-        let out = dispatch(&config, &Background::new(1), &substituted, &payload).await;
+        let out = dispatch(&config, &Background::new(1), &substituted, &payload)
+            .await
+            .detail;
         assert!(out.starts_with("custom_error:"), "{out}");
         assert!(out.contains("starts with `-`"), "{out}");
 
         let appended = custom_agent(r#"["[%s]"]"#, "{title}");
-        let out = dispatch(&config, &Background::new(1), &appended, &payload).await;
+        let out = dispatch(&config, &Background::new(1), &appended, &payload).await.detail;
         assert!(out.starts_with("custom_error:"), "{out}");
 
         let separated = custom_agent(r#"["[%s]", "--", "{message}"]"#, "{title}");
         assert_eq!(
-            dispatch(&config, &Background::new(1), &separated, &payload).await,
+            dispatch(&config, &Background::new(1), &separated, &payload)
+                .await
+                .detail,
             "[--][-v x]"
         );
     }
@@ -1656,18 +1726,22 @@ mcp_instructions = "Read issue {issue_id} before writing."
 
         let substituted = custom_agent(r#"["[%s]", "{message}"]"#, "- {key}");
         assert_eq!(
-            dispatch(&config, &Background::new(1), &substituted, &payload).await,
+            dispatch(&config, &Background::new(1), &substituted, &payload)
+                .await
+                .detail,
             "[- BIL-4C3B2A19]"
         );
         let appended = custom_agent(r#"["[%s]"]"#, "-{key}");
         assert_eq!(
-            dispatch(&config, &Background::new(1), &appended, &payload).await,
+            dispatch(&config, &Background::new(1), &appended, &payload).await.detail,
             "[-BIL-4C3B2A19]"
         );
 
         let behind_empty = custom_agent(r#"["[%s]", "{message}"]"#, "{workspace_missing}{state_missing}");
         assert_eq!(
-            dispatch(&config, &Background::new(1), &behind_empty, &payload).await,
+            dispatch(&config, &Background::new(1), &behind_empty, &payload)
+                .await
+                .detail,
             "[{workspace_missing}{state_missing}]",
             "unknown placeholders stay literal"
         );
@@ -1676,7 +1750,9 @@ mcp_instructions = "Read issue {issue_id} before writing."
             .pointer_mut("/project/name")
             .expect("fixture has a project") = json!("");
         let from_payload = custom_agent(r#"["[%s]", "{message}"]"#, "{project}{title}");
-        let out = dispatch(&config, &Background::new(1), &from_payload, &empty_project).await;
+        let out = dispatch(&config, &Background::new(1), &from_payload, &empty_project)
+            .await
+            .detail;
         assert!(out.starts_with("custom_error:"), "{out}");
     }
 
@@ -1690,7 +1766,9 @@ mcp_instructions = "Read issue {issue_id} before writing."
              [openclaw]\ncommand = 'printf'\nargs = ['[%s]']\nchannel = 'signal'\ntarget = 'uuid:u1'\n",
         )
         .expect("parse agent");
-        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery())
+            .await
+            .detail;
         assert_eq!(
             out,
             "ok: [--channel][signal][--target][uuid:u1][--message][BIL-4C3B2A19]"
@@ -1707,7 +1785,9 @@ mcp_instructions = "Read issue {issue_id} before writing."
              target = 't'\n",
         )
         .expect("parse agent");
-        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery())
+            .await
+            .detail;
         assert_eq!(out, "ok");
     }
 
@@ -1725,7 +1805,7 @@ executor = "codex"
         )
         .expect("parse agent");
 
-        let result = dispatch(&config, &Background::new(1), &agent, &json!({})).await;
+        let result = dispatch(&config, &Background::new(1), &agent, &json!({})).await.detail;
         assert!(result.contains("disabled"));
     }
 
@@ -1745,21 +1825,25 @@ executor = "codex"
         assert!(
             dispatch(&config, &Background::new(1), &openclaw, &payload)
                 .await
+                .detail
                 .contains("missing openclaw config")
         );
         assert!(
             dispatch(&config, &Background::new(1), &openprx, &payload)
                 .await
+                .detail
                 .contains("missing openprx config")
         );
         assert!(
             dispatch(&config, &Background::new(1), &webhook, &payload)
                 .await
+                .detail
                 .contains("missing webhook config")
         );
         assert!(
             dispatch(&config, &Background::new(1), &custom, &payload)
                 .await
+                .detail
                 .contains("missing custom config")
         );
     }
