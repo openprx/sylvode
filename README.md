@@ -5,8 +5,8 @@ from a Sylvode deployment and dispatches them to AI agents, chat platforms or ex
 
 > **Formerly OpenPR Webhook.** The project was renamed together with the main product. Every old
 > name (executable, container image, signature header, environment variable, service unit) keeps
-> working for the whole Sylvode 1.x line and is not removed before Sylvode v2.0; see [Migrating from OpenPR
-> Webhook](#migrating-from-openpr-webhook).
+> working for the whole Sylvode 1.x line and is not removed before Sylvode v2.0; see [Migrating
+> from OpenPR Webhook](#migrating-from-openpr-webhook).
 
 Built with **Rust** (Axum).
 
@@ -23,28 +23,45 @@ Sylvode ──webhook POST──▶ sylvode-webhook ──dispatch──▶ Open
                                                        (read issue → fix → write back)
 ```
 
-1. Sylvode fires a webhook on events (issue created, proposal submitted, comment added, etc.)
+1. Sylvode sends a signed webhook delivery for one of the events a webhook subscribes to, or its
+   worker dispatches a queued AI task to the webhook of the bot it is assigned to
 2. sylvode-webhook verifies the HMAC-SHA256 signature
-3. Processes bot tasks where `bot_context.is_bot_task=true` and worker AI task envelopes
-4. Dispatches formatted notifications to configured agents
+3. It acts only on bot tasks: a delivery whose `bot_context.is_bot_task` is `true`, or a worker AI
+   task envelope (`task_id` and `ai_participant_id`). Anything else is answered
+   `{"status":"ignored","reason":"not_bot_task"}`
+4. It selects exactly one agent (see [Agent selection](#agent-selection)) and dispatches to it
+
+A webhook can subscribe to these 14 events, the full list the Sylvode API accepts:
+
+| Group | Events |
+|-------|--------|
+| Issues | `issue.created`, `issue.updated`, `issue.assigned`, `issue.deleted`, `issue.state_changed` |
+| Comments | `comment.created`, `comment.updated`, `comment.deleted` |
+| Labels | `label.added`, `label.removed` |
+| Sprints | `sprint.started`, `sprint.completed` |
+| AI tasks | `ai.task_completed`, `ai.task_failed` |
+
+A delivery carries `bot_context` only when the webhook has a bot user and that bot is an assignee
+of the issue, or, for `comment.created`, is mentioned in the comment.
 
 ## Features
 
 - **HMAC-SHA256 signature verification** — Validates webhook authenticity
-- **Multi-agent dispatch** — Route events to multiple agents simultaneously
+- **Agent routing** — Each bot task goes to exactly one agent, chosen by bot identity, agent type
+  and optional route constraints (project type, trigger kind, event, form key)
 - **Agent types**:
-  - `openclaw` — Send via OpenClaw CLI (`openclaw message send`)
-  - `openprx` — Send via OpenPRX Signal API or CLI
-  - `webhook` — Forward to HTTP endpoints
-  - `custom` — Execute arbitrary commands
-  - `cli` — Execute codex/claude-code/opencode via strict whitelist templates
+  - `openclaw` — Send the rendered message via the OpenClaw CLI (`openclaw message send`)
+  - `openprx` — Send the rendered message via an OpenPRX Signal API or a command
+  - `webhook` — Forward the delivery JSON unchanged to an HTTP endpoint
+  - `custom` — Run a command with the rendered message as an argument
+  - `cli` — Run codex, claude-code or opencode with a rendered prompt (fixed executor whitelist)
 - **MCP closed-loop automation** — AI agents read full issue context (description, comments, labels) via Sylvode MCP tools and write results back directly
-- **CLI callback loop** — Send issue execution result back via MCP/API (comment write-back ready)
+- **CLI callbacks** — Report a CLI run back to Sylvode via MCP or the REST API (see [Callbacks](#callbacks))
 - **Per-agent environment variables** — Inject extra environment variables into each CLI executor
 - **WSS tunnel client (Phase B MVP)** — Active ws/wss connection with Bearer auth, heartbeat, auto-reconnect
 - **Tunnel envelope + HMAC** — Minimal envelope (`id/type/ts/agent_id/payload/sig`) with optional HMAC-SHA256
 - **Task bridge** — Handles `task.dispatch` -> immediate `task.ack` -> async `task.result`
-- **Message templates** — Customizable notification format with placeholders
+- **Message templates** — Customizable message and prompt format with placeholders
 - **Configurable** — TOML-based configuration
 
 ## Quick Start
@@ -70,8 +87,10 @@ cp config.example.toml config.toml
 In Sylvode, create a webhook pointing to this receiver:
 
 - **URL**: `http://your-server:9090/webhook`
-- **Secret**: Must match `webhook_secrets` in `config.toml`
-- **Events**: Select which events to receive
+- **Secret**: Must match one of `webhook_secrets` in `config.toml`
+- **Events**: Select which events to receive (see the list above)
+- **Bot user**: The bot whose tasks this receiver handles. Without one, deliveries carry no
+  `bot_context` and are ignored, and the worker has no webhook to dispatch that bot's AI tasks to
 
 ## Configuration
 
@@ -83,17 +102,16 @@ listen = "0.0.0.0:9090"
 webhook_secrets = ["your-secret-here"]
 allow_unsigned = false  # Set true only for development
 
-# Feature gates (safe defaults)
-# Keep new paths OFF unless you are explicitly enabling them.
+# Feature gates (safe defaults). A cli agent does nothing unless cli_enabled is
+# true, and no callback is sent unless callback_enabled is true.
 [features]
 tunnel_enabled = false
 cli_enabled = false
 callback_enabled = false
 
-# Runtime guardrails
 [runtime]
-cli_max_concurrency = 1
-http_timeout_secs = 15
+cli_max_concurrency = 1               # tunnel tasks run at once (webhook-triggered cli runs are not limited)
+http_timeout_secs = 15                # outbound HTTP; commands get max(this, 60) seconds
 tunnel_reconnect_backoff_max_secs = 60
 
 # Agent: OpenClaw (AI assistant via Signal/Telegram)
@@ -120,24 +138,24 @@ message_template = "[{project}] {event}: {key} {title}\n{actor} | {reason}"
 signal_api = "http://127.0.0.1:8686"
 account = "+1234567890"
 target = "uuid:your-user-uuid"
-# Or use CLI instead:
+# Or send through a command instead (used only when signal_api is not set):
 # command = "openprx"
 # args = ["message", "send"]
-# channel = "signal"
+# channel = "signal"   # default
 
-# Agent: Forward to HTTP endpoint
+# Agent: forward the delivery JSON, unchanged, to an HTTP endpoint.
+# No message is rendered, so message_template has no effect here.
 [[agents]]
-id = "slack-bot"
-name = "Slack"
+id = "review-bot"
+name = "Document review connection"
 agent_type = "webhook"
-message_template = "{event}: {title}"
 
 [agents.webhook]
-url = "https://hooks.slack.com/services/xxx"
-secret = "optional-shared-secret" # if set, outbound header x-webhook-signature is added
+url = "https://automation.example.com/hooks/sylvode"
+secret = "optional-shared-secret" # if set, the X-Webhook-Signature header is added
 
-# Optional: route this agent only for a scenario-aware Sylvode bot task.
-# Empty lists mean "no constraint".
+# Optional: route constraints (see "Agent selection"). Every non-empty list
+# must contain the task's value; empty or omitted lists mean "no constraint".
 [agents.route]
 bot_names = ["Document review connection"]
 bot_agent_types = ["webhook"]
@@ -154,15 +172,14 @@ agent_type = "custom"
 message_template = "{event} {key}"
 
 [agents.custom]
-command = "echo"
-args = ["{message}"]
+command = "logger"                     # one program, no shell: put arguments in args
+args = ["-t", "sylvode", "--", "{message}"]
 
 # Agent: CLI executor with MCP closed-loop
 [[agents]]
 id = "ai-fixer"
 name = "AI Issue Fixer"
 agent_type = "cli"
-message_template = "[{project}] {event}: {key} {title}"
 
 [agents.cli]
 executor = "claude-code" # codex | claude-code | opencode
@@ -170,9 +187,13 @@ workdir = "/path/to/your/repository"
 timeout_secs = 900
 max_output_chars = 12000
 prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
-callback = "mcp" # mcp | api
-callback_url = "http://127.0.0.1:8090/mcp/rpc"
-callback_token = "opr_xxx"
+callback = "mcp" # mcp (default) | api
+callback_url = "http://127.0.0.1:8090/mcp/rpc" # no callback is sent without it
+callback_token = "opr_xxx"                     # sent as Authorization: Bearer <token>
+# Issue state to set through the callback (ignored when skip_callback_state = true):
+# update_state_on_start = "in_progress"
+# update_state_on_success = "done"
+# update_state_on_fail = "todo"
 
 # MCP closed-loop: AI reads full issue context and updates state via MCP tools,
 # so skip_callback_state prevents duplicate state updates from the callback.
@@ -189,6 +210,65 @@ mcp_config_path = "/path/to/mcp-config.json"
 # [agents.cli.env_vars]
 # HTTPS_PROXY = "http://proxy.internal:3128"
 ```
+
+Start-up is refused, with a message naming the agent, when a `route.trigger_kinds` value is not one
+Sylvode sends, or when an `openclaw`, `openprx` or `custom` `command` contains whitespace but names
+neither an existing file nor a program on `PATH`.
+
+### Agent selection
+
+A bot task is dispatched to exactly one agent, or to none. The bot key is `bot_context.bot_name`
+(or `bot_context.bot_id` when the name is empty) for a webhook delivery, and `ai_participant_id`
+(the bot user's id) for a worker AI task. The first match in this order wins, in configuration
+order within each step:
+
+1. an agent whose `id` equals the bot key, or whose `name` equals it ignoring case, and whose route
+   matches;
+2. otherwise an agent whose `agent_type` equals the bot's agent type (`bot_context.bot_agent_type`,
+   which Sylvode sets to `custom` for a bot without one, or `ai_participant_agent_type` for a worker
+   task) and whose route matches;
+3. otherwise an agent that has an `[agents.route]` section and whose route matches.
+
+An agent without a route matches every task. A route matches when every non-empty list contains
+the task's value, compared ignoring case and surrounding whitespace; a value missing from the task
+fails a non-empty list. `bot_names` and `bot_ids` together form one constraint that either list can
+satisfy. When nothing matches, the answer is `{"status":"no_agent", ...}` and nothing runs.
+
+`trigger_kinds` is compared with `bot_context.trigger_reason` on a webhook delivery and with
+`trigger_kind` on a worker AI task. These are the values Sylvode sends; any other value refuses
+start-up:
+
+| Source | Values |
+|--------|--------|
+| Webhook delivery (`bot_context.trigger_reason`) | `assigned` (`issue.assigned`, `issue.updated` and every event not listed here), `created` (`issue.created`), `status_changed` (`issue.state_changed`), `mentioned` (`comment.created`), `completed` (`ai.task_completed`), `failed` (`ai.task_failed`) |
+| Worker AI task (`trigger_kind`) | `assigned` (`issue_assigned`), `mention` (`review_requested`, `comment_requested`), `proposal_vote` (`vote_requested`), `manual` (anything else) |
+
+`events` is compared with the delivery's `event` (a worker AI task has none, so a route with
+`events` never matches one). `project_types` is compared with a `project_type` field, which
+Sylvode currently sends only in the payload of a worker AI task for a bot mentioned in a comment;
+`form_keys` with a `form_key` field, which no current Sylvode bot task carries. A non-empty list
+for either of them therefore matches only those tasks, or none.
+
+### What each agent receives
+
+- `openclaw` runs `command [args...] --channel <channel> --target <target> --message <message>`.
+- `openprx` posts `{"recipients": [target], "message": message}` to
+  `<signal_api>/api/v1/send/<account>`; without `signal_api` it runs `command` like `openclaw`.
+- `custom` runs `command` with `args`. Every argument containing `{message}` has it replaced by the
+  rendered message and stays one argument, whatever the message contains; without `{message}` in
+  any argument the message is appended as the last argument. If the message would make an argument
+  start with `-` (so text from Sylvode could act as an option), the command is not run, unless an
+  earlier argument is `--`. Arguments you write with a leading `-`, such as `--text={message}`, are
+  left alone.
+- `webhook` posts the delivery JSON unchanged to `url`, signed with `X-Webhook-Signature:
+  sha256=<hex>` when `secret` is set.
+- `cli` runs the whitelisted executor with the rendered prompt in the background and answers at
+  once: `codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check <prompt>`,
+  `claude -p <prompt> --permission-mode bypassPermissions [--mcp-config <path>]` or
+  `opencode run <prompt>`, in `workdir`, killed after `timeout_secs`.
+
+Commands are run directly, never through a shell, so `command` names one program and everything
+else goes in `args`.
 
 ### Environment
 
@@ -210,7 +290,11 @@ When a CLI agent has Sylvode MCP tools available (via global config or `mcp_conf
 
 This eliminates the need for the webhook callback to update issue state (use `skip_callback_state = true`).
 
-Default MCP instructions are injected automatically when the agent has MCP-related config (`mcp_instructions`, `mcp_config_path`, or `env_vars`). You can customize them via `mcp_instructions` in the agent config.
+Default MCP instructions are appended to the prompt when the agent has MCP-related config
+(`mcp_instructions`, `mcp_config_path`, or `env_vars`); a form event gets form-specific
+instructions instead. You can replace them with `mcp_instructions`. With MCP-related config the
+prompt also asks the agent to read the project context (`context.get_project`) when the task
+carries a project id, and describes the form record for a form event.
 
 ### MCP Setup
 
@@ -237,23 +321,44 @@ For **Claude Code**, add to `~/.claude.json`:
 }
 ```
 
-### Callback attribution
+### Callbacks
+
+A callback is sent only when `[features].callback_enabled = true` and the agent has a
+`callback_url`.
+
+- **When.** For a `cli` agent selected from a webhook delivery: before the run, a start callback
+  carrying `update_state_on_start`, if that is set; after the run, a final callback only when the
+  run failed or timed out (a successful agent reports through MCP itself). For a tunnel task: a
+  final callback after every run. With `skip_callback_state = true` no callback carries a state, so
+  no start callback is sent.
+- **`callback = "mcp"`** (the default) sends JSON-RPC `tools/call` requests: `comments.create`
+  with an execution report, then `work_items.update` when there is a state to set
+  (`update_state_on_success`, or `update_state_on_fail` for a failure or timeout).
+- **`callback = "api"`** posts the result as JSON (`issue_id`, `run_id`, `executor`, `status`,
+  `summary`, `exit_code`, `duration_ms`, `stdout_tail`, `stderr_tail`, `state`).
+
+`callback_token` is sent as `Authorization: Bearer <token>`.
+
+#### Callback attribution
 
 A plain API callback (`callback = "api"`) reports its surface as `cli` in both
 `X-Sylvode-MCP-Surface` and the legacy `X-OpenPR-MCP-Surface`, with the same value, so the API
 records it correctly whether it predates the rename or not. Both headers are sent for the whole
 Sylvode 1.x line.
 
----
+## Outbound webhook signature
 
-When forwarding via `agent_type = "webhook"` and `agents.webhook.secret` is configured, sylvode-webhook signs the outbound JSON body and sends:
+When forwarding via `agent_type = "webhook"` and `agents.webhook.secret` is configured,
+sylvode-webhook signs the outbound JSON body and sends:
 
 - Header: `X-Webhook-Signature`
 - Value format: `sha256=<hex_hmac>`
 
 ## Phase B: Tunnel (WSS) MVP
 
-Enable both `[features].tunnel_enabled = true` and `[tunnel].enabled = true` in `config.toml` to let `sylvode-webhook` actively connect to a control plane.
+Enable both `[features].tunnel_enabled = true` and `[tunnel].enabled = true` in `config.toml` to
+let `sylvode-webhook` actively connect to a control plane. The tunnel needs `url` (`ws://`
+or `wss://`), `agent_id` and `auth_token`, and its tasks also need `[features].cli_enabled = true`.
 
 ```toml
 [tunnel]
@@ -263,8 +368,12 @@ agent_id = "vano-qa"                                  # required; there is no de
 auth_token = "opr_xxx"                                # Authorization: Bearer <token>
 reconnect_secs = 3
 heartbeat_secs = 20
-hmac_secret = "shared-hmac-secret"                    # optional, signs envelope body
+hmac_secret = "shared-hmac-secret"                    # optional; see "Signature behavior"
+require_inbound_sig = false                           # refuse inbound envelopes without sig
 ```
+
+Reconnects back off from `reconnect_secs`, doubling up to
+`[runtime].tunnel_reconnect_backoff_max_secs`.
 
 Envelope schema (minimal):
 
@@ -281,39 +390,74 @@ Envelope schema (minimal):
 
 Current task bridge behavior:
 
-1. Receive `task.dispatch`
+1. Receive `task.dispatch`; its payload may carry `run_id`, `issue_id`, `agent` and `body`
 2. Send `task.ack` immediately (`run_id`, `issue_id`, `status=accepted`)
-3. Reuse existing `cli` executor
+3. Run the `cli` agent whose `id` equals `agent`, or the first `cli` agent when `agent` is absent,
+   on `body` (or the whole payload); at most `[runtime].cli_max_concurrency` tasks run at once
 4. Send `task.result` when done (`run_id`, `issue_id`, `status`, `summary`)
 
-Signature behavior (MVP):
+Other envelope types received are ignored.
 
-- If `tunnel.hmac_secret` is set: outbound envelopes include `sig` (HMAC-SHA256 over unsigned envelope body).
-- Inbound verification is optional framework: when `sig` exists it is verified, missing `sig` is currently accepted.
+Signature behavior:
+
+- With `tunnel.hmac_secret` set, every outbound envelope carries `sig` (HMAC-SHA256 over the
+  envelope without `sig`), and every inbound envelope must carry a valid `sig`: one that is
+  missing or wrong is answered with an `error` envelope (`reason: bad_signature`, or
+  `missing_signature` when `require_inbound_sig` is also set) and dropped.
+- Without `hmac_secret`, inbound `sig` is not verified. `require_inbound_sig = true` then only
+  refuses envelopes that have no `sig` at all (`reason: missing_signature`); it does not check the
+  value, so set `hmac_secret` to authenticate the control plane.
 
 Safety toggles:
 
 - `SYLVODE_WEBHOOK_SAFE_MODE=1` forces `tunnel/cli/callback` off at runtime.
 - This provides one-command rollback to legacy webhook-only behavior.
 
-### Template Placeholders
+## Templates
 
-| Placeholder | Description |
-|-------------|-------------|
-| `{project}` | Project name |
-| `{event}` | Event type (e.g. `issue.created`) |
-| `{key}` | Item identifier |
-| `{title}` | Item title |
-| `{actor}` | User who triggered the event |
-| `{reason}` | Trigger reason |
-| `{issue_id}` | Issue ID (from webhook payload) |
+`message_template` sets the message of `openclaw`, `openprx` and `custom` agents; `webhook` agents
+send no message and `cli` agents use `prompt_template`. Without a template these defaults are used:
+
+| Template | Default |
+|----------|---------|
+| `message_template` | `[{project}] {event}: {key} {title}` and, on a second line, `{actor} \| Trigger: {reason}` |
+| `prompt_template` | `Fix issue {issue_id}: {title}` and, on a second line, `Context: {reason}` |
+
+A template is rendered in one pass: a placeholder below is replaced by its value, any other text is
+kept as written, and a placeholder that appears inside a value (such as an issue title containing
+`{actor}`) stays literal.
+
+| Placeholder | Value | In `message_template` | In `prompt_template` |
+|-------------|-------|:---:|:---:|
+| `{event}` | Event (`issue.assigned`), or a worker task's `task_type` | yes | yes |
+| `{title}` | Issue title (`untitled` when absent) | yes | yes |
+| `{reason}` | Trigger reason (`assigned`, `mentioned`, ...; see [Agent selection](#agent-selection)) | yes | yes |
+| `{issue_id}` | Issue id | yes | yes |
+| `{project_id}` | Project id | yes | yes |
+| `{form_id}`, `{form_key}`, `{record_id}` | Form identifiers of a form event | yes | yes |
+| `{key}` | Issue key (`BIL-4C3B2A19`) | yes | |
+| `{actor}` | Name of the user who caused the event | yes | |
+| `{project}` | Project name | yes | |
+| `{workspace}` | Workspace name | yes | |
+| `{state}`, `{priority}` | Issue state and priority | yes | |
+| `{url}` | `issue/<issue_id>` | yes | |
+
+A value that is missing renders as an empty string in `message_template` (`unknown` for `{event}`,
+`{reason}` and `{actor}`, `untitled` for `{title}`) and as `<project_id>`, `<form_id>`, and so on in
+`prompt_template` (`unknown` for `{issue_id}`, `{event}` and `{reason}`). In a `custom` agent's
+`args`, `{message}` stands for the rendered message.
 
 ## API
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/webhook` | POST | Receive webhook events |
-| `/health` | GET | Health check |
+| `/webhook` | POST | Receive a webhook delivery or worker AI task |
+| `/health` | GET | Health check; answers `ok` |
+
+`/webhook` answers `401` for a missing, invalid or conflicting signature and `400` for a body that
+is not JSON. Otherwise it answers `200` with a JSON status: `ignored` (not a bot task), `no_agent`
+(no agent matched), or `dispatched` with the agent id and the dispatch result (for a `cli` agent,
+the run continues in the background).
 
 ### Signature headers
 
@@ -382,9 +526,10 @@ and the legacy `openpr-webhook` executable. The same archive is also published a
 
 ## Migrating from OpenPR Webhook
 
-Nothing has to change on upgrade: every legacy name below keeps working for the whole Sylvode 1.x line and
-is not removed before Sylvode v2.0. Using one writes a single deprecation line to stderr per process,
-naming the replacement. stdout and exit codes are the same for the legacy and the canonical name.
+Nothing has to change on upgrade: every legacy name below keeps working for the whole Sylvode 1.x
+line and is not removed before Sylvode v2.0. Using one writes a single deprecation line to stderr
+per process, naming the replacement. stdout and exit codes are the same for the legacy and the
+canonical name.
 
 | Legacy | Canonical | When both are supplied |
 |--------|-----------|------------------------|
@@ -404,7 +549,7 @@ configuration) and the repository URL `https://github.com/openprx/openpr-webhook
 
 ## Links
 
-- [Documentation](https://docs.openprx.dev/en/openpr-webhook/) — Full documentation (10 languages)
+- [Documentation](https://docs.openprx.dev/en/sylvode-webhook/) — Full documentation (10 languages)
 - [Community](https://community.openprx.dev) — OpenPRX community forum
 
 ## Related
