@@ -72,12 +72,17 @@ cargo build --release
 
 # Configure
 cp config.example.toml config.toml
-# Edit config.toml with your settings
+# Set webhook_secrets to the secret of your Sylvode webhook; start-up is refused while the
+# example placeholder is still there
 
 # Run
 ./target/release/sylvode-webhook config.toml
-# sylvode-webhook listening on 0.0.0.0:9090
+# sylvode-webhook listening on 127.0.0.1:9090
 ```
+
+The example configuration is secure by default: it listens on loopback only, verifies every
+signature (`allow_unsigned = false`) and contains no agent that runs a command without
+`[features].cli_enabled`. Change `listen` once the secret is set, or put a reverse proxy in front.
 
 `sylvode-webhook [CONFIG]` reads `config.toml` in the working directory when no path is given.
 `--help` and `--version` print usage and the version.
@@ -99,8 +104,8 @@ In Sylvode, create a webhook pointing to this receiver:
 listen = "0.0.0.0:9090"
 
 [security]
-webhook_secrets = ["your-secret-here"]
-allow_unsigned = false  # Set true only for development
+webhook_secrets = ["a-long-random-secret"]  # blank entries and example placeholders refuse start-up
+allow_unsigned = false  # true only for local development; see below
 
 # Feature gates (safe defaults). A cli agent does nothing unless cli_enabled is
 # true, and no callback is sent unless callback_enabled is true.
@@ -210,6 +215,12 @@ mcp_config_path = "/path/to/mcp-config.json"
 # [agents.cli.env_vars]
 # HTTPS_PROXY = "http://proxy.internal:3128"
 ```
+
+`allow_unsigned = true` turns signature verification off and logs a warning at start-up. On a
+`listen` address other than loopback (`127.0.0.0/8`, `::1` or `localhost`) it is refused unless
+`allow_unsigned_non_loopback = true` acknowledges that anyone who can reach the port can trigger
+agents. With `allow_unsigned = false` and no `webhook_secrets`, every request is answered `401`,
+and start-up logs a warning saying so.
 
 Start-up is refused, with a message naming the agent, when a `route.trigger_kinds` value is not one
 Sylvode sends, or when an `openclaw`, `openprx` or `custom` `command` contains whitespace but names

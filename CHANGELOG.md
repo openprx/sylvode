@@ -3,6 +3,23 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.20
+
+### Security
+
+- **`config.example.toml` is secure by default.** It listens on `127.0.0.1:9090` instead of
+  `0.0.0.0:9090`, sets `allow_unsigned = false` instead of `true`, and its `openclaw` agent, which
+  runs a command for every matching bot task without any feature gate, is commented out. Copying
+  it unchanged no longer exposes an unauthenticated dispatcher on every interface.
+- **An example placeholder secret refuses start-up.** The example ships with
+  `webhook_secrets = ["replace-with-the-secret-of-your-sylvode-webhook"]`; that value, and the
+  values earlier examples showed (`your-secret-here`, `shared-hmac-secret`), are refused in
+  `security.webhook_secrets` and `tunnel.hmac_secret`.
+- **`allow_unsigned = true` on an address other than loopback refuses start-up** unless
+  `security.allow_unsigned_non_loopback = true` acknowledges it. On loopback it still starts.
+- Start-up logs a warning when `allow_unsigned = true`, and when `allow_unsigned = false` with no
+  `webhook_secrets`, in which case every `/webhook` request is answered `401`.
+
 ## 0.3.19
 
 ### Fixed
