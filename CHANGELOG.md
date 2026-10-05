@@ -3,6 +3,17 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.28
+
+### Security
+
+- **Text from a delivery, a command or a remote server can no longer forge log lines.** The
+  event name, bot key, command output, callback and Signal API errors and tunnel message ids were
+  written into log lines verbatim, so a newline in them started a line of its own, for example a
+  fake `ERROR` line. They are now logged as structured fields with control characters escaped.
+  Log messages that contained these values read slightly differently, for example
+  `Received webhook event event="issue.assigned"` instead of `Received webhook event: issue.assigned`.
+
 ## 0.3.27
 
 ### Fixed

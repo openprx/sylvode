@@ -232,12 +232,12 @@ pub async fn handle_webhook(
     }
 
     let event = payload.get("event").and_then(Value::as_str).unwrap_or("unknown");
-    tracing::info!("Received webhook event: {event}");
+    tracing::info!(event = ?event, "Received webhook event");
 
     // 4. Check if bot task. Supports both direct Sylvode webhook payloads
     // and worker-dispatched ai_tasks envelopes.
     let Some(target) = bot_dispatch_target(&payload) else {
-        tracing::debug!(event = %event, "Webhook event dropped: is_bot_task=false");
+        tracing::debug!(event = ?event, "Webhook event dropped: is_bot_task=false");
         return Ok(Json(json!({"status": "ignored", "reason": "not_bot_task"})));
     };
 
@@ -254,14 +254,14 @@ pub async fn handle_webhook(
     });
 
     if let Some(a) = select_agent(&state.config.agents, &target) {
-        tracing::info!("Dispatching to agent: {} ({})", a.name, a.agent_type);
+        tracing::info!(agent = ?a.id, agent_type = ?a.agent_type, "Dispatching to agent");
         let result = dispatcher::dispatch(&state.config, &state.background, a, &payload).await;
         Ok(Json(
             json!({"status": "dispatched", "agent": a.id, "result": result, "route": route}),
         ))
     } else {
         tracing::warn!(
-            bot_key = %target.bot_key,
+            bot_key = ?target.bot_key,
             agent_type = ?target.agent_type,
             project_type = ?target.project_type,
             trigger_kind = ?target.trigger_kind,
