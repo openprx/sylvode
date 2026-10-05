@@ -78,6 +78,42 @@ fn envelope_outcome(payload: &Value, path: &str) -> Result<(), StructuredApiErro
     }
 }
 
+/// The message for a request that got no response at all (DNS, connect, TLS or timeout).
+///
+/// `reqwest`'s own `Display` stops at "error sending request for url (...)", which hides the one
+/// thing an operator needs: *why* nothing answered. The source chain carries it ("Connection
+/// refused", "dns error", "operation timed out"), so it is spelled out here. The message also says
+/// plainly that this is a network failure: the stable code it travels under is `server_draining`
+/// (see `CliError::network` for why), and a human reading `--format table` must not take it for a
+/// drain or for lock contention.
+fn unreachable_message(base_url: &str, error: &reqwest::Error) -> String {
+    let mut causes: Vec<String> = Vec::new();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if !text.is_empty() && !causes.iter().any(|seen| seen.contains(&text)) {
+            causes.push(text);
+        }
+        source = cause.source();
+    }
+    let kind = if error.is_timeout() {
+        "the request timed out"
+    } else if error.is_connect() {
+        "the connection failed"
+    } else {
+        "the request could not be sent"
+    };
+    let detail = if causes.is_empty() {
+        error.to_string()
+    } else {
+        causes.join(": ")
+    };
+    format!(
+        "network failure: no response from the API at {base_url}; {kind} ({detail}). This is a temporary \
+         failure, not a server drain: retry once the API is reachable"
+    )
+}
+
 /// Structured API-call failure.
 ///
 /// Additive next to the String-returning `get`/`post`/`put` `apps/mcp-server/src/tools/*.rs`
@@ -126,7 +162,7 @@ impl OpenPrClient {
             )
             .send()
             .await
-            .map_err(|e| StructuredApiError::transport(format!("Request failed: {e}")))?;
+            .map_err(|e| StructuredApiError::transport(unreachable_message(&self.base_url, &e)))?;
 
         let status = resp.status();
         let body = resp

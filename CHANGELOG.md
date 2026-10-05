@@ -205,6 +205,12 @@ replacement and the earliest removal.
   from `SYLVODE_BIND_HOST` and `SYLVODE_FRONTEND_PORT`, with a comment to replace them with the
   public origin. Existing files are not rewritten; `--check-config` now warns when the list is
   empty and rejects entries that are not `scheme://host[:port]`.
+- `sylvode` Flow commands reported an unreachable API as `Request failed: error sending request
+  for url (...)` under the code `server_draining`, which reads like a server drain and hides the
+  cause. The message now says it is a network failure, names the API URL and the cause
+  (connection refused, DNS, timeout) and that the command can be retried. The envelope is
+  unchanged: exit 9, `recoverable: true`, code `server_draining` with empty `details`, because
+  the CLI contract defines no code or reason of its own for a network failure.
 
 ## [0.2.21] - 2026-08-19
 

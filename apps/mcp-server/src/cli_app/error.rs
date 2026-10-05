@@ -66,9 +66,18 @@ impl CliError {
 
     /// A transport-level failure: the request never reached a business decision at all (DNS,
     /// connect, timeout, or a response that is not the `{code,message,data}` envelope the API
-    /// always answers with). Grouped under `server_draining`/exit 9, the "temporary service
-    /// failure" bucket, because from the caller's point of view both are "retry later", and
-    /// `error-mapping-v1.md` reserves no separate code for "could not even reach the server".
+    /// always answers with).
+    ///
+    /// What `error-mapping-v1.md` and `cli-surface-v1.md` fix for this case is implemented: exit
+    /// `9` ("draining/network/temporary service failure"; "网络失败 exit 9") and
+    /// `recoverable: true`. What they do not fix is the stable `code` and `details.reason`: the
+    /// only stable code with exit 9 is `server_draining`, whose required `details.reason` is
+    /// `drain` or `contention`, and a network failure is neither. The contract forbids guessing
+    /// either (a consumer must "不得猜测为维护或竞争"), so `details` stays `{}` rather than
+    /// carrying an invented reason, and the human message says "network failure" in so many
+    /// words (`api_client::unreachable_message`). The `server_draining` code with no `reason` is
+    /// the contract gap reported for a decision: a third reason or a CLI-local code would be a new
+    /// wire value, which is the contract owner's call, not this binary's.
     pub fn network(message: impl Into<String>) -> Self {
         Self {
             code: "server_draining",
