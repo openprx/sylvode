@@ -64,6 +64,10 @@ async fn main() -> anyhow::Result<()> {
     // startup rather than leaving half the service reading the fallback settings.
     api::config::install(&config).map_err(|err| anyhow::anyhow!("{err}"))?;
     logging::init(&config.logging, "api")?;
+    // Emitted only now: the logger it goes through did not exist while the file was loading.
+    if let Some(notice) = platform::config::take_legacy_discovery_notice() {
+        tracing::warn!("{notice}");
+    }
 
     // from_config first: it reports a missing database url and signing key together, so the
     // operator fixes both in one pass instead of being walked through them one at a time.

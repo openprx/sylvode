@@ -40,6 +40,35 @@ pub fn init_reserving_stdout(logging: &LoggingConfig, service_name: &str) -> App
     Ok(())
 }
 
+/// Runs `emit` under a subscriber built from `[logging]` that writes to stderr, without
+/// installing anything process-wide.
+///
+/// For a process that never installs a global subscriber — the `sylvode` Flow commands, whose
+/// stderr carries only their own diagnostics — but still has to write one log line, such as
+/// the ADR-0020 D2 legacy configuration notice. The format and filter are the file's; the
+/// stream is always stderr, because such a process prints its result on stdout.
+pub fn with_stderr_subscriber(logging: &LoggingConfig, service_name: &str, emit: impl FnOnce()) -> AppResult<()> {
+    let filter = filter_for(logging, service_name)?;
+    let writer = BoxMakeWriter::new(std::io::stderr);
+    match logging.format {
+        LogFormat::Json => {
+            let subscriber = fmt()
+                .with_env_filter(filter)
+                .with_writer(writer)
+                .json()
+                .with_current_span(true)
+                .with_span_list(true)
+                .finish();
+            tracing::subscriber::with_default(subscriber, emit);
+        }
+        LogFormat::Text => {
+            let subscriber = fmt().with_env_filter(filter).with_writer(writer).finish();
+            tracing::subscriber::with_default(subscriber, emit);
+        }
+    }
+    Ok(())
+}
+
 /// Builds the subscriber and makes it the process-wide default.
 fn install(logging: &LoggingConfig, service_name: &str, output: LogOutput) -> AppResult<()> {
     let filter = filter_for(logging, service_name)?;

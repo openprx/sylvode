@@ -580,6 +580,10 @@ pub fn prepare_runtime(global: &GlobalArgs, serve: Option<&ServeArgs>) -> anyhow
     // stdio frames JSON-RPC on stdout, so the log stream is reserved to stderr no
     // matter what the file asks for.
     platform::logging::init_reserving_stdout(&config.logging, SERVICE_NAME)?;
+    // Emitted only now: the logger it goes through did not exist while the file was loading.
+    if let Some(notice) = platform::config::take_legacy_discovery_notice() {
+        tracing::warn!("{notice}");
+    }
 
     apply_cli_overrides(&mut config.mcp, global, serve)?;
 
