@@ -224,8 +224,15 @@ agents. With `allow_unsigned = false` and no `webhook_secrets`, every request is
 and start-up logs a warning saying so.
 
 Start-up is refused, with a message naming the agent, when a `route.trigger_kinds` value is not one
-Sylvode sends, or when an `openclaw`, `openprx` or `custom` `command` contains whitespace but names
-neither an existing file nor a program on `PATH`.
+Sylvode sends, or when an `openclaw`, `openprx` or `custom` `command` contains whitespace, names
+neither an existing file nor a program on `PATH`, and cannot be split unambiguously (see below).
+
+Commands run without a shell, so `command` is one program and its arguments go in `args`. The
+one-string form earlier documentation showed, `command = "openclaw message send"`, is still
+accepted with a deprecation warning at start-up when it is unambiguous: `args` is empty, the string
+contains no quotes or backslashes, and its first word is a program on `PATH` or a file. It is then
+split on whitespace once, at start-up, and runs as `command = "openclaw"` with
+`args = ["message", "send"]`; text inserted into arguments later is never split.
 
 ### Agent selection
 

@@ -3,6 +3,22 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.34
+
+### Changed
+
+- **The one-string command form earlier documentation recommended works again, with a
+  deprecation warning.** `command = "openclaw message send"` (and the same form for `openprx` and
+  `custom`) refused start-up since 0.3.13. When it is unambiguous it is now split on whitespace
+  once at start-up and runs as `command = "openclaw"` with `args = ["message", "send"]`, and
+  start-up logs a warning that shows that replacement. Unambiguous means: the whole string names no
+  file or program, `args` is empty, the string contains no quote or backslash, and its first word
+  is a program on `PATH` or a file. Any other multi-word command is still refused, and the error
+  now says which condition failed. No shell is involved and substituted text is never split.
+  Note that in 0.3.3 and earlier such a command was looked up as one program name and every
+  dispatch failed to spawn, so an agent configured that way starts sending messages after this
+  upgrade.
+
 ## 0.3.33
 
 ### Security
