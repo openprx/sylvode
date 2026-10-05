@@ -1,4 +1,4 @@
-use crate::{AppState, compat, config, handler, tunnel};
+use crate::{AppState, background::Background, compat, config, handler, process, tunnel};
 use axum::{
     Router,
     routing::{get, post},
@@ -7,6 +7,7 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 use tower_http::trace::TraceLayer;
 
 const DEFAULT_CONFIG_PATH: &str = "config.toml";
@@ -157,16 +158,28 @@ fn serve_blocking(config_path: &str) -> ExitCode {
     runtime.block_on(serve(config))
 }
 
+/// How long shutdown waits for background runs: the process-group grace period, then a
+/// terminal callback of up to two requests (MCP sends a comment and a state update), plus slack.
+fn shutdown_bound(http_timeout_secs: u64) -> Duration {
+    process::TERMINATION_GRACE + Duration::from_secs(http_timeout_secs.saturating_mul(2)) + Duration::from_secs(5)
+}
+
 async fn serve(config: config::Config) -> ExitCode {
     let listen = config.server.listen.clone();
+    let bound = shutdown_bound(config.runtime.http_timeout_secs);
     tracing::info!("Loaded {} agent(s)", config.agents.len());
 
-    let state = Arc::new(AppState { config });
+    let background = Background::new();
+    let state = Arc::new(AppState {
+        config,
+        background: background.clone(),
+    });
 
     let tunnel_state = Arc::new(state.config.clone());
     if tunnel_state.tunnel_enabled() {
-        tokio::spawn(async move {
-            tunnel::run_tunnel_loop(tunnel_state).await;
+        let tunnel_background = background.clone();
+        background.spawn(async move {
+            tunnel::run_tunnel_loop(tunnel_state, tunnel_background).await;
         });
     } else {
         tracing::info!("tunnel subsystem disabled (feature flag or safe mode)");
@@ -193,10 +206,33 @@ async fn serve(config: config::Config) -> ExitCode {
             compat::CANONICAL_NAME
         ),
     }
-    if let Err(e) = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-    {
+    // On a signal, background runs are cancelled at once, while in-flight requests finish.
+    let on_signal = background.clone();
+    let served = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            on_signal.begin_shutdown();
+        })
+        .await;
+
+    // Also after a server error: running executors are stopped and report before the exit.
+    background.begin_shutdown();
+    let running = background.running();
+    if running > 0 {
+        tracing::info!(
+            "waiting up to {}s for {running} background run(s) to stop and report",
+            bound.as_secs()
+        );
+    }
+    if !background.finish(bound).await {
+        tracing::error!(
+            "{} background run(s) did not finish within {}s; exiting anyway",
+            background.running(),
+            bound.as_secs()
+        );
+    }
+
+    if let Err(e) = served {
         tracing::error!("server error: {e}");
         return ExitCode::FAILURE;
     }

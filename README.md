@@ -276,10 +276,38 @@ for either of them therefore matches only those tasks, or none.
 - `cli` runs the whitelisted executor with the rendered prompt in the background and answers at
   once: `codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check <prompt>`,
   `claude -p <prompt> --permission-mode bypassPermissions [--mcp-config <path>]` or
-  `opencode run <prompt>`, in `workdir`, killed after `timeout_secs`.
+  `opencode run <prompt>`, in `workdir`, stopped after `timeout_secs` (see below).
 
 Commands are run directly, never through a shell, so `command` names one program and everything
-else goes in `args`.
+else goes in `args`. Their stdin is `/dev/null`; they inherit the service's environment (a `cli`
+agent adds its `env_vars`).
+
+#### Stopping commands
+
+On Linux and macOS every command (`cli` executors and the commands of `openclaw`, `openprx` and
+`custom` agents) is started as the leader of its own process group. When it times out
+(`timeout_secs` for `cli`, `max(http_timeout_secs, 60)` seconds for the others), when the service
+shuts down, and also when it exits by itself, the whole group is sent `SIGTERM` and, if anything
+in it is still alive 5 seconds later, `SIGKILL`. This stops the processes an executor started
+(an npm-installed `codex` launcher's native binary, an agent's tool calls), not only the executor
+itself. A process that deliberately leaves its process group (`setsid`, `daemon`) is not
+reached. The timeout or cancellation callback is sent only after the group is gone.
+
+In a container, run the image with an init process (`docker run --init`, or `init: true` in
+compose): without one, processes orphaned by an executor are never reaped and each stop waits the
+full 5 seconds.
+
+### Shutdown
+
+On `SIGTERM` or `SIGINT` the service stops accepting connections and finishes the requests in
+flight. Every running `cli` executor (webhook-triggered or tunnel task) is stopped as above and
+then sends its terminal callback with `status = "cancelled"`, which sets `update_state_on_fail`
+like a failure, so no issue is left `in_progress` by a run that no longer exists. On the webhook
+path this callback follows the same rules as a failure (it is not sent with
+`skip_callback_state = true`, which also suppresses the start callback). The service waits for
+these callbacks up to `5 + 2 × http_timeout_secs + 5` seconds (40 seconds by default), then
+exits 0. Give the service manager at least that long: systemd's default `TimeoutStopSec` (90 s)
+is enough, `docker stop` needs `--time 45` (its default is 10 s).
 
 ### Environment
 
