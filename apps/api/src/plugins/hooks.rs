@@ -12,7 +12,7 @@ use crate::{
     forms::schema::parse_fields,
     plugins::{
         manifest::{PluginHook, parse_manifest},
-        runtime::{PluginRuntimeOutput, invoke_wasm_plugin},
+        runtime::{PluginInvocationStatus, PluginRuntimeError, PluginRuntimeOutput, invoke_wasm_plugin},
     },
 };
 
@@ -320,7 +320,12 @@ async fn insert_hook_invocation(
         plugin,
         InvocationInsert {
             hook_kind,
-            status: if error_message.is_some() { "failed" } else { "completed" },
+            // A validator that ran and returned `ok: false` rejected the value: it failed.
+            status: if error_message.is_some() {
+                PluginInvocationStatus::Failed
+            } else {
+                PluginInvocationStatus::Completed
+            },
             input,
             output: output.output,
             error_message,
@@ -336,19 +341,19 @@ async fn insert_failed_hook_invocation(
     plugin: &PluginHookRow,
     hook_kind: &str,
     input: Value,
-    error: &str,
+    error: &PluginRuntimeError,
 ) -> Result<(), ApiError> {
     insert_invocation(
         state,
         plugin,
         InvocationInsert {
             hook_kind,
-            status: "failed",
+            status: error.kind.into(),
             input,
             output: json!({}),
-            error_message: Some(error.to_string()),
-            duration_ms: 0,
-            fuel_consumed: None,
+            error_message: Some(error.message.clone()),
+            duration_ms: i64::try_from(error.duration_ms).unwrap_or(i64::MAX),
+            fuel_consumed: error.fuel_consumed.and_then(|value| i64::try_from(value).ok()),
         },
     )
     .await
@@ -356,7 +361,7 @@ async fn insert_failed_hook_invocation(
 
 struct InvocationInsert<'a> {
     hook_kind: &'a str,
-    status: &'a str,
+    status: PluginInvocationStatus,
     input: Value,
     output: Value,
     error_message: Option<String>,
@@ -385,7 +390,7 @@ async fn insert_invocation(
             plugin.id.into(),
             plugin.key.clone().into(),
             invocation.hook_kind.to_string().into(),
-            invocation.status.to_string().into(),
+            invocation.status.as_str().into(),
             invocation.input.into(),
             invocation.output.into(),
             invocation.error_message.into(),
@@ -413,7 +418,7 @@ async fn insert_invocation(
                 "plugin_key": plugin.key,
                 "invocation_id": invocation_id,
                 "hook_kind": invocation.hook_kind,
-                "status": invocation.status,
+                "status": invocation.status.as_str(),
                 "duration_ms": invocation.duration_ms,
                 "fuel_consumed": invocation.fuel_consumed
             }),

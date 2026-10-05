@@ -479,7 +479,7 @@ Production plugin rules:
 - Keep field validation, formula, and event handler hooks explicit in the manifest.
 - Amount and numeric patches returned from plugins must pass the main system schema and decimal validation.
 - Plugins run under wasmtime with fuel, timeout, memory limits, no host imports, and no WASI access.
-- Review `plugin_invocations` for failures before accepting a scenario as production-ready.
+- Review `plugin_invocations` for `failed` and `timeout` runs before accepting a scenario as production-ready.
 
 Smoke commands:
 

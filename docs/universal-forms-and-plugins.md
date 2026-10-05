@@ -37,6 +37,8 @@ Plugins use `openpr.plugin.v1` manifests and a small core WASM ABI:
 
 WASM modules run under wasmtime with fuel, timeout, and memory limits. Plugins have no host imports or WASI access in the current runtime.
 
+Every run is recorded in `plugin_invocations` with `status` set to `completed`, `failed`, or `timeout`. `timeout` means the wall-clock deadline (`runtime.timeout_ms`) expired, and its `error_message` reads `wasm execution timeout after {N}ms`; every other run that produced no output, including fuel exhaustion and guest traps, is `failed`. `duration_ms` is the elapsed wall time of the run for every status, and `fuel_consumed` is recorded whenever the runtime got far enough to know it (including fuel exhaustion, traps, and timeouts); it is null only when it is unknown, for example when the module does not compile.
+
 ## Scenario Templates
 
 Creating a project with a scenario template initializes the project as a ready-to-use business workspace.

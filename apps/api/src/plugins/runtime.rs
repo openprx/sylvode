@@ -24,6 +24,86 @@ pub struct PluginRuntimeOutput {
     pub fuel_consumed: Option<u64>,
 }
 
+/// How a plugin run that produced no output ended, as `plugin_invocations.status` records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginFailureKind {
+    /// The wall-clock deadline (`runtime.timeout_ms`) expired first.
+    Timeout,
+    /// Anything else: a module that does not compile or instantiate, a missing export, a guest
+    /// trap (fuel exhaustion included), or output the host cannot read.
+    Failed,
+}
+
+/// A plugin run that produced no output, with everything the store knew when it stopped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginRuntimeError {
+    pub kind: PluginFailureKind,
+    /// The user-visible reason. A timeout reads exactly `wasm execution timeout after {N}ms`.
+    pub message: String,
+    /// Wall-clock time from the start of the invocation until it ended.
+    pub duration_ms: u64,
+    /// Fuel the guest burnt before it stopped; `None` when no store with fuel ever existed
+    /// (the module did not compile) or the run could not be observed.
+    pub fuel_consumed: Option<u64>,
+}
+
+impl std::fmt::Display for PluginRuntimeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for PluginRuntimeError {}
+
+/// `plugin_invocations.status`, whose CHECK constraint admits exactly these three values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginInvocationStatus {
+    Completed,
+    Failed,
+    Timeout,
+}
+
+impl PluginInvocationStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Timeout => "timeout",
+        }
+    }
+}
+
+impl From<PluginFailureKind> for PluginInvocationStatus {
+    fn from(kind: PluginFailureKind) -> Self {
+        match kind {
+            PluginFailureKind::Timeout => Self::Timeout,
+            PluginFailureKind::Failed => Self::Failed,
+        }
+    }
+}
+
+/// Why the guest stopped, before the store's cost is attached to it.
+struct GuestFailure {
+    kind: PluginFailureKind,
+    message: String,
+}
+
+impl GuestFailure {
+    const fn failed(message: String) -> Self {
+        Self {
+            kind: PluginFailureKind::Failed,
+            message,
+        }
+    }
+
+    fn timeout(timeout_ms: u64) -> Self {
+        Self {
+            kind: PluginFailureKind::Timeout,
+            message: timeout_error(timeout_ms),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct StoreState {
     limits: StoreLimits,
@@ -39,8 +119,13 @@ pub async fn invoke_wasm_plugin(
     wasm_bytes: Vec<u8>,
     input: Value,
     policy: PluginRuntimePolicy,
-) -> Result<PluginRuntimeOutput, String> {
-    let engine = build_engine()?;
+) -> Result<PluginRuntimeOutput, PluginRuntimeError> {
+    let engine = build_engine().map_err(|message| PluginRuntimeError {
+        kind: PluginFailureKind::Failed,
+        message,
+        duration_ms: 0,
+        fuel_consumed: None,
+    })?;
     invoke_on_engine(&engine, wasm_bytes, input, policy).await
 }
 
@@ -55,7 +140,8 @@ async fn invoke_on_engine(
     wasm_bytes: Vec<u8>,
     input: Value,
     policy: PluginRuntimePolicy,
-) -> Result<PluginRuntimeOutput, String> {
+) -> Result<PluginRuntimeOutput, PluginRuntimeError> {
+    let started = Instant::now();
     let timeout = Duration::from_millis(policy.timeout_ms);
     let timeout_ms = policy.timeout_ms;
     let expired = Arc::new(AtomicBool::new(false));
@@ -76,7 +162,12 @@ async fn invoke_on_engine(
         guard.disarm();
         return match joined {
             Ok(result) => result,
-            Err(err) => Err(format!("wasm task failed: {err}")),
+            Err(err) => Err(PluginRuntimeError {
+                kind: PluginFailureKind::Failed,
+                message: format!("wasm task failed: {err}"),
+                duration_ms: millis_u64(started.elapsed()),
+                fuel_consumed: None,
+            }),
         };
     }
 
@@ -88,12 +179,27 @@ async fn invoke_on_engine(
         }
     };
     guard.disarm();
-    match late {
-        Ok(Ok(_)) => tracing::debug!(timeout_ms, "wasm plugin finished after its deadline; result discarded"),
-        Ok(Err(err)) => tracing::debug!(timeout_ms, error = %err, "wasm plugin stopped after its deadline"),
-        Err(err) => tracing::warn!(timeout_ms, error = %err, "wasm task failed after its deadline"),
-    }
-    Err(timeout_error(timeout_ms))
+    // The guest's own report, discarded below, still says how much fuel it burnt.
+    let fuel_consumed = match late {
+        Ok(Ok(output)) => {
+            tracing::debug!(timeout_ms, "wasm plugin finished after its deadline; result discarded");
+            output.fuel_consumed
+        }
+        Ok(Err(err)) => {
+            tracing::debug!(timeout_ms, error = %err, "wasm plugin stopped after its deadline");
+            err.fuel_consumed
+        }
+        Err(err) => {
+            tracing::warn!(timeout_ms, error = %err, "wasm task failed after its deadline");
+            None
+        }
+    };
+    Err(PluginRuntimeError {
+        kind: PluginFailureKind::Timeout,
+        message: timeout_error(timeout_ms),
+        duration_ms: millis_u64(started.elapsed()),
+        fuel_consumed,
+    })
 }
 
 struct InterruptOnDrop {
@@ -127,9 +233,16 @@ fn invoke_wasm_plugin_sync(
     input: &Value,
     policy: &PluginRuntimePolicy,
     expired: &Arc<AtomicBool>,
-) -> Result<PluginRuntimeOutput, String> {
+) -> Result<PluginRuntimeOutput, PluginRuntimeError> {
     let started = Instant::now();
-    let module = Module::new(engine, wasm_bytes).map_err(|err| format!("invalid wasm module: {err}"))?;
+    // Before a store with fuel exists there is no cost to report.
+    let without_store = |message: String| PluginRuntimeError {
+        kind: PluginFailureKind::Failed,
+        message,
+        duration_ms: millis_u64(started.elapsed()),
+        fuel_consumed: None,
+    };
+    let module = Module::new(engine, wasm_bytes).map_err(|err| without_store(format!("invalid wasm module: {err}")))?;
     let limits = StoreLimitsBuilder::new()
         .memory_size(policy.memory_bytes)
         .instances(1)
@@ -140,7 +253,7 @@ fn invoke_wasm_plugin_sync(
     store.limiter(|state| &mut state.limits);
     store
         .set_fuel(policy.fuel)
-        .map_err(|err| format!("failed to set wasm fuel: {err}"))?;
+        .map_err(|err| without_store(format!("failed to set wasm fuel: {err}")))?;
     // The deadline is one tick past the epoch current at store creation. Reaching it only runs
     // the callback: it interrupts the guest when this invocation's own deadline has passed and
     // otherwise re-arms one tick past the then-current epoch, so an epoch advance made on behalf
@@ -154,16 +267,48 @@ fn invoke_wasm_plugin_sync(
             Ok(UpdateDeadline::Continue(1))
         }
     });
+
+    let outcome = run_guest(&mut store, &module, input, policy, expired);
+    // Known from here on whatever the outcome: fuel exhaustion leaves zero remaining, a trap or
+    // an interrupt leaves whatever the guest had not burnt yet.
+    let fuel_consumed = store
+        .get_fuel()
+        .ok()
+        .map(|remaining| policy.fuel.saturating_sub(remaining));
+    let duration_ms = millis_u64(started.elapsed());
+    match outcome {
+        Ok(output) => Ok(PluginRuntimeOutput {
+            output,
+            duration_ms,
+            fuel_consumed,
+        }),
+        Err(failure) => Err(PluginRuntimeError {
+            kind: failure.kind,
+            message: failure.message,
+            duration_ms,
+            fuel_consumed,
+        }),
+    }
+}
+
+/// Instantiates the module in `store`, runs the ABI and reads the guest's JSON output.
+fn run_guest(
+    store: &mut Store<StoreState>,
+    module: &Module,
+    input: &Value,
+    policy: &PluginRuntimePolicy,
+    expired: &Arc<AtomicBool>,
+) -> Result<Value, GuestFailure> {
     let guest_error = |context: &str, err: wasmtime::Error| {
         if matches!(err.downcast_ref::<Trap>(), Some(Trap::Interrupt)) {
-            timeout_error(policy.timeout_ms)
+            GuestFailure::timeout(policy.timeout_ms)
         } else {
-            format!("{context}: {err:#}")
+            GuestFailure::failed(format!("{context}: {err:#}"))
         }
     };
     let ensure_not_expired = || {
         if expired.load(Ordering::SeqCst) {
-            Err(timeout_error(policy.timeout_ms))
+            Err(GuestFailure::timeout(policy.timeout_ms))
         } else {
             Ok(())
         }
@@ -171,59 +316,58 @@ fn invoke_wasm_plugin_sync(
 
     ensure_not_expired()?;
     let instance =
-        Instance::new(&mut store, &module, &[]).map_err(|err| guest_error("failed to instantiate wasm", err))?;
+        Instance::new(&mut *store, module, &[]).map_err(|err| guest_error("failed to instantiate wasm", err))?;
 
-    if let Ok(version_fn) = instance.get_typed_func::<(), i32>(&mut store, "openpr_plugin_abi_version") {
+    if let Ok(version_fn) = instance.get_typed_func::<(), i32>(&mut *store, "openpr_plugin_abi_version") {
         ensure_not_expired()?;
         let version = version_fn
-            .call(&mut store, ())
+            .call(&mut *store, ())
             .map_err(|err| guest_error("failed to read plugin abi version", err))?;
         if version != ABI_VERSION {
-            return Err(format!("unsupported plugin abi version: {version}"));
+            return Err(GuestFailure::failed(format!(
+                "unsupported plugin abi version: {version}"
+            )));
         }
     }
 
     let alloc = instance
-        .get_typed_func::<i32, i32>(&mut store, "openpr_alloc")
-        .map_err(|_| "plugin must export openpr_alloc(len: i32) -> i32".to_string())?;
+        .get_typed_func::<i32, i32>(&mut *store, "openpr_alloc")
+        .map_err(|_| GuestFailure::failed("plugin must export openpr_alloc(len: i32) -> i32".to_string()))?;
     let invoke = instance
-        .get_typed_func::<(i32, i32), i64>(&mut store, "openpr_invoke")
-        .map_err(|_| "plugin must export openpr_invoke(ptr: i32, len: i32) -> i64".to_string())?;
+        .get_typed_func::<(i32, i32), i64>(&mut *store, "openpr_invoke")
+        .map_err(|_| GuestFailure::failed("plugin must export openpr_invoke(ptr: i32, len: i32) -> i64".to_string()))?;
     let memory = instance
-        .get_memory(&mut store, "memory")
-        .ok_or_else(|| "plugin must export memory".to_string())?;
+        .get_memory(&mut *store, "memory")
+        .ok_or_else(|| GuestFailure::failed("plugin must export memory".to_string()))?;
 
-    let input_bytes = serde_json::to_vec(input).map_err(|err| format!("failed to encode plugin input: {err}"))?;
-    let input_len = i32::try_from(input_bytes.len()).map_err(|_| "plugin input is too large".to_string())?;
+    let input_bytes = serde_json::to_vec(input)
+        .map_err(|err| GuestFailure::failed(format!("failed to encode plugin input: {err}")))?;
+    let input_len =
+        i32::try_from(input_bytes.len()).map_err(|_| GuestFailure::failed("plugin input is too large".to_string()))?;
     ensure_not_expired()?;
     let input_ptr = alloc
-        .call(&mut store, input_len)
+        .call(&mut *store, input_len)
         .map_err(|err| guest_error("plugin allocation failed", err))?;
-    let input_offset = usize::try_from(input_ptr).map_err(|_| "plugin returned negative input pointer".to_string())?;
+    let input_offset = usize::try_from(input_ptr)
+        .map_err(|_| GuestFailure::failed("plugin returned negative input pointer".to_string()))?;
     memory
-        .write(&mut store, input_offset, &input_bytes)
-        .map_err(|err| format!("failed to write plugin input: {err}"))?;
+        .write(&mut *store, input_offset, &input_bytes)
+        .map_err(|err| GuestFailure::failed(format!("failed to write plugin input: {err}")))?;
 
     ensure_not_expired()?;
     let output_handle = invoke
-        .call(&mut store, (input_ptr, input_len))
+        .call(&mut *store, (input_ptr, input_len))
         .map_err(|err| guest_error("plugin invocation trapped", err))?;
-    let (output_ptr, output_len) = unpack_ptr_len(output_handle)?;
+    let (output_ptr, output_len) = unpack_ptr_len(output_handle).map_err(GuestFailure::failed)?;
     if output_len > MAX_OUTPUT_BYTES {
-        return Err("plugin output is too large".to_string());
+        return Err(GuestFailure::failed("plugin output is too large".to_string()));
     }
     let mut output_bytes = vec![0_u8; output_len];
     memory
-        .read(&store, output_ptr, &mut output_bytes)
-        .map_err(|err| format!("failed to read plugin output: {err}"))?;
-    let output = serde_json::from_slice(&output_bytes).map_err(|err| format!("plugin output is not JSON: {err}"))?;
-    let fuel_remaining = store.get_fuel().ok();
-
-    Ok(PluginRuntimeOutput {
-        output,
-        duration_ms: millis_u64(started.elapsed()),
-        fuel_consumed: fuel_remaining.map(|remaining| policy.fuel.saturating_sub(remaining)),
-    })
+        .read(&*store, output_ptr, &mut output_bytes)
+        .map_err(|err| GuestFailure::failed(format!("failed to read plugin output: {err}")))?;
+    serde_json::from_slice(&output_bytes)
+        .map_err(|err| GuestFailure::failed(format!("plugin output is not JSON: {err}")))
 }
 
 fn build_engine() -> Result<Engine, String> {
@@ -251,7 +395,10 @@ fn millis_u64(duration: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PluginRuntimePolicy, build_engine, invoke_on_engine, invoke_wasm_plugin, validate_wasm_module};
+    use super::{
+        PluginFailureKind, PluginInvocationStatus, PluginRuntimePolicy, build_engine, invoke_on_engine,
+        invoke_wasm_plugin, validate_wasm_module,
+    };
     use serde_json::json;
     use std::time::{Duration, Instant};
 
@@ -315,7 +462,40 @@ mod tests {
             .await
             .expect_err("missing abi should fail");
 
-        assert!(err.contains("openpr_alloc"));
+        assert!(err.message.contains("openpr_alloc"), "{err}");
+        assert_eq!(err.kind, PluginFailureKind::Failed);
+        // The store existed, so its (zero) fuel use is known.
+        assert_eq!(err.fuel_consumed, Some(0), "{err:?}");
+    }
+
+    /// Bytes that never compile leave no store behind, so no fuel figure can be reported.
+    #[tokio::test]
+    async fn an_uncompilable_module_reports_no_fuel() {
+        let err = invoke_wasm_plugin(b"not wasm".to_vec(), json!({}), PluginRuntimePolicy::default())
+            .await
+            .expect_err("garbage must not run");
+
+        assert!(err.message.starts_with("invalid wasm module"), "{err}");
+        assert_eq!(err.kind, PluginFailureKind::Failed);
+        assert_eq!(err.fuel_consumed, None);
+    }
+
+    #[test]
+    fn invocation_statuses_match_the_table_constraint() {
+        assert_eq!(PluginInvocationStatus::Completed.as_str(), "completed");
+        assert_eq!(
+            PluginInvocationStatus::from(PluginFailureKind::Failed).as_str(),
+            "failed"
+        );
+        assert_eq!(
+            PluginInvocationStatus::from(PluginFailureKind::Timeout).as_str(),
+            "timeout"
+        );
+        let migration = include_str!("../../../../migrations/0033_plugins_wasm.sql");
+        assert!(
+            migration.contains("CHECK (status IN ('completed', 'failed', 'timeout'))"),
+            "plugin_invocations.status must admit every value the runtime records"
+        );
     }
 
     #[tokio::test]
@@ -336,7 +516,7 @@ mod tests {
             .await
             .expect_err("imports should fail");
 
-        assert!(err.contains("failed to instantiate wasm"));
+        assert!(err.message.contains("failed to instantiate wasm"), "{err}");
     }
 
     fn memory_grow_probe_wasm(initial_pages: u32) -> Vec<u8> {
@@ -415,7 +595,7 @@ mod tests {
             .await
             .expect_err("oversized initial memory should fail");
 
-        assert!(err.contains("failed to instantiate wasm"));
+        assert!(err.message.contains("failed to instantiate wasm"), "{err}");
     }
 
     #[test]
@@ -498,9 +678,15 @@ mod tests {
         .await
         .expect_err("fuel should trap");
 
-        assert!(err.starts_with("plugin invocation trapped"), "{err}");
-        assert!(err.contains("fuel"), "{err}");
-        assert!(!err.contains("timeout"), "{err}");
+        assert!(err.message.starts_with("plugin invocation trapped"), "{err}");
+        assert!(err.message.contains("fuel"), "{err}");
+        assert!(!err.message.contains("timeout"), "{err}");
+        assert_eq!(err.kind, PluginFailureKind::Failed);
+        assert_eq!(
+            err.fuel_consumed,
+            Some(10),
+            "fuel exhaustion burns the whole budget: {err:?}"
+        );
     }
 
     #[tokio::test]
@@ -527,9 +713,14 @@ mod tests {
         .await
         .expect_err("unreachable should trap");
 
-        assert!(err.starts_with("plugin invocation trapped"), "{err}");
-        assert!(!err.contains("timeout"), "{err}");
-        assert!(!err.contains("fuel"), "{err}");
+        assert!(err.message.starts_with("plugin invocation trapped"), "{err}");
+        assert!(!err.message.contains("timeout"), "{err}");
+        assert!(!err.message.contains("fuel"), "{err}");
+        assert_eq!(err.kind, PluginFailureKind::Failed);
+        assert!(
+            err.fuel_consumed.is_some(),
+            "a trap leaves the store's fuel readable: {err:?}"
+        );
     }
 
     /// Runs `future` on a dedicated runtime that is shut down with a timeout, so a guest that
@@ -577,10 +768,12 @@ mod tests {
         });
 
         let result = invocation.expect("invocation must return within the bound once the deadline passes");
-        assert_eq!(
-            result.expect_err("runaway guest must not succeed"),
-            "wasm execution timeout after 200ms"
-        );
+        let err = result.expect_err("runaway guest must not succeed");
+        assert_eq!(err.message, "wasm execution timeout after 200ms");
+        assert_eq!(err.kind, PluginFailureKind::Timeout);
+        assert_eq!(PluginInvocationStatus::from(err.kind).as_str(), "timeout");
+        assert!(err.duration_ms >= 200, "{err:?}");
+        assert!(err.fuel_consumed.is_some_and(|fuel| fuel > 0), "{err:?}");
         let job = released.expect("the single blocking thread must be free after the timeout");
         assert_eq!(job.expect("blocking job should complete"), 7);
     }
@@ -658,10 +851,9 @@ mod tests {
         })
         .expect("both invocations must finish within the bound");
 
-        assert_eq!(
-            short_result.expect_err("short invocation must time out"),
-            "wasm execution timeout after 100ms"
-        );
+        let short_err = short_result.expect_err("short invocation must time out");
+        assert_eq!(short_err.message, "wasm execution timeout after 100ms");
+        assert_eq!(short_err.kind, PluginFailureKind::Timeout);
         let output = long_result.expect("long invocation must not be stopped by the other deadline");
         assert_eq!(output.output, json!({"done": true}));
         assert!(
