@@ -63,3 +63,75 @@ fn refuses_a_blank_webhook_secret() {
         assert!(refused.stderr.is_empty(), "{refused:?}");
     }
 }
+
+/// `config.example.toml` refuses to start as shipped, because of its placeholder secret, and
+/// starts once a real secret is filled in.
+#[test]
+fn the_shipped_example_refuses_until_its_secret_is_set() {
+    let example = include_str!("../../config.example.toml").replace("127.0.0.1:9090", "127.0.0.1:0");
+    let refused = Server::start(CANONICAL, &example, &[])
+        .err()
+        .expect("refused as shipped");
+    assert_eq!(refused.code, Some(1));
+    assert!(
+        refused
+            .stdout
+            .iter()
+            .any(|line| line.contains("security.webhook_secrets[0] is still the example placeholder")),
+        "{refused:?}"
+    );
+
+    let filled = example.replace(
+        "replace-with-the-secret-of-your-sylvode-webhook",
+        "a-real-random-secret",
+    );
+    let server = Server::start(CANONICAL, &filled, &[]).expect("starts with a real secret");
+    assert!(server.addr.ip().is_loopback());
+}
+
+fn unsigned_config(listen: &str, extra: &str) -> String {
+    format!("[server]\nlisten = \"{listen}\"\n\n[security]\nallow_unsigned = true\n{extra}\n")
+}
+
+/// `allow_unsigned = true` starts on loopback with a prominent warning, is refused on any other
+/// address, and starts there, still warning, only when explicitly acknowledged.
+#[test]
+fn allow_unsigned_warns_and_is_refused_off_loopback_unless_acknowledged() {
+    let mut server = Server::start(CANONICAL, &unsigned_config("127.0.0.1:0", ""), &[]).expect("loopback starts");
+    assert!(
+        server
+            .stdout()
+            .iter()
+            .any(|line| line.contains(" WARN ") && line.contains("signatures are NOT verified")),
+        "{:?}",
+        server.stdout()
+    );
+    drop(server);
+
+    let refused = Server::start(CANONICAL, &unsigned_config("0.0.0.0:0", ""), &[])
+        .err()
+        .expect("non-loopback unsigned is refused");
+    assert_eq!(refused.code, Some(1));
+    assert!(
+        refused
+            .stdout
+            .iter()
+            .any(|line| line.contains("security.allow_unsigned_non_loopback = true")),
+        "{refused:?}"
+    );
+
+    let mut acknowledged = Server::start(
+        CANONICAL,
+        &unsigned_config("0.0.0.0:0", "allow_unsigned_non_loopback = true"),
+        &[],
+    )
+    .expect("acknowledged non-loopback starts");
+    assert!(
+        acknowledged
+            .stdout()
+            .iter()
+            .any(|line| line.contains(" WARN ") && line.contains("anyone who can reach 0.0.0.0:0")),
+        "{:?}",
+        acknowledged.stdout()
+    );
+}

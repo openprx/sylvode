@@ -143,6 +143,9 @@ fn serve_blocking(config_path: &str) -> ExitCode {
         }
     };
     config.safe_mode = safe_mode;
+    for warning in config.startup_warnings() {
+        tracing::warn!("{warning}");
+    }
 
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(runtime) => runtime,

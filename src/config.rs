@@ -59,6 +59,10 @@ pub struct SecurityConfig {
     pub webhook_secrets: Vec<String>,
     #[serde(default)]
     pub allow_unsigned: bool,
+    /// Acknowledges that `allow_unsigned = true` is meant on an address other than loopback, where
+    /// anyone who can reach the port can trigger agents. Without it that combination is refused.
+    #[serde(default)]
+    pub allow_unsigned_non_loopback: bool,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -211,6 +215,33 @@ const fn default_tunnel_reconnect_backoff_max_secs() -> u64 {
     60
 }
 
+/// The secret `config.example.toml` ships with. Start-up is refused while it is still in place.
+pub const EXAMPLE_SECRET_PLACEHOLDER: &str = "replace-with-the-secret-of-your-sylvode-webhook";
+
+/// Secrets copied from an example file rather than chosen: the current example's placeholder and
+/// the values earlier examples and the README showed.
+pub const PLACEHOLDER_SECRETS: [&str; 4] = [
+    EXAMPLE_SECRET_PLACEHOLDER,
+    "your-secret-here",
+    "shared-hmac-secret",
+    "replace-with-the-secret-shared-with-the-control-plane",
+];
+
+fn is_placeholder(secret: &str) -> bool {
+    PLACEHOLDER_SECRETS.contains(&secret.trim())
+}
+
+/// Whether `listen` (`host:port`) binds only a loopback interface. A host name other than
+/// `localhost` may resolve to anything, so it does not count as loopback.
+fn is_loopback_listen(listen: &str) -> bool {
+    if let Ok(addr) = listen.parse::<std::net::SocketAddr>() {
+        return addr.ip().is_loopback();
+    }
+    listen
+        .rsplit_once(':')
+        .is_some_and(|(host, _)| host.eq_ignore_ascii_case("localhost"))
+}
+
 /// Every trigger kind a Sylvode deployment sends, the closed set `route.trigger_kinds` may name.
 ///
 /// A direct webhook delivery carries `bot_context.trigger_reason`: `created`, `assigned`,
@@ -310,6 +341,41 @@ impl Config {
             .security
             .webhook_secrets
             .iter()
+            .position(|secret| is_placeholder(secret))
+        {
+            return Err(format!(
+                "security.webhook_secrets[{index}] is still the example placeholder; set it to the secret \
+                 configured on the Sylvode webhook (a long random string)"
+            ));
+        }
+        if self
+            .tunnel
+            .as_ref()
+            .and_then(|t| t.hmac_secret.as_deref())
+            .is_some_and(is_placeholder)
+        {
+            return Err(
+                "tunnel.hmac_secret is still an example placeholder; set it to the secret shared with \
+                        the control plane, or remove the setting"
+                    .to_string(),
+            );
+        }
+        if self.security.allow_unsigned
+            && !self.security.allow_unsigned_non_loopback
+            && !is_loopback_listen(&self.server.listen)
+        {
+            return Err(format!(
+                "security.allow_unsigned = true with server.listen = \"{}\", which is not a loopback address: \
+                 anyone who can reach the port could trigger agents without a signature. Listen on \
+                 127.0.0.1, set allow_unsigned = false, or, if this is really intended, set \
+                 security.allow_unsigned_non_loopback = true",
+                self.server.listen
+            ));
+        }
+        if let Some(index) = self
+            .security
+            .webhook_secrets
+            .iter()
             .position(|secret| secret.trim().is_empty())
         {
             return Err(format!(
@@ -354,6 +420,25 @@ impl Config {
             );
         }
         Ok(())
+    }
+
+    /// Configurations that start but deserve a prominent warning in the log.
+    pub fn startup_warnings(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if self.security.allow_unsigned {
+            warnings.push(format!(
+                "security.allow_unsigned = true: webhook signatures are NOT verified; anyone who can reach \
+                 {} can trigger agents. Use this only for local development",
+                self.server.listen
+            ));
+        } else if self.security.webhook_secrets.is_empty() {
+            warnings.push(
+                "security.webhook_secrets is empty and allow_unsigned = false: every /webhook request will be \
+                 answered 401. Add the secret configured on the Sylvode webhook"
+                    .to_string(),
+            );
+        }
+        warnings
     }
 
     pub const fn cli_enabled(&self) -> bool {
@@ -449,7 +534,7 @@ enabled = true
 
     fn route_config(trigger_kinds: &str) -> String {
         format!(
-            "[server]\nlisten = \"0.0.0.0:9090\"\n\n[security]\nallow_unsigned = true\n\n\
+            "[server]\nlisten = \"127.0.0.1:9090\"\n\n[security]\nallow_unsigned = true\n\n\
              [[agents]]\nid = \"fixer\"\nname = \"Fixer\"\nagent_type = \"webhook\"\n\n\
              [agents.route]\ntrigger_kinds = {trigger_kinds}\n\n\
              [agents.webhook]\nurl = \"http://127.0.0.1:9000/hook\"\n"
@@ -479,7 +564,7 @@ enabled = true
 
     fn command_config(agent_type: &str, section: &str) -> String {
         format!(
-            "[server]\nlisten = \"0.0.0.0:9090\"\n\n[security]\nallow_unsigned = true\n\n\
+            "[server]\nlisten = \"127.0.0.1:9090\"\n\n[security]\nallow_unsigned = true\n\n\
              [[agents]]\nid = \"david\"\nname = \"David\"\nagent_type = \"{agent_type}\"\n\n{section}\n"
         )
     }
@@ -567,7 +652,7 @@ url = "http://127.0.0.1:9000/hook"
 
     fn tunnel_config(tunnel_enabled: bool, enabled: bool, extra: &str) -> String {
         format!(
-            "[server]\nlisten = \"0.0.0.0:9090\"\n\n[security]\nallow_unsigned = true\n\n\
+            "[server]\nlisten = \"127.0.0.1:9090\"\n\n[security]\nallow_unsigned = true\n\n\
              [features]\ntunnel_enabled = {tunnel_enabled}\n\n\
              [tunnel]\nenabled = {enabled}\nurl = \"wss://example.invalid/tunnel\"\nagent_id = \"a\"\n\
              auth_token = \"t\"\n{extra}\n"
@@ -649,6 +734,116 @@ url = "http://127.0.0.1:9000/hook"
                 assert!(err.contains("blank"), "{err}");
             }
         }
+    }
+
+    fn security_config(listen: &str, security: &str) -> String {
+        format!("[server]\nlisten = \"{listen}\"\n\n[security]\n{security}\n")
+    }
+
+    /// The placeholder of `config.example.toml`, and the ones earlier examples shipped, are
+    /// refused: a deployment that copied the example unchanged must not start.
+    #[test]
+    fn refuses_a_placeholder_secret() {
+        for placeholder in super::PLACEHOLDER_SECRETS {
+            let err = load_str(&security_config(
+                "127.0.0.1:9090",
+                &format!("webhook_secrets = [\"{placeholder}\"]"),
+            ))
+            .expect_err("a placeholder webhook secret is refused");
+            assert!(err.contains("security.webhook_secrets[0]"), "{err}");
+            assert!(err.contains("placeholder"), "{err}");
+
+            let err = load_str(&tunnel_config(
+                false,
+                false,
+                &format!("hmac_secret = \"{placeholder}\""),
+            ))
+            .expect_err("a placeholder hmac secret is refused");
+            assert!(err.contains("tunnel.hmac_secret"), "{err}");
+        }
+    }
+
+    /// The example file ships with the placeholder, so it refuses to start as shipped, and starts
+    /// once a real secret is filled in.
+    #[test]
+    fn the_shipped_example_refuses_until_its_secret_is_set() {
+        let example = include_str!("../config.example.toml");
+        let err = load_str(example).expect_err("the example refuses as shipped");
+        assert!(err.contains("placeholder"), "{err}");
+        let filled = example.replace(super::EXAMPLE_SECRET_PLACEHOLDER, "a-real-random-secret");
+        let cfg = load_str(&filled).expect("the example starts with a real secret");
+        assert!(!cfg.security.allow_unsigned, "the example verifies signatures");
+        assert_eq!(cfg.server.listen, "127.0.0.1:9090", "the example binds loopback only");
+        assert!(
+            cfg.agents
+                .iter()
+                .all(|agent| agent.agent_type == "cli" || agent.agent_type == "webhook"),
+            "every example agent that runs a command is gated by cli_enabled"
+        );
+        assert!(!cfg.features.cli_enabled);
+    }
+
+    /// Unsigned requests on an interface other than loopback are refused unless acknowledged.
+    #[test]
+    fn refuses_allow_unsigned_on_a_non_loopback_address_without_acknowledgement() {
+        for listen in ["0.0.0.0:9090", "[::]:9090", "192.168.1.5:9090", "example.com:9090"] {
+            let err = load_str(&security_config(listen, "allow_unsigned = true"))
+                .expect_err("unsigned on a non-loopback address is refused");
+            assert!(err.contains("security.allow_unsigned"), "{listen}: {err}");
+            assert!(err.contains("security.allow_unsigned_non_loopback"), "{listen}: {err}");
+
+            let acknowledged = load_str(&security_config(
+                listen,
+                "allow_unsigned = true\nallow_unsigned_non_loopback = true",
+            ))
+            .expect("acknowledged");
+            assert!(acknowledged.security.allow_unsigned_non_loopback);
+        }
+        for listen in [
+            "127.0.0.1:9090",
+            "127.0.0.2:0",
+            "[::1]:9090",
+            "localhost:9090",
+            "LOCALHOST:1",
+        ] {
+            load_str(&security_config(listen, "allow_unsigned = true")).expect("loopback is accepted");
+        }
+    }
+
+    #[test]
+    fn startup_warnings_name_unsigned_and_unverifiable_configurations() {
+        let unsigned = load_str(&security_config("127.0.0.1:9090", "allow_unsigned = true")).expect("loads");
+        let warnings = unsigned.startup_warnings();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("allow_unsigned = true") && w.contains("NOT verified")),
+            "{warnings:?}"
+        );
+
+        let public = load_str(&security_config(
+            "0.0.0.0:9090",
+            "allow_unsigned = true\nallow_unsigned_non_loopback = true",
+        ))
+        .expect("loads");
+        assert!(
+            public.startup_warnings().iter().any(|w| w.contains("0.0.0.0:9090")),
+            "{:?}",
+            public.startup_warnings()
+        );
+
+        let no_secret = load_str(&security_config("127.0.0.1:9090", "allow_unsigned = false")).expect("loads");
+        assert!(
+            no_secret
+                .startup_warnings()
+                .iter()
+                .any(|w| w.contains("webhook_secrets") && w.contains("401")),
+            "{:?}",
+            no_secret.startup_warnings()
+        );
+
+        let fine = load_str(&security_config("0.0.0.0:9090", "webhook_secrets = [\"real\"]")).expect("loads");
+        assert!(fine.startup_warnings().is_empty(), "{:?}", fine.startup_warnings());
     }
 
     /// Without `require_inbound_sig`, or with the tunnel off, a missing secret is still accepted.
