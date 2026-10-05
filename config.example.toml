@@ -21,7 +21,8 @@ tunnel_reconnect_backoff_max_secs = 60
 [tunnel]
 enabled = false
 # supports ws:// and wss://, production should use wss://
-url = "wss://openpr.example.com/api/v1/agent-tunnel"
+url = "wss://sylvode.example.com/api/v1/agent-tunnel"
+# required: the id the control plane registered for this agent; there is no default
 agent_id = "vano-qa"
 # sent as Authorization: Bearer <token>
 auth_token = "opr_xxx"
@@ -51,7 +52,7 @@ name = "Vano CLI"
 agent_type = "cli"
 message_template = "[{project}] {event}: {key} {title}"
 
-# Optional scenario route constraints. When present, the OpenPR bot task or
+# Optional scenario route constraints. When present, the Sylvode bot task or
 # worker AI task must match these fields before the agent is selected.
 # Empty lists mean "no constraint" for that dimension.
 [agents.route]
@@ -59,13 +60,13 @@ bot_agent_types = ["cli"]
 project_types = ["code_delivery"]
 trigger_kinds = ["mention", "assignment"]
 # Event routing. Only events a webhook subscription can request are ever
-# delivered; see WEBHOOK_EVENTS in the OpenPR API.
+# delivered; see WEBHOOK_EVENTS in the Sylvode API.
 # events = ["issue.assigned", "comment.created"]
 # form_keys = ["order", "print_job"]
 
 [agents.cli]
 executor = "codex" # codex | claude-code | opencode
-workdir = "/opt/worker/code/openpr"
+workdir = "/path/to/your/repository"
 timeout_secs = 900
 max_output_chars = 12000
 prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
@@ -85,7 +86,7 @@ agent_type = "cli"
 
 [agents.cli]
 executor = "claude-code"
-workdir = "/opt/worker/code/openpr"
+workdir = "/path/to/your/repository"
 timeout_secs = 900
 max_output_chars = 12000
 prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
@@ -97,17 +98,17 @@ callback = "mcp"
 callback_url = "http://127.0.0.1:8090/mcp/rpc"
 callback_token = "opr_xxx"
 
-# Optional: path to MCP config for claude-code (--mcp-config flag).
-# If omitted, claude-code uses its global ~/.claude.json MCP config.
-# mcp_config_path = "/path/to/mcp-config.json"
+# Path to an MCP config for claude-code (--mcp-config flag). Setting it (or
+# mcp_instructions, or env_vars) also appends the default MCP instructions to
+# the prompt. If omitted, claude-code uses its global ~/.claude.json MCP config.
+mcp_config_path = "/path/to/mcp-config.json"
 
 # Custom MCP instructions appended to the prompt. If omitted, a sensible
-# default is used that instructs the AI to read/write via OpenPR MCP tools.
+# default is used that instructs the AI to read/write via Sylvode MCP tools.
 # mcp_instructions = "Use work_items.get to read issue {issue_id}, then fix it."
 
 # Extra environment variables injected into the executor subprocess.
-# Useful for per-agent API URLs, bot tokens, or workspace IDs.
-[agents.cli.env_vars]
-OPENPR_API_URL = "http://localhost:3000"
-OPENPR_BOT_TOKEN = "opr_xxx"
-OPENPR_WORKSPACE_ID = "e5166fd1-..."
+# The Sylvode MCP server reads its API URL, bot token and workspace from its
+# own config file (mcp-server serve --config ...), not from these variables.
+# [agents.cli.env_vars]
+# HTTPS_PROXY = "http://proxy.internal:3128"
