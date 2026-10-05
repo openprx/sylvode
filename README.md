@@ -260,8 +260,8 @@ connect from:
 | `mcp_http` | The MCP server's HTTP endpoint (`/mcp/rpc`), sent by the agent in its `Authorization` header |
 | `mcp_sse` | The MCP server's SSE endpoint, sent the same way |
 | `mcp_stdio` | `mcp-server serve --transport stdio`, as `mcp.bot_token` |
-| `cli` | The `sylvode` and `mcp-server` commands (including `tools call`), as `mcp.bot_token` or `--bot-token` |
-| `cli_tools_call` | Reserved for clients that identify as the `tools call` surface; the bundled CLI uses `cli` |
+| `cli` | The `sylvode` and `mcp-server` commands other than `tools call`, as `mcp.bot_token` or `--bot-token` |
+| `cli_tools_call` | `sylvode tools call` / `mcp-server tools call`, as `mcp.bot_token` or `--bot-token` |
 
 The web form requires a choice. `POST /api/v1/workspaces/{id}/bots` takes it as
 `transport_surface` and defaults to `rest` when the field is omitted; the
@@ -395,7 +395,9 @@ configuration file as the MCP server (`[mcp] api_url`, `bot_token`,
 
 `--format json` (the default) is the stable machine contract; `--format table` is
 a human display. `tools call` reaches any of the 140 tools by name, an escape
-hatch for anything without a dedicated subcommand.
+hatch for anything without a dedicated subcommand. It declares the transport
+surface `cli_tools_call` rather than `cli`, so it needs a bot token issued for
+that surface (see the surface table above).
 
 ```bash
 sylvode projects list --format table

@@ -21,7 +21,7 @@ use platform::config::{MCP_BOT_TOKEN_REQUIRED, McpConfig, McpRuntime, McpTranspo
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::client::{ClientConfig, OpenPrClient, TRANSPORT_LABEL_CLI, transport_label};
+use crate::client::{ClientConfig, OpenPrClient, TRANSPORT_LABEL_CLI, TRANSPORT_LABEL_CLI_TOOLS_CALL, transport_label};
 use crate::protocol::{CallToolResult, ToolContent};
 use crate::server::McpServer;
 use crate::tools::work_items::WORK_ITEM_PRIORITIES;
@@ -615,8 +615,27 @@ pub async fn run_business(global: &GlobalArgs, command: &BusinessCommands) -> an
     let mcp = prepare_runtime(global, None)?;
     // A CLI subcommand is a local process with no caller to act on behalf of, so it speaks to
     // the API as the configured identity and cannot run without one.
-    let client = build_client(&mcp, Some(configured_bot_token(&mcp)?))?.with_transport_label(TRANSPORT_LABEL_CLI);
+    let client =
+        build_client(&mcp, Some(configured_bot_token(&mcp)?))?.with_transport_label(business_transport_label(command));
     run_cli_command(command, &global.format, client).await
+}
+
+/// The transport surface a workspace command declares to the API (`mcp-surface-v1.md`,
+/// "Transport → actor/origin"): `tools call` is the `cli_tools_call` escape hatch, every native
+/// command is `cli`. The API binds a bot token to one surface, so a token made for `cli` does not
+/// serve `tools call` and the other way round.
+fn business_transport_label(command: &BusinessCommands) -> &'static str {
+    match command {
+        BusinessCommands::Tools(_) => TRANSPORT_LABEL_CLI_TOOLS_CALL,
+        BusinessCommands::Projects(_)
+        | BusinessCommands::WorkItems(_)
+        | BusinessCommands::Comments(_)
+        | BusinessCommands::Labels(_)
+        | BusinessCommands::Sprints(_)
+        | BusinessCommands::Search(_)
+        | BusinessCommands::Files(_)
+        | BusinessCommands::OperationLogs(_) => TRANSPORT_LABEL_CLI,
+    }
 }
 
 /// Loads the configuration, installs the logger and layers the command-line overrides onto

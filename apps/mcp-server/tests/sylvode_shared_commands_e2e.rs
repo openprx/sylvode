@@ -38,17 +38,36 @@ const MISSING: &str = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 /// One request as the stand-in saw it: method, path with query, body.
 type Seen = Arc<tokio::sync::Mutex<Vec<(String, String, String)>>>;
 
+/// The transport surface each request declared, canonical header then legacy header
+/// (`mcp-surface-v1.md` "Transport → actor/origin"; ADR-0020 D3 sends both spellings).
+type Surfaces = Arc<tokio::sync::Mutex<Vec<(String, String)>>>;
+
 /// Starts the recording stand-in API and returns its base URL and its request log.
 ///
 /// Every request is answered `200` with a `{code: 0}` envelope whose `data` echoes the
 /// request and carries the fields the tools read from projects, work items and uploads —
 /// except a request naming [`MISSING`], which gets the API's `404` error envelope.
-async fn spawn_api() -> Result<(String, Seen), BoxError> {
+async fn spawn_api() -> Result<(String, Seen, Surfaces), BoxError> {
     let seen: Seen = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let surfaces: Surfaces = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let log = Arc::clone(&seen);
+    let surface_log = Arc::clone(&surfaces);
     let router = Router::new().fallback(move |request: Request| {
         let log = Arc::clone(&log);
+        let surface_log = Arc::clone(&surface_log);
         async move {
+            let declared = {
+                let header = |name: &str| -> String {
+                    request
+                        .headers()
+                        .get(name)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string()
+                };
+                (header("x-sylvode-mcp-surface"), header("x-openpr-mcp-surface"))
+            };
+            surface_log.lock().await.push(declared);
             let method = request.method().to_string();
             let target = request
                 .uri()
@@ -91,7 +110,7 @@ async fn spawn_api() -> Result<(String, Seen), BoxError> {
     tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
-    Ok((format!("http://{addr}"), seen))
+    Ok((format!("http://{addr}"), seen, surfaces))
 }
 
 /// A multipart body with its random boundary replaced by a fixed token, so two uploads of the
@@ -114,6 +133,7 @@ async fn closed_api_url() -> Result<String, BoxError> {
 struct Fixture {
     config: ConfigFile,
     seen: Seen,
+    surfaces: Surfaces,
     closed_url: String,
     upload: PathBuf,
     upload_missing: PathBuf,
@@ -121,7 +141,7 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Result<Self, BoxError> {
-        let (api_url, seen) = spawn_api().await?;
+        let (api_url, seen, surfaces) = spawn_api().await?;
         let config = write_config(&McpSettings {
             api_url: &api_url,
             bot_token: Some(TOKEN),
@@ -140,6 +160,7 @@ impl Fixture {
         Ok(Self {
             config,
             seen,
+            surfaces,
             closed_url: closed_api_url().await?,
             upload,
             upload_missing,
@@ -185,10 +206,13 @@ async fn assert_same(fixture: &Fixture, args: &[&str], expect: Expect) -> TestRe
     full.push(fixture.config.path().display().to_string());
 
     fixture.seen.lock().await.clear();
+    fixture.surfaces.lock().await.clear();
     let legacy = run(MCP_SERVER, fixture.dir()?, &full).await?;
     let legacy_requests = std::mem::take(&mut *fixture.seen.lock().await);
+    let legacy_surfaces = std::mem::take(&mut *fixture.surfaces.lock().await);
     let canonical = run(SYLVODE, fixture.dir()?, &full).await?;
     let canonical_requests = std::mem::take(&mut *fixture.seen.lock().await);
+    let canonical_surfaces = std::mem::take(&mut *fixture.surfaces.lock().await);
 
     let shown = |output: &Output| {
         format!(
@@ -215,6 +239,10 @@ async fn assert_same(fixture: &Fixture, args: &[&str], expect: Expect) -> TestRe
     assert_eq!(
         legacy_requests, canonical_requests,
         "{args:?}: the API saw different requests"
+    );
+    assert_eq!(
+        legacy_surfaces, canonical_surfaces,
+        "{args:?}: the two executables declared different transport surfaces"
     );
 
     let expected_code = match expect {
@@ -532,6 +560,41 @@ async fn tools_are_the_same_command_under_both_names() -> TestResult {
 }
 
 /// `sylvode --help` names all fifteen groups, and `serve` stays `mcp-server`'s alone.
+/// `mcp-surface-v1.md`: "CLI 的 `tools call` 经 stdio-style configured bot 时使用
+/// `surface=cli_tools_call`，保留 tool 名；native `sylvode` command 使用 `surface=cli`。"
+///
+/// The API binds every bot token to one surface and refuses any other, so the label is what
+/// decides which token a command can use. Both executables, both header spellings.
+#[tokio::test]
+async fn tools_call_declares_the_cli_tools_call_surface_and_native_commands_declare_cli() -> TestResult {
+    let fixture = Fixture::new().await?;
+    for (args, expected) in [
+        (&["tools", "call", "--name", "projects.list"][..], "cli_tools_call"),
+        (&["projects", "list"][..], "cli"),
+    ] {
+        for binary in [MCP_SERVER, SYLVODE] {
+            let mut full: Vec<String> = args.iter().map(ToString::to_string).collect();
+            full.push("--config".to_string());
+            full.push(fixture.config.path().display().to_string());
+            fixture.surfaces.lock().await.clear();
+            let output = run(binary, fixture.dir()?, &full).await?;
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{binary} {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let surfaces = std::mem::take(&mut *fixture.surfaces.lock().await);
+            assert!(!surfaces.is_empty(), "{binary} {args:?}: no request reached the API");
+            for (canonical, legacy) in &surfaces {
+                assert_eq!(canonical, expected, "{binary} {args:?}: X-Sylvode-MCP-Surface");
+                assert_eq!(legacy, expected, "{binary} {args:?}: X-OpenPR-MCP-Surface");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn sylvode_help_lists_all_fifteen_groups_and_no_serve() -> TestResult {
     let fixture = Fixture::new().await?;

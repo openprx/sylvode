@@ -645,11 +645,11 @@
       },
       "cli": {
         "label": "命令行",
-        "description": "sylvode 与 mcp-server 命令行工具（含 tools call），此 Token 填入 mcp.bot_token 或 --bot-token。"
+        "description": "sylvode 与 mcp-server 的命令（tools call 除外），此 Token 填入 mcp.bot_token 或 --bot-token。"
       },
       "cli_tools_call": {
-        "label": "CLI tools call（保留）",
-        "description": "仅用于自报为 tools call 接入面的客户端。随附的命令行工具对所有命令都使用「命令行」。"
+        "label": "CLI tools call",
+        "description": "sylvode 与 mcp-server 的 tools call 命令（按名称调用任意 MCP 工具），此 Token 填入 mcp.bot_token 或 --bot-token。「命令行」Token 不能用于 tools call。"
       }
     }
   },
