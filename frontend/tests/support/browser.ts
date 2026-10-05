@@ -15,6 +15,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const CHROME_CANDIDATES = [
 	'/usr/bin/chromium',
@@ -22,9 +23,11 @@ const CHROME_CANDIDATES = [
 	'/usr/bin/google-chrome'
 ];
 
-/** Scratch root for the browser profile. Deliberately NOT under /tmp: this repo's /tmp is a
- * shared 16 GB tmpfs that a Chromium profile plus a build cache can and has exhausted. */
-const SCRATCH = process.env.FLOW_V04_SCRATCH ?? '/opt/worker/.cache/w9';
+/** Scratch root for the browser profile. Deliberately NOT under /tmp, which is often a small tmpfs
+ * that a Chromium profile plus a build cache can exhaust: the default is the checkout's ignored
+ * `.flow-gate/cache/frontend`. `FLOW_V04_SCRATCH` overrides it. */
+export const SCRATCH =
+	process.env.FLOW_V04_SCRATCH ?? fileURLToPath(new URL('../../../.flow-gate/cache/frontend', import.meta.url));
 
 export function findChrome(): string | null {
 	return CHROME_CANDIDATES.find((candidate) => existsSync(candidate)) ?? null;
