@@ -179,7 +179,7 @@ e2e_status="$(status_for "端到端验收")"
 manual_status="$(status_for "用户侧人工验收")"
 
 {
-  printf '# OpenPR Universal Forms User Acceptance Packet\n\n'
+  printf '# Sylvode Universal Forms User Acceptance Packet\n\n'
   printf '%s\n' "- Generated at: $(date -Is)"
   printf '%s\n' "- Repository: \`$ROOT_DIR\`"
   printf '%s\n' "- Tracker: \`$TRACKER_PATH\`"

@@ -145,7 +145,7 @@ e2e_status="$(status_for "端到端验收")"
 manual_status="$(status_for "用户侧人工验收")"
 
 {
-  printf '# OpenPR Universal Forms Delivery Manifest\n\n'
+  printf '# Sylvode Universal Forms Delivery Manifest\n\n'
   printf '%s\n' "- Generated at: $(date -Is)"
   printf '%s\n' "- Repository: \`$ROOT_DIR\`"
   printf '%s\n' "- Report directory: \`$REPORT_DIR\`"

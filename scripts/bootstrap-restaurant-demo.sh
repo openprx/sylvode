@@ -12,31 +12,34 @@ first user registration/login, workspace creation, restaurant scenario project
 creation, and sample universal-form records for menu, tables, order, order
 line, parent-child link, and business report.
 
-Environment:
-  OPENPR_API_URL                 API base URL. Default: http://localhost:8081
-  OPENPR_DEMO_EMAIL             Demo login email. Default: demo@openpr.local
-  OPENPR_DEMO_PASSWORD          Demo login password. Default: OpenPRDemo123!
-  OPENPR_DEMO_NAME              Demo user name. Default: OpenPR Demo
-  OPENPR_DEMO_WORKSPACE_SLUG    Workspace slug. Default: restaurant-demo
-  OPENPR_DEMO_WORKSPACE_NAME    Workspace name. Default: Restaurant Demo
-  OPENPR_DEMO_PROJECT_KEY       Project key. Default: RESTDEMO
-  OPENPR_DEMO_PROJECT_NAME      Project name. Default: Restaurant Ordering Demo
-  OPENPR_DEMO_ALLOW_REMOTE=1    Allow non-localhost API URLs.
-  OPENPR_DEMO_WRITE_CONFIG=0    Do not write the demo bot credentials into the MCP
-                                configuration file. Default: auto, write only when
-                                that file already exists.
-  OPENPR_DEMO_CONFIG_PATH       MCP configuration file carrying [mcp].
-                                Default: canonical repo config/sylvode.compose.mcp.toml,
-                                with config/openpr.compose.mcp.toml as a legacy fallback.
-  OPENPR_DEMO_RESTART_MCP=0     Do not recreate running compose mcp-server.
-                                Default: 1.
-  OPENPR_DEMO_VERIFY_MCP_HTTP   Verify local MCP JSON-RPC after bootstrap.
-                                Values: auto, 1, 0. Default: auto.
-  OPENPR_DEMO_MCP_URL           MCP JSON-RPC URL.
-                                Default: http://localhost:8090/mcp/rpc
-  OPENPR_MCP_BOT_TOKEN          Workspace bot token the MCP JSON-RPC verification calls
-                                as. Defaults to the demo bot this run created, which is
-                                what makes the verification prove the demo bot works.
+Environment (each SYLVODE_* name also accepts the legacy OPENPR_* name it
+replaces, with a deprecation notice; setting both to different values is an error):
+  SYLVODE_API_URL                API base URL. Default: http://localhost:8081
+  SYLVODE_DEMO_EMAIL             Demo login email. Default: demo@openpr.local
+  SYLVODE_DEMO_PASSWORD          Demo login password. Default: OpenPRDemo123!
+  SYLVODE_DEMO_NAME              Demo user name. Default: Sylvode Demo
+  SYLVODE_DEMO_WORKSPACE_SLUG    Workspace slug. Default: restaurant-demo
+  SYLVODE_DEMO_WORKSPACE_NAME    Workspace name. Default: Restaurant Demo
+  SYLVODE_DEMO_PROJECT_KEY       Project key. Default: RESTDEMO
+  SYLVODE_DEMO_PROJECT_NAME      Project name. Default: Restaurant Ordering Demo
+  SYLVODE_DEMO_ALLOW_REMOTE=1    Allow non-localhost API URLs.
+  SYLVODE_DEMO_WRITE_CONFIG=0    Do not write the demo bot credentials into the MCP
+                                 configuration file. Default: auto, write only when
+                                 that file already exists.
+  SYLVODE_DEMO_CONFIG_PATH       MCP configuration file carrying [mcp].
+                                 Default: canonical repo config/sylvode.compose.mcp.toml,
+                                 with config/openpr.compose.mcp.toml as a legacy fallback.
+  SYLVODE_DEMO_RESTART_MCP=0     Do not recreate running compose mcp-server.
+                                 Default: 1.
+  SYLVODE_DEMO_VERIFY_MCP_HTTP   Verify local MCP JSON-RPC after bootstrap.
+                                 Values: auto, 1, 0. Default: auto.
+  SYLVODE_DEMO_MCP_URL           MCP JSON-RPC URL.
+                                 Default: http://localhost:8090/mcp/rpc
+  SYLVODE_DEMO_MCP_HEALTH_URL    MCP health URL polled after a credential reload.
+                                 Default: http://localhost:8090/health
+  SYLVODE_MCP_BOT_TOKEN          Workspace bot token the MCP JSON-RPC verification calls
+                                 as. Defaults to the demo bot this run created, which is
+                                 what makes the verification prove the demo bot works.
 
 This is a local onboarding helper, not a production seeding tool.
 EOF
@@ -61,6 +64,23 @@ require_cmd node
 # never written to a different file from the one the running container reads.
 # shellcheck source=scripts/lib/sylvode_compat.sh
 source "$ROOT_DIR/scripts/lib/sylvode_compat.sh"
+
+# Inputs are read under their SYLVODE_* names, with the OPENPR_* names they replace as a fallback
+# (one deprecation notice per legacy name on stderr; both set to different values is refused).
+# The resolved value is handed on under the OPENPR_* name, which is what the rest of this script
+# and its embedded node and python blocks read.
+for demo_input in API_URL DEMO_EMAIL DEMO_PASSWORD DEMO_NAME DEMO_WORKSPACE_SLUG DEMO_WORKSPACE_NAME \
+  DEMO_PROJECT_KEY DEMO_PROJECT_NAME DEMO_ALLOW_REMOTE DEMO_WRITE_CONFIG DEMO_CONFIG_PATH \
+  DEMO_RESTART_MCP DEMO_VERIFY_MCP_HTTP DEMO_MCP_URL DEMO_MCP_HEALTH_URL MCP_BOT_TOKEN; do
+  demo_value=""
+  sylvode_resolve_env_into demo_value "" "SYLVODE_$demo_input" "OPENPR_$demo_input" "" "environment variable" || exit 2
+  if [[ -n "$demo_value" ]]; then
+    export "OPENPR_$demo_input=$demo_value"
+  else
+    unset "OPENPR_$demo_input"
+  fi
+done
+unset demo_input demo_value
 if [[ -n "${OPENPR_DEMO_CONFIG_PATH:-}" ]]; then
   DEMO_CONFIG_PATH=$OPENPR_DEMO_CONFIG_PATH
 else
@@ -104,7 +124,7 @@ if isinstance(node, str):
 # carries a workspace bot token in `Authorization: Bearer opr_...` and the MCP server forwards it
 # to the API. There is no shared inbound secret. /health is exempt and stays unauthenticated.
 # The default identity is the demo bot this run creates or reuses, so the verification proves the
-# credentials it just wrote actually work; OPENPR_MCP_BOT_TOKEN overrides it for this script only.
+# credentials it just wrote actually work; SYLVODE_MCP_BOT_TOKEN overrides it for this script only.
 MCP_CALLER_BOT_TOKEN="${OPENPR_MCP_BOT_TOKEN:-}"
 
 # Credentials already in the file. When they still address the demo workspace the bootstrap keeps
@@ -117,12 +137,12 @@ trap 'rm -f "$DEMO_STATE_FILE"' EXIT
 
 API_URL="${OPENPR_API_URL:-http://localhost:8081}"
 case "$API_URL" in
-  http://localhost:*|http://127.0.0.1:*|http://[::1]:*)
+  http://localhost:*|http://127.0.0.1:*|'http://[::1]:'*)
     ;;
   *)
     if [[ "${OPENPR_DEMO_ALLOW_REMOTE:-0}" != "1" ]]; then
       echo "Refusing to seed a non-local API URL: $API_URL" >&2
-      echo "Set OPENPR_DEMO_ALLOW_REMOTE=1 only if this is an intentional demo environment." >&2
+      echo "Set SYLVODE_DEMO_ALLOW_REMOTE=1 only if this is an intentional demo environment." >&2
       exit 2
     fi
     ;;
@@ -131,7 +151,7 @@ esac
 OPENPR_API_URL="$API_URL" \
 OPENPR_DEMO_EMAIL="${OPENPR_DEMO_EMAIL:-demo@openpr.local}" \
 OPENPR_DEMO_PASSWORD="${OPENPR_DEMO_PASSWORD:-OpenPRDemo123!}" \
-OPENPR_DEMO_NAME="${OPENPR_DEMO_NAME:-OpenPR Demo}" \
+OPENPR_DEMO_NAME="${OPENPR_DEMO_NAME:-Sylvode Demo}" \
 OPENPR_DEMO_WORKSPACE_SLUG="${OPENPR_DEMO_WORKSPACE_SLUG:-restaurant-demo}" \
 OPENPR_DEMO_WORKSPACE_NAME="${OPENPR_DEMO_WORKSPACE_NAME:-Restaurant Demo}" \
 OPENPR_DEMO_PROJECT_KEY="${OPENPR_DEMO_PROJECT_KEY:-RESTDEMO}" \
@@ -218,7 +238,7 @@ async function authenticate() {
   }
 
   throw new Error(
-    `Could not register or login demo user ${email}. If this instance already has users, set OPENPR_DEMO_EMAIL and OPENPR_DEMO_PASSWORD to an existing account. Last register message: ${register.payload?.message ?? '<none>'}; login message: ${login.payload?.message ?? '<none>'}`,
+    `Could not register or login demo user ${email}. If this instance already has users, set SYLVODE_DEMO_EMAIL and SYLVODE_DEMO_PASSWORD to an existing account. Last register message: ${register.payload?.message ?? '<none>'}; login message: ${login.payload?.message ?? '<none>'}`,
   );
 }
 
@@ -556,7 +576,7 @@ const configPath = process.env.OPENPR_DEMO_CONFIG_PATH ?? 'config/sylvode.compos
 const overrideBotToken = process.env.OPENPR_MCP_BOT_TOKEN ?? '';
 
 if (verifyMode === '0' || verifyMode === 'false') {
-  console.log('MCP HTTP verification skipped: OPENPR_DEMO_VERIFY_MCP_HTTP=0');
+  console.log('MCP HTTP verification skipped: SYLVODE_DEMO_VERIFY_MCP_HTTP=0');
   process.exit(0);
 }
 
@@ -622,7 +642,7 @@ async function verify() {
   if (!callerBotToken) {
     const message = 'MCP HTTP verification has no caller bot token: /mcp/rpc rejects a request without an Authorization: Bearer opr_... header';
     if (verifyMode === '1') throw new Error(message);
-    console.log(`${message}. The demo bootstrap normally supplies the demo bot it created; export OPENPR_MCP_BOT_TOKEN to name another one.`);
+    console.log(`${message}. The demo bootstrap normally supplies the demo bot it created; export SYLVODE_MCP_BOT_TOKEN to name another one.`);
     return;
   }
 
@@ -631,7 +651,7 @@ async function verify() {
   if (!reachable) {
     const message = `MCP HTTP verification skipped: ${healthUrl} is not reachable`;
     if (verifyMode === '1') throw new Error(message);
-    console.log(`${message}. Start mcp-server or set OPENPR_DEMO_VERIFY_MCP_HTTP=1 to require it.`);
+    console.log(`${message}. Start mcp-server or set SYLVODE_DEMO_VERIFY_MCP_HTTP=1 to require it.`);
     return;
   }
 

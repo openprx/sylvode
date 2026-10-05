@@ -42,6 +42,9 @@ jobs:
       - name: Start script configuration checks
         run: bash scripts/test-start-config.sh
 
+      - name: Demo bootstrap input checks
+        run: bash scripts/test-bootstrap-demo-env.sh
+
   test:
     name: Test
     needs: lint

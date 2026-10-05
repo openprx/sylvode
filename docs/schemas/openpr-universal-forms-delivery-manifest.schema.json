@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "openpr-universal-forms-delivery-manifest.schema.json",
-  "title": "OpenPR Universal Forms Delivery Manifest JSON",
+  "title": "Sylvode Universal Forms Delivery Manifest JSON",
   "type": "object",
   "additionalProperties": false,
   "required": [

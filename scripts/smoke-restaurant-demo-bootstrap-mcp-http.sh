@@ -133,7 +133,7 @@ wait_http "http://127.0.0.1:$API_PORT/health" "Sylvode API"
 
 # What this smoke proves is that the bootstrap hands the MCP server usable credentials, so the
 # file it writes them into is the temporary one below rather than the repository's. It has to
-# exist before the first bootstrap run: OPENPR_DEMO_WRITE_CONFIG=1 rewrites [mcp] in place and
+# exist before the first bootstrap run: SYLVODE_DEMO_WRITE_CONFIG=1 rewrites [mcp] in place and
 # never creates the file. It carries no inbound secret: the second run verifies /mcp/rpc as the
 # demo bot it created, and a file that still stated auth_token would stop the server from starting.
 cat >"$MCP_CONFIG" <<EOF
@@ -145,11 +145,11 @@ format = "text"
 api_url = "http://127.0.0.1:$API_PORT"
 EOF
 
-OPENPR_API_URL="http://127.0.0.1:$API_PORT" \
-OPENPR_DEMO_WRITE_CONFIG=1 \
-OPENPR_DEMO_CONFIG_PATH="$MCP_CONFIG" \
-OPENPR_DEMO_RESTART_MCP=0 \
-OPENPR_DEMO_VERIFY_MCP_HTTP=0 \
+SYLVODE_API_URL="http://127.0.0.1:$API_PORT" \
+SYLVODE_DEMO_WRITE_CONFIG=1 \
+SYLVODE_DEMO_CONFIG_PATH="$MCP_CONFIG" \
+SYLVODE_DEMO_RESTART_MCP=0 \
+SYLVODE_DEMO_VERIFY_MCP_HTTP=0 \
 "$ROOT_DIR/scripts/bootstrap-restaurant-demo.sh" >"$FIRST_BOOTSTRAP_LOG"
 
 if [[ -z "$(config_value mcp.bot_token)" || -z "$(config_value mcp.workspace_id)" ]]; then
@@ -162,12 +162,12 @@ fi
 mcp_pid=$!
 wait_http "http://127.0.0.1:$MCP_PORT/health" "Sylvode MCP"
 
-OPENPR_API_URL="http://127.0.0.1:$API_PORT" \
-OPENPR_DEMO_WRITE_CONFIG=1 \
-OPENPR_DEMO_CONFIG_PATH="$MCP_CONFIG" \
-OPENPR_DEMO_RESTART_MCP=0 \
-OPENPR_DEMO_VERIFY_MCP_HTTP=1 \
-OPENPR_DEMO_MCP_URL="http://127.0.0.1:$MCP_PORT/mcp/rpc" \
+SYLVODE_API_URL="http://127.0.0.1:$API_PORT" \
+SYLVODE_DEMO_WRITE_CONFIG=1 \
+SYLVODE_DEMO_CONFIG_PATH="$MCP_CONFIG" \
+SYLVODE_DEMO_RESTART_MCP=0 \
+SYLVODE_DEMO_VERIFY_MCP_HTTP=1 \
+SYLVODE_DEMO_MCP_URL="http://127.0.0.1:$MCP_PORT/mcp/rpc" \
 "$ROOT_DIR/scripts/bootstrap-restaurant-demo.sh" >"$SECOND_BOOTSTRAP_LOG"
 
 if ! rg -q "MCP HTTP verification passed: projects.list includes RESTDEMO" "$SECOND_BOOTSTRAP_LOG"; then

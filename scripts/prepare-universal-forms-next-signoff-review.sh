@@ -183,7 +183,7 @@ output_tmp="$(mktemp "$(dirname "$OUTPUT_PATH")/.next-signoff-review.XXXXXX")"
 trap 'rm -f "$output_tmp"' EXIT
 
 {
-  printf '# OpenPR Universal Forms Next Signoff Review\n\n'
+  printf '# Sylvode Universal Forms Next Signoff Review\n\n'
   printf '%s\n' "- Generated at: $(date -Is)"
   printf '%s\n' "- Repository: \`$ROOT_DIR\`"
   printf '%s\n' "- Signoff JSON schema: \`$schema_version\`"

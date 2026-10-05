@@ -1,6 +1,6 @@
 # Universal Forms, Plugins, and Scenario Templates
 
-Sylvode supports project-defined business applications through universal forms, connector events, MCP tools, and sandboxed WASM plugins.
+Sylvode supports project-defined business applications through universal forms, business events, webhooks, MCP tools, and sandboxed WASM plugins.
 
 ## Runtime Model
 
@@ -13,18 +13,20 @@ Core tables:
 - `form_records` stores record values.
 - `form_record_links` stores parent-child and reference relationships.
 - `form_record_field_index` stores typed projections, including decimal amount values.
-- `business_events`, `event_outbox`, and `event_inbox` provide event delivery and idempotent receipts.
+- `business_events` and `event_inbox` record business events and idempotent receipts. (The write-only `event_outbox` was dropped in 0.2.21, migration `0053`.)
 - `plugins` and `plugin_invocations` store WASM plugin packages and execution logs.
 
 Amount fields use decimal strings at API boundaries. JSON numbers are rejected for amount input so money and business totals do not pass through floating-point math.
 
-## API, MCP, and Connectors
+## API, MCP, and Integrations
 
-The REST API is the source of truth for forms, records, links, events, aggregates, plugins, connectors, and print receipts.
+The REST API is the source of truth for forms, records, links, events, aggregates, and plugins.
 
 MCP exposes the same business surface to agents through forms tools, plugin tools, events resources, and aggregate reads. This lets human users work in the frontend while AI agents use the same project data and event ledger.
 
-Connectors are passive or active integration endpoints. A webhook does not have to be an agent. Print, device, REST, webhook, MCP, CLI, and tunnel connectors are all treated as event consumers with auditable invocation and receipt records.
+External systems integrate in three ways: they read business events through the form and record event endpoints or the MCP `events.tail` tool, they receive workspace webhooks (configured on the Webhooks page, with the optional webhook receiver service in `docker-compose.yml`), or they act through the REST API, MCP or the CLI with a workspace bot token bound to that surface. A webhook does not have to be an agent.
+
+Connectors and agent invocations were removed in 0.2.21 (migration `0052`); there are no connector records, connector kinds or connector receipts any more.
 
 ## WASM Plugins
 
@@ -53,10 +55,10 @@ Current built-in templates:
 - `restaurant_ordering_default`
 
 See `docs/scenario-templates.md` for the full scenario catalog: business fit,
-generated forms, connector suggestions, MCP usage, frontend usage, and extension
+generated forms, integration notes, MCP usage, frontend usage, and extension
 rules for adding new scenarios.
 
-Each template creates default forms and grid/detail views. Templates also create connector suggestions. The restaurant template additionally auto-installs and activates the `restaurant_calc` WASM plugin.
+Each template creates default forms and grid/detail views. The restaurant template additionally auto-installs and activates the `restaurant_calc` WASM plugin.
 
 ## Restaurant Reference Flow
 
@@ -69,7 +71,7 @@ The restaurant scenario is the delivery reference for universal business usage:
 5. Link order line to order through `parent_child`.
 6. Change table and emit `order.table_changed`.
 7. Create kitchen and receipt `print_job` records.
-8. Deliver print events to a print connector and accept receipts.
+8. Read the `print_job.created` business events from the events API or MCP `events.tail` and hand them to the printer integration.
 9. Create `business_report` and query revenue through MCP aggregate.
 
 For a local stack started with `bash scripts/start.sh`, this can be seeded
@@ -105,7 +107,7 @@ cargo test -p api forms::
 scripts/audit-universal-forms-docs.sh
 scripts/smoke-forms-mcp.sh
 scripts/smoke-scenario-template-forms.sh
-bun --cwd frontend run smoke:restaurant-ordering
+bun run --cwd frontend smoke:restaurant-ordering
 ```
 
 Frontend:

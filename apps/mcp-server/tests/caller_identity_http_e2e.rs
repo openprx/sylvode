@@ -1,5 +1,5 @@
 //! End-to-end proof that a networked MCP request is served as *its own caller*, against the
-//! shipped binary and a counting stand-in for the `OpenPR` API.
+//! shipped binary and a counting stand-in for the Sylvode API.
 //!
 //! The regression under test is not a missing check but a missing distinction. The MCP
 //! server used to hold one workspace bot token and present it on every outbound call, so

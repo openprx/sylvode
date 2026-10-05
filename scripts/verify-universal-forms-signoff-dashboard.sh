@@ -105,7 +105,7 @@ next_command="$(jq -r '.manual_signoff.next_row.recorder_command // ""' "$SIGNOF
 pending_count="$(jq -r '.manual_signoff.pending_rows' "$SIGNOFF_STATUS_JSON_PATH")"
 final_signoff_complete="$(jq -r '.manual_signoff.final_signoff_complete' "$SIGNOFF_STATUS_JSON_PATH")"
 
-check "dashboard has title" dashboard_contains "OpenPR Universal Forms Signoff Dashboard"
+check "dashboard has title" dashboard_contains "Sylvode Universal Forms Signoff Dashboard"
 check "dashboard pins queue count" dashboard_contains "data-signoff-dashboard-queue-count=\"$queue_count\""
 check "dashboard pins next key" dashboard_contains "data-next-signoff-key=\"$next_key\""
 check "dashboard pins final signoff flag" dashboard_contains "data-final-signoff-complete=\"$final_signoff_complete\""

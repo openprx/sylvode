@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openpr.local/schemas/openpr-universal-forms-signoff-status.schema.json",
-  "title": "OpenPR Universal Forms Manual Signoff Status",
-  "description": "Machine-readable user-side manual signoff state for the OpenPR universal forms delivery bundle.",
+  "title": "Sylvode Universal Forms Manual Signoff Status",
+  "description": "Machine-readable user-side manual signoff state for the Sylvode universal forms delivery bundle.",
   "type": "object",
   "additionalProperties": false,
   "required": [

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-OpenPR universal forms should become a business-user-facing form builder, not a
+Sylvode universal forms should become a business-user-facing form builder, not a
 JSON schema editor. The next stage aligns the product interaction with the
 Huoban-style model:
 
@@ -1203,7 +1203,7 @@ scripts/smoke-universal-forms-api.sh
 scripts/smoke-forms-mcp.sh
 scripts/smoke-webhook-generic-consumer.sh
 scripts/smoke-wasm-plugin-runtime.sh
-bun --cwd frontend run smoke:restaurant-ordering
+bun run --cwd frontend smoke:restaurant-ordering
 scripts/smoke-print-connector.sh
 ```
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openpr.dev/schemas/openpr-universal-forms-implementation-map.schema.json",
-  "title": "OpenPR Universal Forms Implementation Map",
+  "title": "Sylvode Universal Forms Implementation Map",
   "type": "object",
   "additionalProperties": false,
   "required": [

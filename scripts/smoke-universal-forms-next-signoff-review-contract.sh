@@ -97,7 +97,7 @@ fi
 
 expect_reject \
   "heading drift" \
-  "# OpenPR Universal Forms Next Signoff Review" \
+  "# Sylvode Universal Forms Next Signoff Review" \
   "# Broken Review"
 
 expect_reject \

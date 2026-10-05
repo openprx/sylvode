@@ -92,7 +92,7 @@ output_tmp="$(mktemp "$(dirname "$OUTPUT_PATH")/.manual-evidence-map.XXXXXX")"
 trap 'rm -f "$output_tmp"' EXIT
 
 {
-  printf '# OpenPR Universal Forms Manual Evidence Map\n\n'
+  printf '# Sylvode Universal Forms Manual Evidence Map\n\n'
   printf '%s\n' "- Generated at: $(date -Is)"
   printf '%s\n' "- Repository: \`$ROOT_DIR\`"
   printf '%s\n' "- Automated evidence: \`$EVIDENCE_PATH\`"

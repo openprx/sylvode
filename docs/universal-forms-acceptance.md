@@ -29,7 +29,7 @@ scenario template
   -> frontend grid/detail workflow
 ```
 
-The restaurant ordering template is the reference scenario. It should prove that OpenPR can be used for non-code business workflows such as menu, SKU, table, order, order line, print job, and daily report management.
+The restaurant ordering template is the reference scenario. It should prove that Sylvode can be used for non-code business workflows such as menu, SKU, table, order, order line, print job, and daily report management.
 The full built-in scenario catalog is in `docs/scenario-templates.md`; it lists
 all six templates, their generated forms, and their API/MCP/frontend usage
 paths.
@@ -50,7 +50,7 @@ scripts/audit-universal-forms-source-coverage.sh
 scripts/audit-universal-forms-docs.sh
 scripts/smoke-scenario-template-forms.sh
 scripts/smoke-forms-mcp.sh
-bun --cwd frontend run smoke:restaurant-ordering
+bun run --cwd frontend smoke:restaurant-ordering
 cd frontend && bun run check && bun run build
 cd frontend && bun run smoke:project-template && bun run smoke:template-work-items
 cd frontend && bun run smoke:forms-ui && bun run smoke:restaurant-ordering

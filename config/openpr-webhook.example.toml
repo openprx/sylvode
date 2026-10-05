@@ -1,5 +1,6 @@
-# Example configuration for the openpr-webhook receiver
-# (https://github.com/openprx/openpr-webhook), pointed at this deployment.
+# Example configuration for the Sylvode Webhook receiver, sylvode-webhook (formerly openpr-webhook;
+# https://github.com/openprx/openpr-webhook), pointed at this deployment. docker-compose.yml mounts
+# it at /etc/sylvode-webhook/config.toml in the optional `webhook` service.
 #
 # The `events` a route may match are the ones a webhook subscription can actually request:
 # see WEBHOOK_EVENTS in apps/api/src/entities/webhook.rs.

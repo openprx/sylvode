@@ -223,7 +223,7 @@ blocked_count=0
 next_index=-1
 accepted_prerequisites=0
 
-printf '# OpenPR Universal Forms Manual Signoff Status\n\n'
+printf '# Sylvode Universal Forms Manual Signoff Status\n\n'
 printf '%s\n' "- Evidence: \`$EVIDENCE_PATH\`"
 printf '%s\n' "- Runbook: \`$RUNBOOK_PATH\`"
 printf '%s\n' "- Manual evidence map: \`$MANUAL_EVIDENCE_MAP_PATH\`"

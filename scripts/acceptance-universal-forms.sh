@@ -88,7 +88,7 @@ append_report() {
 init_report() {
   : >"$CHECK_INDEX_PATH"
   : >"$REPORT_PATH"
-  append_report "# OpenPR Universal Forms Acceptance Evidence"
+  append_report "# Sylvode Universal Forms Acceptance Evidence"
   append_report ""
   append_report "- Generated at: $(date -Is)"
   append_report "- Repository: $ROOT_DIR"

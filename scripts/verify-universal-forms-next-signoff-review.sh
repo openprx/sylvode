@@ -110,7 +110,7 @@ fi
 "$ROOT_DIR/scripts/verify-universal-forms-signoff-status-json.sh" "$SIGNOFF_STATUS_JSON_PATH" >/dev/null
 "$ROOT_DIR/scripts/verify-universal-forms-manual-signoff-consistency.sh" "$RUNBOOK_PATH" "$EVIDENCE_PATH" >/dev/null
 
-equals "review starts with Markdown heading" "$(head -n 1 "$REVIEW_PATH")" "# OpenPR Universal Forms Next Signoff Review"
+equals "review starts with Markdown heading" "$(head -n 1 "$REVIEW_PATH")" "# Sylvode Universal Forms Next Signoff Review"
 contains "review points to repository" "$REVIEW_PATH" "Repository: \`$ROOT_DIR\`"
 contains "review points to signoff status JSON" "$REVIEW_PATH" "$SIGNOFF_STATUS_JSON_PATH"
 contains "review points to signoff status report" "$REVIEW_PATH" "$SIGNOFF_STATUS_PATH"

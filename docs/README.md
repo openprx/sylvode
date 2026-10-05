@@ -3,7 +3,7 @@
 ## 1. Product and Setup
 
 - `../README.md` — Project overview, MCP configuration, tool reference, quick start.
-- `./universal-forms-and-plugins.md` — Universal forms, WASM plugins, scenario templates, connector flow, and restaurant delivery reference.
+- `./universal-forms-and-plugins.md` — Universal forms, WASM plugins, scenario templates, business events and webhooks, and restaurant delivery reference.
 - `./universal-forms-implementation-map.md` — Source-module, public-surface, verification-command, and status-marker map for the universal business platform.
 - `./scenario-templates.md` — Catalog of built-in scenario templates, generated forms, integrations, and usage paths.
 - `./universal-forms-acceptance.md` — Acceptance guide for the universal forms and restaurant reference workflow.
@@ -19,10 +19,6 @@
 - `./schemas/openpr-universal-forms-release-gate.schema.json` — JSON Schema for the machine-readable release gate decision.
 - `./schemas/openpr-project-release-readiness.schema.json` — JSON Schema for project release readiness API/MCP responses.
 - `../apps/mcp-server/AGENTS.md` — Coding agent guidelines: build, test, commit conventions.
-- `./prd/OPENPR_PUBLIC_LAUNCH_AND_PRX_OFFICIAL_REGISTRATION_PLAN.md` — Master plan for public launch, private deployment profile, and PRX official registration.
-- `./prd/OPENPR_PUBLIC_LAUNCH_AND_PRX_IMPLEMENTATION_ROADMAP.md` — Milestones, launch gates, 30/60/90-day roadmap, and prioritized backlog.
-- `./prd/OPENPR_PUBLIC_LAUNCH_MESSAGING_AND_FAQ.md` — External announcement, homepage copy, FAQ, privacy statement, and launch checklist.
-- `./prd/OPENPR_PRX_RUNTIME_API_AND_DATA_MODEL_DRAFT.md` — Runtime registration API, data model, trust, sync, and submission schema draft.
 
 ## 2. MCP Skill Package
 

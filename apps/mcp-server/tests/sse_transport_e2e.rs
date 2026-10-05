@@ -1,5 +1,5 @@
 //! End-to-end proof that the SSE transport completes a whole round trip, against the shipped
-//! binary and a counting stand-in for the `OpenPR` API.
+//! binary and a counting stand-in for the Sylvode API.
 //!
 //! SSE is the one transport where the request and its answer travel on two different
 //! connections: a `POST /messages` only *accepts* the JSON-RPC call, and the result is pushed
@@ -61,7 +61,7 @@ fn project_name_for(token: &str) -> &'static str {
 /// Every bearer token the stand-in API was called with, in order, with the path it arrived on.
 type SeenCredentials = Arc<tokio::sync::Mutex<Vec<(String, String)>>>;
 
-/// The counting stand-in for the `OpenPR` API.
+/// The counting stand-in for the Sylvode API.
 ///
 /// Assertions are made against this rather than against the JSON a tool returned, because a
 /// result that merely looks right proves nothing about *whose* credential fetched it.

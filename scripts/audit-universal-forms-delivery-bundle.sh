@@ -244,7 +244,7 @@ if [[ "$failures" -ne 0 ]]; then
 fi
 
 printf '\nGenerated evidence consistency:\n'
-first_line_equals "next signoff review starts with Markdown heading" "$NEXT_SIGNOFF_REVIEW_PATH" "# OpenPR Universal Forms Next Signoff Review"
+first_line_equals "next signoff review starts with Markdown heading" "$NEXT_SIGNOFF_REVIEW_PATH" "# Sylvode Universal Forms Next Signoff Review"
 contains "next signoff review links signoff status JSON" "$NEXT_SIGNOFF_REVIEW_PATH" "$SIGNOFF_STATUS_JSON_PATH"
 contains "next signoff review links manual evidence map" "$NEXT_SIGNOFF_REVIEW_PATH" "$MANUAL_EVIDENCE_MAP_PATH"
 contains "next signoff review links user acceptance packet" "$NEXT_SIGNOFF_REVIEW_PATH" "$USER_ACCEPTANCE_PACKET_PATH"
