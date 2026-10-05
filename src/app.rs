@@ -183,11 +183,48 @@ async fn serve(config: config::Config) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if let Err(e) = axum::serve(listener, app).await {
+    if let Err(e) = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+    {
         tracing::error!("server error: {e}");
         return ExitCode::FAILURE;
     }
+    tracing::info!("{} stopped", compat::CANONICAL_NAME);
     ExitCode::SUCCESS
+}
+
+/// Resolves on SIGINT or, on Unix, SIGTERM.
+///
+/// Without a handler a process running as PID 1 in a container ignores SIGTERM, so `docker stop`
+/// would wait for its timeout and then kill it.
+async fn shutdown_signal() {
+    let interrupt = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::warn!("cannot listen for SIGINT: {e}");
+            std::future::pending::<()>().await;
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(e) => {
+                tracing::warn!("cannot listen for SIGTERM: {e}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = interrupt => tracing::info!("received SIGINT, shutting down"),
+        () = terminate => tracing::info!("received SIGTERM, shutting down"),
+    }
 }
 
 #[cfg(test)]

@@ -186,3 +186,23 @@ async fn canonical_name_and_headers_write_no_notice() {
         "canonical name and headers must not warn: {stderr:?}"
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sigterm_stops_the_server_cleanly() {
+    let mut server = start(CANONICAL).await;
+    let status = Command::new("kill")
+        .args(["-TERM", &server.child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    for _ in 0..200 {
+        if let Some(exit) = server.child.try_wait().unwrap() {
+            assert_eq!(exit.code(), Some(0), "graceful shutdown exits 0");
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    server.child.kill().unwrap();
+    panic!("server did not stop within 5s of SIGTERM");
+}
