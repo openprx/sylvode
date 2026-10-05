@@ -8,7 +8,7 @@ const DEFAULT_SUBPROCESS_TIMEOUT_SECS: u64 = 60;
 #[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
 const DEFAULT_MCP_INSTRUCTIONS: &str = r#"## MCP Integration
 
-You have OpenPR MCP tools available. Use them to get full issue context before working:
+You have Sylvode MCP tools available. Use them to get full issue context before working:
 
 1. Call `work_items.get` with work_item_id="{issue_id}" to read full issue details (title, description, state, priority, assignee)
 2. Call `comments.list` with work_item_id="{issue_id}" to read all comments and discussion
@@ -22,7 +22,7 @@ After completing your work:
 #[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
 const DEFAULT_FORM_MCP_INSTRUCTIONS: &str = r#"## MCP Integration
 
-You have OpenPR MCP tools available. This webhook is linked to a universal-form event:
+You have Sylvode MCP tools available. This webhook is linked to a universal-form event:
 
 1. Call `forms.get` with form_id="{form_id}" when a form_id is available, or call `forms.list` with project_id="{project_id}" and match form_key="{form_key}".
 2. Call `form_records.get` with record_id="{record_id}" when a record_id is available.
@@ -598,7 +598,7 @@ fn build_form_context_instructions(payload: &Value) -> Option<String> {
     let event = extract_event(payload).unwrap_or("<event>");
 
     Some(format!(
-        "## Universal Form Context\n\nThis is OpenPR universal-form event `{event}` for project_id=\"{project_id}\", form_id=\"{form_id}\", form_key=\"{form_key}\", record_id=\"{record_id}\". Treat custom fields as schema-defined business data: inspect the form schema before assuming field meaning, preserve decimal strings for amount fields, and write any operational result through MCP instead of mutating local webhook state."
+        "## Universal Form Context\n\nThis is Sylvode universal-form event `{event}` for project_id=\"{project_id}\", form_id=\"{form_id}\", form_key=\"{form_key}\", record_id=\"{record_id}\". Treat custom fields as schema-defined business data: inspect the form schema before assuming field meaning, preserve decimal strings for amount fields, and write any operational result through MCP instead of mutating local webhook state."
     ))
 }
 
@@ -1158,7 +1158,7 @@ mcp_instructions = "Read issue {issue_id} before writing."
 
         assert!(prompt.contains("Read issue issue-99 before writing."));
         assert!(prompt.contains("project_id=\"project-1\""));
-        // OpenPR retired agent invocations. An old deployment may still send the id, but the
+        // Sylvode retired agent invocations. An old deployment may still send the id, but the
         // tools it named are gone, so an agent must never be told to call them.
         assert!(!prompt.contains("Invocation Ledger"));
         assert!(!prompt.contains("invocations."));

@@ -82,17 +82,18 @@ pub async fn run_tunnel_loop(config: Arc<Config>) {
         return;
     };
 
-    if tunnel.agent_id.as_deref().unwrap_or(" ").trim().is_empty() {
+    // `agent_id` has no default: the control plane matches it against the agent it registered,
+    // so it must come from the operator's config.
+    let Some(agent_id) = tunnel.agent_id.clone().filter(|id| !id.trim().is_empty()) else {
         tracing::warn!("tunnel enabled but agent_id is missing");
         return;
-    }
+    };
 
     if tunnel.auth_token.as_deref().unwrap_or(" ").trim().is_empty() {
         tracing::warn!("tunnel enabled but auth_token is missing");
         return;
     }
 
-    let agent_id = tunnel.agent_id.clone().unwrap_or_else(|| "openpr-webhook".to_string());
     let base_reconnect_secs = tunnel.reconnect_secs.max(1);
     let heartbeat_secs = tunnel.heartbeat_secs.max(3);
     let hmac_secret = tunnel.hmac_secret.clone();

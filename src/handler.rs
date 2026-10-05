@@ -227,7 +227,7 @@ pub async fn handle_webhook(
     let event = payload.get("event").and_then(Value::as_str).unwrap_or("unknown");
     tracing::info!("Received webhook event: {event}");
 
-    // 3. Check if bot task. Supports both direct OpenPR webhook payloads
+    // 3. Check if bot task. Supports both direct Sylvode webhook payloads
     // and worker-dispatched ai_tasks envelopes.
     let Some(target) = bot_dispatch_target(&payload) else {
         tracing::debug!(event = %event, "Webhook event dropped: is_bot_task=false");
@@ -361,7 +361,7 @@ mod tests {
         assert_eq!(target.event.as_deref(), None);
     }
 
-    /// `OpenPR` retired connectors, so a delivery shaped like one carries no bot identity and
+    /// Sylvode retired connectors, so a delivery shaped like one carries no bot identity and
     /// must not be routed to an agent by its connector kind any more.
     #[test]
     fn ignores_a_connector_shaped_payload() {
