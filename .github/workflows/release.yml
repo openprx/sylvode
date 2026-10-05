@@ -207,4 +207,9 @@ jobs:
             Each archive contains `api`, `worker`, legacy-compatible `mcp-server`, and
             the new `sylvode` CLI. Matching `openpr-*` archive names are retained as aliases.
 
-            See [README.md](https://github.com/openprx/openpr) for setup instructions.
+            Before upgrading, read the "Breaking and behaviour changes" section of
+            [CHANGELOG.md](https://github.com/openprx/sylvode/blob/${{ steps.tag.outputs.tag }}/CHANGELOG.md)
+            for this release. Legacy OpenPR names keep working with a deprecation warning; see the
+            [compatibility matrix](https://github.com/openprx/sylvode/blob/${{ steps.tag.outputs.tag }}/docs/sylvode-v1.0-compatibility.md).
+
+            See [README.md](https://github.com/openprx/sylvode#readme) for setup instructions.

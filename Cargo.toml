@@ -15,9 +15,10 @@ members = [
 authors = ["g1e2x87"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-version = "0.2.356"
+version = "0.2.357"
 description = "Sylvode open-source project management platform"
-repository = "https://github.com/openprx/openpr"
+repository = "https://github.com/openprx/sylvode"
+homepage = "https://openprx.dev/sylvode"
 
 [workspace.dependencies]
 anyhow = "1.0"
