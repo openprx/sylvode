@@ -115,7 +115,7 @@ cli_enabled = false
 callback_enabled = false
 
 [runtime]
-cli_max_concurrency = 1               # tunnel tasks run at once (webhook-triggered cli runs are not limited)
+cli_max_concurrency = 1               # cli executors running at once, webhook and tunnel together; others wait
 http_timeout_secs = 15                # outbound HTTP; commands get max(this, 60) seconds
 tunnel_reconnect_backoff_max_secs = 60
 
@@ -432,7 +432,8 @@ Current task bridge behavior:
 1. Receive `task.dispatch`; its payload may carry `run_id`, `issue_id`, `agent` and `body`
 2. Send `task.ack` immediately (`run_id`, `issue_id`, `status=accepted`)
 3. Run the `cli` agent whose `id` equals `agent`, or the first `cli` agent when `agent` is absent,
-   on `body` (or the whole payload); at most `[runtime].cli_max_concurrency` tasks run at once
+   on `body` (or the whole payload); at most `[runtime].cli_max_concurrency` executors run at once,
+   counting webhook-triggered runs too
 4. Send `task.result` when done (`run_id`, `issue_id`, `status`, `summary`)
 
 Other envelope types received are ignored.

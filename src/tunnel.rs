@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep};
 use tokio_tungstenite::{connect_async, tungstenite::Message, tungstenite::http::Request};
 use uuid::Uuid;
@@ -120,7 +120,6 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
         .runtime
         .tunnel_reconnect_backoff_max_secs
         .max(base_reconnect_secs);
-    let semaphore = Arc::new(Semaphore::new(config.runtime.cli_max_concurrency.max(1)));
     let mut retry_secs = base_reconnect_secs;
 
     loop {
@@ -291,10 +290,22 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
                     let body = dispatch.body.unwrap_or_else(|| envelope.payload.clone());
                     let route_agent = dispatch.agent.clone();
                     let run_id_for_task = run_id.clone();
-                    let limiter = semaphore.clone();
-                    let cancelled = background.cancelled();
+                    let task_background = background.clone();
                     background.spawn(async move {
-                        let Ok(permit) = limiter.acquire_owned().await else {
+                        let Some(permit) = task_background.cli_permit().await else {
+                            let _ = task_tx
+                                .send(build_envelope(
+                                    "task.result",
+                                    &task_agent,
+                                    json!({
+                                        "run_id": run_id_for_task,
+                                        "issue_id": issue_id,
+                                        "status": "cancelled",
+                                        "summary": "cancelled by shutdown before it started"
+                                    }),
+                                    task_secret.as_deref(),
+                                ))
+                                .await;
                             return;
                         };
 
@@ -331,7 +342,7 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
                             cli_agent,
                             &body,
                             Some(run_id_for_task),
-                            cancelled,
+                            task_background.cancelled(),
                         )
                         .await;
                         drop(permit);
