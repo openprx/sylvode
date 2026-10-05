@@ -112,3 +112,32 @@ async fn sigterm_terminates_a_running_executor_and_sends_its_terminal_callback()
             .any(|line| line.contains("background run(s) to stop and report"))
     );
 }
+
+/// A fake `codex` that appends `start` and `end` around a one-second run.
+fn sequenced_codex(dir: &TempDir) -> std::path::PathBuf {
+    let log = dir.file("runs");
+    write_script(
+        dir.path(),
+        "codex",
+        &format!("echo start >> '{l}'\nsleep 1\necho end >> '{l}'", l = log.display()),
+    );
+    log
+}
+
+/// `[runtime].cli_max_concurrency` limits webhook-triggered runs too: with 1, two deliveries run
+/// one after the other instead of at the same time.
+#[tokio::test(flavor = "multi_thread")]
+async fn webhook_triggered_runs_respect_cli_max_concurrency() {
+    let bin = TempDir::new("bin");
+    let log = sequenced_codex(&bin);
+    let api = StubApi::start().await;
+    let config = cli_config(&api, 30).replace("[features]", "[runtime]\ncli_max_concurrency = 1\n\n[features]");
+    let server = Server::start(CANONICAL, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
+
+    for title in ["first", "second"] {
+        let (status, answer) = post_signed(&server.url("/webhook"), &bot_task("Fixer", title).to_string()).await;
+        assert_eq!(status, 200, "{answer}");
+    }
+    let runs = wait_lines(&log, 4, Duration::from_secs(15));
+    assert_eq!(runs, ["start", "end", "start", "end"], "runs overlapped");
+}

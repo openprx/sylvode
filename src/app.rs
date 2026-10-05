@@ -169,7 +169,7 @@ async fn serve(config: config::Config) -> ExitCode {
     let bound = shutdown_bound(config.runtime.http_timeout_secs);
     tracing::info!("Loaded {} agent(s)", config.agents.len());
 
-    let background = Background::new();
+    let background = Background::new(config.runtime.cli_max_concurrency);
     let state = Arc::new(AppState {
         config,
         background: background.clone(),

@@ -101,14 +101,21 @@ async fn dispatch_cli(config: &Config, background: &Background, agent: &AgentCon
     let callback_enabled = config.callback_enabled();
     let http_timeout_secs = config.runtime.http_timeout_secs;
 
-    let cancelled = background.cancelled();
+    let task_background = background.clone();
 
-    // 3. Run the CLI process in the background — do NOT await. On shutdown the run is cancelled
-    // and still sends its terminal callback below.
+    // 3. Run the CLI process in the background — do NOT await. It waits for one of the
+    // `cli_max_concurrency` slots first. On shutdown the run is cancelled, whether it is waiting
+    // or running, and still sends its terminal callback below.
     background.spawn(async move {
-        tracing::info!(executor = %bg_executor, "CLI agent spawned");
-
-        let run = run_cli_executor(&bg_cfg, &prompt, cancelled).await;
+        let run = match task_background.cli_permit().await {
+            Some(permit) => {
+                tracing::info!(executor = %bg_executor, "CLI agent spawned");
+                let run = run_cli_executor(&bg_cfg, &prompt, task_background.cancelled()).await;
+                drop(permit);
+                run
+            }
+            None => CliRunResult::cancelled_before_start(),
+        };
 
         if run.status == "success" {
             tracing::info!(
@@ -279,6 +286,19 @@ struct CliRunResult {
     duration_ms: u128,
     stdout_tail: String,
     stderr_tail: String,
+}
+
+impl CliRunResult {
+    /// A run that shutdown cancelled while it was still waiting for a slot.
+    fn cancelled_before_start() -> Self {
+        Self {
+            status: "cancelled".into(),
+            exit_code: None,
+            duration_ms: 0,
+            stdout_tail: String::new(),
+            stderr_tail: "cancelled by shutdown before it started".into(),
+        }
+    }
 }
 
 async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str, cancelled: impl Future<Output = ()>) -> CliRunResult {
@@ -1455,7 +1475,7 @@ mcp_instructions = "Read issue {issue_id} before writing."
     #[tokio::test]
     async fn custom_args_substitute_the_message_placeholder() {
         let agent = custom_agent(r#"["[%s]", "{message}"]"#, "{key} {title}");
-        let out = dispatch(&base_config(), &Background::new(), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery()).await;
         assert_eq!(out, "[BIL-4C3B2A19 Invoice totals are rounded twice]");
     }
 
@@ -1467,7 +1487,7 @@ mcp_instructions = "Read issue {issue_id} before writing."
         let agent = custom_agent(r#"["[%s]", "--label={message}"]"#, "{title}");
         let out = dispatch(
             &base_config(),
-            &Background::new(),
+            &Background::new(1),
             &agent,
             &titled("a b \"c\" $(id); d"),
         )
@@ -1480,7 +1500,7 @@ mcp_instructions = "Read issue {issue_id} before writing."
     #[tokio::test]
     async fn custom_args_without_placeholder_append_the_message() {
         let agent = custom_agent(r#"["[%s]"]"#, "{key}");
-        let out = dispatch(&base_config(), &Background::new(), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery()).await;
         assert_eq!(out, "[BIL-4C3B2A19]");
     }
 
@@ -1493,17 +1513,17 @@ mcp_instructions = "Read issue {issue_id} before writing."
         let payload = titled("-v x");
 
         let substituted = custom_agent(r#"["[%s]", "{message}"]"#, "{title}");
-        let out = dispatch(&config, &Background::new(), &substituted, &payload).await;
+        let out = dispatch(&config, &Background::new(1), &substituted, &payload).await;
         assert!(out.starts_with("custom_error:"), "{out}");
         assert!(out.contains("starts with `-`"), "{out}");
 
         let appended = custom_agent(r#"["[%s]"]"#, "{title}");
-        let out = dispatch(&config, &Background::new(), &appended, &payload).await;
+        let out = dispatch(&config, &Background::new(1), &appended, &payload).await;
         assert!(out.starts_with("custom_error:"), "{out}");
 
         let separated = custom_agent(r#"["[%s]", "--", "{message}"]"#, "{title}");
         assert_eq!(
-            dispatch(&config, &Background::new(), &separated, &payload).await,
+            dispatch(&config, &Background::new(1), &separated, &payload).await,
             "[--][-v x]"
         );
     }
@@ -1518,7 +1538,7 @@ mcp_instructions = "Read issue {issue_id} before writing."
              [openclaw]\ncommand = 'printf'\nargs = ['[%s]']\nchannel = 'signal'\ntarget = 'uuid:u1'\n",
         )
         .expect("parse agent");
-        let out = dispatch(&base_config(), &Background::new(), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery()).await;
         assert_eq!(
             out,
             "ok: [--channel][signal][--target][uuid:u1][--message][BIL-4C3B2A19]"
@@ -1535,7 +1555,7 @@ mcp_instructions = "Read issue {issue_id} before writing."
              target = 't'\n",
         )
         .expect("parse agent");
-        let out = dispatch(&base_config(), &Background::new(), &agent, &issue_assigned_delivery()).await;
+        let out = dispatch(&base_config(), &Background::new(1), &agent, &issue_assigned_delivery()).await;
         assert_eq!(out, "ok");
     }
 
@@ -1553,7 +1573,7 @@ executor = "codex"
         )
         .expect("parse agent");
 
-        let result = dispatch(&config, &Background::new(), &agent, &json!({})).await;
+        let result = dispatch(&config, &Background::new(1), &agent, &json!({})).await;
         assert!(result.contains("disabled"));
     }
 
@@ -1571,22 +1591,22 @@ executor = "codex"
         let custom: crate::config::AgentConfig = toml::from_str("id='o4'\nname='Custom'\nagent_type='custom'").unwrap();
 
         assert!(
-            dispatch(&config, &Background::new(), &openclaw, &payload)
+            dispatch(&config, &Background::new(1), &openclaw, &payload)
                 .await
                 .contains("missing openclaw config")
         );
         assert!(
-            dispatch(&config, &Background::new(), &openprx, &payload)
+            dispatch(&config, &Background::new(1), &openprx, &payload)
                 .await
                 .contains("missing openprx config")
         );
         assert!(
-            dispatch(&config, &Background::new(), &webhook, &payload)
+            dispatch(&config, &Background::new(1), &webhook, &payload)
                 .await
                 .contains("missing webhook config")
         );
         assert!(
-            dispatch(&config, &Background::new(), &custom, &payload)
+            dispatch(&config, &Background::new(1), &custom, &payload)
                 .await
                 .contains("missing custom config")
         );

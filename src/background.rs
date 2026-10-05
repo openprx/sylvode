@@ -7,19 +7,36 @@
 //! callbacks before it exits.
 
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tokio_util::task::TaskTracker;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Background {
     shutdown: CancellationToken,
     tracker: TaskTracker,
+    /// One permit per `cli` executor allowed to run at once, shared by the webhook and the tunnel.
+    cli_permits: Arc<Semaphore>,
 }
 
 impl Background {
-    pub fn new() -> Self {
-        Self::default()
+    /// `cli_max_concurrency` executors may run at once (at least one).
+    pub fn new(cli_max_concurrency: usize) -> Self {
+        Self {
+            shutdown: CancellationToken::new(),
+            tracker: TaskTracker::new(),
+            cli_permits: Arc::new(Semaphore::new(cli_max_concurrency.max(1))),
+        }
+    }
+
+    /// Waits for a `cli` executor slot. `None` when shutdown begins first.
+    pub async fn cli_permit(&self) -> Option<OwnedSemaphorePermit> {
+        tokio::select! {
+            permit = self.cli_permits.clone().acquire_owned() => permit.ok(),
+            () = self.shutdown.cancelled() => None,
+        }
     }
 
     /// Runs `task` in the background; shutdown waits for it.

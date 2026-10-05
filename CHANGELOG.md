@@ -3,6 +3,17 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.22
+
+### Changed
+
+- **`[runtime].cli_max_concurrency` limits webhook-triggered `cli` runs too.** It used to limit
+  only tunnel tasks; any number of webhook deliveries each started an executor at once. Now at
+  most `cli_max_concurrency` executors (default 1) run at a time, webhook and tunnel together; a
+  delivery that finds no free slot is still answered at once and its run waits. The start
+  callback is still sent before the answer. A run cancelled by shutdown while it waits sends its
+  terminal callback (`cancelled`) without starting.
+
 ## 0.3.21
 
 ### Security
