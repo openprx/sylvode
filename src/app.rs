@@ -50,6 +50,11 @@ fn parse_command(first_arg: Option<OsString>) -> Result<Command, String> {
     Ok(match arg.as_str() {
         "-h" | "--help" => Command::Help,
         "-V" | "--version" => Command::Version,
+        option if option.starts_with('-') => {
+            return Err(format!(
+                "unknown option `{option}`; see --help (write a config path that starts with `-` as ./{option})"
+            ));
+        }
         _ => Command::Serve { config_path: arg },
     })
 }
@@ -299,6 +304,23 @@ mod tests {
             parse_command(Some("/etc/sylvode-webhook/config.toml".into())),
             Ok(Command::Serve {
                 config_path: "/etc/sylvode-webhook/config.toml".to_string()
+            })
+        );
+    }
+
+    /// An unknown option is a usage error, not a config path; a path that starts with `-` can
+    /// still be given as `./-name`.
+    #[test]
+    fn an_unknown_option_is_a_usage_error() {
+        for arg in ["--bogus-flag", "-x", "--", "-", "--config=x.toml"] {
+            let err = parse_command(Some(arg.into())).expect_err("refused");
+            assert!(err.contains(&format!("unknown option `{arg}`")), "{err}");
+            assert!(err.contains("--help"), "{err}");
+        }
+        assert_eq!(
+            parse_command(Some("./-odd.toml".into())),
+            Ok(Command::Serve {
+                config_path: "./-odd.toml".to_string()
             })
         );
     }
