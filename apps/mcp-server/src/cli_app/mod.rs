@@ -1,12 +1,15 @@
-//! The `sylvode` binary's command model, auth/config resolver, typed error and JSON renderer.
+//! The `sylvode` binary's Flow command model, auth/config resolver, typed error and JSON
+//! renderer, and the routing between it and the workspace command groups.
 //!
 //! `cli-surface-v1.md`: "apps/mcp-server/src/cli_app/ 承载共享 command model、auth/config
-//! resolver、typed error 和 JSON renderer". `mcp-server` keeps its own existing `cli.rs`
-//! business subcommands unchanged; this module is `sylvode`'s alone.
+//! resolver、typed error 和 JSON renderer". The nine workspace groups `sylvode` also carries
+//! are not defined here: they are `crate::cli`'s, shared with `mcp-server` (ADR-0020 D5), and
+//! [`entry`] decides which of the two models a command line belongs to.
 
 pub mod api_client;
 pub mod command;
 pub mod config;
+pub mod entry;
 pub mod error;
 pub mod render;
 
