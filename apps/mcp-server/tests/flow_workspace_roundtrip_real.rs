@@ -349,7 +349,7 @@ async fn full_workspace_roundtrip_compares_every_document_graph_lineage_and_repo
     let package = reqwest::Client::new()
         .get(format!("http://{address}/api/v1/flow/exports/{job_id}/artifact"))
         .bearer_auth(source_token)
-        .header("x-openpr-mcp-surface", TRANSPORT_LABEL_STDIO)
+        .header("x-sylvode-mcp-surface", TRANSPORT_LABEL_STDIO)
         .send()
         .await?
         .error_for_status()?

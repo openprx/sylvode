@@ -99,8 +99,11 @@ pub const TRANSPORT_LABEL_SSE: &str = "mcp_sse";
 /// Audit label of a direct CLI command.
 pub const TRANSPORT_LABEL_CLI: &str = "cli";
 
-const MCP_TOOL_HEADER: &str = "X-OpenPR-MCP-Tool";
-const MCP_SURFACE_HEADER: &str = "X-OpenPR-MCP-Surface";
+/// Attribution headers, canonical spelling first (ADR-0020 D3). Throughout 1.x the legacy
+/// `X-OpenPR-MCP-*` spelling is sent alongside with the identical value, so this client keeps
+/// working against a pre-1.0 API; the API refuses the request if the two ever disagree.
+const MCP_TOOL_HEADERS: [&str; 2] = ["X-Sylvode-MCP-Tool", "X-OpenPR-MCP-Tool"];
+const MCP_SURFACE_HEADERS: [&str; 2] = ["X-Sylvode-MCP-Surface", "X-OpenPR-MCP-Surface"];
 
 /// The audit label a configured transport is reported under.
 ///
@@ -305,9 +308,13 @@ impl OpenPrClient {
     }
 
     pub(crate) fn operation_headers(&self, request: RequestBuilder) -> RequestBuilder {
-        let request = request.header(MCP_SURFACE_HEADER, self.transport_label);
+        let request = MCP_SURFACE_HEADERS
+            .iter()
+            .fold(request, |request, name| request.header(*name, self.transport_label));
         match self.operation_tool_name.as_deref() {
-            Some(tool_name) => request.header(MCP_TOOL_HEADER, tool_name),
+            Some(tool_name) => MCP_TOOL_HEADERS
+                .iter()
+                .fold(request, |request, name| request.header(*name, tool_name)),
             None => request,
         }
     }
@@ -1726,11 +1733,20 @@ mod tests {
         let router = Router::new().route(
             "/record",
             get(|headers: HeaderMap| async move {
+                let all = |name: &str| -> Vec<String> {
+                    headers
+                        .get_all(name)
+                        .iter()
+                        .filter_map(|value| value.to_str().ok().map(str::to_string))
+                        .collect()
+                };
                 Json(json!({
                     "code": 0,
                     "data": {
-                        "tool": headers.get("x-openpr-mcp-tool").and_then(|value| value.to_str().ok()),
-                        "surface": headers.get("x-openpr-mcp-surface").and_then(|value| value.to_str().ok()),
+                        "tool": all("x-sylvode-mcp-tool"),
+                        "legacy_tool": all("x-openpr-mcp-tool"),
+                        "surface": all("x-sylvode-mcp-surface"),
+                        "legacy_surface": all("x-openpr-mcp-surface"),
                         "authorization": headers.get("authorization").and_then(|value| value.to_str().ok())
                     }
                 }))
@@ -1744,11 +1760,11 @@ mod tests {
         let value: Value = client.get("/record").await?;
         let data = value.get("data").and_then(Value::as_object).ok_or("missing data")?;
 
-        assert_eq!(
-            data.get("tool").and_then(Value::as_str),
-            Some("bot_operation_logs.list")
-        );
-        assert_eq!(data.get("surface").and_then(Value::as_str), Some("cli"));
+        // ADR-0020 D3: the canonical and the legacy spelling, each exactly once, same value.
+        assert_eq!(data.get("tool"), Some(&json!(["bot_operation_logs.list"])));
+        assert_eq!(data.get("legacy_tool"), Some(&json!(["bot_operation_logs.list"])));
+        assert_eq!(data.get("surface"), Some(&json!(["cli"])));
+        assert_eq!(data.get("legacy_surface"), Some(&json!(["cli"])));
         assert_eq!(
             data.get("authorization").and_then(Value::as_str),
             Some("Bearer opr_test_token")

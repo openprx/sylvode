@@ -156,7 +156,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         calls.append({
             "path": self.path,
             "authorization_present": bool(self.headers.get("authorization")),
-            "surface": self.headers.get("x-openpr-mcp-surface"),
+            "surface": self.headers.get("x-sylvode-mcp-surface") or self.headers.get("x-openpr-mcp-surface"),
         })
         body = json.dumps({"code": 0, "data": data}).encode()
         self.send_response(200)

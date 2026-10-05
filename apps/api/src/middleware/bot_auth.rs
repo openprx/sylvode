@@ -34,8 +34,52 @@ use crate::{
     routes::auth::{extract_bearer_token, extract_cookie_token},
 };
 
-const MCP_TOOL_HEADER: &str = "x-openpr-mcp-tool";
-const MCP_SURFACE_HEADER: &str = "x-openpr-mcp-surface";
+/// Canonical MCP attribution headers (ADR-0020 D3).
+const MCP_TOOL_HEADER: &str = "x-sylvode-mcp-tool";
+const MCP_SURFACE_HEADER: &str = "x-sylvode-mcp-surface";
+/// Legacy spellings, still sent by every 1.x `mcp-server` next to the canonical ones and by any
+/// pre-1.0 client on its own. Accepted for the whole 1.x line.
+const LEGACY_MCP_TOOL_HEADER: &str = "x-openpr-mcp-tool";
+const LEGACY_MCP_SURFACE_HEADER: &str = "x-openpr-mcp-surface";
+
+/// The MCP attribution a request presented, after the canonical and legacy spellings have been
+/// reconciled. Values that are not visible ASCII are treated as absent, as before.
+#[derive(Debug, Clone, Copy, Default)]
+struct McpAttribution<'a> {
+    surface: Option<&'a str>,
+    tool: Option<&'a str>,
+}
+
+/// Reconciles every occurrence of one attribution field across its canonical and legacy header
+/// names.
+///
+/// Fail-closed (ADR-0020 D3): every occurrence must carry byte-identical values, otherwise the
+/// request is rejected. These headers become audit evidence, so silently preferring one spelling
+/// over the other would let a caller record an attribution the other header contradicts.
+fn reconcile_attribution_header<'a>(
+    headers: &'a axum::http::HeaderMap,
+    canonical: &str,
+    legacy: &str,
+) -> Result<Option<&'a str>, ApiError> {
+    let mut values = headers.get_all(canonical).iter().chain(headers.get_all(legacy).iter());
+    let Some(first) = values.next() else {
+        return Ok(None);
+    };
+    if values.any(|other| other.as_bytes() != first.as_bytes()) {
+        return Err(ApiError::Unauthorized(format!(
+            "conflicting MCP attribution headers: every `{canonical}` / `{legacy}` value must be identical"
+        )));
+    }
+    Ok(first.to_str().ok())
+}
+
+/// The single reader of the MCP attribution headers; every consumer goes through it.
+fn mcp_attribution(headers: &axum::http::HeaderMap) -> Result<McpAttribution<'_>, ApiError> {
+    Ok(McpAttribution {
+        surface: reconcile_attribution_header(headers, MCP_SURFACE_HEADER, LEGACY_MCP_SURFACE_HEADER)?,
+        tool: reconcile_attribution_header(headers, MCP_TOOL_HEADER, LEGACY_MCP_TOOL_HEADER)?,
+    })
+}
 
 struct BotOperationContext {
     bot_id: Uuid,
@@ -67,10 +111,9 @@ struct BotOperationContext {
 /// `bot_operation_logs.surface`; this change widens their blast radius from observability to
 /// audit evidence, and that is worth saying out loud rather than burying.
 #[cfg(test)]
-fn operation_surface(headers: &axum::http::HeaderMap) -> EventSurface {
-    headers
-        .get(MCP_SURFACE_HEADER)
-        .and_then(|value| value.to_str().ok())
+fn operation_surface(attribution: McpAttribution<'_>) -> EventSurface {
+    attribution
+        .surface
         .and_then(EventSurface::from_client_transport_label)
         .unwrap_or(EventSurface::Rest)
 }
@@ -86,12 +129,9 @@ fn registered_surface(value: &str) -> Result<EventSurface, ApiError> {
 /// Resolves the request surface only when it equals the surface stored with the credential.
 /// The caller-controlled header is now merely a presented transport label; it cannot promote a
 /// token into another allowed transport (ADR-0018 G8's v0.7 closure).
-fn credential_bound_surface(headers: &axum::http::HeaderMap, registered: &str) -> Result<EventSurface, ApiError> {
+fn credential_bound_surface(attribution: McpAttribution<'_>, registered: &str) -> Result<EventSurface, ApiError> {
     let registered = registered_surface(registered)?;
-    let declared = headers
-        .get(MCP_SURFACE_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(EventSurface::from_client_transport_label);
+    let declared = attribution.surface.and_then(EventSurface::from_client_transport_label);
     match (registered, declared) {
         (EventSurface::Rest, None) => Ok(EventSurface::Rest),
         (expected, Some(actual)) if expected == actual => Ok(expected),
@@ -101,8 +141,8 @@ fn credential_bound_surface(headers: &axum::http::HeaderMap, registered: &str) -
     }
 }
 
-fn operation_tool_name(headers: &axum::http::HeaderMap) -> Option<String> {
-    let value = headers.get(MCP_TOOL_HEADER)?.to_str().ok()?.trim();
+fn operation_tool_name(attribution: McpAttribution<'_>) -> Option<String> {
+    let value = attribution.tool?.trim();
     let mut segments = value.split('.');
     let valid_segment = |segment: &str| {
         !segment.is_empty()
@@ -206,12 +246,13 @@ fn bot_auth_context(
     registered_transport: &str,
     headers: &axum::http::HeaderMap,
 ) -> Result<BotAuthContext, ApiError> {
+    let attribution = mcp_attribution(headers)?;
     Ok(BotAuthContext {
         bot_id,
         workspace_id,
         permissions,
-        surface: credential_bound_surface(headers, registered_transport)?,
-        tool_name: operation_tool_name(headers),
+        surface: credential_bound_surface(attribution, registered_transport)?,
+        tool_name: operation_tool_name(attribution),
         // Minted once per request, here, and copied by everything that describes this request.
         request_id: Uuid::new_v4(),
     })
@@ -509,9 +550,10 @@ pub async fn bot_or_user_auth_middleware(
 mod tests {
     use super::{
         BotAuthContext, BotPermission, EventSurface, bot_permissions_allow, bot_role_from_permissions,
-        credential_bound_surface, ensure_bot_permission, operation_surface, operation_tool_name,
+        credential_bound_surface, ensure_bot_permission, mcp_attribution, operation_surface, operation_tool_name,
         required_bot_permission,
     };
+    use crate::error::ApiError;
     use axum::http::{HeaderMap, HeaderValue, Method};
     use uuid::Uuid;
 
@@ -602,10 +644,10 @@ mod tests {
         ] {
             let mut headers = HeaderMap::new();
             headers.insert(
-                "x-openpr-mcp-surface",
+                "x-sylvode-mcp-surface",
                 HeaderValue::from_str(label).expect("static label is a valid header value"),
             );
-            headers.insert("x-openpr-mcp-tool", HeaderValue::from_static("flow.feature_set"));
+            headers.insert("x-sylvode-mcp-tool", HeaderValue::from_static("flow.feature_set"));
             let context = super::bot_auth_context(bot_id, workspace_id, vec!["write".to_string()], label, &headers)
                 .expect("registered and presented transports match");
             assert_eq!(
@@ -648,36 +690,45 @@ mod tests {
     #[test]
     fn a_bot_cannot_forge_a_transport_different_from_its_credential() {
         let mut headers = HeaderMap::new();
-        headers.insert("x-openpr-mcp-surface", HeaderValue::from_static("mcp_sse"));
+        headers.insert("x-sylvode-mcp-surface", HeaderValue::from_static("mcp_sse"));
+        let presented = mcp_attribution(&headers).expect("one surface header is not a conflict");
+        let empty = HeaderMap::new();
+        let absent = mcp_attribution(&empty).expect("no headers is not a conflict");
 
-        assert!(credential_bound_surface(&headers, "mcp_http").is_err());
-        assert!(credential_bound_surface(&headers, "rest").is_err());
+        assert!(credential_bound_surface(presented, "mcp_http").is_err());
+        assert!(credential_bound_surface(presented, "rest").is_err());
         assert_eq!(
-            credential_bound_surface(&headers, "mcp_sse").expect("matching credential"),
+            credential_bound_surface(presented, "mcp_sse").expect("matching credential"),
             EventSurface::McpSse
         );
-        assert!(credential_bound_surface(&HeaderMap::new(), "mcp_sse").is_err());
+        assert!(credential_bound_surface(absent, "mcp_sse").is_err());
         assert_eq!(
-            credential_bound_surface(&HeaderMap::new(), "rest").expect("plain REST credential"),
+            credential_bound_surface(absent, "rest").expect("plain REST credential"),
             EventSurface::Rest
         );
     }
 
     #[test]
     fn a_client_may_declare_only_the_client_transports_and_nothing_else() {
+        let resolve = |headers: &HeaderMap| -> EventSurface {
+            operation_surface(mcp_attribution(headers).expect("a single surface header is not a conflict"))
+        };
         let mut headers = HeaderMap::new();
-        headers.insert("x-openpr-mcp-surface", HeaderValue::from_static("mcp_http"));
-        headers.insert("x-openpr-mcp-tool", HeaderValue::from_static("form_records.list"));
-        assert_eq!(operation_surface(&headers), EventSurface::McpHttp);
-        assert_eq!(operation_tool_name(&headers).as_deref(), Some("form_records.list"));
+        headers.insert("x-sylvode-mcp-surface", HeaderValue::from_static("mcp_http"));
+        headers.insert("x-sylvode-mcp-tool", HeaderValue::from_static("form_records.list"));
+        assert_eq!(resolve(&headers), EventSurface::McpHttp);
+        assert_eq!(
+            operation_tool_name(mcp_attribution(&headers).expect("no conflict")).as_deref(),
+            Some("form_records.list")
+        );
 
         for label in ["mcp_sse", "mcp_stdio", "cli", "cli_tools_call"] {
             headers.insert(
-                "x-openpr-mcp-surface",
+                "x-sylvode-mcp-surface",
                 HeaderValue::from_str(label).expect("static label is a valid header value"),
             );
             assert_eq!(
-                operation_surface(&headers).as_wire(),
+                resolve(&headers).as_wire(),
                 label,
                 "`{label}` is a client transport and must round-trip through the boundary"
             );
@@ -687,17 +738,120 @@ mod tests {
         // events indistinguishable from a browser session or from the server talking to itself.
         for forged in ["web", "worker", "system", "admin", "REST", "mcp_http "] {
             headers.insert(
-                "x-openpr-mcp-surface",
+                "x-sylvode-mcp-surface",
                 HeaderValue::from_str(forged).expect("static label is a valid header value"),
             );
             assert_eq!(
-                operation_surface(&headers),
+                resolve(&headers),
                 EventSurface::Rest,
                 "`{forged}` must not be declarable by a client; the boundary falls back to REST"
             );
         }
 
-        headers.insert("x-openpr-mcp-tool", HeaderValue::from_static("invalid"));
-        assert!(operation_tool_name(&headers).is_none());
+        headers.insert("x-sylvode-mcp-tool", HeaderValue::from_static("invalid"));
+        assert!(operation_tool_name(mcp_attribution(&headers).expect("no conflict")).is_none());
+    }
+
+    fn headers_of(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (name, value) in pairs {
+            headers.append(*name, HeaderValue::from_static(value));
+        }
+        headers
+    }
+
+    fn assert_conflict(result: Result<super::McpAttribution<'_>, ApiError>, case: &str) {
+        match result {
+            Err(ApiError::Unauthorized(message)) => assert!(
+                message.contains("conflicting MCP attribution headers"),
+                "{case}: unexpected message {message}"
+            ),
+            Err(other) => panic!("{case}: wrong error family {other:?}"),
+            Ok(attribution) => panic!("{case}: a conflict must be rejected, resolved to {attribution:?}"),
+        }
+    }
+
+    /// ADR-0020 D3: canonical `X-Sylvode-MCP-*`, legacy `X-OpenPR-MCP-*`, either alone or both
+    /// with equal values is accepted; any disagreement is refused rather than resolved.
+    #[test]
+    fn attribution_accepts_either_spelling_and_refuses_disagreement() {
+        for (case, pairs) in [
+            (
+                "canonical only",
+                &[
+                    ("x-sylvode-mcp-surface", "mcp_http"),
+                    ("x-sylvode-mcp-tool", "projects.list"),
+                ][..],
+            ),
+            (
+                "legacy only",
+                &[
+                    ("x-openpr-mcp-surface", "mcp_http"),
+                    ("x-openpr-mcp-tool", "projects.list"),
+                ][..],
+            ),
+            (
+                "both equal",
+                &[
+                    ("x-sylvode-mcp-surface", "mcp_http"),
+                    ("x-openpr-mcp-surface", "mcp_http"),
+                    ("x-sylvode-mcp-tool", "projects.list"),
+                    ("x-openpr-mcp-tool", "projects.list"),
+                ][..],
+            ),
+            (
+                "duplicate equal",
+                &[
+                    ("x-sylvode-mcp-surface", "mcp_http"),
+                    ("x-sylvode-mcp-surface", "mcp_http"),
+                    ("x-openpr-mcp-tool", "projects.list"),
+                ][..],
+            ),
+        ] {
+            let headers = headers_of(pairs);
+            let attribution = mcp_attribution(&headers).unwrap_or_else(|error| panic!("{case}: {error:?}"));
+            assert_eq!(attribution.surface, Some("mcp_http"), "{case}");
+            assert_eq!(attribution.tool, Some("projects.list"), "{case}");
+        }
+
+        for (case, pairs) in [
+            (
+                "surface canonical vs legacy",
+                &[
+                    ("x-sylvode-mcp-surface", "mcp_http"),
+                    ("x-openpr-mcp-surface", "mcp_sse"),
+                ][..],
+            ),
+            (
+                "tool canonical vs legacy",
+                &[
+                    ("x-sylvode-mcp-tool", "projects.list"),
+                    ("x-openpr-mcp-tool", "projects.delete"),
+                ][..],
+            ),
+            (
+                "duplicate canonical surface",
+                &[
+                    ("x-sylvode-mcp-surface", "mcp_http"),
+                    ("x-sylvode-mcp-surface", "mcp_sse"),
+                ][..],
+            ),
+            (
+                "duplicate legacy tool",
+                &[
+                    ("x-openpr-mcp-tool", "projects.list"),
+                    ("x-openpr-mcp-tool", "projects.delete"),
+                ][..],
+            ),
+            (
+                "case differs",
+                &[
+                    ("x-sylvode-mcp-surface", "mcp_http"),
+                    ("x-openpr-mcp-surface", "MCP_HTTP"),
+                ][..],
+            ),
+        ] {
+            assert_conflict(mcp_attribution(&headers_of(pairs)), case);
+        }
     }
 }
