@@ -129,7 +129,7 @@ EOF
 
 "$ROOT_DIR/target/debug/api" --config "$APP_CONFIG" >"$API_LOG" 2>&1 &
 api_pid=$!
-wait_http "http://127.0.0.1:$API_PORT/health" "OpenPR API"
+wait_http "http://127.0.0.1:$API_PORT/health" "Sylvode API"
 
 # What this smoke proves is that the bootstrap hands the MCP server usable credentials, so the
 # file it writes them into is the temporary one below rather than the repository's. It has to
@@ -160,7 +160,7 @@ fi
 "$ROOT_DIR/target/debug/mcp-server" --config "$MCP_CONFIG" \
   serve --transport http --bind-addr "127.0.0.1:$MCP_PORT" >"$MCP_LOG" 2>&1 &
 mcp_pid=$!
-wait_http "http://127.0.0.1:$MCP_PORT/health" "OpenPR MCP"
+wait_http "http://127.0.0.1:$MCP_PORT/health" "Sylvode MCP"
 
 OPENPR_API_URL="http://127.0.0.1:$API_PORT" \
 OPENPR_DEMO_WRITE_CONFIG=1 \

@@ -180,9 +180,24 @@ allow_private = false
 
 
 # ---------------------------------------------------------------------------------------------
+# [flow] — Sylvode Flow. Read by the API and the worker; every key is optional.
+# ---------------------------------------------------------------------------------------------
+# [flow]
+# How many times the event dispatcher attempts one Flow event delivery before giving up.
+# Default: 10. Must be greater than 0.
+# dispatch_max_attempts = 10
+#
+# Browser origins (scheme://host[:port], no path) allowed to open live collaboration sessions.
+# A ticket request and the WebSocket upgrade are both refused unless their Origin header is
+# listed here. Default: empty, which refuses every live editing session; list the origin the
+# web UI is served from.
+# collab_allowed_origins = ["https://sylvode.example.com"]
+
+
+# ---------------------------------------------------------------------------------------------
 # [mcp] — MCP server. Optional for the API and the worker.
 #
-# Every call this server makes to the OpenPR API is made with a workspace bot token, and which
+# Every call this server makes to the Sylvode API is made with a workspace bot token, and which
 # bot that is depends on the transport:
 #
 #   stdio          One person runs one process from their own MCP client, so the identity is
@@ -199,7 +214,7 @@ allow_private = false
 # decides.
 # ---------------------------------------------------------------------------------------------
 [mcp]
-# Base URL of the OpenPR API the MCP server talks to. Default: http://localhost:8081.
+# Base URL of the Sylvode API the MCP server talks to. Default: http://localhost:8081.
 # api_url = "http://localhost:8081"
 
 # REQUIRED for transport = "stdio" and for the CLI subcommands, which have no per-request

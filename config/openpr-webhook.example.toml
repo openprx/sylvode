@@ -8,7 +8,7 @@
 listen = "0.0.0.0:9090"
 
 [security]
-# Must equal the `secret` of the webhook subscription created in OpenPR. Both the API's own
+# Must equal the `secret` of the webhook subscription created in Sylvode. Both the API's own
 # deliveries and the worker's AI-task dispatch sign the exact request body with it.
 webhook_secrets = ["replace_with_openpr_webhook_secret"]
 allow_unsigned = false
@@ -23,7 +23,7 @@ cli_max_concurrency = 1
 http_timeout_secs = 15
 tunnel_reconnect_backoff_max_secs = 60
 
-# Bot work: OpenPR marks a delivery with `bot_context.is_bot_task = true` when the webhook's
+# Bot work: Sylvode marks a delivery with `bot_context.is_bot_task = true` when the webhook's
 # bot user is the assignee or is mentioned.
 [[agents]]
 id = "bot-log"

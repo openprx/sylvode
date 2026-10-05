@@ -1,9 +1,9 @@
 ---
 name: openpr-mcp
-description: Manage projects, universal forms, WASM plugins, operation records, issues, sprints, labels, comments, proposals, and files via the OpenPR MCP server. Supports HTTP, stdio, and SSE transports with bot token authentication.
+description: Manage projects, universal forms, WASM plugins, operation records, issues, sprints, labels, comments, proposals, and files via the Sylvode MCP server. Supports HTTP, stdio, and SSE transports with bot token authentication.
 ---
 
-# OpenPR MCP Skill
+# Sylvode MCP Skill
 
 ## When to use
 Use this skill when:
@@ -19,7 +19,7 @@ Use this skill when:
 
 ## Fast start (functional lines)
 
-Run these in order so a client can use OpenPR MCP immediately.
+Run these in order so a client can use the Sylvode MCP server immediately.
 
 ### 1. Capability line (verify connectivity)
 ```

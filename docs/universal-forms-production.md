@@ -1,6 +1,6 @@
 # Universal Forms Production Runbook
 
-This runbook is for running OpenPR as a generic open-source business platform,
+This runbook is for running Sylvode (formerly OpenPR) as a generic open-source business platform,
 not only as a project management tool. It assumes PostgreSQL is the production
 database and uses the restaurant ordering template as the first acceptance
 scenario.
@@ -10,10 +10,10 @@ scenario.
 Minimum production services:
 
 - PostgreSQL 15 or newer.
-- OpenPR API.
-- OpenPR worker.
-- OpenPR frontend.
-- OpenPR MCP server if AI assistants or external MCP clients are enabled.
+- Sylvode API.
+- Sylvode worker.
+- Sylvode frontend.
+- Sylvode MCP server if AI assistants or external MCP clients are enabled.
 - Optional connector receivers such as webhook, print, device, REST, CLI, or tunnel gateways.
 
 Universal forms production features require these subsystems to be running
@@ -196,7 +196,7 @@ Do not mark final acceptance until user-side manual signoff is complete.
 ## Runtime Configuration
 
 The compose deployment must not ship with demo MCP credentials. Configure these
-values for the target deployment before starting OpenPR services:
+values for the target deployment before starting Sylvode services:
 
 The api, worker and mcp-server binaries read no environment variables at all.
 Their settings live in TOML configuration files that `docker-compose.yml` mounts
@@ -228,7 +228,7 @@ workspace_id = "replace_with_workspace_uuid"
 ```
 
 `.env` is left to docker-compose's own `${...}` interpolation and to the
-postgres image. Nothing in it reaches OpenPR's own code:
+postgres image. Nothing in it reaches Sylvode's own code:
 
 ```bash
 POSTGRES_PASSWORD=replace_with_postgres_password
@@ -271,7 +271,7 @@ it to a deployment-owned path, set a concrete `webhook_secrets` value, keep
 `allow_unsigned = false`, and point `OPENPR_WEBHOOK_CONFIG` at that file.
 
 The compose file intentionally avoids fixed `container_name` values. This lets
-operators run multiple OpenPR deployments on the same host by using different
+operators run multiple Sylvode deployments on the same host by using different
 compose project names while keeping service discovery on compose service names
 such as `api`, `postgres`, `worker`, `mcp-server`, and `frontend`.
 

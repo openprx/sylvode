@@ -1,6 +1,6 @@
-# OpenPR Frontend
+# Sylvode Frontend
 
-OpenPR 前端应用，基于 SvelteKit + TypeScript + Tailwind CSS + shadcn-svelte 构建。
+Sylvode 前端应用，基于 SvelteKit + TypeScript + Tailwind CSS + shadcn-svelte 构建。
 
 ## 技术栈
 

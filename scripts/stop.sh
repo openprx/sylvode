@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "🛑 Stopping OpenPR Services"
+echo "🛑 Stopping Sylvode Services"
 echo "==========================="
 echo ""
 

@@ -6,7 +6,7 @@ set -e
 
 API_URL="${API_URL:-http://localhost:8081}"
 
-echo "⚡ OpenPR API Performance Benchmark"
+echo "⚡ Sylvode API Performance Benchmark"
 echo "==================================="
 echo "API URL: $API_URL"
 echo ""

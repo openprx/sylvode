@@ -104,7 +104,7 @@ EOF
 
 "$ROOT_DIR/target/debug/api" --config "$APP_CONFIG" >"$API_LOG" 2>&1 &
 api_pid=$!
-wait_http "http://127.0.0.1:$API_PORT/health" "OpenPR API"
+wait_http "http://127.0.0.1:$API_PORT/health" "Sylvode API"
 
 # The mcp-server reads no environment variables either, and refuses to start without a
 # configuration file. Its identity still arrives per call through --api-url/--bot-token/

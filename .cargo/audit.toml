@@ -1,10 +1,10 @@
 [advisories]
-# Lockfile-only through SQLx's inactive MySQL backend; OpenPR enables only
+# Lockfile-only through SQLx's inactive MySQL backend; Sylvode enables only
 # sqlx-postgres at build/runtime. Verified with cargo tree -i rsa/sqlx-mysql.
 ignore = [
     "RUSTSEC-2023-0071",
     # rkyv 0.7 out-of-bounds read when validating an untrusted archive. Reached only as
-    # rust_decimal's optional rkyv backend by way of sea-orm; OpenPR never produces or parses
+    # rust_decimal's optional rkyv backend by way of sea-orm; Sylvode never produces or parses
     # a rkyv archive (decimals cross every boundary as strings). Needs rust_decimal on
     # rkyv >=0.8.17 upstream before it can be resolved here.
     "RUSTSEC-2026-0235",
@@ -13,7 +13,7 @@ ignore = [
     "RUSTSEC-2026-0173",
     # atomic-polyfill unmaintained: build-graph-only through wasmtime's Cranelift backend
     # (wasmtime -> cranelift-codegen -> postcard -> heapless). It emulates atomics on
-    # single-core targets; OpenPR builds only targets with native atomics, so those paths are
+    # single-core targets; Sylvode builds only targets with native atomics, so those paths are
     # never compiled in. Resolvable only when heapless 0.7 is dropped upstream.
     "RUSTSEC-2023-0089",
     # im / sized-chunks / bitmaps (via loro -> loro-internal) and smallstr (via yrs) are

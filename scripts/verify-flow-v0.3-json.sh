@@ -19,7 +19,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCHEMA_DIR="$ROOT_DIR/docs/schemas"
 
 # Non-evidence contract docs (decisions/, contracts/, security/, testing/,
-# gates/) live in the read-only spec repo, never under OpenPR. This root is
+# gates/) live in the read-only spec repo, never in this repository. This root is
 # not ambiguous: those directories do not exist under $ROOT_DIR.
 CONTRACTS_ROOT="/opt/working/sylvode-flow"
 
