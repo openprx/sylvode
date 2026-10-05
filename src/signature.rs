@@ -79,17 +79,46 @@ pub fn sign_payload(payload: &[u8], secret: &str) -> Result<String, String> {
     Ok(hex::encode(mac.finalize().into_bytes()))
 }
 
+/// Length of an HMAC-SHA256 digest in bytes.
+const DIGEST_LEN: usize = 32;
+
+/// Decodes a presented signature: exactly 64 lowercase hex digits, without any prefix.
+///
+/// Uppercase hex is refused, as it always was: the signature used to be compared as text against
+/// the lowercase hex of the computed digest. Anything else that is not exactly one digest is
+/// refused here too, so it never reaches the HMAC comparison.
+fn decode_digest_hex(sig_hex: &str) -> Option<[u8; DIGEST_LEN]> {
+    let well_formed =
+        sig_hex.len() == DIGEST_LEN * 2 && sig_hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    if !well_formed {
+        return None;
+    }
+    let mut digest = [0_u8; DIGEST_LEN];
+    hex::decode_to_slice(sig_hex, &mut digest).ok()?;
+    Some(digest)
+}
+
+/// Whether `sig_hex` (a signature with any prefix already removed) is the HMAC-SHA256 of
+/// `payload` under one of `secrets`.
+///
+/// The digests are compared in constant time by `Mac::verify_slice`. Both the HTTP receiver and
+/// the tunnel verify through this function.
+pub fn verify_digest_hex<'a>(payload: &[u8], sig_hex: &str, secrets: impl IntoIterator<Item = &'a str>) -> bool {
+    let Some(presented) = decode_digest_hex(sig_hex) else {
+        return false;
+    };
+    secrets.into_iter().any(|secret| {
+        HmacSha256::new_from_slice(secret.as_bytes()).is_ok_and(|mut mac| {
+            mac.update(payload);
+            mac.verify_slice(&presented).is_ok()
+        })
+    })
+}
+
+/// Verifies an HTTP request signature, `sha256=<hex>` or bare `<hex>`, against `secrets`.
 pub fn verify_signature(payload: &[u8], signature: &str, secrets: &[String]) -> bool {
     let sig_hex = signature.strip_prefix("sha256=").unwrap_or(signature);
-
-    for secret in secrets {
-        if let Ok(computed) = sign_payload(payload, secret)
-            && computed == sig_hex
-        {
-            return true;
-        }
-    }
-    false
+    verify_digest_hex(payload, sig_hex, secrets.iter().map(String::as_str))
 }
 
 #[cfg(test)]
@@ -219,5 +248,104 @@ mod tests {
                 header: LEGACY_SIGNATURE_HEADER
             })
         );
+    }
+
+    fn good_hex() -> String {
+        sign_payload(BODY, SECRET).unwrap()
+    }
+
+    fn verifies(signature: &str) -> bool {
+        verify_signature(BODY, signature, &[SECRET.to_string()])
+    }
+
+    #[test]
+    fn lowercase_hex_is_accepted_with_or_without_the_prefix() {
+        let hex = good_hex();
+        assert!(
+            hex.bytes().any(|b| b.is_ascii_lowercase()),
+            "fixture must contain letters"
+        );
+        assert!(verifies(&hex));
+        assert!(verifies(&format!("sha256={hex}")));
+    }
+
+    /// Uppercase hex was never accepted: the old text comparison was against lowercase output.
+    #[test]
+    fn uppercase_and_mixed_case_hex_are_refused() {
+        let hex = good_hex();
+        let upper = hex.to_ascii_uppercase();
+        assert_ne!(upper, hex);
+        assert!(!verifies(&upper));
+        assert!(!verifies(&format!("sha256={upper}")));
+        let pos = hex.find(|c: char| c.is_ascii_lowercase()).unwrap();
+        let mut mixed = hex.clone();
+        mixed.replace_range(pos..=pos, &hex[pos..=pos].to_ascii_uppercase());
+        assert!(!verifies(&mixed));
+    }
+
+    #[test]
+    fn an_uppercase_prefix_is_not_stripped() {
+        assert!(!verifies(&format!("SHA256={}", good_hex())));
+    }
+
+    #[test]
+    fn malformed_hex_is_refused_without_panicking() {
+        let hex = good_hex();
+        let mut non_hex = hex.clone();
+        non_hex.replace_range(0..1, "g");
+        for sig in [
+            non_hex,
+            format!(" {}", &hex[1..]),
+            format!("{} ", &hex[..63]),
+            format!("{}\t", &hex[..63]),
+            "z".repeat(64),
+            "sha256=".to_string(),
+            String::new(),
+        ] {
+            assert!(!verifies(&sig), "{sig:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn odd_length_hex_is_refused() {
+        let hex = good_hex();
+        assert!(!verifies(&hex[..63]));
+        assert!(!verifies(&format!("{hex}0")));
+        assert!(!verifies("a"));
+    }
+
+    #[test]
+    fn a_digest_of_the_wrong_length_is_refused() {
+        let hex = good_hex();
+        // A prefix of the right digest, and the right digest with a byte appended.
+        assert!(!verifies(&hex[..62]));
+        assert!(!verifies(&hex[..32]));
+        assert!(!verifies(&format!("{hex}00")));
+        assert!(!verifies(&format!("{hex}{hex}")));
+    }
+
+    #[test]
+    fn a_well_formed_digest_of_another_body_is_refused() {
+        assert!(!verifies(&"0".repeat(64)));
+        assert!(!verifies(&sign_payload(b"another body", SECRET).unwrap()));
+    }
+
+    #[test]
+    fn any_configured_secret_verifies_and_none_configured_verifies_nothing() {
+        let hex = good_hex();
+        assert!(verify_signature(BODY, &hex, &["other".to_string(), SECRET.to_string()]));
+        assert!(!verify_signature(BODY, &hex, &[]));
+    }
+
+    /// The handler strips one `sha256=` while extracting and `verify_signature` strips another.
+    #[test]
+    fn a_doubled_prefix_through_the_handler_path_is_still_accepted() {
+        let map = headers(&[(WEBHOOK_SIGNATURE_HEADER, &format!("sha256=sha256={}", good_hex()))]);
+        assert!(accepted(&map));
+        let tripled = headers(&[(
+            WEBHOOK_SIGNATURE_HEADER,
+            &format!("sha256=sha256=sha256={}", good_hex()),
+        )]);
+        assert!(!accepted(&tripled));
     }
 }
