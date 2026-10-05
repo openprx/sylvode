@@ -30,27 +30,36 @@ pub enum Invocation {
 pub enum LegacyEntry {
     /// The `openpr-webhook` executable name.
     ExecutableName,
+    /// The `x-openpr-signature` inbound signature header.
+    SignatureHeader,
 }
 
 static EXECUTABLE_NAME_WARNED: AtomicBool = AtomicBool::new(false);
+static SIGNATURE_HEADER_WARNED: AtomicBool = AtomicBool::new(false);
 
 impl LegacyEntry {
     /// The legacy name and the name that replaces it.
     pub const fn names(self) -> (&'static str, &'static str) {
         match self {
             Self::ExecutableName => (LEGACY_NAME, CANONICAL_NAME),
+            Self::SignatureHeader => (
+                crate::signature::LEGACY_SIGNATURE_HEADER,
+                crate::signature::SYLVODE_SIGNATURE_HEADER,
+            ),
         }
     }
 
     const fn kind(self) -> &'static str {
         match self {
             Self::ExecutableName => "executable name",
+            Self::SignatureHeader => "inbound signature header",
         }
     }
 
     const fn flag(self) -> &'static AtomicBool {
         match self {
             Self::ExecutableName => &EXECUTABLE_NAME_WARNED,
+            Self::SignatureHeader => &SIGNATURE_HEADER_WARNED,
         }
     }
 
@@ -82,7 +91,7 @@ pub fn warn_once(entry: LegacyEntry) -> bool {
 mod tests {
     use super::*;
 
-    const ALL: [LegacyEntry; 1] = [LegacyEntry::ExecutableName];
+    const ALL: [LegacyEntry; 2] = [LegacyEntry::ExecutableName, LegacyEntry::SignatureHeader];
 
     #[test]
     fn every_notice_names_legacy_replacement_and_earliest_removal() {
@@ -102,6 +111,13 @@ mod tests {
         let message = LegacyEntry::ExecutableName.message();
         assert!(message.contains("`openpr-webhook`"), "{message}");
         assert!(message.contains("`sylvode-webhook`"), "{message}");
+    }
+
+    #[test]
+    fn signature_header_notice_names_both_headers() {
+        let message = LegacyEntry::SignatureHeader.message();
+        assert!(message.contains("`x-openpr-signature`"), "{message}");
+        assert!(message.contains("`x-sylvode-signature`"), "{message}");
     }
 
     #[test]
