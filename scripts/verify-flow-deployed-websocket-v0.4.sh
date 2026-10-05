@@ -151,7 +151,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/verify-flow-deployed-websocket-v0.4.sh --chain caddy,nginx,api --json [OPTIONS]
 
-Drives a real wss:// handshake against a real deployed OpenPR chain
+Drives a real wss:// handshake against a real deployed Sylvode chain
 (Caddy -> frontend nginx -> API), proves all three hops from container
 identity and access-log correlation, proves the RFC 6455 accept value,
 proves a same-origin REST request is not an upgrade, proves both proxies'

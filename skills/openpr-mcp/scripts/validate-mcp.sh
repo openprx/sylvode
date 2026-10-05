@@ -1,5 +1,5 @@
 #!/bin/bash
-# Quick smoke test for OpenPR MCP server connectivity
+# Quick smoke test for Sylvode MCP server connectivity
 # Usage: ./validate-mcp.sh [http://localhost:8090] [project-uuid]
 # Calls the server as a workspace bot. The token is read from mcp.bot_token in the TOML
 # configuration file, by default config/openpr.compose.mcp.toml in the repository root; override

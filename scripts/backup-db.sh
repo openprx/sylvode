@@ -11,7 +11,7 @@ BACKUP_FILE="$BACKUP_DIR/openpr_backup_$TIMESTAMP.sql.gz"
 # Create backup directory
 mkdir -p "$BACKUP_DIR"
 
-echo "💾 OpenPR Database Backup"
+echo "💾 Sylvode Database Backup"
 echo "========================"
 echo ""
 echo "Backup file: $BACKUP_FILE"

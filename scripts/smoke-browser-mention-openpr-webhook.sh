@@ -122,7 +122,7 @@ EOF
 
 "$ROOT_DIR/target/debug/api" --config "$APP_CONFIG" >"$API_LOG" 2>&1 &
 api_pid=$!
-wait_http "http://127.0.0.1:$API_PORT/health" "OpenPR API"
+wait_http "http://127.0.0.1:$API_PORT/health" "Sylvode API"
 
 psql_smoke -v ON_ERROR_STOP=1 -q <<SQL
 INSERT INTO users (id, email, name, password_hash, role, is_active, entity_type, agent_type, created_at, updated_at)

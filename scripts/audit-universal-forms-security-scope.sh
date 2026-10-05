@@ -14,7 +14,7 @@ Verifies the universal forms delivery security-audit scope:
   - workspace feature resolution pulls in neither sqlx-mysql nor rsa
   - the workspace enables sqlx-postgres through SeaORM
 
-This script is intentionally explicit because OpenPR's production delivery path
+This script is intentionally explicit because Sylvode's production delivery path
 is PostgreSQL-only. Lockfile-only or transitive metadata for other SQL backends
 must not be treated as an active runtime database backend.
 

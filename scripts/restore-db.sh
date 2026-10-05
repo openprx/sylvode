@@ -6,7 +6,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BACKUP_DIR="$PROJECT_ROOT/backups"
 
-echo "♻️  OpenPR Database Restore"
+echo "♻️  Sylvode Database Restore"
 echo "=========================="
 echo ""
 

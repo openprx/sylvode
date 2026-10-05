@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OpenPR MCP core regression - 3 transports with snapshot-derived registry checks."""
+"""Sylvode MCP core regression - 3 transports with snapshot-derived registry checks."""
 import json, subprocess, requests, time, threading, sys, queue, base64, os, atexit, shutil, tempfile
 
 EXPECTED_TOOL_COUNT = int(subprocess.check_output(
@@ -256,7 +256,7 @@ def get_id(r):
 def ok_or_str(r): return is_ok(r) or (isinstance(r, str) and any(w in r.lower() for w in ["added","removed","deleted","success"]))
 
 print("=" * 60)
-print(f"  OpenPR MCP 核心回归测试 ({EXPECTED_TOOL_COUNT}工具注册面 × 3协议)")
+print(f"  Sylvode MCP 核心回归测试 ({EXPECTED_TOOL_COUNT}工具注册面 × 3协议)")
 print(f"  {time.strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 60)
 

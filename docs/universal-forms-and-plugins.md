@@ -1,6 +1,6 @@
 # Universal Forms, Plugins, and Scenario Templates
 
-OpenPR supports project-defined business applications through universal forms, connector events, MCP tools, and sandboxed WASM plugins.
+Sylvode supports project-defined business applications through universal forms, connector events, MCP tools, and sandboxed WASM plugins.
 
 ## Runtime Model
 

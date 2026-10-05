@@ -1,6 +1,6 @@
 # Scenario Template Catalog
 
-OpenPR scenario templates turn a new project into a ready-to-use business
+Sylvode scenario templates turn a new project into a ready-to-use business
 workspace. A template sets the project type, workflow states, issue fields,
 project resources, universal forms, default grid/detail views, connector
 suggestions, and optional WASM plugins.
@@ -103,13 +103,13 @@ recorded as an invocation.
 
 Use `customer_delivery_default` for professional service or implementation
 teams that need customer milestones, acceptance status, delivery risk, and
-change request tracking. A CRM connector can remain passive at first; OpenPR
+change request tracking. A CRM connector can remain passive at first; Sylvode
 can still manage internal acceptance and risk work with universal forms.
 
 ### Restaurant Ordering
 
 Use `restaurant_ordering_default` as the reference non-code business workflow.
-It proves that OpenPR can run operational data, not just software issues:
+It proves that Sylvode can run operational data, not just software issues:
 
 1. Create menu categories, SKU, and tables.
 2. Create an order and `order_line` children.

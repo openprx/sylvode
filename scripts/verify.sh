@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# OpenPR System Verification Script
+# Sylvode System Verification Script
 # Quickly verify all components are working
 
-echo "🔍 OpenPR System Verification"
+echo "🔍 Sylvode System Verification"
 echo "=============================="
 echo ""
 
@@ -100,7 +100,7 @@ echo "=============================="
 if [ $failed_checks -eq 0 ]; then
   echo "✅ All checks passed! System is healthy."
   echo ""
-  echo "🚀 Your OpenPR installation is ready!"
+  echo "🚀 Your Sylvode installation is ready!"
   echo ""
   echo "📍 Access the application:"
   echo "  - Frontend:   http://localhost:3000"

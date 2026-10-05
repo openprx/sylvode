@@ -1,4 +1,4 @@
-# Reference Caddy config for an OpenPR deployment behind Cloudflare.
+# Reference Caddy config for a Sylvode deployment behind Cloudflare.
 #
 # Replace `openpr.example.com` with the real host. Everything else is meant to
 # be deployed as-is: each block below exists because of a failure that only
@@ -64,7 +64,7 @@ openpr.example.com {
 	# authenticate with their own workspace bot token over an SSH tunnel.
 	reverse_proxy 127.0.0.1:3000
 
-	# `format json` on its own logs `request.uri` verbatim, and two OpenPR URLs
+	# `format json` on its own logs `request.uri` verbatim, and two Sylvode URLs
 	# carry a credential in their query string: the one-time WebSocket ticket on
 	# `GET /api/v1/collab/ws?ticket=...` (`ADR-0007`) and the HMAC on the signed
 	# attachment/upload download URLs (`?expires=...&signature=...`). Both are

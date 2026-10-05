@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-- OpenPR is an open-source project management platform with governance and AI integration.
+- Sylvode (formerly OpenPR) is an open-source project management platform with governance and AI integration.
 - The MCP server exposes 140 tools for managing projects, context, project types/templates/resources, operation records, universal forms, WASM plugins, issues, sprints, labels, comments, proposals, check results, release next actions, files, scenario-specific governed work, and Sylvode Flow (v0.9).
 - Transports: HTTP (`POST /mcp/rpc`), stdio (stdin/stdout), SSE (`GET /sse` + `POST /messages`).
 
@@ -121,7 +121,7 @@ curl -X POST http://localhost:8090/mcp/rpc \
 ## Security & Configuration
 
 - Never commit bot tokens or API keys.
-- The configuration file is the source of all secrets (`mcp.bot_token`, `mcp.workspace_id`); OpenPR reads no environment variables. Never commit the file itself.
+- The configuration file is the source of all secrets (`mcp.bot_token`, `mcp.workspace_id`); Sylvode reads no environment variables. Never commit the file itself.
 - Bot tokens are workspace-scoped; each creates a `bot_mcp` user for audit integrity.
 - `mcp.bot_token` is only required for `stdio` transport and CLI subcommands (no per-request caller to act on). `http`/`sse` transports ignore it: every request supplies its own caller bot token via `Authorization: Bearer opr_...`, forwarded to the API unchanged. There is no server-side fallback identity and no shared inbound secret for these transports, so `mcp.bind_addr` can be bound to any reachable address without extra configuration.
 - `mcp.auth_token` was removed. A configuration file that still sets it fails to start; when asked to fix a broken MCP config, delete the key rather than filling in a value.

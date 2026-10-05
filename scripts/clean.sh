@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "🧹 OpenPR Clean Slate"
+echo "🧹 Sylvode Clean Slate"
 echo "===================="
 echo ""
 echo "⚠️  WARNING: This will remove:"

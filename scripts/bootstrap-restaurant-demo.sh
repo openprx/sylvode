@@ -7,7 +7,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/bootstrap-restaurant-demo.sh
 
-Creates a local restaurant ordering demo through the public OpenPR API:
+Creates a local restaurant ordering demo through the public Sylvode API:
 first user registration/login, workspace creation, restaurant scenario project
 creation, and sample universal-form records for menu, tables, order, order
 line, parent-child link, and business report.
@@ -197,7 +197,7 @@ function formByKey(forms, key) {
 async function authenticate() {
   const health = await rawRequest('GET', '/health');
   if (!health.response.ok) {
-    throw new Error(`OpenPR API is not reachable at ${apiUrl}/health`);
+    throw new Error(`Sylvode API is not reachable at ${apiUrl}/health`);
   }
 
   const register = await rawRequest('POST', '/api/v1/auth/register', {
