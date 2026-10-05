@@ -3,6 +3,16 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.26
+
+### Security
+
+- **A `cli` prompt that starts with `-` is not run.** The prompt is passed as a positional
+  argument and contains payload text, so with `prompt_template = "{title}"` an issue titled
+  `--config=model_provider=evil --oss` became options of `codex exec`. Such a run now reports
+  `failed` with the reason instead of starting the executor, for every executor. The default
+  template begins with fixed text and is not affected.
+
 ## 0.3.25
 
 ### Fixed

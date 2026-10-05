@@ -283,7 +283,9 @@ for either of them therefore matches only those tasks, or none.
 - `cli` runs the whitelisted executor with the rendered prompt in the background and answers at
   once: `codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check <prompt>`,
   `claude -p <prompt> --permission-mode bypassPermissions [--mcp-config <path>]` or
-  `opencode run <prompt>`, in `workdir`, stopped after `timeout_secs` (see below).
+  `opencode run <prompt>`, in `workdir`, stopped after `timeout_secs` (see below). A rendered prompt that
+  starts with `-` would be read as an option of the executor, so such a run is not started and
+  reports `failed`; begin `prompt_template` with fixed text (the default does).
 
 Commands are run directly, never through a shell, so `command` names one program and everything
 else goes in `args`. Their stdin is `/dev/null`; they inherit the service's environment (a `cli`
