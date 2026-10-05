@@ -274,10 +274,10 @@ for either of them therefore matches only those tasks, or none.
   `<signal_api>/api/v1/send/<account>`; without `signal_api` it runs `command` like `openclaw`.
 - `custom` runs `command` with `args`. Every argument containing `{message}` has it replaced by the
   rendered message and stays one argument, whatever the message contains; without `{message}` in
-  any argument the message is appended as the last argument. If the message would make an argument
-  start with `-` (so text from Sylvode could act as an option), the command is not run, unless an
-  earlier argument is `--`. Arguments you write with a leading `-`, such as `--text={message}`, are
-  left alone.
+  any argument the message is appended as the last argument. If text from Sylvode would make an
+  argument start with `-` (so it could act as an option), the command is not run, unless an earlier
+  argument is `--`. A leading `-` you write yourself, in an argument such as `--text={message}` or
+  at the start of `message_template` such as `- {title}`, is left alone.
 - `webhook` posts the delivery JSON unchanged to `url`, signed with `X-Webhook-Signature:
   sha256=<hex>` when `secret` is set.
 - `cli` runs the whitelisted executor with the rendered prompt in the background and answers at
