@@ -251,8 +251,9 @@ the task's value, compared ignoring case and surrounding whitespace; a value mis
 fails a non-empty list. `bot_names` and `bot_ids` together form one constraint that either list can
 satisfy. When nothing matches, the answer is `{"status":"no_agent", ...}` and nothing runs.
 
-`trigger_kinds` is compared with `bot_context.trigger_reason` on a webhook delivery and with
-`trigger_kind` on a worker AI task. These are the values Sylvode sends; any other value refuses
+`trigger_kinds` is compared with `bot_context.trigger_reason` (or `bot_context.trigger_kind`) on a
+webhook delivery and with the top-level `trigger_kind` on a worker AI task, and with nothing else: a
+task without that field fails a non-empty `trigger_kinds`. These are the values Sylvode sends; any other value refuses
 start-up:
 
 | Source | Values |

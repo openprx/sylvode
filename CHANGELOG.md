@@ -3,6 +3,19 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.25
+
+### Fixed
+
+- **`route.trigger_kinds` is matched only against the fields its allowed values describe**:
+  `bot_context.trigger_reason` (or `bot_context.trigger_kind`) of a webhook delivery and the
+  top-level `trigger_kind` of a worker AI task. The matcher also fell back to `task_type`,
+  `payload.trigger` and `payload.trigger_kind`, whose values (`issue_assigned`, `issue.create`, or
+  anything the task's creator wrote) either can never pass start-up validation, or let the
+  free-form task payload satisfy a route. A task without those fields now fails a non-empty
+  `trigger_kinds` instead. Every Sylvode version that has route matching sends `trigger_kind` on
+  worker tasks.
+
 ## 0.3.24
 
 ### Security
