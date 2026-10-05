@@ -4,6 +4,13 @@
 	import { locale, t } from 'svelte-i18n';
 	import { page } from '$app/stores';
 	import { botsApi, type Bot, type CreateBotResponse } from '$lib/api/bots';
+	import {
+		BOT_TRANSPORT_SURFACES,
+		isBotTransportSurface,
+		surfaceDescriptionKey,
+		surfaceLabelKey,
+		type BotTransportSurface
+	} from '$lib/bots/transport-surfaces';
 	import { membersApi, type WorkspaceMember, type WorkspaceMemberRole } from '$lib/api/members';
 	import { toast } from '$lib/stores/toast';
 	import { requireRouteParam } from '$lib/utils/route-params';
@@ -44,6 +51,9 @@
 	let tokenName = $state('');
 	let tokenExpiresAt = $state('');
 	let tokenPermissions = $state<BotPermission[]>(['read']);
+	// Deliberately no default: a token works on exactly one surface, and silently picking one
+	// is how every token created here used to end up usable for the REST API only.
+	let tokenSurface = $state<BotTransportSurface | ''>('');
 	let bots = $state<Bot[]>([]);
 	let createdToken = $state<CreateBotResponse | null>(null);
 
@@ -175,6 +185,7 @@
 		tokenName = '';
 		tokenExpiresAt = '';
 		tokenPermissions = ['read'];
+		tokenSurface = '';
 		showCreateTokenModal = true;
 	}
 
@@ -199,12 +210,17 @@
 			toast.error(get(t)('members.tokenNameRequired'));
 			return;
 		}
+		if (tokenSurface === '') {
+			toast.error(get(t)('members.transportSurfaceRequired'));
+			return;
+		}
 
 		creatingToken = true;
 		const expiresAt = buildExpiresAt(tokenExpiresAt);
 		const response = await botsApi.create(workspaceId, {
 			name: tokenName.trim(),
 			permissions: tokenPermissions,
+			transport_surface: tokenSurface,
 			expires_at: expiresAt
 		});
 
@@ -272,6 +288,15 @@
 			return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300';
 		}
 		return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
+	}
+
+	/** A surface the server reports but this client does not know is shown verbatim. */
+	function getSurfaceLabel(surface: string): string {
+		return isBotTransportSurface(surface) ? get(t)(surfaceLabelKey(surface)) : surface;
+	}
+
+	function getSurfaceDescription(surface: string): string {
+		return isBotTransportSurface(surface) ? get(t)(surfaceDescriptionKey(surface)) : '';
 	}
 
 	function getPermissionLabel(permission: string): string {
@@ -386,6 +411,7 @@
 						<tr>
 							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.tokenName')}</th>
 							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.tokenPrefix')}</th>
+							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.transportSurfaceColumn')}</th>
 							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.permissions')}</th>
 							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.status')}</th>
 							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.lastUsedAt')}</th>
@@ -398,6 +424,16 @@
 							<tr>
 								<td class="px-4 py-3 text-sm font-medium text-slate-900 dark:text-slate-100">{bot.name}</td>
 								<td class="px-4 py-3 text-sm font-mono text-slate-600 dark:text-slate-300">{bot.token_prefix}</td>
+								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+									<span
+										class="inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
+										title={getSurfaceDescription(bot.transport_surface)}
+										data-testid="bot-transport-surface"
+										data-surface={bot.transport_surface}
+									>
+										{getSurfaceLabel(bot.transport_surface)}
+									</span>
+								</td>
 								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
 									<div class="flex flex-wrap gap-1.5">
 										{#if bot.permissions.length === 0}
@@ -520,6 +556,36 @@
 			required
 		/>
 
+		<fieldset aria-describedby="tokenSurfaceHint">
+			<legend class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+				{$t('members.transportSurface')} <span class="text-red-600 dark:text-red-400" aria-hidden="true">*</span>
+			</legend>
+			<p id="tokenSurfaceHint" class="mb-2 text-xs text-slate-500 dark:text-slate-400">{$t('members.transportSurfaceHint')}</p>
+			<div class="space-y-2">
+				{#each BOT_TRANSPORT_SURFACES as surface (surface)}
+					<label
+						class="flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-blue-500 dark:focus-within:ring-blue-400 {tokenSurface === surface
+							? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20'
+							: 'border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800'}"
+					>
+						<input
+							type="radio"
+							name="tokenSurface"
+							value={surface}
+							bind:group={tokenSurface}
+							required
+							aria-describedby={`tokenSurface-${surface}-description`}
+							class="mt-0.5 h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800"
+						/>
+						<span>
+							<span class="block font-medium text-slate-900 dark:text-slate-100">{$t(surfaceLabelKey(surface))}</span>
+							<span id={`tokenSurface-${surface}-description`} class="block text-xs text-slate-500 dark:text-slate-400">{$t(surfaceDescriptionKey(surface))}</span>
+						</span>
+					</label>
+				{/each}
+			</div>
+		</fieldset>
+
 		<div>
 			<p class="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('members.permissions')}</p>
 			<div class="flex flex-wrap gap-2">
@@ -565,6 +631,17 @@
 		<div class="space-y-4">
 			<div class="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
 				{$t('members.tokenCreatedHint')}
+			</div>
+
+			<div
+				class="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-200"
+				data-testid="created-token-surface"
+			>
+				<p class="font-medium">
+					{$t('members.tokenWorksOn', { values: { surface: getSurfaceLabel(createdToken.transport_surface) } })}
+				</p>
+				<p class="mt-1 text-xs">{getSurfaceDescription(createdToken.transport_surface)}</p>
+				<p class="mt-1 text-xs">{$t('members.tokenWorksOnlyThere')}</p>
 			</div>
 
 			<div>
