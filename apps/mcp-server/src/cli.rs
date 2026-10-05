@@ -229,6 +229,9 @@ pub enum ProjectsAction {
     },
     /// Create a new project
     Create {
+        /// Project key: uppercase letters and digits only, e.g. PROJ or API2
+        #[arg(long)]
+        key: String,
         #[arg(long)]
         name: String,
         #[arg(long)]
@@ -737,12 +740,22 @@ async fn run_cli_command(
         return Ok(());
     }
 
-    let (tool_name, args): (&str, Value) = match command {
+    let (tool_name, args) = tool_invocation(command)?;
+    let result = server.call_tool(tool_name, args).await;
+    print_result(format, &result);
+    Ok(())
+}
+
+/// The MCP tool a workspace command calls and the arguments it passes, built from the parsed
+/// command line alone. `files upload` reads the file first and is built by
+/// [`run_file_upload`] instead.
+fn tool_invocation(command: &BusinessCommands) -> anyhow::Result<(&str, Value)> {
+    let invocation = match command {
         BusinessCommands::Projects(cmd) => match &cmd.action {
             ProjectsAction::List => ("projects.list", json!({})),
             ProjectsAction::Get { id } => ("projects.get", json!({ "project_id": id })),
-            ProjectsAction::Create { name, description } => {
-                let mut body = json!({ "name": name });
+            ProjectsAction::Create { key, name, description } => {
+                let mut body = json!({ "key": key, "name": name });
                 if let Some(desc) = description {
                     body["description"] = json!(desc);
                 }
@@ -858,10 +871,7 @@ async fn run_cli_command(
             ToolsAction::Call { name, args_json } => (name.as_str(), parse_tool_args_json(args_json)?),
         },
     };
-
-    let result = server.call_tool(tool_name, args).await;
-    print_result(format, &result);
-    Ok(())
+    Ok(invocation)
 }
 
 fn parse_tool_args_json(args_json: &str) -> anyhow::Result<Value> {
@@ -905,7 +915,7 @@ mod tests {
     use super::{
         BUSINESS_GROUPS, BusinessCli, BusinessCommands, Cli, Commands, McpTransport, OperationLogsAction, ToolsAction,
         Transport, business_cli_command, checked_api_url, checked_bind_addr, checked_bot_token, checked_workspace_id,
-        parse_tool_args_json,
+        parse_tool_args_json, tool_invocation,
     };
     use clap::{CommandFactory, Parser};
     use platform::config::DEFAULT_MCP_API_URL;
@@ -967,6 +977,97 @@ mod tests {
                 }
             },
             _ => panic!("expected operation-logs command"),
+        }
+    }
+
+    /// The leaf subcommand paths under `command`, as typed: `projects create`, `search`.
+    fn leaf_paths(command: &clap::Command, prefix: &str, out: &mut Vec<String>) {
+        let mut children = command
+            .get_subcommands()
+            .filter(|child| child.get_name() != "help")
+            .peekable();
+        if children.peek().is_none() {
+            out.push(prefix.to_string());
+            return;
+        }
+        for child in children {
+            let path = if prefix.is_empty() {
+                child.get_name().to_string()
+            } else {
+                format!("{prefix} {}", child.get_name())
+            };
+            leaf_paths(child, &path, out);
+        }
+    }
+
+    /// Every workspace subcommand, given only the arguments its parser requires, passes every
+    /// field its MCP tool's input schema requires. `projects create` once offered no `--key`
+    /// while `projects.create` requires it, so the command could never succeed.
+    ///
+    /// `files upload` builds its arguments from the file it reads (`run_file_upload`), and
+    /// `tools call` passes a caller-supplied payload to a caller-chosen tool; both are listed
+    /// so that a new subcommand cannot slip past this test unlisted.
+    #[test]
+    fn every_workspace_subcommand_passes_its_tools_required_fields() {
+        const PROJECT: &str = "22222222-2222-4222-8222-222222222222";
+        const WORK_ITEM: &str = "33333333-3333-4333-8333-333333333333";
+        let minimal: Vec<(&str, Vec<&str>)> = vec![
+            ("projects list", vec![]),
+            ("projects get", vec![PROJECT]),
+            ("projects create", vec!["--key", "DEMO", "--name", "Demo"]),
+            ("work-items list", vec!["--project", PROJECT]),
+            ("work-items get", vec![WORK_ITEM]),
+            ("work-items create", vec!["--project", PROJECT, "--title", "T"]),
+            ("work-items search", vec!["--query", "q"]),
+            ("work-items update", vec![WORK_ITEM]),
+            ("comments list", vec!["--work-item", WORK_ITEM]),
+            ("comments create", vec!["--work-item", WORK_ITEM, "--content", "c"]),
+            ("labels list", vec![]),
+            ("sprints list", vec!["--project", PROJECT]),
+            ("search", vec!["q"]),
+            ("operation-logs list", vec![]),
+        ];
+        let built_elsewhere = ["files upload", "tools call"];
+
+        let mut leaves = Vec::new();
+        leaf_paths(&BusinessCli::command(), "", &mut leaves);
+        let mut listed: Vec<String> = minimal
+            .iter()
+            .map(|(path, _)| (*path).to_string())
+            .chain(built_elsewhere.iter().map(ToString::to_string))
+            .collect();
+        leaves.sort();
+        listed.sort();
+        assert_eq!(leaves, listed, "every workspace subcommand must be listed here");
+
+        let definitions = crate::get_all_tool_definitions();
+        let mut extra = vec![
+            ("labels list", vec!["--project", PROJECT]),
+            ("work-items get", vec!["PRX-1"]),
+        ];
+        let mut cases = minimal;
+        cases.append(&mut extra);
+        for (path, args) in cases {
+            let mut line = vec!["sylvode"];
+            line.extend(path.split(' '));
+            line.extend(args.iter().copied());
+            let cli = BusinessCli::try_parse_from(&line).unwrap_or_else(|error| panic!("{line:?}: {error}"));
+            let (tool, arguments) = tool_invocation(&cli.command).unwrap_or_else(|error| panic!("{line:?}: {error}"));
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.name == tool)
+                .unwrap_or_else(|| panic!("{line:?} calls {tool}, which is not registered"));
+            let required = definition.input_schema["required"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            for field in required {
+                let field = field.as_str().unwrap_or_default();
+                assert!(
+                    arguments.get(field).is_some(),
+                    "{line:?} calls {tool} without its required field `{field}`: {arguments}"
+                );
+            }
         }
     }
 

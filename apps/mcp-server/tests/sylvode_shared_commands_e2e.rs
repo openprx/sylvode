@@ -305,12 +305,50 @@ async fn projects_are_the_same_command_under_both_names() -> TestResult {
         Expect::Success,
     )
     .await?;
-    // `projects create` offers no `--key`, which the tool requires, so the write is refused
-    // before any request under both names; the refusal itself must be identical.
     assert_same(
         &fixture,
-        &["projects", "create", "--name", "Demo", "--description", "Desc"],
-        Expect::LocalFailure,
+        &[
+            "projects",
+            "create",
+            "--key",
+            "WPKEY",
+            "--name",
+            "Demo",
+            "--description",
+            "Desc",
+        ],
+        Expect::Success,
+    )
+    .await?;
+    let created = run(
+        SYLVODE,
+        fixture.dir()?,
+        &[
+            "projects".to_string(),
+            "create".to_string(),
+            "--key".to_string(),
+            "WPKEY".to_string(),
+            "--name".to_string(),
+            "Demo".to_string(),
+            "--config".to_string(),
+            fixture.config.path().display().to_string(),
+        ],
+    )
+    .await?;
+    assert_eq!(created.status.code(), Some(0));
+    let requests = std::mem::take(&mut *fixture.seen.lock().await);
+    let (method, _, body) = requests
+        .iter()
+        .find(|(method, _, _)| method == "POST")
+        .ok_or("projects create sent no POST")?;
+    let body: Value = serde_json::from_str(body)?;
+    assert_eq!(method, "POST");
+    assert_eq!(body.get("key"), Some(&json!("WPKEY")), "{body}");
+    assert_eq!(body.get("name"), Some(&json!("Demo")), "{body}");
+    assert_same(
+        &fixture,
+        &["projects", "create", "--key", "WPKEY", "--name", MISSING],
+        Expect::ApiError,
     )
     .await?;
     assert_same(&fixture, &["projects", "get", MISSING], Expect::ApiError).await?;
