@@ -328,7 +328,7 @@ mod tests {
         SearchScope,
     };
     use crate::error::ApiError;
-    use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
     use uuid::Uuid;
 
     #[test]
@@ -427,6 +427,7 @@ mod tests {
     // is dropped from the handler and not only from the SQL fragment.
 
     use super::{SearchQuery, search};
+    use crate::{routes::context::tenant_fixture::Scratch, scratch_or_skip};
     use axum::{
         Extension,
         extract::{Query, State},
@@ -440,6 +441,7 @@ mod tests {
     use serde_json::Value as JsonValue;
 
     struct Fixture {
+        scratch: Scratch,
         state: AppState,
         token: String,
         alice_id: Uuid,
@@ -460,27 +462,23 @@ mod tests {
         Bot(Uuid, Uuid),
     }
 
-    async fn state_from_env() -> Option<AppState> {
-        let url = std::env::var("OPENPR_TEST_DATABASE_URL").ok()?;
-        let db = Database::connect(&url)
-            .await
-            .unwrap_or_else(|err| panic!("cannot connect to OPENPR_TEST_DATABASE_URL: {err}"));
-        let cfg = AppConfig {
-            app_name: "api-test".to_string(),
-            bind_addr: "127.0.0.1:0".to_string(),
-            database_url: Secret::new(url),
-            jwt_secret: Secret::new("test-secret"),
-            jwt_access_ttl_seconds: 60,
-            jwt_refresh_ttl_seconds: 60,
-            default_author_id: None,
-            allow_insecure_cookies: false,
-            collab_allowed_origins: Vec::new(),
-        };
-        Some(AppState {
-            cfg,
-            db,
+    /// Handler state over a scratch database that has every migration applied.
+    fn state_for(scratch: &Scratch) -> AppState {
+        AppState {
+            cfg: AppConfig {
+                app_name: "api-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new("test-secret"),
+                jwt_access_ttl_seconds: 60,
+                jwt_refresh_ttl_seconds: 60,
+                default_author_id: None,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db: scratch.db.clone(),
             flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
-        })
+        }
     }
 
     async fn exec(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
@@ -560,7 +558,8 @@ mod tests {
     /// Two tenants: workspace A (alice, two projects) and workspace B (bob, one
     /// project). Every seeded row carries the same unique search token, so any
     /// leak across a tenant or project boundary shows up as an extra hit.
-    async fn seed(state: AppState) -> Fixture {
+    async fn seed(scratch: Scratch) -> Fixture {
+        let state = state_for(&scratch);
         let token = format!("sq{}", Uuid::new_v4().simple());
         let alice_id = Uuid::new_v4();
         let bob_id = Uuid::new_v4();
@@ -586,6 +585,7 @@ mod tests {
         insert_issue_with_comment(&db, project_b1, bob_id, &token).await;
 
         Fixture {
+            scratch,
             state,
             token,
             alice_id,
@@ -596,20 +596,6 @@ mod tests {
             project_a2,
             project_b1,
             bot_id,
-        }
-    }
-
-    async fn cleanup(fx: &Fixture) {
-        for workspace_id in [fx.workspace_a, fx.workspace_b] {
-            exec(
-                &fx.state.db,
-                "DELETE FROM workspaces WHERE id = $1",
-                vec![workspace_id.into()],
-            )
-            .await;
-        }
-        for user_id in [fx.alice_id, fx.bob_id] {
-            exec(&fx.state.db, "DELETE FROM users WHERE id = $1", vec![user_id.into()]).await;
         }
     }
 
@@ -710,10 +696,7 @@ mod tests {
 
     #[tokio::test]
     async fn db_search_is_scoped_to_workspace_and_project() {
-        let Some(state) = state_from_env().await else {
-            return;
-        };
-        let fx = seed(state).await;
+        let fx = seed(scratch_or_skip!("search_scope")).await;
         let alice = Caller::User(fx.alice_id);
 
         // 1. Unfiltered: alice sees both of her projects and nothing from workspace B.
@@ -768,15 +751,12 @@ mod tests {
         assert_eq!(ids_of(&body, "issue", "project_id"), vec![fx.project_b1]);
         assert_eq!(ids_of(&body, "project", "id"), vec![fx.project_b1]);
 
-        cleanup(&fx).await;
+        fx.scratch.drop_self().await;
     }
 
     #[tokio::test]
     async fn db_bot_search_is_scoped_by_token_workspace() {
-        let Some(state) = state_from_env().await else {
-            return;
-        };
-        let fx = seed(state).await;
+        let fx = seed(scratch_or_skip!("search_bot_scope")).await;
 
         // The bot id has no workspace_members row at all: its reach comes purely
         // from the workspace its token was issued for.
@@ -826,6 +806,6 @@ mod tests {
         assert_legacy_result_contract(&body, 3);
         assert_eq!(ids_of(&body, "issue", "project_id"), vec![fx.project_b1]);
 
-        cleanup(&fx).await;
+        fx.scratch.drop_self().await;
     }
 }
