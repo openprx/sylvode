@@ -3,6 +3,17 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.23
+
+### Security
+
+- **Replayed signed deliveries are refused.** A signed `/webhook` request whose body `timestamp`
+  is more than `security.max_delivery_age_secs` (new, default 300; `0` turns it off) away from now
+  is answered `401`, and one whose body `id` was already received (for a worker AI task: the same
+  `task_id` and `attempts`) is answered `409`. Before, a captured signed delivery could be sent
+  again any number of times and dispatched the agent each time. Bodies without these fields are not
+  checked, and nothing is checked with `allow_unsigned = true`.
+
 ## 0.3.22
 
 ### Changed

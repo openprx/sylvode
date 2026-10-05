@@ -63,6 +63,10 @@ pub struct SecurityConfig {
     /// anyone who can reach the port can trigger agents. Without it that combination is refused.
     #[serde(default)]
     pub allow_unsigned_non_loopback: bool,
+    /// How far a signed delivery's `timestamp` may be from now, in seconds, before it is refused
+    /// as a replay. `0` turns the check off.
+    #[serde(default = "default_max_delivery_age_secs")]
+    pub max_delivery_age_secs: u64,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -185,6 +189,10 @@ pub struct TunnelConfig {
     pub hmac_secret: Option<String>,
     #[serde(default)]
     pub require_inbound_sig: bool,
+}
+
+const fn default_max_delivery_age_secs() -> u64 {
+    300
 }
 
 const fn default_timeout_secs() -> u64 {
