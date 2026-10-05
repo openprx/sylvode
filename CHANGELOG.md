@@ -3,6 +3,19 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.18
+
+### Security
+
+- **A blank inbound secret refuses start-up.** An empty or whitespace-only entry in
+  `security.webhook_secrets`, or a present but blank `tunnel.hmac_secret`, is refused with an error
+  naming the setting (and the list position). Before, an empty entry was used as an HMAC key that
+  anyone can compute, so with `webhook_secrets = [""]` any request signed with the empty key was
+  accepted. A blank `hmac_secret` is refused whether or not the tunnel is enabled and whatever
+  `require_inbound_sig` says.
+- Signature verification never accepts a signature under an empty or blank key, even if
+  configuration validation were bypassed.
+
 ## 0.3.17
 
 ### Fixed
