@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 EVIDENCE="$ROOT/.flow-gate/evidence/v1.0"
@@ -22,7 +24,7 @@ env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 "$ROOT/scripts/verify-flow-forms-reg
 BASE_EXIT=$?
 set -e
 
-RUN=$(mktemp -d /opt/worker/.cache/v10-signoff-domains.XXXXXX)
+RUN=$(mktemp -d "${SYLVODE_SCRATCH}/v10-signoff-domains.XXXXXX")
 trap 'rm -rf -- "$RUN"' EXIT
 FLOW_RECORDER="$ROOT/scripts/record-flow-v1.0-manual-signoff.sh"
 FORMS_RECORDER="$ROOT/scripts/record-universal-forms-manual-signoff.sh"
@@ -39,8 +41,12 @@ python3 "$DOMAIN_CHECKER" --flow-recorder "$FLOW_RECORDER" --forms-recorder "$RU
 ALIAS_EXIT=$?
 set -e
 
-cp /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md "$RUN/forms-runbook.md"
-cp /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md "$RUN/forms-evidence.md"
+FORMS_REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$ROOT/.flow-gate/universal-forms}/docs"
+for forms_input in openpr-universal-form-user-acceptance-runbook-2026-05-31.md openpr-universal-form-acceptance-evidence-2026-05-31.md; do
+  [[ -f $FORMS_REPORT_DIR/$forms_input ]] || { echo "FAIL: missing Universal Forms report $FORMS_REPORT_DIR/$forms_input; set SYLVODE_UF_REPORT_ROOT to the report area" >&2; exit 2; }
+done
+cp "$FORMS_REPORT_DIR/openpr-universal-form-user-acceptance-runbook-2026-05-31.md" "$RUN/forms-runbook.md"
+cp "$FORMS_REPORT_DIR/openpr-universal-form-acceptance-evidence-2026-05-31.md" "$RUN/forms-evidence.md"
 python3 - "$RUN/flow-gate-result.json" <<'PY'
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])

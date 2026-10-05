@@ -8,7 +8,8 @@ Set `OPENPR_BACKUP_SOURCE_DATABASE_URL` to the database being backed up and
 `OPENPR_BACKUP_RESTORE_ADMIN_URL` to that cluster's `postgres` database. Credentials belong in the
 environment or a PostgreSQL password file, never in the repository. The verifier only permits a
 disposable restore database whose name starts with `v08_restore_`, drops it on exit, and keeps its
-dump and comparison material under `/opt/worker/.cache`.
+dump and comparison material under `.flow-gate/cache` in the checkout (override with
+`SYLVODE_SCRATCH_ROOT`).
 
 ```bash
 export OPENPR_BACKUP_SOURCE_DATABASE_URL='postgresql://.../openpr'

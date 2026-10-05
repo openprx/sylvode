@@ -16,8 +16,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
 
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.5"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.5"
 ADR_PATH=""
 SINCE_RELEASE=""
 JSON_MODE=0
@@ -38,8 +38,8 @@ Options:
                                 resolved against the current directory first,
                                 then against --contracts-root.
   --since-release RELEASE       Required; v0.5 accepts exactly 0.4.
-  --contracts-root DIR          Default: /opt/working/sylvode-flow
-  --evidence-root DIR           Default: /opt/working/sylvode-flow/evidence/v0.5
+  --contracts-root DIR          Default: $SYLVODE_CONTRACTS_ROOT
+  --evidence-root DIR           Default: .flow-gate/evidence/v0.5
   --repo-root DIR               Default: this checkout.
   --json                        Required by the gate command.
   --test-drop-declaration NAME  Test-only fault injection. NAME must be one of
@@ -79,6 +79,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$ADR_PATH" ]]; then
   echo "FAIL: --adr is required" >&2

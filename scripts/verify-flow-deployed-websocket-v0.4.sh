@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 deployed-chain WebSocket verifier.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md, the v0.4 section's
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md, the v0.4 section's
 # `deployed_chain_websocket_upgrade` paragraph:
 #
 #   "必须向真实发布 hostname 的 wss://.../api/v1/collab/ws 发起带有效 ticket/origin 的握手,

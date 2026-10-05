@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 : "${OPENPR_TEST_DATABASE_URL:?OPENPR_TEST_DATABASE_URL is required}"
 
-CACHE_ROOT=/opt/worker/.cache/openpr-v08-object-retention-mutations
+CACHE_ROOT="${SYLVODE_SCRATCH}/flow-v08-object-retention-mutations"
 WORKTREE="$CACHE_ROOT/worktree"
-TARGET_DIR=/opt/worker/.cache/openpr-v08-shared-target
+TARGET_DIR="${SYLVODE_SCRATCH}/flow-v08-shared-target"
 LOG_DIR="$CACHE_ROOT/logs"
 TIER_TEST=flow::command::database_tests::flow_collection_container_archive_tier_enforces_collection_and_page_contrast
 WORKER_TEST=flow::retention::tests::worker_deletes_only_expired_full_access_archives_not_edit_tier_soft_archives

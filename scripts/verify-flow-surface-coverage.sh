@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow REST/MCP/CLI/UI surface-coverage verifier (v0.4-v1.0 shared).
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md, "Surface
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md, "Surface
 # coverage verifier (v0.4-v1.0 共用)" section.
 #
 # Parses the five frozen contract files and recomputes every cross-reference
@@ -23,7 +23,7 @@ set -euo pipefail
 # 1 = one or more violations found, 2 = usage/tool/evidence malformed.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 REPO_ROOT="$ROOT_DIR"
 RELEASE=""
@@ -48,9 +48,9 @@ Options:
                           filters declarations by release. Later entries are
                           recorded as not_yet_in_release and do not fail.
   --contracts-root DIR     Root containing contracts/. Default:
-                          /opt/working/sylvode-flow
+                          $SYLVODE_CONTRACTS_ROOT
   --evidence-root DIR     Where surface-coverage-result.json is written.
-                          Default: <contracts-root>/evidence/vX.Y
+                          Default: .flow-gate/evidence/vX.Y
   --repo-root DIR         Repository whose HEAD becomes source_head.
                           Default: this checkout.
   --json                  Required for CLI-contract compatibility (the
@@ -73,6 +73,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$RELEASE" ]]; then
   echo "FAIL: --release is required (e.g. --release 0.4)" >&2
@@ -89,7 +90,7 @@ if [[ $JSON_MODE -ne 1 ]]; then
   exit 2
 fi
 if [[ -z "$EVIDENCE_ROOT" ]]; then
-  EVIDENCE_ROOT="$CONTRACTS_ROOT/evidence/v$RELEASE"
+  EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v$RELEASE"
 fi
 
 for tool in jq sha256sum git python3 cargo; do

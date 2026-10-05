@@ -127,6 +127,27 @@ proves little about anything that touches the database. CI always sets it.
 audits of the source tree followed by the forms regression tests. It requires
 `OPENPR_TEST_DATABASE_URL`.
 
+### Where scripts read and write
+
+Nothing under `scripts/` assumes a particular machine. Generated output defaults to the ignored
+`.flow-gate/` directory of the checkout, and inputs that live outside the repository must be
+named explicitly; a script that needs one and does not get it stops with an error instead of
+treating the missing input as a pass.
+
+| Variable | Used for | Default |
+|---|---|---|
+| `SYLVODE_CONTRACTS_ROOT` | The Sylvode Flow contracts checkout (`gates/`, `contracts/`) read by the Flow gate scripts; `--contracts-root` overrides it | none, required |
+| `SYLVODE_SCRATCH_ROOT` | Scratch trees, mutation copies and separate cargo target directories | `.flow-gate/cache` |
+| `SYLVODE_UF_REPORT_ROOT` | Universal Forms acceptance reports (`docs/`) and screenshots (`artifacts/`) | `.flow-gate/universal-forms` |
+| `SYLVODE_FLOW_PRIOR_EVIDENCE_ROOT` | Earlier release receipts read by `verify-flow-prior-receipts-v1.0.sh` | `.flow-gate/evidence` |
+| `SYLVODE_WEBHOOK_DIR` | The Sylvode Webhook checkout used by the webhook smokes | none, required |
+| `SYLVODE_FLOW_V05_CONTRACT_GAPS` | The v0.5 contract-gap register read by `verify-flow-authz-v0.5.sh`, or `none` | none, required |
+
+Flow gate scripts write their evidence to `.flow-gate/evidence/<release>` unless `--evidence-root`
+names another directory. The screenshot collectors and render smokes refuse to write into a
+non-empty directory unless `--overwrite` is given. `bash scripts/test-no-machine-paths.sh` runs in
+CI and fails when a tracked file under `scripts/` names a machine-specific absolute path.
+
 ## Code rules
 
 The workspace lints in `Cargo.toml` and the settings in `clippy.toml` enforce these rules;

@@ -3,10 +3,10 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 cross-workspace / policy-bypass negative verifier.
 #
-# Contract: /opt/working/sylvode-flow/security/threat-model.md rows
+# Contract: $SYLVODE_CONTRACTS_ROOT/security/threat-model.md rows
 # "跨 workspace object/relation 访问" (first gate: v0.4) and "伪造 actor/origin",
 # its "必须失败关闭" list (workspace / 授权 / feature flag 不一致), and
-# /opt/working/sylvode-flow/gates/v0.4-gate.yaml's hard gate
+# $SYLVODE_CONTRACTS_ROOT/gates/v0.4-gate.yaml's hard gate
 # `cross_workspace_and_policy_bypass_negative`.
 #
 # Backs exactly one hard gate: cross_workspace_and_policy_bypass_negative.
@@ -31,7 +31,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 THREAT_MODEL=""
 DATABASE_URL="${OPENPR_TEST_DATABASE_URL:-}"
 JSON_MODE=0
@@ -51,7 +51,7 @@ Options:
   --database-url URL    Postgres DSN. Default: $OPENPR_TEST_DATABASE_URL
   --repo-root DIR       Repository containing apps/api. Default: this checkout.
   --evidence-root DIR   Where cross-workspace-negative-result.json is written.
-                        Default: /opt/working/sylvode-flow/evidence/v0.4
+                        Default: .flow-gate/evidence/v0.4
   --json                Required for CLI-contract compatibility.
   -h, --help            Show this help and exit 0.
 

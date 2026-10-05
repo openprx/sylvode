@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 : "${OPENPR_TEST_DATABASE_URL:?OPENPR_TEST_DATABASE_URL is required}"
 : "${OPENPR_BACKUP_SOURCE_DATABASE_URL:?OPENPR_BACKUP_SOURCE_DATABASE_URL is required}"
 : "${OPENPR_BACKUP_RESTORE_ADMIN_URL:?OPENPR_BACKUP_RESTORE_ADMIN_URL is required}"
 
-CACHE_ROOT=/opt/worker/.cache/openpr-v08-backup-restore-mutations
+CACHE_ROOT="${SYLVODE_SCRATCH}/flow-v08-backup-restore-mutations"
 WORKTREE="$CACHE_ROOT/worktree"
 LOG_DIR="$CACHE_ROOT/logs"
-TARGET_DIR=/opt/worker/.cache/openpr-v08-shared-target
+TARGET_DIR="${SYLVODE_SCRATCH}/flow-v08-shared-target"
 CHECKSUM_TEST=flow::collab::snapshot::database_tests::bootstrap_rejects_snapshot_bytes_that_no_longer_match_the_persisted_checksum
 
 cleanup() {

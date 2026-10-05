@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CONTRACTS=/opt/working/sylvode-flow
+CONTRACTS="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE="$ROOT/.flow-gate/evidence/v1.0"
 ADR=
 FULL_SCAN=0
@@ -18,10 +20,11 @@ while (($#)); do
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS && -d $CONTRACTS ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 [[ $FULL_SCAN -eq 1 && $JSON_MODE -eq 1 ]] || { echo 'FAIL: require --full-scan --json' >&2; exit 2; }
 [[ -n $ADR ]] || ADR="$CONTRACTS/decisions/ADR-0013-multi-document-atomicity.md"
 [[ -f $ADR ]] || { echo "FAIL: ADR missing: $ADR" >&2; exit 2; }
-mkdir -p "$EVIDENCE/logs" /opt/worker/.cache
+mkdir -p "$EVIDENCE/logs" "${SYLVODE_SCRATCH}"
 GREEN="$EVIDENCE/logs/cardinality-v10-green.log"
 MISSING="$EVIDENCE/logs/cardinality-v10-missing-red.log"
 LOCK="$EVIDENCE/logs/cardinality-v10-lock-order-red.log"
@@ -35,7 +38,7 @@ run_test() {
 }
 
 run_test "$ROOT" "$GREEN"
-MUTATION=$(mktemp -d /opt/worker/.cache/v10-cardinality.XXXXXX)
+MUTATION=$(mktemp -d "${SYLVODE_SCRATCH}/v10-cardinality.XXXXXX")
 cleanup() { git -C "$ROOT" worktree remove --force "$MUTATION" >/dev/null 2>&1 || true; rm -rf -- "$MUTATION"; }
 trap cleanup EXIT
 rm -rf -- "$MUTATION"

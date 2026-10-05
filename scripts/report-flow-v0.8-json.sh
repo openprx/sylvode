@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CONTRACTS_ROOT=/opt/working/sylvode-flow
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=
 GATE_YAML=
 PREDECESSOR=
@@ -19,13 +19,13 @@ while (($#)); do
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 for name in OPENPR_TEST_DATABASE_URL OPENPR_BACKUP_SOURCE_DATABASE_URL OPENPR_BACKUP_RESTORE_ADMIN_URL; do
   [[ -n ${!name:-} ]] || { echo "FAIL: $name is required" >&2; exit 2; }
 done
 [[ -n $EVIDENCE_ROOT ]] || EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v0.8"
 [[ -n $GATE_YAML ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.8-gate.yaml"
-WORKSPACE_ROOT=$(cd "$REPO_ROOT/../.." && pwd)
-[[ -n $PREDECESSOR ]] || PREDECESSOR="$WORKSPACE_ROOT/evidence/v0.7/gate-result.json"
+[[ -n $PREDECESSOR ]] || PREDECESSOR="$(dirname "$EVIDENCE_ROOT")/v0.7/gate-result.json"
 [[ -n $MANUAL_FROM ]] || MANUAL_FROM="$EVIDENCE_ROOT/gate-result.json"
 mkdir -p "$EVIDENCE_ROOT/logs"
 ROWS=$(mktemp "$EVIDENCE_ROOT/.report-rows.XXXXXX")
@@ -77,9 +77,9 @@ run operations cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p api flow_op
 run package_import cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p api flow_package_import_ -- --nocapture
 run mcp_operations cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p mcp-server --test flow_admin_operations_e2e
 run mcp_package cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p mcp-server --test flow_package_roundtrip_e2e
-run frontend_package env PATH="/home/ck/.bun/bin:$PATH" bun run --cwd "$REPO_ROOT/frontend" test:flow-package-import
-run frontend_check env PATH="/home/ck/.bun/bin:$PATH" bun run --cwd "$REPO_ROOT/frontend" check
-run frontend_build env PATH="/home/ck/.bun/bin:$PATH" bun run --cwd "$REPO_ROOT/frontend" build
+run frontend_package env PATH="$HOME/.bun/bin:$PATH" bun run --cwd "$REPO_ROOT/frontend" test:flow-package-import
+run frontend_check env PATH="$HOME/.bun/bin:$PATH" bun run --cwd "$REPO_ROOT/frontend" check
+run frontend_build env PATH="$HOME/.bun/bin:$PATH" bun run --cwd "$REPO_ROOT/frontend" build
 run clippy_full cargo clippy --manifest-path "$REPO_ROOT/Cargo.toml" --workspace --all-targets -- -D warnings
 run workspace_full cargo test --manifest-path "$REPO_ROOT/Cargo.toml" --workspace --no-fail-fast
 

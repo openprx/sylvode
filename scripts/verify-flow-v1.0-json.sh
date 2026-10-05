@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd); EVIDENCE="$ROOT/.flow-gate/evidence/v1.0"; CONTRACTS=/opt/working/sylvode-flow; RESULT=
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd); EVIDENCE="$ROOT/.flow-gate/evidence/v1.0"; CONTRACTS="${SYLVODE_CONTRACTS_ROOT:-}"; RESULT=
 [[ $# -eq 0 || $1 == --* ]] || { RESULT=$1; shift; }
 while (($#)); do case "$1" in
  --repo-root) ROOT=${2:?};shift 2;; --evidence-root) EVIDENCE=${2:?};shift 2;; --contracts-root) CONTRACTS=${2:?};shift 2;; --json) shift;;
  --predecessor-gate-result|--predecessor-evidence) shift 2;; *) echo "FAIL: unsupported argument: $1" >&2;exit 2;; esac; done
+[[ -n $CONTRACTS && -d $CONTRACTS ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 [[ -n $RESULT ]] || RESULT="$EVIDENCE/gate-result.json"
 python3 - "$RESULT" "$EVIDENCE" "$ROOT" "$CONTRACTS/gates/v1.0-gate.yaml" <<'PY'
 import hashlib,json,pathlib,re,subprocess,sys,yaml

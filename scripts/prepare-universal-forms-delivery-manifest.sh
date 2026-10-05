@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORT_DIR="/opt/worker/report/openpr/docs"
-ARTIFACT_DIR="/opt/worker/report/openpr/artifacts/universal-forms-ui-2026-05-31"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
+ARTIFACT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/artifacts/universal-forms-ui-2026-05-31"
 OUTPUT_PATH="${OPENPR_DELIVERY_MANIFEST:-$REPORT_DIR/openpr-universal-form-delivery-manifest-2026-05-31.md}"
 
 usage() {

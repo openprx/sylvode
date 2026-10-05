@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 # Sylvode Flow v0.4 limits verifier.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md, the v0.4
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md, the v0.4
 # section's "Limits verifier" paragraph ("Limits verifier 必须对每个
 # caller-input 固定上限证明 exact boundary accepted、boundary+1 以正确
 # limit_kind rejected、canonical head/event/event_dispatch 行零变化,并覆盖
@@ -117,7 +119,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # unresolvable -> FAIL naming both attempted paths).
 # shellcheck source=scripts/lib/flow_contract_path.sh
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 REPO_ROOT="$ROOT_DIR"
 CONTRACT_PATH=""
@@ -146,7 +148,7 @@ Options:
                           current directory first, then against
                           --contracts-root.
   --contracts-root DIR     Root containing contracts/. Default:
-                          /opt/working/sylvode-flow
+                          $SYLVODE_CONTRACTS_ROOT
   --evidence-root DIR     Required. Where limits-result.json is written, and where
                           the sibling collab-architecture-result.json /
                           flow-events-result.json are read from.
@@ -181,6 +183,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ $JSON_MODE -ne 1 ]]; then
   echo "FAIL: --json is required" >&2
@@ -271,7 +274,7 @@ for f in "$LIMITS_RS" "$COLLAB_CORE_LIMITS_RS" "$COLLAB_CORE_ERROR_RS" "$REGISTR
 done
 
 mkdir -p "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/logs"
-FLOW_LIMITS_TARGET="${CARGO_TARGET_DIR:-/opt/worker/.cache/flow-v04-limits-target}"
+FLOW_LIMITS_TARGET="${CARGO_TARGET_DIR:-"${SYLVODE_SCRATCH}/flow-v04-limits-target"}"
 mkdir -p "$FLOW_LIMITS_TARGET"
 export CARGO_TARGET_DIR="$FLOW_LIMITS_TARGET"
 SOURCE_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
@@ -1300,7 +1303,7 @@ if [[ $SKIP_CARGO_TEST -eq 1 ]]; then
 else
   # These nine producer-local filters intentionally retain default libtest parallelism. Each was
   # measured independently as deterministic and 5/5 green at ccd2a99; raw per-run counts, timings,
-  # logs, and hashes are in /opt/worker/evidence/v10-limits-parallel-5x-ccd2a99/summary.json.
+  # logs, and hashes are in the release evidence store under v10-limits-parallel-5x-ccd2a99/summary.json.
   echo "  running: cargo test -p api routes::collab::...full_session_hello... (DB-backed)" >&2
   set +e
   ( cd "$REPO_ROOT" && cargo test -p api --lib "routes::collab::collab_database_tests::full_session_hello_open_snapshot_update_accepted_and_two_rejections" ) > "$LOG_DIR/limits.dyn.update_bytes_e2e.log" 2>&1

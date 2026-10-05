@@ -34,7 +34,7 @@ run() {
 run audit cargo audit --json
 run deny cargo deny --format json check advisories bans licenses sources
 run metadata cargo metadata --locked --format-version 1 --no-deps
-run frontend_tree /home/ck/.bun/bin/bun pm ls --cwd "$REPO_ROOT/frontend" --all
+run frontend_tree "$HOME/.bun/bin/bun" pm ls --cwd "$REPO_ROOT/frontend" --all
 run export_authorization cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p api \
   workspace_export_requires_admin_and_object_export_rechecks_effective_permission -- --nocapture
 run revoked_reads cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p api \

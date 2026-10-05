@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORT_DIR="/opt/worker/report/openpr/docs"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
 TRACKER_PATH="$REPORT_DIR/openpr-universal-form-development-execution-tracker-2026-05-31.md"
 IMPLEMENTATION_MAP_PATH="$ROOT_DIR/docs/universal-forms-implementation-map.md"
 EVIDENCE_PATH="$REPORT_DIR/openpr-universal-form-acceptance-evidence-2026-05-31.md"
@@ -271,16 +271,16 @@ fi
   printf '```bash\n'
   printf 'scripts/report-universal-forms-signoff-status.sh --reviewer "<name>"\n'
   printf 'scripts/report-universal-forms-signoff-status.sh --output \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-signoff-status-2026-05-31.md\n'
+  printf '  %s/openpr-universal-form-signoff-status-2026-05-31.md\n' "$REPORT_DIR"
   printf 'scripts/report-universal-forms-readiness-json.sh\n'
   printf 'scripts/verify-universal-forms-ui-review-gallery.sh\n'
   printf 'scripts/smoke-universal-forms-ui-review-gallery-render.sh\n'
   printf 'scripts/record-universal-forms-manual-signoff.sh --list-items\n'
   printf 'scripts/verify-universal-forms-manual-signoff-consistency.sh \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md\n'
+  printf '  %s/openpr-universal-form-user-acceptance-runbook-2026-05-31.md \\\n' "$REPORT_DIR"
+  printf '  %s/openpr-universal-form-acceptance-evidence-2026-05-31.md\n' "$REPORT_DIR"
   printf 'scripts/verify-universal-forms-acceptance-signoff.sh \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md\n'
+  printf '  %s/openpr-universal-form-acceptance-evidence-2026-05-31.md\n' "$REPORT_DIR"
   printf 'scripts/finalize-universal-forms-acceptance.sh\n'
   printf 'scripts/audit-universal-forms-delivery-state.sh --strict\n'
   printf 'scripts/audit-universal-forms-delivery-bundle.sh\n'

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CONTRACTS_ROOT=/opt/working/sylvode-flow
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v0.9"
 ADR_PATH=
 SINCE_RELEASE=
@@ -18,12 +20,13 @@ while (($#)); do
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 [[ $JSON_MODE -eq 1 && $SINCE_RELEASE == 0.8 ]] || { echo 'FAIL: require --since-release 0.8 --json' >&2; exit 2; }
 [[ -n $ADR_PATH ]] || ADR_PATH="$CONTRACTS_ROOT/decisions/ADR-0013-multi-document-atomicity.md"
 [[ -f $ADR_PATH ]] || { echo "FAIL: ADR missing: $ADR_PATH" >&2; exit 2; }
 ROUNDTRIP="$EVIDENCE_ROOT/export-roundtrip-result.json"
 [[ -s $ROUNDTRIP ]] || { echo "FAIL: current export roundtrip artifact missing: $ROUNDTRIP" >&2; exit 1; }
-mkdir -p "$EVIDENCE_ROOT/logs" /opt/worker/.cache
+mkdir -p "$EVIDENCE_ROOT/logs" "${SYLVODE_SCRATCH}"
 GREEN_LOG="$EVIDENCE_ROOT/logs/cardinality-v09-green.log"
 MISSING_LOG="$EVIDENCE_ROOT/logs/cardinality-v09-missing-declaration-red.log"
 LOCK_LOG="$EVIDENCE_ROOT/logs/cardinality-v09-lock-order-red.log"
@@ -38,7 +41,7 @@ run_test() {
 
 run_test "$REPO_ROOT" "$GREEN_LOG"
 
-MUTATION_ROOT=$(mktemp -d /opt/worker/.cache/v09-cardinality.XXXXXX)
+MUTATION_ROOT=$(mktemp -d "${SYLVODE_SCRATCH}/v09-cardinality.XXXXXX")
 cleanup() {
   git -C "$REPO_ROOT" worktree remove --force "$MUTATION_ROOT" >/dev/null 2>&1 || true
   rm -rf -- "$MUTATION_ROOT"

@@ -13,8 +13,8 @@ set -euo pipefail
 # drift or any non-pass; 2 = usage/tool/structurally malformed evidence.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.5"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.5"
 REPO_ROOT="$ROOT_DIR"
 GATE_YAML=""
 GATE_RESULT_PATH=""
@@ -29,7 +29,7 @@ Independently recomputes all 31 v0.5 gate states from on-disk evidence.
 
 Options:
   --evidence-root DIR   Artifact/log root. Default:
-                        /opt/working/sylvode-flow/evidence/v0.5
+                        .flow-gate/evidence/v0.5
   --contracts-root DIR Contract repository.
   --repo-root DIR       Source repository. Default: this checkout.
   --gate-yaml PATH      Gate YAML. Default:
@@ -57,6 +57,7 @@ while [[ $# -gt 0 ]]; do
       GATE_RESULT_PATH="$1"; shift ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$GATE_RESULT_PATH" ]]; then
   echo "FAIL: GATE_RESULT_JSON is required" >&2

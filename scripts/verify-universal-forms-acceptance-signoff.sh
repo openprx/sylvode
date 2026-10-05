@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPORT_PATH="/opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md"
-RUNBOOK_PATH="${OPENPR_UNIVERSAL_FORMS_RUNBOOK:-/opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md}"
+REPORT_PATH="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md"
+RUNBOOK_PATH="${OPENPR_UNIVERSAL_FORMS_RUNBOOK:-${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md}"
 
 usage() {
   cat <<'EOF'

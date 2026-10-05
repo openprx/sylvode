@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORT_DIR="/opt/worker/report/openpr/docs"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
 TRACKER_PATH="$REPORT_DIR/openpr-universal-form-development-execution-tracker-2026-05-31.md"
 IMPLEMENTATION_MAP_PATH="$ROOT_DIR/docs/universal-forms-implementation-map.md"
 EVIDENCE_PATH="$REPORT_DIR/openpr-universal-form-acceptance-evidence-2026-05-31.md"
@@ -209,7 +209,7 @@ manual_status="$(status_for "用户侧人工验收")"
   printf '| UI review gallery browser render | %s | passed |\n' "$ui_gallery_render_status"
   printf '| Manual evidence map | generated | reviewer evidence is mapped to every manual row |\n'
   printf '| Implementation map | `%s` | reviewer can trace modules to source paths and verification commands |\n' "$IMPLEMENTATION_MAP_PATH"
-  printf '| Report docs index | `/opt/worker/report/openpr/docs/README.md` | current bundle wins over historical reports |\n'
+  printf '| Report docs index | `%s/README.md` | current bundle wins over historical reports |\n' "$REPORT_DIR"
   printf '| End-to-end acceptance | %s | 已验收 after manual signoff |\n' "${e2e_status:-missing}"
   printf '| User-side manual acceptance | %s | 已验收 after manual signoff |\n' "${manual_status:-missing}"
   printf '| Manual signoff rows pending | %s | 0 |\n' "$manual_pending_count"
@@ -267,9 +267,9 @@ manual_status="$(status_for "用户侧人工验收")"
 printf '```bash\n'
   printf 'scripts/report-universal-forms-signoff-status.sh --reviewer "<name>"\n'
   printf 'scripts/report-universal-forms-signoff-status.sh --output \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-signoff-status-2026-05-31.md\n'
+  printf '  %s/openpr-universal-form-signoff-status-2026-05-31.md\n' "$REPORT_DIR"
   printf 'scripts/report-universal-forms-signoff-status.sh \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md \\\n'
+  printf '  %s/openpr-universal-form-acceptance-evidence-2026-05-31.md \\\n' "$REPORT_DIR"
   printf '  --reviewer "<name>"\n'
   printf 'scripts/report-universal-forms-signoff-status-json.sh\n'
   printf 'scripts/verify-universal-forms-signoff-status-json.sh\n'
@@ -286,13 +286,13 @@ printf '```bash\n'
   printf 'scripts/smoke-universal-forms-delivery-status-json-contract.sh\n'
   printf 'scripts/smoke-universal-forms-delivery-status-output.sh\n'
   printf 'scripts/verify-universal-forms-manual-signoff-consistency.sh \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md\n'
+  printf '  %s/openpr-universal-form-user-acceptance-runbook-2026-05-31.md \\\n' "$REPORT_DIR"
+  printf '  %s/openpr-universal-form-acceptance-evidence-2026-05-31.md\n' "$REPORT_DIR"
   printf 'scripts/verify-universal-forms-acceptance-signoff.sh \\\n'
-  printf '  /opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md \\\n'
-  printf '  --runbook /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md\n'
+  printf '  %s/openpr-universal-form-acceptance-evidence-2026-05-31.md \\\n' "$REPORT_DIR"
+  printf '  --runbook %s/openpr-universal-form-user-acceptance-runbook-2026-05-31.md\n' "$REPORT_DIR"
   printf 'scripts/finalize-universal-forms-acceptance.sh \\\n'
-  printf '  --runbook /opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md\n'
+  printf '  --runbook %s/openpr-universal-form-user-acceptance-runbook-2026-05-31.md\n' "$REPORT_DIR"
   printf 'scripts/audit-universal-forms-delivery-state.sh --strict\n'
   printf 'scripts/audit-universal-forms-delivery-bundle.sh\n'
   printf 'scripts/report-universal-forms-completion-audit-json.sh\n'

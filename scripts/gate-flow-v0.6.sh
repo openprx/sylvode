@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 GATE_YAML=""
 GATE_RESULT=""
@@ -19,8 +19,8 @@ Usage: scripts/gate-flow-v0.6.sh --json [OPTIONS]
 Options:
   --allow-pending       Accept only a candidate-ready receipt whose sole manual row is pending
   --gate-result PATH    Default: <evidence-root>/gate-result.json
-  --evidence-root DIR   Default: <contracts-root>/evidence/v0.6
-  --contracts-root DIR  Default: /opt/working/sylvode-flow
+  --evidence-root DIR   Default: .flow-gate/evidence/v0.6
+  --contracts-root DIR  Default: $SYLVODE_CONTRACTS_ROOT
   --repo-root DIR       Default: this checkout
   --gate-yaml PATH      Default: <contracts-root>/gates/v0.6-gate.yaml
   --json                Required
@@ -44,10 +44,11 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 [[ $JSON_MODE -eq 1 ]] || { echo "FAIL: --json is required" >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "FAIL: jq is required" >&2; exit 2; }
-[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$CONTRACTS_ROOT/evidence/v0.6"
+[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.6"
 [[ -n "$GATE_YAML" ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.6-gate.yaml"
 [[ -n "$GATE_RESULT" ]] || GATE_RESULT="$EVIDENCE_ROOT/gate-result.json"
 [[ -f "$GATE_RESULT" ]] || { echo "FAIL: gate result missing: $GATE_RESULT" >&2; exit 2; }

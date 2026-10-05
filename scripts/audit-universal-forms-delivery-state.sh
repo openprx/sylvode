@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TRACKER_PATH="/opt/worker/report/openpr/docs/openpr-universal-form-development-execution-tracker-2026-05-31.md"
-REPORT_PATH="/opt/worker/report/openpr/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md"
-RUNBOOK_PATH="${OPENPR_UNIVERSAL_FORMS_RUNBOOK:-/opt/worker/report/openpr/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md}"
+TRACKER_PATH="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-development-execution-tracker-2026-05-31.md"
+REPORT_PATH="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-acceptance-evidence-2026-05-31.md"
+RUNBOOK_PATH="${OPENPR_UNIVERSAL_FORMS_RUNBOOK:-${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs/openpr-universal-form-user-acceptance-runbook-2026-05-31.md}"
 EXPECTED_AUTOMATED_CHECKS="${OPENPR_EXPECTED_AUTOMATED_CHECKS:-27}"
 STRICT=0
 

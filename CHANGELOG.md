@@ -243,6 +243,16 @@ replacement and the earliest removal.
   `apps/mcp-server/src/main.rs`, which no longer holds that code, so the check could not fail. It
   now checks `DEFAULT_MCP_API_URL` and `apps/mcp-server/src/cli.rs`, and every audit's
   `not_contains` fails when the file it inspects does not exist.
+- Scripts under `scripts/` defaulted to paths on one maintainer's machine: the Universal Forms
+  report generators, render smokes and screenshot collector wrote to a report directory outside
+  the repository and overwrote what was there, the Flow gate scripts read their contracts from and
+  wrote evidence into a fixed contracts checkout, and scratch trees, cargo targets and the Bun
+  binary were looked up at fixed absolute paths. Generated output now defaults to the ignored
+  `.flow-gate/` directory of the checkout, outside inputs are named through `--contracts-root`,
+  `SYLVODE_CONTRACTS_ROOT` and similar variables (see CONTRIBUTING, "Where scripts read and
+  write") and a missing one is an error, the render smokes and the screenshot collector refuse a
+  non-empty target directory without `--overwrite`, and `scripts/test-no-machine-paths.sh` runs
+  in CI.
 
 ## [0.2.21] - 2026-08-19
 

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 # Sylvode Flow v0.4 command-cardinality verifier.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md, "Cardinality
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md, "Cardinality
 # verifier" paragraph, and ADR-0013 §1 ("v0.4 的竞争文档集合恒 ≤ 1").
 #
 # This script covers both the registry bound and the four live concurrency
@@ -35,8 +37,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # unresolvable -> FAIL naming both attempted paths).
 # shellcheck source=scripts/lib/flow_contract_path.sh
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 REPO_ROOT="$ROOT_DIR"
 ADR_PATH=""
 MAX_CARDINALITY=1
@@ -61,9 +63,9 @@ Options:
                           against --contracts-root.
   --max-cardinality N     The ADR-0013 §1 bound (v0.4: 1). Required.
   --contracts-root DIR     Root containing contracts/. Default:
-                          /opt/working/sylvode-flow
+                          $SYLVODE_CONTRACTS_ROOT
   --evidence-root DIR     Where cardinality-result.json is written.
-                          Default: /opt/working/sylvode-flow/evidence/v0.4
+                          Default: .flow-gate/evidence/v0.4
   --repo-root DIR         Repository containing apps/api and the cargo
                           workspace. Default: this checkout.
   --database-url URL      PostgreSQL DSN on which a scratch database may be
@@ -95,6 +97,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$ADR_PATH" ]]; then
   echo "FAIL: --adr is required" >&2
@@ -297,7 +300,7 @@ cleanup_live() {
   if [[ -n "$SCRATCH_DB" && -n "$DATABASE_URL" ]]; then
     psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS \"$SCRATCH_DB\" WITH (FORCE)" >/dev/null 2>&1 || true
   fi
-  if [[ -n "$TMP_DIR" && "$TMP_DIR" == /opt/worker/.cache/openpr-cardinality-verify.* ]]; then
+  if [[ -n "$TMP_DIR" && "$TMP_DIR" == "${SYLVODE_SCRATCH}/flow-cardinality-verify."* ]]; then
     rm -rf "$TMP_DIR"
   fi
   exit "$ec"
@@ -319,7 +322,7 @@ else
   RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
   SCRATCH_DB="openpr_flow_cardinality_verify_$RUN_ID"
   SCRATCH_URL="${DATABASE_URL%/*}/$SCRATCH_DB"
-  TMP_DIR="$(mktemp -d /opt/worker/.cache/openpr-cardinality-verify.XXXXXX)"
+  TMP_DIR="$(mktemp -d "${SYLVODE_SCRATCH}/flow-cardinality-verify.XXXXXX")"
   API_PORT=$((22000 + RANDOM % 12000))
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"$SCRATCH_DB\"" >/dev/null || {
     LIVE_JSON='{"status":"failed","fixtures":{},"violations":["could not create scratch database"]}'

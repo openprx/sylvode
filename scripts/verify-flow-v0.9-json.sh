@@ -5,9 +5,9 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 RESULT=
 [[ $# -eq 0 || $1 == --* ]] || { RESULT=$1; shift; }
 EVIDENCE="$ROOT/.flow-gate/evidence/v0.9"
-CONTRACTS=/opt/working/sylvode-flow
+CONTRACTS="${SYLVODE_CONTRACTS_ROOT:-}"
 REPO=$ROOT
-PREDECESSOR=/opt/worker/evidence/v0.8/gate-result.json
+PREDECESSOR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.8/gate-result.json
 while (($#)); do
   case "$1" in
     --evidence-root) EVIDENCE=${2:?}; shift 2 ;;
@@ -18,6 +18,7 @@ while (($#)); do
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS && -d $CONTRACTS ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 [[ -n $RESULT ]] || RESULT="$EVIDENCE/gate-result.json"
 
 python3 - "$RESULT" "$EVIDENCE" "$REPO" "$CONTRACTS/gates/v0.9-gate.yaml" "$PREDECESSOR" <<'PY'

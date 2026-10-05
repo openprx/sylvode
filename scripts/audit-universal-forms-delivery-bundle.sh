@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORT_DIR="/opt/worker/report/openpr/docs"
-ARTIFACT_DIR="/opt/worker/report/openpr/artifacts/universal-forms-ui-2026-05-31"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
+ARTIFACT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/artifacts/universal-forms-ui-2026-05-31"
 TRACKER_PATH="$REPORT_DIR/openpr-universal-form-development-execution-tracker-2026-05-31.md"
 EVIDENCE_PATH="$REPORT_DIR/openpr-universal-form-acceptance-evidence-2026-05-31.md"
 RUNBOOK_PATH="$REPORT_DIR/openpr-universal-form-user-acceptance-runbook-2026-05-31.md"
@@ -722,7 +722,7 @@ if "$ROOT_DIR/scripts/verify-universal-forms-signoff-dashboard.sh" >/dev/null; t
 else
   fail "signoff dashboard verifier passes"
 fi
-if "$ROOT_DIR/scripts/smoke-universal-forms-signoff-dashboard-render.sh" >/dev/null; then
+if "$ROOT_DIR/scripts/smoke-universal-forms-signoff-dashboard-render.sh" --overwrite >/dev/null; then
   pass "signoff dashboard browser render smoke passes"
 else
   fail "signoff dashboard browser render smoke passes"
@@ -879,7 +879,7 @@ if "$ROOT_DIR/scripts/verify-universal-forms-ui-review-gallery.sh" >/dev/null; t
 else
   fail "UI review gallery verifier passes"
 fi
-if "$ROOT_DIR/scripts/smoke-universal-forms-ui-review-gallery-render.sh" >/dev/null; then
+if "$ROOT_DIR/scripts/smoke-universal-forms-ui-review-gallery-render.sh" --overwrite >/dev/null; then
   pass "UI review gallery browser render smoke passes"
 else
   fail "UI review gallery browser render smoke passes"

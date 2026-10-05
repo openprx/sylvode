@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.4 document row lock / update-seq uniqueness verifier.
 #
-# Contract: /opt/working/sylvode-flow/STATUS.md ("v0.4 使用 PostgreSQL
+# Contract: $SYLVODE_CONTRACTS_ROOT/STATUS.md ("v0.4 使用 PostgreSQL
 # document row lock 串行分配 update seq"), versions/v0.4-flow-alpha.md
 # "验收" ("两个并发请求竞争同一 document 时 seq 连续唯一、head/projection
 # 对齐"), ADR-0010 ("PostgreSQL `collab_documents` head 和 document row lock
@@ -89,8 +89,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 DATABASE_URL="${OPENPR_TEST_DATABASE_URL:-}"
 CONCURRENCY=8
 ROUNDS=3
@@ -116,8 +116,8 @@ Options:
   --database-url URL     Postgres DSN this script may CREATE DATABASE on.
                          Default: $OPENPR_TEST_DATABASE_URL
   --repo-root DIR        Default: this checkout.
-  --contracts-root DIR   Default: /opt/working/sylvode-flow
-  --evidence-root DIR    Default: /opt/working/sylvode-flow/evidence/v0.4
+  --contracts-root DIR   Default: $SYLVODE_CONTRACTS_ROOT
+  --evidence-root DIR    Default: .flow-gate/evidence/v0.4
   --json                 Required for CLI-contract compatibility.
   -h, --help             Show this help and exit 0.
 
@@ -141,6 +141,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 : "$CONTRACTS_ROOT"
 
 if [[ $JSON_MODE -ne 1 ]]; then

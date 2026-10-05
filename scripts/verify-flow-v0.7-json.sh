@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESULT=""
 if [[ $# -gt 0 && "$1" != --* ]]; then RESULT="$1"; shift; fi
 REPO_ROOT="$ROOT_DIR"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
 GATE_YAML=""
 while (($#)); do
@@ -18,7 +18,8 @@ while (($#)); do
     *) echo "FAIL: unsupported argument $1" >&2; exit 2 ;;
   esac
 done
-[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$CONTRACTS_ROOT/evidence/v0.7"
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
+[[ -n "$EVIDENCE_ROOT" ]] || EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.7"
 [[ -n "$RESULT" ]] || RESULT="$EVIDENCE_ROOT/gate-result.json"
 [[ -n "$GATE_YAML" ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.7-gate.yaml"
 [[ -f "$RESULT" ]] || { echo "FAIL: gate result missing: $RESULT" >&2; exit 2; }

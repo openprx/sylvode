@@ -21,8 +21,8 @@ set -euo pipefail
 # 1 = gate failed, 2 = usage/tool/evidence malformed.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.4"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 REPO_ROOT="$ROOT_DIR"
 SCHEMA_PATH="$ROOT_DIR/docs/schemas/sylvode-flow-gate-v0.4.schema.json"
 GATE_RESULT_PATH=""
@@ -55,10 +55,10 @@ Options:
   --gate-result PATH      Path to gate-result.json. Default:
                           <evidence-root>/gate-result.json
   --evidence-root DIR    Root passed through to verify-flow-v0.4-json.sh.
-                          Default: /opt/working/sylvode-flow/evidence/v0.4
+                          Default: .flow-gate/evidence/v0.4
   --contracts-root DIR   Contract root passed through to verify so the YAML
                           ledger is checked against the schema. Default:
-                          /opt/working/sylvode-flow
+                          $SYLVODE_CONTRACTS_ROOT
   --repo-root DIR         Path passed through to verify-flow-v0.4-json.sh.
                           Default: this checkout.
   --schema PATH           Path passed through to verify-flow-v0.4-json.sh.
@@ -83,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$GATE_RESULT_PATH" ]]; then
   GATE_RESULT_PATH="$EVIDENCE_ROOT/gate-result.json"

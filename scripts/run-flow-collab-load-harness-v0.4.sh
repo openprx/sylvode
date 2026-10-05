@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 # Qualified runner for the v0.4 release load harness. The Rust harness is a
 # measurement instrument, not an environment classifier: this wrapper refuses
@@ -121,7 +123,7 @@ ACTIVE_OTHER_CLIENTS="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
   "declared dedicated PostgreSQL instance has $ACTIVE_OTHER_CLIENTS other active client(s); the harness was not started" \
   "$ACTIVE_OTHER_CLIENTS"
 
-TMP_DIR="$(mktemp -d /opt/worker/.cache/flow-load-runner.XXXXXX)"
+TMP_DIR="$(mktemp -d "${SYLVODE_SCRATCH}/flow-load-runner.XXXXXX")"
 cleanup() {
   rm -rf "$TMP_DIR"
 }

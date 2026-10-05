@@ -3,15 +3,15 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 RESULT=
 [[ $# -eq 0 || $1 == --* ]] || { RESULT=$1; shift; }
-EVIDENCE="$ROOT/.flow-gate/evidence/v0.8"; CONTRACTS=/opt/working/sylvode-flow; REPO=$ROOT; PREDECESSOR=
+EVIDENCE="$ROOT/.flow-gate/evidence/v0.8"; CONTRACTS="${SYLVODE_CONTRACTS_ROOT:-}"; REPO=$ROOT; PREDECESSOR=
 while (($#)); do case "$1" in
   --evidence-root) EVIDENCE=${2:?}; shift 2;; --contracts-root) CONTRACTS=${2:?}; shift 2;;
   --repo-root) REPO=${2:?}; shift 2;;
   --predecessor-gate-result|--predecessor-evidence) PREDECESSOR=${2:?}; shift 2;;
   --json) shift;; *) echo "FAIL: unsupported argument: $1" >&2; exit 2;; esac; done
+[[ -n $CONTRACTS && -d $CONTRACTS ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 [[ -n $RESULT ]] || RESULT="$EVIDENCE/gate-result.json"
-WORKSPACE_ROOT=$(cd "$REPO/../.." && pwd)
-[[ -n $PREDECESSOR ]] || PREDECESSOR="$WORKSPACE_ROOT/evidence/v0.7/gate-result.json"
+[[ -n $PREDECESSOR ]] || PREDECESSOR="$(dirname "$EVIDENCE")/v0.7/gate-result.json"
 python3 - "$RESULT" "$EVIDENCE" "$REPO" "$CONTRACTS/gates/v0.8-gate.yaml" "$PREDECESSOR" <<'PY'
 import hashlib,json,pathlib,re,subprocess,sys,yaml
 result,evidence,repo,gate_path,predecessor_path=map(lambda p:pathlib.Path(p).resolve(),sys.argv[1:]); drift=[]

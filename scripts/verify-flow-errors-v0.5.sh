@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 # v0.5 invalid_update named-reason and MCP/CLI error-surface verifier.
 # Exit 0 means every required producer/consumer observation passed; exit 1
@@ -9,7 +11,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib/flow_contract_path.sh
 source "$ROOT_DIR/scripts/lib/flow_contract_path.sh"
-CONTRACTS_ROOT=/opt/working/sylvode-flow
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 REPO_ROOT="$ROOT_DIR"
 EVIDENCE_ROOT=""
 CONTRACT_PATH=""
@@ -21,7 +23,7 @@ Usage: scripts/verify-flow-errors-v0.5.sh --contract PATH --json [OPTIONS]
 
 Options:
   --contract PATH       error-mapping-v1.md (required by command contract)
-  --contracts-root DIR  Default: /opt/working/sylvode-flow
+  --contracts-root DIR  Default: $SYLVODE_CONTRACTS_ROOT
   --evidence-root DIR   Required; never defaults into the contract repository
   --repo-root DIR       Default: this checkout
   --json                Required
@@ -44,6 +46,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "FAIL: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 [[ $JSON_MODE -eq 1 ]] || { echo "FAIL: --json is required" >&2; exit 2; }
 [[ -n "$EVIDENCE_ROOT" ]] || { echo "FAIL: --evidence-root is required" >&2; exit 2; }
@@ -221,7 +224,7 @@ if [[ $API_EXIT -eq 0 ]] && strict_one_passed "$API_LOG" && \
    ! grep -Fq 'skipped: OPENPR_TEST_DATABASE_URL is not set' "$API_LOG"; then API_DYNAMIC=true; fi
 if [[ $CLI_EXIT -eq 0 ]] && strict_one_passed "$CLI_LOG"; then CLI_DYNAMIC=true; fi
 
-MUTATION_DIR="$(mktemp -d /opt/worker/.cache/flow-v05-errors-mutation.XXXXXX)"
+MUTATION_DIR="$(mktemp -d "${SYLVODE_SCRATCH}/flow-v05-errors-mutation.XXXXXX")"
 trap 'rm -rf "$MUTATION_DIR"' EXIT
 sed 's/child_project_must_match_parent/child_project_reason_mutated/g' "$COMMAND_RS" >"$MUTATION_DIR/command.rs"
 sed 's/subtree_spans_multiple_projects/subtree_reason_mutated/g' "$MOVE_RS" >"$MUTATION_DIR/move_object.rs"

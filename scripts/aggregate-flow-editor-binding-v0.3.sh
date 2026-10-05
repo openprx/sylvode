@@ -19,7 +19,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCHEMA_DIR="$ROOT_DIR/docs/schemas"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.3"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.3"
 JSON_MODE=0
 
 usage() {
@@ -41,7 +41,7 @@ Options:
   --evidence-root DIR    Directory holding editor-binding-loro.json /
                           editor-binding-yrs-yjs.json; merged output is
                           written here too.
-                          Default: /opt/working/sylvode-flow/evidence/v0.3
+                          Default: .flow-gate/evidence/v0.3
   --schema-dir DIR        Directory holding sylvode-flow-*.schema.json.
                           Default: <repo>/docs/schemas
   -h, --help              Show this help and exit 0.

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EVIDENCE_ROOT="${REPO_ROOT}/evidence/v0.7"
@@ -18,7 +20,7 @@ done
 }
 
 mkdir -p "$EVIDENCE_ROOT"
-CACHE_ROOT="/opt/worker/.cache"
+CACHE_ROOT="${SYLVODE_SCRATCH}"
 mkdir -p "$CACHE_ROOT"
 TMP_DIR="$(mktemp -d "$CACHE_ROOT/v07-migration-replay.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Sylvode Flow v0.3 editor-binding maturity runner -- SKELETON.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md v0.3 section
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md v0.3 section
 # ("scripts/verify-flow-editor-binding-v0.3.sh --candidate X --soak-hours 8
 # --out evidence/v0.3/editor-binding-X.json"),
 # sylvode-flow-editor-binding-result-v1.schema.json, and ADR-0006's six
@@ -19,7 +19,7 @@ set -euo pipefail
 # capability missing, 2 = usage/tool error.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.3"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.3"
 CANDIDATE=""
 OUT_PATH=""
 SOAK_HOURS=""
@@ -48,7 +48,7 @@ Required options:
 
 Options:
   --evidence-root DIR   Reserved for future use by the real runner.
-                          Default: /opt/working/sylvode-flow/evidence/v0.3
+                          Default: .flow-gate/evidence/v0.3
   -h, --help             Show this help and exit 0.
 
 Exit codes: 0 written, 1 capability missing, 2 usage/tool error.

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd);EVIDENCE="$ROOT/.flow-gate/evidence/v1.0";JSON=0
 while (($#));do case "$1" in --repo-root) ROOT=${2:?};shift 2;;--evidence-root) EVIDENCE=${2:?};shift 2;;--json) JSON=1;shift;;*) echo "FAIL: unsupported argument: $1" >&2;exit 2;;esac;done
-[[ $JSON -eq 1 ]]||{ echo 'FAIL: --json required' >&2;exit 2;};mkdir -p "$EVIDENCE/logs" /opt/worker/.cache
-RUN=$(mktemp -d /opt/worker/.cache/v10-repro.XXXXXX);A="$RUN/a";B="$RUN/b";TA="$RUN/target-a";TB="$RUN/target-b"
+[[ $JSON -eq 1 ]]||{ echo 'FAIL: --json required' >&2;exit 2;};mkdir -p "$EVIDENCE/logs" "${SYLVODE_SCRATCH}"
+RUN=$(mktemp -d "${SYLVODE_SCRATCH}/v10-repro.XXXXXX");A="$RUN/a";B="$RUN/b";TA="$RUN/target-a";TB="$RUN/target-b"
 cleanup(){ git -C "$ROOT" worktree remove --force "$A" >/dev/null 2>&1||true;git -C "$ROOT" worktree remove --force "$B" >/dev/null 2>&1||true;rm -rf -- "$RUN";};trap cleanup EXIT
 git -C "$ROOT" worktree add --detach "$A" HEAD >/dev/null;git -C "$ROOT" worktree add --detach "$B" HEAD >/dev/null
 EPOCH=$(git -C "$ROOT" show -s --format=%ct HEAD)

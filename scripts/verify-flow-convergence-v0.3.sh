@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Sylvode Flow v0.3 P2a/P2b/P3 convergence corpus runner -- SKELETON.
 #
-# Contract: /opt/working/sylvode-flow/gates/gate-commands.md v0.3 section
+# Contract: $SYLVODE_CONTRACTS_ROOT/gates/gate-commands.md v0.3 section
 # ("scripts/verify-flow-convergence-v0.3.sh --candidate X --out
-# evidence/v0.3/convergence-X.json"), /opt/working/sylvode-flow/testing/
+# evidence/v0.3/convergence-X.json"), $SYLVODE_CONTRACTS_ROOT/testing/
 # convergence-corpus.md, sylvode-flow-convergence-result-v1.schema.json, and
 # ADR-0014-isolated-apply-host.md section 9 (the isolation.{rust,web}.cases[]
 # five-path wire this file's "isolation" object must satisfy).
@@ -19,8 +19,8 @@ set -euo pipefail
 # capability missing, 2 = usage/tool error.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTRACTS_ROOT="/opt/working/sylvode-flow"
-EVIDENCE_ROOT="/opt/working/sylvode-flow/evidence/v0.3"
+CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.3"
 CANDIDATE=""
 OUT_PATH=""
 
@@ -43,9 +43,9 @@ Required options:
 
 Options:
   --evidence-root DIR   Reserved for future use by the real runner.
-                          Default: /opt/working/sylvode-flow/evidence/v0.3
+                          Default: .flow-gate/evidence/v0.3
   --contracts-root DIR  Root for decisions/*.md lookups.
-                          Default: /opt/working/sylvode-flow
+                          Default: $SYLVODE_CONTRACTS_ROOT
   -h, --help             Show this help and exit 0.
 
 Exit codes: 0 written, 1 capability missing, 2 usage/tool error.
@@ -63,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unexpected argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 
 if [[ -z "$CANDIDATE" ]]; then
   echo "FAIL: --candidate is required (loro or yrs-yjs)" >&2

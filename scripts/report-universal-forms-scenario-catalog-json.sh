@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORT_DIR="/opt/worker/report/openpr/docs"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
 CATALOG_PATH="$ROOT_DIR/docs/scenario-templates.md"
 SCHEMA_PATH="$ROOT_DIR/docs/schemas/openpr-universal-forms-scenario-catalog.schema.json"
 OUTPUT_PATH="${OPENPR_SCENARIO_CATALOG_JSON_REPORT:-$REPORT_DIR/openpr-universal-form-scenario-catalog-2026-05-31.json}"

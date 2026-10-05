@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EVIDENCE_ROOT="${REPO_ROOT}/evidence/v0.7"
-CACHE_ROOT="/opt/worker/.cache/openpr-v07-bridge-mutations"
+CACHE_ROOT="${SYLVODE_SCRATCH}/flow-v07-bridge-mutations"
 while (($#)); do
   case "$1" in
     --repo-root) REPO_ROOT="${2:?--repo-root requires a value}"; shift 2 ;;

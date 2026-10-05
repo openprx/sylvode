@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPORT_DIR="/opt/worker/report/openpr/docs"
-ARTIFACT_DIR="${OPENPR_UI_ARTIFACT_DIR:-/opt/worker/report/openpr/artifacts/universal-forms-ui-2026-05-31}"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
+ARTIFACT_DIR="${OPENPR_UI_ARTIFACT_DIR:-${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/artifacts/universal-forms-ui-2026-05-31}"
 GALLERY_PATH="${OPENPR_UI_REVIEW_GALLERY:-$REPORT_DIR/openpr-universal-form-ui-review-gallery-2026-05-31.html}"
 RENDER_DIR="${OPENPR_UI_REVIEW_GALLERY_RENDER_DIR:-$ARTIFACT_DIR/ui-review-gallery}"
 CHROMIUM_BIN="${CHROMIUM_BIN:-/usr/bin/chromium}"
+OVERWRITE=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/smoke-universal-forms-ui-review-gallery-render.sh [--gallery PATH] [--render-dir PATH]
+Usage: scripts/smoke-universal-forms-ui-review-gallery-render.sh [--gallery PATH] [--render-dir PATH] [--overwrite]
 
 Renders the universal forms UI review gallery in headless Chromium, verifies
 that all eight gallery screenshots load, and captures desktop/mobile render
 screenshots for reviewer evidence.
+
+An existing non-empty target directory is not overwritten unless --overwrite is given.
 
 Environment:
   OPENPR_UI_REVIEW_GALLERY             Optional HTML gallery path.
@@ -40,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       fi
       shift 2
       ;;
+    --overwrite)
+      OVERWRITE=1
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -51,6 +58,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ $OVERWRITE -ne 1 && -d "$RENDER_DIR" ]] && [[ -n "$(ls -A "$RENDER_DIR")" ]]; then
+  echo "Refusing to overwrite the non-empty render directory $RENDER_DIR; pass --overwrite to replace it" >&2
+  exit 2
+fi
 
 if [[ ! -x "$CHROMIUM_BIN" ]]; then
   echo "Chromium binary not found or not executable: $CHROMIUM_BIN" >&2

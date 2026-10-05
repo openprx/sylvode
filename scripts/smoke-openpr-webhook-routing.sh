@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WEBHOOK_DIR="${1:-/opt/worker/code/openpr-webhook}"
+WEBHOOK_DIR="${1:-${SYLVODE_WEBHOOK_DIR:-}}"
+[[ -n $WEBHOOK_DIR && -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: webhook checkout not found (${WEBHOOK_DIR:-unset}); pass the checkout path as the first argument or set SYLVODE_WEBHOOK_DIR" >&2; exit 2; }
 TMP_DIR="$(mktemp -d)"
 PORT="$((19000 + $$ % 1000))"
 SERVER_PID=""

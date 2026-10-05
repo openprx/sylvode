@@ -2,17 +2,21 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORT_DIR="/opt/worker/report/openpr/docs"
-ARTIFACT_DIR="${OPENPR_UI_ARTIFACT_DIR:-/opt/worker/report/openpr/artifacts/universal-forms-ui-2026-05-31}"
+REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
+ARTIFACT_DIR="${OPENPR_UI_ARTIFACT_DIR:-${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/artifacts/universal-forms-ui-2026-05-31}"
 MANIFEST_PATH="${OPENPR_UI_ARTIFACT_MANIFEST:-$REPORT_DIR/openpr-universal-form-ui-artifacts-2026-05-31.md}"
 FRONTEND_LOCK="${OPENPR_FRONTEND_BUILD_LOCK:-/tmp/openpr-frontend-build.lock}"
 
+OVERWRITE=0
+
 usage() {
   cat <<'EOF'
-Usage: scripts/collect-universal-forms-ui-artifacts.sh [--artifact-dir PATH] [--manifest PATH]
+Usage: scripts/collect-universal-forms-ui-artifacts.sh [--artifact-dir PATH] [--manifest PATH] [--overwrite]
 
 Runs the project template, universal forms, and restaurant browser smoke checks
 with screenshot capture enabled, then writes a reviewer-facing artifact manifest.
+
+An existing non-empty target directory is not overwritten unless --overwrite is given.
 
 Environment:
   OPENPR_UI_ARTIFACT_DIR       Optional screenshot output directory.
@@ -40,6 +44,10 @@ while [[ $# -gt 0 ]]; do
       fi
       shift 2
       ;;
+    --overwrite)
+      OVERWRITE=1
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -51,6 +59,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ $OVERWRITE -ne 1 && -d "$ARTIFACT_DIR" ]] && [[ -n "$(ls -A "$ARTIFACT_DIR")" ]]; then
+  echo "Refusing to overwrite the non-empty artifact directory $ARTIFACT_DIR; pass --overwrite to replace it" >&2
+  exit 2
+fi
 
 mkdir -p \
   "$ARTIFACT_DIR/project-template-wizard" \
@@ -178,7 +191,7 @@ manifest_tmp=""
   --artifact-dir "$ARTIFACT_DIR"
 
 "$ROOT_DIR/scripts/smoke-universal-forms-ui-review-gallery-render.sh" \
-  --render-dir "$ARTIFACT_DIR/ui-review-gallery"
+  --render-dir "$ARTIFACT_DIR/ui-review-gallery" --overwrite
 
 "$ROOT_DIR/scripts/verify-universal-forms-ui-review-gallery.sh" \
   --artifact-dir "$ARTIFACT_DIR"

@@ -13,7 +13,7 @@ done
 mkdir -p "$EVIDENCE_ROOT/logs"
 export CARGO_BUILD_JOBS=4
 BUN_BIN="$(command -v bun || true)"
-if [[ -z "$BUN_BIN" && -x /home/ck/.bun/bin/bun ]]; then BUN_BIN=/home/ck/.bun/bin/bun; fi
+if [[ -z "$BUN_BIN" && -x "$HOME/.bun/bin/bun" ]]; then BUN_BIN=$HOME/.bun/bin/bun; fi
 
 run() {
   local id="$1"; shift

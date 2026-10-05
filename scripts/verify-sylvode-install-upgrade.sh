@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 JSON_MODE=0
@@ -16,16 +18,16 @@ done
 for command_name in cargo curl jq psql python3 git sha256sum; do
   command -v "$command_name" >/dev/null || { echo "FAIL: missing $command_name" >&2; exit 2; }
 done
-if command -v bun >/dev/null; then BUN=$(command -v bun); elif [[ -x /home/ck/.bun/bin/bun ]]; then BUN=/home/ck/.bun/bin/bun; else echo "FAIL: missing bun" >&2; exit 2; fi
+if command -v bun >/dev/null; then BUN=$(command -v bun); elif [[ -x "$HOME/.bun/bin/bun" ]]; then BUN=$HOME/.bun/bin/bun; else echo "FAIL: missing bun" >&2; exit 2; fi
 
 V029_HEAD=cac9e7c305c1c31c6f9bb6dbe164c955731b3fca
 V08_HEAD=aa453de2a12911b4fe343c6ce52d67e4bf8e679e
-CACHE_ROOT=/opt/worker/.cache/v09-install-upgrade
+CACHE_ROOT="${SYLVODE_SCRATCH}/v09-install-upgrade"
 LOG_ROOT="$CACHE_ROOT/logs"
 V029_WORKTREE="$CACHE_ROOT/v029"
 V08_WORKTREE="$CACHE_ROOT/v08"
-V029_TARGET=/opt/worker/.cache/v09-install-target-v029
-V08_TARGET=/opt/worker/.cache/v09-install-target-v08
+V029_TARGET="${SYLVODE_SCRATCH}/v09-install-target-v029"
+V08_TARGET="${SYLVODE_SCRATCH}/v09-install-target-v08"
 CLEAN_DB=v09_clean_install
 UPGRADE_DB=v09_in_place_upgrade
 ADMIN_URL=$OPENPR_TEST_DATABASE_URL
