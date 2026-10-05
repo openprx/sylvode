@@ -738,3 +738,7 @@ impl std::fmt::Debug for AppConfig {
     clippy::nursery
 )]
 mod tests;
+
+#[cfg(test)]
+#[allow(clippy::panic, clippy::pedantic, clippy::nursery)]
+mod schema_tests;

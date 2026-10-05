@@ -39,6 +39,9 @@ jobs:
           cargo install cargo-machete --locked
           cargo machete
 
+      - name: Start script configuration checks
+        run: bash scripts/test-start-config.sh
+
   test:
     name: Test
     needs: lint
