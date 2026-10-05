@@ -3,6 +3,18 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.15
+
+### Security
+
+- Inbound signatures, on `/webhook` and on the tunnel, are compared in constant time with
+  `Mac::verify_slice` instead of as text, so response timing no longer reveals how much of a
+  forged signature matched. Both paths verify through one function.
+- A signature must be exactly 64 lowercase hex digits after the optional `sha256=` prefix; anything
+  else is refused before an HMAC is computed. This is what was accepted before: uppercase hex,
+  odd-length or non-hex values and digests of the wrong length were already refused, and a
+  prefix is still stripped as before.
+
 ## 0.3.14
 
 ### Changed

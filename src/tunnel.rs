@@ -33,17 +33,27 @@ struct DispatchPayload {
     body: Option<Value>,
 }
 
-pub fn sign_envelope_body(envelope: &Envelope, secret: &str) -> Option<String> {
+/// The bytes a tunnel signature covers: the envelope serialized without `sig`.
+fn unsigned_envelope_bytes(envelope: &Envelope) -> Option<Vec<u8>> {
     let mut unsigned = envelope.clone();
     unsigned.sig = None;
     serde_json::to_vec(&unsigned)
+        .map_err(|e| tracing::warn!("serialize envelope for signing failed: {e}"))
         .ok()
-        .and_then(|bytes| signature::sign_payload(&bytes, secret).ok())
 }
 
+pub fn sign_envelope_body(envelope: &Envelope, secret: &str) -> Option<String> {
+    unsigned_envelope_bytes(envelope).and_then(|bytes| signature::sign_payload(&bytes, secret).ok())
+}
+
+/// Whether the envelope carries a valid `sig` under `secret`, compared in constant time.
+///
+/// Every leading `sha256=` is removed from `sig` before it is decoded.
 pub fn verify_envelope_signature(envelope: &Envelope, secret: &str) -> bool {
     envelope.sig.as_ref().is_some_and(|sig| {
-        sign_envelope_body(envelope, secret).is_some_and(|expected| expected == sig.trim_start_matches("sha256="))
+        unsigned_envelope_bytes(envelope).is_some_and(|bytes| {
+            signature::verify_digest_hex(&bytes, sig.trim_start_matches("sha256="), std::iter::once(secret))
+        })
     })
 }
 
@@ -358,5 +368,60 @@ mod tests {
     fn unsigned_envelope_fails_verification() {
         let env = build_envelope("heartbeat", "agent-1", json!({"alive":true}), None);
         assert!(!verify_envelope_signature(&env, "secret"));
+    }
+
+    fn signed(secret: &str) -> (Envelope, String) {
+        let env = build_envelope("task.dispatch", "agent-1", json!({"run_id":"r1"}), None);
+        let hex = sign_envelope_body(&env, secret).expect("sign");
+        (env, hex)
+    }
+
+    fn with_sig(mut env: Envelope, sig: &str) -> Envelope {
+        env.sig = Some(sig.to_string());
+        env
+    }
+
+    #[test]
+    fn envelope_signature_is_accepted_with_any_number_of_prefixes() {
+        let (env, hex) = signed("secret");
+        assert!(verify_envelope_signature(&with_sig(env.clone(), &hex), "secret"));
+        assert!(verify_envelope_signature(
+            &with_sig(env, &format!("sha256=sha256={hex}")),
+            "secret"
+        ));
+    }
+
+    #[test]
+    fn envelope_signature_in_uppercase_hex_is_refused() {
+        let (env, hex) = signed("secret");
+        assert!(!verify_envelope_signature(
+            &with_sig(env, &format!("sha256={}", hex.to_ascii_uppercase())),
+            "secret"
+        ));
+    }
+
+    #[test]
+    fn malformed_envelope_signatures_are_refused() {
+        let (env, hex) = signed("secret");
+        for sig in [
+            format!("sha256={}", &hex[..63]),
+            format!("sha256={}", &hex[..62]),
+            format!("sha256={hex}00"),
+            format!("sha256=g{}", &hex[1..]),
+            "sha256=".to_string(),
+            String::new(),
+        ] {
+            assert!(
+                !verify_envelope_signature(&with_sig(env.clone(), &sig), "secret"),
+                "{sig:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn envelope_signature_does_not_survive_a_changed_payload() {
+        let (mut env, hex) = signed("secret");
+        env.payload = json!({"run_id":"r2"});
+        assert!(!verify_envelope_signature(&with_sig(env, &hex), "secret"));
     }
 }
