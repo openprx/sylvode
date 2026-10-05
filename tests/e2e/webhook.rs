@@ -35,3 +35,26 @@ async fn a_stale_delivery_is_refused() {
     let (status, answer) = post_signed(&server.url("/webhook"), &body.to_string()).await;
     assert_eq!(status, 200, "{answer}");
 }
+
+/// Text from a delivery cannot forge log lines: a newline inside a logged field is escaped.
+#[tokio::test(flavor = "multi_thread")]
+async fn delivery_text_cannot_forge_a_log_line() {
+    let mut server = Server::start(CANONICAL, &config(), &[]).expect("server starts");
+    let forged = "2026-10-05T00:00:00.000000Z ERROR sylvode_webhook::app: FORGED LINE";
+    let mut body = bot_task("Nobody\nFORGED BOT", "t");
+    body["event"] = serde_json::Value::String(format!("x\n{forged}"));
+    let (status, answer) = post_signed(&server.url("/webhook"), &body.to_string()).await;
+    assert_eq!(status, 200, "{answer}");
+    assert!(server.wait_for_line("No agent for bot task", std::time::Duration::from_secs(5)));
+    let lines = server.stdout().to_vec();
+    assert!(
+        lines.iter().any(|line| line.contains("FORGED LINE")),
+        "the event is logged: {lines:?}"
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.starts_with(forged) || line.starts_with("FORGED BOT")),
+        "a payload newline started a log line of its own: {lines:?}"
+    );
+}

@@ -189,6 +189,24 @@ impl Server {
         &self.seen
     }
 
+    /// Waits until a stdout line contains `needle`.
+    pub fn wait_for_line(&mut self, needle: &str, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        if self.stdout().iter().any(|line| line.contains(needle)) {
+            return true;
+        }
+        while Instant::now() < deadline {
+            if let Ok(line) = self.lines.recv_timeout(Duration::from_millis(50)) {
+                let hit = line.contains(needle);
+                self.seen.push(line);
+                if hit {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Sends SIGTERM.
     pub fn terminate(&mut self) {
         let pid = self.pid().to_string();

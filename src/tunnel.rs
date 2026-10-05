@@ -206,7 +206,7 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
                     let envelope: Envelope = match serde_json::from_str(&text) {
                         Ok(v) => v,
                         Err(e) => {
-                            tracing::warn!("invalid tunnel message: {e}");
+                            tracing::warn!(error = ?e.to_string(), "invalid tunnel message");
                             let _ = tx
                                 .send(build_envelope(
                                     "error",
@@ -221,8 +221,8 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
 
                     if require_inbound_sig && envelope.sig.is_none() {
                         tracing::warn!(
-                            "tunnel missing signature while require_inbound_sig=true for msg_id={}",
-                            envelope.id
+                            msg_id = ?envelope.id,
+                            "tunnel missing signature while require_inbound_sig=true"
                         );
                         let _ = tx
                             .send(build_envelope(
@@ -238,7 +238,7 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
                     if let Some(secret) = &hmac_secret
                         && !verify_envelope_signature(&envelope, secret)
                     {
-                        tracing::warn!("tunnel signature verify failed for msg_id={}", envelope.id);
+                        tracing::warn!(msg_id = ?envelope.id, "tunnel signature verify failed");
                         let _ = tx
                             .send(build_envelope(
                                 "error",

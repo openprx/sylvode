@@ -90,7 +90,7 @@ async fn dispatch_cli(config: &Config, background: &Background, agent: &AgentCon
             start_state,
         );
         if let Err(e) = callback::send_callback(cfg, &start_payload, config.runtime.http_timeout_secs).await {
-            tracing::warn!("start callback failed: {e}");
+            tracing::warn!(error = ?e, "start callback failed");
         }
     }
     // 2. Clone what the background task needs
@@ -131,8 +131,8 @@ async fn dispatch_cli(config: &Config, background: &Background, agent: &AgentCon
                 status = %run.status,
                 exit_code = ?run.exit_code,
                 duration_ms = %run.duration_ms,
-                stderr = %run.stderr_tail,
-                stdout = %run.stdout_tail,
+                stderr = ?run.stderr_tail,
+                stdout = ?run.stdout_tail,
                 "CLI agent failed"
             );
         }
@@ -156,7 +156,7 @@ async fn dispatch_cli(config: &Config, background: &Background, agent: &AgentCon
             );
 
             if let Err(e) = callback::send_callback(&bg_cfg, &callback_payload, http_timeout_secs).await {
-                tracing::warn!("final callback failed: {e}");
+                tracing::warn!(error = ?e, "final callback failed");
             }
         }
     });
@@ -228,7 +228,7 @@ pub async fn execute_cli_task(
             start_state,
         );
         if let Err(e) = callback::send_callback(cfg, &start_payload, config.runtime.http_timeout_secs).await {
-            tracing::warn!("start callback failed: {e}");
+            tracing::warn!(error = ?e, "start callback failed");
         }
     }
     let run = run_cli_executor(cfg, &prompt, cancelled).await;
@@ -267,7 +267,7 @@ pub async fn execute_cli_task(
         );
 
         if let Err(e) = callback::send_callback(cfg, &callback_payload, config.runtime.http_timeout_secs).await {
-            tracing::warn!("final callback failed: {e}");
+            tracing::warn!(error = ?e, "final callback failed");
         }
     }
 
@@ -339,7 +339,7 @@ async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str, cancelled: impl Fu
     {
         Ok(finished) => finished,
         Err(e) => {
-            tracing::error!(executor = %cfg.executor, error = %e, "Failed to spawn CLI process");
+            tracing::error!(executor = %cfg.executor, error = ?e, "Failed to spawn CLI process");
             return CliRunResult {
                 status: "failed".into(),
                 exit_code: None,
@@ -746,16 +746,16 @@ async fn dispatch_openclaw(config: &Config, background: &Background, agent: &Age
     match run_subprocess_with_timeout(&cfg.command, &args, timeout, background.cancelled()).await {
         Ok(o) if o.success => {
             let out = o.stdout.trim();
-            tracing::info!("openclaw ok: {out}");
+            tracing::info!(stdout = ?out, "openclaw ok");
             format!("ok: {out}")
         }
         Ok(o) => {
             let err = o.stderr.trim();
-            tracing::error!("openclaw failed: {err}");
+            tracing::error!(stderr = ?err, "openclaw failed");
             format!("error: {err}")
         }
         Err(e) => {
-            tracing::error!("openclaw exec failed: {e}");
+            tracing::error!(error = ?e, "openclaw exec failed");
             format!("exec_error: {e}")
         }
     }
@@ -792,11 +792,11 @@ async fn dispatch_openprx(config: &Config, background: &Background, agent: &Agen
             Ok(resp) => {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
-                tracing::error!("openprx signal {status}: {text}");
+                tracing::error!(%status, body = ?text, "openprx signal request refused");
                 format!("error: {status} {text}")
             }
             Err(e) => {
-                tracing::error!("openprx signal request failed: {e}");
+                tracing::error!(error = ?e.to_string(), "openprx signal request failed");
                 format!("error: {e}")
             }
         };
@@ -814,7 +814,7 @@ async fn dispatch_openprx(config: &Config, background: &Background, agent: &Agen
             }
             Ok(o) => {
                 let err = o.stderr.trim();
-                tracing::error!("openprx cli failed: {err}");
+                tracing::error!(stderr = ?err, "openprx cli failed");
                 format!("error: {err}")
             }
             Err(e) => format!("exec_error: {e}"),
@@ -871,7 +871,7 @@ async fn dispatch_custom(config: &Config, background: &Background, agent: &Agent
     ) {
         Ok(args) => args,
         Err(e) => {
-            tracing::warn!(agent = %agent.id, "custom agent not run: {e}");
+            tracing::warn!(agent = ?agent.id, reason = ?e, "custom agent not run");
             return format!("custom_error: {e}");
         }
     };
