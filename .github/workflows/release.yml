@@ -14,7 +14,11 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: openpr-webhook
+  # Canonical name. Every archive also ships the legacy openpr-webhook executable, and each
+  # archive is published a second time under the legacy openpr-webhook-<suffix> name (same bytes,
+  # own sha256) for the whole 1.x line.
+  BINARY_NAME: sylvode-webhook
+  LEGACY_BINARY_NAME: openpr-webhook
 
 jobs:
   build:
@@ -69,20 +73,90 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package
+        shell: bash
         run: |
+          set -euo pipefail
           cd target/${{ matrix.target }}/release
-          chmod +x openpr-webhook || true
-          tar czf ../../../openpr-webhook-${{ matrix.suffix }}.tar.gz openpr-webhook
+          chmod +x "$BINARY_NAME" "$LEGACY_BINARY_NAME"
+          tar czf "../../../$BINARY_NAME-${{ matrix.suffix }}.tar.gz" "$BINARY_NAME" "$LEGACY_BINARY_NAME"
           cd ../../..
-          sha256sum openpr-webhook-${{ matrix.suffix }}.tar.gz > openpr-webhook-${{ matrix.suffix }}.tar.gz.sha256
+          cp "$BINARY_NAME-${{ matrix.suffix }}.tar.gz" "$LEGACY_BINARY_NAME-${{ matrix.suffix }}.tar.gz"
+          sha256sum "$BINARY_NAME-${{ matrix.suffix }}.tar.gz" > "$BINARY_NAME-${{ matrix.suffix }}.tar.gz.sha256"
+          sha256sum "$LEGACY_BINARY_NAME-${{ matrix.suffix }}.tar.gz" > "$LEGACY_BINARY_NAME-${{ matrix.suffix }}.tar.gz.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openpr-webhook-${{ matrix.suffix }}
+          name: sylvode-webhook-${{ matrix.suffix }}
           path: |
-            openpr-webhook-${{ matrix.suffix }}.*
+            sylvode-webhook-${{ matrix.suffix }}.tar.gz
+            sylvode-webhook-${{ matrix.suffix }}.tar.gz.sha256
+            openpr-webhook-${{ matrix.suffix }}.tar.gz
+            openpr-webhook-${{ matrix.suffix }}.tar.gz.sha256
           if-no-files-found: ignore
+
+  image:
+    # Builds the container image once and pushes the same manifest under both names, so
+    # ghcr.io/openprx/sylvode-webhook and the legacy ghcr.io/openprx/openpr-webhook share a digest.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/openprx/sylvode-webhook
+            ghcr.io/openprx/openpr-webhook
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.tag.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.tag.outputs.tag }}
+            type=raw,value=latest
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Verify both names resolve to one digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.tag.outputs.tag }}"
+          version="${version#v}"
+          canonical=$(docker buildx imagetools inspect "ghcr.io/openprx/sylvode-webhook:$version" --format '{{.Manifest.Digest}}')
+          legacy=$(docker buildx imagetools inspect "ghcr.io/openprx/openpr-webhook:$version" --format '{{.Manifest.Digest}}')
+          echo "sylvode-webhook:$version -> $canonical"
+          echo "openpr-webhook:$version -> $legacy"
+          test "$canonical" = "$legacy"
+          test "$canonical" = "${{ steps.build.outputs.digest }}"
 
   release:
     needs: build
@@ -106,16 +180,25 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: OpenPR Webhook ${{ steps.tag.outputs.tag }}
+          name: Sylvode Webhook ${{ steps.tag.outputs.tag }}
           files: artifacts/*
           body: |
-            ## OpenPR Webhook ${{ steps.tag.outputs.tag }}
+            ## Sylvode Webhook ${{ steps.tag.outputs.tag }}
 
-            GitHub webhook dispatcher for OpenPR.
+            Webhook receiver and agent dispatcher for Sylvode (formerly OpenPR Webhook).
 
             | Platform | Architecture | File |
             |----------|-------------|------|
-            | Linux | x86_64 | `openpr-webhook-linux-amd64.tar.gz` |
-            | Linux | ARM64 | `openpr-webhook-linux-arm64.tar.gz` |
-            | macOS | Intel | `openpr-webhook-macos-amd64.tar.gz` |
-            | macOS | Apple Silicon | `openpr-webhook-macos-arm64.tar.gz` |
+            | Linux | x86_64 | `sylvode-webhook-linux-amd64.tar.gz` |
+            | Linux | ARM64 | `sylvode-webhook-linux-arm64.tar.gz` |
+            | macOS | Intel | `sylvode-webhook-macos-amd64.tar.gz` |
+            | macOS | Apple Silicon | `sylvode-webhook-macos-arm64.tar.gz` |
+
+            Each archive contains the `sylvode-webhook` executable and the legacy `openpr-webhook`
+            executable, which runs the same program and prints a deprecation notice. Matching
+            `openpr-webhook-<platform>.tar.gz` archives with the same contents are retained as
+            aliases, each with its own `.sha256`. The legacy names are not removed before v2.0.
+
+            Container image: `ghcr.io/openprx/sylvode-webhook` (tags `<version>`, `<major>.<minor>`
+            and `latest`, without the leading `v`), also published as the legacy
+            `ghcr.io/openprx/openpr-webhook` with the same digest.
