@@ -106,6 +106,7 @@ listen = "0.0.0.0:9090"
 [security]
 webhook_secrets = ["a-long-random-secret"]  # blank entries and example placeholders refuse start-up
 allow_unsigned = false  # true only for local development; see below
+max_delivery_age_secs = 300  # refuse signed deliveries whose timestamp is further from now; 0 = off
 
 # Feature gates (safe defaults). A cli agent does nothing unless cli_enabled is
 # true, and no callback is sent unless callback_enabled is true.
@@ -494,8 +495,8 @@ A value that is missing renders as an empty string in `message_template` (`unkno
 | `/webhook` | POST | Receive a webhook delivery or worker AI task |
 | `/health` | GET | Health check; answers `ok` |
 
-`/webhook` answers `401` for a missing, invalid or conflicting signature and `400` for a body that
-is not JSON. Otherwise it answers `200` with a JSON status: `ignored` (not a bot task), `no_agent`
+`/webhook` answers `401` for a missing, invalid or conflicting signature or a stale delivery, `409`
+for a replayed one, and `400` for a body that is not JSON. Otherwise it answers `200` with a JSON status: `ignored` (not a bot task), `no_agent`
 (no agent matched), or `dispatched` with the agent id and the dispatch result (for a `cli` agent,
 the run continues in the background).
 
@@ -509,6 +510,16 @@ keyed with one of `webhook_secrets`. It is accepted in any of these headers:
 | `X-Sylvode-Signature` | Canonical |
 | `X-Webhook-Signature` | Canonical; the header the Sylvode API sends today |
 | `X-OpenPR-Signature` | Legacy; accepted with a deprecation notice, not removed before Sylvode v2.0 |
+
+### Replayed requests
+
+A signature proves who wrote a body, not when it was sent. For a signed request, two fields inside
+the signed body are therefore checked as well: a webhook delivery whose `timestamp` is more than
+`max_delivery_age_secs` (default 300) away from the receiver's clock, in either direction, is
+refused with `401`, and a delivery whose `id` was already received (for a worker AI task: the same
+`task_id` and `attempts`) is refused with `409`. Received keys are remembered for twice the window
+(at least 10 minutes), up to 10,000 of them. Keep the clocks of Sylvode and this receiver in sync.
+A body without these fields, which Sylvode does not send, is not checked.
 
 Every signature header present is read. When they carry different signatures (or one header is
 repeated with different values) the request is refused with `401`, even if one of them is valid: an

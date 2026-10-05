@@ -170,9 +170,11 @@ async fn serve(config: config::Config) -> ExitCode {
     tracing::info!("Loaded {} agent(s)", config.agents.len());
 
     let background = Background::new(config.runtime.cli_max_concurrency);
+    let replay = tokio::sync::Mutex::new(crate::replay::ReplayGuard::new(config.security.max_delivery_age_secs));
     let state = Arc::new(AppState {
         config,
         background: background.clone(),
+        replay,
     });
 
     let tunnel_state = Arc::new(state.config.clone());

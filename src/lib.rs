@@ -13,6 +13,7 @@ mod config;
 mod dispatcher;
 mod handler;
 mod process;
+mod replay;
 mod signature;
 mod tunnel;
 
@@ -22,4 +23,5 @@ pub use compat::Invocation;
 pub(crate) struct AppState {
     pub config: config::Config,
     pub background: background::Background,
+    pub replay: tokio::sync::Mutex<replay::ReplayGuard>,
 }

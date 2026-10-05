@@ -1,4 +1,4 @@
-use crate::{AppState, compat, config::AgentConfig, dispatcher, signature};
+use crate::{AppState, compat, config::AgentConfig, dispatcher, replay::Refusal, signature};
 use axum::{
     Json,
     extract::State,
@@ -224,17 +224,36 @@ pub async fn handle_webhook(
     // 2. Parse payload
     let payload: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
 
+    // 3. A signed request must not be a replay of an earlier one.
+    if !state.config.security.allow_unsigned {
+        let checked = state.replay.lock().await.check(&payload);
+        match checked {
+            Ok(()) => {}
+            Err(Refusal::Stale { skew_secs }) => {
+                tracing::warn!(
+                    skew_secs,
+                    "Refused a delivery whose timestamp is {skew_secs}s away from now (replay or clock skew)"
+                );
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+            Err(Refusal::Duplicate { key }) => {
+                tracing::warn!(key = ?key, "Refused a delivery that was already received (replay)");
+                return Err(StatusCode::CONFLICT);
+            }
+        }
+    }
+
     let event = payload.get("event").and_then(Value::as_str).unwrap_or("unknown");
     tracing::info!("Received webhook event: {event}");
 
-    // 3. Check if bot task. Supports both direct Sylvode webhook payloads
+    // 4. Check if bot task. Supports both direct Sylvode webhook payloads
     // and worker-dispatched ai_tasks envelopes.
     let Some(target) = bot_dispatch_target(&payload) else {
         tracing::debug!(event = %event, "Webhook event dropped: is_bot_task=false");
         return Ok(Json(json!({"status": "ignored", "reason": "not_bot_task"})));
     };
 
-    // 4. Find matching agent
+    // 5. Find matching agent
     let route = json!({
         "bot_key": &target.bot_key,
         "bot_name": target.bot_name.as_deref(),
