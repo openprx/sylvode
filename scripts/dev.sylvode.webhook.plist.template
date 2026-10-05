@@ -2,16 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  launchd user agent for openpr-webhook.
-  Installed to: ~/Library/LaunchAgents/dev.openpr.webhook.plist
-  Load:   launchctl load ~/Library/LaunchAgents/dev.openpr.webhook.plist
-  Unload: launchctl unload ~/Library/LaunchAgents/dev.openpr.webhook.plist
+  launchd user agent for Sylvode Webhook.
+  Installed to: ~/Library/LaunchAgents/{{LABEL}}.plist
+  Load:   launchctl load ~/Library/LaunchAgents/{{LABEL}}.plist
+  Unload: launchctl unload ~/Library/LaunchAgents/{{LABEL}}.plist
 -->
 <plist version="1.0">
 <dict>
     <!-- Unique reverse-DNS label for this agent -->
     <key>Label</key>
-    <string>dev.openpr.webhook</string>
+    <string>{{LABEL}}</string>
 
     <!-- Full command line: binary followed by the config file path -->
     <key>ProgramArguments</key>
@@ -55,10 +55,10 @@
 
     <!-- Redirect stdout to a log file under ~/Library/Logs/ -->
     <key>StandardOutPath</key>
-    <string>{{LOG_DIR}}/openpr-webhook.log</string>
+    <string>{{LOG_DIR}}/{{LOG_NAME}}.log</string>
 
     <!-- Redirect stderr to a separate error log file -->
     <key>StandardErrorPath</key>
-    <string>{{LOG_DIR}}/openpr-webhook.error.log</string>
+    <string>{{LOG_DIR}}/{{LOG_NAME}}.error.log</string>
 </dict>
 </plist>

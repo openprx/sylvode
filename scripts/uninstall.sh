@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# uninstall.sh — Remove the openpr-webhook system service
+# uninstall.sh — Remove the Sylvode Webhook system service
 #
 # Stops the running service (if any) and removes the service/agent file for
-# both Linux (systemd user service) and macOS (launchd user agent).
+# both Linux (systemd user service) and macOS (launchd user agent). Both the
+# canonical names (sylvode-webhook.service, dev.sylvode.webhook) and the
+# legacy names (openpr-webhook.service, dev.openpr.webhook) are removed.
 #
 # Usage:
 #   ./scripts/uninstall.sh
@@ -38,8 +40,29 @@ log "Detected platform: $PLATFORM"
 # ---------------------------------------------------------------------------
 
 uninstall_linux() {
-    local service_name="openpr-webhook"
+    local service_name
+    for service_name in sylvode-webhook openpr-webhook; do
+        uninstall_linux_unit "$service_name"
+    done
+
+    cat <<EOF
+
+  Uninstall complete (Linux / systemd).
+
+  The binary and config.toml are NOT removed.
+  Delete them manually if no longer needed.
+
+EOF
+}
+
+uninstall_linux_unit() {
+    local service_name="$1"
     local service_file="$HOME/.config/systemd/user/${service_name}.service"
+
+    if [[ ! -f "$service_file" ]]; then
+        log "Not installed: $service_name"
+        return
+    fi
 
     if ! command -v systemctl &>/dev/null; then
         warn "systemctl not found; cannot manage the service automatically."
@@ -74,15 +97,6 @@ uninstall_linux() {
     # Tell systemd to forget about the now-absent unit.
     systemctl --user daemon-reload
     log "systemd user daemon reloaded"
-
-    cat <<EOF
-
-  Uninstall complete (Linux / systemd).
-
-  The binary and config.toml are NOT removed.
-  Delete them manually if no longer needed.
-
-EOF
 }
 
 # ---------------------------------------------------------------------------
@@ -90,8 +104,28 @@ EOF
 # ---------------------------------------------------------------------------
 
 uninstall_macos() {
-    local label="dev.openpr.webhook"
+    uninstall_macos_agent "dev.sylvode.webhook" "sylvode-webhook"
+    uninstall_macos_agent "dev.openpr.webhook" "openpr-webhook"
+
+    cat <<EOF
+
+  Uninstall complete (macOS / launchd).
+
+  The binary and config.toml are NOT removed.
+  Delete them manually if no longer needed.
+
+EOF
+}
+
+uninstall_macos_agent() {
+    local label="$1"
+    local log_name="$2"
     local plist_file="$HOME/Library/LaunchAgents/${label}.plist"
+
+    if [[ ! -f "$plist_file" ]] && ! launchctl list 2>/dev/null | grep -q "$label"; then
+        log "Not installed: $label"
+        return
+    fi
 
     # Unload the agent if it is currently loaded (stops it and removes it
     # from launchd's memory).
@@ -119,22 +153,13 @@ uninstall_macos() {
     fi
 
     # Note: log files are left in place so the user can review them.
-    local log_out="$HOME/Library/Logs/openpr-webhook.log"
-    local log_err="$HOME/Library/Logs/openpr-webhook.error.log"
+    local log_out="$HOME/Library/Logs/${log_name}.log"
+    local log_err="$HOME/Library/Logs/${log_name}.error.log"
     if [[ -f "$log_out" ]] || [[ -f "$log_err" ]]; then
         warn "Log files were NOT removed. Delete manually if desired:"
         [[ -f "$log_out" ]] && warn "  $log_out"
         [[ -f "$log_err" ]] && warn "  $log_err"
     fi
-
-    cat <<EOF
-
-  Uninstall complete (macOS / launchd).
-
-  The binary and config.toml are NOT removed.
-  Delete them manually if no longer needed.
-
-EOF
 }
 
 # ---------------------------------------------------------------------------

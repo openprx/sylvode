@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenPR Webhook Service
+Description=Sylvode Webhook Service
 Documentation=https://github.com/openprx/openpr-webhook
 After=network.target
 Wants=network-online.target
@@ -16,7 +16,7 @@ RestartSec=5
 # Limit restart attempts to 5 within a 2-minute window to avoid tight loops.
 StartLimitInterval=120
 StartLimitBurst=5
-# Write logs to the systemd journal; view with: journalctl --user -u openpr-webhook
+# Write logs to the systemd journal; view with: journalctl --user -u {{UNIT_NAME}}
 StandardOutput=journal
 StandardError=journal
 

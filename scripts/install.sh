@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# install.sh — Cross-platform installer for openpr-webhook
+# install.sh — Cross-platform installer for Sylvode Webhook
 #
 # Supports:
-#   Linux  — installs a systemd user service
-#   macOS  — installs a launchd user agent (LaunchAgents plist)
+#   Linux  — installs a systemd user service (sylvode-webhook.service)
+#   macOS  — installs a launchd user agent (dev.sylvode.webhook)
+#
+# An existing installation under the legacy names (openpr-webhook.service,
+# dev.openpr.webhook) is updated in place under its old name, so units that
+# are already enabled keep working; the installer prints a deprecation
+# notice. Having both the legacy and the canonical service installed is an
+# error, because both would bind the same port.
 #
 # Usage:
 #   ./scripts/install.sh [--binary-path <path>] [--config-dir <path>]
 #
 # Options:
-#   --binary-path PATH   Path to the openpr-webhook binary.
-#                        Default: ./openpr-webhook, then
-#                                 ./target/release/openpr-webhook
+#   --binary-path PATH   Path to the sylvode-webhook binary.
+#                        Default: ./sylvode-webhook, then
+#                                 ./target/release/sylvode-webhook; the
+#                                 legacy openpr-webhook name is tried last
 #   --config-dir  PATH   Directory that contains config.toml (and will be
 #                        used as the service working directory).
 #                        Default: current working directory
@@ -22,8 +29,8 @@
 #
 #   # Explicit paths
 #   ./scripts/install.sh \
-#       --binary-path /usr/local/bin/openpr-webhook \
-#       --config-dir  /etc/openpr-webhook
+#       --binary-path /usr/local/bin/sylvode-webhook \
+#       --config-dir  /etc/sylvode-webhook
 
 set -euo pipefail
 
@@ -34,6 +41,15 @@ set -euo pipefail
 log()  { printf '\033[1;32m[install]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
+# deprecated KIND OLD NEW
+deprecated() {
+    warn "the $1 $2 is deprecated, use $3 instead; $2 is not removed before v2.0"
+}
+
+CANONICAL_NAME="sylvode-webhook"
+LEGACY_NAME="openpr-webhook"
+CANONICAL_LABEL="dev.sylvode.webhook"
+LEGACY_LABEL="dev.openpr.webhook"
 
 # resolve_path: canonicalise a path without requiring it to exist yet.
 # Falls back to a simple absolute-path construction when realpath is absent.
@@ -104,10 +120,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -z "$BINARY_PATH" ]]; then
     # Try common locations in order of preference.
     for candidate in \
-        "$PWD/openpr-webhook" \
-        "$PWD/target/release/openpr-webhook" \
-        "$SCRIPT_DIR/../openpr-webhook" \
-        "$SCRIPT_DIR/../target/release/openpr-webhook"
+        "$PWD/$CANONICAL_NAME" \
+        "$PWD/target/release/$CANONICAL_NAME" \
+        "$SCRIPT_DIR/../$CANONICAL_NAME" \
+        "$SCRIPT_DIR/../target/release/$CANONICAL_NAME" \
+        "$PWD/$LEGACY_NAME" \
+        "$PWD/target/release/$LEGACY_NAME" \
+        "$SCRIPT_DIR/../$LEGACY_NAME" \
+        "$SCRIPT_DIR/../target/release/$LEGACY_NAME"
     do
         if [[ -f "$candidate" ]]; then
             BINARY_PATH="$(resolve_path "$candidate")"
@@ -118,7 +138,7 @@ if [[ -z "$BINARY_PATH" ]]; then
 fi
 
 [[ -n "$BINARY_PATH" ]] \
-    || die "Could not locate the openpr-webhook binary. Build it first with
+    || die "Could not locate the $CANONICAL_NAME binary. Build it first with
        'cargo build --release', then re-run with --binary-path <path>."
 
 [[ -f "$BINARY_PATH" ]] \
@@ -129,6 +149,9 @@ fi
        Run: chmod +x $BINARY_PATH"
 
 log "Binary: $BINARY_PATH"
+if [[ "$(basename "$BINARY_PATH")" == "$LEGACY_NAME" ]]; then
+    deprecated "executable name" "$LEGACY_NAME" "$CANONICAL_NAME"
+fi
 
 # ---------------------------------------------------------------------------
 # Resolve config directory
@@ -188,8 +211,8 @@ log "Embedded PATH: $SERVICE_PATH"
 # Locate template files
 # ---------------------------------------------------------------------------
 
-SYSTEMD_TEMPLATE="$SCRIPT_DIR/openpr-webhook.service.template"
-LAUNCHD_TEMPLATE="$SCRIPT_DIR/dev.openpr.webhook.plist.template"
+SYSTEMD_TEMPLATE="$SCRIPT_DIR/sylvode-webhook.service.template"
+LAUNCHD_TEMPLATE="$SCRIPT_DIR/dev.sylvode.webhook.plist.template"
 
 if [[ "$PLATFORM" == "linux" && ! -f "$SYSTEMD_TEMPLATE" ]]; then
     die "systemd template not found: $SYSTEMD_TEMPLATE"
@@ -227,7 +250,21 @@ render_template() {
 
 install_linux() {
     local service_dir="$HOME/.config/systemd/user"
-    local service_file="$service_dir/openpr-webhook.service"
+    local canonical_file="$service_dir/$CANONICAL_NAME.service"
+    local legacy_file="$service_dir/$LEGACY_NAME.service"
+    local unit_name="$CANONICAL_NAME"
+
+    if [[ -f "$canonical_file" && -f "$legacy_file" ]]; then
+        die "Both $canonical_file and $legacy_file exist; they would bind the same port.
+       Stop and remove the legacy unit first:
+         systemctl --user disable --now $LEGACY_NAME && rm $legacy_file"
+    fi
+    if [[ -f "$legacy_file" ]]; then
+        unit_name="$LEGACY_NAME"
+        deprecated "systemd unit" "$LEGACY_NAME.service" "$CANONICAL_NAME.service"
+        warn "Updating the existing legacy unit in place. To migrate, run ./scripts/uninstall.sh and install again."
+    fi
+    local service_file="$service_dir/$unit_name.service"
 
     mkdir -p "$service_dir"
 
@@ -235,6 +272,7 @@ install_linux() {
         [BINARY_PATH]="$BINARY_PATH"
         [CONFIG_DIR]="$CONFIG_DIR"
         [PATH]="$SERVICE_PATH"
+        [UNIT_NAME]="$unit_name"
     )
 
     render_template "$SYSTEMD_TEMPLATE" "$service_file"
@@ -253,16 +291,16 @@ install_linux() {
   Installation complete (Linux / systemd user service).
 
   Start the service:
-    systemctl --user start openpr-webhook
+    systemctl --user start $unit_name
 
   Enable auto-start on login:
-    systemctl --user enable openpr-webhook
+    systemctl --user enable $unit_name
 
   Stop the service:
-    systemctl --user stop openpr-webhook
+    systemctl --user stop $unit_name
 
   View logs:
-    journalctl --user -u openpr-webhook -f
+    journalctl --user -u $unit_name -f
 
   Service file:
     $service_file
@@ -276,8 +314,22 @@ EOF
 
 install_macos() {
     local agents_dir="$HOME/Library/LaunchAgents"
-    local plist_file="$agents_dir/dev.openpr.webhook.plist"
     local log_dir="$HOME/Library/Logs"
+    local label="$CANONICAL_LABEL"
+    local log_name="$CANONICAL_NAME"
+
+    if [[ -f "$agents_dir/$CANONICAL_LABEL.plist" && -f "$agents_dir/$LEGACY_LABEL.plist" ]]; then
+        die "Both $CANONICAL_LABEL and $LEGACY_LABEL are installed; they would bind the same port.
+       Unload and remove the legacy agent first:
+         launchctl unload $agents_dir/$LEGACY_LABEL.plist && rm $agents_dir/$LEGACY_LABEL.plist"
+    fi
+    if [[ -f "$agents_dir/$LEGACY_LABEL.plist" ]]; then
+        label="$LEGACY_LABEL"
+        log_name="$LEGACY_NAME"
+        deprecated "launchd label" "$LEGACY_LABEL" "$CANONICAL_LABEL"
+        warn "Updating the existing legacy agent in place. To migrate, run ./scripts/uninstall.sh and install again."
+    fi
+    local plist_file="$agents_dir/$label.plist"
 
     mkdir -p "$agents_dir" "$log_dir"
 
@@ -286,6 +338,8 @@ install_macos() {
         [CONFIG_DIR]="$CONFIG_DIR"
         [PATH]="$SERVICE_PATH"
         [LOG_DIR]="$log_dir"
+        [LABEL]="$label"
+        [LOG_NAME]="$log_name"
     )
 
     render_template "$LAUNCHD_TEMPLATE" "$plist_file"
@@ -301,7 +355,7 @@ install_macos() {
     fi
 
     # If the agent is already loaded, unload it first to pick up changes.
-    if launchctl list 2>/dev/null | grep -q "dev.openpr.webhook"; then
+    if launchctl list 2>/dev/null | grep -q "$label"; then
         warn "Agent already loaded; unloading first to apply changes."
         launchctl unload "$plist_file" 2>/dev/null || true
     fi
@@ -314,20 +368,20 @@ install_macos() {
   Installation complete (macOS / launchd user agent).
 
   Start the agent (loads and starts automatically on login):
-    launchctl load ~/Library/LaunchAgents/dev.openpr.webhook.plist
+    launchctl load ~/Library/LaunchAgents/$label.plist
 
   Start immediately without waiting for login:
-    launchctl start dev.openpr.webhook
+    launchctl start $label
 
   Stop the agent:
-    launchctl stop dev.openpr.webhook
+    launchctl stop $label
 
   Unload (disable auto-start):
-    launchctl unload ~/Library/LaunchAgents/dev.openpr.webhook.plist
+    launchctl unload ~/Library/LaunchAgents/$label.plist
 
   View logs:
-    tail -f ~/Library/Logs/openpr-webhook.log
-    tail -f ~/Library/Logs/openpr-webhook.error.log
+    tail -f ~/Library/Logs/$log_name.log
+    tail -f ~/Library/Logs/$log_name.error.log
 
   Plist file:
     $plist_file
