@@ -110,12 +110,15 @@ pub fn verify_digest_hex<'a>(payload: &[u8], sig_hex: &str, secrets: impl IntoIt
     let Some(presented) = decode_digest_hex(sig_hex) else {
         return false;
     };
-    secrets.into_iter().filter(|secret| !secret.trim().is_empty()).any(|secret| {
-        HmacSha256::new_from_slice(secret.as_bytes()).is_ok_and(|mut mac| {
-            mac.update(payload);
-            mac.verify_slice(&presented).is_ok()
+    secrets
+        .into_iter()
+        .filter(|secret| !secret.trim().is_empty())
+        .any(|secret| {
+            HmacSha256::new_from_slice(secret.as_bytes()).is_ok_and(|mut mac| {
+                mac.update(payload);
+                mac.verify_slice(&presented).is_ok()
+            })
         })
-    })
 }
 
 /// Verifies an HTTP request signature, `sha256=<hex>` or bare `<hex>`, against `secrets`.

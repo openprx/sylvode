@@ -323,9 +323,11 @@ impl Config {
             .and_then(|t| t.hmac_secret.as_deref())
             .is_some_and(|secret| secret.trim().is_empty());
         if blank_hmac {
-            return Err("tunnel.hmac_secret is blank; an empty HMAC key lets anyone sign an envelope. Set it \
+            return Err(
+                "tunnel.hmac_secret is blank; an empty HMAC key lets anyone sign an envelope. Set it \
                         to the secret shared with the control plane, or remove the setting"
-                .to_string());
+                    .to_string(),
+            );
         }
         Ok(())
     }
@@ -622,7 +624,10 @@ url = "http://127.0.0.1:9000/hook"
             (r#"["a-real-secret", ""]"#, 1),
         ] {
             let err = load_str(&secrets_config(secrets)).expect_err("a blank secret is refused");
-            assert!(err.contains(&format!("security.webhook_secrets[{index}]")), "{secrets}: {err}");
+            assert!(
+                err.contains(&format!("security.webhook_secrets[{index}]")),
+                "{secrets}: {err}"
+            );
             assert!(err.contains("blank"), "{secrets}: {err}");
         }
         load_str(&secrets_config(r#"["a-real-secret"]"#)).expect("a real secret is accepted");
@@ -634,8 +639,12 @@ url = "http://127.0.0.1:9000/hook"
     fn refuses_a_blank_hmac_secret_whenever_it_is_present() {
         for (feature, enabled) in [(true, true), (false, true), (true, false), (false, false)] {
             for secret in ["hmac_secret = \"\"", "hmac_secret = \"   \""] {
-                let err = load_str(&tunnel_config(feature, enabled, &format!("require_inbound_sig = false\n{secret}")))
-                    .expect_err("a blank hmac_secret is refused");
+                let err = load_str(&tunnel_config(
+                    feature,
+                    enabled,
+                    &format!("require_inbound_sig = false\n{secret}"),
+                ))
+                .expect_err("a blank hmac_secret is refused");
                 assert!(err.contains("tunnel.hmac_secret"), "{err}");
                 assert!(err.contains("blank"), "{err}");
             }

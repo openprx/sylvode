@@ -3,6 +3,22 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.19
+
+### Fixed
+
+- The start-up line `sylvode-webhook listening on <address>` is written after the listener is
+  bound and names the address actually bound. Before, it was written before binding, so it
+  appeared even when binding then failed, and with `listen = "127.0.0.1:0"` it showed port `0`
+  instead of the port the system chose.
+
+### Tests
+
+- A new end-to-end suite (`tests/e2e`) runs the real executable against generated configurations.
+  It finds the server's port from the start-up line instead of reserving a port and releasing it
+  first, which could collide when tests run in parallel. It also compares the stdout of a
+  successful start under both executable names, and checks that a blank secret refuses start-up.
+
 ## 0.3.18
 
 ### Security
