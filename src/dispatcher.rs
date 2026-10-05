@@ -1,5 +1,6 @@
 use crate::{callback, config::AgentConfig, config::CliAgentConfig, config::Config};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -814,15 +815,61 @@ async fn dispatch_custom(config: &Config, agent: &AgentConfig, payload: &Value) 
     let message = format_message(agent, payload);
     let timeout = config.runtime.http_timeout_secs.max(DEFAULT_SUBPROCESS_TIMEOUT_SECS);
 
-    // Build args: use configured args or default to passing message as single arg
-    let configured_args: Vec<String> = cfg.args.clone().unwrap_or_default();
-    let mut final_args: Vec<&str> = configured_args.iter().map(String::as_str).collect();
-    final_args.push(&message);
+    let args = match build_custom_args(cfg.args.as_deref().unwrap_or_default(), &message) {
+        Ok(args) => args,
+        Err(e) => {
+            tracing::warn!(agent = %agent.id, "custom agent not run: {e}");
+            return format!("custom_error: {e}");
+        }
+    };
+    let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
 
-    match run_subprocess_with_timeout(&cfg.command, &final_args, timeout).await {
+    match run_subprocess_with_timeout(&cfg.command, &args, timeout).await {
         Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
         Err(e) => format!("custom_error: {e}"),
     }
+}
+
+const MESSAGE_PLACEHOLDER: &str = "{message}";
+
+/// Builds the argument list of a `custom` agent.
+///
+/// Each configured argument containing `{message}` has it replaced by the rendered message; the
+/// result stays exactly one argument (there is no shell and nothing is split). Without the
+/// placeholder in any argument, the message is appended as the last argument.
+///
+/// An argument that starts with `-` only because of the inserted message is refused, unless an
+/// earlier configured argument is `--`: payload text must never turn into an option of the
+/// command. An argument the operator wrote with a leading `-`, such as `--text={message}`, is
+/// left alone.
+fn build_custom_args<'a>(configured: &'a [String], message: &'a str) -> Result<Vec<Cow<'a, str>>, String> {
+    let has_placeholder = configured.iter().any(|arg| arg.contains(MESSAGE_PLACEHOLDER));
+    let mut args = Vec::with_capacity(configured.len() + 1);
+    let mut options_ended = false;
+    for arg in configured {
+        if arg.contains(MESSAGE_PLACEHOLDER) {
+            let rendered = render_template(arg, &[("message", message)]);
+            refuse_injected_option(arg, &rendered, options_ended)?;
+            args.push(Cow::Owned(rendered));
+        } else {
+            args.push(Cow::Borrowed(arg.as_str()));
+        }
+        options_ended |= arg == "--";
+    }
+    if !has_placeholder {
+        refuse_injected_option("", message, options_ended)?;
+        args.push(Cow::Borrowed(message));
+    }
+    Ok(args)
+}
+
+fn refuse_injected_option(configured: &str, rendered: &str, options_ended: bool) -> Result<(), String> {
+    if !options_ended && rendered.starts_with('-') && !configured.starts_with('-') {
+        return Err("the message starts with `-` and would be read as an option; \
+                    put `--` before it in args if the command accepts that"
+            .to_string());
+    }
+    Ok(())
 }
 
 fn format_message(agent: &AgentConfig, payload: &Value) -> String {
@@ -1386,6 +1433,70 @@ mcp_instructions = "Read issue {issue_id} before writing."
         *payload.pointer_mut("/data/issue/title").expect("fixture has a title") = json!("see {actor} and {issue_id}");
 
         assert_eq!(format_message(&agent, &payload), "see {actor} and {issue_id} by Alice");
+    }
+
+    fn custom_agent(args: &str, message_template: &str) -> crate::config::AgentConfig {
+        toml::from_str(&format!(
+            "id = 'logger'\nname = 'Logger'\nagent_type = 'custom'\nmessage_template = '{message_template}'\n\
+             [custom]\ncommand = 'printf'\nargs = {args}\n"
+        ))
+        .expect("parse agent")
+    }
+
+    fn titled(title: &str) -> serde_json::Value {
+        let mut payload = issue_assigned_delivery();
+        *payload.pointer_mut("/data/issue/title").expect("fixture has a title") = json!(title);
+        payload
+    }
+
+    /// `{message}` in `args` is replaced by the rendered message, and the message is then not
+    /// appended a second time.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn custom_args_substitute_the_message_placeholder() {
+        let agent = custom_agent(r#"["[%s]", "{message}"]"#, "{key} {title}");
+        let out = dispatch(&base_config(), &agent, &issue_assigned_delivery()).await;
+        assert_eq!(out, "[BIL-4C3B2A19 Invoice totals are rounded twice]");
+    }
+
+    /// Substituted text stays one argument, whatever it contains, and is never split or
+    /// interpreted by a shell.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn custom_args_keep_a_substituted_message_as_one_argument() {
+        let agent = custom_agent(r#"["[%s]", "--label={message}"]"#, "{title}");
+        let out = dispatch(&base_config(), &agent, &titled("a b \"c\" $(id); d")).await;
+        assert_eq!(out, "[--label=a b \"c\" $(id); d]");
+    }
+
+    /// Without the placeholder the message is appended as the last argument, as before.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn custom_args_without_placeholder_append_the_message() {
+        let agent = custom_agent(r#"["[%s]"]"#, "{key}");
+        let out = dispatch(&base_config(), &agent, &issue_assigned_delivery()).await;
+        assert_eq!(out, "[BIL-4C3B2A19]");
+    }
+
+    /// Payload text cannot become an option: an argument that starts with `-` only because of
+    /// the substituted message is refused unless an earlier argument is `--`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn custom_args_refuse_a_message_that_would_start_an_option() {
+        let config = base_config();
+        let payload = titled("-v x");
+
+        let substituted = custom_agent(r#"["[%s]", "{message}"]"#, "{title}");
+        let out = dispatch(&config, &substituted, &payload).await;
+        assert!(out.starts_with("custom_error:"), "{out}");
+        assert!(out.contains("starts with `-`"), "{out}");
+
+        let appended = custom_agent(r#"["[%s]"]"#, "{title}");
+        let out = dispatch(&config, &appended, &payload).await;
+        assert!(out.starts_with("custom_error:"), "{out}");
+
+        let separated = custom_agent(r#"["[%s]", "--", "{message}"]"#, "{title}");
+        assert_eq!(dispatch(&config, &separated, &payload).await, "[--][-v x]");
     }
 
     #[tokio::test]

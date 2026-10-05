@@ -3,6 +3,20 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.12
+
+### Fixed
+
+- **`{message}` in a `custom` agent's `args` is replaced by the rendered message**, as the README
+  example `args = ["{message}"]` always implied; before, the literal `{message}` was passed and the
+  message was appended after it. Each argument stays exactly one argument whatever the message
+  contains; there is no shell and nothing is split. Without the placeholder the message is still
+  appended as the last argument.
+- A `custom` agent is not run when the message would start an argument with `-` (so payload text
+  could be read as an option of the command), unless an earlier argument is `--`. The dispatch
+  result is a `custom_error:` line saying so. An argument written with a leading `-`, such as
+  `--text={message}`, is not affected.
+
 ## 0.3.11
 
 ### Changed
