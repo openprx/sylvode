@@ -6,13 +6,15 @@
 # writes one deprecation line to stderr. There is no ENTRYPOINT, so a compose `command` that names
 # either executable replaces CMD as a whole.
 
-FROM rust:1-bookworm AS builder
+# Base images are pinned by digest so a rebuild of the same commit uses the same bases; update the
+# tag and the digest together.
+FROM rust:1-bookworm@sha256:59037199c44290f2befcdd58dcc540164763fc296950255aaefeef096a1866b0 AS builder
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 RUN cargo build --release --locked --bins
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \

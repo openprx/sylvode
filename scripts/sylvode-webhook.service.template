@@ -7,10 +7,12 @@ Wants=network-online.target
 [Service]
 # PATH includes common locations for node, cargo binaries, and system tools.
 # Populated at install time from the installing user's shell PATH.
-Environment=PATH={{PATH}}
+Environment="PATH={{PATH}}"
 Type=simple
-WorkingDirectory={{CONFIG_DIR}}
-ExecStart={{BINARY_PATH}} {{CONFIG_DIR}}/config.toml
+WorkingDirectory={{WORKING_DIRECTORY}}
+ExecStart="{{BINARY_PATH}}" "{{CONFIG_DIR}}/config.toml"
+# Running executors are stopped and report their terminal callback on SIGTERM; allow for it.
+TimeoutStopSec=90
 Restart=on-failure
 RestartSec=5
 # Limit restart attempts to 5 within a 2-minute window to avoid tight loops.
