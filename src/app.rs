@@ -175,7 +175,6 @@ async fn serve(config: config::Config) -> ExitCode {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    tracing::info!("{} listening on {listen}", compat::CANONICAL_NAME);
     let listener = match tokio::net::TcpListener::bind(&listen).await {
         Ok(l) => l,
         Err(e) => {
@@ -183,6 +182,14 @@ async fn serve(config: config::Config) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // The address actually bound: with port 0 the system picks one, and that is the one to report.
+    match listener.local_addr() {
+        Ok(bound) => tracing::info!("{} listening on {bound}", compat::CANONICAL_NAME),
+        Err(e) => tracing::info!(
+            "{} listening on {listen} (bound address unknown: {e})",
+            compat::CANONICAL_NAME
+        ),
+    }
     if let Err(e) = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
