@@ -9,8 +9,9 @@ on:
         description: 'Release tag (e.g. v0.1.0)'
         required: true
 
+# Least privilege: every job reads only, except the two that publish (packages, release).
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,7 +22,49 @@ env:
   LEGACY_BINARY_NAME: openpr-webhook
 
 jobs:
+  prepare:
+    # The tag comes from the pushed ref or from the dispatch input. It is validated here, once,
+    # and every later job uses only this output; untrusted input never reaches a shell directly.
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Determine and validate the tag
+        id: tag
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="$REF_NAME"
+          fi
+          # [[ =~ ]] anchors to the whole string, so a value with a newline cannot pass.
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "The release tag must look like v1.2.3 or v1.2.3-rc.1" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - name: Test
+        run: cargo test --locked --all-features --no-fail-fast
+
   build:
+    needs: [prepare, test]
     strategy:
       fail-fast: false
       matrix:
@@ -41,51 +84,51 @@ jobs:
             suffix: macos-arm64
 
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.use_cross || false }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install cross
         if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: cargo install cross --locked --git https://github.com/cross-rs/cross --tag v0.2.5
 
-      - name: Install system deps (Linux)
-        if: runner.os == 'Linux' && !matrix.use_cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: ${{ matrix.target }}
 
       - name: Build (cross)
         if: matrix.use_cross
-        run: cross build --release --target ${{ matrix.target }}
+        run: cross build --release --locked --target ${{ matrix.target }}
 
       - name: Build (native)
         if: ${{ !matrix.use_cross }}
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package
         shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          SUFFIX: ${{ matrix.suffix }}
         run: |
           set -euo pipefail
-          cd target/${{ matrix.target }}/release
+          cd "target/$TARGET/release"
           chmod +x "$BINARY_NAME" "$LEGACY_BINARY_NAME"
-          tar czf "../../../$BINARY_NAME-${{ matrix.suffix }}.tar.gz" "$BINARY_NAME" "$LEGACY_BINARY_NAME"
+          tar czf "../../../$BINARY_NAME-$SUFFIX.tar.gz" "$BINARY_NAME" "$LEGACY_BINARY_NAME"
           cd ../../..
-          cp "$BINARY_NAME-${{ matrix.suffix }}.tar.gz" "$LEGACY_BINARY_NAME-${{ matrix.suffix }}.tar.gz"
-          sha256sum "$BINARY_NAME-${{ matrix.suffix }}.tar.gz" > "$BINARY_NAME-${{ matrix.suffix }}.tar.gz.sha256"
-          sha256sum "$LEGACY_BINARY_NAME-${{ matrix.suffix }}.tar.gz" > "$LEGACY_BINARY_NAME-${{ matrix.suffix }}.tar.gz.sha256"
+          cp "$BINARY_NAME-$SUFFIX.tar.gz" "$LEGACY_BINARY_NAME-$SUFFIX.tar.gz"
+          # shasum is present on both the Linux and the macOS runners.
+          shasum -a 256 "$BINARY_NAME-$SUFFIX.tar.gz" > "$BINARY_NAME-$SUFFIX.tar.gz.sha256"
+          shasum -a 256 "$LEGACY_BINARY_NAME-$SUFFIX.tar.gz" > "$LEGACY_BINARY_NAME-$SUFFIX.tar.gz.sha256"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sylvode-webhook-${{ matrix.suffix }}
           path: |
@@ -93,31 +136,25 @@ jobs:
             sylvode-webhook-${{ matrix.suffix }}.tar.gz.sha256
             openpr-webhook-${{ matrix.suffix }}.tar.gz
             openpr-webhook-${{ matrix.suffix }}.tar.gz.sha256
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   image:
     # Builds the container image once and pushes the same manifest under both names, so
     # ghcr.io/openprx/sylvode-webhook and the legacy ghcr.io/openprx/openpr-webhook share a digest.
+    needs: [prepare, test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
-      - name: Determine tag
-        id: tag
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -125,19 +162,19 @@ jobs:
 
       - name: Image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: |
             ghcr.io/openprx/sylvode-webhook
             ghcr.io/openprx/openpr-webhook
           tags: |
-            type=semver,pattern={{version}},value=${{ steps.tag.outputs.tag }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.tag.outputs.tag }}
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.tag }}
             type=raw,value=latest
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -147,43 +184,57 @@ jobs:
 
       - name: Verify both names resolve to one digest
         shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          version="${{ steps.tag.outputs.tag }}"
-          version="${version#v}"
+          version="${TAG#v}"
           canonical=$(docker buildx imagetools inspect "ghcr.io/openprx/sylvode-webhook:$version" --format '{{.Manifest.Digest}}')
           legacy=$(docker buildx imagetools inspect "ghcr.io/openprx/openpr-webhook:$version" --format '{{.Manifest.Digest}}')
           echo "sylvode-webhook:$version -> $canonical"
           echo "openpr-webhook:$version -> $legacy"
           test "$canonical" = "$legacy"
-          test "$canonical" = "${{ steps.build.outputs.digest }}"
+          test "$canonical" = "$DIGEST"
 
   release:
-    needs: build
-    if: always() && !cancelled()
+    # Published only when every archive and the image were built: a failed or skipped dependency
+    # must not produce a release with missing assets.
+    needs: [prepare, build, image]
+    if: >-
+      always() &&
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.image.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
           merge-multiple: true
-      - name: Determine tag
-        id: tag
+
+      - name: Check that every archive is present
+        shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
+          set -euo pipefail
+          for name in sylvode-webhook openpr-webhook; do
+            for suffix in linux-amd64 linux-arm64 macos-amd64 macos-arm64; do
+              test -s "artifacts/$name-$suffix.tar.gz"
+              test -s "artifacts/$name-$suffix.tar.gz.sha256"
+            done
+          done
+
       - name: Create or Update Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Sylvode Webhook ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Sylvode Webhook ${{ needs.prepare.outputs.tag }}
           files: artifacts/*
+          fail_on_unmatched_files: true
           body: |
-            ## Sylvode Webhook ${{ steps.tag.outputs.tag }}
+            ## Sylvode Webhook ${{ needs.prepare.outputs.tag }}
 
             Webhook receiver and agent dispatcher for Sylvode (formerly OpenPR Webhook).
 
@@ -202,3 +253,6 @@ jobs:
             Container image: `ghcr.io/openprx/sylvode-webhook` (tags `<version>`, `<major>.<minor>`
             and `latest`, without the leading `v`), also published as the legacy
             `ghcr.io/openprx/openpr-webhook` with the same digest.
+
+            Read the upgrade notes in CHANGELOG.md before upgrading: some configurations that
+            started before are refused now.
