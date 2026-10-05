@@ -242,9 +242,10 @@ names. An absolute path is what makes this work — the default
 `config/sylvode.toml` is relative to whatever working directory the MCP client
 happens to launch the process in.
 
-The legacy server command and `config/openpr.toml` remain supported in v0.9;
-see [the compatibility matrix](docs/sylvode-v0.9-compatibility.md) for conflict
-handling and the earliest possible removal versions.
+The legacy `mcp-server` CLI commands and `config/openpr.toml` remain supported
+and print a deprecation warning; they are not removed before Sylvode v2.0. See
+[the compatibility matrix](docs/sylvode-v1.0-compatibility.md) for conflict
+handling, the warnings and the earliest possible removal versions.
 
 > `--api-url`, `--bot-token`, `--workspace-id`, `--transport` and `--bind-addr`
 > exist as command-line overrides and win over the file. Prefer the file for
@@ -336,22 +337,23 @@ returns `_meta.canonical_uri` with the canonical identity.
 
 ### The same binary is a CLI
 
-Besides `serve`, `mcp-server` exposes 9 command groups: `projects`,
-`work-items`, `comments`, `labels`, `sprints`, `search`, `files upload`,
-`operation-logs list`, and `tools call`. The global `--format json|table` selects the output shape, and
-`tools call` reaches any of the 140 tools by name — a complete escape hatch for
-anything without a dedicated subcommand. A second `[[bin]]` in this same
-package, `sylvode`, is the native Flow CLI (`sylvode features flow get|set`,
-`sylvode objects create|patch|move|grants|get|inheritance|link|unlink|diff|relations|search` and
-`sylvode collab inspect|verify|projection-lag`); it
-shares this same `OpenPrClient`/config resolver and carries no `serve`.
+The `sylvode` CLI (a second `[[bin]]` in this same package) carries 9 workspace
+command groups: `projects`, `work-items`, `comments`, `labels`, `sprints`,
+`search`, `files upload`, `operation-logs list`, and `tools call`. The global
+`--format json|table` selects the output shape, and `tools call` reaches any of
+the 140 tools by name — a complete escape hatch for anything without a dedicated
+subcommand. It also carries the native Flow commands (`sylvode features flow
+get|set`, `sylvode objects create|patch|move|grants|get|inheritance|link|unlink|diff|relations|search`,
+`sylvode collab inspect|verify|projection-lag` and more) and no `serve`. The
+workspace groups are also available as `mcp-server <group>`, the same commands
+with the same output, which print a deprecation warning on stderr.
 
 ```bash
-mcp-server projects list --format table
-mcp-server work-items create --project <uuid> --title "Fix login" --priority high
-mcp-server files upload --file ./report.pdf
-mcp-server operation-logs list --outcome error --limit 50
-mcp-server tools call --name forms.list --args-json '{"project_id":"<uuid>"}'
+sylvode projects list --format table
+sylvode work-items create --project <uuid> --title "Fix login" --priority high
+sylvode files upload --file ./report.pdf
+sylvode operation-logs list --outcome error --limit 50
+sylvode tools call --name forms.list --args-json '{"project_id":"<uuid>"}'
 ```
 
 ## API

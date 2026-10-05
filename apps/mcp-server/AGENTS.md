@@ -100,7 +100,7 @@ curl -X POST http://localhost:8090/mcp/rpc \
 ## Testing Guidelines
 
 - MCP regression: test all 140 tools across 3 transports (HTTP, stdio, SSE), plus project-aware `tools/list` when a project id is supplied.
-- CLI business-flow coverage: use `mcp-server tools call --name <tool> --args-json '{...}'` for universal forms, plugins, operation records, and scenario tools so CLI calls reuse the same MCP tool names and audit path.
+- CLI business-flow coverage: use `sylvode tools call --name <tool> --args-json '{...}'` for universal forms, plugins, operation records, and scenario tools so CLI calls reuse the same MCP tool names and audit path.
 - API: test via `curl` or MCP client against running instance.
 - Frontend: `bun run build` must succeed.
 - When adding a new MCP tool:
