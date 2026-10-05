@@ -329,7 +329,7 @@ is enough, `docker stop` needs `--time 45` (its default is 10 s).
 
 | Variable | Effect |
 |----------|--------|
-| `SYLVODE_WEBHOOK_SAFE_MODE` | `1`/`true`/`yes`/`on` forces the tunnel, CLI and callback paths off at runtime — a one-switch rollback to webhook-only behavior |
+| `SYLVODE_WEBHOOK_SAFE_MODE` | `1`/`true`/`yes`/`on` forces the tunnel, CLI and callback paths off at runtime — a one-switch rollback to webhook-only behavior. `openclaw`, `openprx` and `custom` agents still run their commands |
 | `RUST_LOG` | Log filter. This service's events use the `sylvode_webhook` target, e.g. `RUST_LOG=sylvode_webhook=debug`; the default is `sylvode_webhook=info` |
 
 Logs are written to stdout. Deprecation notices for legacy names are written to stderr, once per
@@ -383,9 +383,12 @@ A callback is sent only when `[features].callback_enabled = true` and the agent 
 
 - **When.** For a `cli` agent selected from a webhook delivery: before the run, a start callback
   carrying `update_state_on_start`, if that is set; after the run, a final callback only when the
-  run failed or timed out (a successful agent reports through MCP itself). For a tunnel task: a
-  final callback after every run. With `skip_callback_state = true` no callback carries a state, so
-  no start callback is sent.
+  run failed, timed out or was cancelled by shutdown (a successful agent reports through MCP
+  itself), and only when `skip_callback_state` is `false`. For a tunnel task: a final callback after
+  every run; with `skip_callback_state = true` it carries no state.
+- **`skip_callback_state = true`** means the agent reports through MCP itself: no callback carries
+  a state, so no start callback is sent, and on the webhook path no callback is sent at all, even
+  for a failure. `callback_url` and `callback_token` are then only used by tunnel tasks.
 - **`callback = "mcp"`** (the default) sends JSON-RPC `tools/call` requests: `comments.create`
   with an execution report, then `work_items.update` when there is a state to set
   (`update_state_on_success`, or `update_state_on_fail` for a failure or timeout).
@@ -478,7 +481,10 @@ Signature behavior:
 Safety toggles:
 
 - `SYLVODE_WEBHOOK_SAFE_MODE=1` forces `tunnel/cli/callback` off at runtime.
-- This provides one-command rollback to legacy webhook-only behavior.
+- This provides one-command rollback to legacy webhook-only behavior. It does **not** stop
+  `openclaw`, `openprx` (command) or `custom` agents, which are part of that behaviour and run
+  their configured command for every matching bot task; remove or comment out such agents to stop
+  them.
 
 ## Templates
 
@@ -540,6 +546,11 @@ keyed with one of `webhook_secrets`. It is accepted in any of these headers:
 | `X-Webhook-Signature` | Canonical; the header the Sylvode API sends today |
 | `X-OpenPR-Signature` | Legacy; accepted with a deprecation notice, not removed before Sylvode v2.0 |
 
+Every signature header present is read. When they carry different signatures (or one header is
+repeated with different values) the request is refused with `401`, even if one of them is valid: an
+invalid signature cannot ride along a valid one. A non-ASCII signature value is refused the same
+way. With `allow_unsigned = true` signature headers are not read at all.
+
 ### Replayed requests
 
 A signature proves who wrote a body, not when it was sent. For a signed request, two fields inside
@@ -549,11 +560,6 @@ refused with `401`, and a delivery whose `id` was already received (for a worker
 `task_id` and `attempts`) is refused with `409`. Received keys are remembered for twice the window
 (at least 10 minutes), up to 10,000 of them. Keep the clocks of Sylvode and this receiver in sync.
 A body without these fields, which Sylvode does not send, is not checked.
-
-Every signature header present is read. When they carry different signatures (or one header is
-repeated with different values) the request is refused with `401`, even if one of them is valid: an
-invalid signature cannot ride along a valid one. A non-ASCII signature value is refused the same
-way. With `allow_unsigned = true` signature headers are not read at all.
 
 ## Deployment
 
@@ -577,9 +583,14 @@ Description=Sylvode Webhook Receiver
 After=network.target
 
 [Service]
+# A dedicated unprivileged user: cli executors run with bypassed permissions as this user.
+User=sylvode-webhook
+Group=sylvode-webhook
 ExecStart=/usr/local/bin/sylvode-webhook /etc/sylvode-webhook/config.toml
 WorkingDirectory=/etc/sylvode-webhook
 Restart=always
+# Running executors are stopped and report on SIGTERM; see Shutdown.
+TimeoutStopSec=90
 
 [Install]
 WantedBy=multi-user.target
@@ -588,12 +599,18 @@ WantedBy=multi-user.target
 ### Container image
 
 ```bash
-docker run -v ./config.toml:/etc/sylvode-webhook/config.toml:ro -p 9090:9090 \
+docker run --init --stop-timeout 45 -p 9090:9090 \
+  -v ./config.toml:/etc/sylvode-webhook/config.toml:ro \
   ghcr.io/openprx/sylvode-webhook:latest
 ```
 
-The image runs `/app/sylvode-webhook /etc/sylvode-webhook/config.toml` as a non-root user and
-contains the legacy `/app/openpr-webhook` as well, so a compose file whose `command` names
+Run it with `--init` (see [Stopping commands](#stopping-commands)) and `--stop-timeout 45` (see
+[Shutdown](#shutdown)). The image runs `/app/sylvode-webhook /etc/sylvode-webhook/config.toml` as
+the non-root user `sylvode` (uid 10001), so the mounted `config.toml` must be readable by uid
+10001, and `listen` must not be loopback inside the container (use `0.0.0.0:9090`, with a secret).
+The image contains only the webhook executables and CA certificates: no `codex`, `claude`,
+`opencode` or `openclaw`, so `cli`, `openclaw` and command-based agents need an image derived from
+this one that adds them. It contains the legacy `/app/openpr-webhook` as well, so a compose file whose `command` names
 `/app/openpr-webhook` keeps working. It is also published as `ghcr.io/openprx/openpr-webhook` with
 the same digest. See [`Dockerfile`](Dockerfile).
 
@@ -606,10 +623,9 @@ and the legacy `openpr-webhook` executable. The same archive is also published a
 
 ## Migrating from OpenPR Webhook
 
-Nothing has to change on upgrade: every legacy name below keeps working for the whole Sylvode 1.x
-line and is not removed before Sylvode v2.0. Using one writes a single deprecation line to stderr
-per process, naming the replacement. stdout and exit codes are the same for the legacy and the
-canonical name.
+Every legacy name below keeps working for the whole Sylvode 1.x line and is not removed before
+Sylvode v2.0. Using one writes a single deprecation line to stderr per process, naming the
+replacement. stdout and exit codes are the same for the legacy and the canonical name.
 
 | Legacy | Canonical | When both are supplied |
 |--------|-----------|------------------------|
@@ -621,6 +637,74 @@ canonical name.
 | `RUST_LOG` target `openpr_webhook` | `sylvode_webhook` | A directive for the same target with a different level refuses to start |
 | Service `openpr-webhook.service` / `dev.openpr.webhook` | `sylvode-webhook.service` / `dev.sylvode.webhook` | The installer refuses to proceed |
 | Outbound header `X-OpenPR-MCP-Surface` | `X-Sylvode-MCP-Surface` | Both are always sent with the same value |
+
+### Upgrade checks
+
+Upgrading from OpenPR Webhook 0.3.3 is not a drop-in replacement for every configuration. Start-up
+now refuses configurations that cannot work or are unsafe, and some behaviour changed. Before
+upgrading, run the new binary once against your configuration; it exits 1 with one of the errors
+below if something must change (`sylvode-webhook config.toml`, then stop it with Ctrl-C).
+
+#### Refused now
+
+Each of these started with 0.3.3 and refuses to start now. The error is logged on stdout as
+`failed to load config from <path>: <error>`, except where noted.
+
+| # | Configuration | Error (excerpt) | Fix |
+|---|---------------|-----------------|-----|
+| 1 | `route.trigger_kinds` contains a value Sylvode never sends, such as `assignment` from the old examples | ``agent `X`: route.trigger_kinds contains `assignment`, which Sylvode never sends; valid values: assigned, created, ...`` | Use the values in [Agent selection](#agent-selection): `assigned`, and `mentioned` (not `mention`) for a comment mention on a webhook delivery |
+| 2 | An `openclaw`, `openprx` or `custom` `command` with whitespace that names no file and cannot be split unambiguously (`args` also set, quotes or backslashes in it, or its first word is not a program on `PATH`) | ``agent `X`: openclaw.command `...` contains whitespace and is not an executable, and cannot be split unambiguously (<reason>); ... write ... command = "openclaw" and args = ["message", "send"]`` | Write `command` and `args` as the error shows. The plain documented form `command = "openclaw message send"` with `openclaw` on `PATH` still starts, with a deprecation warning |
+| 3 | An enabled tunnel with `require_inbound_sig = true` and no `hmac_secret` | `tunnel.require_inbound_sig = true requires a non-empty tunnel.hmac_secret: ...` | Set `hmac_secret` to the secret shared with the control plane, or remove `require_inbound_sig` |
+| 4 | An empty or blank entry in `security.webhook_secrets` | `security.webhook_secrets[N] is blank; an empty HMAC key lets anyone sign a request. ...` | Set the real secret or remove the entry |
+| 5 | A present but blank `tunnel.hmac_secret` (whether or not the tunnel is enabled) | `tunnel.hmac_secret is blank; an empty HMAC key lets anyone sign an envelope. ...` | Set the real secret or remove the setting |
+| 6 | An example placeholder secret: `your-secret-here` or the new example's placeholder in `webhook_secrets`; `shared-hmac-secret` in `tunnel.hmac_secret` | `security.webhook_secrets[N] is still the example placeholder; ...` / `tunnel.hmac_secret is still an example placeholder; ...` | Set a long random secret, the same as on the Sylvode webhook or the control plane |
+| 7 | `allow_unsigned = true` with a `listen` address other than loopback, as in the old `config.example.toml` (`0.0.0.0:9090`) | `security.allow_unsigned = true with server.listen = "0.0.0.0:9090", which is not a loopback address: ...` | Set `allow_unsigned = false` and a secret, or listen on `127.0.0.1`; only if unsigned access from the network is really intended, set `allow_unsigned_non_loopback = true` |
+| 8 | An enabled tunnel whose `url` is `ws://` to a host other than loopback | `tunnel.url = "ws://..." uses unencrypted ws:// to a host other than loopback, ...` | Use `wss://`, or set `tunnel.allow_insecure_transport = true` if the network path is trusted |
+| 9 | Both `SYLVODE_WEBHOOK_SAFE_MODE` and `OPENPR_WEBHOOK_SAFE_MODE` set, disagreeing | `SYLVODE_WEBHOOK_SAFE_MODE="1" and the legacy OPENPR_WEBHOOK_SAFE_MODE="0" disagree; set only SYLVODE_WEBHOOK_SAFE_MODE` | Set only the canonical variable |
+| 10 | `RUST_LOG` with an `openpr_webhook` directive and a `sylvode_webhook` directive for the same target at different levels | On stderr: `error: RUST_LOG directive "sylvode_webhook=error" and the legacy directive "openpr_webhook=debug" disagree; ...` | Use only `sylvode_webhook` directives |
+| 11 | A config path that starts with `-` (including exactly `-h`, `--help`, `-V`, `--version`) | On stderr: ``error: unknown option `-x`; see --help (write a config path that starts with `-` as ./-x)``, or help or version output | Pass the path as `./-x` |
+
+#### Behaves differently
+
+These configurations still start, but the service behaves differently:
+
+- **The tunnel connects.** It never could before (its handshake request was rejected locally), so
+  a configuration with the tunnel enabled starts receiving and running tasks.
+- **The one-string `command = "openclaw message send"`** runs as `openclaw` with
+  `args = ["message", "send"]`. With 0.3.3 every dispatch to such an agent failed to spawn, so it
+  starts sending messages.
+- **`{message}` in a `custom` agent's `args`** is replaced by the message. With 0.3.3 the literal
+  `{message}` was passed and the message appended after it.
+- **Agents without a template** get the rendered default message or prompt instead of literal
+  placeholder text (`[TPL_PROJECT] TPL_EVENT: ...`).
+- **Text from Sylvode that would start an argument with `-`** is not passed: a `custom` agent is
+  not run (`custom_error: ...`) and a `cli` run fails before starting the executor. A leading `-`
+  you wrote in `message_template` or `args` is allowed.
+- **Webhook-triggered `cli` runs wait for `cli_max_concurrency`** (default 1) slots shared with the
+  tunnel, instead of all running at once.
+- **Replays are refused:** a signed delivery whose `id` was already received is answered `409`, and
+  one whose `timestamp` is more than `max_delivery_age_secs` (300) from the receiver's clock `401`.
+  Keep the clocks in sync, or set `max_delivery_age_secs = 0`.
+- **Signature headers that disagree** are answered `401`, even if one of them is valid, and a
+  non-ASCII signature value is refused.
+- **The `/webhook` answer's `result`** is a short status; command output and remote error bodies
+  are logged instead (`Dispatch result detail=...`).
+- **Worker AI tasks:** the callback's issue is the task's `reference_id` and the agent type is
+  `ai_participant_agent_type`; the task's free-form `payload` no longer overrides either.
+  `route.trigger_kinds` is matched only against `bot_context.trigger_reason` and a worker task's
+  `trigger_kind`, not against `task_type` or the payload.
+- **Timeouts and shutdown stop the executor's whole process group** (see [Stopping
+  commands](#stopping-commands)). On `SIGTERM` or `SIGINT` the service sends each running `cli`
+  executor's terminal callback (`cancelled`, which sets `update_state_on_fail`), waits up to 40
+  seconds by default and exits 0; 0.3.3 had no signal handling and was killed, leaving executors
+  running and issues `in_progress`. Give the service manager enough stop time (see
+  [Shutdown](#shutdown)).
+- **Tunnel envelopes** for another `agent_id` are refused, and with `hmac_secret` so are envelopes
+  more than 300 seconds old and repeated envelope ids.
+- **Logs:** the target is `sylvode_webhook`, the listening line is written after binding and names
+  the bound address, and values from deliveries or commands are logged as escaped fields
+  (`event="..."`).
+- **Commands** get `/dev/null` as stdin.
 
 Unchanged on purpose: the configuration file format and its default path `config.toml`, the
 `/webhook` and `/health` routes, the outbound `X-Webhook-Signature`, the `openprx` agent type

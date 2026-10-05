@@ -1,7 +1,70 @@
 # Sylvode Webhook Changelog
 
-Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
-[GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
+Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
+earlier releases are described on the
+[GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.35 are released
+together as 0.3.35.
+
+## Upgrading from 0.3.3
+
+### Breaking: configurations that started with 0.3.3 and are refused now
+
+Each exits 1 at start-up with the error shown (logged as `failed to load config from <path>:
+<error>` unless noted). The README's [Upgrade checks](README.md#upgrade-checks) has the same list.
+
+1. `route.trigger_kinds` with a value Sylvode never sends, such as `assignment`:
+   ``agent `X`: route.trigger_kinds contains `assignment`, which Sylvode never sends; valid values:
+   ...``. Use `assigned`, `mentioned` and the other listed values. (0.3.11)
+2. An `openclaw`, `openprx` or `custom` `command` with whitespace that names no file and cannot be
+   split unambiguously (`args` also set, quotes or backslashes, or a first word that is no program):
+   ``agent `X`: openclaw.command `...` contains whitespace and is not an executable, and cannot be
+   split unambiguously (<reason>); ... command = "openclaw" and args = ["message", "send"]``. Write
+   `command` and `args` separately. The plain one-string form is still accepted. (0.3.13, 0.3.34)
+3. An enabled tunnel with `require_inbound_sig = true` and no `hmac_secret`:
+   `tunnel.require_inbound_sig = true requires a non-empty tunnel.hmac_secret: ...`. (0.3.16)
+4. A blank `security.webhook_secrets` entry: `security.webhook_secrets[N] is blank; ...`. (0.3.18)
+5. A present but blank `tunnel.hmac_secret`: `tunnel.hmac_secret is blank; ...`. (0.3.18)
+6. An example placeholder secret (`your-secret-here`, `shared-hmac-secret`, or the placeholder of
+   the current example): `security.webhook_secrets[N] is still the example placeholder; ...` or
+   `tunnel.hmac_secret is still an example placeholder; ...`. (0.3.20)
+7. `allow_unsigned = true` with a `listen` address other than loopback, as the old example had:
+   `security.allow_unsigned = true with server.listen = "0.0.0.0:9090", which is not a loopback
+   address: ...`. Verify signatures, listen on loopback, or set
+   `security.allow_unsigned_non_loopback = true`. (0.3.20)
+8. An enabled tunnel with a `ws://` URL to a host other than loopback:
+   `tunnel.url = "ws://..." uses unencrypted ws:// to a host other than loopback, ...`. Use
+   `wss://` or set `tunnel.allow_insecure_transport = true`. (0.3.33)
+9. `SYLVODE_WEBHOOK_SAFE_MODE` and `OPENPR_WEBHOOK_SAFE_MODE` both set and disagreeing:
+   `... disagree; set only SYLVODE_WEBHOOK_SAFE_MODE`. (0.3.9)
+10. `RUST_LOG` directives for `openpr_webhook` and `sylvode_webhook` on the same target with
+    different levels, on stderr: `error: RUST_LOG directive ... and the legacy directive ...
+    disagree; ...`. (0.3.9)
+11. A config path starting with `-`, including exactly `-h`, `--help`, `-V` or `--version`: taken
+    as an option (on stderr: ``error: unknown option `-x`; ...``). Pass it as `./-x`. (0.3.9,
+    0.3.31)
+
+### Behaviour changes
+
+- The tunnel connects; it never could before (0.3.32). An enabled tunnel starts running tasks.
+- The one-string `command = "openclaw message send"` runs, with a deprecation warning; with 0.3.3
+  every dispatch to it failed to spawn (0.3.34).
+- `{message}` in `custom` `args` is substituted (0.3.12); default templates are rendered (0.3.10).
+- Payload text that would start an argument with `-` stops a `custom` agent (0.3.12, 0.3.27) and a
+  `cli` run (0.3.26).
+- Webhook-triggered `cli` runs share the `cli_max_concurrency` limit with the tunnel (0.3.22).
+- Signed deliveries are refused when replayed (`409`) or stale (`401`, `max_delivery_age_secs`,
+  default 300) (0.3.23); signature headers that disagree are refused (0.3.9).
+- The `/webhook` answer's `result` no longer contains command output or remote error bodies
+  (0.3.29).
+- A worker task's free-form `payload` no longer chooses the callback's issue or the agent type
+  (0.3.24), and `trigger_kinds` ignores `task_type` and payload fields (0.3.25).
+- Timeouts and shutdown stop the executor's whole process group; `SIGTERM` sends each running
+  executor's terminal callback (`cancelled`) and waits up to 40 seconds by default (0.3.9, 0.3.21).
+- Tunnel envelopes for another `agent_id`, and signed envelopes that are stale or repeated, are
+  refused (0.3.33).
+- The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
+  (0.3.28); the listening line names the bound address (0.3.19).
 
 ## 0.3.35
 
@@ -266,6 +329,12 @@ Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are
 - Signature verification never accepts a signature under an empty or blank key, even if
   configuration validation were bypassed.
 
+### Build
+
+- `[lints]` denies every warning (rustc and clippy) and clippy's `disallowed_types` and
+  `disallowed_methods` (which `clippy.toml` points at `std::sync::Mutex` and `RwLock`), so a plain
+  `cargo check` or `cargo clippy` fails on them without `-D warnings`.
+
 ## 0.3.17
 
 ### Fixed
@@ -368,7 +437,12 @@ The README was checked against the code and the Sylvode API and corrected:
   version has sent, and `mention` for a mention in a comment, which a webhook delivery reports as
   `mentioned`; they now use `assigned` and `mentioned`.
 
+## 0.3.10
+
 ### Fixed
+
+- Templates are rendered in a single pass. A placeholder that appears inside a value taken from the
+  payload, such as an issue title containing `{actor}`, is no longer expanded.
 
 - **Default templates are filled in.** An `openclaw`, `openprx` or `custom` agent without a
   `message_template`, and a `cli` agent without a `prompt_template` (on the webhook path and the
@@ -377,8 +451,6 @@ The README was checked against the code and the Sylvode API and corrected:
   `[{project}] {event}: {key} {title}` / `{actor} | Trigger: {reason}` and
   `Fix issue {issue_id}: {title}` / `Context: {reason}` (each on two lines), rendered like a
   configured template.
-- Templates are rendered in a single pass. A placeholder that appears inside a value taken from the
-  payload, such as an issue title containing `{actor}`, is no longer expanded.
 
 ## 0.3.9
 
@@ -427,6 +499,11 @@ stderr per process that names the replacement. See the migration table in the
 - A config path that is not valid UTF-8 is reported as an error instead of panicking.
 - Prompt text given to CLI agents and the examples now name Sylvode. The examples no longer suggest
   `OPENPR_*` environment variables for the MCP server, which reads its own configuration file.
+
+### Security
+
+- rustls is updated from 0.23.37 to 0.23.45 for RUSTSEC-2026-0285: the older version accepted TLS
+  1.3 handshake messages across encryption level boundaries.
 
 ### Unchanged
 
