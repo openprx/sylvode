@@ -30,8 +30,8 @@ Built with **Rust** (Axum + SeaORM), **SvelteKit**, and **PostgreSQL 16**.
 ## Quick Start
 
 ```bash
-git clone https://github.com/openprx/openpr.git
-cd openpr
+git clone https://github.com/openprx/sylvode.git
+cd sylvode
 bash scripts/start.sh
 ```
 
@@ -446,17 +446,18 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 
 ## Related Projects
 
-| Repository                                                  | Description                                     |
-| ----------------------------------------------------------- | ----------------------------------------------- |
-| [openpr](https://github.com/openprx/openpr)                 | Core platform (this repo)                       |
-| [openpr-webhook](https://github.com/openprx/openpr-webhook) | Webhook receiver for external integrations      |
-| [prx](https://github.com/openprx/prx)                       | AI assistant framework with built-in OpenPR MCP |
-| [prx-memory](https://github.com/openprx/prx-memory)         | Local-first MCP memory for coding agents        |
-| [wacli](https://github.com/openprx/wacli)                   | WhatsApp CLI with JSON-RPC daemon               |
+| Repository                                                   | Description                                      |
+| ------------------------------------------------------------ | ------------------------------------------------ |
+| [Sylvode](https://github.com/openprx/sylvode)                | Core platform (this repo)                        |
+| [Sylvode Webhook](https://github.com/openprx/openpr-webhook) | Webhook receiver for external integrations       |
+| [prx](https://github.com/openprx/prx)                        | AI assistant framework with built-in Sylvode MCP |
+| [prx-memory](https://github.com/openprx/prx-memory)          | Local-first MCP memory for coding agents         |
+| [wacli](https://github.com/openprx/wacli)                    | WhatsApp CLI with JSON-RPC daemon                |
 
 ## Links
 
-[Documentation](https://docs.openprx.dev/en/openpr/) ·
+[Homepage](https://openprx.dev/sylvode) ·
+[Documentation](https://docs.openprx.dev/en/sylvode/) ·
 [Community](https://community.openprx.dev) · [OpenPRX](https://openprx.dev)
 
 ## License
