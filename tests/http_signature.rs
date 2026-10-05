@@ -10,7 +10,7 @@
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use std::net::TcpListener;
+use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -63,44 +63,48 @@ impl Drop for TempDir {
     }
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
-async fn start(binary: &str) -> Server {
-    let port = free_port();
-    let dir = std::env::temp_dir().join(format!("sylvode-webhook-it-{}-{port}", std::process::id()));
+/// Starts `binary` on a port the system chooses and reads that port from the listening line, so
+/// parallel tests cannot collide on a port reserved and released beforehand.
+fn start(binary: &str) -> Server {
+    let dir = std::env::temp_dir().join(format!("sylvode-webhook-it-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config = dir.join("config.toml");
     std::fs::write(
         &config,
-        format!("[server]\nlisten = \"127.0.0.1:{port}\"\n\n[security]\nwebhook_secrets = [\"{SECRET}\"]\nallow_unsigned = false\n"),
+        format!("[server]\nlisten = \"127.0.0.1:0\"\n\n[security]\nwebhook_secrets = [\"{SECRET}\"]\nallow_unsigned = false\n"),
     )
     .unwrap();
-    let child = Command::new(binary)
+    let mut child = Command::new(binary)
         .arg(&config)
         .env_remove("RUST_LOG")
         .env_remove("SYLVODE_WEBHOOK_SAFE_MODE")
         .env_remove("OPENPR_WEBHOOK_SAFE_MODE")
-        .stdout(Stdio::null())
+        .env("NO_COLOR", "1")
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn server");
-    let server = Server {
+    let stdout = child.stdout.take().expect("piped stdout");
+    let (tx, rx) = std::sync::mpsc::channel();
+    // Keeps draining stdout for the life of the process, so it never blocks on a full pipe.
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+    let mut server = Server {
         child: Some(child),
-        base: format!("http://127.0.0.1:{port}"),
+        base: String::new(),
         _dir: TempDir(dir),
     };
-    let client = reqwest::Client::new();
-    for _ in 0..200 {
-        if let Ok(resp) = client.get(format!("{}/health", server.base)).send().await
-            && resp.status().is_success()
-        {
+    while let Ok(line) = rx.recv_timeout(Duration::from_secs(20)) {
+        if let Some((_, addr)) = line.split_once(" listening on ") {
+            server.base = format!("http://{}", addr.trim());
             return server;
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    panic!("{binary} did not become healthy");
+    let _ = server.child().kill();
+    panic!("{binary} did not report a listening address");
 }
 
 /// Stops the server and returns its stderr lines.
@@ -170,7 +174,7 @@ fn cases(good: &str, bad: &str) -> Vec<Case> {
 async fn answers(binary: &str) -> (Vec<(u16, String)>, Vec<String>) {
     let (good, bad) = (sign(SECRET), sign("not-the-secret"));
     assert_ne!(good, bad);
-    let server = start(binary).await;
+    let server = start(binary);
     let mut results = Vec::new();
     for (label, headers, expected) in cases(&good, &bad) {
         let borrowed: Vec<(&str, &str)> = headers.iter().map(|(n, v)| (*n, v.as_str())).collect();
@@ -198,7 +202,7 @@ async fn both_names_answer_every_header_case_identically() {
 #[tokio::test]
 async fn canonical_name_and_headers_write_no_notice() {
     let good = sign(SECRET);
-    let server = start(CANONICAL).await;
+    let server = start(CANONICAL);
     assert_eq!(post(&server, &[("x-sylvode-signature", &good)]).await.0, 200);
     assert_eq!(post(&server, &[("x-webhook-signature", &good)]).await.0, 200);
     let stderr = stop(server);
@@ -211,7 +215,7 @@ async fn canonical_name_and_headers_write_no_notice() {
 #[cfg(unix)]
 #[tokio::test]
 async fn sigterm_stops_the_server_cleanly() {
-    let mut server = start(CANONICAL).await;
+    let mut server = start(CANONICAL);
     let status = Command::new("kill")
         .args(["-TERM", &server.child().id().to_string()])
         .status()
