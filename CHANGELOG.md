@@ -3,6 +3,15 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.31
+
+### Changed
+
+- **An unknown option is a usage error.** An argument that starts with `-` and is not `-h`,
+  `--help`, `-V` or `--version` now exits 1 with `error: unknown option ...` on stderr. Before, it
+  was taken as the config path (`--bogus-flag` gave `failed to read config --bogus-flag`). A config
+  file whose name starts with `-` is given as `./-name`.
+
 ## 0.3.30
 
 ### Fixed
