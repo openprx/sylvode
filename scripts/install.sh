@@ -180,11 +180,10 @@ log "Config directory: $CONFIG_DIR"
 
 EXTRA_PATHS=(
     "$HOME/.cargo/bin"
-    "$HOME/.nvm/versions/node/v22.22.1/bin"  # nvm default on dev machines
-    "$HOME/.nvm/versions/node/v20/bin"
+    "${NVM_BIN:-}"             # the node of the active nvm version, if any
     "$HOME/.local/bin"
     "/usr/local/bin"
-    "/opt/homebrew/bin"   # macOS Apple Silicon Homebrew
+    "/opt/homebrew/bin"        # macOS Apple Silicon Homebrew
     "/usr/local/opt/node/bin"  # macOS Homebrew node (Intel)
     "/usr/bin"
     "/bin"
@@ -192,19 +191,18 @@ EXTRA_PATHS=(
     "/sbin"
 )
 
-# Start from the current PATH and prepend the extras, deduplicating.
-declare -A _seen
-_seen_order=()
+# Start from the extras, then the current PATH, dropping empty and repeated entries. Plain
+# string matching keeps this working in the bash 3.2 that macOS ships (no associative arrays).
+SERVICE_PATH=""
 IFS=: read -ra _existing_paths <<< "$PATH"
 for p in "${EXTRA_PATHS[@]}" "${_existing_paths[@]}"; do
     [[ -z "$p" ]] && continue
-    if [[ -z "${_seen[$p]+set}" ]]; then
-        _seen[$p]=1
-        _seen_order+=("$p")
-    fi
+    case ":$SERVICE_PATH:" in
+        *":$p:"*) ;;
+        *) SERVICE_PATH="${SERVICE_PATH:+$SERVICE_PATH:}$p" ;;
+    esac
 done
 
-SERVICE_PATH="$(IFS=:; echo "${_seen_order[*]}")"
 log "Embedded PATH: $SERVICE_PATH"
 
 # ---------------------------------------------------------------------------
@@ -222,26 +220,58 @@ if [[ "$PLATFORM" == "macos" && ! -f "$LAUNCHD_TEMPLATE" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# render_template: replace {{PLACEHOLDER}} tokens in a template file.
-# Usage: render_template <input-file> <output-file>
-# Substitutions are driven by the associative array TEMPLATE_VARS.
+# render_template: replace {{KEY}} tokens in a template file.
+# Usage: render_template <input-file> <output-file> <escape-function> KEY=VALUE...
+# Each value is passed through the escape function for the target format and inserted
+# literally (no sed, so `&`, `\` and `/` in paths are safe).
 # ---------------------------------------------------------------------------
 
+# bash 5.2 expands `&` in the replacement of ${var//pattern/replacement}; turn that off.
+shopt -u patsub_replacement 2>/dev/null || true
+
 render_template() {
-    local src="$1"
-    local dst="$2"
-    local content
+    local src="$1" dst="$2" escape="$3"
+    shift 3
+    local content pair key val
     content="$(cat "$src")"
-
-    # Apply each substitution in-place using bash parameter expansion.
-    for key in "${!TEMPLATE_VARS[@]}"; do
-        local val="${TEMPLATE_VARS[$key]}"
-        # Escape forward slashes in the value so sed doesn't choke.
-        local escaped_val="${val//\//\\/}"
-        content="$(printf '%s' "$content" | sed "s/{{${key}}}/${escaped_val}/g")"
+    for pair in "$@"; do
+        key="${pair%%=*}"
+        val="$("$escape" "${pair#*=}")"
+        content="${content//"{{$key}}"/"$val"}"
     done
-
     printf '%s\n' "$content" > "$dst"
+}
+
+# A value inside a double-quoted systemd setting (Environment=, the program of ExecStart=):
+# escape \ and ", and double % (specifier).
+systemd_quoted_escape() {
+    local v="$1"
+    v="${v//\\/\\\\}"
+    v="${v//\"/\\\"}"
+    v="${v//%/%%}"
+    printf '%s' "$v"
+}
+
+# An argument of ExecStart= inside double quotes: as above, and $ doubled, because systemd
+# expands $VARIABLE in arguments.
+systemd_arg_escape() {
+    local v
+    v="$(systemd_quoted_escape "$1")"
+    printf '%s' "${v//\$/\$\$}"
+}
+
+# A value of an unquoted systemd path setting (WorkingDirectory=): only % (specifier) is special.
+systemd_path_escape() {
+    printf '%s' "${1//%/%%}"
+}
+
+# A value inside a plist <string>: escape the XML special characters.
+xml_escape() {
+    local v="$1"
+    v="${v//&/&amp;}"
+    v="${v//</&lt;}"
+    v="${v//>/&gt;}"
+    printf '%s' "$v"
 }
 
 # ---------------------------------------------------------------------------
@@ -268,14 +298,14 @@ install_linux() {
 
     mkdir -p "$service_dir"
 
-    declare -A TEMPLATE_VARS=(
-        [BINARY_PATH]="$BINARY_PATH"
-        [CONFIG_DIR]="$CONFIG_DIR"
-        [PATH]="$SERVICE_PATH"
-        [UNIT_NAME]="$unit_name"
-    )
-
-    render_template "$SYSTEMD_TEMPLATE" "$service_file"
+    render_template "$SYSTEMD_TEMPLATE" "$service_file" systemd_quoted_escape \
+        "BINARY_PATH=$BINARY_PATH" \
+        "PATH=$SERVICE_PATH" \
+        "UNIT_NAME=$unit_name"
+    render_template "$service_file" "$service_file" systemd_arg_escape \
+        "CONFIG_DIR=$CONFIG_DIR"
+    render_template "$service_file" "$service_file" systemd_path_escape \
+        "WORKING_DIRECTORY=$CONFIG_DIR"
     log "Installed service file: $service_file"
 
     # Reload the systemd daemon so it picks up the new unit file.
@@ -333,16 +363,13 @@ install_macos() {
 
     mkdir -p "$agents_dir" "$log_dir"
 
-    declare -A TEMPLATE_VARS=(
-        [BINARY_PATH]="$BINARY_PATH"
-        [CONFIG_DIR]="$CONFIG_DIR"
-        [PATH]="$SERVICE_PATH"
-        [LOG_DIR]="$log_dir"
-        [LABEL]="$label"
-        [LOG_NAME]="$log_name"
-    )
-
-    render_template "$LAUNCHD_TEMPLATE" "$plist_file"
+    render_template "$LAUNCHD_TEMPLATE" "$plist_file" xml_escape \
+        "BINARY_PATH=$BINARY_PATH" \
+        "CONFIG_DIR=$CONFIG_DIR" \
+        "PATH=$SERVICE_PATH" \
+        "LOG_DIR=$log_dir" \
+        "LABEL=$label" \
+        "LOG_NAME=$log_name"
     log "Installed plist file: $plist_file"
 
     # Validate the generated plist before loading it.

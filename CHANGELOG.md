@@ -3,6 +3,33 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.35
+
+### Fixed
+
+- `scripts/install.sh` works with the bash 3.2 that macOS ships: it no longer uses associative
+  arrays (`declare -A`), which made it fail there.
+- The installer inserts paths literally. Template values were substituted with `sed`, so a `&`
+  or `\` in the binary or config path corrupted the unit or plist. Values are now escaped for
+  their format: the systemd unit quotes `ExecStart=` and `Environment=` values (escaping `\`, `"`,
+  `%` and, in arguments, `$`), and the plist escapes XML characters. A path containing a space
+  now works in `ExecStart=`.
+- The installer no longer adds a fixed `~/.nvm/versions/node/v22.22.1/bin` (a developer machine's
+  node version) to the service `PATH`; it adds the active nvm node (`$NVM_BIN`) when there is one.
+- The generated systemd unit sets `TimeoutStopSec=90`, enough for running executors to stop and
+  report on shutdown.
+
+### Changed
+
+- The container image's base images are pinned by digest.
+
+### Tests
+
+- The Linux installer and uninstaller are tested against a temporary `HOME` with a fake
+  `systemctl`: a fresh install with a path containing a space, `&`, `%` and `$`, the in-place
+  update of a legacy `openpr-webhook.service`, the refusal when both units exist, and the removal
+  of both by the uninstaller.
+
 ## 0.3.34
 
 ### Changed
