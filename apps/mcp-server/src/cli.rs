@@ -8,10 +8,10 @@
 //! the same bytes and exit with the same codes for every one of these commands; only the
 //! program name in `--help` differs.
 
-// CLI output functions necessarily use print macros and indexing — allow these for this module.
-#![allow(clippy::print_stdout, clippy::print_stderr, clippy::indexing_slicing)]
+// Argument objects are assembled by key; allow indexing for this module.
+#![allow(clippy::indexing_slicing)]
 
-use std::io::Write as _;
+use std::io::Write;
 use std::path::PathBuf;
 
 use base64::Engine as _;
@@ -426,7 +426,16 @@ pub enum ToolsAction {
 
 // ---- Output formatting ----
 
-pub fn print_result(format: &OutputFormat, result: &CallToolResult) {
+/// Writes one tool result the way every workspace command reports it.
+///
+/// A failed call prints its message on stderr and exits 1. A stderr that cannot be written
+/// (closed, full) must not change that exit code, so the write error is dropped: stderr is the
+/// only channel it could be reported on, and `eprintln!` would panic and exit 101 instead.
+///
+/// A successful call prints on stdout. stdout is the command's machine contract, so a result
+/// that could not be delivered there (a full device, a reader that went away) is an error the
+/// caller returns, and the process exits 1 instead of reporting success or panicking.
+pub fn print_result(format: &OutputFormat, result: &CallToolResult) -> anyhow::Result<()> {
     let text = result
         .content
         .iter()
@@ -437,23 +446,30 @@ pub fn print_result(format: &OutputFormat, result: &CallToolResult) {
         .unwrap_or("");
 
     if result.is_error == Some(true) {
-        eprintln!("{text}");
+        let mut stderr = std::io::stderr().lock();
+        let written = writeln!(stderr, "{text}").and_then(|()| stderr.flush());
+        drop(written);
         std::process::exit(1);
     }
 
+    let mut stdout = std::io::stdout().lock();
+    write_success(&mut stdout, format, text)
+        .and_then(|()| stdout.flush())
+        .map_err(|error| anyhow::anyhow!("failed to write the result to stdout: {error}"))
+}
+
+/// Renders a successful result's text in `format` onto `out`.
+fn write_success(out: &mut impl Write, format: &OutputFormat, text: &str) -> std::io::Result<()> {
     match format {
-        OutputFormat::Json => println!("{text}"),
-        OutputFormat::Table => {
-            if let Ok(value) = serde_json::from_str::<Value>(text) {
-                print_table(&value);
-            } else {
-                println!("{text}");
-            }
-        }
+        OutputFormat::Json => writeln!(out, "{text}"),
+        OutputFormat::Table => match serde_json::from_str::<Value>(text) {
+            Ok(value) => write_table(out, &value),
+            Err(_) => writeln!(out, "{text}"),
+        },
     }
 }
 
-fn print_table(value: &Value) {
+fn write_table(out: &mut impl Write, value: &Value) -> std::io::Result<()> {
     match value {
         Value::Array(arr) if !arr.is_empty() => {
             if let Some(Value::Object(first)) = arr.first() {
@@ -469,40 +485,41 @@ fn print_table(value: &Value) {
                 }
                 // header
                 for (key, width) in keys.iter().zip(widths.iter()) {
-                    print!("{key:<width$}  ");
+                    write!(out, "{key:<width$}  ")?;
                 }
-                println!();
+                writeln!(out)?;
                 // separator
                 for w in &widths {
-                    print!("{:-<w$}  ", "");
+                    write!(out, "{:-<w$}  ", "")?;
                 }
-                println!();
+                writeln!(out)?;
                 // rows
                 for item in arr {
                     if let Value::Object(obj) = item {
                         for (key, width) in keys.iter().zip(widths.iter()) {
                             let s = fmt_val(obj.get(key).unwrap_or(&Value::Null));
                             let truncated = truncate_display(s, 59);
-                            print!("{truncated:<width$}  ");
+                            write!(out, "{truncated:<width$}  ")?;
                         }
-                        println!();
+                        writeln!(out)?;
                     }
                 }
             } else {
                 for item in arr {
-                    println!("{}", fmt_val(item));
+                    writeln!(out, "{}", fmt_val(item))?;
                 }
             }
         }
-        Value::Array(_) => println!("(empty)"),
+        Value::Array(_) => writeln!(out, "(empty)")?,
         Value::Object(obj) => {
             let max_key = obj.keys().map(String::len).max().unwrap_or(0);
             for (key, val) in obj {
-                println!("{key:<max_key$}  {}", fmt_val(val));
+                writeln!(out, "{key:<max_key$}  {}", fmt_val(val))?;
             }
         }
-        _ => println!("{}", fmt_val(value)),
+        _ => writeln!(out, "{}", fmt_val(value))?,
     }
+    Ok(())
 }
 
 /// Truncate a string to at most `max_bytes` bytes on a char boundary, appending `…` if truncated.
@@ -736,14 +753,12 @@ async fn run_cli_command(
     // Files upload requires async disk I/O before calling execute_tool, handle it separately
     if let BusinessCommands::Files(files_cmd) = command {
         let result = run_file_upload(files_cmd, &server).await?;
-        print_result(format, &result);
-        return Ok(());
+        return print_result(format, &result);
     }
 
     let (tool_name, args) = tool_invocation(command)?;
     let result = server.call_tool(tool_name, args).await;
-    print_result(format, &result);
-    Ok(())
+    print_result(format, &result)
 }
 
 /// The MCP tool a workspace command calls and the arguments it passes, built from the parsed

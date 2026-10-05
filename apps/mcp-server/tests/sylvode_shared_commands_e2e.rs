@@ -562,3 +562,100 @@ async fn sylvode_help_lists_all_fifteen_groups_and_no_serve() -> TestResult {
     assert_eq!(serve.status.code(), Some(2), "sylvode must not offer serve");
     Ok(())
 }
+
+/// `/dev/full`: every write fails with `ENOSPC`, the way a full disk or a dead terminal does.
+#[cfg(target_os = "linux")]
+fn unwritable() -> Result<Stdio, BoxError> {
+    Ok(Stdio::from(std::fs::OpenOptions::new().write(true).open("/dev/full")?))
+}
+
+/// Runs `args` with the given stdout and stderr.
+#[cfg(target_os = "linux")]
+async fn run_redirected(
+    binary: &str,
+    cwd: &Path,
+    args: &[&str],
+    stdout: Stdio,
+    stderr: Stdio,
+) -> Result<Output, BoxError> {
+    let mut command = Command::new(binary);
+    command
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(stdout)
+        .stderr(stderr)
+        .kill_on_drop(true);
+    Ok(tokio::time::timeout(Duration::from_mins(1), command.spawn()?.wait_with_output()).await??)
+}
+
+/// An unwritable stream never panics a command (a panic exits 101). A failed workspace command
+/// whose stderr cannot be written exits 1, exactly as with a writable stderr; a successful one
+/// whose result cannot be written to stdout exits 1 instead of claiming success; both names
+/// behave alike. The Flow renderer keeps a failure's own exit code and exits 1 for an
+/// undeliverable success.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn an_unwritable_stream_never_panics_a_command() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let dir = fixture.dir()?;
+    let config = fixture.config.path().display().to_string();
+
+    for binary in [MCP_SERVER, SYLVODE] {
+        let failing = ["projects", "get", MISSING, "--config", &config];
+        let writable = run_redirected(binary, dir, &failing, Stdio::piped(), Stdio::piped()).await?;
+        let full = run_redirected(binary, dir, &failing, Stdio::piped(), unwritable()?).await?;
+        assert_eq!(writable.status.code(), Some(1), "{binary}: {writable:?}");
+        assert_eq!(full.status.code(), writable.status.code(), "{binary}: {full:?}");
+        assert!(full.stdout.is_empty(), "{binary}: {full:?}");
+
+        for format in ["json", "table"] {
+            let listing = ["projects", "list", "--format", format, "--config", &config];
+            let full = run_redirected(binary, dir, &listing, unwritable()?, Stdio::piped()).await?;
+            let stderr = String::from_utf8_lossy(&full.stderr);
+            assert_eq!(full.status.code(), Some(1), "{binary} {format}: {stderr}");
+            assert!(!stderr.contains("panicked"), "{binary} {format}: {stderr}");
+            assert!(
+                stderr.contains("failed to write the result to stdout"),
+                "{binary} {format}: {stderr}"
+            );
+        }
+    }
+
+    let flow_ok = ["features", "flow", "get", "--workspace", WORKSPACE, "--config", &config];
+    let writable = run_redirected(SYLVODE, dir, &flow_ok, Stdio::piped(), Stdio::piped()).await?;
+    assert_eq!(writable.status.code(), Some(0), "{writable:?}");
+    let full = run_redirected(SYLVODE, dir, &flow_ok, unwritable()?, Stdio::piped()).await?;
+    let stderr = String::from_utf8_lossy(&full.stderr);
+    assert_eq!(full.status.code(), Some(1), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+
+    let flow_usage = ["features", "flow", "get", "--workspace", "bad", "--config", &config];
+    let full = run_redirected(SYLVODE, dir, &flow_usage, unwritable()?, Stdio::piped()).await?;
+    assert_eq!(full.status.code(), Some(2), "{full:?}");
+    let table_usage = [
+        "features",
+        "flow",
+        "get",
+        "--workspace",
+        "bad",
+        "--format",
+        "table",
+        "--config",
+        &config,
+    ];
+    let full = run_redirected(SYLVODE, dir, &table_usage, Stdio::piped(), unwritable()?).await?;
+    assert_eq!(full.status.code(), Some(2), "{full:?}");
+
+    // An incomplete tool listing is a failure, reported without a panic.
+    let listing = run_redirected(
+        env!("CARGO_BIN_EXE_list-tools"),
+        dir,
+        &[],
+        unwritable()?,
+        Stdio::piped(),
+    )
+    .await?;
+    assert_eq!(listing.status.code(), Some(1), "{listing:?}");
+    Ok(())
+}

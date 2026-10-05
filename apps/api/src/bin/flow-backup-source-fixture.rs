@@ -1,6 +1,6 @@
 //! Provisions the bounded `PostgreSQL` source used by the Flow backup/restore gate.
 
-#![allow(clippy::print_stdout)]
+use std::io::Write as _;
 
 use api::flow::collab::authz;
 use api::flow::collab::cache::WarmCache;
@@ -31,8 +31,7 @@ async fn main() -> anyhow::Result<()> {
     reset_database(&admin, cleanup_only).await?;
     admin.close().await?;
     if cleanup_only {
-        println!("{}", json!({"database_name": DATABASE_NAME, "status": "removed"}));
-        return Ok(());
+        return print_status(&json!({"database_name": DATABASE_NAME, "status": "removed"}));
     }
 
     let source_url = std::env::var(SOURCE_URL_ENV).map_err(|_| anyhow::anyhow!("{SOURCE_URL_ENV} is required"))?;
@@ -54,16 +53,22 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     anyhow::ensure!(tail_updates > 0, "expected at least one retained update");
-    println!(
-        "{}",
-        json!({
-            "database_name": DATABASE_NAME,
-            "document_count": fingerprints.len(),
-            "retained_update_count": tail_updates,
-            "status": "ready"
-        })
-    );
+    print_status(&json!({
+        "database_name": DATABASE_NAME,
+        "document_count": fingerprints.len(),
+        "retained_update_count": tail_updates,
+        "status": "ready"
+    }))?;
     db.close().await?;
+    Ok(())
+}
+
+/// Prints the one status line the gate reads. A full or closed stdout is an error the process
+/// exits 1 with, never a `println!` panic.
+fn print_status(status: &serde_json::Value) -> anyhow::Result<()> {
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{status}")?;
+    stdout.flush()?;
     Ok(())
 }
 

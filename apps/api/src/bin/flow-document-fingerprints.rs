@@ -1,6 +1,6 @@
 //! Emits stable JSON fingerprints for every Flow document in one database.
 
-#![allow(clippy::print_stdout)]
+use std::io::Write as _;
 
 use api::flow::collab::integrity::all_document_fingerprints;
 use sea_orm::Database;
@@ -13,7 +13,10 @@ async fn main() -> anyhow::Result<()> {
     let fingerprints = all_document_fingerprints(&db)
         .await
         .map_err(|error| anyhow::anyhow!("document fingerprint verification failed: {error}"))?;
-    println!("{}", serde_json::to_string(&fingerprints)?);
+    // A full or closed stdout is an error the process exits 1 with, never a `println!` panic.
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{}", serde_json::to_string(&fingerprints)?)?;
+    stdout.flush()?;
     db.close().await?;
     Ok(())
 }
