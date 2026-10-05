@@ -23,13 +23,14 @@
  *
  * Environment:
  *   FLOW_V04_REUSE_BUILD=1   reuse an existing `build/` instead of running `bun run build`
- *   FLOW_V04_RESULT_PATH     where to write the JSON (default: /opt/worker/.cache/w9/...)
+ *   FLOW_V04_RESULT_PATH     where to write the JSON (default: <checkout>/.flow-gate/cache/frontend/...)
  *   FLOW_V04_SCRATCH         scratch root for the browser profile and build TMPDIR
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { SuiteResult } from './support/harness';
+import { SCRATCH } from './support/browser';
 
 interface GateRow {
 	readonly gate: string;
@@ -128,7 +129,7 @@ const evidence = {
 
 const outputPath =
 	process.env.FLOW_V04_RESULT_PATH ??
-	`${process.env.FLOW_V04_SCRATCH ?? '/opt/worker/.cache/w9'}/flow-v0.4-ui-result.json`;
+	`${SCRATCH}/flow-v0.4-ui-result.json`;
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
 

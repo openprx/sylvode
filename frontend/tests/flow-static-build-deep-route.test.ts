@@ -25,10 +25,10 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { Suite, assert, assertEqual, finish } from './support/harness';
-import { Browser, findChrome, productionCsp, serveStatic } from './support/browser';
+import { Browser, SCRATCH, findChrome, productionCsp, serveStatic } from './support/browser';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const REPO = join(ROOT, '..');
@@ -52,11 +52,12 @@ suite.check(`production build (${reuseBuild ? 'reused' : 'fresh'})`, () => {
 		);
 		return;
 	}
+	// Never /tmp, which is often a small tmpfs that a Vite build can exhaust.
+	mkdirSync(`${SCRATCH}/tmp`, { recursive: true });
 	const result = spawnSync('bun', ['run', 'build'], {
 		cwd: ROOT,
 		encoding: 'utf8',
-		// Never /tmp: this repo's /tmp is a shared 16 GB tmpfs that a Vite build has exhausted.
-		env: { ...process.env, TMPDIR: process.env.FLOW_V04_SCRATCH ?? '/opt/worker/.cache/w9/tmp' },
+		env: { ...process.env, TMPDIR: `${SCRATCH}/tmp` },
 		maxBuffer: 64 * 1024 * 1024
 	});
 	assert(

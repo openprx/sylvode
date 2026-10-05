@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Fails when a tracked file under scripts/ names a machine-specific absolute path.
+# Fails when a tracked script or test (scripts/, tests/, frontend/tests/, skills/) names a
+# machine-specific absolute path.
 #
 # An open-source checkout can live anywhere, so a script must not default to, read from or write
 # to a path that only exists on one maintainer's machine (a workspace under /opt, a home
@@ -46,10 +47,10 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 # This file is excluded: its pattern and exemption table necessarily spell out the paths it bans.
-(cd "$ROOT_DIR" && git ls-files scripts | grep -vxF scripts/test-no-machine-paths.sh) >"$WORK/files"
+(cd "$ROOT_DIR" && git ls-files scripts tests frontend/tests skills | grep -vxF scripts/test-no-machine-paths.sh) >"$WORK/files"
 file_count=$(wc -l <"$WORK/files")
 if [[ $file_count -eq 0 ]]; then
-  echo "FAIL: no tracked files under scripts/ were examined" >&2
+  echo "FAIL: no tracked scripts or tests were examined" >&2
   exit 1
 fi
 
@@ -78,7 +79,7 @@ if [[ $mutant_hits -ne 2 ]]; then
 fi
 
 if [[ -s "$WORK/hits" ]]; then
-  echo "FAIL: machine-specific absolute paths under scripts/:" >&2
+  echo "FAIL: machine-specific absolute paths in scripts or tests:" >&2
   sed 's/^/  /' "$WORK/hits" >&2
   exit 1
 fi

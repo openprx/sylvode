@@ -172,7 +172,8 @@ treating the missing input as a pass.
 Flow gate scripts write their evidence to `.flow-gate/evidence/<release>` unless `--evidence-root`
 names another directory. The screenshot collectors and render smokes refuse to write into a
 non-empty directory unless `--overwrite` is given. `bash scripts/test-no-machine-paths.sh` runs in
-CI and fails when a tracked file under `scripts/` names a machine-specific absolute path.
+CI and fails when a tracked file under `scripts/`, `tests/`, `frontend/tests/` or `skills/` names a
+machine-specific absolute path.
 
 ## Code rules
 
