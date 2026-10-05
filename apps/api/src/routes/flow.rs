@@ -2112,9 +2112,9 @@ mod flow_database_tests {
               (memory (export "memory") 1)
               (global $heap (mut i32) (i32.const 4096))
               (data (i32.const 1024) "{\"ok\":true}")
-              (func (export "sylvode_plugin_abi_version") (result i32)
+              (func (export "openpr_plugin_abi_version") (result i32)
                 i32.const 1)
-              (func (export "sylvode_alloc") (param $len i32) (result i32)
+              (func (export "openpr_alloc") (param $len i32) (result i32)
                 (local $ptr i32)
                 global.get $heap
                 local.set $ptr
@@ -2123,7 +2123,7 @@ mod flow_database_tests {
                 i32.add
                 global.set $heap
                 local.get $ptr)
-              (func (export "sylvode_invoke") (param $ptr i32) (param $len i32) (result i64)
+              (func (export "openpr_invoke") (param $ptr i32) (param $len i32) (result i64)
                 i64.const 1024
                 i64.const 32
                 i64.shl
