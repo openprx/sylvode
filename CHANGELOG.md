@@ -3,6 +3,20 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.10
+
+### Fixed
+
+- **Default templates are filled in.** An `openclaw`, `openprx` or `custom` agent without a
+  `message_template`, and a `cli` agent without a `prompt_template` (on the webhook path and the
+  tunnel path alike), received the literal text `[TPL_PROJECT] TPL_EVENT: ...` or
+  `Fix issue ISSUE_ID: TITLE ...` instead of a message. The defaults are now
+  `[{project}] {event}: {key} {title}` / `{actor} | Trigger: {reason}` and
+  `Fix issue {issue_id}: {title}` / `Context: {reason}` (each on two lines), rendered like a
+  configured template.
+- Templates are rendered in a single pass. A placeholder that appears inside a value taken from the
+  payload, such as an issue title containing `{actor}`, is no longer expanded.
+
 ## 0.3.9
 
 The project is renamed **Sylvode Webhook**, following the main product

@@ -29,6 +29,14 @@ You have Sylvode MCP tools available. This webhook is linked to a universal-form
 3. Call `events.tail` with form_id="{form_id}" or record_id="{record_id}" to inspect the recent business-event stream.
 4. Call `comments.create` on the linked work item, when there is one, to report what you did."#;
 
+/// Message sent by the `openclaw`, `openprx` and `custom` agents without a `message_template`.
+#[allow(clippy::literal_string_with_formatting_args)]
+const DEFAULT_MESSAGE_TEMPLATE: &str = "[{project}] {event}: {key} {title}\n{actor} | Trigger: {reason}";
+
+/// Prompt given to a `cli` agent without a `prompt_template`.
+#[allow(clippy::literal_string_with_formatting_args)]
+const DEFAULT_PROMPT_TEMPLATE: &str = "Fix issue {issue_id}: {title}\nContext: {reason}";
+
 pub async fn dispatch(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
     match agent.agent_type.as_str() {
         "openclaw" => dispatch_openclaw(config, agent, payload).await,
@@ -380,14 +388,12 @@ fn build_executor_command(
     }
 }
 
-#[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
 fn build_cli_prompt(agent: &AgentConfig, payload: &Value, issue_id: &str) -> String {
     let base = agent
         .cli
         .as_ref()
         .and_then(|c| c.prompt_template.as_deref())
-        // Template placeholders — not format args
-        .unwrap_or("Fix issue ISSUE_ID: TITLE\nContext: REASON");
+        .unwrap_or(DEFAULT_PROMPT_TEMPLATE);
 
     let title = extract_issue_title(payload).unwrap_or("untitled");
     let reason = extract_trigger_reason(payload).unwrap_or("unknown");
@@ -397,15 +403,19 @@ fn build_cli_prompt(agent: &AgentConfig, payload: &Value, issue_id: &str) -> Str
     let form_key = extract_form_key(payload).unwrap_or("<form_key>");
     let record_id = extract_record_id(payload).unwrap_or("<record_id>");
 
-    let user_prompt = base
-        .replace("{issue_id}", issue_id)
-        .replace("{title}", title)
-        .replace("{reason}", reason)
-        .replace("{event}", event)
-        .replace("{project_id}", project_id)
-        .replace("{form_id}", form_id)
-        .replace("{form_key}", form_key)
-        .replace("{record_id}", record_id);
+    let user_prompt = render_template(
+        base,
+        &[
+            ("issue_id", issue_id),
+            ("title", title),
+            ("reason", reason),
+            ("event", event),
+            ("project_id", project_id),
+            ("form_id", form_id),
+            ("form_key", form_key),
+            ("record_id", record_id),
+        ],
+    );
 
     // Only append MCP instructions when explicitly configured or when
     // mcp_config_path / env_vars indicate MCP integration is active.
@@ -425,13 +435,17 @@ fn build_cli_prompt(agent: &AgentConfig, payload: &Value, issue_id: &str) -> Str
         }
     });
 
-    let instructions = mcp_instructions
-        .replace("{issue_id}", issue_id)
-        .replace("{project_id}", project_id)
-        .replace("{form_id}", form_id)
-        .replace("{form_key}", form_key)
-        .replace("{record_id}", record_id)
-        .replace("{event}", event);
+    let instructions = render_template(
+        mcp_instructions,
+        &[
+            ("issue_id", issue_id),
+            ("project_id", project_id),
+            ("form_id", form_id),
+            ("form_key", form_key),
+            ("record_id", record_id),
+            ("event", event),
+        ],
+    );
 
     let mut prompt = format!("{user_prompt}\n\n{instructions}");
     if let Some(project_context_instructions) = build_project_context_instructions(payload) {
@@ -811,12 +825,8 @@ async fn dispatch_custom(config: &Config, agent: &AgentConfig, payload: &Value) 
     }
 }
 
-#[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
 fn format_message(agent: &AgentConfig, payload: &Value) -> String {
-    let tmpl = agent.message_template.as_deref().unwrap_or(
-        // Template placeholders — not format args
-        "[TPL_PROJECT] TPL_EVENT: TPL_KEY TPL_TITLE\nTPL_ACTOR | Trigger: TPL_REASON",
-    );
+    let tmpl = agent.message_template.as_deref().unwrap_or(DEFAULT_MESSAGE_TEMPLATE);
 
     let event = extract_event(payload).unwrap_or("unknown");
     let title = extract_issue_title(payload).unwrap_or("untitled");
@@ -845,21 +855,54 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
     let form_key = extract_form_key(payload).unwrap_or("");
     let record_id = extract_record_id(payload).unwrap_or("");
 
-    tmpl.replace("{event}", event)
-        .replace("{title}", title)
-        .replace("{key}", issue_key)
-        .replace("{reason}", reason)
-        .replace("{actor}", actor)
-        .replace("{workspace}", workspace)
-        .replace("{project}", project)
-        .replace("{state}", state)
-        .replace("{priority}", priority)
-        .replace("{issue_id}", &issue_id)
-        .replace("{project_id}", project_id)
-        .replace("{form_id}", form_id)
-        .replace("{form_key}", form_key)
-        .replace("{record_id}", record_id)
-        .replace("{url}", &format!("issue/{issue_id}"))
+    let url = format!("issue/{issue_id}");
+
+    render_template(
+        tmpl,
+        &[
+            ("event", event),
+            ("title", title),
+            ("key", issue_key),
+            ("reason", reason),
+            ("actor", actor),
+            ("workspace", workspace),
+            ("project", project),
+            ("state", state),
+            ("priority", priority),
+            ("issue_id", &issue_id),
+            ("project_id", project_id),
+            ("form_id", form_id),
+            ("form_key", form_key),
+            ("record_id", record_id),
+            ("url", &url),
+        ],
+    )
+}
+
+/// Renders `template` in a single pass. Each `{name}` that has an entry in `values` is replaced by
+/// that value; any other text, including an unknown `{name}`, is copied unchanged. An inserted
+/// value is never scanned again, so a placeholder inside payload text stays literal.
+fn render_template(template: &str, values: &[(&str, &str)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some((before, after_open)) = rest.split_once('{') {
+        out.push_str(before);
+        let substituted = after_open.split_once('}').and_then(|(name, after_close)| {
+            values
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value, after_close))
+        });
+        if let Some((value, after_close)) = substituted {
+            out.push_str(value);
+            rest = after_close;
+        } else {
+            out.push('{');
+            rest = after_open;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 #[cfg(test)]
@@ -1267,6 +1310,82 @@ mcp_instructions = "Read issue {issue_id} before writing."
 
         assert!(!prompt.contains("Invocation Ledger"));
         assert!(!prompt.contains("invocations.complete"));
+    }
+
+    /// A delivery shaped like the one the Sylvode API sends for `issue.assigned` to a bot
+    /// (`apps/api/src/webhook_trigger.rs`, `build_payload` and `fetch_issue_payload`).
+    fn issue_assigned_delivery() -> serde_json::Value {
+        json!({
+            "id": "6f1d1f43-0b8e-4c8a-9a51-6d0e2f0c1a11",
+            "event": "issue.assigned",
+            "timestamp": "2026-10-05T12:00:00+00:00",
+            "workspace": {"id": "2b0c6a59-3d5e-4a43-8f43-6a1c7f2b9e01", "name": "Acme"},
+            "project": {"id": "8d9e2c1b-7f6a-4e5d-9c3b-2a1f0e9d8c7b", "name": "Billing", "key": "BIL"},
+            "actor": {"id": "a1", "name": "Alice", "email": "alice@example.com", "entity_type": "human"},
+            "data": {
+                "issue": {
+                    "id": "4c3b2a19-0f8e-4d7c-b6a5-948372615e0d",
+                    "key": "BIL-4C3B2A19",
+                    "title": "Invoice totals are rounded twice",
+                    "description": "",
+                    "state": "todo",
+                    "priority": "high",
+                    "assignee_ids": ["b0b0b0b0-0000-4000-8000-000000000001"],
+                    "label_ids": [],
+                    "sprint_id": null,
+                    "created_at": "2026-10-05T11:00:00+00:00",
+                    "updated_at": "2026-10-05T12:00:00+00:00"
+                },
+                "changes": {"assignee_ids": {"old": [], "new": ["b0b0b0b0-0000-4000-8000-000000000001"]}}
+            },
+            "bot_context": {
+                "is_bot_task": true,
+                "bot_id": "b0b0b0b0-0000-4000-8000-000000000001",
+                "bot_name": "Fixer",
+                "bot_agent_type": "cli",
+                "trigger_reason": "assigned",
+                "webhook_id": "0e0e0e0e-0000-4000-8000-000000000002"
+            }
+        })
+    }
+
+    #[test]
+    fn format_message_fills_the_default_template() {
+        let agent: crate::config::AgentConfig =
+            toml::from_str("id = 'o1'\nname = 'OpenClaw'\nagent_type = 'openclaw'").expect("parse agent");
+
+        assert_eq!(
+            format_message(&agent, &issue_assigned_delivery()),
+            "[Billing] issue.assigned: BIL-4C3B2A19 Invoice totals are rounded twice\nAlice | Trigger: assigned"
+        );
+    }
+
+    #[test]
+    fn build_cli_prompt_fills_the_default_template() {
+        let agent: crate::config::AgentConfig =
+            toml::from_str("id = 'c1'\nname = 'CLI'\nagent_type = 'cli'\n[cli]\nexecutor = 'codex'")
+                .expect("parse agent");
+        let payload = issue_assigned_delivery();
+        let issue_id = extract_issue_id(&payload).expect("issue id");
+
+        assert_eq!(
+            build_cli_prompt(&agent, &payload, &issue_id),
+            "Fix issue 4c3b2a19-0f8e-4d7c-b6a5-948372615e0d: Invoice totals are rounded twice\nContext: assigned"
+        );
+    }
+
+    /// A value taken from the payload is inserted as it is: a placeholder inside it is not
+    /// expanded again, so a title cannot pull other fields into the message.
+    #[test]
+    fn templates_do_not_expand_placeholders_inside_payload_values() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            "id = 'o1'\nname = 'OpenClaw'\nagent_type = 'openclaw'\nmessage_template = '{title} by {actor}'",
+        )
+        .expect("parse agent");
+        let mut payload = issue_assigned_delivery();
+        *payload.pointer_mut("/data/issue/title").expect("fixture has a title") = json!("see {actor} and {issue_id}");
+
+        assert_eq!(format_message(&agent, &payload), "see {actor} and {issue_id} by Alice");
     }
 
     #[tokio::test]
