@@ -1642,25 +1642,48 @@ pub async fn export_form_attachment_package(
     let (actor_id, role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.export").await?;
     let package = build_attachment_package_for_form(&state, &form, actor_id, &role, query.view_id).await?;
-    let content_disposition = HeaderValue::from_str(&format!("attachment; filename=\"{}\"", package.file_name))
-        .map_err(|_| ApiError::Internal)?;
-
-    Ok((
-        [
-            (header::CONTENT_TYPE, HeaderValue::from_static("application/zip")),
-            (header::CONTENT_DISPOSITION, content_disposition),
-            (
-                HeaderName::from_static("x-openpr-attachment-count"),
-                HeaderValue::from_str(&package.attachment_count.to_string()).map_err(|_| ApiError::Internal)?,
-            ),
-            (
-                HeaderName::from_static("x-openpr-attachment-file-count"),
-                HeaderValue::from_str(&package.binary_file_count.to_string()).map_err(|_| ApiError::Internal)?,
-            ),
-        ],
+    attachment_package_response(
+        &package.file_name,
+        package.attachment_count,
+        package.binary_file_count,
         package.zip,
     )
-        .into_response())
+}
+
+/// Canonical and legacy names of the attachment-package count headers (ADR-0020 D3). Both are
+/// emitted on every package download with the same value throughout 1.x.
+const ATTACHMENT_COUNT_HEADERS: [HeaderName; 2] = [
+    HeaderName::from_static("x-sylvode-attachment-count"),
+    HeaderName::from_static("x-openpr-attachment-count"),
+];
+const ATTACHMENT_FILE_COUNT_HEADERS: [HeaderName; 2] = [
+    HeaderName::from_static("x-sylvode-attachment-file-count"),
+    HeaderName::from_static("x-openpr-attachment-file-count"),
+];
+
+/// The ZIP download response shared by the synchronous export and the package-job download.
+fn attachment_package_response(
+    file_name: &str,
+    attachment_count: impl std::fmt::Display,
+    binary_file_count: impl std::fmt::Display,
+    zip: Vec<u8>,
+) -> Result<Response, ApiError> {
+    let content_disposition =
+        HeaderValue::from_str(&format!("attachment; filename=\"{file_name}\"")).map_err(|_| ApiError::Internal)?;
+    let attachment_count = HeaderValue::from_str(&attachment_count.to_string()).map_err(|_| ApiError::Internal)?;
+    let binary_file_count = HeaderValue::from_str(&binary_file_count.to_string()).map_err(|_| ApiError::Internal)?;
+
+    let mut response = zip.into_response();
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/zip"));
+    headers.insert(header::CONTENT_DISPOSITION, content_disposition);
+    for name in ATTACHMENT_COUNT_HEADERS {
+        headers.insert(name, attachment_count.clone());
+    }
+    for name in ATTACHMENT_FILE_COUNT_HEADERS {
+        headers.insert(name, binary_file_count.clone());
+    }
+    Ok(response)
 }
 
 pub async fn list_form_attachment_package_jobs(
@@ -1753,35 +1776,16 @@ pub async fn download_form_attachment_package_job(
         .get(&artifact_key)
         .await
         .map_err(|_| ApiError::NotFound("attachment package job artifact not found".to_string()))?;
-    let content_disposition =
-        HeaderValue::from_str(&format!("attachment; filename=\"{file_name}\"")).map_err(|_| ApiError::Internal)?;
     let attachment_count = result
         .get("attachment_count")
         .and_then(Value::as_u64)
-        .unwrap_or_default()
-        .to_string();
+        .unwrap_or_default();
     let binary_file_count = result
         .get("binary_file_count")
         .and_then(Value::as_u64)
-        .unwrap_or_default()
-        .to_string();
+        .unwrap_or_default();
 
-    Ok((
-        [
-            (header::CONTENT_TYPE, HeaderValue::from_static("application/zip")),
-            (header::CONTENT_DISPOSITION, content_disposition),
-            (
-                HeaderName::from_static("x-openpr-attachment-count"),
-                HeaderValue::from_str(&attachment_count).map_err(|_| ApiError::Internal)?,
-            ),
-            (
-                HeaderName::from_static("x-openpr-attachment-file-count"),
-                HeaderValue::from_str(&binary_file_count).map_err(|_| ApiError::Internal)?,
-            ),
-        ],
-        zip,
-    )
-        .into_response())
+    attachment_package_response(&file_name, attachment_count, binary_file_count, zip)
 }
 
 pub async fn create_form_attachment_package_job(
@@ -7900,6 +7904,78 @@ mod record_link_database_tests {
         )
         .await
         .map(|_| ())
+    }
+
+    /// ADR-0020 D3: the attachment-package download carries the canonical
+    /// `X-Sylvode-Attachment-*` count headers and the legacy `X-OpenPR-Attachment-*` ones, each
+    /// once and with the same value, on the response the handler actually returns.
+    #[tokio::test]
+    async fn the_attachment_package_download_carries_both_count_header_spellings() {
+        let scratch = scratch_or_skip!("package_headers");
+        let state = state_for(&scratch);
+
+        let user_id = create_user(&state, "owner").await;
+        let tenant = create_tenant(&state, "packaging", user_id, "owner").await;
+        let schema = json!({
+            "fields": [
+                {"field_id": "fld_order_no", "key": "order_no", "type": "text"},
+                {"field_id": "fld_files", "key": "files", "type": "attachment"}
+            ]
+        });
+        let form_id = create_form(&state, tenant, "order", schema).await;
+        let record_id = create_record(&state, tenant, form_id, user_id).await;
+        // Two external-link attachments: counted, but no server-owned binary, so the two
+        // headers carry different numbers (2 attachments, 0 files) and a swap is visible.
+        for name in ["a.pdf", "b.pdf"] {
+            state
+                .db
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    r"
+                        INSERT INTO form_attachments
+                            (workspace_id, project_id, form_id, record_id, field_id, field_key,
+                             file_name, storage_key, url, created_by)
+                        VALUES ($1, $2, $3, $4, 'fld_files', 'files', $5, $5, $6, $7)
+                    ",
+                    vec![
+                        tenant.0.into(),
+                        tenant.1.into(),
+                        form_id.into(),
+                        record_id.into(),
+                        name.into(),
+                        format!("https://files.example.test/{name}").into(),
+                        user_id.into(),
+                    ],
+                ))
+                .await
+                .expect("the attachment is created");
+        }
+
+        let response = super::export_form_attachment_package(
+            State(state.clone()),
+            Extension(claims_for(user_id)),
+            None,
+            Path(form_id),
+            axum::extract::Query(super::ExportAttachmentPackageQuery { view_id: None }),
+        )
+        .await
+        .expect("the owner can download the package");
+
+        let headers = response.headers();
+        let all = |name: &str| -> Vec<&str> {
+            headers
+                .get_all(name)
+                .iter()
+                .map(|value| value.to_str().expect("count headers are ASCII"))
+                .collect()
+        };
+        assert_eq!(all("content-type"), ["application/zip"]);
+        assert_eq!(all("x-sylvode-attachment-count"), ["2"]);
+        assert_eq!(all("x-openpr-attachment-count"), ["2"]);
+        assert_eq!(all("x-sylvode-attachment-file-count"), ["0"]);
+        assert_eq!(all("x-openpr-attachment-file-count"), ["0"]);
+
+        scratch.drop_self().await;
     }
 
     /// The shipped restaurant scenario models order lines on the child form, so the `order` schema
