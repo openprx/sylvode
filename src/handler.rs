@@ -56,12 +56,11 @@ fn event_from_payload(payload: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn trigger_kind_from_payload(payload: &Value) -> Option<String> {
-    string_field(payload, "trigger_kind")
-        .or_else(|| nested_string_field(payload, &["payload", "trigger_kind"]))
-        .or_else(|| nested_string_field(payload, &["payload", "trigger"]))
-        .or_else(|| string_field(payload, "task_type"))
-        .map(ToString::to_string)
+/// The trigger kind of a worker AI task: its top-level `trigger_kind`, one of the values
+/// [`crate::config::TRIGGER_KINDS`] lists. `task_type` and the inner `payload` use other values (or
+/// are free-form) and would never match a valid `route.trigger_kinds` entry.
+fn worker_trigger_kind(payload: &Value) -> Option<String> {
+    string_field(payload, "trigger_kind").map(ToString::to_string)
 }
 
 fn form_key_from_payload(payload: &Value) -> Option<String> {
@@ -102,8 +101,7 @@ fn bot_context_target(payload: &Value) -> Option<BotDispatchTarget> {
             .or_else(|| project_type_from_payload(payload)),
         trigger_kind: string_field(bot_context, "trigger_kind")
             .or_else(|| string_field(bot_context, "trigger_reason"))
-            .map(ToString::to_string)
-            .or_else(|| trigger_kind_from_payload(payload)),
+            .map(ToString::to_string),
         event: event_from_payload(payload),
         form_key: form_key_from_payload(payload),
     })
@@ -124,7 +122,7 @@ fn ai_task_envelope_target(payload: &Value) -> Option<BotDispatchTarget> {
         has_bot_identity: true,
         agent_type,
         project_type: project_type_from_payload(payload),
-        trigger_kind: trigger_kind_from_payload(payload),
+        trigger_kind: worker_trigger_kind(payload),
         event: event_from_payload(payload),
         form_key: form_key_from_payload(payload),
     })
@@ -335,6 +333,7 @@ mod tests {
             "ai_participant_id": "bot-user-1",
             "ai_participant_agent_type": "cli",
             "task_type": "issue_assigned",
+            "trigger_kind": "assigned",
             "payload": {
                 "agent_type": "webhook"
             }
@@ -345,7 +344,7 @@ mod tests {
         assert_eq!(target.bot_id.as_deref(), Some("bot-user-1"));
         assert_eq!(target.agent_type.as_deref(), Some("cli"));
         assert_eq!(target.project_type.as_deref(), None);
-        assert_eq!(target.trigger_kind.as_deref(), Some("issue_assigned"));
+        assert_eq!(target.trigger_kind.as_deref(), Some("assigned"));
         assert_eq!(target.event.as_deref(), None);
     }
 
@@ -355,7 +354,8 @@ mod tests {
             "task_id": "task-1",
             "ai_participant_id": "bot-user-1",
             "ai_participant_agent_type": "webhook",
-            "task_type": "mention",
+            "task_type": "comment_requested",
+            "trigger_kind": "mention",
             "payload": {
                 "project_type": "equipment_maintenance"
             }
@@ -396,6 +396,54 @@ mod tests {
     fn ignores_non_bot_payload() {
         let payload = json!({"event": "issue.created"});
         assert!(bot_dispatch_target(&payload).is_none());
+    }
+
+    /// The trigger kind is read only from the fields whose values `route.trigger_kinds` accepts:
+    /// `bot_context.trigger_reason` (or `trigger_kind`) and a worker task's top-level
+    /// `trigger_kind`. `task_type`, `payload.trigger` and `payload.trigger_kind` carry other
+    /// vocabularies, or free-form data, and are not consulted.
+    #[test]
+    fn trigger_kind_comes_only_from_the_fields_the_whitelist_describes() {
+        let worker = bot_dispatch_target(&json!({
+            "task_id": "t",
+            "ai_participant_id": "bot",
+            "task_type": "issue_assigned",
+            "payload": {"trigger": "issue.create", "trigger_kind": "assigned"}
+        }))
+        .expect("target");
+        assert_eq!(worker.trigger_kind, None);
+
+        let worker = bot_dispatch_target(&json!({
+            "task_id": "t",
+            "ai_participant_id": "bot",
+            "task_type": "issue_assigned",
+            "trigger_kind": "assigned"
+        }))
+        .expect("target");
+        assert_eq!(worker.trigger_kind.as_deref(), Some("assigned"));
+
+        let delivery = bot_dispatch_target(&json!({
+            "bot_context": {"is_bot_task": true, "bot_name": "Fixer"},
+            "trigger_kind": "assigned",
+            "payload": {"trigger_kind": "assigned"}
+        }))
+        .expect("target");
+        assert_eq!(delivery.trigger_kind, None);
+
+        let agents = vec![agent(
+            "id = \"fixer\"\nname = \"Fixer\"\nagent_type = \"cli\"\n[route]\ntrigger_kinds = [\"assigned\"]\n",
+        )];
+        assert!(select_agent(&agents, &worker_with_kind_in_payload()).is_none());
+    }
+
+    fn worker_with_kind_in_payload() -> super::BotDispatchTarget {
+        bot_dispatch_target(&json!({
+            "task_id": "t",
+            "ai_participant_id": "fixer",
+            "task_type": "assigned",
+            "payload": {"trigger_kind": "assigned"}
+        }))
+        .expect("target")
     }
 
     #[test]
