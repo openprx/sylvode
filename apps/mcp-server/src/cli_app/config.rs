@@ -8,7 +8,8 @@
 
 use super::error::CliError;
 use crate::client::{ClientConfig, OpenPrClient, TRANSPORT_LABEL_CLI};
-use platform::config::{OpenPrConfig, Secret};
+use platform::config::{LoggingConfig, OpenPrConfig, Secret};
+use std::io::Write as _;
 use std::path::PathBuf;
 
 /// The global flags every `sylvode` subcommand accepts, resolved from `clap` before dispatch.
@@ -25,6 +26,7 @@ pub struct GlobalArgs {
 pub fn build_client(global: &GlobalArgs) -> Result<OpenPrClient, CliError> {
     let config = OpenPrConfig::load(global.config.as_deref())
         .map_err(|err| CliError::usage(format!("configuration error: {err}")))?;
+    report_legacy_discovery(&config.logging);
     let mcp = config
         .mcp_runtime()
         .map_err(|err| CliError::usage(format!("configuration error: {err}")))?;
@@ -50,6 +52,27 @@ pub fn build_client(global: &GlobalArgs) -> Result<OpenPrClient, CliError> {
         transport_label: TRANSPORT_LABEL_CLI,
     })
     .map_err(CliError::usage)
+}
+
+/// Writes the ADR-0020 D2 legacy configuration notice, if this process loaded the legacy file
+/// by default discovery, as one `warn` line on stderr.
+///
+/// `sylvode` installs no global logger, so the line goes through a subscriber that exists only
+/// for it, built from the file's `[logging]` section. If that section cannot produce one, the
+/// notice is still written, as plain text; a failed stderr write is dropped, because the notice
+/// must never fail the command.
+fn report_legacy_discovery(logging: &LoggingConfig) {
+    let Some(notice) = platform::config::take_legacy_discovery_notice() else {
+        return;
+    };
+    let emitted = platform::logging::with_stderr_subscriber(logging, crate::cli::SERVICE_NAME, || {
+        tracing::warn!("{notice}");
+    });
+    if emitted.is_err() {
+        let mut stderr = std::io::stderr().lock();
+        let written = writeln!(stderr, "WARN {notice}");
+        drop(written);
+    }
 }
 
 /// Mirrors the shape `mcp.api_url` and `mcp-server`'s own `--api-url` are held to

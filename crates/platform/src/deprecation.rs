@@ -22,15 +22,33 @@ pub fn legacy_cli_invocation(subcommand: &str) -> String {
     )
 }
 
+/// Logged at `warn`, once per process, when the legacy configuration file was picked up by
+/// default discovery rather than named with `--config`.
+pub fn legacy_config_discovery(legacy: &str, canonical: &str) -> String {
+    format!(
+        "legacy configuration file {legacy} was discovered by default; rename it to {canonical} \
+         or pass --config explicitly (default discovery of {legacy} is {NOT_REMOVED_BEFORE})"
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{EARLIEST_REMOVAL, NOT_REMOVED_BEFORE, legacy_cli_invocation};
+    use super::{EARLIEST_REMOVAL, NOT_REMOVED_BEFORE, legacy_cli_invocation, legacy_config_discovery};
 
     #[test]
     fn the_cli_notice_names_the_legacy_command_its_replacement_and_the_removal_release() {
         let notice = legacy_cli_invocation("work-items get");
         assert!(notice.contains("`mcp-server work-items get`"), "{notice}");
         assert!(notice.contains("`sylvode work-items get`"), "{notice}");
+        assert!(notice.contains("not removed before Sylvode v2.0"), "{notice}");
+        assert!(!notice.contains('\n'), "the notice must be one line: {notice}");
+    }
+
+    #[test]
+    fn the_config_notice_names_the_legacy_file_its_replacement_and_the_removal_release() {
+        let notice = legacy_config_discovery("config/openpr.toml", "config/sylvode.toml");
+        assert!(notice.contains("config/openpr.toml"), "{notice}");
+        assert!(notice.contains("config/sylvode.toml"), "{notice}");
         assert!(notice.contains("not removed before Sylvode v2.0"), "{notice}");
         assert!(!notice.contains('\n'), "the notice must be one line: {notice}");
     }

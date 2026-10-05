@@ -5,7 +5,7 @@ use std::{fs, process};
 
 use super::{
     AppConfig, ConfigError, DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH, LogFormat, LogOutput, McpTransport, OpenPrConfig,
-    REDACTED, StdoutRole, StorageBackend, resolve_default_config_path,
+    REDACTED, StdoutRole, StorageBackend, resolve_config_path, resolve_default_config_path,
 };
 
 const WORKSPACE: &str = "0f8a1b2c-3d4e-4f60-8182-93a4b5c6d7e8";
@@ -809,6 +809,40 @@ fn sylvode_default_legacy_discovery_and_conflict_are_explicit() {
             .contains("both config/sylvode.toml and legacy config/openpr.toml exist")
     );
     assert!(conflict.to_string().contains("--config explicitly"));
+
+    fs::remove_dir_all(root).expect("remove test config directory");
+}
+
+/// Only default discovery that falls back to the legacy file is marked for the ADR-0020 D2
+/// notice: not the canonical default, and not an explicit `--config` naming the legacy file.
+#[test]
+fn sylvode_only_default_discovery_of_the_legacy_file_is_marked_for_the_notice() {
+    let root = std::env::temp_dir().join(format!("sylvode-config-notice-{}", process::id()));
+    let config_dir = root.join("config");
+    fs::create_dir_all(&config_dir).expect("test config directory");
+    let canonical = root.join(DEFAULT_CONFIG_PATH);
+    let legacy = root.join(LEGACY_CONFIG_PATH);
+
+    fs::write(&legacy, "[logging]\nformat='json'\n").expect("legacy fixture");
+    assert_eq!(
+        resolve_config_path(None, &root).expect("legacy-only config is discovered"),
+        (legacy.clone(), true)
+    );
+    assert_eq!(
+        resolve_config_path(Some(&legacy), &root).expect("an explicit legacy path is accepted"),
+        (legacy.clone(), false)
+    );
+    assert_eq!(
+        resolve_config_path(Some(Path::new(LEGACY_CONFIG_PATH)), &root).expect("an explicit relative legacy path"),
+        (PathBuf::from(LEGACY_CONFIG_PATH), false)
+    );
+
+    fs::remove_file(&legacy).expect("remove legacy fixture");
+    fs::write(&canonical, "[logging]\nformat='json'\n").expect("canonical fixture");
+    assert_eq!(
+        resolve_config_path(None, &root).expect("canonical config is discovered"),
+        (canonical, false)
+    );
 
     fs::remove_dir_all(root).expect("remove test config directory");
 }

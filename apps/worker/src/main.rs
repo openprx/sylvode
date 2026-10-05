@@ -87,6 +87,10 @@ async fn main() -> anyhow::Result<()> {
     // Initialised only once the file parsed, so a configuration error is reported by the process
     // exit rather than swallowed by a subscriber the file was supposed to describe.
     logging::init(&config.logging, "worker")?;
+    // Emitted only now: the logger it goes through did not exist while the file was loading.
+    if let Some(notice) = platform::config::take_legacy_discovery_notice() {
+        tracing::warn!("{notice}");
+    }
     // from_config first: it reports a missing database url and signing key together, so the
     // operator fixes both in one pass instead of being walked through them one at a time.
     let cfg = AppConfig::from_config(&config, "worker", "0.0.0.0:8081")?;

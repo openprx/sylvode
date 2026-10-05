@@ -281,3 +281,196 @@ async fn serve_over_http_and_sse_prints_no_notice() -> TestResult {
     }
     Ok(())
 }
+
+/// The ADR-0020 D2 configuration notice's stable part.
+const CONFIG_NOTICE: &str = "legacy configuration file config/openpr.toml was discovered by default";
+
+/// A working directory holding `config/<file_name>` and nothing else, with the default
+/// `[logging]` filter so a `warn` line from the binary is shown.
+fn config_dir_with(file_name: &str, api_url: &str) -> Result<PathBuf, BoxError> {
+    static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "sylvode-config-notice-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(dir.join("config"))?;
+    std::fs::write(
+        dir.join("config").join(file_name),
+        format!(
+            "[logging]\nformat = \"text\"\n\n[mcp]\napi_url = \"{api_url}\"\nbot_token = \"{TOKEN}\"\nworkspace_id = \"{WORKSPACE}\"\n"
+        ),
+    )?;
+    Ok(dir)
+}
+
+fn config_notices(stderr: &str) -> Vec<&str> {
+    stderr
+        .lines()
+        .filter(|line| line.contains("legacy configuration file"))
+        .collect()
+}
+
+/// Asserts exactly one configuration notice carrying the legacy name, the replacement and the
+/// removal release, written as a `WARN` log line.
+fn assert_one_config_notice(stderr: &str, what: &str) {
+    let found = config_notices(stderr);
+    assert_eq!(
+        found.len(),
+        1,
+        "{what}: expected exactly one configuration notice:\n{stderr}"
+    );
+    let notice = found.first().copied().unwrap_or_default();
+    assert!(notice.contains(CONFIG_NOTICE), "{what}: {notice}");
+    assert!(notice.contains("config/sylvode.toml"), "{what}: {notice}");
+    assert!(notice.contains(REMOVAL), "{what}: {notice}");
+    assert!(notice.contains("WARN"), "{what}: not a warn log line: {notice}");
+}
+
+/// A Flow JSON envelope with its per-run `request_id` removed, for comparing two runs.
+fn without_request_id(stdout: &[u8]) -> Result<Value, BoxError> {
+    let mut envelope: Value = serde_json::from_slice(stdout)?;
+    envelope
+        .as_object_mut()
+        .ok_or("the Flow output is not a JSON object")?
+        .remove("request_id")
+        .ok_or("the Flow output has no request_id")?;
+    Ok(envelope)
+}
+
+const OBJECT: &str = "66666666-6666-4666-8666-666666666666";
+
+/// Legacy configuration found by default discovery: one `warn` line per process from every
+/// executable that loads configuration — `mcp-server` workspace commands, `sylvode` workspace
+/// commands and `sylvode` Flow commands — on stderr only, with stdout identical to a run that
+/// names the same file with `--config`.
+#[tokio::test]
+async fn default_discovery_of_the_legacy_config_warns_once_per_process_on_stderr() -> TestResult {
+    let api_url = spawn_api().await?;
+    let cwd = config_dir_with("openpr.toml", &api_url)?;
+
+    for (binary, args) in [
+        (MCP_SERVER, vec!["projects", "list"]),
+        (SYLVODE, vec!["projects", "list"]),
+        (SYLVODE, vec!["search", "anything", "--format", "table"]),
+    ] {
+        let discovered = run(binary, &cwd, &args, Stdio::piped()).await?;
+        let stderr = text(&discovered.stderr);
+        assert_eq!(discovered.status.code(), Some(0), "{binary} {args:?}: {stderr}");
+        assert_one_config_notice(&stderr, &format!("{binary} {args:?}"));
+        assert!(
+            !text(&discovered.stdout).contains("legacy configuration"),
+            "the notice reached stdout"
+        );
+
+        let mut explicit_args = args.clone();
+        explicit_args.extend(["--config", "config/openpr.toml"]);
+        let explicit = run(binary, &cwd, &explicit_args, Stdio::piped()).await?;
+        assert_eq!(
+            discovered.stdout, explicit.stdout,
+            "{binary} {args:?}: the notice changed stdout"
+        );
+        assert!(!discovered.stdout.is_empty());
+    }
+
+    let flow_args = ["objects", "get", OBJECT];
+    let discovered = run(SYLVODE, &cwd, &flow_args, Stdio::piped()).await?;
+    let stderr = text(&discovered.stderr);
+    assert_eq!(discovered.status.code(), Some(0), "{stderr}");
+    assert_one_config_notice(&stderr, "sylvode objects get");
+    let explicit = run(
+        SYLVODE,
+        &cwd,
+        &["objects", "get", OBJECT, "--config", "config/openpr.toml"],
+        Stdio::piped(),
+    )
+    .await?;
+    assert_eq!(
+        without_request_id(&discovered.stdout)?,
+        without_request_id(&explicit.stdout)?
+    );
+
+    std::fs::remove_dir_all(&cwd)?;
+    Ok(())
+}
+
+/// The stdio transport with default-discovered legacy configuration: the notice goes to
+/// stderr, stdout carries only protocol frames, and there is still no CLI notice.
+#[tokio::test]
+async fn serve_over_stdio_with_discovered_legacy_config_warns_on_stderr_only() -> TestResult {
+    let api_url = spawn_api().await?;
+    let cwd = config_dir_with("openpr.toml", &api_url)?;
+    let mut child = Command::new(MCP_SERVER)
+        .args(["serve", "--transport", "stdio"])
+        .current_dir(&cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+    let mut stdin = child.stdin.take().ok_or("no stdin")?;
+    let request = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}});
+    stdin.write_all(format!("{request}\n").as_bytes()).await?;
+    stdin.flush().await?;
+    drop(stdin);
+    let output = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output()).await??;
+
+    let stdout = text(&output.stdout);
+    let frames: Vec<&str> = stdout.lines().collect();
+    assert_eq!(frames.len(), 1, "stdout: {stdout:?}");
+    for frame in frames {
+        let parsed: Value = serde_json::from_str(frame)?;
+        assert_eq!(parsed.get("jsonrpc"), Some(&json!("2.0")), "{frame}");
+    }
+    let stderr = text(&output.stderr);
+    assert_one_config_notice(&stderr, "serve --transport stdio");
+    assert!(
+        !stderr.contains("deprecated;"),
+        "serve printed the CLI notice:\n{stderr}"
+    );
+    std::fs::remove_dir_all(&cwd)?;
+    Ok(())
+}
+
+/// No notice when the operator named the legacy file explicitly, or when the canonical file is
+/// the one discovered.
+#[tokio::test]
+async fn explicit_legacy_config_and_canonical_discovery_do_not_warn() -> TestResult {
+    let api_url = spawn_api().await?;
+    let legacy_cwd = config_dir_with("openpr.toml", &api_url)?;
+    let canonical_cwd = config_dir_with("sylvode.toml", &api_url)?;
+
+    let cases: [(&str, &Path, Vec<&str>); 6] = [
+        (
+            MCP_SERVER,
+            &legacy_cwd,
+            vec!["projects", "list", "--config", "config/openpr.toml"],
+        ),
+        (
+            SYLVODE,
+            &legacy_cwd,
+            vec!["projects", "list", "--config", "config/openpr.toml"],
+        ),
+        (
+            SYLVODE,
+            &legacy_cwd,
+            vec!["objects", "get", OBJECT, "--config", "config/openpr.toml"],
+        ),
+        (MCP_SERVER, &canonical_cwd, vec!["projects", "list"]),
+        (SYLVODE, &canonical_cwd, vec!["projects", "list"]),
+        (SYLVODE, &canonical_cwd, vec!["objects", "get", OBJECT]),
+    ];
+    for (binary, cwd, args) in cases {
+        let output = run(binary, cwd, &args, Stdio::piped()).await?;
+        let stderr = text(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "{binary} {args:?}: {stderr}");
+        assert!(
+            config_notices(&stderr).is_empty(),
+            "{binary} {args:?} in {} printed a configuration notice:\n{stderr}",
+            cwd.display()
+        );
+    }
+    std::fs::remove_dir_all(&legacy_cwd)?;
+    std::fs::remove_dir_all(&canonical_cwd)?;
+    Ok(())
+}
