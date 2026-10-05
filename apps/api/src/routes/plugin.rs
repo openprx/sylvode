@@ -17,7 +17,9 @@ use crate::{
     middleware::bot_auth::{BotAuthContext, require_workspace_access_from_auth},
     plugins::{
         manifest::parse_manifest,
-        runtime::{PluginRuntimeOutput, invoke_wasm_plugin, validate_wasm_module},
+        runtime::{
+            PluginInvocationStatus, PluginRuntimeError, PluginRuntimeOutput, invoke_wasm_plugin, validate_wasm_module,
+        },
     },
     response::{ApiResponse, PaginatedData},
 };
@@ -283,15 +285,19 @@ pub async fn invoke_plugin(
     }
     let Some(wasm_bytes) = row.wasm_bytes.clone() else {
         let tx = state.db.begin().await?;
+        // Nothing ran, so nothing was spent: zero time, no fuel figure.
         let invocation = insert_invocation(
             &tx,
             &row,
-            &hook_kind,
-            req.input,
-            json!({}),
-            Some("plugin has no wasm module".to_string()),
-            0,
-            None,
+            NewInvocation {
+                hook_kind: &hook_kind,
+                status: PluginInvocationStatus::Failed,
+                input: req.input,
+                output: json!({}),
+                error_message: Some("plugin has no wasm module".to_string()),
+                duration_ms: 0,
+                fuel_consumed: None,
+            },
         )
         .await?;
         insert_plugin_invoked_event(
@@ -315,7 +321,7 @@ pub async fn invoke_plugin(
     let tx = state.db.begin().await?;
     let invocation = match result {
         Ok(output) => insert_success_invocation(&tx, &row, &hook_kind, input, output).await?,
-        Err(err) => insert_invocation(&tx, &row, &hook_kind, input, json!({}), Some(err), 0, None).await?,
+        Err(err) => insert_failed_invocation(&tx, &row, &hook_kind, input, err).await?,
     };
     insert_plugin_invoked_event(
         &tx,
@@ -437,30 +443,66 @@ where
     insert_invocation(
         db,
         plugin,
-        hook_kind,
-        input,
-        output.output,
-        None,
-        i64::try_from(output.duration_ms).unwrap_or(i64::MAX),
-        output.fuel_consumed.and_then(|value| i64::try_from(value).ok()),
+        NewInvocation {
+            hook_kind,
+            status: PluginInvocationStatus::Completed,
+            input,
+            output: output.output,
+            error_message: None,
+            duration_ms: i64::try_from(output.duration_ms).unwrap_or(i64::MAX),
+            fuel_consumed: output.fuel_consumed.and_then(|value| i64::try_from(value).ok()),
+        },
     )
     .await
 }
 
-async fn insert_invocation<C>(
+/// Records a run that produced no output: `timeout` for an expired deadline, `failed` for
+/// anything else, with the elapsed time and whatever fuel the store knew it had burnt.
+async fn insert_failed_invocation<C>(
     db: &C,
     plugin: &PluginRuntimeRow,
     hook_kind: &str,
+    input: Value,
+    error: PluginRuntimeError,
+) -> Result<PluginInvocationResponse, ApiError>
+where
+    C: ConnectionTrait,
+{
+    insert_invocation(
+        db,
+        plugin,
+        NewInvocation {
+            hook_kind,
+            status: error.kind.into(),
+            input,
+            output: json!({}),
+            error_message: Some(error.message),
+            duration_ms: i64::try_from(error.duration_ms).unwrap_or(i64::MAX),
+            fuel_consumed: error.fuel_consumed.and_then(|value| i64::try_from(value).ok()),
+        },
+    )
+    .await
+}
+
+/// One `plugin_invocations` row, as written.
+struct NewInvocation<'a> {
+    hook_kind: &'a str,
+    status: PluginInvocationStatus,
     input: Value,
     output: Value,
     error_message: Option<String>,
     duration_ms: i64,
     fuel_consumed: Option<i64>,
+}
+
+async fn insert_invocation<C>(
+    db: &C,
+    plugin: &PluginRuntimeRow,
+    invocation: NewInvocation<'_>,
 ) -> Result<PluginInvocationResponse, ApiError>
 where
     C: ConnectionTrait,
 {
-    let status = if error_message.is_some() { "failed" } else { "completed" };
     PluginInvocationResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"INSERT INTO plugin_invocations (
@@ -475,13 +517,13 @@ where
             plugin.project_id.into(),
             plugin.id.into(),
             plugin.key.clone().into(),
-            hook_kind.to_string().into(),
-            status.into(),
-            input.into(),
-            output.into(),
-            error_message.into(),
-            duration_ms.into(),
-            fuel_consumed.into(),
+            invocation.hook_kind.to_string().into(),
+            invocation.status.as_str().into(),
+            invocation.input.into(),
+            invocation.output.into(),
+            invocation.error_message.into(),
+            invocation.duration_ms.into(),
+            invocation.fuel_consumed.into(),
         ],
     ))
     .one(db)
@@ -634,5 +676,315 @@ mod tests {
     #[test]
     fn rejects_invalid_wasm_base64() {
         assert!(decode_and_validate_wasm(Some("not wasm")).is_err());
+    }
+}
+
+/// What `plugin_invocations` records for each way a plugin run can end, through the real invoke
+/// route and the real automatic hook path, against a migrated scratch database.
+#[cfg(test)]
+mod invocation_record_database_tests {
+    use super::{InvokePluginRequest, invoke_plugin};
+    use crate::plugins::hooks::run_event_handler_hooks;
+    use crate::routes::context::tenant_fixture::{Tenant, exec, seed_tenant};
+    use crate::scratch_or_skip;
+    use axum::extract::{Extension, Json, Path, State};
+    use axum::response::IntoResponse;
+    use platform::{
+        app::AppState,
+        auth::{JwtClaims, TokenType},
+        config::{AppConfig, Secret},
+    };
+    use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
+    use serde_json::{Value, json};
+    use uuid::Uuid;
+
+    fn state_for(db: DatabaseConnection) -> AppState {
+        AppState {
+            cfg: AppConfig {
+                app_name: "plugin-invocation-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new("plugin-invocation-test-secret"),
+                jwt_access_ttl_seconds: 900,
+                jwt_refresh_ttl_seconds: 3600,
+                default_author_id: None,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db,
+            flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
+        }
+    }
+
+    fn claims_for(user_id: Uuid) -> JwtClaims {
+        JwtClaims {
+            sub: user_id.to_string(),
+            email: format!("{user_id}@tenant.test"),
+            token_type: TokenType::Access,
+            iat: 0,
+            exp: 0,
+        }
+    }
+
+    /// A guest whose `openpr_invoke` loops forever.
+    fn spin_forever_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"
+            (module
+              (memory (export "memory") 1)
+              (func (export "openpr_alloc") (param i32) (result i32) i32.const 0)
+              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+                (loop $again
+                  br $again)
+                i64.const 0))
+            "#,
+        )
+        .expect("wat should compile")
+    }
+
+    /// A guest that counts down from `iterations`, then traps on `unreachable`.
+    fn count_down_then_trap_wasm(iterations: u64) -> Vec<u8> {
+        wat::parse_str(format!(
+            r#"
+            (module
+              (memory (export "memory") 1)
+              (func (export "openpr_alloc") (param i32) (result i32) i32.const 0)
+              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+                (local $n i64)
+                i64.const {iterations}
+                local.set $n
+                (loop $again
+                  local.get $n
+                  i64.const 1
+                  i64.sub
+                  local.tee $n
+                  i64.const 0
+                  i64.gt_s
+                  br_if $again)
+                unreachable))
+            "#
+        ))
+        .expect("wat should compile")
+    }
+
+    /// Installs an active plugin with one `event_handler` hook, straight into the table, so
+    /// that even bytes the install route would refuse can be stored.
+    async fn install(
+        db: &DatabaseConnection,
+        tenant: &Tenant,
+        key: &str,
+        wasm: Vec<u8>,
+        timeout_ms: u64,
+        fuel: u64,
+    ) -> Uuid {
+        let plugin_id = Uuid::new_v4();
+        let manifest = json!({
+            "key": key,
+            "name": key,
+            "version": "1.0.0",
+            "capabilities": {
+                "hooks": [{"kind": "event_handler", "event_type": "record.created"}],
+                "runtime": {"timeout_ms": timeout_ms, "fuel": fuel, "memory_bytes": 1_048_576}
+            }
+        });
+        exec(
+            db,
+            "INSERT INTO plugins (id, workspace_id, project_id, key, name, version, manifest, wasm_bytes, status) \
+             VALUES ($1, $2, $3, $4, $4, '1.0.0', $5, $6, 'active')",
+            vec![
+                plugin_id.into(),
+                tenant.workspace_id.into(),
+                tenant.project_id.into(),
+                key.into(),
+                manifest.into(),
+                wasm.into(),
+            ],
+        )
+        .await;
+        plugin_id
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct Recorded {
+        status: String,
+        error_message: Option<String>,
+        duration_ms: i64,
+        fuel_consumed: Option<i64>,
+        event_status: Option<String>,
+    }
+
+    /// The single invocation row of `plugin_id`, with the status its `plugin.invoked` event carries.
+    async fn recorded(db: &DatabaseConnection, plugin_id: Uuid) -> Recorded {
+        let rows = Recorded::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT i.status, i.error_message, i.duration_ms, i.fuel_consumed, \
+                    (SELECT e.payload->>'status' FROM business_events e \
+                      WHERE e.event_type = 'plugin.invoked' AND e.aggregate_id = $1::text) AS event_status \
+               FROM plugin_invocations i WHERE i.plugin_id = $1",
+            vec![plugin_id.into()],
+        ))
+        .all(db)
+        .await
+        .expect("invocations load");
+        assert_eq!(
+            rows.len(),
+            1,
+            "expected exactly one invocation of {plugin_id}: {rows:?}"
+        );
+        rows.into_iter().next().expect("one row")
+    }
+
+    async fn invoke(state: &AppState, tenant: &Tenant, plugin_id: Uuid) -> Value {
+        let response = invoke_plugin(
+            State(state.clone()),
+            Extension(claims_for(tenant.member_id)),
+            None,
+            Path(plugin_id),
+            Json(InvokePluginRequest {
+                hook_kind: "event_handler".to_string(),
+                input: json!({}),
+            }),
+        )
+        .await
+        .expect("the invoke route records the outcome")
+        .into_response();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("the response body is readable");
+        serde_json::from_slice(&bytes).expect("the response body is JSON")
+    }
+
+    /// A deadline expiry is stored as `timeout`, not `failed`, with the elapsed wall time and the
+    /// fuel the guest had burnt when it was interrupted; the message keeps its exact text.
+    #[tokio::test]
+    async fn a_deadline_expiry_is_recorded_as_timeout_with_its_real_cost() {
+        let scratch = scratch_or_skip!("plugin_timeout_record");
+        let state = state_for(scratch.db.clone());
+        let tenant = seed_tenant(&scratch.db, "pt").await;
+        let plugin_id = install(&scratch.db, &tenant, "spinner", spin_forever_wasm(), 100, 1_000_000_000).await;
+
+        let body = invoke(&state, &tenant, plugin_id).await;
+        let row = recorded(&scratch.db, plugin_id).await;
+
+        assert_eq!(row.status, "timeout", "{row:?}");
+        assert_eq!(row.error_message.as_deref(), Some("wasm execution timeout after 100ms"));
+        assert!(row.duration_ms >= 100, "{row:?}");
+        assert!(row.fuel_consumed.is_some_and(|fuel| fuel > 0), "{row:?}");
+        assert_eq!(row.event_status.as_deref(), Some("timeout"), "{row:?}");
+        assert_eq!(body.pointer("/data/status"), Some(&json!("timeout")), "{body}");
+        assert_eq!(
+            body.pointer("/data/duration_ms"),
+            Some(&json!(row.duration_ms)),
+            "{body}"
+        );
+        assert_eq!(
+            body.pointer("/data/fuel_consumed"),
+            Some(&json!(row.fuel_consumed)),
+            "{body}"
+        );
+        scratch.drop_self().await;
+    }
+
+    /// A guest trap after real work stays `failed`, but keeps its elapsed time and its fuel;
+    /// fuel exhaustion records the whole budget as consumed; a module that never compiled has no
+    /// fuel to report.
+    #[tokio::test]
+    async fn failures_record_elapsed_time_and_known_fuel() {
+        let scratch = scratch_or_skip!("plugin_failure_record");
+        let state = state_for(scratch.db.clone());
+        let tenant = seed_tenant(&scratch.db, "pf").await;
+
+        let trapping = install(
+            &scratch.db,
+            &tenant,
+            "trapper",
+            count_down_then_trap_wasm(50_000_000),
+            30_000,
+            1_000_000_000,
+        )
+        .await;
+        invoke(&state, &tenant, trapping).await;
+        let row = recorded(&scratch.db, trapping).await;
+        assert_eq!(row.status, "failed", "{row:?}");
+        assert!(
+            row.error_message
+                .as_deref()
+                .is_some_and(|message| message.starts_with("plugin invocation trapped")),
+            "{row:?}"
+        );
+        assert!(row.duration_ms > 0, "{row:?}");
+        assert!(row.fuel_consumed.is_some_and(|fuel| fuel >= 50_000_000), "{row:?}");
+        assert_eq!(row.event_status.as_deref(), Some("failed"), "{row:?}");
+
+        let exhausted = install(&scratch.db, &tenant, "exhausted", spin_forever_wasm(), 30_000, 10).await;
+        invoke(&state, &tenant, exhausted).await;
+        let row = recorded(&scratch.db, exhausted).await;
+        assert_eq!(row.status, "failed", "{row:?}");
+        assert!(
+            row.error_message
+                .as_deref()
+                .is_some_and(|message| message.contains("fuel")),
+            "{row:?}"
+        );
+        assert_eq!(row.fuel_consumed, Some(10), "{row:?}");
+
+        let broken = install(
+            &scratch.db,
+            &tenant,
+            "broken",
+            b"not a wasm module".to_vec(),
+            30_000,
+            10,
+        )
+        .await;
+        invoke(&state, &tenant, broken).await;
+        let row = recorded(&scratch.db, broken).await;
+        assert_eq!(row.status, "failed", "{row:?}");
+        assert!(
+            row.error_message
+                .as_deref()
+                .is_some_and(|message| message.starts_with("invalid wasm module")),
+            "{row:?}"
+        );
+        assert_eq!(row.fuel_consumed, None, "{row:?}");
+        scratch.drop_self().await;
+    }
+
+    /// The automatic hook path records the same truth as the invoke route.
+    #[tokio::test]
+    async fn an_automatic_hook_timeout_is_recorded_as_timeout() {
+        let scratch = scratch_or_skip!("plugin_hook_timeout_record");
+        let state = state_for(scratch.db.clone());
+        let tenant = seed_tenant(&scratch.db, "ph").await;
+        let plugin_id = install(
+            &scratch.db,
+            &tenant,
+            "hookspin",
+            spin_forever_wasm(),
+            100,
+            1_000_000_000,
+        )
+        .await;
+
+        run_event_handler_hooks(
+            &state,
+            tenant.workspace_id,
+            tenant.project_id,
+            Uuid::new_v4(),
+            "orders",
+            None,
+            "record.created",
+            json!({}),
+        )
+        .await
+        .expect("an event handler failure does not fail the caller");
+        let row = recorded(&scratch.db, plugin_id).await;
+
+        assert_eq!(row.status, "timeout", "{row:?}");
+        assert_eq!(row.error_message.as_deref(), Some("wasm execution timeout after 100ms"));
+        assert!(row.duration_ms >= 100, "{row:?}");
+        assert!(row.fuel_consumed.is_some_and(|fuel| fuel > 0), "{row:?}");
+        assert_eq!(row.event_status.as_deref(), Some("timeout"), "{row:?}");
+        scratch.drop_self().await;
     }
 }
