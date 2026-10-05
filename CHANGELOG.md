@@ -3,6 +3,14 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.14
+
+### Changed
+
+- Deprecation notices, `--help`, the installer and the documentation say a legacy name is "not
+  removed before Sylvode v2.0" instead of "v2.0". The deprecation window follows the Sylvode
+  product's releases, not this crate's version.
+
 ## 0.3.13
 
 ### Added
@@ -62,7 +70,7 @@ Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are
 
 The project is renamed **Sylvode Webhook**, following the main product
 ([openprx/sylvode](https://github.com/openprx/sylvode)). Every legacy name keeps working for the
-whole 1.x line and is not removed before v2.0; using one writes a single deprecation line to
+whole Sylvode 1.x line and is not removed before Sylvode v2.0; using one writes a single deprecation line to
 stderr per process that names the replacement. See the migration table in the
 [README](README.md#migrating-from-openpr-webhook).
 

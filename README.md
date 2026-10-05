@@ -5,7 +5,7 @@ from a Sylvode deployment and dispatches them to AI agents, chat platforms or ex
 
 > **Formerly OpenPR Webhook.** The project was renamed together with the main product. Every old
 > name (executable, container image, signature header, environment variable, service unit) keeps
-> working for the whole 1.x line and is not removed before v2.0; see [Migrating from OpenPR
+> working for the whole Sylvode 1.x line and is not removed before Sylvode v2.0; see [Migrating from OpenPR
 > Webhook](#migrating-from-openpr-webhook).
 
 Built with **Rust** (Axum).
@@ -242,7 +242,7 @@ For **Claude Code**, add to `~/.claude.json`:
 A plain API callback (`callback = "api"`) reports its surface as `cli` in both
 `X-Sylvode-MCP-Surface` and the legacy `X-OpenPR-MCP-Surface`, with the same value, so the API
 records it correctly whether it predates the rename or not. Both headers are sent for the whole
-1.x line.
+Sylvode 1.x line.
 
 ---
 
@@ -324,7 +324,7 @@ keyed with one of `webhook_secrets`. It is accepted in any of these headers:
 |--------|--------|
 | `X-Sylvode-Signature` | Canonical |
 | `X-Webhook-Signature` | Canonical; the header the Sylvode API sends today |
-| `X-OpenPR-Signature` | Legacy; accepted with a deprecation notice, not removed before v2.0 |
+| `X-OpenPR-Signature` | Legacy; accepted with a deprecation notice, not removed before Sylvode v2.0 |
 
 Every signature header present is read. When they carry different signatures (or one header is
 repeated with different values) the request is refused with `401`, even if one of them is valid: an
@@ -382,8 +382,8 @@ and the legacy `openpr-webhook` executable. The same archive is also published a
 
 ## Migrating from OpenPR Webhook
 
-Nothing has to change on upgrade: every legacy name below keeps working for the whole 1.x line and
-is not removed before v2.0. Using one writes a single deprecation line to stderr per process,
+Nothing has to change on upgrade: every legacy name below keeps working for the whole Sylvode 1.x line and
+is not removed before Sylvode v2.0. Using one writes a single deprecation line to stderr per process,
 naming the replacement. stdout and exit codes are the same for the legacy and the canonical name.
 
 | Legacy | Canonical | When both are supplied |

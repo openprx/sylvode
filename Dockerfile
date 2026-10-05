@@ -1,6 +1,6 @@
 # Sylvode Webhook container image.
 #
-# Published as ghcr.io/openprx/sylvode-webhook and, for the whole 1.x line, under the legacy name
+# Published as ghcr.io/openprx/sylvode-webhook and, for the whole Sylvode 1.x line, under the legacy name
 # ghcr.io/openprx/openpr-webhook with the same digest. Both executables are installed: the
 # canonical /app/sylvode-webhook and the legacy /app/openpr-webhook, which runs the same code and
 # writes one deprecation line to stderr. There is no ENTRYPOINT, so a compose `command` that names

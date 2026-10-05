@@ -16,7 +16,7 @@ env:
   CARGO_TERM_COLOR: always
   # Canonical name. Every archive also ships the legacy openpr-webhook executable, and each
   # archive is published a second time under the legacy openpr-webhook-<suffix> name (same bytes,
-  # own sha256) for the whole 1.x line.
+  # own sha256) for the whole Sylvode 1.x line.
   BINARY_NAME: sylvode-webhook
   LEGACY_BINARY_NAME: openpr-webhook
 
@@ -197,7 +197,7 @@ jobs:
             Each archive contains the `sylvode-webhook` executable and the legacy `openpr-webhook`
             executable, which runs the same program and prints a deprecation notice. Matching
             `openpr-webhook-<platform>.tar.gz` archives with the same contents are retained as
-            aliases, each with its own `.sha256`. The legacy names are not removed before v2.0.
+            aliases, each with its own `.sha256`. The legacy names are not removed before Sylvode v2.0.
 
             Container image: `ghcr.io/openprx/sylvode-webhook` (tags `<version>`, `<major>.<minor>`
             and `latest`, without the leading `v`), also published as the legacy

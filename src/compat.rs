@@ -1,4 +1,4 @@
-//! Legacy `openpr-webhook` names that keep working for the whole 1.x line.
+//! Legacy `openpr-webhook` names that keep working for the whole Sylvode 1.x line.
 //!
 //! Every legacy entry point behaves exactly like its canonical replacement and, the first time it
 //! is used in a process, writes one deprecation line to stderr. The notice goes to stderr directly
@@ -11,10 +11,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The canonical executable name.
 pub const CANONICAL_NAME: &str = "sylvode-webhook";
-/// The legacy executable name, deprecated but kept for the whole 1.x line.
+/// The legacy executable name, deprecated but kept for the whole Sylvode 1.x line.
 pub const LEGACY_NAME: &str = "openpr-webhook";
-/// The earliest release in which a legacy name may be removed (ADR-0020 D1).
-pub const EARLIEST_REMOVAL: &str = "v2.0";
+/// The earliest Sylvode release in which a legacy name may be removed (ADR-0020 D1). The window
+/// is the Sylvode product's, not this crate's version.
+pub const EARLIEST_REMOVAL: &str = "Sylvode v2.0";
 /// Environment variable that forces the tunnel, CLI and callback paths off.
 pub const SAFE_MODE_ENV: &str = "SYLVODE_WEBHOOK_SAFE_MODE";
 /// Legacy name of [`SAFE_MODE_ENV`].
@@ -223,7 +224,10 @@ mod tests {
             let message = entry.message();
             assert!(message.contains(legacy), "{entry:?}: {message}");
             assert!(message.contains(replacement), "{entry:?}: {message}");
-            assert!(message.contains("not removed before v2.0"), "{entry:?}: {message}");
+            assert!(
+                message.contains("not removed before Sylvode v2.0"),
+                "{entry:?}: {message}"
+            );
             assert!(!message.contains('\n'), "{entry:?} must be a single line: {message}");
         }
     }

@@ -9,7 +9,7 @@ type HmacSha256 = Hmac<Sha256>;
 pub const SYLVODE_SIGNATURE_HEADER: &str = "x-sylvode-signature";
 /// Generic signature header; the one the Sylvode API sends today.
 pub const WEBHOOK_SIGNATURE_HEADER: &str = "x-webhook-signature";
-/// Legacy header, accepted with a deprecation notice for the whole 1.x line.
+/// Legacy header, accepted with a deprecation notice for the whole Sylvode 1.x line.
 pub const LEGACY_SIGNATURE_HEADER: &str = "x-openpr-signature";
 
 pub const INBOUND_SIGNATURE_HEADERS: [&str; 3] = [

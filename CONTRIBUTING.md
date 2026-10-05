@@ -50,8 +50,8 @@ The production code rules in [`CLAUDE.md`](CLAUDE.md) apply to every contributor
 ## Legacy names
 
 Legacy `openpr-webhook` names (executable, image, `X-OpenPR-Signature`, `OPENPR_WEBHOOK_SAFE_MODE`,
-the `openpr_webhook` log target, service units) keep working for the whole 1.x line and must not be
-removed before v2.0. A change that touches one of them needs tests in both directions: the legacy
+the `openpr_webhook` log target, service units) keep working for the whole Sylvode 1.x line and
+must not be removed before Sylvode v2.0. A change that touches one of them needs tests in both directions: the legacy
 form works and writes its deprecation notice, and the canonical form works and writes none.
 
 ## Commits and Pull Requests

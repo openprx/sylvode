@@ -13,9 +13,9 @@ use std::process::{Command, Output};
 const CANONICAL: &str = env!("CARGO_BIN_EXE_sylvode-webhook");
 const SAFE_MODE_NOTICE: &str = "warning: the environment variable `OPENPR_WEBHOOK_SAFE_MODE` is deprecated, use \
                                 `SYLVODE_WEBHOOK_SAFE_MODE` instead; `OPENPR_WEBHOOK_SAFE_MODE` is not removed \
-                                before v2.0";
+                                before Sylvode v2.0";
 const LOG_TARGET_NOTICE: &str = "warning: the RUST_LOG target `openpr_webhook` is deprecated, use `sylvode_webhook` \
-                                 instead; `openpr_webhook` is not removed before v2.0";
+                                 instead; `openpr_webhook` is not removed before Sylvode v2.0";
 
 fn run(env: &[(&str, &str)]) -> Output {
     let missing = std::env::temp_dir().join("sylvode-webhook-env-test-missing.toml");

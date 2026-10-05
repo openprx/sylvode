@@ -19,9 +19,9 @@ const LEGACY: &str = env!("CARGO_BIN_EXE_openpr-webhook");
 const SECRET: &str = "integration-secret";
 const BODY: &str = r#"{"event":"issue.created","data":{"title":"signature test"}}"#;
 const EXECUTABLE_NOTICE: &str = "warning: the executable name `openpr-webhook` is deprecated, use `sylvode-webhook` \
-                                 instead; `openpr-webhook` is not removed before v2.0";
+                                 instead; `openpr-webhook` is not removed before Sylvode v2.0";
 const HEADER_NOTICE: &str = "warning: the inbound signature header `x-openpr-signature` is deprecated, use \
-                             `x-sylvode-signature` instead; `x-openpr-signature` is not removed before v2.0";
+                             `x-sylvode-signature` instead; `x-openpr-signature` is not removed before Sylvode v2.0";
 
 fn sign(secret: &str) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
