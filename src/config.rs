@@ -268,6 +268,7 @@ impl Config {
     /// Refuses settings that parse but can never work, so they fail at start-up instead of
     /// silently never dispatching.
     fn validate(&self) -> Result<(), String> {
+        self.validate_tunnel()?;
         for agent in &self.agents {
             let commands = [
                 ("openclaw.command", agent.openclaw.as_ref().map(|c| c.command.as_str())),
@@ -297,6 +298,30 @@ impl Config {
                     }
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Refuses `require_inbound_sig` on an enabled tunnel without `hmac_secret`.
+    ///
+    /// Without a secret the `sig` of an inbound envelope is never verified, so requiring one would
+    /// only check that the field exists and would authenticate nothing.
+    fn validate_tunnel(&self) -> Result<(), String> {
+        let Some(tunnel) = self
+            .tunnel
+            .as_ref()
+            .filter(|t| self.features.tunnel_enabled && t.enabled)
+        else {
+            return Ok(());
+        };
+        let has_secret = tunnel.hmac_secret.as_deref().is_some_and(|s| !s.trim().is_empty());
+        if tunnel.require_inbound_sig && !has_secret {
+            return Err(
+                "tunnel.require_inbound_sig = true requires a non-empty tunnel.hmac_secret: without it \
+                        the sig of inbound envelopes cannot be verified and authenticates nothing; set \
+                        tunnel.hmac_secret to the secret shared with the control plane"
+                    .to_string(),
+            );
         }
         Ok(())
     }
@@ -508,5 +533,52 @@ url = "http://127.0.0.1:9000/hook"
         assert_eq!(route.trigger_kinds, vec!["mention"]);
         assert_eq!(route.events, vec!["form.record.created"]);
         assert_eq!(route.form_keys, vec!["order"]);
+    }
+
+    fn tunnel_config(tunnel_enabled: bool, enabled: bool, extra: &str) -> String {
+        format!(
+            "[server]\nlisten = \"0.0.0.0:9090\"\n\n[security]\nallow_unsigned = true\n\n\
+             [features]\ntunnel_enabled = {tunnel_enabled}\n\n\
+             [tunnel]\nenabled = {enabled}\nurl = \"wss://example.invalid/tunnel\"\nagent_id = \"a\"\n\
+             auth_token = \"t\"\n{extra}\n"
+        )
+    }
+
+    /// Requiring an inbound `sig` that nothing verifies authenticates nothing, so start-up is
+    /// refused, naming the setting, whether the secret is absent, empty or blank.
+    #[test]
+    fn refuses_require_inbound_sig_without_hmac_secret() {
+        for secret in ["", "hmac_secret = \"\"", "hmac_secret = \"  \""] {
+            let err = load_str(&tunnel_config(
+                true,
+                true,
+                &format!("require_inbound_sig = true\n{secret}"),
+            ))
+            .expect_err("require_inbound_sig without a secret is refused");
+            assert!(err.contains("tunnel.require_inbound_sig"), "{err}");
+            assert!(err.contains("tunnel.hmac_secret"), "{err}");
+        }
+    }
+
+    #[test]
+    fn accepts_require_inbound_sig_with_hmac_secret() {
+        let cfg = load_str(&tunnel_config(
+            true,
+            true,
+            "require_inbound_sig = true\nhmac_secret = \"shared\"",
+        ))
+        .expect("require_inbound_sig with a secret is accepted");
+        let tunnel = cfg.tunnel.expect("tunnel config");
+        assert!(tunnel.require_inbound_sig);
+        assert_eq!(tunnel.hmac_secret.as_deref(), Some("shared"));
+    }
+
+    /// Without `require_inbound_sig`, or with the tunnel off, a missing secret is still accepted.
+    #[test]
+    fn accepts_a_missing_hmac_secret_when_nothing_requires_it() {
+        load_str(&tunnel_config(true, true, "require_inbound_sig = false")).expect("no requirement");
+        load_str(&tunnel_config(true, true, "")).expect("requirement defaults to off");
+        load_str(&tunnel_config(false, true, "require_inbound_sig = true")).expect("feature flag off");
+        load_str(&tunnel_config(true, false, "require_inbound_sig = true")).expect("tunnel disabled");
     }
 }
