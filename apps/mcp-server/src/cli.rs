@@ -15,6 +15,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use base64::Engine as _;
+use clap::builder::PossibleValuesParser;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use platform::config::{MCP_BOT_TOKEN_REQUIRED, McpConfig, McpRuntime, McpTransport, OpenPrConfig, Secret};
 use serde_json::{Value, json};
@@ -23,6 +24,7 @@ use uuid::Uuid;
 use crate::client::{ClientConfig, OpenPrClient, TRANSPORT_LABEL_CLI, transport_label};
 use crate::protocol::{CallToolResult, ToolContent};
 use crate::server::McpServer;
+use crate::tools::work_items::WORK_ITEM_PRIORITIES;
 
 /// Tracing target of the MCP server and of the workspace commands, and the scope of the
 /// default `[logging]` filter.
@@ -146,21 +148,49 @@ pub const BUSINESS_GROUPS: [&str; 9] = [
     "tools",
 ];
 
+/// Help prose of the shared options that names `mcp-server serve`, and what `sylvode`, which has
+/// no `serve`, says in its place. Pairs of (legacy text, `sylvode` text), applied before the
+/// program name itself is replaced.
+const SERVE_PROSE: [(&str, &str); 2] = [
+    (
+        "has to parse exactly like `mcp-server serve --config <path>`.",
+        "has to parse exactly like `sylvode --config <path> projects list`.",
+    ),
+    (
+        "Used by the CLI subcommands and by `serve --transport stdio`. The `http` and `sse` transports ignore it: \
+         they act as whoever calls them, never as a configured bot.",
+        "Every sylvode command acts as this bot.",
+    ),
+];
+
+/// `mcp-server` help prose as `sylvode` prints it.
+///
+/// The sentences about `serve` are rewritten (see [`SERVE_PROSE`]) and the program is renamed.
+/// The only differences ADR-0020 D5 allows between the two executables' help are these, so the
+/// equality tests compare through this function.
+pub fn sylvode_help_prose(legacy: &str) -> String {
+    SERVE_PROSE
+        .iter()
+        .fold(legacy.to_string(), |text, (from, to)| text.replace(from, to))
+        .replace("mcp-server", "sylvode")
+}
+
 /// The `sylvode` parser for the workspace command groups.
 ///
-/// Identical to [`BusinessCli::command`] except that help prose naming `mcp-server` names
-/// `sylvode` instead, so the only difference between the two executables' help is the program
-/// name (ADR-0020 D5).
+/// Identical to [`BusinessCli::command`] except for the help prose of the shared options, which
+/// [`sylvode_help_prose`] rewrites so that it names `sylvode` and never the `serve` subcommand
+/// `sylvode` does not have.
 pub fn business_cli_command() -> clap::Command {
-    BusinessCli::command().mut_arg("config", |arg| {
-        let renamed = arg
-            .get_long_help()
-            .map(|help| help.to_string().replace("mcp-server ", "sylvode "));
-        match renamed {
+    let rewrite = |arg: clap::Arg| {
+        let long = arg.get_long_help().map(|help| sylvode_help_prose(&help.to_string()));
+        match long {
             Some(help) => arg.long_help(help),
             None => arg,
         }
-    })
+    };
+    BusinessCli::command()
+        .mut_arg("config", rewrite)
+        .mut_arg("bot_token", rewrite)
 }
 
 /// Parses `args` with [`business_cli_command`], exiting the way [`Parser::parse_from`] does on
@@ -253,7 +283,7 @@ pub enum WorkItemsAction {
     List {
         #[arg(long)]
         project: String,
-        /// Filter by state (`backlog|todo|in_progress|done`)
+        /// Filter by workflow state key (for example `todo`)
         #[arg(long)]
         state: Option<String>,
     },
@@ -265,11 +295,11 @@ pub enum WorkItemsAction {
         project: String,
         #[arg(long)]
         title: String,
-        /// Initial state (`backlog|todo|in_progress|done`)
-        #[arg(long, default_value = "backlog")]
-        state: String,
-        /// Priority (`none|low|medium|high|urgent`)
-        #[arg(long, default_value = "medium")]
+        /// Initial workflow state key [default: the project workflow's initial state]
+        #[arg(long)]
+        state: Option<String>,
+        /// Priority
+        #[arg(long, default_value = "medium", value_parser = PossibleValuesParser::new(WORK_ITEM_PRIORITIES))]
         priority: String,
         #[arg(long)]
         description: Option<String>,
@@ -283,11 +313,11 @@ pub enum WorkItemsAction {
     Update {
         /// Work item UUID
         id: String,
-        /// New state (`backlog|todo|in_progress|done`)
+        /// New workflow state key
         #[arg(long)]
         state: Option<String>,
-        /// New priority (`none|low|medium|high|urgent`)
-        #[arg(long)]
+        /// New priority
+        #[arg(long, value_parser = PossibleValuesParser::new(WORK_ITEM_PRIORITIES))]
         priority: Option<String>,
         #[arg(long)]
         title: Option<String>,
@@ -810,12 +840,16 @@ fn tool_invocation(command: &BusinessCommands) -> anyhow::Result<(&str, Value)> 
                 priority,
                 description,
             } => {
+                // No state unless one was asked for: the API then applies the project
+                // workflow's initial state, exactly as the `work_items.create` tool does.
                 let mut args = json!({
                     "project_id": project,
                     "title": title,
-                    "state": state,
                     "priority": priority,
                 });
+                if let Some(state) = state {
+                    args["state"] = json!(state);
+                }
                 if let Some(desc) = description {
                     args["description"] = json!(desc);
                 }
@@ -937,13 +971,79 @@ async fn run_file_upload(cmd: &FilesCmd, server: &McpServer) -> anyhow::Result<C
 #[cfg(test)]
 mod tests {
     use super::{
-        BUSINESS_GROUPS, BusinessCli, BusinessCommands, Cli, Commands, McpTransport, OperationLogsAction, ToolsAction,
-        Transport, business_cli_command, checked_api_url, checked_bind_addr, checked_bot_token, checked_workspace_id,
-        parse_tool_args_json, tool_invocation,
+        BUSINESS_GROUPS, BusinessCli, BusinessCommands, Cli, Commands, McpTransport, OperationLogsAction, SERVE_PROSE,
+        ToolsAction, Transport, business_cli_command, checked_api_url, checked_bind_addr, checked_bot_token,
+        checked_workspace_id, parse_tool_args_json, tool_invocation,
     };
     use clap::{CommandFactory, Parser};
     use platform::config::DEFAULT_MCP_API_URL;
     use serde_json::json;
+
+    /// `--priority` accepts exactly what the `work_items.*` tools accept, in both executables:
+    /// the help used to offer `none`, which the tool schema and the API refuse.
+    #[test]
+    fn work_item_priorities_are_the_tool_schema_enum_in_both_parsers() {
+        use crate::tools::work_items::{WORK_ITEM_PRIORITIES, create_work_item_tool, update_work_item_tool};
+
+        for tool in [create_work_item_tool(), update_work_item_tool()] {
+            assert_eq!(
+                tool.input_schema.pointer("/properties/priority/enum"),
+                Some(&json!(WORK_ITEM_PRIORITIES)),
+                "{}",
+                tool.name
+            );
+        }
+        let parsers = [("mcp-server", Cli::command()), ("sylvode", business_cli_command())];
+        for (program, parser) in parsers {
+            for action in ["create", "update"] {
+                let mut parser = parser.clone();
+                parser.build();
+                let command = parser
+                    .find_subcommand("work-items")
+                    .and_then(|group| group.find_subcommand(action))
+                    .unwrap_or_else(|| panic!("{program} has no work-items {action}"));
+                let offered: Vec<String> = command
+                    .get_arguments()
+                    .find(|arg| arg.get_id() == "priority")
+                    .unwrap_or_else(|| panic!("{program} work-items {action} has no --priority"))
+                    .get_possible_values()
+                    .iter()
+                    .map(|value| value.get_name().to_string())
+                    .collect();
+                assert_eq!(offered, WORK_ITEM_PRIORITIES, "{program} work-items {action}");
+
+                let target = if action == "create" { "--project" } else { "WI-1" };
+                let mut line = vec![program, "work-items", action, target];
+                if action == "create" {
+                    line.extend(["p", "--title", "t"]);
+                }
+                line.extend(["--priority", "none"]);
+                assert!(
+                    parser.clone().try_get_matches_from(&line).is_err(),
+                    "{program} accepted --priority none"
+                );
+            }
+        }
+    }
+
+    /// `work-items create` sends no state unless `--state` names one, so the API applies the
+    /// project workflow's initial state, as the `work_items.create` tool does.
+    #[test]
+    fn work_items_create_sends_a_state_only_when_asked() {
+        let parse = |extra: &[&str]| {
+            let mut line = vec!["mcp-server", "work-items", "create", "--project", "p", "--title", "t"];
+            line.extend_from_slice(extra);
+            let cli = Cli::try_parse_from(line).unwrap_or_else(|error| panic!("{error}"));
+            let Commands::Business(command) = cli.command else {
+                panic!("not a workspace command");
+            };
+            tool_invocation(&command).unwrap_or_else(|error| panic!("{error}")).1
+        };
+        let without = parse(&[]);
+        assert_eq!(without.get("state"), None, "{without}");
+        assert_eq!(without.get("priority"), Some(&json!("medium")));
+        assert_eq!(parse(&["--state", "triage"]).get("state"), Some(&json!("triage")));
+    }
 
     #[test]
     fn parses_generic_tool_call_command() {
@@ -1235,13 +1335,37 @@ mod tests {
         assert!(BusinessCli::command().find_subcommand("serve").is_none());
     }
 
-    /// The `sylvode` parser renames the program in help prose and nothing else.
+    /// The `sylvode` parser renames the program in help prose and never mentions `serve`, which
+    /// it does not have, while `mcp-server`'s help keeps both.
     #[test]
-    fn the_sylvode_parser_only_renames_the_program_in_the_config_help() {
+    fn the_sylvode_parser_names_itself_and_never_serve_in_the_shared_option_help() {
+        let mut screens = Vec::new();
+        let mut business = business_cli_command();
+        business.build();
+        help_screens(&mut business, "sylvode", &mut screens);
+        // The root screen is never shown: `sylvode` and `sylvode --help` print the overview that
+        // `bin/sylvode.rs` builds, and only `sylvode <group> ...` reaches this parser.
+        for (path, help) in screens.iter().filter(|(path, _)| path != "sylvode") {
+            let mentions_serve = help
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+                .any(|word| word == "serve");
+            assert!(!mentions_serve, "{path} help mentions serve:\n{help}");
+            assert!(!help.contains("mcp-server"), "{path} help names mcp-server:\n{help}");
+        }
         let mut command = business_cli_command();
         let help = command.render_long_help().to_string();
         assert!(help.contains("`sylvode projects list --config <path>`"), "{help}");
-        assert!(!help.contains("mcp-server projects list"), "{help}");
+        assert!(help.contains("Every sylvode command acts as this bot."), "{help}");
+
+        let legacy = Cli::command().render_long_help().to_string();
+        assert!(legacy.contains("`mcp-server serve --config <path>`"), "{legacy}");
+        assert!(legacy.contains("`serve --transport stdio`"), "{legacy}");
+        for (from, _) in SERVE_PROSE {
+            assert!(
+                legacy.contains(from),
+                "SERVE_PROSE no longer matches mcp-server's help: {from}"
+            );
+        }
     }
 
     #[test]

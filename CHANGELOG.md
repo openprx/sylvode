@@ -211,6 +211,16 @@ replacement and the earliest removal.
   (connection refused, DNS, timeout) and that the command can be retried. The envelope is
   unchanged: exit 9, `recoverable: true`, code `server_draining` with empty `details`, because
   the CLI contract defines no code or reason of its own for a network failure.
+- `work-items create` (under `mcp-server` and `sylvode`) always sent `state=backlog`. For a
+  project whose workflow has no `backlog` state the create failed with `state must be one of:
+  ...`, and for one whose workflow starts at another state the item landed in `backlog`. The
+  command now sends no state unless `--state` is given, so the workflow's initial state applies,
+  as with the `work_items.create` tool.
+- `work-items create/update --priority` offered `none`, which the API rejects; the accepted values
+  are now exactly the tool's (`low`, `medium`, `high`, `urgent`) and anything else is refused
+  before a request is sent.
+- `sylvode <group> --help` described `--config` and `--bot-token` in terms of a `sylvode serve`
+  command that does not exist.
 
 ## [0.2.21] - 2026-08-19
 

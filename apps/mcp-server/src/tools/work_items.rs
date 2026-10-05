@@ -3,6 +3,13 @@ use crate::protocol::{CallToolResult, ToolDefinition};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+/// The work item priorities the API accepts (`apps/api/src/routes/issue.rs`, `validate_priority`).
+///
+/// The one list behind the `priority` enum of every `work_items.*` tool schema and behind the
+/// `--priority` values of `work-items create/update` in both executables, so the command line
+/// cannot offer a value the tool and the API refuse.
+pub const WORK_ITEM_PRIORITIES: [&str; 4] = ["low", "medium", "high", "urgent"];
+
 const DEFAULT_PAGE: u64 = 1;
 const DEFAULT_PER_PAGE: u64 = 50;
 const MAX_PER_PAGE: u64 = 100;
@@ -45,7 +52,7 @@ pub fn list_work_items_tool() -> ToolDefinition {
                 },
                 "priority": {
                     "type": "string",
-                    "enum": ["low", "medium", "high", "urgent"],
+                    "enum": WORK_ITEM_PRIORITIES,
                     "description": "Filter by priority (optional)"
                 },
                 "search": {
@@ -561,7 +568,7 @@ pub fn create_work_item_tool() -> ToolDefinition {
                 },
                 "priority": {
                     "type": "string",
-                    "enum": ["low", "medium", "high", "urgent"],
+                    "enum": WORK_ITEM_PRIORITIES,
                     "description": "Work item priority",
                     "default": "medium"
                 },
@@ -666,7 +673,7 @@ pub fn update_work_item_tool() -> ToolDefinition {
                 },
                 "priority": {
                     "type": "string",
-                    "enum": ["low", "medium", "high", "urgent"],
+                    "enum": WORK_ITEM_PRIORITIES,
                     "description": "New priority (optional)"
                 },
                 "sprint_id": {
