@@ -1,18 +1,29 @@
 # Sylvode
 
 Open-source project management platform with built-in governance, a universal
-business-form engine, WASM plugins, and a first-class MCP server for AI agents.
-Built with **Rust** (Axum + SeaORM), **SvelteKit**, and **PostgreSQL 16**.
+business-form engine, collaborative Flow pages, WASM plugins, and a first-class
+MCP server for AI agents. Built with **Rust** (Axum + SeaORM), **SvelteKit**, and
+**PostgreSQL 16**.
+
+> **Formerly OpenPR.** Releases up to 0.2.21 were published as OpenPR. Existing
+> OpenPR names (the `mcp-server` CLI commands, `config/openpr.toml`, `OPENPR_*`
+> compose variables, `openpr://` resources, `openpr-*` release archives) keep
+> working with a deprecation warning and are not removed before Sylvode v2.0;
+> stable identifiers such as the REST API, MCP tool names, database names and the
+> plugin ABI are not renamed at all. See the
+> [v1.0 compatibility matrix](docs/sylvode-v1.0-compatibility.md) and
+> [CHANGELOG.md](CHANGELOG.md).
 
 ## What It Provides
 
 - **Project management** — workspaces, projects, issues, kanban board, sprints, labels, comments, activity feed, notifications, attachments.
 - **Governance** — proposals, weighted voting, decision records, veto and escalation, trust scores, appeals, impact reviews, audit logs.
 - **Universal forms** — project-defined business data types with grid/detail views, decimal-safe amounts, record links and child tables, formulas, per-role permissions, import/export, electronic signatures.
+- **Sylvode Flow** — collaborative pages and objects with live multi-user editing (Loro CRDT over WebSocket), Collections and records, a workspace navigator, search, Forms conversion, and export/import packages. Off by default; enabled per workspace.
 - **WASM plugins** — per-project sandboxed plugins for field validation, formulas, and event handlers.
 - **Events** — transactional business-event ledger and HMAC-signed webhooks.
-- **MCP server** — 140 tools (the documented v0.8 quarantine-repair rebase), 4 static resources,
-  22 resource templates, 3 transports; the legacy `mcp-server` binary remains compatible.
+- **MCP server** — 140 tools, 4 static resources, 22 resource templates, 3 transports.
+- **`sylvode` CLI** — fifteen command groups for Flow and workspace operations, with a stable JSON output contract.
 - **Scenario templates** — 6 ready-to-start setups: `code_delivery_default`, `contract_review_default`, `equipment_maintenance_default`, `quality_corrective_action_default`, `customer_delivery_default`, `restaurant_ordering_default`.
 
 ## Architecture
@@ -20,12 +31,15 @@ Built with **Rust** (Axum + SeaORM), **SvelteKit**, and **PostgreSQL 16**.
 | Component    | Path              | Role                                                                 |
 | ------------ | ----------------- | -------------------------------------------------------------------- |
 | `api`        | `apps/api`        | HTTP API, form engine, plugin runtime, event emission                 |
-| `worker`     | `apps/worker`     | Background pipelines: AI tasks, operation-log retention, form jobs   |
-| `mcp-server` | `apps/mcp-server` | MCP server (HTTP/stdio/SSE) and CLI over the API                     |
+| `worker`     | `apps/worker`     | Background pipelines: AI tasks, form jobs, Flow dispatch, retention  |
+| `mcp-server` | `apps/mcp-server` | MCP server (HTTP/stdio/SSE) over the API                             |
+| `sylvode`    | `apps/mcp-server` | Command-line client over the API (second binary of the same package) |
 | `frontend`   | `frontend`        | SvelteKit 2 SPA (adapter-static)                                     |
 
-`crates/platform` holds shared config, DB connection, auth, error, and logging.
-`migrations/` holds the ordered SQL schema history through `0052`.
+`crates/platform` holds shared config, DB connection, auth, error, logging and
+the deprecation texts. `crates/collab-core` is the Flow collaboration engine on
+Loro. `migrations/` holds the ordered SQL schema history from `0000` through
+`0069`; the API applies pending migrations at startup.
 
 ## Quick Start
 
@@ -44,7 +58,9 @@ runs `docker compose up -d --build`. The generated files are `chmod 600` and
 hold real secrets: replace them before production use, and never commit them.
 Services publish on `${SYLVODE_BIND_HOST:-127.0.0.1}`: frontend `:3000`, API
 `:8081`, MCP `:8090`. `scripts/start.sh` maps the documented legacy environment
-aliases to these canonical compose inputs.
+aliases to these canonical compose inputs. `bash scripts/start.sh --check-config`
+only generates and validates the configuration, without building or starting
+anything.
 For demo data once healthy, `scripts/bootstrap-restaurant-demo.sh` creates a
 demo account, workspace, `restaurant_ordering_default` project with sample
 records, and a workspace-scoped bot token; it refuses non-local API URLs unless
@@ -53,7 +69,7 @@ records, and a workspace-scoped bot token; it refuses non-local API URLs unless
 ### Local development
 
 ```bash
-# Prerequisites: stable Rust with edition 2024 support, Bun, PostgreSQL 16
+# Prerequisites: the Rust toolchain pinned in rust-toolchain.toml, Bun, PostgreSQL 16
 scripts/dev-up.sh                                  # start only PostgreSQL from compose
 cp config/sylvode.example.toml config/sylvode.toml
 $EDITOR config/sylvode.toml                        # database.url, auth.jwt_secret, [mcp]
@@ -93,13 +109,14 @@ being silently ignored.
 | --- | --- | --- |
 | `[server]` | api, worker | `app_name`, `bind_addr`. Both optional; each binary keeps its own default when they are omitted (api listens on `0.0.0.0:8081`). |
 | `[database]` | api, worker | `url` (**required**; full URL, password included, never logged), `max_connections` (`20`), `min_connections` (`2`), `connect_timeout_seconds` (`5`), `idle_timeout_seconds` (`30`), `acquire_timeout_seconds` (`5`) |
-| `[auth]` | api, worker | `jwt_secret` (**required**; minimum 16 characters, 64 hex recommended — `openssl rand -hex 32`), `access_ttl_seconds` (`1296000`), `refresh_ttl_seconds` (`1728000`), `default_author_id` (optional, must be a real non-nil UUID) |
+| `[auth]` | api, worker | `jwt_secret` (**required**; minimum 16 characters, 64 hex recommended — `openssl rand -hex 32`), `access_ttl_seconds` (`1296000`), `refresh_ttl_seconds` (`1728000`), `default_author_id` (optional, must be a real non-nil UUID), `allow_insecure_cookies` (`false`; drops `Secure` from auth cookies for local plain-HTTP development and is refused unless `[server] bind_addr` is loopback) |
 | `[logging]` | all | `filter` — `tracing` directives, validated at startup (`<service>=info,tower_http=info`), `format` — `json` \| `text` (`json`), `output` — `stderr` \| `stdout` (`stderr`) |
 | `[storage]` | api | `backend` — `local` \| `s3` (`local`), `dir` (`./uploads`); `[storage.s3]` with `endpoint`, `bucket`, `region` (`us-east-1`), `access_key_id`, `secret_access_key`, `session_token`, required only when `backend = "s3"` and left unread otherwise |
 | `[audit]` | worker | `operation_log_retention_days` (`30`, range `1..=3650`) |
 | `[migrations]` | api | `replay` (`false`), `continue_on_error` (`false`) — both are escape hatches; turn one on deliberately, then turn it back off |
 | `[outbound]` | api, worker | `allowed_hosts` — a TOML **array of strings** (`[]`), `allow_private` (`false`) |
-| `[mcp]` | mcp-server | `api_url` (`http://localhost:8081`), `bot_token` (`opr_` prefix; **required** for `stdio` and the CLI subcommands, unused by `http`/`sse`), `workspace_id` (**required**, real non-nil UUID), `transport` — `stdio` \| `http` \| `sse` (`stdio`), `bind_addr` (`127.0.0.1:8090`) |
+| `[flow]` | api, worker | `dispatch_max_attempts` (`10`), `collab_allowed_origins` — a TOML array of `scheme://host[:port]` origins allowed to open live collaboration sessions (`[]`; empty refuses every session, so list the web UI's origin to enable live editing) |
+| `[mcp]` | mcp-server, sylvode | `api_url` (`http://localhost:8081`), `bot_token` (`opr_` prefix; **required** for `stdio` and the CLI subcommands, unused by `http`/`sse`), `workspace_id` (**required**, real non-nil UUID), `transport` — `stdio` \| `http` \| `sse` (`stdio`), `bind_addr` (`127.0.0.1:8090`) |
 
 > **Eager shape, lazy presence.** Every value the file *does* contain is
 > shape-checked at startup by whichever binary reads it, but whether a mandatory
@@ -181,6 +198,8 @@ and awaits them sequentially.
 | AI task dispatch     | `ai_tasks`                                                             | POSTs to bot webhooks, HMAC-signed; retry delay `max(attempts, 1) * 30` s |
 | Operation-log cleanup | `bot_operation_logs`                                                  | Deletes metadata records older than `[audit]` retention       |
 | Form jobs            | `form_import_jobs`, `form_export_jobs`, `form_attachment_package_jobs` | Plus expiry cleanup of package artifacts and signature values |
+| Proposal settlement  | `proposals`                                                            | Settles expired proposals (moved off the API read path)       |
+| Flow                 | `event_dispatch`, Flow projections and documents                       | Event dispatch and delivery, search indexing, compaction, projection rebuilds, integrity scans |
 
 Queue-backed pipelines pick rows with `SELECT ... FOR UPDATE SKIP LOCKED`, so
 multiple worker instances can share one database safely.
@@ -221,7 +240,9 @@ Only `--transport http` serves all three surfaces on one port.
 MCP authenticates to the API with **bot tokens** (prefix `opr_`), managed under
 **Workspace → Members → Bot Tokens**. A token has a display name shown in
 activity feeds, is scoped to one workspace, creates a `bot_mcp` user entity for
-audit-trail integrity, and can perform any read/write a workspace member can.
+audit-trail integrity, and carries `read`, `write` or `admin` permissions that the
+API enforces: safe methods need `read`, every other method needs `write`, and
+`admin` implies both.
 
 ### Client configuration — stdio (Claude Desktop / Cursor / Codex)
 
@@ -260,7 +281,7 @@ server, so each client puts **its own** bot token in the header.
 ```json
 {
   "mcpServers": {
-    "openpr": {
+    "sylvode": {
       "type": "http",
       "url": "http://localhost:8090/mcp/rpc",
       "headers": { "Authorization": "Bearer opr_your_own_workspace_bot_token" }
@@ -279,21 +300,21 @@ endpoint it returns, and the response arrives back on the stream as
 # This shell variable is a convenience for curl, not application configuration: the value
 # is your own workspace bot token, created under Workspace → Members → Bot Tokens. The
 # server forwards it to the API unchanged and the call is made as that bot.
-export OPENPR_MCP_BOT_TOKEN=opr_your_own_workspace_bot_token
+export SYLVODE_MCP_BOT_TOKEN=opr_your_own_workspace_bot_token
 
 curl -X POST http://localhost:8090/mcp/rpc -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OPENPR_MCP_BOT_TOKEN" \
+  -H "Authorization: Bearer $SYLVODE_MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 curl -X POST http://localhost:8090/mcp/rpc -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OPENPR_MCP_BOT_TOKEN" \
+  -H "Authorization: Bearer $SYLVODE_MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"project_id":"<project-uuid>"}}'
 
 curl -N -H "Accept: text/event-stream" \
-  -H "Authorization: Bearer $OPENPR_MCP_BOT_TOKEN" http://localhost:8090/sse
+  -H "Authorization: Bearer $SYLVODE_MCP_BOT_TOKEN" http://localhost:8090/sse
 # → event: endpoint / data: /messages?session_id=<uuid>
 curl -X POST "http://localhost:8090/messages?session_id=<uuid>" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OPENPR_MCP_BOT_TOKEN" \
+  -H "Authorization: Bearer $SYLVODE_MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"projects.list","arguments":{}}}'
 ```
 
@@ -307,7 +328,7 @@ Per-domain counts; the total and sorted-name hash are pinned in
 | Universal forms & events  |    34 | `forms.create`, `forms.update_schema`, `form_records.create`, `events.tail` |
 | Work items                |    11 | `work_items.create`, `work_items.get_by_identifier`, `work_items.search`   |
 | Scenario tools            |     9 | `code.change_proposal.create`, `documents.review_risk`, `approval.request` |
-| Flow (v0.7)               |    30 | `objects.create`, `objects.reference`, `objects.convert_commit`, `records.create` |
+| Flow                      |    42 | `objects.create`, `objects.convert_commit`, `collab.status`, `legacy_pages.import_commit` |
 | Project types & resources |     6 | `project_types.get`, `project_resources.create`                            |
 | Projects                  |     5 | `projects.list`, `projects.create`                                         |
 | Labels                    |     5 | `labels.create`, `labels.list_by_project`                                  |
@@ -333,45 +354,63 @@ project, Forms, scenario and issue resources plus all five frozen Flow resources
 `sylvode://objects/{object_id}`, object history and schema, Collection records, and the
 workspace/project navigator. The registry lists only `sylvode://` canonical identities;
 `resources/read` continues to accept the corresponding `openpr://` alias for every one and
-returns `_meta.canonical_uri` with the canonical identity.
+returns `_meta.canonical_uri` with the canonical identity, plus `_meta.deprecation` naming the
+replacement and the earliest removal (Sylvode v2.0).
 
-### The same binary is a CLI
+### Command-line client: `sylvode`
 
-The `sylvode` CLI (a second `[[bin]]` in this same package) carries 9 workspace
-command groups: `projects`, `work-items`, `comments`, `labels`, `sprints`,
-`search`, `files upload`, `operation-logs list`, and `tools call`. The global
-`--format json|table` selects the output shape, and `tools call` reaches any of
-the 140 tools by name — a complete escape hatch for anything without a dedicated
-subcommand. It also carries the native Flow commands (`sylvode features flow
-get|set`, `sylvode objects create|patch|move|grants|get|inheritance|link|unlink|diff|relations|search`,
-`sylvode collab inspect|verify|projection-lag` and more) and no `serve`. The
-workspace groups are also available as `mcp-server <group>`, the same commands
-with the same output, which print a deprecation warning on stderr.
+The `sylvode` binary (a second `[[bin]]` of the `mcp-server` package, shipped in
+every release archive) is the command-line client. It reads the same
+configuration file as the MCP server (`[mcp] api_url`, `bot_token`,
+`workspace_id`) and has fifteen command groups; `sylvode --help` lists them and
+`sylvode <group> --help` shows the options of one group.
+
+| Kind | Groups | Conventions |
+| --- | --- | --- |
+| Flow | `features`, `objects`, `collections`, `records`, `collab`, `deliveries` | `sylvode.cli.v1` JSON envelope on stdout, typed exit codes, `--workspace` on the commands that take a workspace |
+| Workspace | `projects`, `work-items`, `comments`, `labels`, `sprints`, `search`, `files`, `operation-logs`, `tools` | The tool's JSON on stdout, errors on stderr with exit code 1, global `--workspace-id` |
+
+`--format json` (the default) is the stable machine contract; `--format table` is
+a human display. `tools call` reaches any of the 140 tools by name, an escape
+hatch for anything without a dedicated subcommand.
 
 ```bash
 sylvode projects list --format table
+sylvode projects create --key WEB --name "Website"
 sylvode work-items create --project <uuid> --title "Fix login" --priority high
 sylvode files upload --file ./report.pdf
 sylvode operation-logs list --outcome error --limit 50
 sylvode tools call --name forms.list --args-json '{"project_id":"<uuid>"}'
+sylvode features flow get --workspace <uuid>
+sylvode objects get <object-uuid> --render markdown
 ```
+
+`mcp-server` is the MCP server (`mcp-server serve`). It still accepts the nine
+workspace groups as a deprecated alias: `mcp-server <group> ...` runs the same
+command with byte-identical stdout and the same exit code, and prints one
+deprecation warning on stderr. It is not removed before Sylvode v2.0; switch
+scripts to `sylvode <group> ...`. The Flow groups exist only under `sylvode`, and
+`serve` only under `mcp-server`.
 
 ## API
 
-302 method+path endpoints (215 `.route()` calls), all registered in
-`apps/api/src/main.rs`. Every route lives under `/api/v1/`, plus an unversioned
-`/health`.
+332 method+path endpoints (245 `.route()` calls), all registered in
+`apps/api/src/main.rs`. Every route lives under `/api/v1/`, apart from the
+unversioned `/health`, `/ready` and `/uploads/*` attachment paths.
 
 Prefixes, all relative to `/api/v1`: auth and admin (`/auth/*`, `/admin/*`,
 `/users/*`, `/my/*`); core PM (`/workspaces/*`, `/projects/*`, `/issues/*`,
-`/comments/*`, `/sprints/*`, `/labels/*`); forms (`/forms/*`,
-`/form-records/*`, `/form-views/*`, `/form-attachments/*`, `/form-*-jobs/*`);
+`/comments/*`, `/sprints/*`, `/labels/*`, `/workflows/*`, `/workflow-states/*`);
+Flow (`/flow/*`, `/collab/*`, `/workspaces/{id}/flow/*`); forms (`/forms/*`,
+`/form-records/*`, `/form-views/*`, `/form-attachments/*`, `/form-*-jobs/*`,
+`/form-import-mapping-templates/*`);
 plugins and events (`/plugins/*`, `/check-results/*`);
-governance (`/proposals/*`, `/decisions/*`, `/governance/*`, `/trust-scores/*`,
+governance (`/proposals/*`, `/proposal-comments/*`, `/decisions/*`,
+`/decision-domains/*`, `/governance/*`, `/trust-scores/*`,
 `/impact-reviews/*`, `/vetoers/*`); AI (`/ai/*`, `/ai-participants/*`,
 `/ai-learning/*`); templates (`/scenario-templates/*`, `/project-types/*`,
 `/proposal-templates/*`); files and misc (`/upload`, `/uploads/*`, `/search`,
-`/export/*`, `/notifications/*`, `/workflows/*`).
+`/export/*`, `/notifications/*`).
 
 Search (`/api/v1/search`, MCP `search.all`) matches issues, comments, and
 proposals with case-insensitive substring matching.
@@ -386,7 +425,7 @@ SvelteKit 2.50 on Svelte 5 with Tailwind 4, built with **Bun**. The adapter is
 SPA served by nginx with same-origin API proxying in the production image. i18n
 is a minimal in-repo store aliased to `svelte-i18n`
 (`frontend/src/lib/i18n/svelte-i18n.ts`); `en.json` and `zh.json` each carry
-2199 keys.
+2155 keys.
 
 ## Scripts
 
@@ -407,8 +446,12 @@ All under `scripts/`.
 
 ## Testing
 
-**Rust unit tests — 308 total** (`api` 251, `mcp-server` 23, `worker` 3,
-`platform` 31), run with `cargo test --workspace`.
+**Rust tests** — unit and integration tests across the workspace, run with
+`cargo test --workspace --no-fail-fast` after
+`cargo build -p collab-core --bin collab-isolated-apply-worker`. Database-backed
+tests need `OPENPR_TEST_DATABASE_URL` pointing at a PostgreSQL maintenance
+connection; without it they print `skipped:` and still count as passed. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full contract and the CI checks.
 
 **Playwright E2E — 8 specs**, all covering universal forms, in `tests/e2e/web/`:
 field design save, human flow, import/export, interaction/IA, mobile + dark
@@ -433,12 +476,14 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 - `docs/universal-forms-production.md` — production runbook
 - `docs/universal-forms-implementation-map.md` — source module / verification command map
 - `docs/plugins/openpr-plugin-v1.wit` — plugin ABI v1
+- `docs/sylvode-v1.0-compatibility.md` — OpenPR compatibility names, deprecation warnings and upgrade sequence
+- `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md` — release notes, contributor guide, security policy
 - `apps/mcp-server/AGENTS.md` — coding-agent workflow patterns and tool examples
 - `skills/openpr-mcp/SKILL.md` — governed MCP skill package
 
 ## Tech Stack
 
-- **Backend**: Rust edition 2024, axum 0.8, SeaORM 1 (`sqlx-postgres`, rustls), `rust_decimal`, wasmtime 45, PostgreSQL 16
+- **Backend**: Rust edition 2024, axum 0.8, SeaORM 1 (`sqlx-postgres`, rustls), `rust_decimal`, wasmtime 49, Loro (Flow collaboration), PostgreSQL 16
 - **Frontend**: SvelteKit 2.50, Svelte 5, Tailwind 4, `@sveltejs/adapter-static`, Bun
 - **MCP**: JSON-RPC 2.0 over HTTP, stdio, and SSE
 - **Auth**: JWT access + refresh, bot tokens (`opr_`)
