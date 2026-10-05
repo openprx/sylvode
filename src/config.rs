@@ -268,6 +268,7 @@ impl Config {
     /// Refuses settings that parse but can never work, so they fail at start-up instead of
     /// silently never dispatching.
     fn validate(&self) -> Result<(), String> {
+        self.validate_secrets()?;
         self.validate_tunnel()?;
         for agent in &self.agents {
             let commands = [
@@ -298,6 +299,33 @@ impl Config {
                     }
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Refuses a blank inbound secret. An HMAC with an empty key is one anyone can compute, so a
+    /// blank entry (an unfilled template, say) would turn signature checking into no check.
+    fn validate_secrets(&self) -> Result<(), String> {
+        if let Some(index) = self
+            .security
+            .webhook_secrets
+            .iter()
+            .position(|secret| secret.trim().is_empty())
+        {
+            return Err(format!(
+                "security.webhook_secrets[{index}] is blank; an empty HMAC key lets anyone sign a request. \
+                 Set it to the secret configured on the Sylvode webhook, or remove the entry"
+            ));
+        }
+        let blank_hmac = self
+            .tunnel
+            .as_ref()
+            .and_then(|t| t.hmac_secret.as_deref())
+            .is_some_and(|secret| secret.trim().is_empty());
+        if blank_hmac {
+            return Err("tunnel.hmac_secret is blank; an empty HMAC key lets anyone sign an envelope. Set it \
+                        to the secret shared with the control plane, or remove the setting"
+                .to_string());
         }
         Ok(())
     }
@@ -545,17 +573,21 @@ url = "http://127.0.0.1:9000/hook"
     }
 
     /// Requiring an inbound `sig` that nothing verifies authenticates nothing, so start-up is
-    /// refused, naming the setting, whether the secret is absent, empty or blank.
+    /// refused, naming the setting, whether the secret is absent, empty or blank. An empty or
+    /// blank secret is refused on its own (see below), and the error names it.
     #[test]
     fn refuses_require_inbound_sig_without_hmac_secret() {
-        for secret in ["", "hmac_secret = \"\"", "hmac_secret = \"  \""] {
+        let err = load_str(&tunnel_config(true, true, "require_inbound_sig = true"))
+            .expect_err("require_inbound_sig without a secret is refused");
+        assert!(err.contains("tunnel.require_inbound_sig"), "{err}");
+        assert!(err.contains("tunnel.hmac_secret"), "{err}");
+        for secret in ["hmac_secret = \"\"", "hmac_secret = \"  \""] {
             let err = load_str(&tunnel_config(
                 true,
                 true,
                 &format!("require_inbound_sig = true\n{secret}"),
             ))
-            .expect_err("require_inbound_sig without a secret is refused");
-            assert!(err.contains("tunnel.require_inbound_sig"), "{err}");
+            .expect_err("require_inbound_sig with a blank secret is refused");
             assert!(err.contains("tunnel.hmac_secret"), "{err}");
         }
     }
@@ -571,6 +603,43 @@ url = "http://127.0.0.1:9000/hook"
         let tunnel = cfg.tunnel.expect("tunnel config");
         assert!(tunnel.require_inbound_sig);
         assert_eq!(tunnel.hmac_secret.as_deref(), Some("shared"));
+    }
+
+    fn secrets_config(secrets: &str) -> String {
+        format!(
+            "[server]\nlisten = \"127.0.0.1:9090\"\n\n[security]\nwebhook_secrets = {secrets}\nallow_unsigned = false\n"
+        )
+    }
+
+    /// An empty key is a key anyone can sign with, so a blank entry is refused wherever it is in
+    /// the list, naming the setting and its position.
+    #[test]
+    fn refuses_a_blank_webhook_secret() {
+        for (secrets, index) in [
+            (r#"[""]"#, 0),
+            (r#"["   "]"#, 0),
+            (r#"["\t"]"#, 0),
+            (r#"["a-real-secret", ""]"#, 1),
+        ] {
+            let err = load_str(&secrets_config(secrets)).expect_err("a blank secret is refused");
+            assert!(err.contains(&format!("security.webhook_secrets[{index}]")), "{secrets}: {err}");
+            assert!(err.contains("blank"), "{secrets}: {err}");
+        }
+        load_str(&secrets_config(r#"["a-real-secret"]"#)).expect("a real secret is accepted");
+    }
+
+    /// A present but blank `hmac_secret` is refused whatever `require_inbound_sig` says and
+    /// whether or not the tunnel is enabled: it would sign and verify with an empty key.
+    #[test]
+    fn refuses_a_blank_hmac_secret_whenever_it_is_present() {
+        for (feature, enabled) in [(true, true), (false, true), (true, false), (false, false)] {
+            for secret in ["hmac_secret = \"\"", "hmac_secret = \"   \""] {
+                let err = load_str(&tunnel_config(feature, enabled, &format!("require_inbound_sig = false\n{secret}")))
+                    .expect_err("a blank hmac_secret is refused");
+                assert!(err.contains("tunnel.hmac_secret"), "{err}");
+                assert!(err.contains("blank"), "{err}");
+            }
+        }
     }
 
     /// Without `require_inbound_sig`, or with the tunnel off, a missing secret is still accepted.

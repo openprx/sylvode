@@ -103,11 +103,14 @@ fn decode_digest_hex(sig_hex: &str) -> Option<[u8; DIGEST_LEN]> {
 ///
 /// The digests are compared in constant time by `Mac::verify_slice`. Both the HTTP receiver and
 /// the tunnel verify through this function.
+///
+/// An empty or blank secret never verifies anything. Start-up refuses such a secret, but an empty
+/// HMAC key is one every sender knows, so this function does not rely on that check.
 pub fn verify_digest_hex<'a>(payload: &[u8], sig_hex: &str, secrets: impl IntoIterator<Item = &'a str>) -> bool {
     let Some(presented) = decode_digest_hex(sig_hex) else {
         return false;
     };
-    secrets.into_iter().any(|secret| {
+    secrets.into_iter().filter(|secret| !secret.trim().is_empty()).any(|secret| {
         HmacSha256::new_from_slice(secret.as_bytes()).is_ok_and(|mut mac| {
             mac.update(payload);
             mac.verify_slice(&presented).is_ok()
@@ -335,6 +338,21 @@ mod tests {
         let hex = good_hex();
         assert!(verify_signature(BODY, &hex, &["other".to_string(), SECRET.to_string()]));
         assert!(!verify_signature(BODY, &hex, &[]));
+    }
+
+    /// Defence in depth behind config validation: an empty or blank key never verifies, even
+    /// for a signature computed with exactly that key.
+    #[test]
+    fn a_blank_secret_verifies_nothing() {
+        for blank in ["", " ", "\t\n"] {
+            let forged = sign_payload(BODY, blank).unwrap();
+            assert!(!verify_signature(BODY, &forged, &[blank.to_string()]), "{blank:?}");
+            assert!(
+                !verify_signature(BODY, &forged, &[SECRET.to_string(), blank.to_string()]),
+                "{blank:?} beside a real secret"
+            );
+            assert!(!verify_digest_hex(BODY, &forged, std::iter::once(blank)), "{blank:?}");
+        }
     }
 
     /// The handler strips one `sha256=` while extracting and `verify_signature` strips another.
