@@ -619,7 +619,39 @@
     "fullToken": "完整 Token",
     "copyToken": "复制 Token",
     "copyTokenSuccess": "Token 已复制",
-    "copyTokenFailed": "Token 复制失败"
+    "copyTokenFailed": "Token 复制失败",
+    "transportSurface": "此 Token 将在哪里使用？",
+    "transportSurfaceHint": "每个 Token 只能在一个接入面使用，在其他接入面一律被拒绝。从不同位置接入请分别创建 Token。",
+    "transportSurfaceRequired": "请选择此 Token 的使用位置",
+    "transportSurfaceColumn": "可用于",
+    "tokenWorksOn": "此 Token 仅可用于：{surface}",
+    "tokenWorksOnlyThere": "其他接入面会以 401 拒绝它。如需在其他接入面使用，请另行创建 Token。",
+    "surface": {
+      "rest": {
+        "label": "REST API",
+        "description": "使用 Authorization: Bearer 请求头直接调用 Sylvode API，例如脚本和集成。"
+      },
+      "mcp_http": {
+        "label": "MCP（HTTP）",
+        "description": "AI 智能体在 Authorization 请求头中携带此 Token，访问 MCP 服务的 HTTP 端点（/mcp/rpc）。"
+      },
+      "mcp_sse": {
+        "label": "MCP（SSE）",
+        "description": "AI 智能体在 Authorization 请求头中携带此 Token，访问 MCP 服务的 SSE 端点。"
+      },
+      "mcp_stdio": {
+        "label": "MCP（stdio）",
+        "description": "由智能体自行启动的本地 MCP 服务进程（mcp-server serve --transport stdio），此 Token 填入 mcp.bot_token。"
+      },
+      "cli": {
+        "label": "命令行",
+        "description": "sylvode 与 mcp-server 命令行工具（含 tools call），此 Token 填入 mcp.bot_token 或 --bot-token。"
+      },
+      "cli_tools_call": {
+        "label": "CLI tools call（保留）",
+        "description": "仅用于自报为 tools call 接入面的客户端。随附的命令行工具对所有命令都使用「命令行」。"
+      }
+    }
   },
   "webhook": {
     "title": "Webhook 管理",

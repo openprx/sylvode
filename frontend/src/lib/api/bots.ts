@@ -1,4 +1,5 @@
 import { apiClient, type ApiResult } from './client';
+import type { BotTransportSurface } from '$lib/bots/transport-surfaces';
 
 export interface Bot {
 	id: string;
@@ -6,6 +7,9 @@ export interface Bot {
 	name: string;
 	token_prefix: string;
 	permissions: string[];
+	/** The one surface the API accepts this token on. A string, not the union: a newer server
+	 * may report a surface this client does not know yet. */
+	transport_surface: string;
 	is_active: boolean;
 	last_used_at: string | null;
 	expires_at: string | null;
@@ -19,6 +23,8 @@ export interface CreateBotResponse extends Bot {
 export interface CreateBotData {
 	name: string;
 	permissions?: string[];
+	/** Always sent by this client: the API's default when it is omitted is `rest`. */
+	transport_surface: BotTransportSurface;
 	expires_at?: string;
 }
 

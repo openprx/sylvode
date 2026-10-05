@@ -1,7 +1,7 @@
 {
 	"name": "frontend",
 	"private": true,
-	"version": "0.2.360",
+	"version": "0.2.361",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
@@ -19,6 +19,8 @@
 		"test:flow-limits": "bun tests/flow-limits-negotiation.test.ts",
 		"test:flow-v0.4": "bun tests/flow-v0.4.ts",
 		"test:flow-i18n-parity": "bun tests/flow-i18n-parity.test.ts",
+		"test:i18n-parity": "bun tests/i18n-parity.test.ts",
+		"test:bot-transport-surfaces": "bun tests/bot-transport-surfaces.test.ts",
 		"test:flow-navigator-equivalence": "bun tests/flow-navigator-equivalence.test.ts",
 		"test:flow-ui-state": "bun tests/flow-ui-state.test.ts",
 		"test:flow-static-build": "bun tests/flow-static-build-deep-route.test.ts",

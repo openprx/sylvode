@@ -238,11 +238,28 @@ Only `--transport http` serves all three surfaces on one port.
 ### Bot tokens
 
 MCP authenticates to the API with **bot tokens** (prefix `opr_`), managed under
-**Workspace → Members → Bot Tokens**. A token has a display name shown in
+**Workspace → Members → API Tokens**. A token has a display name shown in
 activity feeds, is scoped to one workspace, creates a `bot_mcp` user entity for
 audit-trail integrity, and carries `read`, `write` or `admin` permissions that the
 API enforces: safe methods need `read`, every other method needs `write`, and
 `admin` implies both.
+
+Every token is also bound to **one transport surface** when it is created, and
+the API refuses it with 401 on any other surface. Create one token per place you
+connect from:
+
+| Surface | Where the token works |
+|---|---|
+| `rest` | Direct REST calls with `Authorization: Bearer opr_...` |
+| `mcp_http` | The MCP server's HTTP endpoint (`/mcp/rpc`), sent by the agent in its `Authorization` header |
+| `mcp_sse` | The MCP server's SSE endpoint, sent the same way |
+| `mcp_stdio` | `mcp-server serve --transport stdio`, as `mcp.bot_token` |
+| `cli` | The `sylvode` and `mcp-server` commands (including `tools call`), as `mcp.bot_token` or `--bot-token` |
+| `cli_tools_call` | Reserved for clients that identify as the `tools call` surface; the bundled CLI uses `cli` |
+
+The web form requires a choice. `POST /api/v1/workspaces/{id}/bots` takes it as
+`transport_surface` and defaults to `rest` when the field is omitted; the
+surface cannot be changed afterwards, so issue a new token instead.
 
 ### Client configuration — stdio (Claude Desktop / Cursor / Codex)
 
@@ -298,7 +315,7 @@ endpoint it returns, and the response arrives back on the stream as
 ```bash
 # The Authorization header is mandatory on every one of these; only /health is exempt.
 # This shell variable is a convenience for curl, not application configuration: the value
-# is your own workspace bot token, created under Workspace → Members → Bot Tokens. The
+# is your own workspace bot token, created under Workspace → Members → API Tokens (surface `mcp_http`). The
 # server forwards it to the API unchanged and the call is made as that bot.
 export SYLVODE_MCP_BOT_TOKEN=opr_your_own_workspace_bot_token
 

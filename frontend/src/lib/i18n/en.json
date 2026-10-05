@@ -619,7 +619,39 @@
     "fullToken": "Full Token",
     "copyToken": "Copy Token",
     "copyTokenSuccess": "Token copied",
-    "copyTokenFailed": "Failed to copy token"
+    "copyTokenFailed": "Failed to copy token",
+    "transportSurface": "Where will this token be used?",
+    "transportSurfaceHint": "A token works on exactly one surface and is refused everywhere else. Create a separate token for each place you connect from.",
+    "transportSurfaceRequired": "Choose where this token will be used",
+    "transportSurfaceColumn": "Works with",
+    "tokenWorksOn": "This token works only with: {surface}",
+    "tokenWorksOnlyThere": "Any other surface rejects it with 401. Create another token for each additional surface.",
+    "surface": {
+      "rest": {
+        "label": "REST API",
+        "description": "Direct HTTP calls to the Sylvode API with an Authorization: Bearer header, e.g. scripts and integrations."
+      },
+      "mcp_http": {
+        "label": "MCP over HTTP",
+        "description": "AI agents that send this token in the Authorization header to the MCP server's HTTP endpoint (/mcp/rpc)."
+      },
+      "mcp_sse": {
+        "label": "MCP over SSE",
+        "description": "AI agents that send this token in the Authorization header to the MCP server's SSE endpoint."
+      },
+      "mcp_stdio": {
+        "label": "MCP over stdio",
+        "description": "A local MCP server process an agent starts itself (mcp-server serve --transport stdio), with this token as mcp.bot_token."
+      },
+      "cli": {
+        "label": "Command line",
+        "description": "The sylvode and mcp-server command-line tools, including tools call, with this token as mcp.bot_token or --bot-token."
+      },
+      "cli_tools_call": {
+        "label": "CLI tools call (reserved)",
+        "description": "Only for clients that identify themselves as the tools call surface. The bundled command-line tools use Command line for every command."
+      }
+    }
   },
   "webhook": {
     "title": "Webhook Management",

@@ -187,6 +187,11 @@ replacement and the earliest removal.
   default filter drops, so it was never shown.
 - Failed plugin invocations recorded `duration_ms = 0` and no fuel, and a deadline expiry was
   recorded as `failed`.
+- Bot tokens created on the Members page could only be used with the REST API: the form sent
+  no transport surface, so the API bound every token to `rest` and refused it with 401 through
+  MCP (HTTP, SSE, stdio) and the command-line tools. The form now requires choosing where the
+  token will be used, the token list shows each token's surface, and the token-reveal dialog
+  says where the token works.
 
 ## [0.2.21] - 2026-08-19
 
