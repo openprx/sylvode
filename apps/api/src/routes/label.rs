@@ -701,6 +701,7 @@ mod tests {
     // `ensure_label_mutation_allowed`.
 
     use super::{UpdateLabelRequest, delete_label, update_label};
+    use crate::{routes::context::tenant_fixture::Scratch, scratch_or_skip};
     use axum::{
         Json,
         extract::{Path, State},
@@ -710,9 +711,10 @@ mod tests {
         auth::{JwtClaims, TokenType},
         config::{AppConfig, Secret},
     };
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     struct Fixture {
+        scratch: Scratch,
         state: AppState,
         workspace_id: Uuid,
         label_id: Uuid,
@@ -730,27 +732,23 @@ mod tests {
         Bot(Uuid, Uuid, bool),
     }
 
-    async fn state_from_env() -> Option<AppState> {
-        let url = std::env::var("OPENPR_TEST_DATABASE_URL").ok()?;
-        let db = Database::connect(&url)
-            .await
-            .unwrap_or_else(|err| panic!("cannot connect to OPENPR_TEST_DATABASE_URL: {err}"));
-        let cfg = AppConfig {
-            app_name: "api-test".to_string(),
-            bind_addr: "127.0.0.1:0".to_string(),
-            database_url: Secret::new(url),
-            jwt_secret: Secret::new("test-secret"),
-            jwt_access_ttl_seconds: 60,
-            jwt_refresh_ttl_seconds: 60,
-            default_author_id: None,
-            allow_insecure_cookies: false,
-            collab_allowed_origins: Vec::new(),
-        };
-        Some(AppState {
-            cfg,
-            db,
+    /// Handler state over a scratch database that has every migration applied.
+    fn state_for(scratch: &Scratch) -> AppState {
+        AppState {
+            cfg: AppConfig {
+                app_name: "api-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new("test-secret"),
+                jwt_access_ttl_seconds: 60,
+                jwt_refresh_ttl_seconds: 60,
+                default_author_id: None,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db: scratch.db.clone(),
             flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
-        })
+        }
     }
 
     async fn exec(state: &AppState, sql: &str, values: Vec<sea_orm::Value>) {
@@ -768,7 +766,8 @@ mod tests {
     /// `workspace_members` row. That row is what made the pre-fix `update_label`
     /// reachable for a read-only bot token, so the guard cannot rely on bots
     /// being absent from `workspace_members`.
-    async fn seed(state: AppState) -> Fixture {
+    async fn seed(scratch: Scratch) -> Fixture {
+        let state = state_for(&scratch);
         let workspace_id = Uuid::new_v4();
         let label_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
@@ -817,6 +816,7 @@ mod tests {
         .await;
 
         Fixture {
+            scratch,
             state,
             workspace_id,
             label_id,
@@ -824,18 +824,6 @@ mod tests {
             member_id,
             read_bot_id,
             admin_bot_id,
-        }
-    }
-
-    async fn cleanup(fx: &Fixture) {
-        exec(
-            &fx.state,
-            "DELETE FROM workspaces WHERE id = $1",
-            vec![fx.workspace_id.into()],
-        )
-        .await;
-        for user_id in [fx.owner_id, fx.member_id, fx.read_bot_id, fx.admin_bot_id] {
-            exec(&fx.state, "DELETE FROM users WHERE id = $1", vec![user_id.into()]).await;
         }
     }
 
@@ -908,10 +896,7 @@ mod tests {
 
     #[tokio::test]
     async fn db_update_label_requires_owner_or_admin() {
-        let Some(state) = state_from_env().await else {
-            return;
-        };
-        let fx = seed(state).await;
+        let fx = seed(scratch_or_skip!("label_update_guard")).await;
 
         // A plain workspace member must not rewrite the workspace-wide taxonomy.
         let denied = rename(&fx, Caller::User(fx.member_id), "member-rename").await;
@@ -959,15 +944,12 @@ mod tests {
         .unwrap_or_else(|err| panic!("admin bot rename failed: {err}"));
         assert_eq!(label_name(&fx).await.as_deref(), Some("admin-bot-rename"));
 
-        cleanup(&fx).await;
+        fx.scratch.drop_self().await;
     }
 
     #[tokio::test]
     async fn db_delete_label_requires_owner_or_admin() {
-        let Some(state) = state_from_env().await else {
-            return;
-        };
-        let fx = seed(state).await;
+        let fx = seed(scratch_or_skip!("label_delete_guard")).await;
 
         let (claims, bot) = auth_for(Caller::User(fx.member_id));
         let denied = delete_label(State(fx.state.clone()), claims, bot, Path(fx.label_id))
@@ -996,6 +978,6 @@ mod tests {
             .unwrap_or_else(|err| panic!("owner delete failed: {err}"));
         assert!(label_name(&fx).await.is_none());
 
-        cleanup(&fx).await;
+        fx.scratch.drop_self().await;
     }
 }
