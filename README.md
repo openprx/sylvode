@@ -369,7 +369,7 @@ auth_token = "opr_xxx"                                # Authorization: Bearer <t
 reconnect_secs = 3
 heartbeat_secs = 20
 hmac_secret = "shared-hmac-secret"                    # optional; see "Signature behavior"
-require_inbound_sig = false                           # refuse inbound envelopes without sig
+require_inbound_sig = false                           # refuse inbound envelopes without sig; needs hmac_secret
 ```
 
 Reconnects back off from `reconnect_secs`, doubling up to
@@ -404,9 +404,9 @@ Signature behavior:
   envelope without `sig`), and every inbound envelope must carry a valid `sig`: one that is
   missing or wrong is answered with an `error` envelope (`reason: bad_signature`, or
   `missing_signature` when `require_inbound_sig` is also set) and dropped.
-- Without `hmac_secret`, inbound `sig` is not verified. `require_inbound_sig = true` then only
-  refuses envelopes that have no `sig` at all (`reason: missing_signature`); it does not check the
-  value, so set `hmac_secret` to authenticate the control plane.
+- Without `hmac_secret`, inbound `sig` is not verified and inbound envelopes are not
+  authenticated. `require_inbound_sig = true` needs a non-empty `hmac_secret`: an enabled tunnel
+  with `require_inbound_sig = true` and no `hmac_secret` is refused at start-up.
 
 Safety toggles:
 

@@ -3,6 +3,14 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.16
+
+### Security
+
+- Start-up is refused when an enabled tunnel sets `require_inbound_sig = true` without a non-empty
+  `hmac_secret`. Without a secret the inbound `sig` was never verified, so the setting only checked
+  that the field existed and authenticated nothing. The error names both settings.
+
 ## 0.3.15
 
 ### Security

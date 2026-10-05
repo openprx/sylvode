@@ -32,7 +32,8 @@ reconnect_secs = 3
 heartbeat_secs = 20
 # optional: sign outgoing envelopes and verify incoming envelopes
 hmac_secret = "shared-hmac-secret"
-# if true, inbound tunnel messages without sig are rejected
+# if true, inbound tunnel messages without sig are rejected; requires hmac_secret
+# (start-up is refused without it)
 require_inbound_sig = false
 
 [[agents]]
