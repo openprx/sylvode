@@ -1,13 +1,21 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wasmtime::{Config, Engine, Instance, Module, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, Instance, Module, Store, StoreLimits, StoreLimitsBuilder, Trap, UpdateDeadline};
 
 use super::manifest::PluginRuntimePolicy;
 
 const ABI_VERSION: i32 = 1;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+/// How often the caller re-advances the engine epoch after the deadline while it waits for the
+/// guest thread to return. One advance normally suffices; the repeats close the window where a
+/// store was created, or a guest observed the epoch, concurrently with the first advance.
+const INTERRUPT_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginRuntimeOutput {
@@ -21,19 +29,19 @@ struct StoreState {
     limits: StoreLimits,
 }
 
+/// Runs a plugin with its wall-clock deadline enforced by epoch interruption.
+///
+/// Every invocation builds its own engine, so the epoch advances issued here only ever reach this
+/// invocation's store. The store deadline is still expressed relative to the current epoch and the
+/// epoch callback only interrupts once this invocation's own `expired` flag is set, so the
+/// mechanism stays isolated even if an engine is later shared between invocations.
 pub async fn invoke_wasm_plugin(
     wasm_bytes: Vec<u8>,
     input: Value,
     policy: PluginRuntimePolicy,
 ) -> Result<PluginRuntimeOutput, String> {
-    let timeout = Duration::from_millis(policy.timeout_ms);
-    let timeout_ms = policy.timeout_ms;
-    let task = tokio::task::spawn_blocking(move || invoke_wasm_plugin_sync(&wasm_bytes, &input, &policy));
-    match tokio::time::timeout(timeout, task).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(err)) => Err(format!("wasm task failed: {err}")),
-        Err(_) => Err(format!("wasm execution timeout after {timeout_ms}ms")),
-    }
+    let engine = build_engine()?;
+    invoke_on_engine(&engine, wasm_bytes, input, policy).await
 }
 
 pub fn validate_wasm_module(wasm_bytes: &[u8]) -> Result<(), String> {
@@ -42,33 +50,134 @@ pub fn validate_wasm_module(wasm_bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+async fn invoke_on_engine(
+    engine: &Engine,
+    wasm_bytes: Vec<u8>,
+    input: Value,
+    policy: PluginRuntimePolicy,
+) -> Result<PluginRuntimeOutput, String> {
+    let timeout = Duration::from_millis(policy.timeout_ms);
+    let timeout_ms = policy.timeout_ms;
+    let expired = Arc::new(AtomicBool::new(false));
+    let task_engine = engine.clone();
+    let task_expired = Arc::clone(&expired);
+    let mut task = tokio::task::spawn_blocking(move || {
+        invoke_wasm_plugin_sync(&task_engine, &wasm_bytes, &input, &policy, &task_expired)
+    });
+    // If this future is dropped before the guest returns (request cancelled, runtime shutting
+    // down), the guard interrupts the guest so its blocking thread is released.
+    let guard = InterruptOnDrop {
+        engine: engine.clone(),
+        expired: Arc::clone(&expired),
+        armed: true,
+    };
+
+    if let Ok(joined) = tokio::time::timeout(timeout, &mut task).await {
+        guard.disarm();
+        return match joined {
+            Ok(result) => result,
+            Err(err) => Err(format!("wasm task failed: {err}")),
+        };
+    }
+
+    expired.store(true, Ordering::SeqCst);
+    let late = loop {
+        engine.increment_epoch();
+        if let Ok(joined) = tokio::time::timeout(INTERRUPT_RETRY_INTERVAL, &mut task).await {
+            break joined;
+        }
+    };
+    guard.disarm();
+    match late {
+        Ok(Ok(_)) => tracing::debug!(timeout_ms, "wasm plugin finished after its deadline; result discarded"),
+        Ok(Err(err)) => tracing::debug!(timeout_ms, error = %err, "wasm plugin stopped after its deadline"),
+        Err(err) => tracing::warn!(timeout_ms, error = %err, "wasm task failed after its deadline"),
+    }
+    Err(timeout_error(timeout_ms))
+}
+
+struct InterruptOnDrop {
+    engine: Engine,
+    expired: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl InterruptOnDrop {
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for InterruptOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            self.expired.store(true, Ordering::SeqCst);
+            self.engine.increment_epoch();
+        }
+    }
+}
+
+fn timeout_error(timeout_ms: u64) -> String {
+    format!("wasm execution timeout after {timeout_ms}ms")
+}
+
 fn invoke_wasm_plugin_sync(
+    engine: &Engine,
     wasm_bytes: &[u8],
     input: &Value,
     policy: &PluginRuntimePolicy,
+    expired: &Arc<AtomicBool>,
 ) -> Result<PluginRuntimeOutput, String> {
     let started = Instant::now();
-    let engine = build_engine()?;
-    let module = Module::new(&engine, wasm_bytes).map_err(|err| format!("invalid wasm module: {err}"))?;
+    let module = Module::new(engine, wasm_bytes).map_err(|err| format!("invalid wasm module: {err}"))?;
     let limits = StoreLimitsBuilder::new()
         .memory_size(policy.memory_bytes)
         .instances(1)
         .memories(1)
         .tables(1)
         .build();
-    let mut store = Store::new(&engine, StoreState { limits });
+    let mut store = Store::new(engine, StoreState { limits });
     store.limiter(|state| &mut state.limits);
     store
         .set_fuel(policy.fuel)
         .map_err(|err| format!("failed to set wasm fuel: {err}"))?;
+    // The deadline is one tick past the epoch current at store creation. Reaching it only runs
+    // the callback: it interrupts the guest when this invocation's own deadline has passed and
+    // otherwise re-arms one tick past the then-current epoch, so an epoch advance made on behalf
+    // of anything else can never stop this guest early.
+    store.set_epoch_deadline(1);
+    let callback_expired = Arc::clone(expired);
+    store.epoch_deadline_callback(move |_| {
+        if callback_expired.load(Ordering::SeqCst) {
+            Ok(UpdateDeadline::Interrupt)
+        } else {
+            Ok(UpdateDeadline::Continue(1))
+        }
+    });
+    let guest_error = |context: &str, err: wasmtime::Error| {
+        if matches!(err.downcast_ref::<Trap>(), Some(Trap::Interrupt)) {
+            timeout_error(policy.timeout_ms)
+        } else {
+            format!("{context}: {err:#}")
+        }
+    };
+    let ensure_not_expired = || {
+        if expired.load(Ordering::SeqCst) {
+            Err(timeout_error(policy.timeout_ms))
+        } else {
+            Ok(())
+        }
+    };
 
+    ensure_not_expired()?;
     let instance =
-        Instance::new(&mut store, &module, &[]).map_err(|err| format!("failed to instantiate wasm: {err}"))?;
+        Instance::new(&mut store, &module, &[]).map_err(|err| guest_error("failed to instantiate wasm", err))?;
 
     if let Ok(version_fn) = instance.get_typed_func::<(), i32>(&mut store, "openpr_plugin_abi_version") {
+        ensure_not_expired()?;
         let version = version_fn
             .call(&mut store, ())
-            .map_err(|err| format!("failed to read plugin abi version: {err}"))?;
+            .map_err(|err| guest_error("failed to read plugin abi version", err))?;
         if version != ABI_VERSION {
             return Err(format!("unsupported plugin abi version: {version}"));
         }
@@ -86,17 +195,19 @@ fn invoke_wasm_plugin_sync(
 
     let input_bytes = serde_json::to_vec(input).map_err(|err| format!("failed to encode plugin input: {err}"))?;
     let input_len = i32::try_from(input_bytes.len()).map_err(|_| "plugin input is too large".to_string())?;
+    ensure_not_expired()?;
     let input_ptr = alloc
         .call(&mut store, input_len)
-        .map_err(|err| format!("plugin allocation failed: {err}"))?;
+        .map_err(|err| guest_error("plugin allocation failed", err))?;
     let input_offset = usize::try_from(input_ptr).map_err(|_| "plugin returned negative input pointer".to_string())?;
     memory
         .write(&mut store, input_offset, &input_bytes)
         .map_err(|err| format!("failed to write plugin input: {err}"))?;
 
+    ensure_not_expired()?;
     let output_handle = invoke
         .call(&mut store, (input_ptr, input_len))
-        .map_err(|err| format!("plugin invocation trapped: {err}"))?;
+        .map_err(|err| guest_error("plugin invocation trapped", err))?;
     let (output_ptr, output_len) = unpack_ptr_len(output_handle)?;
     if output_len > MAX_OUTPUT_BYTES {
         return Err("plugin output is too large".to_string());
@@ -118,6 +229,9 @@ fn invoke_wasm_plugin_sync(
 fn build_engine() -> Result<Engine, String> {
     let mut config = Config::new();
     config.consume_fuel(true);
+    // Wall-clock deadlines interrupt running guest code through epoch checks inserted at
+    // function entries and loop back-edges; fuel stays the deterministic CPU budget.
+    config.epoch_interruption(true);
     // Wasmtime 49 turned the wide-arithmetic proposal on by default. Keep the guest-visible
     // feature set identical to what plugins were validated against before the upgrade.
     config.wasm_wide_arithmetic(false);
@@ -137,8 +251,9 @@ fn millis_u64(duration: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PluginRuntimePolicy, invoke_wasm_plugin, validate_wasm_module};
+    use super::{PluginRuntimePolicy, build_engine, invoke_on_engine, invoke_wasm_plugin, validate_wasm_module};
     use serde_json::json;
+    use std::time::{Duration, Instant};
 
     fn echo_ok_wasm() -> Vec<u8> {
         wat::parse_str(
@@ -322,9 +437,8 @@ mod tests {
         assert!(err.contains("invalid wasm module"));
     }
 
-    #[tokio::test]
-    async fn fuel_limit_traps_runaway_plugins() {
-        let wasm = wat::parse_str(
+    fn spin_forever_wasm() -> Vec<u8> {
+        wat::parse_str(
             r#"
             (module
               (memory (export "memory") 1)
@@ -335,12 +449,48 @@ mod tests {
                 i64.const 0))
             "#,
         )
-        .expect("wat should compile");
+        .expect("wat should compile")
+    }
+
+    /// Counts down from `iterations` in a guest loop, then returns `{"done":true}`.
+    fn count_down_wasm(iterations: u64) -> Vec<u8> {
+        wat::parse_str(format!(
+            r#"
+            (module
+              (memory (export "memory") 1)
+              (data (i32.const 1024) "{{\"done\":true}}")
+              (func (export "openpr_alloc") (param i32) (result i32) i32.const 4096)
+              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+                (local $n i64)
+                i64.const {iterations}
+                local.set $n
+                (loop $again
+                  local.get $n
+                  i64.const 1
+                  i64.sub
+                  local.tee $n
+                  i64.const 0
+                  i64.gt_s
+                  br_if $again)
+                i64.const 1024
+                i64.const 32
+                i64.shl
+                i64.const 13
+                i64.or))
+            "#
+        ))
+        .expect("wat should compile")
+    }
+
+    #[tokio::test]
+    async fn fuel_limit_traps_runaway_plugins() {
+        // The deadline is far beyond the time 10 units of fuel can take, so the only way this
+        // guest stops is fuel exhaustion, and the error must say so rather than claim a timeout.
         let err = invoke_wasm_plugin(
-            wasm,
+            spin_forever_wasm(),
             json!({}),
             PluginRuntimePolicy {
-                timeout_ms: 500,
+                timeout_ms: 30_000,
                 fuel: 10,
                 memory_bytes: 1024 * 1024,
             },
@@ -348,6 +498,178 @@ mod tests {
         .await
         .expect_err("fuel should trap");
 
-        assert!(err.contains("plugin invocation trapped"));
+        assert!(err.starts_with("plugin invocation trapped"), "{err}");
+        assert!(err.contains("fuel"), "{err}");
+        assert!(!err.contains("timeout"), "{err}");
     }
+
+    #[tokio::test]
+    async fn guest_trap_is_reported_as_trap_not_timeout() {
+        let wasm = wat::parse_str(
+            r#"
+            (module
+              (memory (export "memory") 1)
+              (func (export "openpr_alloc") (param i32) (result i32) i32.const 0)
+              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+                unreachable))
+            "#,
+        )
+        .expect("wat should compile");
+        let err = invoke_wasm_plugin(
+            wasm,
+            json!({}),
+            PluginRuntimePolicy {
+                timeout_ms: 30_000,
+                fuel: 100_000,
+                memory_bytes: 1024 * 1024,
+            },
+        )
+        .await
+        .expect_err("unreachable should trap");
+
+        assert!(err.starts_with("plugin invocation trapped"), "{err}");
+        assert!(!err.contains("timeout"), "{err}");
+        assert!(!err.contains("fuel"), "{err}");
+    }
+
+    /// Runs `future` on a dedicated runtime that is shut down with a timeout, so a guest that
+    /// keeps spinning on a blocking thread after a failed assertion cannot hang test teardown
+    /// (`#[tokio::test]` waits for blocking threads without a bound).
+    fn run_on_bounded_runtime<F: std::future::Future>(max_blocking_threads: usize, future: F) -> F::Output {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .max_blocking_threads(max_blocking_threads)
+            .enable_all()
+            .build()
+            .expect("runtime should build");
+        let output = runtime.block_on(future);
+        runtime.shutdown_timeout(Duration::from_secs(1));
+        output
+    }
+
+    /// A guest that never yields, with fuel that cannot run out in practice, must be stopped by
+    /// the wall-clock deadline and must give its blocking thread back.
+    ///
+    /// The runtime has exactly one blocking thread. After the timeout error, a trivial blocking
+    /// job has to get that thread; if the guest were still spinning on it the job would queue
+    /// forever. Each wait has its own 10 s bound (50x the 200 ms deadline) so a regression fails
+    /// by assertion instead of hanging, and the runtime is shut down with a timeout so a spinning
+    /// guest cannot block test teardown either.
+    #[test]
+    fn deadline_interrupts_runaway_guest_and_releases_its_thread() {
+        let bound = Duration::from_secs(10);
+        let (invocation, released) = run_on_bounded_runtime(1, async {
+            let invocation = tokio::time::timeout(
+                bound,
+                invoke_wasm_plugin(
+                    spin_forever_wasm(),
+                    json!({}),
+                    PluginRuntimePolicy {
+                        timeout_ms: 200,
+                        fuel: u64::MAX,
+                        memory_bytes: 1024 * 1024,
+                    },
+                ),
+            )
+            .await;
+            let released = tokio::time::timeout(bound, tokio::task::spawn_blocking(|| 7_u8)).await;
+            (invocation, released)
+        });
+
+        let result = invocation.expect("invocation must return within the bound once the deadline passes");
+        assert_eq!(
+            result.expect_err("runaway guest must not succeed"),
+            "wasm execution timeout after 200ms"
+        );
+        let job = released.expect("the single blocking thread must be free after the timeout");
+        assert_eq!(job.expect("blocking job should complete"), 7);
+    }
+
+    /// Dropping the invocation future before its deadline (a cancelled request, a runtime shutting
+    /// down) must still interrupt the guest and free the single blocking thread. Bounds as in the
+    /// deadline test.
+    #[test]
+    fn cancelled_invocation_interrupts_guest_and_releases_its_thread() {
+        let bound = Duration::from_secs(10);
+        let (cancelled, released) = run_on_bounded_runtime(1, async {
+            let cancelled = tokio::time::timeout(
+                Duration::from_millis(200),
+                invoke_wasm_plugin(
+                    spin_forever_wasm(),
+                    json!({}),
+                    PluginRuntimePolicy {
+                        timeout_ms: 30_000,
+                        fuel: u64::MAX,
+                        memory_bytes: 1024 * 1024,
+                    },
+                ),
+            )
+            .await;
+            let released = tokio::time::timeout(bound, tokio::task::spawn_blocking(|| 7_u8)).await;
+            (cancelled, released)
+        });
+
+        assert!(cancelled.is_err(), "the caller must have dropped the invocation first");
+        let job = released.expect("the single blocking thread must be free after the cancellation");
+        assert_eq!(job.expect("blocking job should complete"), 7);
+    }
+
+    /// Two invocations share one engine, so the epoch advance issued at the short deadline
+    /// reaches the long invocation's store too. The long one must keep running and finish.
+    ///
+    /// The long guest's loop takes about 1.5 s on an idle machine (measured) and the short
+    /// deadline is 100 ms, so the short timeout fires while the long guest is still running; the
+    /// test asserts that overlap instead of assuming it. The long deadline is the manifest
+    /// maximum (30 s), leaving ample headroom on a loaded machine.
+    #[test]
+    fn epoch_advance_for_one_deadline_does_not_stop_another_invocation() {
+        let engine = build_engine().expect("engine should build");
+        let started = Instant::now();
+        let short = async {
+            let result = invoke_on_engine(
+                &engine,
+                spin_forever_wasm(),
+                json!({}),
+                PluginRuntimePolicy {
+                    timeout_ms: 100,
+                    fuel: u64::MAX,
+                    memory_bytes: 1024 * 1024,
+                },
+            )
+            .await;
+            (result, started.elapsed())
+        };
+        let long = async {
+            let result = invoke_on_engine(
+                &engine,
+                count_down_wasm(LONG_GUEST_ITERATIONS),
+                json!({}),
+                PluginRuntimePolicy {
+                    timeout_ms: 30_000,
+                    fuel: u64::MAX,
+                    memory_bytes: 1024 * 1024,
+                },
+            )
+            .await;
+            (result, started.elapsed())
+        };
+        let ((short_result, short_done), (long_result, long_done)) = run_on_bounded_runtime(2, async {
+            tokio::time::timeout(Duration::from_mins(1), async { tokio::join!(short, long) }).await
+        })
+        .expect("both invocations must finish within the bound");
+
+        assert_eq!(
+            short_result.expect_err("short invocation must time out"),
+            "wasm execution timeout after 100ms"
+        );
+        let output = long_result.expect("long invocation must not be stopped by the other deadline");
+        assert_eq!(output.output, json!({"done": true}));
+        assert!(
+            long_done > short_done,
+            "long guest must still have been running when the short deadline fired \
+             (short {short_done:?}, long {long_done:?})"
+        );
+    }
+
+    const LONG_GUEST_ITERATIONS: u64 = 2_000_000_000;
 }
