@@ -67,6 +67,13 @@ OpenPR name keeps working; see **Deprecated**.
 - **Deprecation warnings on stderr and in logs.** Legacy entry points now announce themselves
   (see **Deprecated**). The warnings never change stdout or the exit code, but a wrapper that
   treats any stderr output as failure will notice them.
+- **`tools call` declares its own transport surface.** `sylvode tools call` and
+  `mcp-server tools call` now present the surface `cli_tools_call` to the API, as the MCP surface
+  contract specifies; every other workspace and Flow command still presents `cli`. The API accepts
+  a bot token only on the surface it was issued for, so a token issued for `cli` that was used
+  with `tools call` is now refused with 401, and a `cli_tools_call` token does not run the native
+  commands. Issue a separate `cli_tools_call` token (Members page, "CLI tools call") for
+  `tools call`. Operation logs and Flow event origins record `cli_tools_call` for these calls.
 
 ### Added
 

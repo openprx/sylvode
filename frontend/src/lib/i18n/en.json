@@ -645,11 +645,11 @@
       },
       "cli": {
         "label": "Command line",
-        "description": "The sylvode and mcp-server command-line tools, including tools call, with this token as mcp.bot_token or --bot-token."
+        "description": "The sylvode and mcp-server commands except tools call, with this token as mcp.bot_token or --bot-token."
       },
       "cli_tools_call": {
-        "label": "CLI tools call (reserved)",
-        "description": "Only for clients that identify themselves as the tools call surface. The bundled command-line tools use Command line for every command."
+        "label": "CLI tools call",
+        "description": "The tools call command of sylvode and mcp-server, which calls any MCP tool by name, with this token as mcp.bot_token or --bot-token. A Command line token does not work for tools call."
       }
     }
   },

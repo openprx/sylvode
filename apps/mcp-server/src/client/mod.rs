@@ -98,6 +98,10 @@ pub const TRANSPORT_LABEL_HTTP: &str = "mcp_http";
 pub const TRANSPORT_LABEL_SSE: &str = "mcp_sse";
 /// Audit label of a direct CLI command.
 pub const TRANSPORT_LABEL_CLI: &str = "cli";
+/// Audit label of the CLI's `tools call` escape hatch (`mcp-surface-v1.md`: "CLI 的 `tools call`
+/// 经 stdio-style configured bot 时使用 `surface=cli_tools_call`"), distinct from the native
+/// commands' `cli`.
+pub const TRANSPORT_LABEL_CLI_TOOLS_CALL: &str = "cli_tools_call";
 
 /// Attribution headers, canonical spelling first (ADR-0020 D3). Throughout 1.x the legacy
 /// `X-OpenPR-MCP-*` spelling is sent alongside with the identical value, so this client keeps
