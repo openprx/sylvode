@@ -487,7 +487,28 @@ fn nested_string_field<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
     cursor.as_str().filter(|value| !value.is_empty())
 }
 
+/// Whether `payload` is an AI task envelope from the Sylvode worker.
+fn is_worker_task(payload: &Value) -> bool {
+    string_field(payload, "task_id").is_some() && string_field(payload, "ai_participant_id").is_some()
+}
+
+/// The issue a delivery is about, which is also the issue every callback for it writes to.
+///
+/// For a worker AI task this is only the task's `reference_id` (when `reference_type` is
+/// `work_item`), which the worker takes from the task record. The task's inner `payload` is
+/// free-form data supplied by whoever created the task, so an `issue_id` inside it is ignored:
+/// otherwise it could point the callback, sent with the bot's token, at another issue.
 pub fn extract_issue_id(payload: &Value) -> Option<String> {
+    if is_worker_task(payload) {
+        return (payload.get("reference_type").and_then(Value::as_str) == Some("work_item"))
+            .then(|| {
+                payload
+                    .get("reference_id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .flatten();
+    }
     let direct_issue_id = payload
         .get("data")
         .and_then(|d| d.get("issue"))
@@ -1163,6 +1184,41 @@ update_state_on_success = "done"
         });
 
         assert_eq!(extract_issue_id(&payload).as_deref(), Some("issue-99"));
+    }
+
+    /// The issue of a worker AI task is its `reference_id`; an `issue_id` inside the free-form
+    /// `payload`, or a non-work-item reference, yields nothing else.
+    #[test]
+    fn a_worker_task_issue_id_comes_only_from_its_reference() {
+        let task = json!({
+            "task_id": "task-1",
+            "ai_participant_id": "bot-1",
+            "reference_type": "work_item",
+            "reference_id": "REAL-ISSUE",
+            "payload": {"issue_id": "OTHER-ISSUE"}
+        });
+        assert_eq!(extract_issue_id(&task).as_deref(), Some("REAL-ISSUE"));
+
+        let proposal = json!({
+            "task_id": "task-2",
+            "ai_participant_id": "bot-1",
+            "reference_type": "proposal",
+            "reference_id": "PROPOSAL-1",
+            "payload": {"issue_id": "OTHER-ISSUE"}
+        });
+        assert_eq!(extract_issue_id(&proposal), None);
+    }
+
+    /// Outside a worker task (a tunnel task body, say) the order is `data.issue.id`, then
+    /// `payload.issue_id`, then a top-level `issue_id`.
+    #[test]
+    fn issue_id_precedence_outside_worker_tasks() {
+        let all = json!({"data": {"issue": {"id": "A"}}, "payload": {"issue_id": "B"}, "issue_id": "C"});
+        assert_eq!(extract_issue_id(&all).as_deref(), Some("A"));
+        let inner = json!({"payload": {"issue_id": "B"}, "issue_id": "C"});
+        assert_eq!(extract_issue_id(&inner).as_deref(), Some("B"));
+        let top = json!({"issue_id": 7});
+        assert_eq!(extract_issue_id(&top).as_deref(), Some("7"));
     }
 
     #[test]

@@ -241,6 +241,11 @@ order within each step:
    task) and whose route matches;
 3. otherwise an agent that has an `[agents.route]` section and whose route matches.
 
+For a worker AI task, the bot's agent type is `ai_participant_agent_type` only, and the issue that
+every callback writes to is the task's `reference_id` (when `reference_type` is `work_item`). The
+task's inner `payload` is free-form data from whoever created the task; it never chooses the agent
+type or the callback's issue.
+
 An agent without a route matches every task. A route matches when every non-empty list contains
 the task's value, compared ignoring case and surrounding whitespace; a value missing from the task
 fails a non-empty list. `bot_names` and `bot_ids` together form one constraint that either list can

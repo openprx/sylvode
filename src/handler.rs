@@ -113,19 +113,9 @@ fn ai_task_envelope_target(payload: &Value) -> Option<BotDispatchTarget> {
     string_field(payload, "task_id")?;
     let bot_key = string_field(payload, "ai_participant_id")?.to_string();
 
-    let agent_type = string_field(payload, "agent_type")
-        .or_else(|| string_field(payload, "ai_participant_agent_type"))
-        .or_else(|| {
-            payload
-                .get("payload")
-                .and_then(|inner| string_field(inner, "bot_agent_type"))
-        })
-        .or_else(|| {
-            payload
-                .get("payload")
-                .and_then(|inner| string_field(inner, "agent_type"))
-        })
-        .map(ToString::to_string);
+    // The bot's agent type, as the worker reads it from the bot user. The task's inner `payload`
+    // is free-form data from whoever created the task and must not choose the agent type.
+    let agent_type = string_field(payload, "ai_participant_agent_type").map(ToString::to_string);
 
     Some(BotDispatchTarget {
         bot_name: None,

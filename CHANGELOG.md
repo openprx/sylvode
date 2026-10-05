@@ -3,6 +3,19 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.24
+
+### Security
+
+- **A worker AI task's free-form `payload` can no longer redirect the callback or choose the agent
+  type.** The callback of a worker task, sent with the bot's `callback_token`, now always targets
+  the task's `reference_id` (with `reference_type = "work_item"`). Before, a `payload.issue_id`
+  took precedence, so whoever could create an AI task with an arbitrary `payload` (a project admin)
+  could make the callback set the state of, and comment on, any other issue the bot's token can
+  write to. Likewise the agent type of a worker task is now only `ai_participant_agent_type`;
+  `payload.agent_type` and `payload.bot_agent_type` no longer select, for example, a `cli` agent
+  for a bot that has no agent type.
+
 ## 0.3.23
 
 ### Security
