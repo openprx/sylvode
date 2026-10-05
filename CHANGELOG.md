@@ -3,7 +3,17 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
-## 0.3.10
+## 0.3.11
+
+### Changed
+
+- **An unknown `route.trigger_kinds` value refuses start-up.** The error names the agent and lists
+  the values Sylvode sends: `assigned`, `created`, `status_changed`, `mentioned`, `completed` and
+  `failed` on webhook deliveries (`bot_context.trigger_reason`), and `assigned`, `mention`,
+  `proposal_vote` and `manual` on worker-dispatched AI tasks (`trigger_kind`). Before, such a value
+  was accepted and the agent was never selected. The examples used `assignment`, which no Sylvode
+  version has sent, and `mention` for a mention in a comment, which a webhook delivery reports as
+  `mentioned`; they now use `assigned` and `mentioned`.
 
 ### Fixed
 

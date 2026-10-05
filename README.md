@@ -140,7 +140,7 @@ secret = "optional-shared-secret" # if set, outbound header x-webhook-signature 
 bot_names = ["Document review connection"]
 bot_agent_types = ["webhook"]
 project_types = ["contract_review"]
-trigger_kinds = ["mention"]
+trigger_kinds = ["assigned", "mentioned"]
 events = ["issue.assigned", "comment.created"]
 form_keys = ["order", "print_job"]
 

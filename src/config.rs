@@ -205,10 +205,52 @@ const fn default_tunnel_reconnect_backoff_max_secs() -> u64 {
     60
 }
 
+/// Every trigger kind a Sylvode deployment sends, the closed set `route.trigger_kinds` may name.
+///
+/// A direct webhook delivery carries `bot_context.trigger_reason`: `created`, `assigned`,
+/// `status_changed`, `mentioned`, `completed` or `failed`. A worker-dispatched AI task carries a
+/// top-level `trigger_kind`: `assigned`, `mention`, `proposal_vote` or `manual`.
+pub const TRIGGER_KINDS: [&str; 9] = [
+    "assigned",
+    "created",
+    "status_changed",
+    "mentioned",
+    "completed",
+    "failed",
+    "mention",
+    "proposal_vote",
+    "manual",
+];
+
 impl Config {
     pub fn load(path: &str) -> Result<Self, String> {
         let content = std::fs::read_to_string(path).map_err(|e| format!("failed to read config {path}: {e}"))?;
-        toml::from_str(&content).map_err(|e| format!("failed to parse config: {e}"))
+        let config: Self = toml::from_str(&content).map_err(|e| format!("failed to parse config: {e}"))?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Refuses settings that parse but can never work, so they fail at start-up instead of
+    /// silently never dispatching.
+    fn validate(&self) -> Result<(), String> {
+        for agent in &self.agents {
+            if let Some(route) = &agent.route {
+                for kind in &route.trigger_kinds {
+                    let known = TRIGGER_KINDS
+                        .iter()
+                        .any(|valid| valid.eq_ignore_ascii_case(kind.trim()));
+                    if !known {
+                        return Err(format!(
+                            "agent `{}`: route.trigger_kinds contains `{kind}`, which Sylvode never sends; \
+                             valid values: {}",
+                            agent.id,
+                            TRIGGER_KINDS.join(", ")
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub const fn cli_enabled(&self) -> bool {
@@ -289,6 +331,47 @@ enabled = true
         assert!(!cfg.cli_enabled());
         assert!(!cfg.callback_enabled());
         assert!(!cfg.tunnel_enabled());
+    }
+
+    /// Writes `content` to a fresh file and loads it the way start-up does.
+    fn load_str(content: &str) -> Result<Config, String> {
+        let dir = std::env::temp_dir().join(format!("sylvode-webhook-config-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, content).expect("write config");
+        let loaded = Config::load(path.to_str().expect("utf-8 path"));
+        std::fs::remove_dir_all(&dir).expect("remove temp dir");
+        loaded
+    }
+
+    fn route_config(trigger_kinds: &str) -> String {
+        format!(
+            "[server]\nlisten = \"0.0.0.0:9090\"\n\n[security]\nallow_unsigned = true\n\n\
+             [[agents]]\nid = \"fixer\"\nname = \"Fixer\"\nagent_type = \"webhook\"\n\n\
+             [agents.route]\ntrigger_kinds = {trigger_kinds}\n\n\
+             [agents.webhook]\nurl = \"http://127.0.0.1:9000/hook\"\n"
+        )
+    }
+
+    /// Every value a Sylvode deployment sends is accepted, in any case and with surrounding
+    /// whitespace, as the route matcher compares them.
+    #[test]
+    fn accepts_every_trigger_kind_sylvode_sends() {
+        let cfg = load_str(&route_config(
+            r#"["assigned", "created", "status_changed", "mentioned", "completed", "failed", "mention", "proposal_vote", " Manual "]"#,
+        ))
+        .expect("all wire values are accepted");
+        assert_eq!(cfg.agents.len(), 1);
+    }
+
+    /// `assignment` was never sent by any Sylvode version, so a route naming it could never match.
+    /// Start-up is refused with the valid values instead of silently never dispatching.
+    #[test]
+    fn refuses_a_trigger_kind_sylvode_never_sends() {
+        let err = load_str(&route_config(r#"["mentioned", "assignment"]"#)).expect_err("assignment is refused");
+        assert!(err.contains("`fixer`"), "{err}");
+        assert!(err.contains("`assignment`"), "{err}");
+        assert!(err.contains("assigned, created"), "{err}");
     }
 
     #[test]
