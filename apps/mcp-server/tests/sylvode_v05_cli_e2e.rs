@@ -339,3 +339,53 @@ async fn malformed_patch_file_exits_two_before_the_network() -> TestResult {
     assert!(calls.lock().await.is_empty(), "invalid local JSON reached the API");
     Ok(())
 }
+
+/// An API nothing answers on: the contract fixes exit 9 and `recoverable: true` ("网络失败 exit
+/// 9"; exit 9 is "draining/network/temporary service failure"). It fixes no stable code or
+/// `details.reason` for the case, and forbids guessing `drain` or `contention`, so the envelope
+/// must not carry a reason, and the message has to say it was a network failure and why — before
+/// this, it read "Request failed: error sending request for url (...)" under `server_draining`,
+/// with nothing that told a reader the API was simply unreachable.
+#[tokio::test]
+async fn network_failure_exits_nine_without_guessing_a_drain_reason() -> TestResult {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let closed = format!("http://{}", listener.local_addr()?);
+    drop(listener);
+    let config = config(&closed)?;
+
+    let output = run(&config, &["objects", "get", OBJECT]).await?;
+    assert_eq!(
+        output.status.code(),
+        Some(9),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(json_at(&envelope, "/schema_version")?, "sylvode.cli.v1");
+    assert_eq!(json_at(&envelope, "/ok")?, false);
+    assert_eq!(json_at(&envelope, "/command")?, "objects.get");
+    assert_eq!(json_at(&envelope, "/error/recoverable")?, true);
+    assert_eq!(json_at(&envelope, "/error/code")?, "server_draining");
+    assert_eq!(
+        json_at(&envelope, "/error/details")?,
+        &json!({}),
+        "a network failure is neither drain nor contention and must not be reported as either"
+    );
+    let message = json_at(&envelope, "/error/message")?
+        .as_str()
+        .ok_or("error.message is not a string")?;
+    assert!(
+        message.starts_with("network failure: no response from the API at "),
+        "{message}"
+    );
+    assert!(message.contains(&closed), "{message}");
+    assert!(message.to_ascii_lowercase().contains("connection refused"), "{message}");
+    assert!(message.contains("not a server drain"), "{message}");
+
+    let table = run(&config, &["--format", "table", "objects", "get", OBJECT]).await?;
+    assert_eq!(table.status.code(), Some(9));
+    assert!(table.stdout.is_empty(), "a failure wrote to stdout in table format");
+    let stderr = String::from_utf8(table.stderr)?;
+    assert!(stderr.contains("network failure: no response from the API"), "{stderr}");
+    Ok(())
+}
