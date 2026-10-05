@@ -3,8 +3,14 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-/// Identifies this dispatcher in `OpenPR`'s bot operation ledger.
-const MCP_SURFACE_HEADER: &str = "X-OpenPR-MCP-Surface";
+/// Identifies this dispatcher in the Sylvode API's bot operation ledger.
+const MCP_SURFACE_HEADER: &str = "X-Sylvode-MCP-Surface";
+/// Legacy name of [`MCP_SURFACE_HEADER`]. Sent alongside it with the identical value for the
+/// whole 1.x line, so this service records the same surface against an API that only knows the
+/// legacy header and against one that knows both (ADR-0020 D3).
+const LEGACY_MCP_SURFACE_HEADER: &str = "X-OpenPR-MCP-Surface";
+/// The surface this dispatcher reports for a plain API callback.
+const CLI_SURFACE: &str = "cli";
 
 /// Monotonically increasing JSON-RPC request ID counter.
 static JSONRPC_ID: AtomicU64 = AtomicU64::new(1);
@@ -115,9 +121,9 @@ fn parse_jsonrpc_response(body: &str) -> Option<serde_json::Value> {
         .next_back()
 }
 
-/// Reads the `{code, message, data}` envelope the `OpenPR` REST API answers with.
+/// Reads the `{code, message, data}` envelope the Sylvode REST API answers with.
 ///
-/// A receiver that is not the `OpenPR` API answers something else, which is left alone.
+/// A receiver that is not the Sylvode API answers something else, which is left alone.
 fn interpret_api_body(body: &str) -> Result<(), String> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
         return Ok(());
@@ -232,16 +238,7 @@ async fn send_api_callback(
     http_timeout_secs: u64,
 ) -> Result<(), String> {
     let client = build_client(http_timeout_secs)?;
-    // OpenPR's bot operation ledger groups a request by this header. Without it every write
-    // from here is recorded as an anonymous REST call. The MCP path sets its own headers.
-    let mut req = client.post(url).header(MCP_SURFACE_HEADER, "cli").json(payload);
-
-    if let Some(token) = &cfg.callback_token
-        && !token.is_empty()
-    {
-        req = req.bearer_auth(token);
-    }
-
+    let req = api_callback_request(&client, url, payload, cfg.callback_token.as_deref());
     let resp = req.send().await.map_err(|e| format!("callback request failed: {e}"))?;
 
     let status = resp.status();
@@ -250,6 +247,29 @@ async fn send_api_callback(
         return Err(format!("callback failed: {status} {body}"));
     }
     interpret_api_body(&body)
+}
+
+/// Builds the plain API callback request.
+///
+/// The Sylvode API's bot operation ledger groups a request by the surface header. Without it every
+/// write from here is recorded as an anonymous REST call. The MCP path sets its own headers.
+fn api_callback_request(
+    client: &reqwest::Client,
+    url: &str,
+    payload: &CallbackPayload,
+    token: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let mut req = client
+        .post(url)
+        .header(MCP_SURFACE_HEADER, CLI_SURFACE)
+        .header(LEGACY_MCP_SURFACE_HEADER, CLI_SURFACE)
+        .json(payload);
+    if let Some(token) = token
+        && !token.is_empty()
+    {
+        req = req.bearer_auth(token);
+    }
+    req
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -310,6 +330,53 @@ mod tests {
         assert_eq!(payload.run_id, "run-1");
         assert_eq!(payload.status, "success");
         assert_eq!(payload.state.as_deref(), Some("done"));
+    }
+
+    fn sample_payload() -> CallbackPayload {
+        build_callback_payload(
+            "issue-1".into(),
+            "run-1".into(),
+            "codex".into(),
+            "success".into(),
+            "done".into(),
+            Some(0),
+            1,
+            String::new(),
+            String::new(),
+            None,
+        )
+    }
+
+    #[test]
+    fn api_callback_sends_canonical_and_legacy_surface_headers_with_one_value() {
+        let client = build_client(5).unwrap();
+        let request = api_callback_request(&client, "http://127.0.0.1:9/callback", &sample_payload(), Some("opr_x"))
+            .build()
+            .unwrap();
+        let headers = request.headers();
+
+        let canonical: Vec<_> = headers.get_all("x-sylvode-mcp-surface").iter().collect();
+        let legacy: Vec<_> = headers.get_all("x-openpr-mcp-surface").iter().collect();
+        assert_eq!(canonical, vec!["cli"], "canonical surface header");
+        assert_eq!(
+            legacy,
+            vec!["cli"],
+            "legacy surface header for an API that predates the rename"
+        );
+        assert_eq!(
+            headers.get("authorization").and_then(|v| v.to_str().ok()),
+            Some("Bearer opr_x")
+        );
+    }
+
+    #[test]
+    fn api_callback_omits_authorization_for_an_empty_token() {
+        let client = build_client(5).unwrap();
+        let request = api_callback_request(&client, "http://127.0.0.1:9/callback", &sample_payload(), Some(""))
+            .build()
+            .unwrap();
+        assert!(request.headers().get("authorization").is_none());
+        assert!(request.headers().get("x-sylvode-mcp-surface").is_some());
     }
 
     #[test]
