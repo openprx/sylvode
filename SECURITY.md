@@ -21,6 +21,19 @@ the advisory unless you prefer otherwise.
   `X-Webhook-Signature` or the legacy `X-OpenPR-Signature`. Requests whose signature headers
   disagree are refused. `allow_unsigned = true` disables verification and is meant for
   development only.
-- The `cli` and `custom` agent types run local commands. Keep `features.cli_enabled` off unless you
-  need it, and use `SYLVODE_WEBHOOK_SAFE_MODE=1` to force the tunnel, CLI and callback paths off.
+- `allow_unsigned = true` is refused on an address other than loopback unless
+  `allow_unsigned_non_loopback = true` acknowledges it. Blank secrets and the example placeholders
+  refuse start-up. Signed requests are also checked for replay (`id`) and freshness (`timestamp`).
+- Several agent types run local commands, and they are gated differently:
+  - `cli` runs `codex`, `claude` or `opencode` with permission checks bypassed. It runs only with
+    `features.cli_enabled = true`, never in safe mode (`SYLVODE_WEBHOOK_SAFE_MODE=1`), at most
+    `runtime.cli_max_concurrency` at a time, and its whole process group is stopped on timeout or
+    shutdown.
+  - `openclaw`, `openprx` (with `command`) and `custom` run their configured command for every
+    matching bot task. Neither `cli_enabled` nor safe mode stops them; the program and its fixed
+    arguments come only from the configuration, and payload text is always passed as a single
+    argument (for `custom`, it may not start an option). Configure only the agents you need.
+- Commands run without a shell, with stdin closed, and inherit the service's environment; do not
+  give the service environment variables you would not give the agents.
+- Run the service as a dedicated unprivileged user (see the systemd example in the README).
 - Never commit a `config.toml` containing secrets; `.gitignore` excludes it.
