@@ -49,7 +49,6 @@ Thumbs.db
 # Database files
 *.db
 *.sqlite
-/CHANGELOG.md
 .brv/
 
 # Generated runtime configuration; contains the signing key, the database password and the MCP bot
