@@ -314,3 +314,35 @@ async fn a_message_that_is_not_an_envelope_is_answered_invalid_json() {
     assert_eq!(refused.msg_type, "error");
     assert_eq!(refused.payload["reason"], "invalid_json");
 }
+
+/// A signed envelope is still refused when it is addressed to another agent, is older (or
+/// newer) than five minutes, or repeats an envelope id already accepted.
+#[tokio::test(flavor = "multi_thread")]
+async fn misaddressed_stale_and_replayed_envelopes_are_refused() {
+    let mut h = start(Options::default(), true).await;
+
+    let mut other = dispatch("ISSUE-9", None);
+    other.agent_id = "someone-else".into();
+    h.peer.send(&other.signed(TUNNEL_SECRET)).await;
+    let refused = next(&mut h.peer).await;
+    assert_eq!(refused.payload["reason"], "wrong_agent", "{refused:?}");
+
+    let mut stale = dispatch("ISSUE-10", None);
+    stale.ts -= 3600;
+    h.peer.send(&stale.signed(TUNNEL_SECRET)).await;
+    let refused = next(&mut h.peer).await;
+    assert_eq!(refused.payload["reason"], "stale_envelope", "{refused:?}");
+
+    let once = dispatch("ISSUE-11", None).signed(TUNNEL_SECRET);
+    h.peer.send(&once).await;
+    assert_eq!(next(&mut h.peer).await.msg_type, "task.ack");
+    assert_eq!(next(&mut h.peer).await.payload["status"], "success");
+    h.peer.send(&once).await;
+    let refused = next(&mut h.peer).await;
+    assert_eq!(refused.payload["reason"], "duplicate_envelope", "{refused:?}");
+    assert_eq!(
+        wait_lines(&h.runs, 3, Duration::from_millis(500)).len(),
+        2,
+        "only one run"
+    );
+}

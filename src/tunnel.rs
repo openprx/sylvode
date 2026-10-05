@@ -80,6 +80,45 @@ fn build_envelope(msg_type: &str, agent_id: &str, payload: Value, hmac_secret: O
     env
 }
 
+/// How far a signed envelope's `ts` may be from now, in seconds.
+const MAX_ENVELOPE_AGE_SECS: u64 = 300;
+/// How many recent envelope ids are remembered to refuse a replay.
+const REMEMBERED_ENVELOPE_IDS: usize = 4096;
+
+/// Checks that follow signature verification: the envelope is addressed to this agent, and a
+/// signed envelope is fresh and not a replay of one already accepted. Without `hmac_secret`
+/// nothing in an envelope is authenticated, so only the address is checked.
+#[derive(Default)]
+struct InboundCheck {
+    seen: std::collections::HashSet<String>,
+    order: std::collections::VecDeque<String>,
+}
+
+impl InboundCheck {
+    fn check(&mut self, envelope: &Envelope, agent_id: &str, signed: bool) -> Result<(), &'static str> {
+        if envelope.agent_id != agent_id {
+            return Err("wrong_agent");
+        }
+        if !signed {
+            return Ok(());
+        }
+        if now_ts().abs_diff(envelope.ts) > MAX_ENVELOPE_AGE_SECS {
+            return Err("stale_envelope");
+        }
+        if self.seen.contains(&envelope.id) {
+            return Err("duplicate_envelope");
+        }
+        if self.order.len() >= REMEMBERED_ENVELOPE_IDS
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.seen.remove(&oldest);
+        }
+        self.seen.insert(envelope.id.clone());
+        self.order.push_back(envelope.id.clone());
+        Ok(())
+    }
+}
+
 /// The WebSocket handshake request for `url`, with the bearer token.
 ///
 /// The request is built by tungstenite from the URL, so it carries the handshake headers
@@ -174,6 +213,7 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
                 retry_secs = base_reconnect_secs;
                 tracing::info!("tunnel connected: {url}");
                 let (mut writer, mut reader) = ws_stream.split();
+                let mut inbound = InboundCheck::default();
                 let (tx, mut rx) = mpsc::channel::<Envelope>(128);
 
                 let writer_task = tokio::spawn(async move {
@@ -256,6 +296,19 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
                                 "error",
                                 &agent_id,
                                 json!({"reason":"bad_signature","msg_id":envelope.id}),
+                                hmac_secret.as_deref(),
+                            ))
+                            .await;
+                        continue;
+                    }
+
+                    if let Err(reason) = inbound.check(&envelope, &agent_id, hmac_secret.is_some()) {
+                        tracing::warn!(msg_id = ?envelope.id, reason, "tunnel envelope refused");
+                        let _ = tx
+                            .send(build_envelope(
+                                "error",
+                                &agent_id,
+                                json!({"reason": reason, "msg_id": envelope.id}),
                                 hmac_secret.as_deref(),
                             ))
                             .await;
