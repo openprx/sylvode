@@ -687,7 +687,40 @@
     "deliveryDetailTitle": "Delivery Detail",
     "loadingDetail": "Loading detail...",
     "request": "Request",
-    "response": "Response"
+    "response": "Response",
+    "eventGroup": {
+      "issue": "Work items",
+      "comment": "Comments",
+      "label": "Labels",
+      "sprint": "Sprints",
+      "ai": "AI tasks"
+    },
+    "eventLabel": {
+      "issue": {
+        "created": "Work item created",
+        "updated": "Work item updated",
+        "assigned": "Work item assigned",
+        "deleted": "Work item deleted",
+        "state_changed": "Work item state changed"
+      },
+      "comment": {
+        "created": "Comment added",
+        "updated": "Comment edited",
+        "deleted": "Comment deleted"
+      },
+      "label": {
+        "added": "Label added to a work item",
+        "removed": "Label removed from a work item"
+      },
+      "sprint": {
+        "started": "Sprint started",
+        "completed": "Sprint completed"
+      },
+      "ai": {
+        "task_completed": "AI task completed",
+        "task_failed": "AI task failed"
+      }
+    }
   },
   "governance": {
     "title": "Governance Proposals",

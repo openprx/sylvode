@@ -1,7 +1,7 @@
 {
 	"name": "frontend",
 	"private": true,
-	"version": "0.2.361",
+	"version": "0.2.362",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
@@ -21,6 +21,7 @@
 		"test:flow-i18n-parity": "bun tests/flow-i18n-parity.test.ts",
 		"test:i18n-parity": "bun tests/i18n-parity.test.ts",
 		"test:bot-transport-surfaces": "bun tests/bot-transport-surfaces.test.ts",
+		"test:webhook-events": "bun tests/webhook-events.test.ts",
 		"test:flow-navigator-equivalence": "bun tests/flow-navigator-equivalence.test.ts",
 		"test:flow-ui-state": "bun tests/flow-ui-state.test.ts",
 		"test:flow-static-build": "bun tests/flow-static-build-deep-route.test.ts",

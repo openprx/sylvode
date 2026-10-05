@@ -133,3 +133,36 @@ pub const WEBHOOK_EVENTS: &[&str] = &[
     "ai.task_completed",
     "ai.task_failed",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::WEBHOOK_EVENTS;
+
+    /// The web UI's webhook form offers exactly the events this list accepts, in this order.
+    ///
+    /// The form used to hard-code three of them, so eleven subscribable events could only be
+    /// reached through the API. Its list now lives in one frontend constant, which this test
+    /// reads: adding an event on either side without the other fails here.
+    #[test]
+    fn frontend_webhook_events_match_the_api_list() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../frontend/src/lib/webhooks/events.ts");
+        let source = std::fs::read_to_string(path).unwrap_or_else(|error| panic!("cannot read {path}: {error}"));
+        let start = source
+            .find("export const WEBHOOK_EVENT_GROUPS")
+            .unwrap_or_else(|| panic!("{path} no longer defines WEBHOOK_EVENT_GROUPS"));
+        let end = source[start..].find("] as const;").map_or_else(
+            || panic!("{path}: WEBHOOK_EVENT_GROUPS is not closed by `] as const;`"),
+            |offset| start + offset,
+        );
+        let frontend: Vec<&str> = source[start..end]
+            .split('\'')
+            .skip(1)
+            .step_by(2)
+            .filter(|literal| literal.contains('.'))
+            .collect();
+        assert_eq!(
+            frontend, WEBHOOK_EVENTS,
+            "frontend/src/lib/webhooks/events.ts and WEBHOOK_EVENTS disagree"
+        );
+    }
+}

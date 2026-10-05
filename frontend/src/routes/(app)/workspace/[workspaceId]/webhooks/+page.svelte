@@ -16,9 +16,13 @@
 	import BotIcon from '$lib/components/BotIcon.svelte';
 	import Input from '$lib/components/Input.svelte';
 	import Modal from '$lib/components/Modal.svelte';
+	import {
+		WEBHOOK_EVENT_GROUPS,
+		webhookEventGroupKey,
+		webhookEventLabelKey
+	} from '$lib/webhooks/events';
 
 	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
-	const eventOptions = ['issue.created', 'issue.updated', 'comment.created'];
 
 	let loading = $state(true);
 	let submitting = $state(false);
@@ -425,7 +429,7 @@
 	{/if}
 </div>
 
-<Modal bind:open={showModal} title={editingWebhook ? $t('webhook.edit') : $t('webhook.create')}>
+<Modal bind:open={showModal} title={editingWebhook ? $t('webhook.edit') : $t('webhook.create')} maxWidthClass="max-w-2xl">
 	<form
 		onsubmit={(event) => {
 			event.preventDefault();
@@ -453,22 +457,33 @@
 			{$t('webhook.enable')}
 		</label>
 
-		<div>
-			<p class="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">{$t('webhook.eventTypes')}</p>
-			<div class="space-y-2">
-				{#each eventOptions as eventName}
-					<label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-						<input
-							type="checkbox"
-							class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800"
-							checked={form.events.includes(eventName)}
-							onchange={() => toggleEvent(eventName)}
-						/>
-						{eventName}
-					</label>
+		<fieldset>
+			<legend class="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">{$t('webhook.eventTypes')}</legend>
+			<div class="space-y-3">
+				{#each WEBHOOK_EVENT_GROUPS as entry (entry.group)}
+					<fieldset data-testid="webhook-event-group" data-group={entry.group}>
+						<legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+							{$t(webhookEventGroupKey(entry.group))}
+						</legend>
+						<div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
+							{#each entry.events as eventName (eventName)}
+								<label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+									<input
+										type="checkbox"
+										value={eventName}
+										class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800"
+										checked={form.events.includes(eventName)}
+										onchange={() => toggleEvent(eventName)}
+									/>
+									<span>{$t(webhookEventLabelKey(eventName))}</span>
+									<code class="text-xs text-slate-400 dark:text-slate-500">{eventName}</code>
+								</label>
+							{/each}
+						</div>
+					</fieldset>
 				{/each}
 			</div>
-		</div>
+		</fieldset>
 
 		<div class="flex justify-end gap-2 pt-2">
 			<Button variant="secondary" onclick={() => (showModal = false)}>{$t('common.cancel')}</Button>

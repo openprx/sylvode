@@ -192,6 +192,9 @@ replacement and the earliest removal.
   MCP (HTTP, SSE, stdio) and the command-line tools. The form now requires choosing where the
   token will be used, the token list shows each token's surface, and the token-reveal dialog
   says where the token works.
+- The Webhooks page offered only `issue.created`, `issue.updated` and `comment.created`,
+  although the API accepts 14 events. The form now offers all of them, grouped by work items,
+  comments, labels, sprints and AI tasks, with translated labels.
 
 ## [0.2.21] - 2026-08-19
 
