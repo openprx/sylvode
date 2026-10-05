@@ -104,7 +104,8 @@ agent_type = "openclaw"
 message_template = "🔔 [{project}] {event}: {key} {title}\n👤 {actor} | Trigger: {reason}"
 
 [agents.openclaw]
-command = "openclaw message send"
+command = "openclaw"
+args = ["message", "send"] # runs: openclaw message send --channel ... --target ... --message ...
 channel = "signal"
 target = "uuid:your-user-uuid"
 
@@ -120,7 +121,8 @@ signal_api = "http://127.0.0.1:8686"
 account = "+1234567890"
 target = "uuid:your-user-uuid"
 # Or use CLI instead:
-# command = "openprx message send"
+# command = "openprx"
+# args = ["message", "send"]
 # channel = "signal"
 
 # Agent: Forward to HTTP endpoint

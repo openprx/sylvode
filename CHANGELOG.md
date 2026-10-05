@@ -3,6 +3,23 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.13
+
+### Added
+
+- `args` for `openclaw` and `openprx` agents: fixed arguments placed between `command` and
+  `--channel`. `openclaw message send` is now written `command = "openclaw"` with
+  `args = ["message", "send"]`.
+
+### Changed
+
+- **A `command` containing whitespace that names no program refuses start-up** (`openclaw.command`,
+  `openprx.command` and `custom.command`). Commands run without a shell, so a value such as
+  `openclaw message send` was looked up as a single program of that name and every dispatch failed
+  to spawn. The error shows the `command` and `args` to write instead. A path that contains
+  whitespace and names an existing file is still accepted. The README and `config.example.toml`
+  showed `command = "openclaw message send"`; they now use `command` and `args`.
+
 ## 0.3.12
 
 ### Fixed
