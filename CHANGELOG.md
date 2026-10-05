@@ -3,6 +3,14 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.30
+
+### Fixed
+
+- The deprecation notice for the legacy `X-OpenPR-Signature` header is written only for a request
+  whose signature verified. Before, any unauthenticated request carrying the header used up the
+  once-per-process notice, so the operator never saw it for the real sender.
+
 ## 0.3.29
 
 ### Security
