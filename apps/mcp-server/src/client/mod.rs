@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-/// The `OpenPR` API always answers with HTTP 200 and carries the real status in the
+/// The Sylvode API always answers with HTTP 200 and carries the real status in the
 /// response envelope (`{ "code": 0, "message": "...", "data": ... }`): every handler
 /// returns `ApiResponse<T>` (`apps/api/src/response.rs`) and every failure returns
 /// `ApiError` (`apps/api/src/error.rs`). Any non-zero `code` is an API error and must
@@ -58,7 +58,7 @@ fn check_response_envelope(payload: &Value, path: &str) -> Result<(), String> {
 const fn refusal_reason(code: i64) -> Option<&'static str> {
     match code {
         401 => Some(
-            "the OpenPR API rejected the credential this call was made with; check that the bot token presented is \
+            "the Sylvode API rejected the credential this call was made with; check that the bot token presented is \
              correct, enabled and not expired",
         ),
         _ => None,
@@ -67,7 +67,7 @@ const fn refusal_reason(code: i64) -> Option<&'static str> {
 
 /// What a caller is told about a non-2xx answer.
 ///
-/// The `OpenPR` API itself answers `200` and carries its status in the envelope, so a real
+/// The Sylvode API itself answers `200` and carries its status in the envelope, so a real
 /// HTTP status here comes from something in front of it — a proxy, a gateway, a load
 /// balancer — whose error page is not written for this caller at all. The same reasoning as
 /// [`refusal_reason`] therefore applies to the same status, and to a body rather than to an
@@ -124,7 +124,7 @@ pub const fn transport_label(transport: McpTransport) -> &'static str {
 /// (stdio, the CLI subcommands) are configured with `mcp.bot_token`. It is an error rather
 /// than a fallback so that the failure is a refusal, never an unattributed call made with
 /// somebody else's authority.
-const NO_OUTBOUND_CREDENTIAL: &str = "Refusing to call the OpenPR API with no credential: this request carried no caller identity \
+const NO_OUTBOUND_CREDENTIAL: &str = "Refusing to call the Sylvode API with no credential: this request carried no caller identity \
      and this process holds none of its own";
 
 /// Everything the client needs, already resolved from the configuration file and the CLI
@@ -133,7 +133,7 @@ const NO_OUTBOUND_CREDENTIAL: &str = "Refusing to call the OpenPR API with no cr
 /// Carries no `Debug` on purpose: it may hold a credential, and the point of [`Secret`] is
 /// that no derived `Debug` anywhere can start printing it.
 pub struct ClientConfig {
-    /// Base URL of the `OpenPR` API, from `mcp.api_url` or `--api-url`.
+    /// Base URL of the Sylvode API, from `mcp.api_url` or `--api-url`.
     pub base_url: String,
     /// The identity this client presents to the API.
     ///
@@ -1657,6 +1657,10 @@ mod tests {
 
         assert!(error.contains("401"), "{error}");
         assert!(error.contains("not expired"), "the refusal is not actionable: {error}");
+        assert!(
+            error.contains("the Sylvode API rejected the credential"),
+            "the refusal names the product: {error}"
+        );
         assert!(
             !error.contains("pg-primary-7.internal"),
             "the refusal relayed the backend's message: {error}"
