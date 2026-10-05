@@ -51,7 +51,7 @@ target = "uuid:your-user-uuid"
 id = "vano-cli"
 name = "Vano CLI"
 agent_type = "cli"
-message_template = "[{project}] {event}: {key} {title}"
+# A cli agent is given prompt_template (below); message_template does not apply.
 
 # Optional scenario route constraints. When present, the Sylvode bot task or
 # worker AI task must match these fields before the agent is selected.
