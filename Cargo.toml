@@ -40,6 +40,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [lints.rust]
 unsafe_code = "deny"
 unused_must_use = "deny"
+# Zero warnings and zero dead code are rules, not preferences: every warning, from rustc or clippy,
+# fails `cargo check` and `cargo clippy` without needing `-D warnings` on the command line.
+warnings = { level = "deny", priority = -2 }
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
@@ -52,6 +55,10 @@ todo = "deny"
 unimplemented = "deny"
 unreachable = "deny"
 indexing_slicing = "deny"
+
+# clippy.toml lists std::sync::Mutex / RwLock as disallowed; these make that a hard error.
+disallowed_types = "deny"
+disallowed_methods = "deny"
 
 dbg_macro = "deny"
 print_stdout = "deny"
