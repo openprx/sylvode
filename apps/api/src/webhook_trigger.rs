@@ -803,6 +803,45 @@ async fn check_bot_mention(
     })
 }
 
+/// `User-Agent` of every outbound webhook delivery (ADR-0020 D3).
+///
+/// The legacy `OpenPR-Webhook/1.0` product token stays in the comment section so receivers that
+/// match it as a substring keep working; receivers that match the old value exactly or as a
+/// prefix do not.
+const WEBHOOK_USER_AGENT: &str = "Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)";
+
+/// The headers a delivery is sent with, and the copy of them stored with the delivery record.
+///
+/// Built together from the same values so the stored `request_headers` cannot drift from what
+/// actually went on the wire.
+fn delivery_request_headers(signature: &str, event: &str, delivery_id: &str) -> (HeaderMap, Value) {
+    let signature = format!("sha256={signature}");
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(USER_AGENT, HeaderValue::from_static(WEBHOOK_USER_AGENT));
+    headers.insert(
+        WEBHOOK_SIGNATURE_HEADER,
+        HeaderValue::from_str(&signature).unwrap_or(HeaderValue::from_static("sha256=")),
+    );
+    headers.insert(
+        "X-Webhook-Event",
+        HeaderValue::from_str(event).unwrap_or(HeaderValue::from_static("unknown")),
+    );
+    headers.insert(
+        "X-Webhook-Delivery",
+        HeaderValue::from_str(delivery_id).unwrap_or(HeaderValue::from_static("unknown")),
+    );
+
+    let recorded = json!({
+        "Content-Type": "application/json",
+        "User-Agent": WEBHOOK_USER_AGENT,
+        "X-Webhook-Signature": signature,
+        "X-Webhook-Event": event,
+        "X-Webhook-Delivery": delivery_id,
+    });
+    (headers, recorded)
+}
+
 async fn deliver_webhook(
     state: &AppState,
     webhook: &ActiveWebhookRow,
@@ -814,32 +853,7 @@ async fn deliver_webhook(
     let signature = sign_payload(&webhook.secret, &body)
         .map_err(|e| sea_orm::DbErr::Custom(format!("sign payload failed: {e}")))?;
 
-    let delivery_id = payload.id.clone();
-    let event = payload.event.clone();
-
-    let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(USER_AGENT, HeaderValue::from_static("OpenPR-Webhook/1.0"));
-    headers.insert(
-        WEBHOOK_SIGNATURE_HEADER,
-        HeaderValue::from_str(&format!("sha256={signature}")).unwrap_or(HeaderValue::from_static("sha256=")),
-    );
-    headers.insert(
-        "X-Webhook-Event",
-        HeaderValue::from_str(&event).unwrap_or(HeaderValue::from_static("unknown")),
-    );
-    headers.insert(
-        "X-Webhook-Delivery",
-        HeaderValue::from_str(&delivery_id).unwrap_or(HeaderValue::from_static("unknown")),
-    );
-
-    let request_headers = json!({
-        "Content-Type": "application/json",
-        "User-Agent": "OpenPR-Webhook/1.0",
-        "X-Webhook-Signature": format!("sha256={signature}"),
-        "X-Webhook-Event": event,
-        "X-Webhook-Delivery": delivery_id,
-    });
+    let (headers, request_headers) = delivery_request_headers(&signature, &payload.event, &payload.id);
 
     let payload_json = serde_json::to_value(&payload)
         .map_err(|e| sea_orm::DbErr::Custom(format!("serialize payload json failed: {e}")))?;
@@ -1111,8 +1125,8 @@ const fn default_trigger_reason(event: WebhookEvent) -> &'static str {
 #[cfg(test)]
 mod delivery_tests {
     use super::{
-        WEBHOOK_DIAGNOSTIC_CHARS, WEBHOOK_RESPONSE_BYTE_LIMIT, build_delivery_client, read_capped_body,
-        validate_outbound_url,
+        WEBHOOK_DIAGNOSTIC_CHARS, WEBHOOK_RESPONSE_BYTE_LIMIT, build_delivery_client, delivery_request_headers,
+        read_capped_body, validate_outbound_url,
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -1182,6 +1196,64 @@ mod delivery_tests {
             response.url().as_str(),
             url,
             "the request must not have moved to the redirect target"
+        );
+    }
+
+    /// ADR-0020 D3: the `User-Agent` a delivery puts on the wire is the Sylvode token with the
+    /// legacy token in its comment, and the `request_headers` stored with the delivery record
+    /// carry exactly that value.
+    #[tokio::test]
+    async fn the_delivery_user_agent_on_the_wire_matches_the_recorded_one() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a loopback port must be bindable");
+        let addr = listener.local_addr().expect("the bound port must be readable");
+        let received = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("the delivery connects");
+            let mut raw = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            while !raw.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket.read(&mut buffer).await.expect("the request is readable");
+                if read == 0 {
+                    break;
+                }
+                raw.extend_from_slice(buffer.get(..read).unwrap_or_default());
+            }
+            let _written = socket
+                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                .await;
+            String::from_utf8_lossy(&raw).into_owned()
+        });
+
+        let (headers, recorded) = delivery_request_headers("abc123", "issue.created", "delivery-1");
+        let client = build_delivery_client().expect("client must build");
+        client
+            .post(format!("http://{addr}/hook"))
+            .headers(headers)
+            .body("{}")
+            .send()
+            .await
+            .expect("request must complete");
+        let raw = received.await.expect("the receiver finishes");
+
+        let sent: Vec<&str> = raw
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .filter(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+            .map(|(_, value)| value.trim())
+            .collect();
+        assert_eq!(
+            sent,
+            ["Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)"],
+            "exactly one User-Agent with both product tokens: {raw}"
+        );
+        assert_eq!(
+            recorded.get("User-Agent").and_then(serde_json::Value::as_str),
+            sent.first().copied()
+        );
+        assert_eq!(
+            recorded.get("X-Webhook-Signature").and_then(serde_json::Value::as_str),
+            Some("sha256=abc123")
         );
     }
 
