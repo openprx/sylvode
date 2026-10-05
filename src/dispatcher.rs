@@ -662,6 +662,16 @@ async fn run_subprocess_with_timeout(
         .map_err(|e| format!("subprocess {program} wait failed: {e}"))
 }
 
+/// Arguments of an `openclaw` or `openprx` command: the configured fixed arguments, then
+/// `--channel <channel> --target <target> --message <message>`.
+fn channel_command_args<'a>(fixed: &'a [String], channel: &'a str, target: &'a str, message: &'a str) -> Vec<&'a str> {
+    fixed
+        .iter()
+        .map(String::as_str)
+        .chain(["--channel", channel, "--target", target, "--message", message])
+        .collect()
+}
+
 async fn dispatch_openclaw(config: &Config, agent: &AgentConfig, payload: &Value) -> String {
     let Some(cfg) = &agent.openclaw else {
         return "missing openclaw config".into();
@@ -670,20 +680,9 @@ async fn dispatch_openclaw(config: &Config, agent: &AgentConfig, payload: &Value
     let message = format_message(agent, payload);
     let timeout = config.runtime.http_timeout_secs.max(DEFAULT_SUBPROCESS_TIMEOUT_SECS);
 
-    match run_subprocess_with_timeout(
-        &cfg.command,
-        &[
-            "--channel",
-            &cfg.channel,
-            "--target",
-            &cfg.target,
-            "--message",
-            &message,
-        ],
-        timeout,
-    )
-    .await
-    {
+    let args = channel_command_args(&cfg.args, &cfg.channel, &cfg.target, &message);
+
+    match run_subprocess_with_timeout(&cfg.command, &args, timeout).await {
         Ok(o) if o.status.success() => {
             let out = String::from_utf8_lossy(&o.stdout);
             tracing::info!("openclaw ok: {}", out.trim());
@@ -745,20 +744,9 @@ async fn dispatch_openprx(config: &Config, agent: &AgentConfig, payload: &Value)
     if let Some(command) = &cfg.command {
         let timeout = config.runtime.http_timeout_secs.max(DEFAULT_SUBPROCESS_TIMEOUT_SECS);
 
-        return match run_subprocess_with_timeout(
-            command,
-            &[
-                "--channel",
-                &cfg.channel,
-                "--target",
-                &cfg.target,
-                "--message",
-                &message,
-            ],
-            timeout,
-        )
-        .await
-        {
+        let args = channel_command_args(&cfg.args, &cfg.channel, &cfg.target, &message);
+
+        return match run_subprocess_with_timeout(command, &args, timeout).await {
             Ok(o) if o.status.success() => {
                 tracing::info!("openprx cli ok");
                 "ok".into()
@@ -1497,6 +1485,37 @@ mcp_instructions = "Read issue {issue_id} before writing."
 
         let separated = custom_agent(r#"["[%s]", "--", "{message}"]"#, "{title}");
         assert_eq!(dispatch(&config, &separated, &payload).await, "[--][-v x]");
+    }
+
+    /// `args` of an `openclaw` agent go between the command and `--channel`, so
+    /// `openclaw message send` is written as a program plus two arguments.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn openclaw_args_precede_the_channel_options() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            "id = 'david'\nname = 'David'\nagent_type = 'openclaw'\nmessage_template = '{key}'\n\
+             [openclaw]\ncommand = 'printf'\nargs = ['[%s]']\nchannel = 'signal'\ntarget = 'uuid:u1'\n",
+        )
+        .expect("parse agent");
+        let out = dispatch(&base_config(), &agent, &issue_assigned_delivery()).await;
+        assert_eq!(
+            out,
+            "ok: [--channel][signal][--target][uuid:u1][--message][BIL-4C3B2A19]"
+        );
+    }
+
+    /// The same for an `openprx` agent that sends through a command.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn openprx_args_precede_the_channel_options() {
+        let agent: crate::config::AgentConfig = toml::from_str(
+            "id = 'vano'\nname = 'Vano'\nagent_type = 'openprx'\nmessage_template = '{key}'\n\
+             [openprx]\ncommand = 'sh'\nargs = ['-c', 'test \"$*\" = \"--channel signal --target t --message BIL-4C3B2A19\"', 'sh']\n\
+             target = 't'\n",
+        )
+        .expect("parse agent");
+        let out = dispatch(&base_config(), &agent, &issue_assigned_delivery()).await;
+        assert_eq!(out, "ok");
     }
 
     #[tokio::test]

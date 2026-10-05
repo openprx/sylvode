@@ -97,6 +97,9 @@ pub struct RouteConfig {
 #[derive(Deserialize, Clone, Debug)]
 pub struct OpenClawConfig {
     pub command: String,
+    /// Fixed arguments placed between `command` and `--channel`.
+    #[serde(default)]
+    pub args: Vec<String>,
     pub channel: String,
     pub target: String,
 }
@@ -115,8 +118,11 @@ pub struct OpenPRXConfig {
     pub target: String,
     /// Account phone number for signal-cli
     pub account: Option<String>,
-    /// Or use CLI command (e.g. "openprx message send")
+    /// Or send through a command (e.g. `openprx`, with `args = ["message", "send"]`)
     pub command: Option<String>,
+    /// Fixed arguments placed between `command` and `--channel`.
+    #[serde(default)]
+    pub args: Vec<String>,
     /// Channel name (signal, wacli, etc.)
     #[serde(default = "default_channel")]
     pub channel: String,
@@ -222,6 +228,35 @@ pub const TRIGGER_KINDS: [&str; 9] = [
     "manual",
 ];
 
+/// Refuses a command that contains whitespace but names no program.
+///
+/// Commands run without a shell, so `openclaw message send` is looked up as one program of that
+/// name, which does not exist. A path or program name that really contains whitespace is accepted.
+fn validate_command(agent_id: &str, key: &str, command: &str) -> Result<(), String> {
+    if !command.contains(char::is_whitespace) || names_a_program(command) {
+        return Ok(());
+    }
+    let mut words = command.split_whitespace();
+    let program = words.next().unwrap_or_default();
+    let args: Vec<String> = words.map(|word| format!("{word:?}")).collect();
+    Err(format!(
+        "agent `{agent_id}`: {key} `{command}` contains whitespace and is not an executable; commands run \
+         without a shell, so write the program and its arguments separately: command = {program:?} and \
+         args = [{}]",
+        args.join(", ")
+    ))
+}
+
+/// Whether `command` names an existing file, either as a path or as a name found on `PATH`, the
+/// way the command is resolved when it is run.
+fn names_a_program(command: &str) -> bool {
+    let path = std::path::Path::new(command);
+    if path.components().count() > 1 {
+        return path.is_file();
+    }
+    std::env::var_os("PATH").is_some_and(|dirs| std::env::split_paths(&dirs).any(|dir| dir.join(command).is_file()))
+}
+
 impl Config {
     pub fn load(path: &str) -> Result<Self, String> {
         let content = std::fs::read_to_string(path).map_err(|e| format!("failed to read config {path}: {e}"))?;
@@ -234,6 +269,19 @@ impl Config {
     /// silently never dispatching.
     fn validate(&self) -> Result<(), String> {
         for agent in &self.agents {
+            let commands = [
+                ("openclaw.command", agent.openclaw.as_ref().map(|c| c.command.as_str())),
+                (
+                    "openprx.command",
+                    agent.openprx.as_ref().and_then(|c| c.command.as_deref()),
+                ),
+                ("custom.command", agent.custom.as_ref().map(|c| c.command.as_str())),
+            ];
+            for (key, command) in commands {
+                if let Some(command) = command {
+                    validate_command(&agent.id, key, command)?;
+                }
+            }
             if let Some(route) = &agent.route {
                 for kind in &route.trigger_kinds {
                     let known = TRIGGER_KINDS
@@ -372,6 +420,53 @@ enabled = true
         assert!(err.contains("`fixer`"), "{err}");
         assert!(err.contains("`assignment`"), "{err}");
         assert!(err.contains("assigned, created"), "{err}");
+    }
+
+    fn command_config(agent_type: &str, section: &str) -> String {
+        format!(
+            "[server]\nlisten = \"0.0.0.0:9090\"\n\n[security]\nallow_unsigned = true\n\n\
+             [[agents]]\nid = \"david\"\nname = \"David\"\nagent_type = \"{agent_type}\"\n\n{section}\n"
+        )
+    }
+
+    /// Commands run without a shell, so `openclaw message send` names a program that does not
+    /// exist. Start-up is refused with the `command` + `args` form to use instead.
+    #[test]
+    fn refuses_a_multi_word_command() {
+        let openclaw = command_config(
+            "openclaw",
+            "[agents.openclaw]\ncommand = \"openclaw message send\"\nchannel = \"signal\"\ntarget = \"t\"",
+        );
+        let err = load_str(&openclaw).expect_err("multi-word openclaw command is refused");
+        assert!(err.contains("agent `david`"), "{err}");
+        assert!(err.contains("openclaw.command"), "{err}");
+        assert!(err.contains(r#"command = "openclaw""#), "{err}");
+        assert!(err.contains(r#"args = ["message", "send"]"#), "{err}");
+
+        let openprx = command_config(
+            "openprx",
+            "[agents.openprx]\ncommand = \"openprx message send\"\ntarget = \"t\"",
+        );
+        assert!(load_str(&openprx).expect_err("refused").contains("openprx.command"));
+
+        let custom = command_config("custom", "[agents.custom]\ncommand = \"echo hello\"");
+        assert!(load_str(&custom).expect_err("refused").contains("custom.command"));
+    }
+
+    /// A path with a space in it is fine when it names an existing file.
+    #[test]
+    fn accepts_an_existing_executable_path_with_whitespace() {
+        let dir = std::env::temp_dir().join(format!("sylvode webhook {}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let tool = dir.join("my tool");
+        std::fs::write(&tool, "#!/bin/sh\n").expect("write tool");
+        let custom = command_config(
+            "custom",
+            &format!("[agents.custom]\ncommand = '{}'", tool.to_str().expect("utf-8 path")),
+        );
+        let loaded = load_str(&custom);
+        std::fs::remove_dir_all(&dir).expect("remove dir");
+        loaded.expect("an existing path is accepted");
     }
 
     #[test]
