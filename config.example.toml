@@ -58,7 +58,10 @@ message_template = "[{project}] {event}: {key} {title}"
 [agents.route]
 bot_agent_types = ["cli"]
 project_types = ["code_delivery"]
-trigger_kinds = ["mention", "assignment"]
+# Values Sylvode sends: assigned, created, status_changed, mentioned, completed,
+# failed (webhook deliveries) and assigned, mention, proposal_vote, manual
+# (worker AI tasks). Any other value refuses start-up.
+trigger_kinds = ["assigned", "mentioned"]
 # Event routing. Only events a webhook subscription can request are ever
 # delivered; see WEBHOOK_EVENTS in the Sylvode API.
 # events = ["issue.assigned", "comment.created"]
