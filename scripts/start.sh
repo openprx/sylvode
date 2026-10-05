@@ -20,14 +20,9 @@ LEGACY_APP_CONFIG="./config/openpr.compose.toml"
 CANONICAL_MCP_CONFIG="./config/sylvode.compose.mcp.toml"
 LEGACY_MCP_CONFIG="./config/openpr.compose.mcp.toml"
 
-APP_CONFIG=$(sylvode_select_config "$CANONICAL_APP_CONFIG" "$LEGACY_APP_CONFIG")
-MCP_CONFIG=$(sylvode_select_config "$CANONICAL_MCP_CONFIG" "$LEGACY_MCP_CONFIG")
-if [[ "$APP_CONFIG" == "$LEGACY_APP_CONFIG" ]]; then
-  echo "ℹ️  Using legacy configuration $LEGACY_APP_CONFIG; it remains supported." >&2
-fi
-if [[ "$MCP_CONFIG" == "$LEGACY_MCP_CONFIG" ]]; then
-  echo "ℹ️  Using legacy configuration $LEGACY_MCP_CONFIG; it remains supported." >&2
-fi
+# A legacy file still works; picking one prints its deprecation notice on stderr.
+sylvode_select_config_into APP_CONFIG "$CANONICAL_APP_CONFIG" "$LEGACY_APP_CONFIG"
+sylvode_select_config_into MCP_CONFIG "$CANONICAL_MCP_CONFIG" "$LEGACY_MCP_CONFIG"
 export SYLVODE_APP_CONFIG_PATH="$APP_CONFIG"
 export SYLVODE_MCP_CONFIG_PATH="$MCP_CONFIG"
 
@@ -94,15 +89,17 @@ if [ ! -f "$ENV_FILE" ]; then
   chmod 600 "$ENV_FILE"
 fi
 
-SYLVODE_BIND_HOST=$(sylvode_resolve_env "$ENV_FILE" SYLVODE_BIND_HOST OPENPR_BIND_HOST 127.0.0.1)
-SYLVODE_API_PORT=$(sylvode_resolve_env "$ENV_FILE" SYLVODE_API_PORT OPENPR_API_PORT 8081)
-SYLVODE_FRONTEND_PORT=$(sylvode_resolve_env "$ENV_FILE" SYLVODE_FRONTEND_PORT OPENPR_FRONTEND_PORT 3000)
-SYLVODE_MCP_PORT=$(sylvode_resolve_env "$ENV_FILE" SYLVODE_MCP_PORT MCP_SERVER_PORT 8090)
-SYLVODE_RUNTIME_BASE=$(sylvode_resolve_env "$ENV_FILE" SYLVODE_RUNTIME_BASE OPENPR_RUNTIME_BASE '')
-SYLVODE_FRONTEND_DOCKERFILE=$(sylvode_resolve_env "$ENV_FILE" SYLVODE_FRONTEND_DOCKERFILE OPENPR_FRONTEND_DOCKERFILE Dockerfile)
-SYLVODE_WEBHOOK_PORT=$(sylvode_resolve_env "$ENV_FILE" SYLVODE_WEBHOOK_PORT OPENPR_WEBHOOK_PORT 9090)
-SYLVODE_WEBHOOK_IMAGE=$(sylvode_resolve_env "$ENV_FILE" SYLVODE_WEBHOOK_IMAGE OPENPR_WEBHOOK_IMAGE ghcr.io/openprx/openpr-webhook:latest)
-SYLVODE_WEBHOOK_CONFIG=$(sylvode_resolve_env "$ENV_FILE" SYLVODE_WEBHOOK_CONFIG OPENPR_WEBHOOK_CONFIG ./config/openpr-webhook.example.toml)
+# Resolved in this shell, not in command substitutions, so each legacy variable that is set
+# prints its deprecation notice once per run.
+sylvode_resolve_env_into SYLVODE_BIND_HOST "$ENV_FILE" SYLVODE_BIND_HOST OPENPR_BIND_HOST 127.0.0.1
+sylvode_resolve_env_into SYLVODE_API_PORT "$ENV_FILE" SYLVODE_API_PORT OPENPR_API_PORT 8081
+sylvode_resolve_env_into SYLVODE_FRONTEND_PORT "$ENV_FILE" SYLVODE_FRONTEND_PORT OPENPR_FRONTEND_PORT 3000
+sylvode_resolve_env_into SYLVODE_MCP_PORT "$ENV_FILE" SYLVODE_MCP_PORT MCP_SERVER_PORT 8090
+sylvode_resolve_env_into SYLVODE_RUNTIME_BASE "$ENV_FILE" SYLVODE_RUNTIME_BASE OPENPR_RUNTIME_BASE ''
+sylvode_resolve_env_into SYLVODE_FRONTEND_DOCKERFILE "$ENV_FILE" SYLVODE_FRONTEND_DOCKERFILE OPENPR_FRONTEND_DOCKERFILE Dockerfile
+sylvode_resolve_env_into SYLVODE_WEBHOOK_PORT "$ENV_FILE" SYLVODE_WEBHOOK_PORT OPENPR_WEBHOOK_PORT 9090
+sylvode_resolve_env_into SYLVODE_WEBHOOK_IMAGE "$ENV_FILE" SYLVODE_WEBHOOK_IMAGE OPENPR_WEBHOOK_IMAGE ghcr.io/openprx/openpr-webhook:latest
+sylvode_resolve_env_into SYLVODE_WEBHOOK_CONFIG "$ENV_FILE" SYLVODE_WEBHOOK_CONFIG OPENPR_WEBHOOK_CONFIG ./config/openpr-webhook.example.toml
 export SYLVODE_BIND_HOST SYLVODE_API_PORT SYLVODE_FRONTEND_PORT SYLVODE_MCP_PORT SYLVODE_RUNTIME_BASE
 export SYLVODE_FRONTEND_DOCKERFILE SYLVODE_WEBHOOK_PORT SYLVODE_WEBHOOK_IMAGE SYLVODE_WEBHOOK_CONFIG
 

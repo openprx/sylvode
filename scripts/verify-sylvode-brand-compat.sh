@@ -38,6 +38,9 @@ run_logged platform-config-test env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
 run_logged mcp-display-test env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
   cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p mcp-server \
   initialize_uses_sylvode_display_identity -- --nocapture
+run_logged mcp-deprecation-test env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
+  cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p mcp-server \
+  --test legacy_deprecation_e2e --test sylvode_shared_commands_e2e
 run_logged binary-build env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
   cargo build --manifest-path "$REPO_ROOT/Cargo.toml" -p api -p mcp-server --bins
 run_logged api-help "$REPO_ROOT/target/debug/api" --help
@@ -71,6 +74,15 @@ ENV_CONFLICT_EXIT=$?
 set -e
 [[ $ENV_CONFLICT_EXIT -ne 0 ]]
 
+# ADR-0020 D2: a legacy compose variable or compose file is reported on stderr, stdout keeps
+# only the value, and the canonical names report nothing.
+printf 'OPENPR_API_PORT=18081\n' >"$ENV_FIXTURE"
+[[ $(sylvode_resolve_env "$ENV_FIXTURE" SYLVODE_API_PORT OPENPR_API_PORT 8081 2>"$LOG_ROOT/notice-legacy-env.log") == 18081 ]]
+printf 'SYLVODE_API_PORT=18081\n' >"$ENV_FIXTURE"
+[[ $(sylvode_resolve_env "$ENV_FIXTURE" SYLVODE_API_PORT OPENPR_API_PORT 8081 2>"$LOG_ROOT/notice-canonical-env.log") == 18081 ]]
+rm -f "$COMPAT_DIR/config/sylvode.toml"
+[[ $(cd "$COMPAT_DIR" && sylvode_select_config config/sylvode.toml config/openpr.toml 2>"$LOG_ROOT/notice-legacy-config.log") == config/openpr.toml ]]
+
 python3 - "$REPO_ROOT" "$EVIDENCE_ROOT" "$LOG_ROOT" "$CONFIG_CONFLICT_EXIT" "$ENV_CONFLICT_EXIT" <<'PY'
 import datetime as dt
 import hashlib
@@ -98,10 +110,18 @@ def log_check(name, required):
 
 checks = [
     log_check("api-help", ["Sylvode API server", "config/sylvode.toml"]),
-    log_check("sylvode-help", ["Sylvode Flow CLI", "config/sylvode.toml"]),
+    log_check("sylvode-help", ["Sylvode Flow CLI", "config/sylvode.toml", "  features ", "  objects ",
+                               "  collections ", "  records ", "  collab ", "  deliveries ", "  projects ",
+                               "  work-items ", "  comments ", "  labels ", "  sprints ", "  search ",
+                               "  files ", "  operation-logs ", "  tools "]),
+    log_check("notice-legacy-env", ["OPENPR_API_PORT", "use SYLVODE_API_PORT", "not removed before Sylvode v2.0"]),
+    log_check("notice-legacy-config", ["config/openpr.toml", "use config/sylvode.toml", "not removed before Sylvode v2.0"]),
     log_check("legacy-mcp-help", ["Sylvode MCP server", "config/sylvode.toml"]),
 ]
-for name in ("platform-config-test", "mcp-display-test"):
+canonical_notice = (logs / "notice-canonical-env.log").read_bytes()
+checks.append({"name": "notice-canonical-env-silent", "status": "passed" if canonical_notice == b"" else "failed",
+               "stderr_bytes": len(canonical_notice)})
+for name in ("platform-config-test", "mcp-display-test", "mcp-deprecation-test"):
     path = logs / f"{name}.log"
     body = path.read_text(errors="replace")
     summaries = re.findall(r"^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;", body, re.M)
