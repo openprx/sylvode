@@ -253,8 +253,8 @@ not_contains "frontend README does not claim missing Vite proxy" "$ROOT_DIR/fron
 printf '\nMCP production configuration coverage:\n'
 contains "MCP server reads its own generated configuration" "$COMPOSE_FILE" '${SYLVODE_MCP_CONFIG_PATH:-./config/sylvode.compose.mcp.toml}'
 not_contains "MCP server is handed no credential through the environment" "$COMPOSE_FILE" "OPENPR_BOT_TOKEN"
-contains "MCP server rejects unexpanded shell templates on the command line" "$ROOT_DIR/apps/mcp-server/src/main.rs" "rejects_unexpanded_shell_templates_on_the_command_line"
-contains "MCP server rejects a placeholder token and the nil workspace" "$ROOT_DIR/apps/mcp-server/src/main.rs" "rejects_placeholder_token_and_nil_workspace_on_the_command_line"
+contains "MCP server rejects unexpanded shell templates on the command line" "$ROOT_DIR/apps/mcp-server/src/cli.rs" "rejects_unexpanded_shell_templates_on_the_command_line"
+contains "MCP server rejects a placeholder token and the nil workspace" "$ROOT_DIR/apps/mcp-server/src/cli.rs" "rejects_placeholder_token_and_nil_workspace_on_the_command_line"
 not_contains "MCP server default API URL does not target frontend port" "$ROOT_DIR/apps/mcp-server/src/main.rs" '"http://localhost:3000"'
 contains "MCP bind address defaults to loopback" "$ROOT_DIR/apps/mcp-server/src/cli.rs" "Bind address for HTTP/SSE transports"
 contains "MCP CLI tests pin the configuration-file default" "$ROOT_DIR/apps/mcp-server/src/cli.rs" "an_unspecified_transport_and_bind_address_defer_to_the_configuration_file"
