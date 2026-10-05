@@ -9,4 +9,5 @@
 mod cli;
 mod startup;
 mod support;
+mod tunnel;
 mod webhook;

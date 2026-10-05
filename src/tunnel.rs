@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep};
-use tokio_tungstenite::{connect_async, tungstenite::Message, tungstenite::http::Request};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::{HeaderValue, Request};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +80,21 @@ fn build_envelope(msg_type: &str, agent_id: &str, payload: Value, hmac_secret: O
     env
 }
 
+/// The WebSocket handshake request for `url`, with the bearer token.
+///
+/// The request is built by tungstenite from the URL, so it carries the handshake headers
+/// (`Sec-WebSocket-Key`, `Sec-WebSocket-Version`, `Upgrade`, `Connection`, `Host`); a request
+/// built by hand without them is refused by tungstenite before anything is sent.
+fn handshake_request(url: &str, auth_token: Option<&str>) -> Result<Request<()>, String> {
+    let mut request = url.into_client_request().map_err(|e| e.to_string())?;
+    if let Some(token) = auth_token {
+        let value =
+            HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| format!("invalid auth_token: {e}"))?;
+        request.headers_mut().insert("Authorization", value);
+    }
+    Ok(request)
+}
+
 /// Sleeps for `secs`, or less when shutdown begins. Returns whether shutdown has begun.
 async fn pause_unless_shutdown(background: &Background, secs: u64) -> bool {
     tokio::select! {
@@ -136,12 +153,7 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
             tracing::warn!("tunnel using insecure ws:// transport; prefer wss:// in production");
         }
 
-        let mut req_builder = Request::builder().uri(&url);
-        if let Some(token) = &tunnel.auth_token {
-            req_builder = req_builder.header("Authorization", format!("Bearer {token}"));
-        }
-
-        let request = match req_builder.body(()) {
+        let request = match handshake_request(&url, tunnel.auth_token.as_deref()) {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!("build tunnel request failed: {e}");
@@ -387,6 +399,26 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_handshake_request_carries_the_websocket_headers_and_the_token() {
+        let request = handshake_request("wss://control.example.com/tunnel", Some("tok")).expect("request");
+        let headers = request.headers();
+        for name in [
+            "sec-websocket-key",
+            "sec-websocket-version",
+            "upgrade",
+            "connection",
+            "host",
+        ] {
+            assert!(headers.contains_key(name), "{name} missing");
+        }
+        assert_eq!(
+            headers.get("authorization").and_then(|v| v.to_str().ok()),
+            Some("Bearer tok")
+        );
+        assert!(handshake_request("wss://control.example.com/tunnel", Some("bad\ntoken")).is_err());
+    }
 
     #[test]
     fn envelope_serialization_contains_required_fields() {
