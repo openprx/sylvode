@@ -39,7 +39,7 @@ impl StructuredApiError {
     }
 }
 
-const UNAUTHENTICATED_MESSAGE: &str = "the OpenPR API rejected the credential this call was made with; check that the bot token presented is correct, enabled and not expired";
+const UNAUTHENTICATED_MESSAGE: &str = "the Sylvode API rejected the credential this call was made with; check that the bot token presented is correct, enabled and not expired";
 
 /// Flow tools need the typed `{error_code,details}` fields the legacy String-returning client
 /// helpers intentionally collapse. Kept local to this allowed file so unrelated MCP tools retain
@@ -2463,7 +2463,7 @@ mod tests {
         let Some(crate::protocol::ToolContent::Text { text }) = result.content.first() else {
             return Err("missing MCP text content".into());
         };
-        assert!(text.contains("rejected the credential"));
+        assert!(text.contains("the Sylvode API rejected the credential"), "{text}");
         assert!(!text.contains("pg-primary.internal"));
         Ok(())
     }
