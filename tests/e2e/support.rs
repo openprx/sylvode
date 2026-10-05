@@ -3,7 +3,9 @@
 //! WebSocket control plane for the tunnel.
 
 use axum::{Router, body::Bytes, extract::State, http::HeaderMap, routing::post};
+use futures_util::{SinkExt, StreamExt};
 use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Sha256;
 use std::io::{BufRead, BufReader};
@@ -13,6 +15,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
+use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
 pub const CANONICAL: &str = env!("CARGO_BIN_EXE_sylvode-webhook");
 pub const LEGACY: &str = env!("CARGO_BIN_EXE_openpr-webhook");
@@ -409,4 +412,119 @@ pub fn rfc3339(secs: u64) -> String {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = if month <= 2 { y + 1 } else { y };
     format!("{year:04}-{month:02}-{d:02}T{hour:02}:{minute:02}:{second:02}+00:00")
+}
+
+/// The tunnel envelope, in the field order the service signs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Envelope {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    pub ts: u64,
+    pub agent_id: String,
+    pub payload: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sig: Option<String>,
+}
+
+impl Envelope {
+    pub fn new(msg_type: &str, agent_id: &str, payload: Value) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            msg_type: msg_type.to_owned(),
+            ts: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
+            agent_id: agent_id.to_owned(),
+            payload,
+            sig: None,
+        }
+    }
+
+    /// Signs the envelope the way a control plane sharing `secret` does.
+    pub fn signed(mut self, secret: &str) -> Self {
+        self.sig = None;
+        let bytes = serde_json::to_vec(&self).expect("serialize envelope");
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("hmac key");
+        mac.update(&bytes);
+        self.sig = Some(format!("sha256={}", hex::encode(mac.finalize().into_bytes())));
+        self
+    }
+}
+
+/// An in-process control plane the tunnel connects to.
+pub struct ControlPlane {
+    listener: TcpListener,
+}
+
+pub struct TunnelPeer {
+    ws: WebSocketStream<tokio::net::TcpStream>,
+    pub authorization: Option<String>,
+}
+
+impl ControlPlane {
+    pub async fn bind() -> Self {
+        Self {
+            listener: TcpListener::bind("127.0.0.1:0").await.expect("bind control plane"),
+        }
+    }
+
+    pub fn url(&self) -> String {
+        format!(
+            "ws://{}/tunnel",
+            self.listener.local_addr().expect("control plane addr")
+        )
+    }
+
+    // The handshake callback's error type is tungstenite's, not ours.
+    #[allow(clippy::result_large_err)]
+    pub async fn accept(&self, timeout: Duration) -> TunnelPeer {
+        let (stream, _) = tokio::time::timeout(timeout, self.listener.accept())
+            .await
+            .expect("tunnel connected in time")
+            .expect("accept tunnel");
+        let mut authorization = None;
+        let ws = tokio_tungstenite::accept_hdr_async(
+            stream,
+            |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+             response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                authorization = request
+                    .headers()
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_owned);
+                Ok(response)
+            },
+        )
+        .await
+        .expect("websocket handshake");
+        TunnelPeer { ws, authorization }
+    }
+}
+
+impl TunnelPeer {
+    pub async fn send(&mut self, envelope: &Envelope) {
+        let text = serde_json::to_string(envelope).expect("serialize envelope");
+        self.ws.send(Message::Text(text.into())).await.expect("send envelope");
+    }
+
+    pub async fn send_text(&mut self, text: &str) {
+        self.ws
+            .send(Message::Text(text.to_owned().into()))
+            .await
+            .expect("send text");
+    }
+
+    /// The next envelope that is not a heartbeat, or `None` within `timeout`.
+    pub async fn recv(&mut self, timeout: Duration) -> Option<Envelope> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let message = tokio::time::timeout_at(deadline, self.ws.next()).await.ok()??.ok()?;
+            let Message::Text(text) = message else { continue };
+            let envelope: Envelope = serde_json::from_str(&text).expect("envelope from the service");
+            if envelope.msg_type != "heartbeat" {
+                return Some(envelope);
+            }
+        }
+    }
 }

@@ -3,6 +3,24 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.32
+
+### Fixed
+
+- **The tunnel connects.** The WebSocket handshake request was built by hand without the
+  handshake headers, so tungstenite refused it before sending anything (`tunnel connect failed:
+  WebSocket protocol error: Missing, duplicated or incorrect header sec-websocket-key`) and the
+  tunnel retried forever without ever connecting, in every version that had it. The request is now
+  built from the URL by tungstenite, with the `Authorization: Bearer` header added.
+
+### Tests
+
+- The tunnel is tested end to end against an in-process WebSocket control plane: the bearer token,
+  a wrongly signed envelope (`bad_signature`, nothing runs), a missing signature
+  (`missing_signature` with `require_inbound_sig`, `bad_signature` without), `cli_enabled`, agent
+  selection by id restricted to `cli` agents, `cli_max_concurrency`, the callback gate, signed
+  outbound envelopes, `invalid_json`, and `SIGTERM` during a task (`cancelled` result and callback).
+
 ## 0.3.31
 
 ### Changed
