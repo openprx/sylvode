@@ -74,6 +74,12 @@ OpenPR name keeps working; see **Deprecated**.
   with `tools call` is now refused with 401, and a `cli_tools_call` token does not run the native
   commands. Issue a separate `cli_tools_call` token (Members page, "CLI tools call") for
   `tools call`. Operation logs and Flow event origins record `cli_tools_call` for these calls.
+- **`work-items create` starts in the project workflow's initial state.** Under `mcp-server` and
+  `sylvode` the command always sent `state=backlog`, so a project whose workflow has no `backlog`
+  state refused the create (`state must be one of: ...`) and a project whose workflow starts at
+  another state got its items in `backlog`. The command now sends a state only when `--state` is
+  given, as the `work_items.create` tool does. A script that relied on new items landing in
+  `backlog` in a workflow that starts elsewhere must pass `--state backlog`.
 
 ### Added
 
@@ -115,6 +121,8 @@ OpenPR name keeps working; see **Deprecated**.
   reference.
 - **Release archives** named `sylvode-<target>` and `sylvode-frontend.tar.gz`, with
   `openpr-<target>` aliases that contain the same binaries.
+- **Project policies in the repository**: `SECURITY.md` (how to report a vulnerability and what is
+  in scope), this `CHANGELOG.md`, and a rewritten `CONTRIBUTING.md`.
 
 ### Changed
 
@@ -138,7 +146,16 @@ OpenPR name keeps working; see **Deprecated**.
   `SYLVODE_WEBHOOK_CONFIG` still override them, and `scripts/start.sh` still maps
   `OPENPR_WEBHOOK_IMAGE` / `OPENPR_WEBHOOK_CONFIG` onto them. The canonical executable ships in
   Sylvode Webhook images after 0.3.3; an image pinned to 0.3.3 or earlier needs its own
-  `command: ["/app/openpr-webhook", "/etc/sylvode-webhook/config.toml"]`.
+  `command: ["/app/openpr-webhook", "/etc/sylvode-webhook/config.toml"]`. The
+  `ghcr.io/openprx/sylvode-webhook` image name exists only from the first Sylvode Webhook release
+  after 0.3.3 onward (every earlier image is published only as `ghcr.io/openprx/openpr-webhook`),
+  so until that release is published, starting the `connectors` profile with the defaults fails
+  to pull; set `SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/openpr-webhook:<tag>` together with the
+  `command` above.
+- The repository root carries exactly `LICENSE-MIT` and `LICENSE-APACHE`. `LICENSE-APACHE` is now
+  the complete standard Apache License 2.0 text instead of a shortened rendering, the duplicate
+  `LICENSE` file is gone, and `LICENSE-MIT` names OpenPRX Contributors as the copyright holder.
+  The licence itself (`MIT OR Apache-2.0`) is unchanged.
 - `scripts/bootstrap-restaurant-demo.sh` reads its inputs as `SYLVODE_API_URL`,
   `SYLVODE_DEMO_*` and `SYLVODE_MCP_BOT_TOKEN`. The `OPENPR_*` names still work with one
   deprecation notice each; setting both names of one input to different values is an error. The
@@ -231,11 +248,6 @@ replacement and the earliest removal.
   (connection refused, DNS, timeout) and that the command can be retried. The envelope is
   unchanged: exit 9, `recoverable: true`, code `server_draining` with empty `details`, because
   the CLI contract defines no code or reason of its own for a network failure.
-- `work-items create` (under `mcp-server` and `sylvode`) always sent `state=backlog`. For a
-  project whose workflow has no `backlog` state the create failed with `state must be one of:
-  ...`, and for one whose workflow starts at another state the item landed in `backlog`. The
-  command now sends no state unless `--state` is given, so the workflow's initial state applies,
-  as with the `work_items.create` tool.
 - `work-items create/update --priority` offered `none`, which the API rejects; the accepted values
   are now exactly the tool's (`low`, `medium`, `high`, `urgent`) and anything else is refused
   before a request is sent.
