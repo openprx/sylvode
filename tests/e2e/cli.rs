@@ -141,3 +141,55 @@ async fn webhook_triggered_runs_respect_cli_max_concurrency() {
     let runs = wait_lines(&log, 4, Duration::from_secs(15));
     assert_eq!(runs, ["start", "end", "start", "end"], "runs overlapped");
 }
+
+/// A worker AI task, as the Sylvode worker sends it, for bot `bot-1` and issue `REAL-ISSUE`,
+/// whose free-form `payload` (written by whoever created the task) names another issue and
+/// another agent type.
+fn worker_task_with_hostile_payload(agent_type: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "task_id": uuid::Uuid::new_v4().to_string(),
+        "project_id": "project-1",
+        "ai_participant_id": "bot-1",
+        "ai_participant_name": "Fixer",
+        "ai_participant_agent_type": agent_type,
+        "task_type": "issue_assigned",
+        "reference_type": "work_item",
+        "reference_id": "REAL-ISSUE",
+        "payload": {"issue_id": "OTHER-PROJECT-ISSUE", "agent_type": "cli", "bot_agent_type": "cli"},
+        "attempts": 1,
+        "max_attempts": 3,
+        "trigger_kind": "assigned"
+    })
+}
+
+/// The callback, sent with the bot's token, targets the issue the task was issued for
+/// (`reference_id`), never an issue named inside the task's free-form `payload`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_task_payload_cannot_redirect_the_callback_to_another_issue() {
+    let mut api = StubApi::start().await;
+    let config = cli_config(&api, 30).replace("id = \"fixer\"", "id = \"bot-1\"");
+    let server = Server::start(CANONICAL, &config, &[]).expect("server starts");
+
+    let body = worker_task_with_hostile_payload(Some("cli")).to_string();
+    let (status, answer) = post_signed(&server.url("/webhook"), &body).await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    let start = api.next(Duration::from_secs(10)).await.expect("start callback");
+    assert_eq!(start.body["issue_id"], "REAL-ISSUE", "{:?}", start.body);
+    let last = api.next(Duration::from_secs(10)).await.expect("final callback");
+    assert_eq!(last.body["issue_id"], "REAL-ISSUE", "{:?}", last.body);
+}
+
+/// The agent type of a worker task is the bot's (`ai_participant_agent_type`); the task's
+/// free-form `payload` cannot pick a `cli` agent for a bot that has none.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_task_payload_cannot_choose_the_agent_type() {
+    let api = StubApi::start().await;
+    let server = Server::start(CANONICAL, &cli_config(&api, 30), &[]).expect("server starts");
+
+    let body = worker_task_with_hostile_payload(None).to_string();
+    let (status, answer) = post_signed(&server.url("/webhook"), &body).await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["status"], "no_agent", "{answer}");
+    assert_eq!(answer["route"]["agent_type"], serde_json::Value::Null, "{answer}");
+}

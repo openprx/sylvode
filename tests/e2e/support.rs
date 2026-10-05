@@ -53,9 +53,13 @@ pub fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
-/// `PATH` with `dir` in front of the inherited value.
+/// The `PATH` every server starts with: system tools only, so a real `codex`, `claude` or
+/// `opencode` installed for the user running the tests can never be started by a test.
+pub const SAFE_PATH: &str = "/usr/bin:/bin";
+
+/// [`SAFE_PATH`] with `dir`, holding fake executors, in front.
 pub fn path_with(dir: &Path) -> String {
-    format!("{}:{}", dir.display(), std::env::var("PATH").unwrap_or_default())
+    format!("{}:{SAFE_PATH}", dir.display())
 }
 
 /// A running server process. Dropping it kills and reaps the process.
@@ -103,6 +107,7 @@ impl Server {
             .env_remove("SYLVODE_WEBHOOK_SAFE_MODE")
             .env_remove("OPENPR_WEBHOOK_SAFE_MODE")
             .env("NO_COLOR", "1")
+            .env("PATH", SAFE_PATH)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
