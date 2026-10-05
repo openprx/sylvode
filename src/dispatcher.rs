@@ -861,10 +861,14 @@ async fn dispatch_custom(config: &Config, background: &Background, agent: &Agent
         return "missing custom config".into();
     };
 
-    let message = format_message(agent, payload);
+    let message = format_message_tracked(agent, payload);
     let timeout = config.runtime.http_timeout_secs.max(DEFAULT_SUBPROCESS_TIMEOUT_SECS);
 
-    let args = match build_custom_args(cfg.args.as_deref().unwrap_or_default(), &message) {
+    let args = match build_custom_args(
+        cfg.args.as_deref().unwrap_or_default(),
+        &message.text,
+        message.starts_with_value,
+    ) {
         Ok(args) => args,
         Err(e) => {
             tracing::warn!(agent = %agent.id, "custom agent not run: {e}");
@@ -887,33 +891,39 @@ const MESSAGE_PLACEHOLDER: &str = "{message}";
 /// result stays exactly one argument (there is no shell and nothing is split). Without the
 /// placeholder in any argument, the message is appended as the last argument.
 ///
-/// An argument that starts with `-` only because of the inserted message is refused, unless an
-/// earlier configured argument is `--`: payload text must never turn into an option of the
-/// command. An argument the operator wrote with a leading `-`, such as `--text={message}`, is
-/// left alone.
-fn build_custom_args<'a>(configured: &'a [String], message: &'a str) -> Result<Vec<Cow<'a, str>>, String> {
+/// An argument whose leading `-` comes from the payload is refused, unless an earlier configured
+/// argument is `--`: payload text must never turn into an option of the command. A leading `-`
+/// the operator wrote, in the argument (`--text={message}`) or at the start of
+/// `message_template` (`- {title}`), is left alone. `message_starts_with_payload` says whether the
+/// message's first character came from the payload.
+fn build_custom_args<'a>(
+    configured: &'a [String],
+    message: &'a str,
+    message_starts_with_payload: bool,
+) -> Result<Vec<Cow<'a, str>>, String> {
     let has_placeholder = configured.iter().any(|arg| arg.contains(MESSAGE_PLACEHOLDER));
     let mut args = Vec::with_capacity(configured.len() + 1);
     let mut options_ended = false;
     for arg in configured {
         if arg.contains(MESSAGE_PLACEHOLDER) {
-            let rendered = render_template(arg, &[("message", message)]);
-            refuse_injected_option(arg, &rendered, options_ended)?;
-            args.push(Cow::Owned(rendered));
+            let rendered = render_template_tracked(arg, &[("message", message)]);
+            let dash_from_payload = rendered.starts_with_value && message_starts_with_payload;
+            refuse_injected_option(&rendered.text, dash_from_payload, options_ended)?;
+            args.push(Cow::Owned(rendered.text));
         } else {
             args.push(Cow::Borrowed(arg.as_str()));
         }
         options_ended |= arg == "--";
     }
     if !has_placeholder {
-        refuse_injected_option("", message, options_ended)?;
+        refuse_injected_option(message, message_starts_with_payload, options_ended)?;
         args.push(Cow::Borrowed(message));
     }
     Ok(args)
 }
 
-fn refuse_injected_option(configured: &str, rendered: &str, options_ended: bool) -> Result<(), String> {
-    if !options_ended && rendered.starts_with('-') && !configured.starts_with('-') {
+fn refuse_injected_option(rendered: &str, starts_with_payload: bool, options_ended: bool) -> Result<(), String> {
+    if !options_ended && starts_with_payload && rendered.starts_with('-') {
         return Err("the message starts with `-` and would be read as an option; \
                     put `--` before it in args if the command accepts that"
             .to_string());
@@ -922,6 +932,12 @@ fn refuse_injected_option(configured: &str, rendered: &str, options_ended: bool)
 }
 
 fn format_message(agent: &AgentConfig, payload: &Value) -> String {
+    format_message_tracked(agent, payload).text
+}
+
+/// The rendered message, and whether its first character came from the payload rather than
+/// from the template the operator wrote.
+fn format_message_tracked(agent: &AgentConfig, payload: &Value) -> Rendered {
     let tmpl = agent.message_template.as_deref().unwrap_or(DEFAULT_MESSAGE_TEMPLATE);
 
     let event = extract_event(payload).unwrap_or("unknown");
@@ -953,7 +969,7 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
 
     let url = format!("issue/{issue_id}");
 
-    render_template(
+    render_template_tracked(
         tmpl,
         &[
             ("event", event),
@@ -979,10 +995,30 @@ fn format_message(agent: &AgentConfig, payload: &Value) -> String {
 /// that value; any other text, including an unknown `{name}`, is copied unchanged. An inserted
 /// value is never scanned again, so a placeholder inside payload text stays literal.
 fn render_template(template: &str, values: &[(&str, &str)]) -> String {
+    render_template_tracked(template, values).text
+}
+
+/// A rendered template, and where its first character came from.
+struct Rendered {
+    text: String,
+    /// Whether the first character of `text` was inserted from a value rather than written in
+    /// the template.
+    starts_with_value: bool,
+}
+
+/// [`render_template`], also reporting whether the result starts with inserted text.
+fn render_template_tracked(template: &str, values: &[(&str, &str)]) -> Rendered {
     let mut out = String::with_capacity(template.len());
+    let mut starts_with_value = None;
+    let mut push = |out: &mut String, text: &str, from_value: bool| {
+        if starts_with_value.is_none() && !text.is_empty() {
+            starts_with_value = Some(from_value);
+        }
+        out.push_str(text);
+    };
     let mut rest = template;
     while let Some((before, after_open)) = rest.split_once('{') {
-        out.push_str(before);
+        push(&mut out, before, false);
         let substituted = after_open.split_once('}').and_then(|(name, after_close)| {
             values
                 .iter()
@@ -990,15 +1026,18 @@ fn render_template(template: &str, values: &[(&str, &str)]) -> String {
                 .map(|(_, value)| (*value, after_close))
         });
         if let Some((value, after_close)) = substituted {
-            out.push_str(value);
+            push(&mut out, value, true);
             rest = after_close;
         } else {
-            out.push('{');
+            push(&mut out, "{", false);
             rest = after_open;
         }
     }
-    out.push_str(rest);
-    out
+    push(&mut out, rest, false);
+    Rendered {
+        text: out,
+        starts_with_value: starts_with_value.unwrap_or(false),
+    }
 }
 
 #[cfg(test)]
@@ -1604,6 +1643,41 @@ mcp_instructions = "Read issue {issue_id} before writing."
             dispatch(&config, &Background::new(1), &separated, &payload).await,
             "[--][-v x]"
         );
+    }
+
+    /// A leading `-` the operator wrote in `message_template` is not payload text, so it is not
+    /// refused, whether the message is substituted or appended. A `-` that comes from the
+    /// payload still is, even behind placeholders that rendered empty.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn custom_args_accept_a_dash_written_in_the_template() {
+        let config = base_config();
+        let payload = issue_assigned_delivery();
+
+        let substituted = custom_agent(r#"["[%s]", "{message}"]"#, "- {key}");
+        assert_eq!(
+            dispatch(&config, &Background::new(1), &substituted, &payload).await,
+            "[- BIL-4C3B2A19]"
+        );
+        let appended = custom_agent(r#"["[%s]"]"#, "-{key}");
+        assert_eq!(
+            dispatch(&config, &Background::new(1), &appended, &payload).await,
+            "[-BIL-4C3B2A19]"
+        );
+
+        let behind_empty = custom_agent(r#"["[%s]", "{message}"]"#, "{workspace_missing}{state_missing}");
+        assert_eq!(
+            dispatch(&config, &Background::new(1), &behind_empty, &payload).await,
+            "[{workspace_missing}{state_missing}]",
+            "unknown placeholders stay literal"
+        );
+        let mut empty_project = titled("-v x");
+        *empty_project
+            .pointer_mut("/project/name")
+            .expect("fixture has a project") = json!("");
+        let from_payload = custom_agent(r#"["[%s]", "{message}"]"#, "{project}{title}");
+        let out = dispatch(&config, &Background::new(1), &from_payload, &empty_project).await;
+        assert!(out.starts_with("custom_error:"), "{out}");
     }
 
     /// `args` of an `openclaw` agent go between the command and `--channel`, so

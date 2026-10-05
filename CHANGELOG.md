@@ -3,6 +3,15 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.27
+
+### Fixed
+
+- A `custom` agent whose `message_template` itself starts with `-` (for example `- {title}`) runs
+  again. The leading-`-` refusal of 0.3.12 could not tell where the dash came from and refused it
+  like payload text. Only a leading `-` that comes from the payload is refused now, also when it
+  follows placeholders that rendered empty.
+
 ## 0.3.26
 
 ### Security
