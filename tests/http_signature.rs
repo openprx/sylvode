@@ -29,10 +29,30 @@ fn sign(secret: &str) -> String {
     format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
 }
 
+/// A running server. Dropping it kills and reaps the process, then removes its temp directory,
+/// so a failed assertion or panic anywhere in a test cannot leave the process running.
 struct Server {
-    child: Child,
+    /// `None` once `stop` has reaped the process.
+    child: Option<Child>,
     base: String,
     _dir: TempDir,
+}
+
+impl Server {
+    const fn child(&mut self) -> &mut Child {
+        self.child.as_mut().expect("server process already reaped")
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            // Killing a process that has already exited fails harmlessly; wait reaps it either way.
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        // `_dir` is dropped after this, once the process can no longer use it.
+    }
 }
 
 struct TempDir(std::path::PathBuf);
@@ -67,7 +87,7 @@ async fn start(binary: &str) -> Server {
         .spawn()
         .expect("spawn server");
     let server = Server {
-        child,
+        child: Some(child),
         base: format!("http://127.0.0.1:{port}"),
         _dir: TempDir(dir),
     };
@@ -85,8 +105,9 @@ async fn start(binary: &str) -> Server {
 
 /// Stops the server and returns its stderr lines.
 fn stop(mut server: Server) -> Vec<String> {
-    server.child.kill().unwrap();
-    let output = server.child.wait_with_output().unwrap();
+    let mut child = server.child.take().expect("server process already reaped");
+    child.kill().unwrap();
+    let output = child.wait_with_output().unwrap();
     String::from_utf8_lossy(&output.stderr)
         .lines()
         .map(str::to_owned)
@@ -192,17 +213,17 @@ async fn canonical_name_and_headers_write_no_notice() {
 async fn sigterm_stops_the_server_cleanly() {
     let mut server = start(CANONICAL).await;
     let status = Command::new("kill")
-        .args(["-TERM", &server.child.id().to_string()])
+        .args(["-TERM", &server.child().id().to_string()])
         .status()
         .unwrap();
     assert!(status.success());
     for _ in 0..200 {
-        if let Some(exit) = server.child.try_wait().unwrap() {
+        if let Some(exit) = server.child().try_wait().unwrap() {
             assert_eq!(exit.code(), Some(0), "graceful shutdown exits 0");
             return;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    server.child.kill().unwrap();
+    // Dropping `server` while unwinding kills and reaps the process.
     panic!("server did not stop within 5s of SIGTERM");
 }

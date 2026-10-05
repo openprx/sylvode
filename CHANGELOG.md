@@ -3,6 +3,15 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3. Releases before 0.3.9 are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases).
 
+## 0.3.17
+
+### Fixed
+
+- The HTTP signature integration test left its `sylvode-webhook` server running when an assertion
+  failed, because the process was only killed on the success path. The test server is now killed
+  and reaped when it is dropped, on every exit path including a panic, before its temporary
+  directory is removed.
+
 ## 0.3.16
 
 ### Security
