@@ -4,12 +4,14 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=
+GATE_YAML=
 JSON_MODE=0
 while (($#)); do
   case "$1" in
     --repo-root) REPO_ROOT=${2:?}; shift 2 ;;
     --contracts-root) CONTRACTS_ROOT=${2:?}; shift 2 ;;
     --evidence-root) EVIDENCE_ROOT=${2:?}; shift 2 ;;
+    --gate-yaml) GATE_YAML=${2:?}; shift 2 ;;
     --json) JSON_MODE=1; shift ;;
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
@@ -21,7 +23,6 @@ for name in OPENPR_TEST_DATABASE_URL OPENPR_BACKUP_SOURCE_DATABASE_URL OPENPR_BA
   [[ -n ${!name:-} ]] || { echo "FAIL: $name is required" >&2; exit 2; }
 done
 [[ -n $EVIDENCE_ROOT ]] || EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v0.8"
-GATE_YAML=""
 [[ -s $GATE_YAML ]] || { echo "FAIL: authoritative v0.8 gate missing: $GATE_YAML" >&2; exit 2; }
 mkdir -p "$EVIDENCE_ROOT/logs"
 DRILL="$EVIDENCE_ROOT/backup-restore-drill.json"
