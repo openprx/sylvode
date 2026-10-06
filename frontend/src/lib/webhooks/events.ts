@@ -36,3 +36,12 @@ export function webhookEventLabelKey(event: WebhookEvent): string {
 export function webhookEventGroupKey(group: WebhookEventGroup): string {
 	return `webhook.eventGroup.${group}`;
 }
+
+/**
+ * The selection after the user toggles `event`'s checkbox: added when absent, removed when
+ * present, every other selected event kept in place. The webhook form's checkbox handler applies
+ * exactly this (`tests/webhook-events.test.ts`).
+ */
+export function toggleWebhookEvent(selected: readonly string[], event: string): string[] {
+	return selected.includes(event) ? selected.filter((value) => value !== event) : [...selected, event];
+}

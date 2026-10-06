@@ -11,6 +11,7 @@
 		surfaceLabelKey,
 		type BotTransportSurface
 	} from '$lib/bots/transport-surfaces';
+	import { createBotRequest } from '$lib/bots/create-bot-request';
 	import { membersApi, type WorkspaceMember, type WorkspaceMemberRole } from '$lib/api/members';
 	import { toast } from '$lib/stores/toast';
 	import { requireRouteParam } from '$lib/utils/route-params';
@@ -206,23 +207,19 @@
 	}
 
 	async function createToken() {
-		if (!tokenName.trim()) {
-			toast.error(get(t)('members.tokenNameRequired'));
-			return;
-		}
-		if (tokenSurface === '') {
-			toast.error(get(t)('members.transportSurfaceRequired'));
+		const built = createBotRequest({
+			name: tokenName,
+			permissions: tokenPermissions,
+			surface: tokenSurface,
+			expiresAt: buildExpiresAt(tokenExpiresAt)
+		});
+		if (!built.ok) {
+			toast.error(get(t)(built.errorKey));
 			return;
 		}
 
 		creatingToken = true;
-		const expiresAt = buildExpiresAt(tokenExpiresAt);
-		const response = await botsApi.create(workspaceId, {
-			name: tokenName.trim(),
-			permissions: tokenPermissions,
-			transport_surface: tokenSurface,
-			expires_at: expiresAt
-		});
+		const response = await botsApi.create(workspaceId, built.request);
 
 		if (response.code !== 0) {
 			toast.error(response.message);

@@ -17,6 +17,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Suite, assert, assertDeepEqual, finish } from './support/harness';
+import { withoutComments } from './support/source';
+import { createBotRequest } from '../src/lib/bots/create-bot-request';
 import {
 	BOT_TRANSPORT_SURFACES,
 	isBotTransportSurface,
@@ -106,15 +108,54 @@ suite.check('an unknown surface from a newer server is not mistaken for a known 
 	for (const surface of BOT_TRANSPORT_SURFACES) assert(isBotTransportSurface(surface), surface);
 });
 
+suite.check('the create request carries exactly the chosen surface, for every surface', () => {
+	for (const surface of BOT_TRANSPORT_SURFACES) {
+		const built = createBotRequest({
+			name: '  ci bot  ',
+			permissions: ['read', 'write'],
+			surface,
+			expiresAt: '2030-01-01T23:59:59.000Z'
+		});
+		assert(built.ok, `${surface}: a named token with a surface must build`);
+		assertDeepEqual(
+			built.request,
+			{
+				name: 'ci bot',
+				permissions: ['read', 'write'],
+				transport_surface: surface,
+				expires_at: '2030-01-01T23:59:59.000Z'
+			},
+			`${surface}: request body`
+		);
+	}
+});
+
+suite.check('the create request is refused without a surface or a name, never defaulted', () => {
+	const noSurface = createBotRequest({ name: 'ci bot', permissions: [], surface: '' });
+	assert(!noSurface.ok && noSurface.errorKey === 'members.transportSurfaceRequired', 'no surface chosen');
+	const noName = createBotRequest({ name: '   ', permissions: [], surface: 'cli' });
+	assert(!noName.ok && noName.errorKey === 'members.tokenNameRequired', 'blank name');
+});
+
+suite.check('the members page sends the request createBotRequest builds from the chosen surface', () => {
+	const code = withoutComments(readFileSync(MEMBERS_PAGE, 'utf8'));
+	assert(
+		/createBotRequest\(\{[\s\S]{0,200}surface: tokenSurface[\s\S]{0,200}\}\)/.test(code),
+		'createToken must build its request from the selected tokenSurface'
+	);
+	assert(/botsApi\.create\(workspaceId, built\.request\)/.test(code), 'createToken must send the built request');
+	assert(!/transport_surface\s*:/.test(code), 'the page must not set transport_surface itself');
+	assert(/bind:group=\{tokenSurface\}/.test(code), 'the radio group must bind to tokenSurface');
+});
+
 suite.check('the members page asks for the surface, sends it, lists it and shows it on reveal', () => {
-	const page = readFileSync(MEMBERS_PAGE, 'utf8');
+	const page = withoutComments(readFileSync(MEMBERS_PAGE, 'utf8'));
 	assert(/\{#each BOT_TRANSPORT_SURFACES as surface/.test(page), 'create form does not list the surfaces');
 	assert(
 		/type="radio"[\s\S]{0,120}name="tokenSurface"[\s\S]{0,200}required/.test(page),
 		'the surface choice must be a required, labelled radio group'
 	);
 	assert(/<legend[^>]*>[\s\S]{0,80}members\.transportSurface'/.test(page), 'the radio group needs a legend');
-	assert(/transport_surface: tokenSurface/.test(page), 'createToken does not send the chosen surface');
 	assert(
 		/let tokenSurface = \$state<BotTransportSurface \| ''>\(''\)/.test(page),
 		'the surface must start unselected so the user has to choose'

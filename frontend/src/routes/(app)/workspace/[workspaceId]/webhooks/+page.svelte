@@ -18,6 +18,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import {
 		WEBHOOK_EVENT_GROUPS,
+		toggleWebhookEvent,
 		webhookEventGroupKey,
 		webhookEventLabelKey
 	} from '$lib/webhooks/events';
@@ -102,11 +103,7 @@
 	}
 
 	function toggleEvent(eventName: string) {
-		if (form.events.includes(eventName)) {
-			form.events = form.events.filter((value) => value !== eventName);
-		} else {
-			form.events = [...form.events, eventName];
-		}
+		form.events = toggleWebhookEvent(form.events, eventName);
 	}
 
 	async function saveWebhook() {
