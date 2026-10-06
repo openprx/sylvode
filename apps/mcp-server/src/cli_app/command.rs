@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 /// `sylvode` — the Sylvode Flow CLI (online-only; no `serve` subcommand, see `cli-surface-v1.md`).
 #[derive(Debug, Parser)]
-#[command(name = "sylvode", about = "Sylvode Flow CLI")]
+#[command(name = "sylvode", about = "Sylvode Flow CLI", long_about = None, version)]
 #[command(arg_required_else_help = true)]
 pub struct Cli {
     #[command(subcommand)]

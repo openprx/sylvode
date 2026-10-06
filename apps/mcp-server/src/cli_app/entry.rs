@@ -41,6 +41,9 @@ pub enum Route {
 /// `help <group>` routes like `<group>`, so `sylvode help projects` prints the same help as
 /// `sylvode projects --help`.
 pub fn route(args: &[OsString]) -> Route {
+    if top_level_info_flag(args.get(1..).unwrap_or_default()) {
+        return Route::Overview;
+    }
     let mut positionals = positionals(args.get(1..).unwrap_or_default());
     let first = positionals.next();
     let name = if first == Some("help") {
@@ -53,6 +56,30 @@ pub fn route(args: &[OsString]) -> Route {
         Some(name) if BUSINESS_GROUPS.contains(&name) => Route::Business,
         _ => Route::Overview,
     }
+}
+
+/// Whether `--help`/`-h` or `--version`/`-V` comes before the first subcommand name: that asks
+/// for the top-level help or version, whichever group follows, so `sylvode --help projects`
+/// lists all fifteen groups instead of handing the line to one model's parser.
+fn top_level_info_flag(args: &[OsString]) -> bool {
+    let mut skip_value = false;
+    for arg in args {
+        if std::mem::take(&mut skip_value) {
+            continue;
+        }
+        let Some(arg) = arg.to_str() else {
+            return false;
+        };
+        match arg {
+            "--help" | "-h" | "--version" | "-V" => return true,
+            "--" => return false,
+            option if option.starts_with('-') => {
+                skip_value = !option.contains('=') && VALUE_OPTIONS.contains(&option);
+            }
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// The arguments that are neither options nor option values, up to a `--` terminator.
@@ -132,6 +159,22 @@ mod tests {
             assert_eq!(routed(&[group, "--help"]), Route::Business, "{group}");
             assert_eq!(routed(&["help", group]), Route::Business, "{group}");
         }
+    }
+
+    #[test]
+    fn a_help_or_version_flag_before_the_group_asks_for_the_top_level() {
+        for flag in ["--help", "-h", "--version", "-V"] {
+            assert_eq!(routed(&[flag, "projects"]), Route::Overview, "{flag} projects");
+            assert_eq!(routed(&[flag, "objects"]), Route::Overview, "{flag} objects");
+            assert_eq!(
+                routed(&["--format", "table", flag, "projects"]),
+                Route::Overview,
+                "--format table {flag} projects"
+            );
+        }
+        assert_eq!(routed(&["projects", "--help"]), Route::Business);
+        assert_eq!(routed(&["objects", "--help"]), Route::Flow);
+        assert_eq!(routed(&["--config", "-h", "projects"]), Route::Business);
     }
 
     #[test]

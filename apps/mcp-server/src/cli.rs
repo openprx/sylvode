@@ -45,7 +45,7 @@ pub enum OutputFormat {
 
 /// Sylvode MCP server and CLI tool. The `mcp-server` executable remains a compatibility shim.
 #[derive(Debug, Parser)]
-#[command(name = "mcp-server", about = "Sylvode MCP server and CLI tool")]
+#[command(name = "mcp-server", about = "Sylvode MCP server and CLI tool", long_about = None, version)]
 #[command(arg_required_else_help = true)]
 pub struct Cli {
     #[command(subcommand)]
@@ -61,7 +61,7 @@ pub struct Cli {
 /// Build the parser with [`business_cli_command`], which only adjusts help prose that names
 /// the program.
 #[derive(Debug, Parser)]
-#[command(name = "sylvode", about = "Sylvode workspace commands")]
+#[command(name = "sylvode", about = "Sylvode workspace commands", long_about = None, version)]
 #[command(arg_required_else_help = true)]
 pub struct BusinessCli {
     #[command(subcommand)]

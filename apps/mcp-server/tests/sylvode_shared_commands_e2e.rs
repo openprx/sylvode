@@ -598,9 +598,28 @@ async fn tools_call_declares_the_cli_tools_call_surface_and_native_commands_decl
 #[tokio::test]
 async fn sylvode_help_lists_all_fifteen_groups_and_no_serve() -> TestResult {
     let fixture = Fixture::new().await?;
-    let output = run(SYLVODE, fixture.dir()?, &["--help".to_string()]).await?;
-    assert_eq!(output.status.code(), Some(0));
-    let help = String::from_utf8(output.stdout)?;
+    // A help flag before any group is top-level help, whichever group follows it.
+    for args in [vec!["--help"], vec!["--help", "projects"], vec!["-h", "objects"]] {
+        let args: Vec<String> = args.into_iter().map(str::to_string).collect();
+        let output = run(SYLVODE, fixture.dir()?, &args).await?;
+        assert_eq!(output.status.code(), Some(0), "{args:?}");
+        let help = String::from_utf8(output.stdout)?;
+        assert_top_level_help(&help, &args);
+    }
+
+    let serve = run(SYLVODE, fixture.dir()?, &["serve".to_string()]).await?;
+    assert_eq!(serve.status.code(), Some(2), "sylvode must not offer serve");
+    Ok(())
+}
+
+/// `sylvode`'s top-level help: the product description, all fifteen groups, no `serve`, and no
+/// internal source documentation (rustdoc intra-doc links, which start with a bracket and a backtick).
+fn assert_top_level_help(help: &str, args: &[String]) {
+    assert!(
+        help.starts_with("Sylvode Flow CLI and workspace commands"),
+        "{args:?}:\n{help}"
+    );
+    assert!(!help.contains("[`"), "{args:?} prints rustdoc:\n{help}");
     for group in [
         "features",
         "objects",
@@ -621,16 +640,52 @@ async fn sylvode_help_lists_all_fifteen_groups_and_no_serve() -> TestResult {
         assert!(
             help.lines()
                 .any(|line| line.trim_start().starts_with(&format!("{group} "))),
-            "sylvode --help does not list {group}:\n{help}"
+            "sylvode {args:?} does not list {group}:\n{help}"
         );
     }
     assert!(
         !help.lines().any(|line| line.trim_start().starts_with("serve ")),
         "{help}"
     );
+}
 
-    let serve = run(SYLVODE, fixture.dir()?, &["serve".to_string()]).await?;
-    assert_eq!(serve.status.code(), Some(2), "sylvode must not offer serve");
+/// `--version` and `-V` print the program name and the package version and exit 0 under both
+/// names (ADR-0020 D5 lists `--version` among the allowed differences, so each names itself).
+#[tokio::test]
+async fn both_names_print_their_version() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let version = env!("CARGO_PKG_VERSION");
+    for (binary, name) in [(SYLVODE, "sylvode"), (MCP_SERVER, "mcp-server")] {
+        for flag in ["--version", "-V"] {
+            let output = run(binary, fixture.dir()?, &[flag.to_string()]).await?;
+            assert_eq!(output.status.code(), Some(0), "{name} {flag}");
+            assert_eq!(
+                String::from_utf8(output.stdout)?,
+                format!("{name} {version}\n"),
+                "{name} {flag}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Each parser's own help shows the product description, never the internal documentation of
+/// the type that defines it.
+#[tokio::test]
+async fn group_help_never_prints_internal_documentation() -> TestResult {
+    let fixture = Fixture::new().await?;
+    for (binary, args) in [
+        (SYLVODE, vec!["projects", "--help"]),
+        (SYLVODE, vec!["objects", "--help"]),
+        (MCP_SERVER, vec!["--help"]),
+        (MCP_SERVER, vec!["projects", "--help"]),
+    ] {
+        let args: Vec<String> = args.into_iter().map(str::to_string).collect();
+        let output = run(binary, fixture.dir()?, &args).await?;
+        assert_eq!(output.status.code(), Some(0), "{binary} {args:?}");
+        let help = String::from_utf8(output.stdout)?;
+        assert!(!help.contains("[`"), "{binary} {args:?} prints rustdoc:\n{help}");
+    }
     Ok(())
 }
 
