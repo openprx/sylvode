@@ -247,6 +247,8 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- The legacy configuration notice's "once per process" guarantee had no test of its own; a test
+  now asks for it twice (and again after a second load) in a fresh process.
 - Nothing pinned the plugin ABI export names against a rename applied to the runtime and its
   tests together. A compiled fixture, `apps/api/tests/fixtures/plugin-abi-v1.wasm` (source
   `plugin-abi-v1.wat` beside it, hash checked by the test), exports exactly `memory`,
