@@ -537,22 +537,55 @@ fn is_worker_task(payload: &Value) -> bool {
     string_field(payload, "task_id").is_some() && string_field(payload, "ai_participant_id").is_some()
 }
 
-/// The issue a delivery is about, which is also the issue every callback for it writes to.
+/// Where the issue of a worker AI task is read from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkerIssue {
+    /// The task's top-level `reference_id`, which the worker reads from the task record.
+    ReferenceId,
+    /// `payload.issue_id`.
+    PayloadIssueId,
+}
+
+/// The issue of a worker AI task, by `reference_type`: one row per task shape the Sylvode API
+/// produces. A reference type not listed (a proposal, none, anything else) has no issue.
 ///
-/// For a worker AI task this is only the task's `reference_id` (when `reference_type` is
-/// `work_item`), which the worker takes from the task record. The task's inner `payload` is
-/// free-form data supplied by whoever created the task, so an `issue_id` inside it is ignored:
-/// otherwise it could point the callback, sent with the bot's token, at another issue.
+/// - `work_item`: tasks queued when an issue is created with, or reassigned to, a bot
+///   (`apps/api/src/routes/issue.rs`). The issue is `reference_id`. The free-form `payload` also
+///   names an issue, but a task created by hand (below) can put anything there, so it is ignored:
+///   it must not point the callback, sent with the bot's token, at another issue.
+/// - `comment`: tasks queued when a comment mentions a bot (`apps/api/src/routes/comment.rs`).
+///   `reference_id` is the comment, not an issue, and the envelope carries the comment's issue
+///   nowhere but in `payload.issue_id`, which the API sets itself to the issue the comment was
+///   just inserted on. That is the only source, so it is used.
+///
+/// Residual trust: a project admin (or system admin) can also create a task by hand
+/// (`POST /api/v1/projects/{project_id}/ai/tasks`, `apps/api/src/routes/ai_callback.rs`) with any
+/// `reference_type`, any `reference_id` and any `payload`, none of them checked against the
+/// project. For such a task with a `comment` reference the issue is whatever that admin wrote
+/// into the payload; with a `work_item` reference it is whatever `reference_id` they wrote. Only
+/// the API, when it receives the bot's callback, can check that the bot may write to the issue.
+const WORKER_ISSUE_SOURCES: [(&str, WorkerIssue); 2] = [
+    ("work_item", WorkerIssue::ReferenceId),
+    ("comment", WorkerIssue::PayloadIssueId),
+];
+
+fn worker_task_issue_id(task: &Value) -> Option<String> {
+    let reference_type = string_field(task, "reference_type")?;
+    let (_, source) = WORKER_ISSUE_SOURCES
+        .iter()
+        .find(|(listed, _)| *listed == reference_type)?;
+    let issue = match source {
+        WorkerIssue::ReferenceId => string_field(task, "reference_id"),
+        WorkerIssue::PayloadIssueId => nested_string_field(task, &["payload", "issue_id"]),
+    };
+    issue.map(ToString::to_string)
+}
+
+/// The issue a delivery is about, which is also the issue every callback for it writes to. For a
+/// worker AI task see [`WORKER_ISSUE_SOURCES`].
 pub fn extract_issue_id(payload: &Value) -> Option<String> {
     if is_worker_task(payload) {
-        return (payload.get("reference_type").and_then(Value::as_str) == Some("work_item"))
-            .then(|| {
-                payload
-                    .get("reference_id")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
-            })
-            .flatten();
+        return worker_task_issue_id(payload);
     }
     let direct_issue_id = payload
         .get("data")
@@ -1386,27 +1419,138 @@ mcp_instructions = "Custom: read issue {issue_id} first"
         assert_eq!(extract_issue_id(&payload).as_deref(), Some("issue-99"));
     }
 
-    /// The issue of a worker AI task is its `reference_id`; an `issue_id` inside the free-form
-    /// `payload`, or a non-work-item reference, yields nothing else.
-    #[test]
-    fn a_worker_task_issue_id_comes_only_from_its_reference() {
-        let task = json!({
+    /// A worker AI task envelope as `apps/worker/src/main.rs` (`dispatch_task`) builds it from an
+    /// `ai_tasks` row.
+    fn worker_task(
+        task_type: &str,
+        reference_type: Option<&str>,
+        reference_id: Option<&str>,
+        payload: serde_json::Value,
+    ) -> serde_json::Value {
+        json!({
             "task_id": "task-1",
+            "project_id": "PROJECT",
             "ai_participant_id": "bot-1",
-            "reference_type": "work_item",
-            "reference_id": "REAL-ISSUE",
-            "payload": {"issue_id": "OTHER-ISSUE"}
-        });
-        assert_eq!(extract_issue_id(&task).as_deref(), Some("REAL-ISSUE"));
+            "ai_participant_name": "Fixer",
+            "ai_participant_agent_type": "cli",
+            "task_type": task_type,
+            "reference_type": reference_type,
+            "reference_id": reference_id,
+            "payload": payload,
+            "attempts": 1,
+            "max_attempts": 3,
+            "trigger_kind": "mention"
+        })
+    }
 
-        let proposal = json!({
-            "task_id": "task-2",
-            "ai_participant_id": "bot-1",
-            "reference_type": "proposal",
-            "reference_id": "PROPOSAL-1",
-            "payload": {"issue_id": "OTHER-ISSUE"}
-        });
-        assert_eq!(extract_issue_id(&proposal), None);
+    /// The issue of every worker task shape the Sylvode API produces, one row per producer.
+    #[test]
+    fn a_worker_task_issue_id_follows_the_shape_each_producer_sends() {
+        let rows = [
+            // apps/api/src/routes/issue.rs, issue created with a bot assignee.
+            (
+                "issue created",
+                worker_task(
+                    "issue_assigned",
+                    Some("work_item"),
+                    Some("ISSUE"),
+                    json!({"issue_id": "ISSUE", "project_id": "PROJECT", "assignee_id": "bot-1", "trigger": "issue.create"}),
+                ),
+                Some("ISSUE"),
+            ),
+            // apps/api/src/routes/issue.rs, issue reassigned to a bot.
+            (
+                "issue reassigned",
+                worker_task(
+                    "issue_assigned",
+                    Some("work_item"),
+                    Some("ISSUE"),
+                    json!({"issue_id": "ISSUE", "project_id": "PROJECT", "assignee_id": "bot-1", "trigger": "issue.update_assignee"}),
+                ),
+                Some("ISSUE"),
+            ),
+            // apps/api/src/routes/comment.rs, a comment mentioning a bot: the reference is the
+            // comment, the issue is in the payload.
+            (
+                "comment mention",
+                worker_task(
+                    "comment_requested",
+                    Some("comment"),
+                    Some("COMMENT"),
+                    json!({
+                        "issue_id": "ISSUE",
+                        "comment_id": "COMMENT",
+                        "project_id": "PROJECT",
+                        "project_type": "software",
+                        "bot_id": "bot-1",
+                        "trigger": "comment.created",
+                        "comment": {"id": "COMMENT", "body": "@Fixer please look"}
+                    }),
+                ),
+                Some("ISSUE"),
+            ),
+            // apps/api/src/services/ai_task_service.rs, a proposal opened for voting.
+            (
+                "proposal vote",
+                worker_task(
+                    "vote_requested",
+                    Some("proposal"),
+                    Some("PROPOSAL"),
+                    json!({"proposal_id": "PROPOSAL", "project_id": "PROJECT", "trigger": "proposal.start_voting"}),
+                ),
+                None,
+            ),
+            // apps/api/src/routes/ai_callback.rs, created by a project admin: any reference, any
+            // payload. A work item reference wins over the payload.
+            (
+                "manual work item",
+                worker_task(
+                    "review_requested",
+                    Some("work_item"),
+                    Some("ISSUE"),
+                    json!({"issue_id": "OTHER-ISSUE"}),
+                ),
+                Some("ISSUE"),
+            ),
+            (
+                "manual proposal",
+                worker_task(
+                    "review_requested",
+                    Some("proposal"),
+                    Some("PROPOSAL"),
+                    json!({"issue_id": "OTHER-ISSUE"}),
+                ),
+                None,
+            ),
+            (
+                "manual without reference",
+                worker_task("review_requested", None, None, json!({"issue_id": "OTHER-ISSUE"})),
+                None,
+            ),
+            (
+                "unknown reference type",
+                worker_task(
+                    "review_requested",
+                    Some("form_record"),
+                    Some("R"),
+                    json!({"issue_id": "OTHER-ISSUE"}),
+                ),
+                None,
+            ),
+            (
+                "comment without issue",
+                worker_task(
+                    "comment_requested",
+                    Some("comment"),
+                    Some("COMMENT"),
+                    json!({"comment_id": "COMMENT"}),
+                ),
+                None,
+            ),
+        ];
+        for (shape, task, expected) in rows {
+            assert_eq!(extract_issue_id(&task).as_deref(), expected, "{shape}");
+        }
     }
 
     /// Outside a worker task (a tunnel task body, say) the order is `data.issue.id`, then

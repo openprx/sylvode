@@ -248,10 +248,22 @@ order within each step:
    task) and whose route matches;
 3. otherwise an agent that has an `[agents.route]` section and whose route matches.
 
-For a worker AI task, the bot's agent type is `ai_participant_agent_type` only, and the issue that
-every callback writes to is the task's `reference_id` (when `reference_type` is `work_item`). The
-task's inner `payload` is free-form data from whoever created the task; it never chooses the agent
-type or the callback's issue.
+For a worker AI task, the bot's agent type is `ai_participant_agent_type` only; the task's inner
+`payload` never chooses it. The issue that the prompt names and every callback writes to depends on
+the task's `reference_type`:
+
+| `reference_type` | Queued by Sylvode when | Issue |
+|---|---|---|
+| `work_item` | an issue is created with, or reassigned to, the bot | `reference_id`; `payload.issue_id` is ignored |
+| `comment` | a comment mentions the bot | `payload.issue_id` (`reference_id` is the comment) |
+| `proposal`, none, other | a proposal opens for voting, or a task created by hand | none (`unknown`) |
+
+For `comment` tasks the issue comes from the payload because the task carries it nowhere else;
+Sylvode's comment route sets it to the issue the comment was posted on. Residual trust: a project
+admin can create a task by hand (`POST /api/v1/projects/{project_id}/ai/tasks`) with any reference
+and any payload, so for such a task the issue is whatever that admin wrote, in `payload.issue_id`
+for a `comment` reference and in `reference_id` for a `work_item` reference. Only the Sylvode API
+can check, when it receives the callback, that the bot may write to that issue.
 
 An agent without a route matches every task. A route matches when every non-empty list contains
 the task's value, compared ignoring case and surrounding whitespace; a value missing from the task
@@ -689,8 +701,10 @@ These configurations still start, but the service behaves differently:
   non-ASCII signature value is refused.
 - **The `/webhook` answer's `result`** is a short status; command output and remote error bodies
   are logged instead (`Dispatch result detail=...`).
-- **Worker AI tasks:** the callback's issue is the task's `reference_id` and the agent type is
-  `ai_participant_agent_type`; the task's free-form `payload` no longer overrides either.
+- **Worker AI tasks:** the callback's issue is the task's `reference_id` for a `work_item`
+  reference and `payload.issue_id` for a `comment` reference (a comment mentioning the bot), and
+  none otherwise; the agent type is `ai_participant_agent_type`. For a `work_item` task the
+  free-form `payload` no longer overrides the issue, and for no task the agent type.
   `route.trigger_kinds` is matched only against `bot_context.trigger_reason` and a worker task's
   `trigger_kind`, not against `task_type` or the payload.
 - **Timeouts and shutdown stop the executor's whole process group** (see [Stopping

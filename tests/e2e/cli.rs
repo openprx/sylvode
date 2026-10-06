@@ -180,6 +180,65 @@ async fn a_worker_task_payload_cannot_redirect_the_callback_to_another_issue() {
     assert_eq!(last.body["issue_id"], "REAL-ISSUE", "{:?}", last.body);
 }
 
+/// A comment that mentions a bot, as Sylvode's comment route queues it: the task references the
+/// comment and the issue is in its payload. The prompt and both callbacks name that issue.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_comment_mention_task_reports_on_the_commented_issue() {
+    let bin = TempDir::new("bin");
+    let argv = bin.file("argv");
+    write_script(
+        bin.path(),
+        "codex",
+        &format!("for a in \"$@\"; do echo \"$a\" >> '{}'; done\nexit 1", argv.display()),
+    );
+    let mut api = StubApi::start().await;
+    let config = cli_config(&api, 30).replace("id = \"fixer\"", "id = \"bot-1\"");
+    let server = Server::start(CANONICAL, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
+
+    let body = serde_json::json!({
+        "task_id": uuid::Uuid::new_v4().to_string(),
+        "project_id": "project-1",
+        "ai_participant_id": "bot-1",
+        "ai_participant_name": "Fixer",
+        "ai_participant_agent_type": "cli",
+        "task_type": "comment_requested",
+        "reference_type": "comment",
+        "reference_id": "COMMENT-ID",
+        "payload": {
+            "issue_id": "REAL-ISSUE-ID",
+            "comment_id": "COMMENT-ID",
+            "project_id": "project-1",
+            "project_type": "software",
+            "bot_id": "bot-1",
+            "trigger": "comment.created",
+            "comment": {"id": "COMMENT-ID", "body": "@Fixer please look"}
+        },
+        "attempts": 1,
+        "max_attempts": 3,
+        "trigger_kind": "mention"
+    })
+    .to_string();
+    let (status, answer) = post_signed(&server.url("/webhook"), &body).await;
+    assert_eq!(status, 200, "{answer}");
+    assert!(
+        answer["result"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("issue_id=REAL-ISSUE-ID"),
+        "{answer}"
+    );
+    let start = api.next(Duration::from_secs(10)).await.expect("start callback");
+    assert_eq!(start.body["issue_id"], "REAL-ISSUE-ID", "{:?}", start.body);
+    let last = api.next(Duration::from_secs(10)).await.expect("final callback");
+    assert_eq!(last.body["status"], "failed", "{:?}", last.body);
+    assert_eq!(last.body["issue_id"], "REAL-ISSUE-ID", "{:?}", last.body);
+    let args = wait_lines(&argv, 4, Duration::from_secs(5));
+    assert!(
+        args.iter().any(|arg| arg.starts_with("Fix issue REAL-ISSUE-ID:")),
+        "{args:?}"
+    );
+}
+
 /// The agent type of a worker task is the bot's (`ai_participant_agent_type`); the task's
 /// free-form `payload` cannot pick a `cli` agent for a bot that has none.
 #[tokio::test(flavor = "multi_thread")]
