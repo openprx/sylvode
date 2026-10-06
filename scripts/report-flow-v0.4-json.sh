@@ -38,6 +38,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT=""
+GATE_YAML=""
 REPO_ROOT="$ROOT_DIR"
 SKIP_GENERIC=0
 LOAD_HARNESS_EVIDENCE=""
@@ -66,6 +67,7 @@ Options:
   --evidence-root DIR    Required. Where evidence artifacts are written and read.
   --contracts-root DIR   Root for decisions/, contracts/, security/
                           artifact paths. Default: $SYLVODE_CONTRACTS_ROOT
+  --gate-yaml PATH       Default: <contracts-root>/gates/v0.4-gate.yaml
   --repo-root DIR         Repository the cargo/bun commands run in and
                           whose HEAD becomes source.head. Default: this
                           checkout.
@@ -98,6 +100,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --evidence-root) EVIDENCE_ROOT="${2:?--evidence-root requires a DIR argument}"; shift 2 ;;
     --contracts-root) CONTRACTS_ROOT="${2:?--contracts-root requires a DIR argument}"; shift 2 ;;
+    --gate-yaml) GATE_YAML="${2:?--gate-yaml requires a PATH argument}"; shift 2 ;;
     --repo-root) REPO_ROOT="${2:?--repo-root requires a DIR argument}"; shift 2 ;;
     --load-harness-evidence) LOAD_HARNESS_EVIDENCE="${2:?--load-harness-evidence requires a PATH}"; shift 2 ;;
     --cache-evidence) CACHE_EVIDENCE="${2:?--cache-evidence requires a PATH}"; shift 2 ;;
@@ -131,7 +134,6 @@ if [[ ! -f "$SCHEMA_PATH" ]]; then
   echo "FAIL: v0.4 gate schema not found: $SCHEMA_PATH" >&2
   exit 2
 fi
-GATE_YAML=""
 if [[ ! -f "$GATE_YAML" ]]; then
   echo "FAIL: v0.4 gate contract not found: $GATE_YAML" >&2
   exit 2
