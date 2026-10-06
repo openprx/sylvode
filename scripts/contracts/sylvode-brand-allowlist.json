@@ -178,7 +178,9 @@
         "config/sylvode-webhook.example.toml",
         "scripts/smoke-sylvode-webhook-routing.sh",
         "scripts/smoke-browser-mention-sylvode-webhook.sh",
-        "scripts/audit-universal-forms-production-readiness.sh"
+        "scripts/audit-universal-forms-production-readiness.sh",
+        ".env.example",
+        "docs/universal-forms-production.md"
       ],
       "pattern": "(?:ghcr\\.io/openprx/|/app/|/target/debug/)?openpr-webhook(?:[:\\w<>.-]*)?|OPENPR_WEBHOOK_\\w+",
       "explanation": "The legacy Sylvode Webhook executable and image names (openpr-webhook, ghcr.io/openprx/openpr-webhook, /app/openpr-webhook) kept through 1.x by ADR-0020 D4."
