@@ -396,6 +396,27 @@ mod tests {
         assert_eq!(wait_dead(&left, Duration::from_secs(2)).await, Vec::<i32>::new());
     }
 
+    /// A run whose future is dropped half-way (its task aborted) still takes the whole process
+    /// group with it, not only the direct child that `kill_on_drop` covers.
+    #[tokio::test]
+    async fn dropping_a_run_kills_every_grandchild() {
+        let dir = Dir::new();
+        let (command, file) = tree(&dir, "");
+        let task = tokio::spawn(run(
+            command,
+            Duration::from_secs(60),
+            TERMINATION_GRACE,
+            std::future::pending(),
+        ));
+        let grandchildren = started(&file).await;
+        task.abort();
+        assert!(task.await.is_err_and(|e| e.is_cancelled()));
+        assert_eq!(
+            wait_dead(&grandchildren, Duration::from_secs(2)).await,
+            Vec::<i32>::new()
+        );
+    }
+
     #[tokio::test]
     async fn stdin_is_closed_and_exit_status_is_reported() {
         let mut command = tokio::process::Command::new("sh");
