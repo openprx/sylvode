@@ -10,14 +10,48 @@ on:
         description: 'Release tag (e.g. v0.1.0)'
         required: true
 
+# Read-only by default; only the release job writes.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  # The tag being released: the pushed tag, or the input of a manual run. Passed to scripts
+  # through the environment, never interpolated into them.
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
+  # Fails before anything is built when the tag is not exactly v<workspace version>, so a release
+  # can only carry the version its Cargo.toml and frontend/package.json declare.
+  verify-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Tag equals the workspace and frontend versions
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tag '$RELEASE_TAG' is not v<major>.<minor>.<patch>"
+            exit 1
+          fi
+          tag_version="${RELEASE_TAG#v}"
+          cargo_version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          frontend_version="$(python3 -c 'import json; print(json.load(open("frontend/package.json"))["version"])')"
+          echo "tag=$tag_version Cargo.toml=$cargo_version frontend/package.json=$frontend_version"
+          if ! [[ "$tag_version" == "$cargo_version" && "$tag_version" == "$frontend_version" ]]; then
+            echo "::error::tag $RELEASE_TAG does not match Cargo.toml ($cargo_version) and frontend/package.json ($frontend_version)"
+            exit 1
+          fi
+          grep -q '^## \[Unreleased\]\|^## \['"$tag_version"'\]' CHANGELOG.md || {
+            echo "::error::CHANGELOG.md has neither an [Unreleased] nor a [$tag_version] section"
+            exit 1
+          }
+
   build:
+    needs: verify-version
     strategy:
       fail-fast: false
       matrix:
@@ -44,12 +78,13 @@ jobs:
             use_cross: false
 
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.use_cross }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           targets: ${{ matrix.target }}
 
@@ -62,7 +97,7 @@ jobs:
 
       - name: Install cross
         if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --tag v0.2.5 --locked
 
       - name: Install system deps (Linux native)
         if: runner.os == 'Linux' && !matrix.use_cross
@@ -70,7 +105,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev libpq-dev
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: ${{ matrix.target }}
 
@@ -96,7 +131,7 @@ jobs:
             chmod +x staging/$bin
           done
           cd staging
-          tar czf ../sylvode-${{ matrix.suffix }}.tar.gz *
+          tar czf ../sylvode-${{ matrix.suffix }}.tar.gz -- *
           cd ..
           cp sylvode-${{ matrix.suffix }}.tar.gz openpr-${{ matrix.suffix }}.tar.gz
           sha256sum sylvode-${{ matrix.suffix }}.tar.gz > sylvode-${{ matrix.suffix }}.tar.gz.sha256
@@ -114,11 +149,14 @@ jobs:
           }
           Compress-Archive -Path staging/* -DestinationPath sylvode-${{ matrix.suffix }}.zip
           Copy-Item sylvode-${{ matrix.suffix }}.zip openpr-${{ matrix.suffix }}.zip
-          Get-FileHash sylvode-${{ matrix.suffix }}.zip -Algorithm SHA256 | Format-List Hash | Out-File sylvode-${{ matrix.suffix }}.zip.sha256
-          Get-FileHash openpr-${{ matrix.suffix }}.zip -Algorithm SHA256 | Format-List Hash | Out-File openpr-${{ matrix.suffix }}.zip.sha256
+          # The same "<hash>  <file>" line sha256sum writes, so `sha256sum -c` checks it.
+          foreach ($archive in @("sylvode-${{ matrix.suffix }}.zip", "openpr-${{ matrix.suffix }}.zip")) {
+            $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+            [System.IO.File]::WriteAllText("$archive.sha256", "$hash  $archive`n")
+          }
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sylvode-${{ matrix.suffix }}
           path: |
@@ -130,66 +168,82 @@ jobs:
             openpr-${{ matrix.suffix }}.tar.gz.sha256
             openpr-${{ matrix.suffix }}.zip
             openpr-${{ matrix.suffix }}.zip.sha256
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   build-frontend:
+    needs: verify-version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
 
       - name: Build frontend
         run: |
           cd frontend
-          bun install
+          bun install --frozen-lockfile
           bun run build
           tar czf ../sylvode-frontend.tar.gz build/ nginx.conf
-          cp ../sylvode-frontend.tar.gz ../openpr-frontend.tar.gz
+          cd ..
+          cp sylvode-frontend.tar.gz openpr-frontend.tar.gz
+          sha256sum sylvode-frontend.tar.gz > sylvode-frontend.tar.gz.sha256
+          sha256sum openpr-frontend.tar.gz > openpr-frontend.tar.gz.sha256
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sylvode-frontend
           path: |
             sylvode-frontend.tar.gz
+            sylvode-frontend.tar.gz.sha256
             openpr-frontend.tar.gz
+            openpr-frontend.tar.gz.sha256
+          if-no-files-found: error
 
+  # Publishes only when the version check and every build and package job succeeded; a failed
+  # or cancelled leg leaves no release behind.
   release:
-    needs: [build, build-frontend]
-    if: always() && !cancelled()
+    needs: [verify-version, build, build-frontend]
+    if: >-
+      always()
+      && needs.verify-version.result == 'success'
+      && needs.build.result == 'success'
+      && needs.build-frontend.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
           merge-multiple: true
 
-      - name: Determine tag
-        id: tag
+      - name: Every platform archive is present
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
+          set -euo pipefail
+          for file in sylvode-linux-amd64.tar.gz sylvode-linux-arm64.tar.gz sylvode-macos-amd64.tar.gz \
+                      sylvode-macos-arm64.tar.gz sylvode-windows-amd64.zip sylvode-frontend.tar.gz; do
+            test -s "artifacts/$file" || { echo "::error::missing release archive $file"; exit 1; }
+            test -s "artifacts/$file.sha256" || { echo "::error::missing checksum $file.sha256"; exit 1; }
+          done
+          (cd artifacts && sha256sum -c ./*.sha256)
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Sylvode ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Sylvode ${{ env.RELEASE_TAG }}
           draft: false
           prerelease: false
           files: artifacts/*
           body: |
-            ## Sylvode ${{ steps.tag.outputs.tag }}
+            ## Sylvode ${{ env.RELEASE_TAG }}
 
             Pre-built binaries for Sylvode (API server, Worker, MCP server, native CLI, Frontend).
 
@@ -205,11 +259,13 @@ jobs:
             | Frontend | Static | `sylvode-frontend.tar.gz` |
 
             Each archive contains `api`, `worker`, legacy-compatible `mcp-server`, and
-            the new `sylvode` CLI. Matching `openpr-*` archive names are retained as aliases.
+            the new `sylvode` CLI, with a `.sha256` file to check it (`sha256sum -c`).
+            Matching `openpr-*` archive names are published as deprecated aliases with the same
+            content; they are not removed before Sylvode v2.0.
 
             Before upgrading, read the "Breaking and behaviour changes" section of
-            [CHANGELOG.md](https://github.com/openprx/sylvode/blob/${{ steps.tag.outputs.tag }}/CHANGELOG.md)
+            [CHANGELOG.md](https://github.com/openprx/sylvode/blob/${{ env.RELEASE_TAG }}/CHANGELOG.md)
             for this release. Legacy OpenPR names keep working with a deprecation warning; see the
-            [compatibility matrix](https://github.com/openprx/sylvode/blob/${{ steps.tag.outputs.tag }}/docs/sylvode-v1.0-compatibility.md).
+            [compatibility matrix](https://github.com/openprx/sylvode/blob/${{ env.RELEASE_TAG }}/docs/sylvode-v1.0-compatibility.md).
 
             See [README.md](https://github.com/openprx/sylvode#readme) for setup instructions.
