@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.45 are released
-together as 0.3.45.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.46 are released
+together as 0.3.46.
 
 ## Upgrading from 0.3.3
 
@@ -72,6 +72,14 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.46
+
+### Tests
+
+- A run whose future is dropped half-way (its task aborted) is proven to kill its whole process
+  group: the grandchildren die too, not only the direct child that `kill_on_drop` covers. The test
+  fails when the drop guard no longer signals the group.
 
 ## 0.3.45
 
