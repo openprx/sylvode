@@ -13,6 +13,7 @@
 //! A body without these fields (not sent by Sylvode) passes both checks.
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -26,7 +27,8 @@ const MIN_REMEMBER: Duration = Duration::from_secs(600);
 pub enum Refusal {
     /// The delivery's `timestamp` is `skew_secs` away from now, more than allowed.
     Stale { skew_secs: u64 },
-    /// The delivery key was seen before.
+    /// The delivery key was seen before. `key` names it for the log: its kind and the start of
+    /// its digest.
     Duplicate { key: String },
 }
 
@@ -34,8 +36,8 @@ pub enum Refusal {
 pub struct ReplayGuard {
     max_age: Option<Duration>,
     remember: Duration,
-    seen: HashMap<String, Instant>,
-    order: VecDeque<(Instant, String)>,
+    seen: HashMap<Key, Instant>,
+    order: VecDeque<(Instant, Key)>,
 }
 
 impl ReplayGuard {
@@ -65,18 +67,21 @@ impl ReplayGuard {
             }
         }
         self.forget_expired(now);
-        let Some(key) = delivery_key(payload) else {
+        let Some((kind, key)) = delivery_key(payload) else {
             return Ok(());
         };
         if self.seen.contains_key(&key) {
-            return Err(Refusal::Duplicate { key });
+            let short = hex::encode(key.get(..8).unwrap_or_default());
+            return Err(Refusal::Duplicate {
+                key: format!("{kind}:{short}"),
+            });
         }
         if self.order.len() >= CAPACITY
             && let Some((_, oldest)) = self.order.pop_front()
         {
             self.seen.remove(&oldest);
         }
-        self.seen.insert(key.clone(), now);
+        self.seen.insert(key, now);
         self.order.push_back((now, key));
         Ok(())
     }
@@ -93,18 +98,32 @@ impl ReplayGuard {
     }
 }
 
-/// The key that identifies one delivery: `id` of a webhook delivery, or `task_id` and `attempts`
-/// of a worker AI task.
-fn delivery_key(payload: &Value) -> Option<String> {
+/// A remembered delivery key: the SHA-256 digest of its fields, so every key takes 32 bytes
+/// however long the fields are.
+type Key = [u8; 32];
+
+/// The key that identifies one delivery, with its kind: `id` of a webhook delivery, or `task_id`
+/// and `attempts` of a worker AI task. Each field is hashed with its length in front, so no two
+/// different field values give the same input.
+fn delivery_key(payload: &Value) -> Option<(&'static str, Key)> {
+    let digest = |kind: &str, fields: &[&[u8]]| -> Key {
+        let mut hasher = Sha256::new();
+        hasher.update(kind.as_bytes());
+        for field in fields {
+            hasher.update((field.len() as u64).to_be_bytes());
+            hasher.update(field);
+        }
+        hasher.finalize().into()
+    };
     if let Some(task_id) = payload.get("task_id").and_then(Value::as_str) {
         let attempts = payload.get("attempts").map_or_else(String::new, ToString::to_string);
-        return Some(format!("task:{task_id}:{attempts}"));
+        return Some(("task", digest("task", &[task_id.as_bytes(), attempts.as_bytes()])));
     }
     payload
         .get("id")
         .and_then(Value::as_str)
         .filter(|id| !id.is_empty())
-        .map(|id| format!("delivery:{id}"))
+        .map(|id| ("delivery", digest("delivery", &[id.as_bytes()])))
 }
 
 fn unix_now() -> i64 {
@@ -203,7 +222,7 @@ mod tests {
         assert_eq!(
             guard.check_at(&body, now, NOW + 1),
             Err(Refusal::Duplicate {
-                key: "delivery:d-1".into()
+                key: format!("delivery:{}", hex::encode(&delivery_key(&body).expect("key").1[..8]))
             })
         );
         assert_eq!(
@@ -316,6 +335,29 @@ mod tests {
             guard.check_at(&json!({"id": "n-2"}), now, NOW),
             Err(Refusal::Duplicate { .. })
         ));
+    }
+
+    /// A remembered key takes the same small space however long the identifying fields are: the
+    /// fields come from an authenticated sender, but a body may be 2 MB, and 10,000 such keys would
+    /// otherwise hold gigabytes.
+    #[test]
+    fn a_remembered_key_has_a_fixed_size() {
+        let mut guard = ReplayGuard::new(300);
+        let now = Instant::now();
+        let long = "x".repeat(100_000);
+        for body in [
+            json!({"id": long}),
+            json!({"task_id": long, "attempts": 1}),
+            json!({"id": format!("{long}y")}),
+        ] {
+            assert_eq!(guard.check_at(&body, now, NOW), Ok(()));
+            assert!(matches!(
+                guard.check_at(&body, now, NOW),
+                Err(Refusal::Duplicate { .. })
+            ));
+        }
+        let stored: usize = guard.seen.keys().map(|key| key.len()).sum();
+        assert!(stored <= 3 * 32, "{stored} bytes of keys stored");
     }
 
     #[test]
