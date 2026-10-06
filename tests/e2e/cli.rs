@@ -343,3 +343,57 @@ async fn the_answer_does_not_wait_for_a_hanging_start_callback() {
     drop(server);
     hole.abort();
 }
+
+/// A webhook-triggered run still waiting for its `cli_max_concurrency` slot when `SIGTERM`
+/// arrives sends the terminal `cancelled` callback too, like the running one, without a start
+/// callback and without starting the executor.
+#[tokio::test(flavor = "multi_thread")]
+async fn sigterm_reports_a_queued_run_as_cancelled() {
+    let bin = TempDir::new("bin");
+    let pids = forking_codex(&bin);
+    let mut api = StubApi::start().await;
+    let config = cli_config(&api, 900).replace("[features]", "[runtime]\ncli_max_concurrency = 1\n\n[features]");
+    let mut server = Server::start(CANONICAL, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
+
+    for issue in ["RUNNING", "QUEUED"] {
+        let mut body = bot_task("Fixer", issue);
+        body["data"]["issue"]["id"] = serde_json::Value::String(issue.to_owned());
+        let (status, answer) = post_signed(&server.url("/webhook"), &body.to_string()).await;
+        assert_eq!(status, 200, "{answer}");
+    }
+    let start = api.next(Duration::from_secs(10)).await.expect("start callback");
+    assert_eq!(start.body["issue_id"], "RUNNING", "{:?}", start.body);
+    assert_eq!(start.body["status"], "started");
+    assert_eq!(
+        wait_lines(&pids, 3, Duration::from_secs(10)).len(),
+        3,
+        "the first run started"
+    );
+    assert!(
+        api.next(Duration::from_millis(300)).await.is_none(),
+        "the queued run sent a callback before shutdown"
+    );
+
+    server.terminate();
+    let mut terminal = Vec::new();
+    for _ in 0..2 {
+        let callback = api.next(Duration::from_secs(20)).await.expect("terminal callback");
+        terminal.push((
+            callback.body["issue_id"].as_str().unwrap_or_default().to_owned(),
+            callback.body["status"].as_str().unwrap_or_default().to_owned(),
+            callback.body["state"].as_str().unwrap_or_default().to_owned(),
+        ));
+    }
+    terminal.sort();
+    assert_eq!(
+        terminal,
+        [
+            ("QUEUED".to_owned(), "cancelled".to_owned(), "todo".to_owned()),
+            ("RUNNING".to_owned(), "cancelled".to_owned(), "todo".to_owned()),
+        ]
+    );
+    let (code, _) = server.wait_exit(Duration::from_secs(20)).expect("server exits");
+    assert_eq!(code, Some(0));
+    assert_eq!(read_pids(&pids).len(), 3, "the queued executor never started");
+    assert!(wait_all_dead(&read_pids(&pids), Duration::from_secs(1)).is_empty());
+}
