@@ -58,7 +58,7 @@ of the issue, or, for `comment.created`, is mentioned in the comment.
 - **MCP closed-loop automation** — AI agents read full issue context (description, comments, labels) via Sylvode MCP tools and write results back directly
 - **CLI callbacks** — Report a CLI run back to Sylvode via MCP or the REST API (see [Callbacks](#callbacks))
 - **Per-agent environment variables** — Inject extra environment variables into each CLI executor
-- **WSS tunnel client (Phase B MVP)** — Active ws/wss connection with Bearer auth, heartbeat, auto-reconnect
+- **WSS tunnel client (Phase B MVP)** — Active ws/wss connection with Bearer auth, heartbeat, auto-reconnect. No Sylvode server endpoint exists yet, so it has nothing to connect to (see [the tunnel section](#phase-b-tunnel-wss-mvp))
 - **Tunnel envelope + HMAC** — Minimal envelope (`id/type/ts/agent_id/payload/sig`) with optional HMAC-SHA256
 - **Task bridge** — Handles `task.dispatch` -> immediate `task.ack` -> async `task.result`
 - **Message templates** — Customizable message and prompt format with placeholders
@@ -238,7 +238,10 @@ one-string form earlier documentation showed, `command = "openclaw message send"
 accepted with a deprecation warning at start-up when it is unambiguous: `args` is empty, the string
 contains no quotes or backslashes, and its first word is a program on `PATH` or a file. It is then
 split on whitespace once, at start-up, and runs as `command = "openclaw"` with
-`args = ["message", "send"]`; text inserted into arguments later is never split.
+`args = ["message", "send"]`; text inserted into arguments later is never split. Because the first
+word must be found when the service starts, this form refuses start-up where the program is not on
+the service's `PATH` (a container image without `openclaw`, say), whereas `command = "openclaw"`
+written separately only fails when a task is dispatched.
 
 ### Agent selection
 
@@ -445,6 +448,14 @@ sylvode-webhook signs the outbound JSON body and sends:
 
 ## Phase B: Tunnel (WSS) MVP
 
+**Status: client only, nothing to connect to yet.** The tunnel client is implemented and tested
+only against an in-process test peer (`tests/e2e/tunnel.rs`). No Sylvode server endpoint exists
+yet: the Sylvode API has no `/api/v1/agent-tunnel` route (the URL below is a placeholder), and no
+server implements the `task.dispatch` / `task.ack` / `task.result` / `heartbeat` / `error`
+envelopes described here, which are this repository's draft protocol. Enabling the tunnel today
+connects to nothing: the client retries with backoff and logs `tunnel connect failed`. Use the
+webhook path for Sylvode.
+
 Enable both `[features].tunnel_enabled = true` and `[tunnel].enabled = true` in `config.toml` to
 let `sylvode-webhook` actively connect to a control plane. The tunnel needs `url` (`wss://`, or
 `ws://`), `agent_id` and `auth_token`, and its tasks also need `[features].cli_enabled = true`.
@@ -454,7 +465,7 @@ loopback refuses start-up unless `allow_insecure_transport = true` acknowledges 
 ```toml
 [tunnel]
 enabled = true
-url = "wss://sylvode.example.com/api/v1/agent-tunnel" # ws:// only to loopback, or see below
+url = "wss://sylvode.example.com/api/v1/agent-tunnel" # placeholder: no Sylvode endpoint exists yet
 agent_id = "vano-qa"                                  # required; there is no default
 auth_token = "opr_xxx"                                # Authorization: Bearer <token>
 reconnect_secs = 3
@@ -591,9 +602,24 @@ A signature proves who wrote a body, not when it was sent. For a signed request,
 the signed body are therefore checked as well: a webhook delivery whose `timestamp` is more than
 `max_delivery_age_secs` (default 300) away from the receiver's clock, in either direction, is
 refused with `401`, and a delivery whose `id` was already received (for a worker AI task: the same
-`task_id` and `attempts`) is refused with `409`. Received keys are remembered for twice the window
-(at least 10 minutes), up to 10,000 of them. Keep the clocks of Sylvode and this receiver in sync.
-A body without these fields, which Sylvode does not send, is not checked.
+`task_id` and `attempts`) is refused with `409`. Keep the clocks of Sylvode and this receiver in
+sync.
+
+What this covers, and what it does not:
+
+- It covers signed HTTP deliveries only (with `allow_unsigned = true` nothing is checked), and
+  only through the fields a body carries at its top level.
+- A webhook delivery from the Sylvode API carries both `id` and `timestamp`, so it is checked for
+  freshness and uniqueness.
+- A worker AI task carries `task_id` and `attempts` but **no timestamp**, so it is only checked for
+  uniqueness, and only while its key is remembered: for twice `max_delivery_age_secs` (with the
+  default 300, about 10 minutes; never less than 10 minutes), up to 10,000 keys. A captured worker
+  task can be replayed after that.
+- The memory is held in the process and **cleared on restart**: a delivery received before a
+  restart is accepted once more afterwards (a webhook delivery only while its timestamp is fresh).
+- A body without these top-level fields is not checked. Sylvode does send such bodies: a flow
+  event delivery (`{"delivery": {...}, "event": {...}}`) has neither, and is ignored anyway because
+  it is not a bot task.
 
 ## Deployment
 
@@ -702,8 +728,9 @@ Each of these started with 0.3.3 and refuses to start now. The error is logged o
 
 These configurations still start, but the service behaves differently:
 
-- **The tunnel connects.** It never could before (its handshake request was rejected locally), so
-  a configuration with the tunnel enabled starts receiving and running tasks.
+- **The tunnel client can complete a WebSocket handshake.** It never could before (its handshake
+  request was rejected locally). It has been tested only against an in-process test peer: no
+  Sylvode server endpoint exists yet, so an enabled tunnel still connects to nothing.
 - **The one-string `command = "openclaw message send"`** runs as `openclaw` with
   `args = ["message", "send"]`. With 0.3.3 every dispatch to such an agent failed to spawn, so it
   starts sending messages.

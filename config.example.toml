@@ -9,6 +9,9 @@ webhook_secrets = ["replace-with-the-secret-of-your-sylvode-webhook"]
 # Never true in production: without signatures anyone who can reach the port triggers agents.
 # On an address other than loopback it is refused unless allow_unsigned_non_loopback = true.
 allow_unsigned = false
+# Refuse a signed delivery whose timestamp is further than this from now, either way (0 = off).
+# Worker AI tasks carry no timestamp; see "Replayed requests" in the README.
+max_delivery_age_secs = 300
 
 # Feature flags: all new Phase-B paths default OFF.
 [features]
@@ -22,7 +25,9 @@ cli_max_concurrency = 1
 http_timeout_secs = 15
 tunnel_reconnect_backoff_max_secs = 60
 
-# Optional: tunnel config (Phase B minimal viable)
+# Optional: tunnel config (Phase B minimal viable). The client is tested only against an
+# in-process test peer: no Sylvode server endpoint exists yet, so enabling it today connects to
+# nothing. The url below is a placeholder.
 [tunnel]
 enabled = false
 # supports ws:// and wss://, production should use wss://
