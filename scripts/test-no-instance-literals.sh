@@ -7,14 +7,15 @@
 # override. A bot token (`opr_` followed by 20 or more letters and digits) is a credential, and one
 # committed to a public history must be revoked, so none may be added again.
 #
-# Every tracked text file is scanned (binary files are skipped). The only exemptions are listed
+# Every tracked text file is scanned (binary files are skipped). A range in CIDR notation
+# (`10.0.0.0/8`) names a range, not an address, and is not reported. The only exemptions are listed
 # below with the reason; each must still match, so a stale entry fails as well. A built-in
 # mutation control proves each pattern can go red.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OCTET='[0-9]{1,3}'
-PRIVATE_IPV4="(^|[^0-9.])(10\\.${OCTET}\\.${OCTET}\\.${OCTET}|172\\.(1[6-9]|2[0-9]|3[01])\\.${OCTET}\\.${OCTET}|192\\.168\\.${OCTET}\\.${OCTET})([^0-9]|$)"
+PRIVATE_IPV4="(^|[^0-9.])(10\\.${OCTET}\\.${OCTET}\\.${OCTET}|172\\.(1[6-9]|2[0-9]|3[01])\\.${OCTET}\\.${OCTET}|192\\.168\\.${OCTET}\\.${OCTET})([^0-9/]|$)"
 TOKEN_LITERAL='opr_[A-Za-z0-9]{20,}'
 PATTERN="${PRIVATE_IPV4}|${TOKEN_LITERAL}"
 
@@ -78,6 +79,7 @@ mkdir -p "$WORK/mutant/docs"
   printf 'token = "opr_%s"\n' 0123456789abcdefABCDEF0123
   printf 'BASE_URL=http://127.0.0.1:3000 or http://localhost:3000 or 8.8.8.8 or 172.32.0.1\n'
   printf 'version 110.72.0.30 and token = "opr_short" and bot_token = "opr_<token>"\n'
+  printf 'the private ranges are 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16\n'
 } >"$WORK/mutant/docs/deploy.md"
 printf 'docs/deploy.md\n' >"$WORK/mutant/files"
 mutant_hits=$(scan "$WORK/mutant" "$WORK/mutant/files" | wc -l)

@@ -5,7 +5,8 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
 EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v0.9"
 GATE_YAML=""
-PREDECESSOR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.8/gate-result.json
+# Default: the predecessor receipt next to this release's evidence root (see below).
+PREDECESSOR=
 MANUAL_FROM=
 while (($#)); do
   case "$1" in
@@ -19,6 +20,9 @@ while (($#)); do
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
+# The predecessor receipt lives next to this release's evidence: <evidence root>/../v0.8/, the
+# same rule the v0.6-v0.8 gates use, so --evidence-root moves both together.
+[[ -n $PREDECESSOR ]] || PREDECESSOR="$(dirname "$EVIDENCE_ROOT")/v0.8/gate-result.json"
 [[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 [[ -n $GATE_YAML ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.9-gate.yaml"
 [[ -n $MANUAL_FROM ]] || MANUAL_FROM="$EVIDENCE_ROOT/gate-result.json"

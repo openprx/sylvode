@@ -169,6 +169,16 @@ allowed_hosts = ["webhook:9090", "api:8080", "mcp-server:8090", "frontend:80"]
 allow_private = false
 ```
 
+## WASM Plugins
+
+Per-project WebAssembly modules executed by `wasmtime` 49. Each invocation runs under a
+**fuel budget** (per manifest, at most 1e9), a **memory ceiling** (per manifest, at most
+128 MiB), a **wall-clock deadline** (per manifest, at most 30000 ms) that covers compiling the
+module as well as running it, a **module size limit** of 4 MiB, and store limits of one
+instance, one memory and one table of at most 65,536 elements. **Zero host functions**: modules
+are instantiated with an empty import list, so there is no WASI, no filesystem, no network and
+no clock; communication happens only through linear memory. Every run is recorded in
+`plugin_invocations` (see `docs/universal-forms-and-plugins.md`).
 
 ABI (`docs/plugins/openpr-plugin-v1.wit`): export `memory`,
 `openpr_alloc(len: i32) -> i32`, and `openpr_invoke(ptr: i32, len: i32) -> i64`
@@ -191,7 +201,7 @@ returning `1`. Input and output are UTF-8 JSON, decimals stay strings.
 **Business event ledger.** Business writes append to `business_events`. Consumers read the resulting stream with `events.tail`; there is no push-based delivery of these events.
 
 
-**Legacy webhooks** are a separate path from the outbox, signed with HMAC-SHA256
+**Legacy webhooks** are a separate path from the business event ledger, signed with HMAC-SHA256
 in `X-Webhook-Signature: sha256=<hex>`. 31 event types can be emitted (issue,
 comment, label, sprint, proposal, project, member, veto, escalation, appeal,
 governance config, AI task), while webhook subscriptions are validated against a
@@ -425,7 +435,7 @@ scripts to `sylvode <group> ...`. The Flow groups exist only under `sylvode`, an
 
 ## API
 
-332 method+path endpoints (245 `.route()` calls), all registered in
+332 method+path endpoints (246 `.route()` calls), all registered in
 `apps/api/src/main.rs`. Every route lives under `/api/v1/`, apart from the
 unversioned `/health`, `/ready` and `/uploads/*` attachment paths.
 
@@ -456,7 +466,7 @@ SvelteKit 2.50 on Svelte 5 with Tailwind 4, built with **Bun**. The adapter is
 SPA served by nginx with same-origin API proxying in the production image. i18n
 is a minimal in-repo store aliased to `svelte-i18n`
 (`frontend/src/lib/i18n/svelte-i18n.ts`); `en.json` and `zh.json` each carry
-2155 keys.
+2192 keys, and `bun run --cwd frontend test:i18n-parity` keeps the two key sets equal.
 
 ## Scripts
 

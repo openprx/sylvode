@@ -1,205 +1,205 @@
 # Sylvode Frontend
 
-Sylvode 前端应用，基于 SvelteKit + TypeScript + Tailwind CSS + shadcn-svelte 构建。
+The Sylvode frontend application, built with SvelteKit + TypeScript + Tailwind CSS + shadcn-svelte.
 
-## 技术栈
+## Tech Stack
 
-- **框架：** SvelteKit 2.x (Svelte 5)
-- **语言：** TypeScript
-- **运行时：** Bun 1.3+
-- **UI 库：** shadcn-svelte
-- **样式：** Tailwind CSS v4
-- **构建工具：** Vite 7
+- **Framework:** SvelteKit 2.x (Svelte 5)
+- **Language:** TypeScript
+- **Runtime:** Bun 1.3+
+- **UI library:** shadcn-svelte
+- **Styling:** Tailwind CSS v4
+- **Build tool:** Vite 7
 
-## 快速开始
+## Quick Start
 
-### 安装依赖
+### Install dependencies
 
 ```bash
 bun install
 ```
 
-### 开发服务器
+### Development server
 
 ```bash
 bun run dev
 ```
 
-访问 http://localhost:5173
+Open http://localhost:5173
 
-### 构建生产版本
+### Production build
 
 ```bash
 bun run build
 ```
 
-### 预览生产版本
+### Preview the production build
 
 ```bash
 bun run preview
 ```
 
-## 项目结构
+## Project Structure
 
 ```
 src/
 ├── lib/
-│   ├── api/              # API 客户端
-│   │   ├── client.ts     # 基础 HTTP 客户端
-│   │   ├── auth.ts       # 认证 API
-│   │   ├── workspaces.ts # 工作区 API
-│   │   ├── projects.ts   # 项目 API
-│   │   ├── issues.ts     # 工作项 API
-│   │   └── notifications.ts # 通知 API
-│   ├── stores/           # Svelte 状态管理
-│   │   ├── auth.ts       # 认证状态
-│   │   └── toast.ts      # Toast 通知
-│   └── components/       # 可复用组件
-│       └── Toast.svelte  # Toast 通知组件
-├── routes/               # 页面路由
-│   ├── (auth)/           # 认证路由组
-│   │   └── auth/login/   # 登录页
-│   └── (app)/            # 应用路由组（需认证）
-│       ├── inbox/        # 通知中心
-│       └── workspace/    # 工作区
+│   ├── api/              # API clients
+│   │   ├── client.ts     # Base HTTP client
+│   │   ├── auth.ts       # Authentication API
+│   │   ├── workspaces.ts # Workspace API
+│   │   ├── projects.ts   # Project API
+│   │   ├── issues.ts     # Work item API
+│   │   └── notifications.ts # Notification API
+│   ├── stores/           # Svelte state management
+│   │   ├── auth.ts       # Authentication state
+│   │   └── toast.ts      # Toast notifications
+│   └── components/       # Reusable components
+│       └── Toast.svelte  # Toast notification component
+├── routes/               # Page routes
+│   ├── (auth)/           # Authentication route group
+│   │   └── auth/login/   # Login page
+│   └── (app)/            # Application route group (requires authentication)
+│       ├── inbox/        # Notification center
+│       └── workspace/    # Workspace
 │           ├── [workspaceId]/
 │           │   └── projects/
-│           │       ├── +page.svelte         # 项目列表
+│           │       ├── +page.svelte         # Project list
 │           │       └── [projectId]/
-│           │           ├── +page.svelte     # 项目详情
-│           │           ├── issues/          # 工作项列表/详情
-│           │           ├── board/           # 看板视图
-│           │           └── cycles/          # 迭代管理
-│           └── +page.svelte                 # 工作区选择
-└── app.css               # 全局样式
+│           │           ├── +page.svelte     # Project detail
+│           │           ├── issues/          # Work item list / detail
+│           │           ├── board/           # Board view
+│           │           └── cycles/          # Cycle (iteration) management
+│           └── +page.svelte                 # Workspace selection
+└── app.css               # Global styles
 
 ```
 
-## 核心页面
+## Core Pages
 
-### 已实现（8 个）
+### Implemented (9)
 
-1. **登录页** - `/auth/login`
-2. **工作区选择** - `/workspace`
-3. **项目列表** - `/workspace/:workspaceId/projects`
-4. **项目详情** - `/workspace/:workspaceId/projects/:projectId`
-5. **工作项列表** - `/workspace/:workspaceId/projects/:projectId/issues`
-6. **工作项详情** - `/workspace/:workspaceId/projects/:projectId/issues/:issueId`
-7. **看板视图** - `/workspace/:workspaceId/projects/:projectId/board`
-8. **Cycles 迭代** - `/workspace/:workspaceId/projects/:projectId/cycles`（占位页）
-9. **通知中心** - `/inbox`
+1. **Login page** - `/auth/login`
+2. **Workspace selection** - `/workspace`
+3. **Project list** - `/workspace/:workspaceId/projects`
+4. **Project detail** - `/workspace/:workspaceId/projects/:projectId`
+5. **Work item list** - `/workspace/:workspaceId/projects/:projectId/issues`
+6. **Work item detail** - `/workspace/:workspaceId/projects/:projectId/issues/:issueId`
+7. **Board view** - `/workspace/:workspaceId/projects/:projectId/board`
+8. **Cycles** - `/workspace/:workspaceId/projects/:projectId/cycles` (placeholder page)
+9. **Notification center** - `/inbox`
 
-## 功能特性
+## Features
 
-### ✅ 已完成
+### Completed
 
-- [x] API 客户端封装（统一错误处理、自动 Token 管理）
-- [x] 认证流程（登录/登出/Token 刷新）
-- [x] 路由守卫（AuthGuard）
-- [x] 状态管理（Svelte stores）
-- [x] Toast 通知系统
-- [x] 响应式设计（桌面/平板/移动端）
-- [x] Loading/Error/Empty 三态管理
-- [x] 工作项 CRUD 操作
-- [x] 评论功能
-- [x] 看板视图
-- [x] 通知中心
+- [x] API client wrapper (unified error handling, automatic token management)
+- [x] Authentication flow (login / logout / token refresh)
+- [x] Route guard (AuthGuard)
+- [x] State management (Svelte stores)
+- [x] Toast notification system
+- [x] Responsive design (desktop / tablet / mobile)
+- [x] Loading / Error / Empty state handling
+- [x] Work item CRUD operations
+- [x] Comments
+- [x] Board view
+- [x] Notification center
 
-### 🚧 待完善
+### Remaining
 
-- [ ] 拖拽功能（看板）
-- [ ] Cycles 迭代管理完整实现
-- [ ] 图片上传
-- [ ] Markdown 编辑器
-- [ ] 实时通知（WebSocket）
-- [ ] 搜索功能
-- [ ] 无障碍访问优化（修复 a11y 警告）
+- [ ] Drag and drop (board)
+- [ ] Full implementation of Cycles management
+- [ ] Image upload
+- [ ] Markdown editor
+- [ ] Real-time notifications (WebSocket)
+- [ ] Search
+- [ ] Accessibility improvements (fix a11y warnings)
 
-## 环境变量
+## Environment Variables
 
-创建 `.env` 文件：
+Create a `.env` file:
 
 ```bash
-# API 基础 URL
+# API base URL
 VITE_API_BASE_URL=http://localhost:8081
 ```
 
-## API 对接
+## API Integration
 
-后端 API 文档参考：仓库根目录下的 `docs/API_ENDPOINTS_PHASE3.md`
+For the backend API documentation, see `docs/API_ENDPOINTS_PHASE3.md` in the repository root.
 
-所有 API 请求通过 `$lib/api/client.ts` 中的 `apiClient` 发送，自动处理：
+All API requests are sent through `apiClient` in `$lib/api/client.ts`, which handles:
 
-- JWT Token 注入（Authorization header）
-- 统一错误响应格式
-- Loading 状态管理
-- LocalStorage Token 持久化
+- JWT token injection (Authorization header)
+- Unified error response format
+- Loading state management
+- Token persistence in LocalStorage
 
-## 样式指南
+## Style Guide
 
 ### Tailwind CSS
 
-- 移动端优先（mobile-first）
-- 响应式断点：`sm` (640px), `md` (768px), `lg` (1024px), `xl` (1280px)
-- 配色方案：Slate（主色）
+- Mobile-first
+- Responsive breakpoints: `sm` (640px), `md` (768px), `lg` (1024px), `xl` (1280px)
+- Color scheme: Slate (primary)
 
-### 组件规范
+### Component Conventions
 
-- 触摸友好（按钮最小 44x44px）
-- 表格在移动端自动切换为卡片视图
-- 侧边栏在小屏幕自动折叠
+- Touch-friendly (buttons at least 44x44px)
+- Tables switch to card view on mobile
+- The sidebar collapses automatically on small screens
 
-## 构建部署
+## Build and Deployment
 
-### 生产构建
+### Production build
 
 ```bash
 bun run build
-# 输出：.svelte-kit/output/
+# Output: .svelte-kit/output/
 ```
 
-### Adapter 配置
+### Adapter configuration
 
-当前使用 `@sveltejs/adapter-auto`，支持自动检测部署平台：
+The project currently uses `@sveltejs/adapter-auto`, which detects the deployment platform automatically:
 
-- Node.js 服务器
+- Node.js server
 - Vercel
 - Netlify
 - Cloudflare Pages
-- 等等
+- and others
 
-如需指定 adapter，修改 `svelte.config.js`。
+To pin a specific adapter, edit `svelte.config.js`.
 
-## 开发指南
+## Development Guide
 
-### 添加新页面
+### Add a new page
 
-1. 在 `src/routes/` 创建目录和 `+page.svelte`
-2. 如需数据加载，添加 `+page.ts`
-3. 如需服务端数据，添加 `+page.server.ts`
+1. Create a directory and `+page.svelte` under `src/routes/`
+2. If the page needs data loading, add `+page.ts`
+3. If the page needs server-side data, add `+page.server.ts`
 
-### 添加 API 方法
+### Add an API method
 
-在 `src/lib/api/` 对应模块添加方法，使用 `apiClient` 发起请求。
+Add the method to the matching module in `src/lib/api/` and send requests with `apiClient`.
 
-### 添加全局状态
+### Add global state
 
-在 `src/lib/stores/` 创建新的 store 文件。
+Create a new store file in `src/lib/stores/`.
 
-## 常见问题
+## FAQ
 
-### Q: 为什么使用 Bun 而不是 npm/pnpm？
+### Q: Why Bun instead of npm/pnpm?
 
-A: Bun 速度更快，安装依赖和运行脚本比 npm 快 2-10 倍。
+A: Bun is faster; installing dependencies and running scripts is 2-10 times faster than npm.
 
-### Q: 如何处理 API 连接问题？
+### Q: How do I handle API connection problems?
 
-A: 开发环境请把 `.env` 中的 `VITE_API_BASE_URL` 指向后端 API，例如 `http://localhost:8081`。生产 Docker Compose 前端通过 nginx 同源代理转发 API 请求。
+A: In development, point `VITE_API_BASE_URL` in `.env` at the backend API, for example `http://localhost:8081`. In the production Docker Compose setup, the frontend forwards API requests through a same-origin nginx proxy.
 
-### Q: 构建报错 a11y 警告？
+### Q: The build reports a11y warnings?
 
-A: 这些是无障碍访问警告，不影响构建。建议添加 `aria-label` 属性以提升用户体验。
+A: These are accessibility warnings and do not break the build. Adding `aria-label` attributes is recommended to improve usability.
 
-## 许可证
+## License
 
-双许可证： [MIT](../LICENSE-MIT) 或 [Apache-2.0](../LICENSE-APACHE)。
+Dual-licensed: [MIT](../LICENSE-MIT) or [Apache-2.0](../LICENSE-APACHE).

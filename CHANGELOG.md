@@ -306,6 +306,19 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Documentation facts: the README's WASM plugin section had lost its heading and introduction and
+  now states the current limits; it gave 2155 translation keys (2192) and 245 `.route()` calls
+  (246), still mentioned the removed outbox, and described `playwright.config.ts` as targeting an
+  internal address. `frontend/README.md`, `frontend/QUICKSTART.md`, `docs/API_ENDPOINTS_PHASE3.md`
+  and `docs/frontend-requirements.md` are now in English. The Universal Forms acceptance guide and
+  production runbook say that the `.flow-gate/universal-forms/` files they name are not in a fresh
+  checkout and where each comes from. The v1.0 stable runbook and CONTRIBUTING list every input
+  the v1.0 gate reads from outside the repository, and the bash and GNU tool requirement.
+- The v0.9 and v1.0 reports and the v0.9 verifier read the predecessor receipt from a fixed path
+  under the checkout even when `--evidence-root` named another directory; the default is now
+  `<evidence root>/../<previous release>/gate-result.json`, as for v0.6-v0.8.
+- `scripts/test-no-instance-literals.sh` no longer reports a private range written in CIDR
+  notation (`10.0.0.0/8`), which names a range rather than an address.
 - The root `Dockerfile` did not copy `Cargo.lock` or the spike crates that are workspace members,
   so it could not load the workspace; it now copies both and builds with `--locked`. A root
   `.dockerignore` keeps the build context to what the two Dockerfiles copy (no `target/` apart from
