@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.40 are released
-together as 0.3.40.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.41 are released
+together as 0.3.41.
 
 ## Upgrading from 0.3.3
 
@@ -67,6 +67,20 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.41
+
+### Fixed
+
+- **Loopback detection parses the address and compares the host exactly.** `server.listen` (for
+  `allow_unsigned`) and `tunnel.url` (for `ws://`) are parsed as URLs and count as loopback only
+  when the host is `localhost` (any case), an address in `127.0.0.0/8` or `::1`, without user
+  information. A `ws://` URL with user information, such as `ws://user:pw@127.0.0.1/t`, is now
+  refused like a remote one (before, the user information was stripped and the URL accepted), and
+  a `ws://` URL that does not parse is refused. Names that only look like loopback
+  (`localhost.evil`, `localhost:x@evil.com`, `127.0.0.1.evil.com`), IPv4-mapped IPv6 addresses
+  and other bracketed hosts were already refused; tests now prove it. `url` is a direct
+  dependency now (reqwest already used it).
 
 ## 0.3.40
 
