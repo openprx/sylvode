@@ -2469,6 +2469,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0069_flow_v08_rollback_control.sql",
         include_str!("../../../migrations/0069_flow_v08_rollback_control.sql"),
     ),
+    (
+        "0070_bot_operation_logs_surface_check.sql",
+        include_str!("../../../migrations/0070_bot_operation_logs_surface_check.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -2830,6 +2834,14 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0069_flow_v08_rollback_control.sql",
         SchemaProbe::Relation("flow_v08_rollback_control"),
+    ),
+    (
+        "0070_bot_operation_logs_surface_check.sql",
+        SchemaProbe::ConstraintContains(
+            "bot_operation_logs",
+            "bot_operation_logs_surface_check",
+            "cli_tools_call",
+        ),
     ),
 ];
 
@@ -3353,7 +3365,8 @@ mod tests {
                 "0066_flow_v08_object_retention.sql",
                 "0067_flow_package_jobs.sql",
                 "0068_flow_authz_revocations.sql",
-                "0069_flow_v08_rollback_control.sql"
+                "0069_flow_v08_rollback_control.sql",
+                "0070_bot_operation_logs_surface_check.sql"
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );

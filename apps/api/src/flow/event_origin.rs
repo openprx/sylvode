@@ -119,14 +119,35 @@ impl EventSurface {
     /// [`middleware::bot_auth`]: crate::middleware::bot_auth
     #[must_use]
     pub fn from_client_transport_label(label: &str) -> Option<Self> {
-        match label {
-            "mcp_http" => Some(Self::McpHttp),
-            "mcp_sse" => Some(Self::McpSse),
-            "mcp_stdio" => Some(Self::McpStdio),
-            "cli" => Some(Self::Cli),
-            "cli_tools_call" => Some(Self::CliToolsCall),
-            _ => None,
-        }
+        Self::from_bot_credential_label(label).filter(|surface| *surface != Self::Rest)
+    }
+
+    /// Every transport a bot credential can be registered with: plain REST plus the five client
+    /// transports.
+    ///
+    /// This is the one list of surfaces the API accepts from a bot. `routes::bot` validates
+    /// `transport_surface` against it, the authentication middleware resolves a credential's
+    /// stored surface against it, [`Self::from_client_transport_label`] is this list minus
+    /// `rest`, and the bot-operation log writes whichever entry the request resolved to. The
+    /// `workspace_bots_transport_surface_check` (`migrations/0062_flow_forms_bridge.sql`) and
+    /// `bot_operation_logs_surface_check` (`migrations/0070_bot_operation_logs_surface_check.sql`)
+    /// constraints must accept every entry; a real-database test in `middleware::bot_auth` walks
+    /// this list through both, so adding a surface here without widening them fails the suite.
+    pub const BOT_CREDENTIAL_SURFACES: [Self; 6] = [
+        Self::Rest,
+        Self::McpHttp,
+        Self::McpSse,
+        Self::McpStdio,
+        Self::Cli,
+        Self::CliToolsCall,
+    ];
+
+    /// Parses a stored or requested bot credential surface against [`Self::BOT_CREDENTIAL_SURFACES`].
+    #[must_use]
+    pub fn from_bot_credential_label(label: &str) -> Option<Self> {
+        Self::BOT_CREDENTIAL_SURFACES
+            .into_iter()
+            .find(|surface| surface.as_wire() == label)
     }
 }
 

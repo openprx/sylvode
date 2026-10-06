@@ -39,7 +39,7 @@ MCP server for AI agents. Built with **Rust** (Axum + SeaORM), **SvelteKit**, an
 `crates/platform` holds shared config, DB connection, auth, error, logging and
 the deprecation texts. `crates/collab-core` is the Flow collaboration engine on
 Loro. `migrations/` holds the ordered SQL schema history from `0000` through
-`0069`; the API applies pending migrations at startup.
+`0070`; the API applies pending migrations at startup.
 
 ## Quick Start
 

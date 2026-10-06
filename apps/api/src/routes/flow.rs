@@ -8667,6 +8667,113 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
+    /// The production auth middleware does not report a bot operation as successful when the
+    /// operation's `bot_operation_logs` row cannot be written: the row is the attribution record,
+    /// so its loss turns success into the internal-error response.
+    #[allow(clippy::literal_string_with_formatting_args)]
+    #[tokio::test]
+    async fn a_bot_operation_whose_audit_row_cannot_be_written_is_not_reported_as_successful() {
+        #[derive(FromQueryResult)]
+        struct Count {
+            n: i64,
+        }
+
+        let scratch = scratch_or_skip!("bot-audit-fail-closed");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, _owner_id) = seed_workspace(&state, true).await;
+
+        let bot_id = Uuid::new_v4();
+        let raw_token = format!("opr_{}", Uuid::new_v4().simple());
+        let token_hash = {
+            use sha2::{Digest as _, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(raw_token.as_bytes());
+            format!("{:x}", hasher.finalize())
+        };
+        exec(
+            &state,
+            "INSERT INTO workspace_bots \
+             (id, workspace_id, name, token_hash, token_prefix, permissions, transport_surface, is_active) \
+             VALUES ($1, $2, 'audit-bot', $3, $4, '[\"read\",\"write\"]'::jsonb, 'cli_tools_call', true)",
+            vec![
+                bot_id.into(),
+                workspace_id.into(),
+                token_hash.into(),
+                raw_token[..8].to_string().into(),
+            ],
+        )
+        .await;
+        // Make the audit write fail the way it failed before migration 0070: the table refuses
+        // the surface of this credential.
+        exec(
+            &state,
+            "ALTER TABLE bot_operation_logs DROP CONSTRAINT bot_operation_logs_surface_check",
+            vec![],
+        )
+        .await;
+        exec(
+            &state,
+            "ALTER TABLE bot_operation_logs ADD CONSTRAINT bot_operation_logs_surface_check \
+             CHECK (surface IN ('mcp_http', 'mcp_sse', 'mcp_stdio', 'cli', 'rest'))",
+            vec![],
+        )
+        .await;
+
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/flow/workspaces/{workspace_id}/objects",
+                axum::routing::post(create_flow_object),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::middleware::bot_auth::bot_or_user_auth_middleware,
+            ))
+            .with_state(state.clone());
+        let response = {
+            use tower::ServiceExt as _;
+            app.oneshot(
+                axum::http::Request::builder()
+                    .method(axum::http::Method::POST)
+                    .uri(format!("/api/v1/flow/workspaces/{workspace_id}/objects"))
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .header(axum::http::header::AUTHORIZATION, format!("Bearer {raw_token}"))
+                    .header("x-sylvode-mcp-surface", "cli_tools_call")
+                    .header("x-sylvode-mcp-tool", "flow.object_create")
+                    .body(axum::body::Body::from(
+                        json!({
+                            "object_type": "page",
+                            "title": "Unattributable",
+                            "idempotency_key": Uuid::new_v4().to_string(),
+                        })
+                        .to_string(),
+                    ))
+                    .expect("the request builds"),
+            )
+            .await
+            .expect("the router responds")
+        };
+        let body = body_json(response).await;
+        assert_eq!(
+            body["code"], 500,
+            "an operation without its attribution record must not report success: {body}"
+        );
+        assert_eq!(body["message"], "internal server error", "{body}");
+
+        let logged = Count::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS n FROM bot_operation_logs WHERE bot_id = $1",
+            vec![bot_id.into()],
+        ))
+        .one(&state.db)
+        .await
+        .expect("bot_operation_logs query runs")
+        .expect("count returns a row")
+        .n;
+        assert_eq!(logged, 0, "the refused audit row was not written");
+
+        scratch.drop_self().await;
+    }
+
     /// The bot behind an event, recovered the only way it can be — through the **real
     /// middleware**, over HTTP, with a real bot token.
     ///
@@ -8802,22 +8909,16 @@ mod flow_database_tests {
         );
         let request_id = event.source["request"].as_str().expect("source.request is a string");
 
-        // `spawn_operation_log` is `tokio::spawn`ed, so give it a bounded moment to land.
-        let mut joined = None;
-        for _ in 0..40 {
-            joined = JoinedBot::find_by_statement(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT bot_id, tool_name, surface FROM bot_operation_logs WHERE request_id = $1::uuid",
-                vec![request_id.into()],
-            ))
-            .one(&state.db)
-            .await
-            .expect("bot_operation_logs query runs");
-            if joined.is_some() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
+        // The middleware writes the operation log row before it answers (fail-closed audit), so
+        // the row exists by the time the response is in hand; no waiting.
+        let joined = JoinedBot::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT bot_id, tool_name, surface FROM bot_operation_logs WHERE request_id = $1::uuid",
+            vec![request_id.into()],
+        ))
+        .one(&state.db)
+        .await
+        .expect("bot_operation_logs query runs");
 
         // **The whole point.** Not "the request id parses" — the join resolves, and it resolves to
         // *this* bot.
