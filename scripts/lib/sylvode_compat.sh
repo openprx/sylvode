@@ -67,9 +67,15 @@ sylvode_select_config() {
 }
 
 sylvode_env_value() {
-  local env_file="$1" key="$2"
+  local env_file="$1" key="$2" value
   [[ -f "$env_file" ]] || return 0
-  grep -E "^${key}=" "$env_file" | tail -n 1 | cut -d= -f2- || true
+  value=$(grep -E "^${key}=" "$env_file" | tail -n 1 | cut -d= -f2- || true)
+  # docker-compose reads KEY="value" and KEY='value' as value; so must every reader here, or the
+  # quotes end up inside generated files.
+  if [[ ${#value} -ge 2 && ( ( $value == \"*\" ) || ( $value == \'*\' ) ) ]]; then
+    value=${value:1:${#value}-2}
+  fi
+  printf '%s\n' "$value"
 }
 
 sylvode_configured_env_value() {

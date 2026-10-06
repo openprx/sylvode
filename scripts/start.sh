@@ -5,6 +5,33 @@ echo "🚀 Sylvode Quick Start"
 echo "===================="
 echo ""
 
+usage() {
+  cat <<'USAGE'
+Usage: scripts/start.sh [--check-config | --pull | --no-build]
+
+Generates .env, config/sylvode.compose.toml and config/sylvode.compose.mcp.toml when they are
+missing (never rewriting existing ones), then builds and starts the compose stack.
+
+  (no argument)    build the release binaries and start the stack
+  --check-config   generate any missing file, validate all three, and exit without touching
+                   docker
+  --pull           pull the latest base images before building
+  --no-build       use the binaries already in target/release instead of building them
+  -h, --help       print this help
+USAGE
+}
+
+case "${1:-}" in
+  '' | --check-config | --pull | --no-build) ;;
+  -h | --help) usage; exit 0 ;;
+  *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+esac
+if (($# > 1)); then
+  echo "Only one argument is accepted, got: $*" >&2
+  usage >&2
+  exit 2
+fi
+
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 MODE="${1:-}"
@@ -27,7 +54,9 @@ export SYLVODE_APP_CONFIG_PATH="$APP_CONFIG"
 export SYLVODE_MCP_CONFIG_PATH="$MCP_CONFIG"
 
 # Values generated below are never printed. A secret that reaches the terminal reaches the scroll
-# buffer, the CI log and the screenshot; the files are written with mode 600 instead.
+# buffer, the CI log and the screenshot. .env is written with mode 600; the two compose
+# configuration files are 644 so the container user can read the bind mount, which is why the
+# README recommends restricting the config/ directory instead.
 random_hex() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex "$1"
@@ -100,6 +129,15 @@ sylvode_resolve_env_into SYLVODE_FRONTEND_DOCKERFILE "$ENV_FILE" SYLVODE_FRONTEN
 sylvode_resolve_env_into SYLVODE_WEBHOOK_PORT "$ENV_FILE" SYLVODE_WEBHOOK_PORT OPENPR_WEBHOOK_PORT 9090
 sylvode_resolve_env_into SYLVODE_WEBHOOK_IMAGE "$ENV_FILE" SYLVODE_WEBHOOK_IMAGE OPENPR_WEBHOOK_IMAGE ghcr.io/openprx/sylvode-webhook:latest
 sylvode_resolve_env_into SYLVODE_WEBHOOK_CONFIG "$ENV_FILE" SYLVODE_WEBHOOK_CONFIG OPENPR_WEBHOOK_CONFIG ./config/sylvode-webhook.example.toml
+# Ports reach generated TOML and compose port mappings, so anything but a port number is refused
+# here, before any file is written.
+for port_var in SYLVODE_API_PORT SYLVODE_FRONTEND_PORT SYLVODE_MCP_PORT SYLVODE_WEBHOOK_PORT; do
+  port_value="${!port_var}"
+  if ! [[ "$port_value" =~ ^[0-9]{1,5}$ ]] || ((10#$port_value < 1 || 10#$port_value > 65535)); then
+    echo "❌ $port_var must be a port number between 1 and 65535, got '$port_value'." >&2
+    exit 1
+  fi
+done
 export SYLVODE_BIND_HOST SYLVODE_API_PORT SYLVODE_FRONTEND_PORT SYLVODE_MCP_PORT SYLVODE_RUNTIME_BASE
 export SYLVODE_FRONTEND_DOCKERFILE SYLVODE_WEBHOOK_PORT SYLVODE_WEBHOOK_IMAGE SYLVODE_WEBHOOK_CONFIG
 

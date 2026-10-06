@@ -235,7 +235,7 @@ replacement and the earliest removal.
 | `mcp-server <command>` for any command except `serve` | `sylvode <command>` | One line on stderr per process. `mcp-server serve` does not warn on any transport. |
 | Default discovery of `config/openpr.toml` | `config/sylvode.toml` | One `warn` log line per process from `api`, `worker`, `mcp-server` and `sylvode` (on stderr for `mcp-server` and `sylvode`). An explicit `--config config/openpr.toml` does not warn. |
 | `config/openpr.compose.toml` and `config/openpr.compose.mcp.toml` | `config/sylvode.compose.toml` and `config/sylvode.compose.mcp.toml` | One line on stderr per file from `scripts/start.sh` when it selects the legacy file. |
-| Compose variables `OPENPR_BIND_HOST`, `OPENPR_API_PORT`, `OPENPR_FRONTEND_PORT`, `MCP_SERVER_PORT`, `OPENPR_RUNTIME_BASE`, `OPENPR_FRONTEND_DOCKERFILE` and `OPENPR_WEBHOOK_*` | `SYLVODE_BIND_HOST`, `SYLVODE_API_PORT`, `SYLVODE_FRONTEND_PORT`, `SYLVODE_MCP_PORT`, `SYLVODE_RUNTIME_BASE`, `SYLVODE_FRONTEND_DOCKERFILE` and `SYLVODE_WEBHOOK_*` | One line on stderr per variable from `scripts/start.sh`. |
+| Compose variables `OPENPR_BIND_HOST`, `OPENPR_API_PORT`, `OPENPR_FRONTEND_PORT`, `MCP_SERVER_PORT`, `OPENPR_RUNTIME_BASE`, `OPENPR_FRONTEND_DOCKERFILE` and `OPENPR_WEBHOOK_*` | `SYLVODE_BIND_HOST`, `SYLVODE_API_PORT`, `SYLVODE_FRONTEND_PORT`, `SYLVODE_MCP_PORT`, `SYLVODE_RUNTIME_BASE`, `SYLVODE_FRONTEND_DOCKERFILE` and `SYLVODE_WEBHOOK_*` | One line on stderr per variable from `scripts/start.sh`. Only `scripts/start.sh` reads the legacy names: `docker-compose.yml` interpolates `SYLVODE_*` only, so running `docker compose` directly with an old `.env` silently uses the defaults. |
 | `openpr://` MCP resource URIs | The corresponding `sylvode://` URI | `_meta.deprecation = {"replaced_by": "<sylvode:// URI>", "earliest_removal": "2.0"}` in the `resources/read` result, next to `_meta.canonical_uri`. The resource body is unchanged and list endpoints return only `sylvode://` URIs. |
 | `openpr-<target>` release archive aliases | `sylvode-<target>` | Release notes only. |
 | `X-OpenPR-MCP-Surface` and `X-OpenPR-MCP-Tool` request headers | `X-Sylvode-MCP-Surface` and `X-Sylvode-MCP-Tool` | None (protocol headers). The MCP client sends both sets so that a new `mcp-server` attributes correctly against an older API. |
@@ -304,6 +304,16 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- `scripts/start.sh` copied a quoted `.env` value (`SYLVODE_FRONTEND_PORT="3999"`) with its quotes
+  into the generated TOML, which then failed to load; values are unquoted as docker-compose does,
+  and a port that is not a number is refused before any file is written. A legacy variable set
+  only in the environment conflicted with the canonical values `.env.example` preset; those lines
+  are now commented out (the defaults are unchanged). An unknown argument prints a usage text and
+  exits 2 instead of building and starting the stack.
+- The compose comment, the production runbook and `.env.example` presented
+  `ghcr.io/openprx/sylvode-webhook` as published. They now say it exists only from the first
+  Sylvode Webhook release after 0.3.3, how to pin a published image until then, and to pin a
+  version tag rather than `latest`.
 - The release workflow published a release, with all six platforms listed, even when a build or
   package job had failed (the arm64 leg was allowed to fail), and never checked the tag against
   the version. It now fails before building unless the tag is `v<version>` equal to the
