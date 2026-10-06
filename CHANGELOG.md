@@ -291,7 +291,8 @@ replacement and the earliest removal.
   `SYLVODE_MCP_REGRESSION_TOKEN`, `SYLVODE_MCP_REGRESSION_WORKSPACE_ID` and
   `SYLVODE_MCP_REGRESSION_PROJECT_ID` and exits when one is missing. The token remains in the
   public git history and must be treated as compromised: revoke it on the instance that issued
-  it. Its output is now in English.
+  it. Its output is now in English. The production readiness audit now checks the script's
+  default API URL in its new form.
 - **A plugin could allocate unbounded host memory through table growth.** The plugin store
   limited linear memory to `runtime.memory_bytes` but left the table element count at
   wasmtime's default, which is unlimited, so a guest could `table.grow` hundreds of millions of
