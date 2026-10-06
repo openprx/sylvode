@@ -7,10 +7,24 @@ EXPECTED_TOOL_COUNT = int(subprocess.check_output(
     text=True,
 ).strip())
 
-MCP_HTTP = "http://localhost:8090"
-TOKEN = "opr_0a5bc81ea108dad8077decc880abced0d923aa873b9ff774575ec152aecf15d5"
-WS = "e5166fd1-3bb7-46d9-b907-273b1eef3f44"
-PID = "adc627bf-15fe-418b-8948-d3c343f9e4f5"
+def _required(name):
+    """A required setting from the environment; the script holds no credentials or instance ids."""
+    value = os.environ.get(name, "").strip()
+    if not value:
+        sys.exit(
+            f"error: {name} is not set. Set SYLVODE_MCP_REGRESSION_TOKEN (a bot token bound to the "
+            "transport under test), SYLVODE_MCP_REGRESSION_WORKSPACE_ID and "
+            "SYLVODE_MCP_REGRESSION_PROJECT_ID; optionally SYLVODE_MCP_REGRESSION_MCP_URL "
+            "(default http://localhost:8090) and SYLVODE_MCP_REGRESSION_API_URL "
+            "(default http://localhost:8081)."
+        )
+    return value
+
+MCP_HTTP = os.environ.get("SYLVODE_MCP_REGRESSION_MCP_URL", "http://localhost:8090").rstrip("/")
+API_URL = os.environ.get("SYLVODE_MCP_REGRESSION_API_URL", "http://localhost:8081").rstrip("/")
+TOKEN = _required("SYLVODE_MCP_REGRESSION_TOKEN")
+WS = _required("SYLVODE_MCP_REGRESSION_WORKSPACE_ID")
+PID = _required("SYLVODE_MCP_REGRESSION_PROJECT_ID")
 MCP_BIN = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
     "target", "release", "mcp-server",
@@ -25,7 +39,7 @@ MCP_CONFIG = os.path.join(_CONFIG_DIR, "sylvode.toml")
 with open(os.open(MCP_CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as _handle:
     _handle.write(
         '[logging]\nfilter = "error"\nformat = "text"\n\n'
-        '[mcp]\napi_url = "http://localhost:8081"\n'
+        f'[mcp]\napi_url = "{API_URL}"\n'
         f'bot_token = "{TOKEN}"\nworkspace_id = "{WS}"\ntransport = "stdio"\n'
     )
 
@@ -259,12 +273,12 @@ def get_id(r):
 def ok_or_str(r): return is_ok(r) or (isinstance(r, str) and any(w in r.lower() for w in ["added","removed","deleted","success"]))
 
 print("=" * 60)
-print(f"  Sylvode MCP 核心回归测试 ({EXPECTED_TOOL_COUNT}工具注册面 × 3协议)")
+print(f"  Sylvode MCP core regression ({EXPECTED_TOOL_COUNT} registered tools x 3 transports)")
 print(f"  {time.strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 60)
 
 for proto, call in CALLERS.items():
-    print(f"\n{'━'*50}\n  协议: {proto}\n{'━'*50}")
+    print(f"\n{'━'*50}\n  Transport: {proto}\n{'━'*50}")
 
     check(
         proto,
@@ -320,15 +334,15 @@ for proto, call in CALLERS.items():
     check(proto, "context.get_governance", call("context.get_governance", {"project_id": PID}), is_ok)
     check(proto, "context.get_agent_policy", call("context.get_agent_policy", {"project_id": PID}), is_ok)
 
-    # === Work Items 读 ===
-    print("\n📋 Work Items (读: list/get/search/get_by_identifier)")
+    # === Work Items: read ===
+    print("\nWork Items (read: list/get/search/get_by_identifier)")
     check(proto, "work_items.list", call("work_items.list", {"project_id": PID}), is_ok)
     check(proto, "work_items.get", call("work_items.get", {"work_item_id": "40b28aac-97d4-4bb7-adbb-f1db6bb763e8"}), is_ok)
     check(proto, "work_items.search", call("work_items.search", {"query": "test"}), is_ok)
     check(proto, "work_items.get_by_identifier", call("work_items.get_by_identifier", {"identifier": "ADMIN123-1"}), lambda r: isinstance(r, dict))
 
-    # === Work Items 写 ===
-    print(f"\n📋 Work Items (写: create/update/labels/delete)")
+    # === Work Items: write ===
+    print("\nWork Items (write: create/update/labels/delete)")
     wi = call("work_items.create", {"project_id": PID, "title": f"{proto}-final-regtest", "priority": "low", "state": "backlog"})
     wi_ok = check(proto, "work_items.create", wi, has_id)
     wi_id = get_id(wi)
@@ -439,14 +453,14 @@ for proto, call in CALLERS.items():
 # Summary
 total_per_proto = PASS + FAIL  # approximate
 print(f"\n{'='*60}")
-print(f"  最终测试结果")
+print("  Final result")
 print(f"{'='*60}")
-print(f"  ✅ 通过: {PASS}")
-print(f"  ❌ 失败: {FAIL}")
-print(f"  ⏭️  跳过: {SKIP}")
-print(f"  📊 通过率: {PASS*100//(PASS+FAIL) if (PASS+FAIL) else 0}%")
+print(f"  Passed:  {PASS}")
+print(f"  Failed:  {FAIL}")
+print(f"  Skipped: {SKIP}")
+print(f"  Pass rate: {PASS*100//(PASS+FAIL) if (PASS+FAIL) else 0}%")
 if ERRORS:
-    print(f"\n  失败详情:")
+    print("\n  Failures:")
     for e in ERRORS: print(e)
 print(f"{'='*60}")
 sys.exit(1 if FAIL > 0 else 0)
