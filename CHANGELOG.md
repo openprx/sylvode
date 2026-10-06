@@ -17,6 +17,21 @@ OpenPR name keeps working; see **Deprecated**.
 
 ### Breaking and behaviour changes
 
+- **Every existing bot token only works with the REST API after the upgrade.** Migration
+  `0062_flow_forms_bridge.sql` adds a transport surface to each bot token,
+  `ALTER TABLE workspace_bots ADD COLUMN IF NOT EXISTS transport_surface TEXT NOT NULL DEFAULT 'rest';`,
+  so every token that exists when upgrading from 0.2.21 is bound to `rest`. The API accepts a
+  bot token only on the surface it is bound to, and the 0.2.21 MCP server and every later client
+  declare their surface (`X-Sylvode-MCP-Surface` / `X-OpenPR-MCP-Surface`), so **after the
+  upgrade every MCP integration (`http`, `sse`, `stdio`) and every command-line integration using
+  an existing token is refused with 401** (`bot credential is not valid for the presented
+  transport`). Plain REST calls with those tokens keep working. For each integration, create a
+  new bot token bound to the matching surface — `mcp_http`, `mcp_sse`, `mcp_stdio`, `cli`, or
+  `cli_tools_call` for `tools call` (see **`tools call` declares its own transport surface**) —
+  on the Members page or with `POST /api/v1/workspaces/{id}/bots` and `"transport_surface"`, then
+  put the new token in that client's configuration (`mcp.bot_token`, the agent's bearer token or
+  `--bot-token`). Existing tokens are not rebound automatically; see the
+  [upgrade sequence](docs/sylvode-v1.0-compatibility.md#upgrade-sequence).
 - **Outbound webhook `User-Agent` changed** from `OpenPR-Webhook/1.0` to
   `Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)`. A `User-Agent` cannot be sent twice,
   so receivers that match the old value **exactly** or as a **prefix** no longer match and must

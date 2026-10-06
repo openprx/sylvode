@@ -83,7 +83,18 @@ These identifiers keep their OpenPR-era names, with no removal planned:
 
 1. Back up the database and the existing configuration.
 2. Install the v1.0 binaries. Existing `mcp-server` invocations and old configuration continue
-   to work; they now print the deprecation warnings above.
+   to work; they now print the deprecation warnings above. **Bot tokens are the exception.**
+   Migration `0062_flow_forms_bridge.sql` runs
+   `ALTER TABLE workspace_bots ADD COLUMN IF NOT EXISTS transport_surface TEXT NOT NULL DEFAULT 'rest';`,
+   which binds every bot token that exists at upgrade time to the `rest` surface, and the API
+   refuses a token on any other surface with 401. Every MCP integration (`http`, `sse`,
+   `stdio`) and every command-line integration that uses an existing token therefore stops
+   working until it is given a new token: create one per integration with the matching
+   `transport_surface` (`mcp_http`, `mcp_sse`, `mcp_stdio`, `cli`, and `cli_tools_call` for
+   `tools call`) on the Members page or with `POST /api/v1/workspaces/{id}/bots`, and update that
+   client's configuration (`mcp.bot_token`, the agent's bearer token, or `--bot-token`). REST
+   calls with the existing tokens keep working. Plan this step with the upgrade: there is no
+   automatic rebinding.
 3. Replace `mcp-server <command>` with `sylvode <command>` in scripts; the output and exit codes
    are identical.
 4. Copy the legacy configuration to the Sylvode filename, compare it, then remove or archive the
