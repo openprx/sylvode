@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.42 are released
-together as 0.3.42.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.43 are released
+together as 0.3.43.
 
 ## Upgrading from 0.3.3
 
@@ -23,12 +23,15 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
    `command` and `args` separately. The plain one-string form is still accepted. (0.3.13, 0.3.34)
 3. An enabled tunnel with `require_inbound_sig = true` and no `hmac_secret`:
    `tunnel.require_inbound_sig = true requires a non-empty tunnel.hmac_secret: ...`. (0.3.16)
-4. A blank `security.webhook_secrets` entry: `security.webhook_secrets[N] is blank; ...`. (0.3.18)
-5. A present but blank `tunnel.hmac_secret`: `tunnel.hmac_secret is blank; ...`. (0.3.18)
+4. A blank `security.webhook_secrets` entry while `allow_unsigned = false`:
+   `security.webhook_secrets[N] is blank; ...`. (0.3.18, 0.3.43)
+5. A blank `tunnel.hmac_secret` while the tunnel is enabled: `tunnel.hmac_secret is blank; ...`.
+   (0.3.18, 0.3.43)
 6. An example placeholder secret (`your-secret-here`, `shared-hmac-secret`,
    `replace_with_webhook_secret`, the placeholders of the current example, or any value containing
    `replace_with`, `replace-with`, `your_`, `your-`, `changeme` or `example`, ignoring case and
-   surrounding whitespace) (0.3.42): `security.webhook_secrets[N] is still the example placeholder; ...` or
+   surrounding whitespace), in a secret that is in use (`webhook_secrets` unless `allow_unsigned`,
+   `hmac_secret` while the tunnel is enabled; an unused one is a warning) (0.3.42, 0.3.43): `security.webhook_secrets[N] is still the example placeholder; ...` or
    `tunnel.hmac_secret is still an example placeholder; ...`. (0.3.20)
 7. `allow_unsigned = true` with a `listen` address other than loopback, as the old example had:
    `security.allow_unsigned = true with server.listen = "0.0.0.0:9090", which is not a loopback
@@ -69,6 +72,19 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.43
+
+### Fixed
+
+- **Blank and placeholder secrets refuse start-up only when they are in use.** The examples up to
+  0.3.17 shipped an uncommented `hmac_secret = "shared-hmac-secret"` beside `[tunnel] enabled =
+  false`, and since 0.3.20 such a configuration refused to start (in a container with
+  `restart: unless-stopped`, a restart loop) although the tunnel, and so the secret, was not used.
+  `tunnel.hmac_secret` is now checked only while the tunnel is enabled (`[features].tunnel_enabled`
+  and `[tunnel].enabled`), and `security.webhook_secrets` only while signatures are verified
+  (`allow_unsigned = false`). A blank or placeholder secret that is not in use is logged as a
+  warning at start-up.
 
 ## 0.3.42
 
