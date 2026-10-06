@@ -119,10 +119,7 @@ fn operation_surface(attribution: McpAttribution<'_>) -> EventSurface {
 }
 
 fn registered_surface(value: &str) -> Result<EventSurface, ApiError> {
-    if value == "rest" {
-        return Ok(EventSurface::Rest);
-    }
-    EventSurface::from_client_transport_label(value)
+    EventSurface::from_bot_credential_label(value)
         .ok_or_else(|| ApiError::Unauthorized("bot credential has an invalid registered transport".to_string()))
 }
 
@@ -161,47 +158,75 @@ fn operation_tool_name(attribution: McpAttribution<'_>) -> Option<String> {
     }
 }
 
-fn spawn_operation_log(
-    db: sea_orm::DatabaseConnection,
+/// Writes the attribution row of one bot-authenticated operation to `bot_operation_logs`.
+///
+/// Awaited by the middleware rather than spawned: the row is the record that attributes the call
+/// to its bot, surface and tool, so the middleware has to know whether it exists before it
+/// reports the outcome (see [`fail_closed_on_audit_failure`]).
+async fn record_operation<C: ConnectionTrait>(
+    db: &C,
     context: BotOperationContext,
     business_code: i32,
     error_message: Option<&'static str>,
     duration_ms: i64,
-) {
-    tokio::spawn(async move {
-        let outcome = if business_code == 0 { "ok" } else { "error" };
-        let result = db
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r"INSERT INTO bot_operation_logs
-                   (id, workspace_id, bot_id, tool_name, surface, method, path,
-                    business_code, outcome, error_message, duration_ms, request_id, created_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
-                vec![
-                    Uuid::new_v4().into(),
-                    context.workspace_id.into(),
-                    context.bot_id.into(),
-                    context.tool_name.into(),
-                    context.surface.as_wire().into(),
-                    context.method.into(),
-                    context.path.into(),
-                    business_code.into(),
-                    outcome.into(),
-                    error_message.map(str::to_string).into(),
-                    duration_ms.into(),
-                    context.request_id.into(),
-                    Utc::now().into(),
-                ],
-            ))
-            .await;
-        if let Err(error) = result {
-            tracing::warn!(
-                request_id = %context.request_id,
-                error = %error,
-                "bot operation log write failed"
-            );
-        }
-    });
+) -> Result<(), sea_orm::DbErr> {
+    let outcome = if business_code == 0 { "ok" } else { "error" };
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"INSERT INTO bot_operation_logs
+           (id, workspace_id, bot_id, tool_name, surface, method, path,
+            business_code, outcome, error_message, duration_ms, request_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+        vec![
+            Uuid::new_v4().into(),
+            context.workspace_id.into(),
+            context.bot_id.into(),
+            context.tool_name.into(),
+            context.surface.as_wire().into(),
+            context.method.into(),
+            context.path.into(),
+            business_code.into(),
+            outcome.into(),
+            error_message.map(str::to_string).into(),
+            duration_ms.into(),
+            context.request_id.into(),
+            Utc::now().into(),
+        ],
+    ))
+    .await
+    .map(|_| ())
+}
+
+/// Fail-closed outcome of a bot operation whose attribution row could not be written.
+///
+/// A bot operation never reports success without its `bot_operation_logs` row: when the write
+/// fails, a successful response is replaced by the internal-error response and the failure is
+/// logged at ERROR with the database's reason. A response that already reports a failure is
+/// returned unchanged (it reports no success), and the failure is logged the same way. The
+/// operation itself has already run by then, so a caller that sees the internal error retries
+/// with its idempotency key where the command takes one.
+fn fail_closed_on_audit_failure(
+    response: Response,
+    business_code: i32,
+    request_id: Uuid,
+    surface: EventSurface,
+    audit: Result<(), sea_orm::DbErr>,
+) -> Result<Response, ApiError> {
+    let Err(error) = audit else {
+        return Ok(response);
+    };
+    tracing::error!(
+        request_id = %request_id,
+        surface = surface.as_wire(),
+        business_code,
+        error = %error,
+        "bot operation log write failed; the operation is not reported as successful without its attribution record"
+    );
+    if business_code == 0 {
+        Err(ApiError::Internal)
+    } else {
+        Ok(response)
+    }
 }
 
 /// Auth context injected when a bot token is used.
@@ -494,13 +519,20 @@ pub async fn bot_or_user_auth_middleware(
         };
         if let Err(error) = ensure_bot_permission(&context, required_bot_permission(req.method())) {
             let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
-            spawn_operation_log(
-                state.db.clone(),
-                authenticated_operation,
-                403,
-                Some("forbidden"),
-                duration_ms,
-            );
+            let request_id = authenticated_operation.request_id;
+            let surface = authenticated_operation.surface;
+            if let Err(audit_error) =
+                record_operation(&state.db, authenticated_operation, 403, Some("forbidden"), duration_ms).await
+            {
+                // The request is refused either way; the refusal stays the answer.
+                tracing::error!(
+                    request_id = %request_id,
+                    surface = surface.as_wire(),
+                    business_code = 403,
+                    error = %audit_error,
+                    "bot operation log write failed for a refused bot request"
+                );
+            }
             return Err(error);
         }
         operation_context = Some(authenticated_operation);
@@ -541,7 +573,10 @@ pub async fn bot_or_user_auth_middleware(
             |value| (value.business_code, value.error_summary),
         );
         let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
-        spawn_operation_log(state.db.clone(), context, business_code, error_message, duration_ms);
+        let request_id = context.request_id;
+        let surface = context.surface;
+        let audit = record_operation(&state.db, context, business_code, error_message, duration_ms).await;
+        return fail_closed_on_audit_failure(response, business_code, request_id, surface, audit);
     }
     Ok(response)
 }
@@ -853,5 +888,279 @@ mod tests {
         ] {
             assert_conflict(mcp_attribution(&headers_of(pairs)), case);
         }
+    }
+}
+
+/// The fail-closed rule for a bot operation whose attribution row could not be written.
+#[cfg(test)]
+mod audit_failure_tests {
+    use super::{EventSurface, fail_closed_on_audit_failure};
+    use crate::error::ApiError;
+    use axum::{http::StatusCode, response::Response};
+    use uuid::Uuid;
+
+    fn teapot() -> Response {
+        let mut response = Response::new(axum::body::Body::empty());
+        *response.status_mut() = StatusCode::IM_A_TEAPOT;
+        response
+    }
+
+    #[test]
+    fn a_written_audit_row_leaves_the_response_untouched() {
+        let response = fail_closed_on_audit_failure(teapot(), 0, Uuid::new_v4(), EventSurface::Cli, Ok(()))
+            .expect("an audited operation keeps its response");
+        assert_eq!(response.status(), StatusCode::IM_A_TEAPOT);
+    }
+
+    #[test]
+    fn a_successful_operation_without_its_audit_row_reports_an_internal_error() {
+        let outcome = fail_closed_on_audit_failure(
+            teapot(),
+            0,
+            Uuid::new_v4(),
+            EventSurface::CliToolsCall,
+            Err(sea_orm::DbErr::Custom("check constraint violated".to_string())),
+        );
+        assert!(
+            matches!(outcome, Err(ApiError::Internal)),
+            "success must not be reported when the attribution record is missing"
+        );
+    }
+
+    #[test]
+    fn a_failed_operation_without_its_audit_row_keeps_its_own_failure() {
+        let response = fail_closed_on_audit_failure(
+            teapot(),
+            404,
+            Uuid::new_v4(),
+            EventSurface::McpHttp,
+            Err(sea_orm::DbErr::Custom("connection reset".to_string())),
+        )
+        .expect("a response that already reports failure is returned as it is");
+        assert_eq!(response.status(), StatusCode::IM_A_TEAPOT);
+    }
+}
+
+/// `bot_operation_logs` and `workspace_bots` against a real `PostgreSQL` server, opt-in via
+/// `OPENPR_TEST_DATABASE_URL` like the other scratch-database tests.
+///
+/// The API accepts a bot surface from one list, [`EventSurface::BOT_CREDENTIAL_SURFACES`], while
+/// the tables restrict it with CHECK constraints written in SQL. The two drifted once: a
+/// `cli_tools_call` credential could be issued and used, and every one of its audit rows was
+/// rejected by `bot_operation_logs_surface_check`. This walks the list through the real migrations
+/// and the real write path so they cannot drift again.
+#[cfg(test)]
+#[allow(clippy::print_stderr)]
+mod database_tests {
+    use super::{BotOperationContext, EventSurface, record_operation};
+    use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQueryResult, Statement};
+    use uuid::Uuid;
+
+    const TEST_DATABASE_URL_ENV: &str = "OPENPR_TEST_DATABASE_URL";
+
+    struct Scratch {
+        db: DatabaseConnection,
+        name: String,
+        admin_url: String,
+    }
+
+    impl Scratch {
+        async fn drop_self(self) {
+            let Self { db, name, admin_url } = self;
+            drop(db);
+            let Ok(admin) = Database::connect(&admin_url).await else {
+                return;
+            };
+            let _ = admin
+                .execute_unprepared(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
+                .await;
+        }
+    }
+
+    async fn scratch(label: &str) -> Option<Scratch> {
+        let admin_url = std::env::var(TEST_DATABASE_URL_ENV).ok()?;
+        let admin = Database::connect(&admin_url)
+            .await
+            .unwrap_or_else(|err| panic!("{TEST_DATABASE_URL_ENV} is set but unusable: {err}"));
+        let name = format!("sylvode_bot_auth_{label}");
+        let quoted = format!("\"{name}\"");
+        admin
+            .execute_unprepared(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
+            .await
+            .unwrap_or_else(|err| panic!("could not reset scratch database {name}: {err}"));
+        admin
+            .execute_unprepared(&format!("CREATE DATABASE {quoted}"))
+            .await
+            .unwrap_or_else(|err| panic!("could not create scratch database {name}: {err}"));
+        let (prefix, _) = admin_url.rsplit_once('/')?;
+        let db = Database::connect(&format!("{prefix}/{name}"))
+            .await
+            .unwrap_or_else(|err| panic!("could not connect to scratch database {name}: {err}"));
+
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../migrations");
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+            .expect("migrations directory is readable")
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "sql"))
+            .collect();
+        files.sort();
+        assert!(!files.is_empty(), "no migration file was found in {dir}");
+        for path in files {
+            let sql = std::fs::read_to_string(&path).expect("a migration file is readable");
+            db.execute_unprepared(&sql)
+                .await
+                .unwrap_or_else(|err| panic!("applying {} failed: {err}", path.display()));
+        }
+        Some(Scratch { db, name, admin_url })
+    }
+
+    macro_rules! scratch_or_skip {
+        ($label:expr) => {
+            match scratch($label).await {
+                Some(scratch) => scratch,
+                None => {
+                    eprintln!("skipped: {TEST_DATABASE_URL_ENV} is not set");
+                    return;
+                }
+            }
+        };
+    }
+
+    async fn seed_workspace(db: &DatabaseConnection) -> Uuid {
+        let workspace_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active) \
+             VALUES ($1, $2, '!', 'test', 'user', true)",
+            vec![owner_id.into(), format!("{owner_id}@bot-auth.test").into()],
+        ))
+        .await
+        .expect("user insert succeeds");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO workspaces (id, slug, name, created_by) VALUES ($1, $2, 'bot auth test', $3)",
+            vec![
+                workspace_id.into(),
+                format!("ws-{workspace_id}").into(),
+                owner_id.into(),
+            ],
+        ))
+        .await
+        .expect("workspace insert succeeds");
+        workspace_id
+    }
+
+    async fn seed_bot(
+        db: &DatabaseConnection,
+        workspace_id: Uuid,
+        surface: EventSurface,
+    ) -> Result<Uuid, sea_orm::DbErr> {
+        let bot_id = Uuid::new_v4();
+        let token_hash = format!("{:0>64}", bot_id.simple());
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix, transport_surface) \
+             VALUES ($1, $2, $3, $4, 'opr_test', $5)",
+            vec![
+                bot_id.into(),
+                workspace_id.into(),
+                format!("bot-{}", surface.as_wire()).into(),
+                token_hash.into(),
+                surface.as_wire().into(),
+            ],
+        ))
+        .await
+        .map(|_| bot_id)
+    }
+
+    fn operation(workspace_id: Uuid, bot_id: Uuid, surface: EventSurface) -> BotOperationContext {
+        BotOperationContext {
+            bot_id,
+            workspace_id,
+            tool_name: (surface != EventSurface::Rest).then(|| "labels.list".to_string()),
+            surface,
+            method: "GET".to_string(),
+            path: format!("/api/v1/workspaces/{workspace_id}/labels"),
+            request_id: Uuid::new_v4(),
+        }
+    }
+
+    #[derive(FromQueryResult)]
+    struct SurfaceRow {
+        surface: String,
+    }
+
+    #[tokio::test]
+    async fn every_surface_the_api_accepts_can_be_registered_and_audited() {
+        let scratch = scratch_or_skip!("every_accepted_surface");
+        let workspace_id = seed_workspace(&scratch.db).await;
+
+        for surface in EventSurface::BOT_CREDENTIAL_SURFACES {
+            let bot_id = seed_bot(&scratch.db, workspace_id, surface)
+                .await
+                .unwrap_or_else(|err| panic!("a `{}` credential must be storable: {err}", surface.as_wire()));
+            record_operation(&scratch.db, operation(workspace_id, bot_id, surface), 0, None, 3)
+                .await
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "the audit row of a `{}` operation must be writable: {err}",
+                        surface.as_wire()
+                    )
+                });
+        }
+
+        let mut recorded: Vec<String> = SurfaceRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT surface FROM bot_operation_logs WHERE workspace_id = $1",
+            vec![workspace_id.into()],
+        ))
+        .all(&scratch.db)
+        .await
+        .expect("operation rows are readable")
+        .into_iter()
+        .map(|row| row.surface)
+        .collect();
+        recorded.sort();
+        let mut expected: Vec<String> = EventSurface::BOT_CREDENTIAL_SURFACES
+            .iter()
+            .map(|surface| surface.as_wire().to_string())
+            .collect();
+        expected.sort();
+        assert_eq!(recorded, expected, "exactly one audit row per accepted surface");
+
+        scratch.drop_self().await;
+    }
+
+    /// The other direction: the constraints must not admit surfaces no bot credential can carry,
+    /// which would let a row claim to come from a browser session or from the server itself.
+    #[tokio::test]
+    async fn surfaces_no_bot_can_carry_are_refused_by_both_tables() {
+        let scratch = scratch_or_skip!("refused_surfaces");
+        let workspace_id = seed_workspace(&scratch.db).await;
+
+        for surface in [EventSurface::Web, EventSurface::Worker, EventSurface::System] {
+            assert!(
+                seed_bot(&scratch.db, workspace_id, surface).await.is_err(),
+                "`{}` must not be storable as a bot credential surface",
+                surface.as_wire()
+            );
+            assert!(
+                record_operation(
+                    &scratch.db,
+                    operation(workspace_id, Uuid::new_v4(), surface),
+                    0,
+                    None,
+                    3
+                )
+                .await
+                .is_err(),
+                "`{}` must not be recordable as a bot operation surface",
+                surface.as_wire()
+            );
+        }
+
+        scratch.drop_self().await;
     }
 }

@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::middleware::bot_auth::{BotAuthContext, BotPermission, bot_permissions_allow, require_workspace_access};
-use crate::{error::ApiError, response::ApiResponse};
+use crate::{error::ApiError, flow::event_origin::EventSurface, response::ApiResponse};
 
 // ============================================================================
 // Request / Response types
@@ -129,13 +129,22 @@ fn normalize_bot_permissions(permissions: Vec<String>) -> Result<Vec<String>, Ap
 fn normalize_transport_surface(value: Option<String>) -> Result<String, ApiError> {
     let value = value.unwrap_or_else(|| "rest".to_string());
     let value = value.trim();
-    if ["rest", "mcp_http", "mcp_sse", "mcp_stdio", "cli", "cli_tools_call"].contains(&value) {
-        Ok(value.to_string())
-    } else {
-        Err(ApiError::BadRequest(
-            "transport_surface must be rest, mcp_http, mcp_sse, mcp_stdio, cli, or cli_tools_call".to_string(),
-        ))
+    EventSurface::from_bot_credential_label(value)
+        .map(|surface| surface.as_wire().to_string())
+        .ok_or_else(|| ApiError::BadRequest(format!("transport_surface must be {}", accepted_transport_surfaces())))
+}
+
+/// `rest, mcp_http, ..., or cli_tools_call`, spelled from the one accepted-surface list.
+fn accepted_transport_surfaces() -> String {
+    let mut text = String::new();
+    let last = EventSurface::BOT_CREDENTIAL_SURFACES.len().saturating_sub(1);
+    for (index, surface) in EventSurface::BOT_CREDENTIAL_SURFACES.iter().enumerate() {
+        if index > 0 {
+            text.push_str(if index == last { ", or " } else { ", " });
+        }
+        text.push_str(surface.as_wire());
     }
+    text
 }
 
 // ============================================================================
@@ -371,7 +380,28 @@ pub async fn revoke_bot(
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_bot_permissions, workspace_role_from_permissions};
+    use super::{normalize_bot_permissions, normalize_transport_surface, workspace_role_from_permissions};
+    use crate::{error::ApiError, flow::event_origin::EventSurface};
+
+    #[test]
+    fn transport_surface_accepts_exactly_the_bot_credential_surfaces() {
+        assert_eq!(normalize_transport_surface(None).expect("default"), "rest");
+        for surface in EventSurface::BOT_CREDENTIAL_SURFACES {
+            assert_eq!(
+                normalize_transport_surface(Some(format!(" {} ", surface.as_wire()))).expect("accepted surface"),
+                surface.as_wire()
+            );
+        }
+        for refused in ["web", "worker", "system", "MCP_HTTP", ""] {
+            match normalize_transport_surface(Some(refused.to_string())) {
+                Err(ApiError::BadRequest(message)) => assert_eq!(
+                    message,
+                    "transport_surface must be rest, mcp_http, mcp_sse, mcp_stdio, cli, or cli_tools_call"
+                ),
+                other => panic!("`{refused}` must be refused, got {other:?}"),
+            }
+        }
+    }
 
     #[test]
     fn permissions_are_canonicalized_and_deduplicated() {

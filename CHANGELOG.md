@@ -121,6 +121,15 @@ OpenPR name keeps working; see **Deprecated**.
   with `tools call` is now refused with 401, and a `cli_tools_call` token does not run the native
   commands. Issue a separate `cli_tools_call` token (Members page, "CLI tools call") for
   `tools call`. Operation logs and Flow event origins record `cli_tools_call` for these calls.
+- **A bot operation whose audit row cannot be written no longer reports success.** Every request
+  made with a bot token writes a `bot_operation_logs` row, the record that attributes the call to
+  its bot, surface and tool. The row was written in the background and a failed write only logged
+  a warning, so the operation reported success with no record of who made it. The API now writes
+  the row before it answers: when the write fails, a successful operation is answered with the
+  internal-error response (`code` 500, `internal server error`) and the API logs the failure at
+  `ERROR` with the database's reason; an operation that already failed keeps its own error. The
+  operation itself has run by then, so retry it with the same idempotency key where the command
+  takes one. Each bot request now also waits for that one insert before it is answered.
 - **`work-items create` starts in the project workflow's initial state.** Under `mcp-server` and
   `sylvode` the command always sent `state=backlog`, so a project whose workflow has no `backlog`
   state refused the create (`state must be one of: ...`) and a project whose workflow starts at
@@ -307,6 +316,12 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- `tools call` with a `cli_tools_call` token left no operation log: `bot_operation_logs` only
+  accepted the surfaces `mcp_http`, `mcp_sse`, `mcp_stdio`, `cli` and `rest`, so every audit row of
+  such a call was rejected by the table and only a warning was logged. Migration
+  `0070_bot_operation_logs_surface_check.sql` adds `cli_tools_call` (expand-only; existing rows are
+  untouched), the API takes its accepted bot surfaces from one list, and a test writes a token and
+  an operation log row for every surface in that list against a real database.
 - Documentation facts: the README's WASM plugin section had lost its heading and introduction and
   now states the current limits; it gave 2155 translation keys (2192) and 245 `.route()` calls
   (246), still mentioned the removed outbox, and described `playwright.config.ts` as targeting an
