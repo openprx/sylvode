@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.50 are released
-together as 0.3.50.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.51 are released
+together as 0.3.51.
 
 ## Upgrading from 0.3.3
 
@@ -51,7 +51,9 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
 
 ### Behaviour changes
 
-- The tunnel connects; it never could before (0.3.32). An enabled tunnel starts running tasks.
+- The tunnel client can complete a WebSocket handshake; it never could before (0.3.32). It is
+  tested only against an in-process test peer: no Sylvode server endpoint exists yet, so an enabled
+  tunnel still connects to nothing.
 - The one-string `command = "openclaw message send"` runs, with a deprecation warning; with 0.3.3
   every dispatch to it failed to spawn (0.3.34).
 - `{message}` in `custom` `args` is substituted (0.3.12); default templates are rendered (0.3.10).
@@ -59,7 +61,9 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   `cli` run (0.3.26).
 - Webhook-triggered `cli` runs share the `cli_max_concurrency` limit with the tunnel (0.3.22).
 - Signed deliveries are refused when replayed (`409`) or stale (`401`, `max_delivery_age_secs`,
-  default 300) (0.3.23); signature headers that disagree are refused (0.3.9).
+  default 300) (0.3.23): a worker task has no timestamp, so only its replay within about 10
+  minutes is refused, and the memory is cleared on restart. Signature headers that disagree are
+  refused (0.3.9).
 - The `/webhook` answer's `result` no longer contains command output or remote error bodies
   (0.3.29).
 - A worker task's free-form `payload` no longer chooses the agent type, nor the callback's issue
@@ -72,6 +76,24 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.51
+
+### Documentation
+
+- **The tunnel's status is stated plainly.** The README, this changelog and `config.example.toml`
+  now say that the tunnel client is implemented and tested only against an in-process test peer,
+  that no Sylvode server endpoint exists yet (the Sylvode API has no `/api/v1/agent-tunnel` route,
+  and the envelope protocol is this repository's draft), and that enabling the tunnel today
+  connects to nothing. Earlier entries said "the tunnel connects" without that qualifier.
+- **Replay protection is described as it is.** It covers signed HTTP deliveries through their
+  top-level `id` and `timestamp`; a worker AI task has no timestamp, so its replay is refused only
+  while its key is remembered (about 10 minutes by default); the memory is cleared on restart. The
+  claim that Sylvode never sends a body without these fields is removed: flow event deliveries
+  have neither.
+- `config.example.toml` lists `max_delivery_age_secs`.
+- The one-string command form needs its program on the service's `PATH` at start-up, unlike
+  `command` and `args` written separately; the README says so.
 
 ## 0.3.50
 
@@ -339,8 +361,9 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
 
 ### Fixed
 
-- **The tunnel connects.** The WebSocket handshake request was built by hand without the
-  handshake headers, so tungstenite refused it before sending anything (`tunnel connect failed:
+- **The tunnel client completes the WebSocket handshake.** (Tested only against an in-process
+  test peer; no Sylvode server endpoint exists yet, see 0.3.51.) The request was built by hand
+  without the handshake headers, so tungstenite refused it before sending anything (`tunnel connect failed:
   WebSocket protocol error: Missing, duplicated or incorrect header sec-websocket-key`) and the
   tunnel retried forever without ever connecting, in every version that had it. The request is now
   built from the URL by tungstenite, with the `Authorization: Bearer` header added.

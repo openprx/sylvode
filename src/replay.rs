@@ -10,7 +10,8 @@
 //!   and `attempts` (a retry of the task has a new attempt number). A key seen before, within the
 //!   remembered window, is refused.
 //!
-//! A body without these fields (not sent by Sylvode) passes both checks.
+//! A body without these fields passes both checks. A worker AI task has no timestamp, so it is only
+//! checked for uniqueness while its key is remembered; the memory is cleared on restart.
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
