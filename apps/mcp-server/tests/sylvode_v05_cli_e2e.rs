@@ -340,37 +340,36 @@ async fn malformed_patch_file_exits_two_before_the_network() -> TestResult {
     Ok(())
 }
 
-/// An API nothing answers on: the contract fixes exit 9 and `recoverable: true` ("网络失败 exit
-/// 9"; exit 9 is "draining/network/temporary service failure"). It fixes no stable code or
-/// `details.reason` for the case, and forbids guessing `drain` or `contention`, so the envelope
-/// must not carry a reason, and the message has to say it was a network failure and why — before
-/// this, it read "Request failed: error sending request for url (...)" under `server_draining`,
-/// with nothing that told a reader the API was simply unreachable.
-#[tokio::test]
-async fn network_failure_exits_nine_without_guessing_a_drain_reason() -> TestResult {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let closed = format!("http://{}", listener.local_addr()?);
-    drop(listener);
-    let config = config(&closed)?;
+/// Runs `sylvode` like [`run`], with a bound long enough for the CLI's own 30 s request timeout.
+async fn run_unbounded_by_request_timeout(config: &ConfigFile, args: &[&str]) -> Result<Output, Box<dyn Error>> {
+    let cwd = config.path().parent().ok_or("config path has no parent")?;
+    Ok(tokio::time::timeout(
+        Duration::from_secs(90),
+        Command::new(env!("CARGO_BIN_EXE_sylvode"))
+            .arg("--config")
+            .arg(config.path())
+            .args(args)
+            .current_dir(cwd)
+            .output(),
+    )
+    .await??)
+}
 
-    let output = run(&config, &["objects", "get", OBJECT]).await?;
-    assert_eq!(
-        output.status.code(),
-        Some(9),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+/// `error-mapping-v1.md` "CLI 本地错误码 `network_error`": when the API gives no response at all
+/// the Flow commands report the CLI-local code `network_error`, exit 9, `recoverable: true`,
+/// `details: {"reason": "unreachable"}`, with a message naming the API URL and the cause, in
+/// JSON on stdout and as `Error [network_error]: ...` on stderr in table format. Before, this was
+/// `server_draining` with empty `details`, which violated `server_draining`'s required reason.
+fn assert_network_error(output: &Output, api_url: &str, cause: &str) -> TestResult {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(9), "{stderr}");
     let envelope: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(json_at(&envelope, "/schema_version")?, "sylvode.cli.v1");
     assert_eq!(json_at(&envelope, "/ok")?, false);
     assert_eq!(json_at(&envelope, "/command")?, "objects.get");
+    assert_eq!(json_at(&envelope, "/error/code")?, "network_error");
     assert_eq!(json_at(&envelope, "/error/recoverable")?, true);
-    assert_eq!(json_at(&envelope, "/error/code")?, "server_draining");
-    assert_eq!(
-        json_at(&envelope, "/error/details")?,
-        &json!({}),
-        "a network failure is neither drain nor contention and must not be reported as either"
-    );
+    assert_eq!(json_at(&envelope, "/error/details")?, &json!({"reason": "unreachable"}));
     let message = json_at(&envelope, "/error/message")?
         .as_str()
         .ok_or("error.message is not a string")?;
@@ -378,14 +377,62 @@ async fn network_failure_exits_nine_without_guessing_a_drain_reason() -> TestRes
         message.starts_with("network failure: no response from the API at "),
         "{message}"
     );
-    assert!(message.contains(&closed), "{message}");
-    assert!(message.to_ascii_lowercase().contains("connection refused"), "{message}");
-    assert!(message.contains("not a server drain"), "{message}");
+    assert!(message.contains(api_url), "{message}");
+    assert!(message.to_ascii_lowercase().contains(cause), "{message}");
+    Ok(())
+}
 
-    let table = run(&config, &["--format", "table", "objects", "get", OBJECT]).await?;
+async fn assert_network_error_table(config: &ConfigFile) -> TestResult {
+    let table = run_unbounded_by_request_timeout(config, &["--format", "table", "objects", "get", OBJECT]).await?;
     assert_eq!(table.status.code(), Some(9));
     assert!(table.stdout.is_empty(), "a failure wrote to stdout in table format");
     let stderr = String::from_utf8(table.stderr)?;
-    assert!(stderr.contains("network failure: no response from the API"), "{stderr}");
+    assert!(
+        stderr.contains("Error [network_error]: network failure: no response from the API"),
+        "{stderr}"
+    );
     Ok(())
+}
+
+#[tokio::test]
+async fn a_refused_connection_is_a_network_error() -> TestResult {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let closed = format!("http://{}", listener.local_addr()?);
+    drop(listener);
+    let config = config(&closed)?;
+
+    let output = run(&config, &["objects", "get", OBJECT]).await?;
+    assert_network_error(&output, &closed, "connection refused")?;
+    assert_network_error_table(&config).await
+}
+
+/// `.invalid` never resolves (RFC 6761), so this fails in name resolution without any network.
+#[tokio::test]
+async fn a_name_that_does_not_resolve_is_a_network_error() -> TestResult {
+    let unresolvable = "http://sylvode-api.invalid:8080";
+    let config = config(unresolvable)?;
+
+    let output = run(&config, &["objects", "get", OBJECT]).await?;
+    assert_network_error(&output, unresolvable, "dns error")?;
+    assert_network_error_table(&config).await
+}
+
+/// An API that accepts the connection and never answers: the CLI's request timeout (30 s)
+/// expires.
+#[tokio::test]
+async fn a_request_timeout_is_a_network_error() -> TestResult {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let silent = format!("http://{}", listener.local_addr()?);
+    let held = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let accepted = Arc::clone(&held);
+    let acceptor = tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            accepted.lock().await.push(socket);
+        }
+    });
+    let config = config(&silent)?;
+
+    let output = run_unbounded_by_request_timeout(&config, &["objects", "get", OBJECT]).await?;
+    acceptor.abort();
+    assert_network_error(&output, &silent, "timed out")
 }

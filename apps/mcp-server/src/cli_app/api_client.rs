@@ -70,6 +70,7 @@ fn envelope_outcome(payload: &Value, path: &str) -> Result<(), StructuredApiErro
                 message,
                 error_code,
                 details,
+                local_input: false,
             })
         }
         None => Err(StructuredApiError::transport(format!(
@@ -82,10 +83,8 @@ fn envelope_outcome(payload: &Value, path: &str) -> Result<(), StructuredApiErro
 ///
 /// `reqwest`'s own `Display` stops at "error sending request for url (...)", which hides the one
 /// thing an operator needs: *why* nothing answered. The source chain carries it ("Connection
-/// refused", "dns error", "operation timed out"), so it is spelled out here. The message also says
-/// plainly that this is a network failure: the stable code it travels under is `server_draining`
-/// (see `CliError::network` for why), and a human reading `--format table` must not take it for a
-/// drain or for lock contention.
+/// refused", "dns error", "operation timed out"), so it is spelled out here. It travels under the
+/// CLI-local code `network_error` (see `CliError::network`).
 fn unreachable_message(base_url: &str, error: &reqwest::Error) -> String {
     let mut causes: Vec<String> = Vec::new();
     let mut source = std::error::Error::source(error);
@@ -131,15 +130,32 @@ pub struct StructuredApiError {
     pub message: String,
     pub error_code: Option<String>,
     pub details: Option<Value>,
+    /// The request was never sent because of a local problem — no bot token configured, a
+    /// package file that cannot be opened — which `cli_app::error::CliError` reports as a
+    /// usage error (exit 2, "未发请求") rather than as a network failure.
+    pub local_input: bool,
 }
 
 impl StructuredApiError {
+    /// No response from the API (see `CliError::network`).
     const fn transport(message: String) -> Self {
         Self {
             code: None,
             message,
             error_code: None,
             details: None,
+            local_input: false,
+        }
+    }
+
+    /// A local problem that stopped the request before anything was sent.
+    const fn local(message: String) -> Self {
+        Self {
+            code: None,
+            message,
+            error_code: None,
+            details: None,
+            local_input: true,
         }
     }
 }
@@ -158,7 +174,7 @@ impl OpenPrClient {
             .operation_headers(request)
             .header(
                 "Authorization",
-                self.authorization().map_err(StructuredApiError::transport)?,
+                self.authorization().map_err(StructuredApiError::local)?,
             )
             .send()
             .await
@@ -210,14 +226,12 @@ impl OpenPrClient {
         idempotency_key: &str,
     ) -> Result<T, StructuredApiError> {
         let file = tokio::fs::File::open(package_path).await.map_err(|error| {
-            StructuredApiError::transport(format!("Failed to open {}: {error}", package_path.display()))
+            StructuredApiError::local(format!("Failed to open {}: {error}", package_path.display()))
         })?;
         let length = file
             .metadata()
             .await
-            .map_err(|error| {
-                StructuredApiError::transport(format!("Failed to stat {}: {error}", package_path.display()))
-            })?
+            .map_err(|error| StructuredApiError::local(format!("Failed to stat {}: {error}", package_path.display())))?
             .len();
         let stream = tokio_util::io::ReaderStream::new(file);
         let body = reqwest::Body::wrap_stream(stream);
@@ -228,7 +242,7 @@ impl OpenPrClient {
         let part = reqwest::multipart::Part::stream_with_length(body, length)
             .file_name(file_name.to_string())
             .mime_str("application/vnd.sylvode.flow-package+zip;version=1")
-            .map_err(|error| StructuredApiError::transport(format!("Failed to build package upload: {error}")))?;
+            .map_err(|error| StructuredApiError::local(format!("Failed to build package upload: {error}")))?;
         let form = reqwest::multipart::Form::new().part("package", part);
         let url = format!("{}{path}", self.base_url);
         self.send_structured(
