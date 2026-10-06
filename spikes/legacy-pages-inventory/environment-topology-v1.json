@@ -1,6 +1,6 @@
 {
   "schema_version": "sylvode.flow.environment-topology.v1",
-  "purpose": "Exhaustive, capability-based inventory of every addressable database environment in this repository, frozen BEFORE any row-count data collection. Universe declared and signed here; no query against the `pages` table (or any table) was run while building this file. Supersedes the per-kind (development/test/target_deployment) framing used in the prior round's legacy-pages-inventory.json, which the codex ADR amendment review (report at /opt/worker/report/codex-adr0003-amendment-2026-08-29.md) found too coarse to close the entry gate.",
+  "purpose": "Exhaustive, capability-based inventory of every addressable database environment in this repository, frozen BEFORE any row-count data collection. Universe declared and signed here; no query against the `pages` table (or any table) was run while building this file. Supersedes the per-kind (development/test/target_deployment) framing used in the prior round's legacy-pages-inventory.json, which the codex ADR amendment review (report at <workspace-reports>/codex-adr0003-amendment-2026-08-29.md) found too coarse to close the entry gate.",
   "source_head": "7945f3fb2eff3547ee8ba8dde9056ed6200f0503",
   "generated_at": "2026-08-29T14:47:30Z",
   "executor": {
@@ -10,7 +10,7 @@
   "constraints_honored": [
     "read-only: no INSERT/UPDATE/DELETE/DDL issued by this task, except starting the already-existing (previously exited) local 'openpr_postgres_1' container via `docker compose start postgres` so `\\l` could be run -- no volume created/destroyed, no `up -d --build`, no `down`, no `-v`",
     "no `SELECT count(*) FROM pages` or any query against `pages` run against any environment in this round",
-    "kkso: read-only only (`docker compose ps`, `psql -c '\\l'`, `SELECT count(*) FROM schema_migrations`); no restart, no config change",
+    "<deployment-host>: read-only only (`docker compose ps`, `psql -c '\\l'`, `SELECT count(*) FROM schema_migrations`); no restart, no config change",
     "no git commit / push / stash performed"
   ],
   "environments": [
@@ -109,19 +109,19 @@
       ]
     },
     {
-      "id": "kkso-target-deployment-postgres",
+      "id": "remote-target-deployment-postgres",
       "kind": "target_deployment",
       "status": "materialized, production, publicly reachable",
       "addressing": {
-        "mechanism": "ssh host alias 'kkso' -> compose project at /opt/openpr (docker-compose.yml of identical service shape to this repo's root; deployed via scp'd pre-built binaries per the documented SOP -- no .git checkout on the host, confirmed: `ssh kkso ls /opt/openpr/.git` -> 'No such file or directory')",
-        "container": "openpr-postgres-1 (docker.io/library/postgres:16), observed 'Up 13 days' at scan time via `ssh kkso docker compose ps`",
-        "volume": "openpr_pgdata (confirmed via `ssh kkso docker volume ls`)",
-        "public_surface": "https://pp.opsxsx.com (Cloudflare -> Caddy -> nginx frontend -> api), admin account admin@kkso.local"
+        "mechanism": "ssh host alias '<deployment-host>' -> compose project at <install-path> (docker-compose.yml of identical service shape to this repo's root; deployed via scp'd pre-built binaries per the documented SOP -- no .git checkout on the host, confirmed: `ssh <deployment-host> ls <install-path>/.git` -> 'No such file or directory')",
+        "container": "openpr-postgres-1 (docker.io/library/postgres:16), observed 'Up 13 days' at scan time via `ssh <deployment-host> docker compose ps`",
+        "volume": "openpr_pgdata (confirmed via `ssh <deployment-host> docker volume ls`)",
+        "public_surface": "https://<public-domain> (Cloudflare -> Caddy -> nginx frontend -> api), admin account <admin-email>"
       },
       "state_bearing": true,
       "classification_basis": [
         "live production stack with a public URL and a real admin account and (per CLAUDE.md's own connector-retirement note) is understood to already carry real usage -- unambiguously state-bearing by any definition.",
-        "read-only confirmation collected this round: `docker compose ps` on kkso shows all 5 services (postgres, api, worker, mcp-server, frontend) 'Up 13 days'; `SELECT count(*) FROM schema_migrations` (the migration ledger table, NOT pages) = 53, consistent with migrations/0053_drop_event_outbox.sql being the latest file on disk at this repo's current HEAD."
+        "read-only confirmation collected this round: `docker compose ps` on <deployment-host> shows all 5 services (postgres, api, worker, mcp-server, frontend) 'Up 13 days'; `SELECT count(*) FROM schema_migrations` (the migration ledger table, NOT pages) = 53, consistent with migrations/0053_drop_event_outbox.sql being the latest file on disk at this repo's current HEAD."
       ]
     },
     {
@@ -129,7 +129,7 @@
       "kind": "development",
       "status": "dormant_not_currently_materialized",
       "addressing": {
-        "mechanism": "28 directories under /opt/worker/code/openpr/.claude/worktrees/agent-*/ (git worktrees created by this Claude Code session's own agent/subagent tooling, not an OpenPR product surface) each carry a full checkout including their own docker-compose.yml, identical in shape to the repo root's (confirmed via `find . -iname '*compose*'`)",
+        "mechanism": "28 directories under <checkout>/.claude/worktrees/agent-*/ (git worktrees created by this Claude Code session's own agent/subagent tooling, not an OpenPR product surface) each carry a full checkout including their own docker-compose.yml, identical in shape to the repo root's (confirmed via `find . -iname '*compose*'`)",
         "would_be_project_naming": "docker-compose.yml has no top-level `name:` field and .env/.env.example set no COMPOSE_PROJECT_NAME (confirmed by grep), so compose's default project-name-from-directory-basename rule applies -- `docker compose up` run from inside any one of these 28 directories would create an independently named stack and an independently named volume, isolated from 'openpr_pgdata' and from every other worktree"
       },
       "state_bearing": true,
@@ -147,8 +147,8 @@
       "why_folded_in": "same compose project 'openpr', same 'pgdata' volume as local-dev-compose-postgres -- only an additional port mapping, not a new identity. See local-dev-compose-postgres.addressing.alternate_host_access."
     },
     {
-      "candidate": "playwright.config.ts baseURL http://10.72.0.3:3000",
-      "why_folded_in": "10.72.0.3 is this host's own WireGuard interface address (confirmed via `ip -4 addr show`), i.e. the same local compose stack's frontend, reached over its VPN IP instead of localhost -- not a separate deployment."
+      "candidate": "playwright.config.ts baseURL http://<maintainer-vpn-address>:3000",
+      "why_folded_in": "<maintainer-vpn-address> is this host's own WireGuard interface address (confirmed via `ip -4 addr show`), i.e. the same local compose stack's frontend, reached over its VPN IP instead of localhost -- not a separate deployment."
     },
     {
       "candidate": "apps/mcp-server/tests/support/mod.rs:21 postgres://openpr:e2e-unused-password@127.0.0.1:5432/openpr",

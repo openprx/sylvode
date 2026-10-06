@@ -10,8 +10,8 @@
 //! engine exposing its own identity outward.
 //!
 //! Beyond the `tree` container the spike adapter had, this production version also attaches a
-//! root-level `meta` map for document-level fields. `ADR-0002` (`decisions/` in
-//! `/opt/working/sylvode-flow`) freezes `meta.title` as the canonical source for a Page/Collection
+//! root-level `meta` map for document-level fields. `ADR-0002` (`decisions/` in the Sylvode
+//! Flow contracts repository) freezes `meta.title` as the canonical source for a Page/Collection
 //! title (`flow_object_projections.title` is only the rebuildable read replica), so the engine
 //! needs a place to hold it that survives snapshot/update round trips exactly like tree content
 //! does.

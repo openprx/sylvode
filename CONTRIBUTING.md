@@ -172,8 +172,13 @@ treating the missing input as a pass.
 Flow gate scripts write their evidence to `.flow-gate/evidence/<release>` unless `--evidence-root`
 names another directory. The screenshot collectors and render smokes refuse to write into a
 non-empty directory unless `--overwrite` is given. `bash scripts/test-no-machine-paths.sh` runs in
-CI and fails when a tracked file under `scripts/`, `tests/`, `frontend/tests/` or `skills/` names a
-machine-specific absolute path.
+CI and fails when a tracked file under `scripts/`, `tests/`, `frontend/tests/`, `skills/`, `apps/`,
+`crates/` or `docs/schemas/` names a machine-specific absolute path (`spikes/`, the frozen
+evaluation spikes, is not scanned). `bash scripts/test-no-instance-literals.sh` runs in CI and
+fails when any tracked text file carries a private IPv4 address (`10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`) or a bot token literal (`opr_` followed by 20 or more letters and digits);
+defaults use `localhost` or `127.0.0.1` with an environment override. Both scripts list their
+exemptions with a reason and fail on a stale one.
 
 ## Code rules
 

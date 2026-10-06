@@ -1,5 +1,5 @@
 //! Wire-shape response types this package's four endpoints share, matching
-//! `contracts/rest-api-v1.md` ("公共类型") in `/opt/working/sylvode-flow`.
+//! `contracts/rest-api-v1.md` ("公共类型") in the Sylvode Flow contracts repository.
 //!
 //! Request DTOs live next to the handlers that parse them (`routes::flow`); these are the
 //! response shapes assembled by [`crate::flow::query`] and [`crate::flow::command`] and returned

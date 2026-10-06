@@ -263,6 +263,15 @@ replacement and the earliest removal.
 - Request tracing spans no longer contain query strings, and the reference Caddy and nginx
   configurations no longer log collaboration tickets or signed download signatures.
 - Auth cookies carry `Secure` (see **Breaking and behaviour changes**).
+- Details of real deployments are removed from the tree: the legacy-pages inventory spikes
+  (`spikes/legacy-pages-inventory/`) named a deployment host's ssh alias, public domain, admin
+  e-mail and install path, now placeholders, and `playwright.config.ts` and the eleven
+  `scripts/smoke-universal-forms-*.mjs` defaulted to a maintainer's private VPN address; they
+  now default to `http://localhost:3000` (and `http://localhost:8090/mcp/rpc`), still
+  overridable with `BASE_URL` / `OPENPR_FRONTEND_URL` / `OPENPR_MCP_URL`.
+  `scripts/test-no-instance-literals.sh` (run in CI) fails on private IPv4 addresses and bot
+  token literals in any tracked text file, and `scripts/test-no-machine-paths.sh` now also
+  scans `apps/`, `crates/` and `docs/schemas/`.
 - `skills/openpr-mcp/scripts/mcp-regression.py` contained a bot token and the workspace and
   project ids of a test instance since 0.1.x. They are removed; the script reads them from
   `SYLVODE_MCP_REGRESSION_TOKEN`, `SYLVODE_MCP_REGRESSION_WORKSPACE_ID` and
