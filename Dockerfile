@@ -13,14 +13,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Cargo files
-COPY Cargo.toml Cargo.toml
-COPY rust-toolchain.toml rust-toolchain.toml
+# Copy Cargo files; the lockfile pins every dependency the build resolves.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 
-# Copy source code
+# Copy source code. The spike crates are workspace members, so cargo needs their manifests and
+# sources to load the workspace even when building one package.
 COPY apps apps
 COPY crates crates
 COPY migrations migrations
+COPY spikes/collab-shared spikes/collab-shared
+COPY spikes/collab-loro spikes/collab-loro
+COPY spikes/collab-yrs-yjs spikes/collab-yrs-yjs
 
 # The Docker build context excludes .git. Release automation must pass all three
 # provenance args; omitted metadata stays explicit "unknown" and is rejected by
@@ -28,7 +31,7 @@ COPY migrations migrations
 RUN OPENPR_BUILD_GIT_COMMIT="${OPENPR_BUILD_GIT_COMMIT}" \
     OPENPR_BUILD_GIT_DIRTY="${OPENPR_BUILD_GIT_DIRTY}" \
     OPENPR_BUILD_GIT_COMMITTER_DATE="${OPENPR_BUILD_GIT_COMMITTER_DATE}" \
-    cargo build --release -p ${APP_BIN}
+    cargo build --release --locked -p ${APP_BIN}
 
 # Runtime stage
 FROM debian:bookworm-slim
