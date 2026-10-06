@@ -327,7 +327,9 @@ EXTRA_SCOPES="$(jq -c -n --argjson live "$LIVE_JSON" --argjson pol "$POLICY_JSON
 # ---- the 27 historical touchpoints named by tool-count-baseline.md ----
 # Each entry is id|path|mode|regex|classification. Pinned prose must contain
 # exactly the live count. Derived sites must retain their link to the single
-# baseline reader. Three obsolete prose/assertion positions are explicitly
+# baseline reader (the MCP regression banner's marker is the f-string
+# "{EXPECTED_TOOL_COUNT} registered tools" in its print call, so a literal
+# number or a reworded banner fails). Three obsolete prose/assertion positions are explicitly
 # classified as retired instead of being mistaken for a bypass.
 # shellcheck disable=SC2016
 TOUCHPOINTS=(
@@ -354,7 +356,7 @@ TOUCHPOINTS=(
   'mcp_regression_predicate|skills/openpr-mcp/scripts/mcp-regression.py|derived|def registry_matches_expected_tools_with_forms_and_plugins|predicate no longer bakes a number into its name'
   'mcp_regression_len|skills/openpr-mcp/scripts/mcp-regression.py|derived|len\(tools\) == EXPECTED_TOOL_COUNT|all three transports use the derived count'
   'mcp_regression_label|skills/openpr-mcp/scripts/mcp-regression.py|derived|tools/list\.registry_\{EXPECTED_TOOL_COUNT\}|label renders the derived count'
-  'mcp_regression_banner|skills/openpr-mcp/scripts/mcp-regression.py|derived|EXPECTED_TOOL_COUNT\}工具注册面|banner renders the derived count'
+  'mcp_regression_banner|skills/openpr-mcp/scripts/mcp-regression.py|derived|print\(f"[^"\n]*\{EXPECTED_TOOL_COUNT\} registered tools|banner renders the derived count'
   'audit_production_readiness|scripts/audit-universal-forms-production-readiness.sh|derived|EXPECTED_TOOL_COUNT=.*expected-tool-count\.py|audit derives the live-validated baseline'
   'audit_source_coverage|scripts/audit-universal-forms-source-coverage.sh|derived|EXPECTED_TOOL_COUNT=.*expected-tool-count\.py|audit derives the live-validated baseline'
   'audit_docs|scripts/audit-universal-forms-docs.sh|derived|EXPECTED_TOOL_COUNT=.*expected-tool-count\.py|audit derives the live-validated baseline'
