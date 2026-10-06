@@ -80,6 +80,11 @@ cp config.example.toml config.toml
 # sylvode-webhook listening on 127.0.0.1:9090
 ```
 
+The Rust toolchain is pinned in `rust-toolchain.toml` (1.97.1), which rustup installs on the first
+build. The crate's `[lints]` turn every compiler and clippy warning into an error, so building
+with a different compiler version (`cargo +stable build`, or `cargo install` outside this
+directory) can fail on a lint that version added.
+
 The example configuration is secure by default: it listens on loopback only, verifies every
 signature (`allow_unsigned = false`) and contains no agent that runs a command without
 `[features].cli_enabled`. Change `listen` once the secret is set, or put a reverse proxy in front.

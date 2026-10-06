@@ -20,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// The most delivery keys remembered; the oldest are forgotten first.
 const CAPACITY: usize = 10_000;
 /// How long a key is remembered at least, even with a short freshness window or none.
-const MIN_REMEMBER: Duration = Duration::from_secs(600);
+const MIN_REMEMBER: Duration = Duration::from_mins(10);
 
 /// Why a request was refused.
 #[derive(Debug, PartialEq, Eq)]
@@ -311,7 +311,7 @@ mod tests {
             short.check_at(&body, start + Duration::from_secs(599), NOW),
             Err(Refusal::Duplicate { .. })
         ));
-        assert_eq!(short.check_at(&body, start + Duration::from_secs(600), NOW), Ok(()));
+        assert_eq!(short.check_at(&body, start + Duration::from_mins(10), NOW), Ok(()));
     }
 
     /// The memory never holds more than `CAPACITY` keys, and the oldest goes first.

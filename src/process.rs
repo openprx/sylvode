@@ -522,7 +522,7 @@ mod tests {
         let (command, file) = tree(&dir, "");
         let finished = run(
             command,
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             TERMINATION_GRACE,
             tokio::time::sleep(Duration::from_millis(300)),
         )
@@ -547,7 +547,7 @@ mod tests {
         let begun = tokio::time::Instant::now();
         let finished = run(
             command,
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             TERMINATION_GRACE,
             std::future::pending(),
         )
@@ -573,7 +573,7 @@ mod tests {
         let (command, file) = tree(&dir, "");
         let task = tokio::spawn(run(
             command,
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             TERMINATION_GRACE,
             std::future::pending(),
         ));
@@ -602,7 +602,7 @@ mod tests {
         command.args(["-c", &script]);
         let finished = run(
             command,
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             TERMINATION_GRACE,
             std::future::pending(),
         )
