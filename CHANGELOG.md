@@ -247,6 +247,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Nothing pinned the plugin ABI export names against a rename applied to the runtime and its
+  tests together. A compiled fixture, `apps/api/tests/fixtures/plugin-abi-v1.wasm` (source
+  `plugin-abi-v1.wat` beside it, hash checked by the test), exports exactly `memory`,
+  `openpr_alloc`, `openpr_invoke` and `openpr_plugin_abi_version` and must load and round-trip
+  its input.
 - `projects create` under `mcp-server` and `sylvode` failed with ``missing field `key` ``
   because it offered no way to pass the required project key; it now takes `--key`.
 - `mcp-server` and `sylvode` no longer panic when stdout or stderr cannot be written.

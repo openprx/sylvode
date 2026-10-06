@@ -551,6 +551,41 @@ mod tests {
         assert!(output.fuel_consumed.unwrap_or(0) > 0);
     }
 
+    /// The compiled ABI fixture, checked in as bytes so that no rename of the source tree can
+    /// rewrite it consistently with the runtime (see `plugin-abi-v1.wat` next to it).
+    const ABI_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/plugin-abi-v1.wasm");
+    const ABI_FIXTURE_SHA256: &str = "fb4d202c6ee13534a05b20303b43c284b367aa4053621286236d17f52ba41de5";
+
+    /// Pins the `openpr.plugin.v1` ABI against the compiled fixture: exports `memory`,
+    /// `openpr_alloc (i32) -> i32`, `openpr_invoke (i32, i32) -> i64` and
+    /// `openpr_plugin_abi_version () -> i32`. The fixture traps unless the version export was
+    /// called before `openpr_invoke` and echoes its input, so the runtime must look up all three
+    /// functions by exactly these names and write the input where `openpr_alloc` said.
+    #[tokio::test]
+    async fn the_compiled_abi_v1_fixture_loads_and_round_trips_its_input() {
+        use sha2::{Digest, Sha256};
+        assert_eq!(
+            hex::encode(Sha256::digest(ABI_FIXTURE)),
+            ABI_FIXTURE_SHA256,
+            "plugin-abi-v1.wasm changed; it is the frozen ABI reference and must not be edited"
+        );
+        let source = wat::parse_str(include_str!("../../tests/fixtures/plugin-abi-v1.wat"))
+            .expect("the fixture source should compile");
+        // The text form adds only a trailing `name` custom section (debug names, id 0).
+        assert!(
+            source.starts_with(ABI_FIXTURE) && source.get(ABI_FIXTURE.len()) == Some(&0),
+            "plugin-abi-v1.wat must describe plugin-abi-v1.wasm exactly"
+        );
+
+        validate_wasm_module(ABI_FIXTURE).expect("the ABI fixture must validate");
+        let input = json!({"record": {"amount": "12.50", "currency": "EUR"}, "hook": "formula"});
+        let output = invoke_wasm_plugin(ABI_FIXTURE.to_vec(), input.clone(), PluginRuntimePolicy::default())
+            .await
+            .expect("a module implementing the documented ABI must run");
+
+        assert_eq!(output.output, input);
+    }
+
     #[tokio::test]
     async fn rejects_wasm_without_required_abi_exports() {
         let wasm = wat::parse_str("(module)").expect("wat should compile");
