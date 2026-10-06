@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.36 are released
-together as 0.3.36.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.37 are released
+together as 0.3.37.
 
 ## Upgrading from 0.3.3
 
@@ -68,6 +68,23 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
 
+## 0.3.37
+
+### Fixed
+
+- **`scripts/install.sh` renders correct values under the bash 3.2 that macOS ships.** Its
+  template substitution quoted the replacement (`${content//"{{KEY}}"/"$val"}`), and bash before
+  4.3 keeps those quotes, so every value in the plist (and the unit) was wrapped in literal `"`:
+  `<string>"/Users/me/.local/bin/sylvode-webhook"</string>`, a launchd agent that never starts.
+  The replacement is now unquoted, which inserts the value byte for byte in bash 3.2 and 5.
+
+### Tests
+
+- The renderer, cut out of `install.sh`, renders both templates with a value containing a space,
+  `&`, `%`, `$`, `\`, `"` and `<`, and the output is compared byte for byte with an independent
+  rendering, under the system bash, under it with `BASH_COMPAT=3.2` and `4.2`, and under a real
+  bash 3.2 (`docker.io/library/bash:3.2` through podman) when that image is present.
+
 ## 0.3.36
 
 ### Fixed
@@ -87,8 +104,8 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
 
 ### Fixed
 
-- `scripts/install.sh` works with the bash 3.2 that macOS ships: it no longer uses associative
-  arrays (`declare -A`), which made it fail there.
+- `scripts/install.sh` no longer uses associative arrays (`declare -A`), which made it fail on
+  the bash 3.2 that macOS ships. (It still rendered wrong values there; fixed in 0.3.37.)
 - The installer inserts paths literally. Template values were substituted with `sed`, so a `&`
   or `\` in the binary or config path corrupted the unit or plist. Values are now escaped for
   their format: the systemd unit quotes `ExecStart=` and `Environment=` values (escaping `\`, `"`,

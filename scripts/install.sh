@@ -237,7 +237,11 @@ render_template() {
     for pair in "$@"; do
         key="${pair%%=*}"
         val="$("$escape" "${pair#*=}")"
-        content="${content//"{{$key}}"/"$val"}"
+        # The replacement is left unquoted: bash before 4.3 (macOS ships 3.2) keeps the quotes
+        # of a quoted replacement inside a double-quoted word, so "$val" would insert literal
+        # quote characters. Unquoted it is not split or globbed here, and its expansion is not
+        # subject to quote removal in any version, so the value is inserted byte for byte.
+        content="${content//"{{$key}}"/$val}"
     done
     printf '%s\n' "$content" > "$dst"
 }

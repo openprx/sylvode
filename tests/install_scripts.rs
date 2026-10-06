@@ -199,3 +199,129 @@ fn uninstall_removes_the_canonical_and_the_legacy_unit() {
     assert!(calls.contains("--user is-active --quiet sylvode-webhook"), "{calls}");
     assert!(calls.contains("--user is-active --quiet openpr-webhook"), "{calls}");
 }
+
+/// The value every placeholder of the rendering tests is set to: a space, `&`, `%`, `$`, a
+/// backslash, a double quote and `<`, each of which some format treats specially.
+const ODD: &str = r#"/Users/me/odd dir & 100% $HOME \ "q" <x>"#;
+
+/// `render_template` and the escape functions, cut out of `scripts/install.sh`, followed by
+/// `driver`, written to a file in `dir` that a bash at `/w` (the directory mounted in the
+/// container, or `dir` itself) can source.
+fn renderer_script(dir: &Path, root: &str, driver: &str) -> PathBuf {
+    let script = std::fs::read_to_string(Path::new(ROOT).join("scripts/install.sh")).unwrap();
+    let start = script.find("shopt -u patsub_replacement").expect("renderer start");
+    let end = script.find("# Platform: Linux").expect("renderer end");
+    let path = dir.join("render.sh");
+    std::fs::write(
+        &path,
+        format!("{}\n{}", &script[start..end], driver.replace("@ROOT@", root)),
+    )
+    .unwrap();
+    path
+}
+
+/// What the installer writes for `ODD` in every placeholder, rendered here independently of
+/// bash: the plist with XML escaping, the unit with systemd quoting.
+fn expected_renderings() -> (String, String) {
+    let xml = ODD.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let mut plist =
+        std::fs::read_to_string(Path::new(ROOT).join("scripts/dev.sylvode.webhook.plist.template")).unwrap();
+    for key in ["BINARY_PATH", "CONFIG_DIR", "PATH", "LOG_DIR", "LABEL", "LOG_NAME"] {
+        plist = plist.replace(&format!("{{{{{key}}}}}"), &xml);
+    }
+    let mut unit = std::fs::read_to_string(Path::new(ROOT).join("scripts/sylvode-webhook.service.template")).unwrap();
+    for key in ["BINARY_PATH", "PATH", "UNIT_NAME"] {
+        unit = unit.replace(&format!("{{{{{key}}}}}"), &quoted(ODD));
+    }
+    unit = unit.replace("{{CONFIG_DIR}}", &quoted_arg(ODD));
+    unit = unit.replace("{{WORKING_DIRECTORY}}", &ODD.replace('%', "%%"));
+    (
+        format!("{}\n", plist.trim_end_matches('\n')),
+        format!("{}\n", unit.trim_end_matches('\n')),
+    )
+}
+
+/// Renders both templates the way `install_linux` and `install_macos` call `render_template`.
+const RENDER_DRIVER: &str = r#"
+v='/Users/me/odd dir & 100% $HOME \ "q" <x>'
+render_template "@ROOT@/dev.sylvode.webhook.plist.template" "@ROOT@/out.plist" xml_escape \
+    "BINARY_PATH=$v" "CONFIG_DIR=$v" "PATH=$v" "LOG_DIR=$v" "LABEL=$v" "LOG_NAME=$v"
+render_template "@ROOT@/sylvode-webhook.service.template" "@ROOT@/out.service" systemd_quoted_escape \
+    "BINARY_PATH=$v" "PATH=$v" "UNIT_NAME=$v"
+render_template "@ROOT@/out.service" "@ROOT@/out.service" systemd_arg_escape "CONFIG_DIR=$v"
+render_template "@ROOT@/out.service" "@ROOT@/out.service" systemd_path_escape "WORKING_DIRECTORY=$v"
+"#;
+
+/// A directory holding both templates and the renderer, for one bash to render into.
+fn render_dir(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("sylvode-webhook-render-{label}-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for template in ["dev.sylvode.webhook.plist.template", "sylvode-webhook.service.template"] {
+        std::fs::copy(Path::new(ROOT).join("scripts").join(template), dir.join(template)).unwrap();
+    }
+    dir
+}
+
+fn assert_rendered(dir: &Path, output: &Output, bash: &str) {
+    assert!(output.status.success(), "{bash}: {}", stderr(output));
+    let (plist, unit) = expected_renderings();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("out.plist")).unwrap(),
+        plist,
+        "{bash}: plist"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("out.service")).unwrap(),
+        unit,
+        "{bash}: unit"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The renderer inserts every value byte for byte under the system bash, and under the same bash
+/// emulating bash 3.2 (`BASH_COMPAT=3.2`): before bash 4.3 a quoted replacement in
+/// `${var//pattern/"$value"}` kept its quotes, which put literal `"` around every value.
+#[test]
+fn the_renderer_inserts_values_literally_under_the_system_bash_and_in_bash_3_2_mode() {
+    for compat in [None, Some("3.2"), Some("4.2")] {
+        let dir = render_dir("system");
+        let script = renderer_script(&dir, dir.to_str().unwrap(), RENDER_DRIVER);
+        let mut command = Command::new("bash");
+        command.arg(&script).env_clear().env("PATH", "/usr/bin:/bin");
+        if let Some(compat) = compat {
+            command.env("BASH_COMPAT", compat);
+        }
+        let output = command.output().expect("run bash");
+        assert_rendered(&dir, &output, &format!("bash BASH_COMPAT={compat:?}"));
+    }
+}
+
+/// The same under a real bash 3.2, the version macOS ships, when the `docker.io/library/bash:3.2`
+/// image is present for podman (it is not pulled). Without it the test says so and checks nothing.
+#[test]
+fn the_renderer_inserts_values_literally_under_a_real_bash_3_2_when_available() {
+    const IMAGE: &str = "docker.io/library/bash:3.2";
+    let available = Command::new("podman")
+        .args(["image", "exists", IMAGE])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !available {
+        eprintln!("SKIPPED: podman image {IMAGE} not present; bash 3.2 rendering not checked here");
+        return;
+    }
+    let dir = render_dir("bash32");
+    let script = renderer_script(&dir, "/w", RENDER_DRIVER);
+    assert!(script.ends_with("render.sh"));
+    let output = Command::new("podman")
+        .args(["run", "--rm", "--network=none", "-v"])
+        .arg(format!("{}:/w:Z", dir.display()))
+        .args([IMAGE, "bash", "-c", "echo \"$BASH_VERSION\" >&2; . /w/render.sh"])
+        .output()
+        .expect("run podman");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).starts_with("3.2."),
+        "{}",
+        stderr(&output)
+    );
+    assert_rendered(&dir, &output, "bash 3.2 (podman)");
+}
