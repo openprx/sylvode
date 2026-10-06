@@ -304,6 +304,15 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- The release workflow published a release, with all six platforms listed, even when a build or
+  package job had failed (the arm64 leg was allowed to fail), and never checked the tag against
+  the version. It now fails before building unless the tag is `v<version>` equal to the
+  `Cargo.toml` workspace version and `frontend/package.json`, publishes only when every build and
+  package job succeeded and every archive and checksum is present, checks out the tag for manual
+  runs, writes `sha256sum`-compatible checksums on Windows and for the frontend archive, pins
+  `cross` and installs frontend dependencies from the lockfile. All workflow actions are pinned by
+  commit, CI has read-only permissions, and only the release job can write. CI also runs
+  `cargo check --all-features` and the frontend unit and contract suites.
 - The brand residue gate (`scripts/verify-sylvode-brand-residue.sh`) saw only `OpenPR` and
   lowercase `openpr` in UTF-8 file content, so `OPENPR_*`, `OpenPr*`, file names, symbolic link
   targets and UTF-16 text were never checked. It now matches `openpr` in any letter case in file

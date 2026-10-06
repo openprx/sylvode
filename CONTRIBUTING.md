@@ -78,7 +78,7 @@ migrations from `migrations/` at startup and records them in the `schema_migrati
 
 ## Checks to run before you push
 
-CI runs these on every push and pull request. Run them locally on a clean, committed tree:
+Run these locally on a clean, committed tree:
 
 ```bash
 cargo fmt --all -- --check
@@ -88,12 +88,29 @@ cargo machete                          # cargo install cargo-machete
 cargo audit                            # cargo install cargo-audit
 cargo deny check                       # cargo install cargo-deny
 cargo build -p collab-core --bin collab-isolated-apply-worker
-cargo test --workspace --no-fail-fast
+cargo test --workspace --all-features --no-fail-fast
+
+bash scripts/test-start-config.sh
+bash scripts/test-bootstrap-demo-env.sh
+bash scripts/test-no-machine-paths.sh
+bash scripts/test-no-instance-literals.sh
 
 bun install --cwd frontend
 bun run --cwd frontend check
 bun run --cwd frontend build
+for suite in record-values flow-limits flow-i18n-parity i18n-parity bot-transport-surfaces \
+             webhook-events flow-navigator-equivalence flow-ui-state flow-bridge \
+             flow-package-import flow-v0.4 flow-static-build; do
+  bun run --cwd frontend "test:$suite"
+done
 ```
+
+Where they run in CI: `.github/workflows/ci.yml` runs everything above except `cargo audit` and
+`cargo deny` on every push and pull request (plus the brand residue gate and the Universal Forms
+gates). `cargo audit` and `cargo deny` run in `.github/workflows/sec-audit.yml`, on pushes and pull
+requests that change `Cargo.toml`, `Cargo.lock`, `deny.toml` or `.cargo/audit.toml`, and weekly;
+its `cargo deny check advisories` leg is informational (`continue-on-error`), so run both locally
+before a release: advisory databases change after the fact.
 
 From inside `frontend/` the same checks are `bun run check && bun run build`.
 
