@@ -74,7 +74,7 @@ pub async fn dispatch(config: &Config, background: &Background, agent: &AgentCon
         "openprx" => dispatch_openprx(config, background, agent, payload).await,
         "webhook" => dispatch_webhook(config, agent, payload).await,
         "custom" => dispatch_custom(config, background, agent, payload).await,
-        "cli" => Dispatched::plain(dispatch_cli(config, background, agent, payload).await),
+        "cli" => Dispatched::plain(dispatch_cli(config, background, agent, payload)),
         other => Dispatched::plain(format!("unknown agent type: {other}")),
     }
 }
@@ -87,7 +87,7 @@ fn exit_summary(code: Option<i32>) -> String {
     )
 }
 
-async fn dispatch_cli(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
+fn dispatch_cli(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
     if !config.cli_enabled() {
         return "cli disabled by feature flag or safe mode".into();
     }
@@ -106,30 +106,11 @@ async fn dispatch_cli(config: &Config, background: &Background, agent: &AgentCon
     let prompt = build_cli_prompt(agent, payload, &issue_id);
     let executor = cfg.executor.clone();
 
-    // 1. Send start callback synchronously (wait for it)
     let start_state = if cfg.skip_callback_state {
         None
     } else {
         cfg.update_state_on_start.clone()
     };
-    if config.callback_enabled() && start_state.is_some() {
-        let start_payload = callback::build_callback_payload(
-            issue_id.clone(),
-            run_id.clone(),
-            executor.clone(),
-            "started".into(),
-            "task started".into(),
-            None,
-            0,
-            String::new(),
-            String::new(),
-            start_state,
-        );
-        if let Err(e) = callback::send_callback(cfg, &start_payload, config.runtime.http_timeout_secs).await {
-            tracing::warn!(error = ?e, "start callback failed");
-        }
-    }
-    // 2. Clone what the background task needs
     let bg_cfg = cfg.clone();
     let bg_issue_id = issue_id.clone();
     let bg_run_id = run_id.clone();
@@ -139,14 +120,45 @@ async fn dispatch_cli(config: &Config, background: &Background, agent: &AgentCon
 
     let task_background = background.clone();
 
-    // 3. Run the CLI process in the background — do NOT await. It waits for one of the
-    // `cli_max_concurrency` slots first. On shutdown the run is cancelled, whether it is waiting
-    // or running, and still sends its terminal callback below.
+    // Everything after this point runs in the background and the `/webhook` answer does not wait
+    // for it: the sender gives up after 10 seconds and then retries the task, which would run it
+    // again, while a callback alone may take `http_timeout_secs` (15 by default) per request.
+    //
+    // The run waits for one of the `cli_max_concurrency` slots, sends the start callback, then
+    // starts the executor. On shutdown it is cancelled at whichever step it is (a start callback
+    // still in flight is abandoned and the executor is not started) and still sends its terminal
+    // callback below.
     background.spawn(async move {
         let run = match task_background.cli_permit().await {
             Some(permit) => {
-                tracing::info!(executor = %bg_executor, "CLI agent spawned");
-                let run = run_cli_executor(&bg_cfg, &prompt, task_background.cancelled()).await;
+                if callback_enabled && start_state.is_some() {
+                    let start_payload = callback::build_callback_payload(
+                        bg_issue_id.clone(),
+                        bg_run_id.clone(),
+                        bg_executor.clone(),
+                        "started".into(),
+                        "task started".into(),
+                        None,
+                        0,
+                        String::new(),
+                        String::new(),
+                        start_state,
+                    );
+                    tokio::select! {
+                        sent = callback::send_callback(&bg_cfg, &start_payload, http_timeout_secs) => {
+                            if let Err(e) = sent {
+                                tracing::warn!(error = ?e, "start callback failed");
+                            }
+                        }
+                        () = task_background.cancelled() => {}
+                    }
+                }
+                let run = if task_background.is_shutting_down() {
+                    CliRunResult::cancelled_before_start()
+                } else {
+                    tracing::info!(executor = %bg_executor, "CLI agent spawned");
+                    run_cli_executor(&bg_cfg, &prompt, task_background.cancelled()).await
+                };
                 drop(permit);
                 run
             }
@@ -197,7 +209,7 @@ async fn dispatch_cli(config: &Config, background: &Background, agent: &AgentCon
         }
     });
 
-    // 4. Return immediately
+    // The answer, at once.
     format!("cli agent spawned in background run_id={run_id} issue_id={issue_id} executor={executor}")
 }
 
@@ -1427,7 +1439,7 @@ mcp_instructions = "Custom: read issue {issue_id} first"
         reference_id: Option<&str>,
         payload: serde_json::Value,
     ) -> serde_json::Value {
-        json!({
+        let mut task = json!({
             "task_id": "task-1",
             "project_id": "PROJECT",
             "ai_participant_id": "bot-1",
@@ -1436,11 +1448,12 @@ mcp_instructions = "Custom: read issue {issue_id} first"
             "task_type": task_type,
             "reference_type": reference_type,
             "reference_id": reference_id,
-            "payload": payload,
             "attempts": 1,
             "max_attempts": 3,
             "trigger_kind": "mention"
-        })
+        });
+        task["payload"] = payload;
+        task
     }
 
     /// The issue of every worker task shape the Sylvode API produces, one row per producer.
