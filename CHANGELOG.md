@@ -294,6 +294,12 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- `sylvode --help <workspace group>` printed internal source documentation as the program
+  description and listed only the nine workspace groups. A help or version flag before the first
+  group now always shows the top-level help of all fifteen groups, and no parser prints source
+  documentation.
+- `--version` / `-V` were refused (exit 2) by `mcp-server` and `sylvode`; they now print the
+  program name and version and exit 0.
 - The legacy configuration notice's "once per process" guarantee had no test of its own; a test
   now asks for it twice (and again after a second load) in a fresh process.
 - Nothing pinned the plugin ABI export names against a rename applied to the runtime and its
