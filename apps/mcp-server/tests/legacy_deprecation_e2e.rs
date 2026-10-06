@@ -288,6 +288,11 @@ const CONFIG_NOTICE: &str = "legacy configuration file config/openpr.toml was di
 /// A working directory holding `config/<file_name>` and nothing else, with the default
 /// `[logging]` filter so a `warn` line from the binary is shown.
 fn config_dir_with(file_name: &str, api_url: &str) -> Result<PathBuf, BoxError> {
+    config_dir_with_format(file_name, api_url, "text")
+}
+
+/// [`config_dir_with`] with `logging.format` set to `format`.
+fn config_dir_with_format(file_name: &str, api_url: &str, format: &str) -> Result<PathBuf, BoxError> {
     static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let dir = std::env::temp_dir().join(format!(
         "sylvode-config-notice-{}-{}",
@@ -298,7 +303,7 @@ fn config_dir_with(file_name: &str, api_url: &str) -> Result<PathBuf, BoxError> 
     std::fs::write(
         dir.join("config").join(file_name),
         format!(
-            "[logging]\nformat = \"text\"\n\n[mcp]\napi_url = \"{api_url}\"\nbot_token = \"{TOKEN}\"\nworkspace_id = \"{WORKSPACE}\"\n"
+            "[logging]\nformat = \"{format}\"\n\n[mcp]\napi_url = \"{api_url}\"\nbot_token = \"{TOKEN}\"\nworkspace_id = \"{WORKSPACE}\"\n"
         ),
     )?;
     Ok(dir)
@@ -472,5 +477,57 @@ async fn explicit_legacy_config_and_canonical_discovery_do_not_warn() -> TestRes
     }
     std::fs::remove_dir_all(&legacy_cwd)?;
     std::fs::remove_dir_all(&canonical_cwd)?;
+    Ok(())
+}
+
+/// A log line that cannot be written never fails a command (ADR-0020 D2: a warning must not
+/// change the exit code, nor fail the command because writing it failed). With stderr on
+/// `/dev/full` every write to it fails; each command must exit exactly as it does with a
+/// writable stderr. The cases log through the global subscriber (`mcp-server` and `sylvode`
+/// workspace commands), through the scoped stderr subscriber (a `sylvode` Flow command), and
+/// with a `warn` event other than the configuration notice (`tools call` of an unknown tool,
+/// with the canonical file discovered, so no notice is involved).
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn an_unwritable_stderr_never_changes_the_exit_code_of_a_logging_command() -> TestResult {
+    let api_url = spawn_api().await?;
+    let legacy_cwd = config_dir_with("openpr.toml", &api_url)?;
+    let canonical_cwd = config_dir_with("sylvode.toml", &api_url)?;
+    let json_cwd = config_dir_with_format("openpr.toml", &api_url, "json")?;
+
+    let cases: [(&str, &Path, Vec<&str>); 9] = [
+        (MCP_SERVER, &legacy_cwd, vec!["projects", "list"]),
+        (SYLVODE, &legacy_cwd, vec!["projects", "list"]),
+        (SYLVODE, &legacy_cwd, vec!["objects", "get", OBJECT]),
+        (MCP_SERVER, &canonical_cwd, vec!["tools", "call", "--name", "nope.nope"]),
+        (SYLVODE, &canonical_cwd, vec!["tools", "call", "--name", "nope.nope"]),
+        (MCP_SERVER, &legacy_cwd, vec!["serve", "--transport", "stdio"]),
+        (MCP_SERVER, &json_cwd, vec!["projects", "list"]),
+        (SYLVODE, &json_cwd, vec!["objects", "get", OBJECT]),
+        (MCP_SERVER, &json_cwd, vec!["serve", "--transport", "stdio"]),
+    ];
+    for (binary, cwd, args) in cases {
+        let writable = run(binary, cwd, &args, Stdio::piped()).await?;
+        let full = std::fs::OpenOptions::new().write(true).open("/dev/full")?;
+        let unwritable = run(binary, cwd, &args, Stdio::from(full)).await?;
+        assert_ne!(
+            unwritable.status.code(),
+            Some(101),
+            "{binary} {args:?} panicked on an unwritable stderr"
+        );
+        assert_eq!(
+            unwritable.status.code(),
+            writable.status.code(),
+            "{binary} {args:?}: an unwritable stderr changed the exit code (stderr when writable:\n{})",
+            text(&writable.stderr)
+        );
+        assert!(
+            !text(&writable.stderr).is_empty(),
+            "{binary} {args:?} logs nothing, so it does not exercise a failed log write"
+        );
+    }
+    std::fs::remove_dir_all(&legacy_cwd)?;
+    std::fs::remove_dir_all(&canonical_cwd)?;
+    std::fs::remove_dir_all(&json_cwd)?;
     Ok(())
 }

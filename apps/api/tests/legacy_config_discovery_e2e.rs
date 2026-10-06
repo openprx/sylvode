@@ -23,12 +23,16 @@ fn workdir(file_name: &str, tag: &str) -> Result<PathBuf, Box<dyn std::error::Er
 }
 
 fn run(cwd: &Path, args: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
+    run_with_stderr(cwd, args, Stdio::piped())
+}
+
+fn run_with_stderr(cwd: &Path, args: &[&str], stderr: Stdio) -> Result<Output, Box<dyn std::error::Error>> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_api"))
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(stderr)
         .spawn()?;
     let started = Instant::now();
     while child.try_wait()?.is_none() {
@@ -108,5 +112,27 @@ fn an_explicit_legacy_path_and_the_canonical_file_do_not_warn() -> TestResult {
 
     std::fs::remove_dir_all(legacy)?;
     std::fs::remove_dir_all(canonical)?;
+    Ok(())
+}
+
+/// The notice, and every other log line, is dropped when stderr cannot be written: with stderr
+/// on `/dev/full` the process ends exactly as it does with a writable stderr (here: the database
+/// connection error), never with a panic (exit 101) from the logger.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_unwritable_stderr_does_not_change_how_the_process_ends() -> TestResult {
+    let dir = workdir("openpr.toml", "full")?;
+    let writable = run(&dir, &[])?;
+    assert_eq!(
+        notices(&writable).len(),
+        1,
+        "{}",
+        String::from_utf8_lossy(&writable.stderr)
+    );
+    let full = std::fs::OpenOptions::new().write(true).open("/dev/full")?;
+    let unwritable = run_with_stderr(&dir, &[], Stdio::from(full))?;
+    assert_ne!(unwritable.status.code(), Some(101), "the logger panicked");
+    assert_eq!(unwritable.status.code(), writable.status.code());
+    std::fs::remove_dir_all(dir)?;
     Ok(())
 }

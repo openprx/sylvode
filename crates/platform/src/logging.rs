@@ -71,6 +71,7 @@ pub fn with_stderr_subscriber(logging: &LoggingConfig, service_name: &str, emit:
             let subscriber = fmt()
                 .with_env_filter(filter)
                 .with_writer(writer)
+                .log_internal_errors(false)
                 .json()
                 .with_current_span(true)
                 .with_span_list(true)
@@ -78,7 +79,11 @@ pub fn with_stderr_subscriber(logging: &LoggingConfig, service_name: &str, emit:
             tracing::subscriber::with_default(subscriber, emit);
         }
         LogFormat::Text => {
-            let subscriber = fmt().with_env_filter(filter).with_writer(writer).finish();
+            let subscriber = fmt()
+                .with_env_filter(filter)
+                .with_writer(writer)
+                .log_internal_errors(false)
+                .finish();
             tracing::subscriber::with_default(subscriber, emit);
         }
     }
@@ -86,6 +91,13 @@ pub fn with_stderr_subscriber(logging: &LoggingConfig, service_name: &str, emit:
 }
 
 /// Builds the subscriber and makes it the process-wide default.
+///
+/// Every subscriber here is built with `log_internal_errors(false)`. A log line is the last thing
+/// allowed to fail a command (ADR-0020 D2: a warning never changes the exit code, nor fails the
+/// command because writing it failed), and by default a failed write — stderr on a full disk,
+/// `/dev/full`, a size-limited file — makes `tracing-subscriber` report the failure with
+/// `eprintln!` on that same stderr, which panics. There is nowhere left to report a failure of
+/// the log stream itself, so the line is dropped.
 fn install(logging: &LoggingConfig, service_name: &str, output: LogOutput) -> AppResult<()> {
     let filter = filter_for(logging, service_name)?;
     let writer = match output {
@@ -97,11 +109,16 @@ fn install(logging: &LoggingConfig, service_name: &str, output: LogOutput) -> Ap
         LogFormat::Json => fmt()
             .with_env_filter(filter)
             .with_writer(writer)
+            .log_internal_errors(false)
             .json()
             .with_current_span(true)
             .with_span_list(true)
             .try_init(),
-        LogFormat::Text => fmt().with_env_filter(filter).with_writer(writer).try_init(),
+        LogFormat::Text => fmt()
+            .with_env_filter(filter)
+            .with_writer(writer)
+            .log_internal_errors(false)
+            .try_init(),
     };
 
     installed.map_err(|err| AppError::Config(format!("the tracing subscriber could not be installed: {err}")))
