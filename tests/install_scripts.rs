@@ -262,20 +262,16 @@ fn render_dir(label: &str) -> PathBuf {
     dir
 }
 
+/// Compares what one bash rendered in `dir` with the expected output. `dir` is removed first, so
+/// a failing comparison leaves nothing behind.
 fn assert_rendered(dir: &Path, output: &Output, bash: &str) {
-    assert!(output.status.success(), "{bash}: {}", stderr(output));
-    let (plist, unit) = expected_renderings();
-    assert_eq!(
-        std::fs::read_to_string(dir.join("out.plist")).unwrap(),
-        plist,
-        "{bash}: plist"
-    );
-    assert_eq!(
-        std::fs::read_to_string(dir.join("out.service")).unwrap(),
-        unit,
-        "{bash}: unit"
-    );
+    let plist = std::fs::read_to_string(dir.join("out.plist")).unwrap_or_default();
+    let unit = std::fs::read_to_string(dir.join("out.service")).unwrap_or_default();
     let _ = std::fs::remove_dir_all(dir);
+    assert!(output.status.success(), "{bash}: {}", stderr(output));
+    let (expected_plist, expected_unit) = expected_renderings();
+    assert_eq!(plist, expected_plist, "{bash}: plist");
+    assert_eq!(unit, expected_unit, "{bash}: unit");
 }
 
 /// The renderer inserts every value byte for byte under the system bash, and under the same bash
