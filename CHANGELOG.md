@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.39 are released
-together as 0.3.39.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.40 are released
+together as 0.3.40.
 
 ## Upgrading from 0.3.3
 
@@ -67,6 +67,15 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.40
+
+### Tests
+
+- A webhook-triggered `cli` run still waiting for its `cli_max_concurrency` slot when `SIGTERM`
+  arrives is proven to send its terminal `cancelled` callback (with `update_state_on_fail`), like
+  the running one, without a start callback and without starting the executor. The test fails
+  when a queued run is dropped without its callback.
 
 ## 0.3.39
 
