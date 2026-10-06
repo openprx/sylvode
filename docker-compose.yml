@@ -157,11 +157,15 @@ services:
     networks:
       - openpr-network
 
-  # The optional Sylvode Webhook receiver (github.com/openprx/openpr-webhook). Its image is published
-  # as ghcr.io/openprx/sylvode-webhook and, with the same digest, under the legacy name
-  # ghcr.io/openprx/openpr-webhook; both carry /app/sylvode-webhook and the legacy /app/openpr-webhook.
-  # SYLVODE_WEBHOOK_IMAGE / SYLVODE_WEBHOOK_CONFIG override the defaults; scripts/start.sh maps the
-  # legacy OPENPR_WEBHOOK_IMAGE / OPENPR_WEBHOOK_CONFIG onto them.
+  # The optional Sylvode Webhook receiver (github.com/openprx/openpr-webhook). The default image name
+  # ghcr.io/openprx/sylvode-webhook exists only from the first Sylvode Webhook release after 0.3.3
+  # onward; from then on each release is published under that name and, with the same digest, under
+  # the legacy ghcr.io/openprx/openpr-webhook, and carries /app/sylvode-webhook and the legacy
+  # /app/openpr-webhook. Until that release is out, the default does not pull: pin a published
+  # image, for example SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/openpr-webhook:<tag>, and for 0.3.3 or
+  # earlier also override the command with /app/openpr-webhook. Pin a version tag rather than
+  # :latest in production. SYLVODE_WEBHOOK_IMAGE / SYLVODE_WEBHOOK_CONFIG override the defaults;
+  # scripts/start.sh maps the legacy OPENPR_WEBHOOK_IMAGE / OPENPR_WEBHOOK_CONFIG onto them.
   webhook:
     profiles:
       - connectors

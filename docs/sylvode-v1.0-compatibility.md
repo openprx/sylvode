@@ -124,7 +124,13 @@ These identifiers keep their OpenPR-era names, with no removal planned:
 4. Copy the legacy configuration to the Sylvode filename, compare it, then remove or archive the
    old file before relying on default discovery.
 5. Move compose variables to their `SYLVODE_*` names without defining conflicting values. No
-   data-directory or database rename is required.
+   data-directory or database rename is required. The legacy `OPENPR_*` compose variables (and
+   the legacy compose configuration file names) are honoured only when the stack is started
+   through `scripts/start.sh`; `docker compose` run directly interpolates only `SYLVODE_*` and
+   falls back to its defaults. Keep the checkout directory name: compose derives the project
+   name, and with it the `pgdata` volume name, from that directory, so renaming the directory
+   from `openpr` to `sylvode` starts a stack on a new, empty database volume (set
+   `COMPOSE_PROJECT_NAME` to the old name, or keep the directory, to reuse the existing one).
 6. Update webhook receivers that match the `User-Agent` exactly or as a prefix.
 7. Read MCP resources through `sylvode://` URIs.
 

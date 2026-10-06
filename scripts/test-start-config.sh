@@ -151,5 +151,51 @@ else
   bad "wildcard and path origins are refused" "$(cat "$dir/out")"
 fi
 
+# 8. A quoted value in .env is unquoted, as docker-compose reads it, and never reaches the TOML.
+dir="$(fresh_copy quoted)"
+cp "$dir/.env.example" "$dir/.env"
+printf 'SYLVODE_FRONTEND_PORT="3999"\n' >>"$dir/.env"
+check "$dir"
+origins="$(origins_of "$dir/config/sylvode.compose.toml" 2>&1 || true)"
+if [[ "$(cat "$dir/status")" == 0 && "$origins" == "http://localhost:3999 http://127.0.0.1:3999" ]]; then
+  ok "a quoted .env value is unquoted before it is used"
+else
+  bad "a quoted .env value is unquoted before it is used" "got: $origins
+$(cat "$dir/out")"
+fi
+
+# 9. A port that is not a number is refused before any file is generated.
+dir="$(fresh_copy badport)"
+check "$dir" SYLVODE_FRONTEND_PORT=30x0
+if [[ "$(cat "$dir/status")" == 1 ]] && grep -q "SYLVODE_FRONTEND_PORT must be a port number" "$dir/out" \
+  && [[ ! -e "$dir/config/sylvode.compose.toml" ]]; then
+  ok "a non-numeric port is refused before generation"
+else
+  bad "a non-numeric port is refused before generation" "$(cat "$dir/out")"
+fi
+
+# 10. A legacy variable set only in the process environment works with a fresh .env: the example
+# file does not preset the canonical names it would conflict with.
+dir="$(fresh_copy legacyenv)"
+check "$dir" OPENPR_FRONTEND_PORT=3111
+origins="$(origins_of "$dir/config/sylvode.compose.toml" 2>&1 || true)"
+if [[ "$(cat "$dir/status")" == 0 && "$origins" == "http://localhost:3111 http://127.0.0.1:3111" ]]; then
+  ok "a legacy variable in the process environment works with a fresh .env"
+else
+  bad "a legacy variable in the process environment works with a fresh .env" "got: $origins
+$(cat "$dir/out")"
+fi
+
+# 11. An unknown argument is a usage error, not a full start.
+dir="$(fresh_copy badarg)"
+status=0
+(cd "$dir" && bash scripts/start.sh --help-me) >"$dir/out" 2>&1 || status=$?
+if [[ "$status" == 2 ]] && grep -q "Usage: scripts/start.sh" "$dir/out" && [[ ! -e "$dir/.env" ]]; then
+  ok "an unknown argument prints the usage and exits 2 before touching anything"
+else
+  bad "an unknown argument prints the usage and exits 2 before touching anything" "status $status
+$(cat "$dir/out")"
+fi
+
 printf '\nstart.sh --check-config: %d passed, %d failed\n' "$passed" "$failed"
 [[ "$failed" -eq 0 ]]
