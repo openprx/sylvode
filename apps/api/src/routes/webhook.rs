@@ -6,7 +6,7 @@ use axum::{
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::entities::webhook::{CreateWebhookRequest, UpdateWebhookRequest, WEBHOOK_EVENTS};
@@ -620,83 +620,6 @@ async fn ensure_webhook_in_workspace(state: &AppState, workspace_id: Uuid, webho
     }
 
     Ok(())
-}
-
-#[allow(dead_code)]
-pub async fn build_webhook_payload(
-    state: &AppState,
-    event_type: &str,
-    issue_data: &Value,
-    webhook_bot_user_id: Option<Uuid>,
-) -> Value {
-    let mut payload = json!({
-        "event": event_type,
-        "issue": issue_data,
-        "timestamp": chrono::Utc::now(),
-    });
-
-    if let Some(bot_id) = webhook_bot_user_id {
-        let is_bot_task = check_is_bot_task(event_type, issue_data, &bot_id);
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("is_bot_task".to_string(), json!(is_bot_task));
-            obj.insert("bot_id".to_string(), json!(bot_id));
-        }
-
-        if let Ok(Some(agent_type)) = get_bot_agent_type_by_id(state, bot_id).await
-            && let Some(obj) = payload.as_object_mut()
-        {
-            obj.insert("bot_agent_type".to_string(), json!(agent_type));
-        }
-
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert(
-                "trigger_reason".to_string(),
-                json!(get_trigger_reason(event_type, issue_data, &bot_id)),
-            );
-        }
-    }
-
-    payload
-}
-
-fn check_is_bot_task(event: &str, issue: &Value, bot_id: &Uuid) -> bool {
-    match event {
-        "issue.created" | "issue.updated" => issue
-            .get("assignee_id")
-            .and_then(|v| v.as_str())
-            .is_some_and(|id| id == bot_id.to_string()),
-        "comment.created" => true,
-        _ => false,
-    }
-}
-
-fn get_trigger_reason(event: &str, issue: &Value, bot_id: &Uuid) -> String {
-    let bot_id_str = bot_id.to_string();
-    if event == "comment.created" {
-        "mentioned".to_string()
-    } else if issue.get("assignee_id").and_then(|v| v.as_str()) == Some(bot_id_str.as_str()) {
-        "assigned".to_string()
-    } else {
-        "status_changed".to_string()
-    }
-}
-
-async fn get_bot_agent_type_by_id(state: &AppState, bot_id: Uuid) -> Result<Option<String>, ApiError> {
-    let row = state
-        .db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT agent_type FROM users WHERE id = $1 AND entity_type = 'bot'",
-            vec![bot_id.into()],
-        ))
-        .await?;
-
-    if let Some(row) = row {
-        let agent_type: Option<String> = row.try_get("", "agent_type")?;
-        Ok(agent_type)
-    } else {
-        Ok(None)
-    }
 }
 
 /// Endpoint audit for webhook rows that predate outbound validation.
