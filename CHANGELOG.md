@@ -306,6 +306,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- The root `Dockerfile` did not copy `Cargo.lock` or the spike crates that are workspace members,
+  so it could not load the workspace; it now copies both and builds with `--locked`. A root
+  `.dockerignore` keeps the build context to what the two Dockerfiles copy (no `target/` apart from
+  the four release binaries, no `.flow-gate/`, no generated configuration or `.env`), and
+  `backups/`, where `scripts/backup-db.sh` writes database dumps, is ignored by git.
 - `SECURITY.md` named a private reporting channel that is not enabled until the release is
   published and called the release line "pre-1.0" next to a 1.x compatibility commitment. It now
   says private vulnerability reporting is enabled with the release, to use the e-mail contact

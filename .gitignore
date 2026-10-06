@@ -22,6 +22,9 @@
 # User uploads (runtime data)
 /uploads/
 
+# Database dumps written by scripts/backup-db.sh
+/backups/
+
 # OS
 .DS_Store
 Thumbs.db
