@@ -233,17 +233,25 @@ const fn default_tunnel_reconnect_backoff_max_secs() -> u64 {
 /// The secret `config.example.toml` ships with. Start-up is refused while it is still in place.
 pub const EXAMPLE_SECRET_PLACEHOLDER: &str = "replace-with-the-secret-of-your-sylvode-webhook";
 
-/// Secrets copied from an example file rather than chosen: the current example's placeholder and
-/// the values earlier examples and the README showed.
-pub const PLACEHOLDER_SECRETS: [&str; 4] = [
+/// Secrets copied from an example file rather than chosen: the current example's placeholder, the
+/// values earlier examples and the README showed, and the placeholder of the compose example in
+/// the Sylvode repository (`config/sylvode-webhook.example.toml`).
+pub const PLACEHOLDER_SECRETS: [&str; 5] = [
     EXAMPLE_SECRET_PLACEHOLDER,
     "your-secret-here",
     "shared-hmac-secret",
     "replace-with-the-secret-shared-with-the-control-plane",
+    "replace_with_webhook_secret",
 ];
 
+/// Text that marks a value as a placeholder someone forgot to replace, wherever it appears.
+const PLACEHOLDER_MARKERS: [&str; 6] = ["replace_with", "replace-with", "your_", "your-", "changeme", "example"];
+
+/// Whether `secret`, ignoring surrounding whitespace and case, is one of [`PLACEHOLDER_SECRETS`]
+/// or contains one of [`PLACEHOLDER_MARKERS`].
 fn is_placeholder(secret: &str) -> bool {
-    PLACEHOLDER_SECRETS.contains(&secret.trim())
+    let secret = secret.trim().to_ascii_lowercase();
+    PLACEHOLDER_SECRETS.contains(&secret.as_str()) || PLACEHOLDER_MARKERS.iter().any(|marker| secret.contains(marker))
 }
 
 /// Whether `url` names a loopback host exactly: `localhost` (any case), an address in
@@ -991,7 +999,28 @@ url = "http://127.0.0.1:9000/hook"
     /// refused: a deployment that copied the example unchanged must not start.
     #[test]
     fn refuses_a_placeholder_secret() {
-        for placeholder in super::PLACEHOLDER_SECRETS {
+        let padded: Vec<String> = super::PLACEHOLDER_SECRETS
+            .iter()
+            .flat_map(|p| [format!("  {p}"), format!("{p}\t"), p.to_ascii_uppercase()])
+            .collect();
+        let refused = super::PLACEHOLDER_SECRETS
+            .iter()
+            .copied()
+            .chain(padded.iter().map(String::as_str))
+            .chain([
+                // The compose example of the Sylvode repository.
+                "replace_with_webhook_secret",
+                // The patterns: replace with, your, changeme, example.
+                "REPLACE_WITH_A_REAL_SECRET",
+                "Replace-With-Something",
+                "your_webhook_secret",
+                "YOUR-TOKEN",
+                "changeme",
+                "ChangeMe-2026",
+                "an-example-secret",
+                "EXAMPLE",
+            ]);
+        for placeholder in refused {
             let err = load_str(&security_config(
                 "127.0.0.1:9090",
                 &format!("webhook_secrets = [\"{placeholder}\"]"),
@@ -1007,6 +1036,18 @@ url = "http://127.0.0.1:9000/hook"
             ))
             .expect_err("a placeholder hmac secret is refused");
             assert!(err.contains("tunnel.hmac_secret"), "{err}");
+        }
+        for chosen in [
+            "e2e-webhook-secret",
+            "9f86d081884c7d659a2feaa0c55ad015",
+            "yours-truly-7Q",
+            "replacement",
+        ] {
+            load_str(&security_config(
+                "127.0.0.1:9090",
+                &format!("webhook_secrets = [\"{chosen}\"]"),
+            ))
+            .expect("a chosen secret is accepted");
         }
     }
 

@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.41 are released
-together as 0.3.41.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.42 are released
+together as 0.3.42.
 
 ## Upgrading from 0.3.3
 
@@ -25,8 +25,10 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
    `tunnel.require_inbound_sig = true requires a non-empty tunnel.hmac_secret: ...`. (0.3.16)
 4. A blank `security.webhook_secrets` entry: `security.webhook_secrets[N] is blank; ...`. (0.3.18)
 5. A present but blank `tunnel.hmac_secret`: `tunnel.hmac_secret is blank; ...`. (0.3.18)
-6. An example placeholder secret (`your-secret-here`, `shared-hmac-secret`, or the placeholder of
-   the current example): `security.webhook_secrets[N] is still the example placeholder; ...` or
+6. An example placeholder secret (`your-secret-here`, `shared-hmac-secret`,
+   `replace_with_webhook_secret`, the placeholders of the current example, or any value containing
+   `replace_with`, `replace-with`, `your_`, `your-`, `changeme` or `example`, ignoring case and
+   surrounding whitespace) (0.3.42): `security.webhook_secrets[N] is still the example placeholder; ...` or
    `tunnel.hmac_secret is still an example placeholder; ...`. (0.3.20)
 7. `allow_unsigned = true` with a `listen` address other than loopback, as the old example had:
    `security.allow_unsigned = true with server.listen = "0.0.0.0:9090", which is not a loopback
@@ -67,6 +69,17 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.42
+
+### Security
+
+- **More placeholder secrets refuse start-up.** The compose example in the Sylvode repository
+  (`config/sylvode-webhook.example.toml`) ships `webhook_secrets = ["replace_with_webhook_secret"]`,
+  which was accepted, so a deployment started from it verified signatures with a publicly known
+  secret. Besides the listed values (now including `replace_with_webhook_secret`), any secret that
+  contains `replace_with`, `replace-with`, `your_`, `your-`, `changeme` or `example` is refused,
+  ignoring case and surrounding whitespace.
 
 ## 0.3.41
 

@@ -1,6 +1,6 @@
 [package]
 name = "sylvode-webhook"
-version = "0.3.41"
+version = "0.3.42"
 edition = "2024"
 authors = ["g1e2x87"]
 license = "MIT OR Apache-2.0"
