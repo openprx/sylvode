@@ -468,31 +468,66 @@ impl Config {
         Ok(())
     }
 
-    /// Refuses a blank inbound secret. An HMAC with an empty key is one anyone can compute, so a
-    /// blank entry (an unfilled template, say) would turn signature checking into no check.
-    fn validate_secrets(&self) -> Result<(), String> {
-        if let Some(index) = self
-            .security
-            .webhook_secrets
-            .iter()
-            .position(|secret| is_placeholder(secret))
-        {
-            return Err(format!(
-                "security.webhook_secrets[{index}] is still the example placeholder; set it to the secret \
-                 configured on the Sylvode webhook (a long random string)"
-            ));
+    /// Whether `[tunnel]` is in use: enabled by both switches. Safe mode is applied later and only
+    /// turns a configured tunnel off for one run, so it does not count here.
+    fn tunnel_in_use(&self) -> bool {
+        self.features.tunnel_enabled && self.tunnel.as_ref().is_some_and(|t| t.enabled)
+    }
+
+    /// Problems with the secrets: a blank one (an HMAC with an empty key is one anyone can
+    /// compute, so it would turn signature checking into no check) or one still set to an example
+    /// placeholder. Each comes with whether the secret is in use: `webhook_secrets` unless
+    /// `allow_unsigned`, `hmac_secret` when the tunnel is in use. Those in use refuse start-up; the
+    /// others are only warned about, so a setting left over beside a disabled feature (such as
+    /// the `hmac_secret = "shared-hmac-secret"` earlier examples shipped) does not stop an upgrade.
+    fn secret_problems(&self) -> Vec<(bool, String)> {
+        let mut problems = Vec::new();
+        let webhook_in_use = !self.security.allow_unsigned;
+        for (index, secret) in self.security.webhook_secrets.iter().enumerate() {
+            if is_placeholder(secret) {
+                problems.push((
+                    webhook_in_use,
+                    format!(
+                        "security.webhook_secrets[{index}] is still the example placeholder; set it to the secret \
+                         configured on the Sylvode webhook (a long random string)"
+                    ),
+                ));
+            } else if secret.trim().is_empty() {
+                problems.push((
+                    webhook_in_use,
+                    format!(
+                        "security.webhook_secrets[{index}] is blank; an empty HMAC key lets anyone sign a request. \
+                         Set it to the secret configured on the Sylvode webhook, or remove the entry"
+                    ),
+                ));
+            }
         }
-        if self
-            .tunnel
-            .as_ref()
-            .and_then(|t| t.hmac_secret.as_deref())
-            .is_some_and(is_placeholder)
-        {
-            return Err(
-                "tunnel.hmac_secret is still an example placeholder; set it to the secret shared with \
-                        the control plane, or remove the setting"
-                    .to_string(),
-            );
+        if let Some(secret) = self.tunnel.as_ref().and_then(|t| t.hmac_secret.as_deref()) {
+            let in_use = self.tunnel_in_use();
+            if is_placeholder(secret) {
+                problems.push((
+                    in_use,
+                    "tunnel.hmac_secret is still an example placeholder; set it to the secret shared with \
+                     the control plane, or remove the setting"
+                        .to_string(),
+                ));
+            } else if secret.trim().is_empty() {
+                problems.push((
+                    in_use,
+                    "tunnel.hmac_secret is blank; an empty HMAC key lets anyone sign an envelope. Set it \
+                     to the secret shared with the control plane, or remove the setting"
+                        .to_string(),
+                ));
+            }
+        }
+        problems
+    }
+
+    /// Refuses a blank or placeholder secret that is in use, and unsigned requests on an address
+    /// other than loopback.
+    fn validate_secrets(&self) -> Result<(), String> {
+        if let Some((_, problem)) = self.secret_problems().into_iter().find(|(in_use, _)| *in_use) {
+            return Err(problem);
         }
         if self.security.allow_unsigned
             && !self.security.allow_unsigned_non_loopback
@@ -506,29 +541,6 @@ impl Config {
                 self.server.listen
             ));
         }
-        if let Some(index) = self
-            .security
-            .webhook_secrets
-            .iter()
-            .position(|secret| secret.trim().is_empty())
-        {
-            return Err(format!(
-                "security.webhook_secrets[{index}] is blank; an empty HMAC key lets anyone sign a request. \
-                 Set it to the secret configured on the Sylvode webhook, or remove the entry"
-            ));
-        }
-        let blank_hmac = self
-            .tunnel
-            .as_ref()
-            .and_then(|t| t.hmac_secret.as_deref())
-            .is_some_and(|secret| secret.trim().is_empty());
-        if blank_hmac {
-            return Err(
-                "tunnel.hmac_secret is blank; an empty HMAC key lets anyone sign an envelope. Set it \
-                        to the secret shared with the control plane, or remove the setting"
-                    .to_string(),
-            );
-        }
         Ok(())
     }
 
@@ -537,11 +549,7 @@ impl Config {
     /// Without a secret the `sig` of an inbound envelope is never verified, so requiring one would
     /// only check that the field exists and would authenticate nothing.
     fn validate_tunnel(&self) -> Result<(), String> {
-        let Some(tunnel) = self
-            .tunnel
-            .as_ref()
-            .filter(|t| self.features.tunnel_enabled && t.enabled)
-        else {
+        let Some(tunnel) = self.tunnel.as_ref().filter(|_| self.tunnel_in_use()) else {
             return Ok(());
         };
         if let Some(url) = &tunnel.url
@@ -569,6 +577,12 @@ impl Config {
     /// Configurations that start but deserve a prominent warning in the log.
     pub fn startup_warnings(&self) -> Vec<String> {
         let mut warnings = self.legacy_command_notices.clone();
+        warnings.extend(
+            self.secret_problems()
+                .into_iter()
+                .filter(|(in_use, _)| !*in_use)
+                .map(|(_, problem)| format!("{problem} (not in use now, so start-up continues)")),
+        );
         if self.security.allow_unsigned {
             warnings.push(format!(
                 "security.allow_unsigned = true: webhook signatures are NOT verified; anyone who can reach \
@@ -973,22 +987,74 @@ url = "http://127.0.0.1:9000/hook"
         load_str(&secrets_config(r#"["a-real-secret"]"#)).expect("a real secret is accepted");
     }
 
-    /// A present but blank `hmac_secret` is refused whatever `require_inbound_sig` says and
-    /// whether or not the tunnel is enabled: it would sign and verify with an empty key.
+    /// A blank `hmac_secret` is refused, whatever `require_inbound_sig` says, when the tunnel is in
+    /// use: it would sign and verify with an empty key. With the tunnel off it is only a warning.
     #[test]
-    fn refuses_a_blank_hmac_secret_whenever_it_is_present() {
+    fn refuses_a_blank_hmac_secret_when_the_tunnel_is_in_use() {
         for (feature, enabled) in [(true, true), (false, true), (true, false), (false, false)] {
             for secret in ["hmac_secret = \"\"", "hmac_secret = \"   \""] {
-                let err = load_str(&tunnel_config(
-                    feature,
-                    enabled,
-                    &format!("require_inbound_sig = false\n{secret}"),
-                ))
-                .expect_err("a blank hmac_secret is refused");
-                assert!(err.contains("tunnel.hmac_secret"), "{err}");
-                assert!(err.contains("blank"), "{err}");
+                let config = tunnel_config(feature, enabled, &format!("require_inbound_sig = false\n{secret}"));
+                if feature && enabled {
+                    let err = load_str(&config).expect_err("a blank hmac_secret is refused");
+                    assert!(err.contains("tunnel.hmac_secret"), "{err}");
+                    assert!(err.contains("blank"), "{err}");
+                } else {
+                    let cfg = load_str(&config).expect("an unused blank hmac_secret only warns");
+                    let warnings = cfg.startup_warnings();
+                    assert!(
+                        warnings
+                            .iter()
+                            .any(|w| w.contains("tunnel.hmac_secret") && w.contains("blank")),
+                        "{warnings:?}"
+                    );
+                }
             }
         }
+    }
+
+    /// Placeholder checks apply only to secrets in use: the `hmac_secret = "shared-hmac-secret"`
+    /// that the examples up to 0.3.17 shipped uncommented, beside `enabled = false`, starts with a
+    /// warning; the same line with the tunnel on refuses. A placeholder in `webhook_secrets` is not
+    /// used with `allow_unsigned = true` either.
+    #[test]
+    fn placeholders_refuse_only_secrets_in_use() {
+        let old_example = "[server]\nlisten = \"127.0.0.1:9090\"\n\n[security]\nwebhook_secrets = [\"a-real-secret\"]\n\n\
+                           [tunnel]\nenabled = false\nurl = \"wss://control.invalid/tunnel\"\nagent_id = \"a\"\n\
+                           auth_token = \"t\"\nhmac_secret = \"shared-hmac-secret\"\n";
+        let cfg = load_str(old_example).expect("an unused placeholder hmac_secret only warns");
+        let warnings = cfg.startup_warnings();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("tunnel.hmac_secret") && w.contains("placeholder")),
+            "{warnings:?}"
+        );
+        let err = load_str(
+            &old_example
+                .replace("enabled = false", "enabled = true")
+                .replace("[tunnel]", "[features]\ntunnel_enabled = true\n\n[tunnel]"),
+        )
+        .expect_err("a placeholder hmac_secret of an enabled tunnel is refused");
+        assert!(err.contains("tunnel.hmac_secret"), "{err}");
+
+        let unsigned = load_str(&security_config(
+            "127.0.0.1:9090",
+            "allow_unsigned = true\nwebhook_secrets = [\"your-secret-here\", \"\"]",
+        ))
+        .expect("unused webhook secrets only warn");
+        let warnings = unsigned.startup_warnings();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("security.webhook_secrets[0]") && w.contains("placeholder")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("security.webhook_secrets[1]") && w.contains("blank")),
+            "{warnings:?}"
+        );
     }
 
     fn security_config(listen: &str, security: &str) -> String {
@@ -1029,12 +1095,8 @@ url = "http://127.0.0.1:9000/hook"
             assert!(err.contains("security.webhook_secrets[0]"), "{err}");
             assert!(err.contains("placeholder"), "{err}");
 
-            let err = load_str(&tunnel_config(
-                false,
-                false,
-                &format!("hmac_secret = \"{placeholder}\""),
-            ))
-            .expect_err("a placeholder hmac secret is refused");
+            let err = load_str(&tunnel_config(true, true, &format!("hmac_secret = \"{placeholder}\"")))
+                .expect_err("a placeholder hmac secret is refused");
             assert!(err.contains("tunnel.hmac_secret"), "{err}");
         }
         for chosen in [
