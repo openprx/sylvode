@@ -3,7 +3,7 @@
 //! The v0.3 spike (`spikes/collab-shared` + `spikes/collab-loro`) evaluated Loro against a second
 //! candidate (`collab-yrs-yjs`) behind a shared, engine-agnostic harness so the comparison could
 //! not be tilted by adapter-specific shortcuts. That evaluation selected Loro
-//! (`decisions/ADR-000x` in `/opt/working/sylvode-flow`); this crate is the promotion of the
+//! (`decisions/ADR-000x` in the Sylvode Flow contracts repository); this crate is the promotion of the
 //! winning adapter to a real workspace member.
 //!
 //! What moved here from the spike, and why:

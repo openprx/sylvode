@@ -11,7 +11,7 @@
       "kind": "development",
       "status": "collected",
       "identity_sha256": "577cca309a8c5c3d493cb205d6f7610aadf63fcdbddb377b57f73a69205fdf3e",
-      "identity_description": "local podman-compose project 'openpr', service 'postgres', persistent volume 'openpr_pgdata' (created 2026-08-19), database 'openpr', reached via `docker compose exec postgres psql` from /opt/worker/code/openpr",
+      "identity_description": "local podman-compose project 'openpr', service 'postgres', persistent volume 'openpr_pgdata' (created 2026-08-19), database 'openpr', reached via `docker compose exec postgres psql` from <checkout>",
       "collected_at": "2026-08-29T14:33:47Z",
       "row_count": 0,
       "workspace_distribution": [],
@@ -41,7 +41,7 @@
       "kind": "target_deployment",
       "status": "collected",
       "identity_sha256": "2b0e958887bf7d5f3cb86e952abc02a39e06177227a2b3d9efbe4ac52a127591",
-      "identity_description": "ssh host alias 'kkso', compose project at /opt/openpr, container 'openpr-postgres-1', database 'openpr', public site https://pp.opsxsx.com; reached via `ssh kkso docker exec openpr-postgres-1 psql`",
+      "identity_description": "ssh host alias '<deployment-host>', compose project at <install-path>, container 'openpr-postgres-1', database 'openpr', public site https://<public-domain>; reached via `ssh <deployment-host> docker exec openpr-postgres-1 psql`",
       "collected_at": "2026-08-29T14:34:31Z",
       "row_count": 0,
       "workspace_distribution": [],
@@ -52,7 +52,7 @@
       "schema_migrations_latest": "0052_drop_connectors_and_agent_invocations.sql",
       "schema_migrations_applied_count": 53,
       "transaction_mode": "BEGIN TRANSACTION READ ONLY; ... COMMIT;",
-      "note": "No local .git checkout at /opt/openpr (deployed via scp binaries per deployment SOP), so the 547ee78 commit reference cited in the task prompt could not be independently verified from a .git directory on that host; schema_migrations (the authoritative in-database ledger) confirms migration 0052 is the latest applied, matching the prompt's stated 'migrated to 0052'."
+      "note": "No local .git checkout at <install-path> (deployed via scp binaries per deployment SOP), so the 547ee78 commit reference cited in the task prompt could not be independently verified from a .git directory on that host; schema_migrations (the authoritative in-database ledger) confirms migration 0052 is the latest applied, matching the prompt's stated 'migrated to 0052'."
     }
   ],
   "total_rows": 0,

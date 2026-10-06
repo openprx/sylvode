@@ -1,10 +1,10 @@
 {
   "schema_version": "sylvode.flow.environment-topology.v2",
-  "purpose": "Restructured, capability-based inventory of every addressable PostgreSQL database environment relevant to this repository. Supersedes environment-topology-v1.json, which the independent audit at /opt/worker/report/codex-topology-presign-2026-08-29.md judged HOLD for two reasons: (1) it omitted a materialized host PostgreSQL 17/main cluster and nine database-creation scripts targeting it, and (2) it mixed physical database identity, access/lifecycle mechanism, and potential-environment-generator into one flat environments[] array. This file splits those into clusters[] (physical DB server identity), databases[] (concrete databases, each owned by exactly one cluster), and mechanisms[] (creation/access/lifecycle paths, each pointing at the cluster/database it acts on).",
+  "purpose": "Restructured, capability-based inventory of every addressable PostgreSQL database environment relevant to this repository. Supersedes environment-topology-v1.json, which the independent audit at <workspace-reports>/codex-topology-presign-2026-08-29.md judged HOLD for two reasons: (1) it omitted a materialized host PostgreSQL 17/main cluster and nine database-creation scripts targeting it, and (2) it mixed physical database identity, access/lifecycle mechanism, and potential-environment-generator into one flat environments[] array. This file splits those into clusters[] (physical DB server identity), databases[] (concrete databases, each owned by exactly one cluster), and mechanisms[] (creation/access/lifecycle paths, each pointing at the cluster/database it acts on).",
   "source_head": "7945f3fb2eff3547ee8ba8dde9056ed6200f0503",
   "generated_at": "2026-08-29T15:17:41Z",
   "supersedes": "environment-topology-v1.json (sha256 5da0daa82fcda25e987436b2708869b111cd2e6272d4e3db49aae86914eadd8f)",
-  "audit_reference": "/opt/worker/report/codex-topology-presign-2026-08-29.md",
+  "audit_reference": "<workspace-reports>/codex-topology-presign-2026-08-29.md",
   "executor": {
     "name": "claude-agent-sonnet5",
     "role": "v0.4-topology-v2-subagent"
@@ -13,7 +13,7 @@
     "read-only everywhere: no INSERT/UPDATE/DELETE/DDL issued by this task against any of the discovered databases",
     "local dev compose: only `docker compose start postgres` on the already-existing, previously-exited container (no create/recreate/down/-v), matching the precedent already accepted in v1",
     "host PostgreSQL 17/main cluster: read-only `psql` via `sudo -n -u postgres` (peer auth), used only for `\\l`, `information_schema.tables`, `pg_roles`, and `SELECT count(*) FROM pages` inside `BEGIN TRANSACTION READ ONLY; ... COMMIT;` where applicable",
-    "kkso: read-only only (`docker compose ps`, `psql -c '\\l'`, `SELECT count(*) FROM schema_migrations`, `SELECT count(*) FROM pages` in a read-only transaction); no restart, no config change",
+    "<deployment-host>: read-only only (`docker compose ps`, `psql -c '\\l'`, `SELECT count(*) FROM schema_migrations`, `SELECT count(*) FROM pages` in a read-only transaction); no restart, no config change",
     "no git commit / push / stash performed"
   ],
   "clusters": [
@@ -22,7 +22,7 @@
       "identity_sha256": "45c183ad9fa3572297425cb2508cc0f8f9be41d781a7d404296424bfe075c6c3",
       "kind": "development",
       "description": "podman-compose project 'openpr' (default project name = repo root directory basename; no `name:` override in docker-compose.yml, no COMPOSE_PROJECT_NAME in .env/.env.example), service 'postgres', container 'openpr_postgres_1', image docker.io/library/postgres:16, persistent named volume 'openpr_pgdata'",
-      "location": "docker-compose.yml:20-35, working_dir /opt/worker/code/openpr",
+      "location": "docker-compose.yml:20-35, working_dir <checkout>",
       "evidence": "`podman inspect openpr_postgres_1` labels: com.docker.compose.project=openpr, com.docker.compose.service=postgres, com.docker.compose.project.config_files=docker-compose.yml. Container observed 'Exited (0) 26 minutes ago (healthy)' at scan start, started (not recreated) via `docker compose start postgres` for read-only querying, matching v1's precedent.",
       "persistence": "named volume 'openpr_pgdata' survives `docker compose down` (without -v) and host reboot by construction"
     },
@@ -38,13 +38,13 @@
       "database_enumeration_method": "`sudo -n -u postgres psql -p 5366 -d postgres -c '\\\\l'` (superuser, lists every database on the cluster, not name-filtered)"
     },
     {
-      "id": "cluster-kkso-target-deployment",
+      "id": "cluster-remote-target-deployment",
       "identity_sha256": "774188f54395215a24996d994a2657b370becbbaca5b060e3365e5f418fb0d91",
       "kind": "target_deployment",
-      "description": "ssh host alias 'kkso' -> compose project at /opt/openpr, container 'openpr-postgres-1', image docker.io/library/postgres:16",
-      "location": "ssh kkso, /opt/openpr (no .git checkout on host -- deployed via scp'd pre-built binaries per documented SOP)",
-      "evidence": "`ssh kkso docker compose ps` (run from /opt/openpr) shows all 5 services 'Up 13 days': postgres, api, worker, mcp-server, frontend.",
-      "public_surface": "https://pp.opsxsx.com (Cloudflare -> Caddy -> nginx frontend -> api), admin account admin@kkso.local"
+      "description": "ssh host alias '<deployment-host>' -> compose project at <install-path>, container 'openpr-postgres-1', image docker.io/library/postgres:16",
+      "location": "ssh <deployment-host>, <install-path> (no .git checkout on host -- deployed via scp'd pre-built binaries per documented SOP)",
+      "evidence": "`ssh <deployment-host> docker compose ps` (run from <install-path>) shows all 5 services 'Up 13 days': postgres, api, worker, mcp-server, frontend.",
+      "public_surface": "https://<public-domain> (Cloudflare -> Caddy -> nginx frontend -> api), admin account <admin-email>"
     }
   ],
   "databases": [
@@ -115,15 +115,15 @@
       "pages_table_present": false
     },
     {
-      "id": "db-kkso-openpr",
+      "id": "db-deployment-openpr",
       "identity_sha256": "05e28ddd2dbf4e750fde502d370824c9028a42ae1e03a35764ef0b415d39fee1",
-      "cluster_id": "cluster-kkso-target-deployment",
+      "cluster_id": "cluster-remote-target-deployment",
       "database_name": "openpr",
       "owner": "openpr",
       "state_bearing": true,
       "materialization_state": "materialized",
       "classification_basis": [
-        "live production stack with a public URL (https://pp.opsxsx.com) and a real admin account; per CLAUDE.md's connector-retirement note, already carries real usage -- unambiguously state-bearing"
+        "live production stack with a public URL (https://<public-domain>) and a real admin account; per CLAUDE.md's connector-retirement note, already carries real usage -- unambiguously state-bearing"
       ],
       "schema_migrations_applied_count": 53,
       "schema_migrations_latest_applied": "0052_drop_connectors_and_agent_invocations.sql (one behind local dev's 0053)"
@@ -328,8 +328,8 @@
   ],
   "not_environments": [
     {
-      "candidate": "playwright.config.ts baseURL http://10.72.0.3:3000",
-      "why_excluded": "10.72.0.3 is this host's own WireGuard interface address -- reaches db-local-dev-openpr's frontend, not a separate deployment"
+      "candidate": "playwright.config.ts baseURL http://<maintainer-vpn-address>:3000",
+      "why_excluded": "<maintainer-vpn-address> is this host's own WireGuard interface address -- reaches db-local-dev-openpr's frontend, not a separate deployment"
     },
     {
       "candidate": "apps/mcp-server/tests/support/mod.rs:21 postgres://openpr:e2e-unused-password@127.0.0.1:5432/openpr",

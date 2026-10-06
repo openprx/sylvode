@@ -484,11 +484,12 @@ tests need `OPENPR_TEST_DATABASE_URL` pointing at a PostgreSQL maintenance
 connection; without it they print `skipped:` and still count as passed. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the full contract and the CI checks.
 
-**Playwright E2E — 8 specs**, all covering universal forms, in `tests/e2e/web/`:
-field design save, human flow, import/export, interaction/IA, mobile + dark
-mode, permissions, record CRUD, record detail edit/delete. `playwright.config.ts`
-hard-codes an internal `baseURL` of `http://10.72.0.3:3000`; override it with
-`BASE_URL=http://localhost:3000 npx playwright test`.
+**Playwright E2E — 10 specs** in `tests/e2e/web/`: eight cover universal forms
+(field design save, human flow, import/export, interaction/IA, mobile + dark
+mode, permissions, record CRUD, record detail edit/delete), and two cover the
+bot token transport surface and the webhook event list. `playwright.config.ts`
+defaults `baseURL` to `http://localhost:3000`; point it at another frontend with
+`BASE_URL=http://<host>:<port> npx playwright test`.
 
 **Frontend smoke scripts — 6 `.mjs` scripts** in `frontend/scripts/`, run via
 `bun run smoke:*` (`smoke:connections`,

@@ -66,7 +66,7 @@ Low-risk exceptions:
    stop serving a permanently incorrect `lang="en"` for the default Chinese UI.
 5. Re-run the page source audit and JSON parity check.
 6. Build frontend, rebuild the Podman frontend image, deploy, and verify
-   `http://10.72.0.3:3000` after restart.
+   `http://<maintainer-lan-address>:3000` after restart.
 
 ## Acceptance criteria
 
@@ -75,7 +75,7 @@ Low-risk exceptions:
 - All listed no-i18n and partial-i18n pages are converted or documented as
   intentional technical/brand exceptions.
 - Frontend build succeeds.
-- Local Podman deployment is rebuilt and reachable through `10.72.0.3`.
+- Local Podman deployment is rebuilt and reachable through `<maintainer-lan-address>`.
 
 ## Execution result
 

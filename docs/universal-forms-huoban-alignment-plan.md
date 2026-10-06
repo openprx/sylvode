@@ -1318,7 +1318,7 @@ Verified:
 - Applied migration to local `openpr_postgres_1`; 6 existing forms received
   stable field IDs and 6 baseline schema versions.
 - Rebuilt release API binary and replaced `/app/api` inside `openpr_api_1`.
-- Health checks passed at `127.0.0.1:8081` and `10.72.0.3:8081`.
+- Health checks passed at `127.0.0.1:8081` and `<maintainer-lan-address>:8081`.
 - Authenticated HTTP smoke passed for form create, generated `field_id`,
   schema version increment, stale schema `409`, view update, record
   archive/restore, and form archive/restore.
@@ -1351,7 +1351,7 @@ Verified:
 - `cd frontend && npm run check`
 - `cd frontend && npm run build`
 - Rebuilt release API binary and replaced `/app/api` inside `openpr_api_1`.
-- Health checks passed at `127.0.0.1:8081` and `10.72.0.3:8081`.
+- Health checks passed at `127.0.0.1:8081` and `<maintainer-lan-address>:8081`.
 - Authenticated HTTP smoke passed for schema summary, field usage, field
   dependencies, amount filter/sort, and datetime filter/sort.
 - Temporary smoke form was archived after verification.
@@ -1388,7 +1388,7 @@ Verified:
 - `cd frontend && npm run build`
 - Applied migration `0037_form_attachments.sql` to local `openpr_postgres_1`.
 - Rebuilt release API binary and replaced `/app/api` inside `openpr_api_1`.
-- Health checks passed at `127.0.0.1:8081` and `10.72.0.3:8081`.
+- Health checks passed at `127.0.0.1:8081` and `<maintainer-lan-address>:8081`.
 - Authenticated HTTP smoke passed for formula preview, record create with
   calculated amount, record recalculation, and attachment metadata creation.
 - Temporary smoke form was archived after verification.
@@ -1426,7 +1426,7 @@ Verified:
 - `cd frontend && npm run check`
 - `cd frontend && npm run build`
 - Rebuilt release API binary and replaced `/app/api` inside `openpr_api_1`.
-- Health checks passed at `127.0.0.1:8081` and `10.72.0.3:8081`.
+- Health checks passed at `127.0.0.1:8081` and `<maintainer-lan-address>:8081`.
 - Authenticated HTTP smoke passed for:
   - parent-child link child aggregate total `12.50`;
   - child update parent total `22.50`;
@@ -1484,10 +1484,10 @@ Verified:
 - `cd frontend && npm run build`
 - `cd frontend && npm run smoke:forms-ui`
 - Copied the static build into `openpr_frontend_1:/usr/share/nginx/html`.
-- Frontend returned HTML from `127.0.0.1:3000` and `10.72.0.3:3000`.
+- Frontend returned HTML from `127.0.0.1:3000` and `<maintainer-lan-address>:3000`.
 - Fixed the frontend Nginx `/api` proxy after return audit found it still held
   a stale API container IP after API redeploy.
-- `10.72.0.3:3000/api/v1/auth/me` now proxies to the real API again.
+- `<maintainer-lan-address>:3000/api/v1/auth/me` now proxies to the real API again.
 - Deployed browser smoke opened the real custom-form project page and matched
   `数据 / 设计 / 自动化`.
 - Browser smoke now covers workflow tabs, automation mode, design mode schema
@@ -1532,10 +1532,10 @@ Verified:
 - `cd frontend && npm run build`
 - `cd frontend && npm run smoke:forms-ui`
 - Copied the static build into `openpr_frontend_1:/usr/share/nginx/html`.
-- Frontend returned HTML from `127.0.0.1:3000` and `10.72.0.3:3000`.
+- Frontend returned HTML from `127.0.0.1:3000` and `<maintainer-lan-address>:3000`.
 - `nginx -t` passed in `openpr_frontend_1` after the Podman DNS runtime
   resolver proxy fix.
-- `10.72.0.3:3000/api/v1/auth/me` returned a real API response through the
+- `<maintainer-lan-address>:3000/api/v1/auth/me` returned a real API response through the
   frontend proxy.
 - Deployed browser smoke opened the real custom-form project page and matched
   `数据 / 设计 / 自动化`.
@@ -1575,7 +1575,7 @@ Verified:
 - `cd frontend && npm run build`
 - Copied the static build and Nginx config into `openpr_frontend_1`.
 - `nginx -t` passed inside `openpr_frontend_1`.
-- `10.72.0.3:3000/api/v1/auth/me` returned a real API response through the
+- `<maintainer-lan-address>:3000/api/v1/auth/me` returned a real API response through the
   frontend proxy.
 - `node scripts/smoke-universal-forms-deployed-crud.mjs` passed and verified
   `create`, `detail`, `edit`, `delete`, and `frontend_api_proxy`.
@@ -1628,7 +1628,7 @@ Verified:
 - `cargo test -p api forms::`
 - Rebuilt release API binary, replaced `/app/api` inside `openpr_api_1`, and
   verified `/health`.
-- HTTP smoke through `10.72.0.3:3000/api` verified:
+- HTTP smoke through `<maintainer-lan-address>:3000/api` verified:
   - `relation-targets` returns the child record display value;
   - `children` returns the linked child record.
 - `cd frontend && npm run check`
@@ -1812,11 +1812,11 @@ Verified:
 - `cd frontend && npm run check`
 - `cd frontend && npm run build`
 - Release API binary was rebuilt and deployed into `openpr_api_1`.
-- Health checks passed at `127.0.0.1:8081` and `10.72.0.3:8081`.
+- Health checks passed at `127.0.0.1:8081` and `<maintainer-lan-address>:8081`.
 - Frontend static build and Nginx config were deployed into
   `openpr_frontend_1`.
 - `nginx -t` passed inside `openpr_frontend_1`.
-- Frontend returned HTML from `127.0.0.1:3000` and `10.72.0.3:3000`.
+- Frontend returned HTML from `127.0.0.1:3000` and `<maintainer-lan-address>:3000`.
 - `node scripts/smoke-universal-forms-deployed-export.mjs` passed and verified
   API export column selection, CSV escaping, hidden-column exclusion, browser
   export button, and browser CSV capture.
@@ -1874,11 +1874,11 @@ Verified:
 - `cd frontend && npm run build`
 - `node --check scripts/smoke-universal-forms-deployed-import.mjs`
 - Release API binary was rebuilt and deployed into `openpr_api_1`.
-- Health checks passed at `127.0.0.1:8081` and `10.72.0.3:8081`.
+- Health checks passed at `127.0.0.1:8081` and `<maintainer-lan-address>:8081`.
 - Frontend static build and Nginx config were deployed into
   `openpr_frontend_1`.
 - `nginx -t` passed inside `openpr_frontend_1`.
-- Frontend returned HTML from `127.0.0.1:3000` and `10.72.0.3:3000`.
+- Frontend returned HTML from `127.0.0.1:3000` and `<maintainer-lan-address>:3000`.
 - `node scripts/smoke-universal-forms-deployed-import.mjs` passed and verified
   API import preview rejection for amount JSON numbers, API import commit for a
   valid Decimal string row, browser import modal visibility, CSV preview, CSV
@@ -1926,11 +1926,11 @@ Verified:
 - `scripts/audit-universal-forms-source-coverage.sh`
 - Migration `0038_form_permissions.sql` applied to deployed Postgres.
 - Release API binary was rebuilt and deployed into `openpr_api_1`.
-- Health checks passed at `127.0.0.1:8081` and `10.72.0.3:8081`.
+- Health checks passed at `127.0.0.1:8081` and `<maintainer-lan-address>:8081`.
 - Frontend static build and Nginx config were deployed into
   `openpr_frontend_1`.
 - `nginx -t` passed inside `openpr_frontend_1`.
-- Frontend returned HTML from `127.0.0.1:3000` and `10.72.0.3:3000`.
+- Frontend returned HTML from `127.0.0.1:3000` and `<maintainer-lan-address>:3000`.
 - `node scripts/smoke-universal-forms-deployed-permissions.mjs` passed and
   verified admin policy update, member effective denial for create/export/design,
   member create restore, and browser permissions panel save.
@@ -2002,7 +2002,7 @@ Verified:
 - `cargo test -p mcp-server project_type_and_resource_tools_are_registered_once`
 - `cargo test -p mcp-server embedded_skill_guide_matches_registered_universal_tool_surface`
 - `scripts/audit-universal-forms-source-coverage.sh`
-- `MCP_URL=http://10.72.0.3:8090 scripts/test-mcp.sh`
+- `MCP_URL=http://<maintainer-lan-address>:8090 scripts/test-mcp.sh`
 - `node --check scripts/smoke-universal-forms-deployed-duplicate.mjs`
 - `node scripts/smoke-universal-forms-deployed-duplicate.mjs`
 

@@ -52,13 +52,13 @@ Checks run during this audit:
   visibility, saved-view create, grid columns following the saved view,
   reload persistence, and saved-view delete.
 - Release API binary was rebuilt and deployed into `openpr_api_1`.
-- Health checks passed at `127.0.0.1:8081` and `10.72.0.3:8081`.
+- Health checks passed at `127.0.0.1:8081` and `<maintainer-lan-address>:8081`.
 - Authenticated HTTP smoke passed for child aggregate link/update/archive/restore
   and attachment create/list/archive/include_archived/restore.
 - Frontend static build was copied into `openpr_frontend_1`.
-- Frontend returned HTML from `127.0.0.1:3000` and `10.72.0.3:3000`.
+- Frontend returned HTML from `127.0.0.1:3000` and `<maintainer-lan-address>:3000`.
 - Frontend Nginx `/api` proxy returned a real API response from
-  `10.72.0.3:3000/api/v1/auth/me` after the proxy fix.
+  `<maintainer-lan-address>:3000/api/v1/auth/me` after the proxy fix.
 - `nginx -t` passed inside `openpr_frontend_1`; `/mcp` proxy returned 404
   rather than 502, confirming the proxy target is reachable even though `/mcp`
   itself is not a root health endpoint.

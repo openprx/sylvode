@@ -48,6 +48,9 @@ jobs:
       - name: No machine-specific paths in scripts
         run: bash scripts/test-no-machine-paths.sh
 
+      - name: No private addresses or bot token literals
+        run: bash scripts/test-no-instance-literals.sh
+
       # Single-repository form only: the sibling repositories are not checked out here. The
       # five-repository release form runs locally (see CONTRIBUTING, "Brand residue gate").
       - name: Brand residue gate (this repository)

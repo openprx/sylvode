@@ -51,12 +51,12 @@
       "workspace_distribution": []
     },
     {
-      "database_id": "db-kkso-openpr",
-      "cluster_id": "cluster-kkso-target-deployment",
+      "database_id": "db-deployment-openpr",
+      "cluster_id": "cluster-remote-target-deployment",
       "state_bearing": true,
       "status": "collected",
       "collected_at": "2026-08-29T15:15:30Z",
-      "access_method": "ssh kkso docker exec openpr-postgres-1 psql -U openpr -d openpr",
+      "access_method": "ssh <deployment-host> docker exec openpr-postgres-1 psql -U openpr -d openpr",
       "transaction_mode": "BEGIN TRANSACTION READ ONLY; SELECT count(*) FROM pages; COMMIT;",
       "row_count": 0,
       "schema_migrations_applied_count": 53,
@@ -106,7 +106,7 @@
     }
   ],
   "total_rows": 0,
-  "total_rows_computation": "sum of row_count over databases_collected where state_bearing=true: db-local-dev-openpr(0) + db-host-openpr_api_test(0) + db-host-r3_replay(0) + db-kkso-openpr(0) = 0. db-host-openpr_e2e excluded (table_absent, not a confirmed-zero pages table). mech-worktree-compose-sources and mech-ci-workflow-test-job excluded (not materialized / not_applicable, row_count=null by rule).",
+  "total_rows_computation": "sum of row_count over databases_collected where state_bearing=true: db-local-dev-openpr(0) + db-host-openpr_api_test(0) + db-host-r3_replay(0) + db-deployment-openpr(0) = 0. db-host-openpr_e2e excluded (table_absent, not a confirmed-zero pages table). mech-worktree-compose-sources and mech-ci-workflow-test-job excluded (not materialized / not_applicable, row_count=null by rule).",
   "total_rows_status": "complete -- every registered state_bearing database with a pages table has been measured; no unavailable/unresolvable state_bearing database remains",
   "unavailable_items": [],
   "unavailable_impact_on_conclusion": "none -- there are zero `unavailable` entries in this round. The only null-row-count entries are `table_absent` (one database, legitimately has no pages table) and `not_materialized`/`not_applicable`/`unbound` (nothing exists yet to be unavailable against)."

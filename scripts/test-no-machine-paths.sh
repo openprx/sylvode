@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Fails when a tracked script or test (scripts/, tests/, frontend/tests/, skills/) names a
-# machine-specific absolute path.
+# Fails when a tracked script, test, skill, source file or schema (scripts/, tests/,
+# frontend/tests/, skills/, apps/, crates/, docs/schemas/) names a machine-specific absolute path.
 #
 # An open-source checkout can live anywhere, so a script must not default to, read from or write
 # to a path that only exists on one maintainer's machine (a workspace under /opt, a home
 # directory). Defaults belong inside the checkout's ignored working area (.flow-gate/) or behind
 # an explicit flag or environment variable that fails clearly when unset.
 #
-# The only exemptions are listed below with the reason; each must still match, so a stale entry
-# fails as well. A built-in mutation control proves the scan can go red.
+# The only exemptions are listed below with the reason: single lines, and whole files that are
+# frozen records of one run. Each must still match, so a stale entry fails as well. A built-in mutation control proves the scan can go red.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,17 +19,35 @@ EXEMPTIONS=$'scripts/audit-universal-forms-production-readiness.sh\tnot_contains
 scripts/report-flow-v0.3-json.sh\t      repository: "/opt/worker/code/openpr",\tfrozen v0.3 receipt: docs/schemas/sylvode-flow-gate-v1.schema.json pins this value as a const
 scripts/report-flow-v0.3-json.sh\t    source: {repository: "/opt/worker/code/openpr", head: $head, dirty: $dirty},\tfrozen v0.3 receipt: docs/schemas/sylvode-flow-gate-v1.schema.json pins this value as a const'
 
+# path<TAB>reason: whole files exempt because they are frozen and their hash or content is pinned
+FILE_EXEMPTIONS=$'docs/schemas/sylvode-flow-gate-v1.schema.json\tfrozen gate schema: pins the v0.3-v1.0 receipt repository path as a const
+docs/schemas/sylvode-flow-gate-v0.4.schema.json\tfrozen gate schema: pins the v0.4 receipt repository path as a const
+docs/schemas/sylvode-flow-legacy-pages-inventory-v1.schema.json\tfrozen v0.4 evidence schema; its description names where the frozen run read its inputs
+docs/schemas/sylvode-flow-surface-coverage-result-v1.schema.json\tfrozen v0.4-v1.0 evidence schema; its description names the contract checkout of the frozen runs'
+
 # scan ROOT LISTFILE -> prints "path:line:text" for every non-exempt hit
 scan() {
   local root=$1 list=$2 rel line_no text
   while IFS= read -r rel; do
     [[ -f "$root/$rel" ]] || continue
+    if file_exempt "$rel"; then
+      continue
+    fi
     while IFS=: read -r line_no text; do
       if ! exempt "$rel" "$text"; then
         printf '%s:%s:%s\n' "$rel" "$line_no" "$text"
       fi
     done < <(grep -n -I -E "$PATTERN" "$root/$rel" || true)
   done <"$list"
+}
+
+file_exempt() {
+  local rel=$1 e_path e_reason
+  while IFS=$'\t' read -r e_path e_reason; do
+    [[ -n $e_reason ]] || continue
+    [[ $rel == "$e_path" ]] && return 0
+  done <<<"$FILE_EXEMPTIONS"
+  return 1
 }
 
 exempt() {
@@ -47,7 +65,9 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 # This file is excluded: its pattern and exemption table necessarily spell out the paths it bans.
-(cd "$ROOT_DIR" && git ls-files scripts tests frontend/tests skills | grep -vxF scripts/test-no-machine-paths.sh) >"$WORK/files"
+# spikes/ is not scanned: it holds the frozen evaluation spikes and their measurement evidence,
+# which record the paths of the runs they document and are not used by any build or gate.
+(cd "$ROOT_DIR" && git ls-files scripts tests frontend/tests skills apps crates docs/schemas | grep -vxF scripts/test-no-machine-paths.sh) >"$WORK/files"
 file_count=$(wc -l <"$WORK/files")
 if [[ $file_count -eq 0 ]]; then
   echo "FAIL: no tracked scripts or tests were examined" >&2
@@ -64,6 +84,13 @@ while IFS=$'\t' read -r e_path e_text _; do
     stale=$((stale + 1))
   fi
 done <<<"$EXEMPTIONS"
+while IFS=$'\t' read -r e_path _; do
+  [[ -n $e_path ]] || continue
+  if ! grep -qxF -- "$e_path" "$WORK/files" || ! grep -qIE "$PATTERN" "$ROOT_DIR/$e_path"; then
+    echo "FAIL: stale file exemption, $e_path is not scanned or no longer names a machine path" >&2
+    stale=$((stale + 1))
+  fi
+done <<<"$FILE_EXEMPTIONS"
 
 # Mutation control: a fixture script with two injected machine defaults must be reported, and its
 # clean lines must not be.
@@ -86,5 +113,5 @@ fi
 if [[ $stale -ne 0 ]]; then
   exit 1
 fi
-printf 'No machine-specific paths: %s files scanned, %s exemptions, mutation control red as expected.\n' \
-  "$file_count" "$(grep -c . <<<"$EXEMPTIONS")"
+printf 'No machine-specific paths: %s files scanned, %s line and %s file exemptions, mutation control red as expected.\n' \
+  "$file_count" "$(grep -c . <<<"$EXEMPTIONS")" "$(grep -c . <<<"$FILE_EXEMPTIONS")"
