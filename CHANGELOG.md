@@ -37,7 +37,9 @@ OpenPR name keeps working; see **Deprecated**.
   so receivers that match the old value **exactly** or as a **prefix** no longer match and must
   be updated. Receivers that match `OpenPR-Webhook/1.0` as a substring are unaffected. The
   `request_headers` recorded with each delivery carry the same value that was sent. The payload
-  and its `X-Webhook-Signature` are unchanged.
+  and its `X-Webhook-Signature` are unchanged. Flow event deliveries (the event dispatcher) and
+  AI-task deliveries (the worker), which sent no `User-Agent` of their own, now send the same
+  value.
 - **Plugin fuel accounting changed with wasmtime 49.** Wasmtime 49 charges fuel per byte or
   element for bulk memory and table operations (`memory.copy`, `memory.fill`, `memory.init`,
   `table.copy` and similar) and per page for `memory.grow`, which wasmtime 47 charged as single
