@@ -7,7 +7,8 @@ RESULT=
 EVIDENCE="$ROOT/.flow-gate/evidence/v0.9"
 CONTRACTS="${SYLVODE_CONTRACTS_ROOT:-}"
 REPO=$ROOT
-PREDECESSOR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.8/gate-result.json
+# Default: the predecessor receipt next to this release's evidence root (see below).
+PREDECESSOR=
 while (($#)); do
   case "$1" in
     --evidence-root) EVIDENCE=${2:?}; shift 2 ;;
@@ -18,6 +19,9 @@ while (($#)); do
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
+# The predecessor receipt lives next to this release's evidence: <evidence root>/../v0.8/, the
+# same rule the v0.6-v0.8 gates use, so --evidence-root moves both together.
+[[ -n $PREDECESSOR ]] || PREDECESSOR="$(dirname "$EVIDENCE")/v0.8/gate-result.json"
 [[ -n $CONTRACTS && -d $CONTRACTS ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 [[ -n $RESULT ]] || RESULT="$EVIDENCE/gate-result.json"
 

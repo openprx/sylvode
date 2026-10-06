@@ -189,6 +189,14 @@ treating the missing input as a pass.
 | `SYLVODE_FLOW_PRIOR_EVIDENCE_ROOT` | Earlier release receipts read by `verify-flow-prior-receipts-v1.0.sh` | `.flow-gate/evidence` |
 | `SYLVODE_WEBHOOK_DIR` | The Sylvode Webhook checkout used by the webhook smokes | none, required |
 | `SYLVODE_FLOW_V05_CONTRACT_GAPS` | The v0.5 contract-gap register read by `verify-flow-authz-v0.5.sh`, or `none` | none, required |
+| `OPENPR_V10_CAPACITY_RESULT` | The capacity measurement result read by `verify-flow-slo-v1.0.sh` (or `--capacity-result`) | none, required |
+| `OPENPR_FLOW_V1_ORCHESTRATION_CONFIG` | The v1.0 orchestration config (`[flow_gate]` database URLs) read by `report-flow-v1.0-json.sh` (or `--orchestration-config`) | `.flow-gate/cache/v10-flow-gate.toml` |
+
+The v0.9 and v1.0 reports read the predecessor release's receipt from
+`<evidence root>/../<previous release>/gate-result.json` unless `--predecessor-gate-result` names
+it. `docs/sylvode-v1-stable-runbook.md` ("Re-running the v1.0 gate") lists every input of the
+v1.0 gate. The scripts need bash 4.3 or newer and GNU coreutils; macOS's bash 3.2 cannot run
+them.
 
 Flow gate scripts write their evidence to `.flow-gate/evidence/<release>` unless `--evidence-root`
 names another directory. The screenshot collectors and render smokes refuse to write into a

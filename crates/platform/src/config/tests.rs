@@ -1024,7 +1024,7 @@ fn only_loopback_addresses_and_localhost_count_as_a_loopback_bind() {
         "127.attacker:8081",
         "0.0.0.0:8081",
         "[::]:8081",
-        "10.0.0.1:8081",
+        "192.0.2.1:8081",
         "localhost.example.org:8081",
     ] {
         assert!(!super::raw::is_loopback_bind_addr(bind), "{bind} is not loopback");

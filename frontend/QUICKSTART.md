@@ -1,90 +1,90 @@
-# Sylvode 前端快速开始
+# Sylvode Frontend Quick Start
 
-## 🚀 启动开发服务器
+## Start the development server
 
 ```bash
 cd frontend
 bun run dev
 ```
 
-访问：http://localhost:5173
+Open: http://localhost:5173
 
-## 📝 测试账号（需后端运行）
+## Test account (backend must be running)
 
-没有预置账号：首次运行时在 http://localhost:5173 注册一个账号，或运行
-`scripts/bootstrap-restaurant-demo.sh` 创建演示账号（见仓库根目录 README）。
+There is no preconfigured account: on first run, register an account at http://localhost:5173, or run
+`scripts/bootstrap-restaurant-demo.sh` to create a demo account (see the README in the repository root).
 
-## 🎨 核心页面路由
+## Core page routes
 
-| 页面 | 路由 | 说明 |
+| Page | Route | Description |
 |------|------|------|
-| 登录页 | `/auth/login` | 邮箱密码登录 |
-| 工作台 | `/workspace` | 工作区选择 |
-| 项目列表 | `/workspace/:id/projects` | 项目管理 |
-| 项目详情 | `/workspace/:id/projects/:pid` | 项目概览 |
-| Issue 列表 | `/workspace/:id/projects/:pid/issues` | 工作项管理 |
-| Issue 详情 | `/workspace/:id/projects/:pid/issues/:iid` | 工作项详情 |
-| 看板视图 | `/workspace/:id/projects/:pid/board` | Kanban 看板 |
-| 迭代管理 | `/workspace/:id/projects/:pid/cycles` | Sprint 管理 |
-| 通知中心 | `/inbox` | 消息通知 |
+| Login | `/auth/login` | Email and password login |
+| Workspace home | `/workspace` | Workspace selection |
+| Project list | `/workspace/:id/projects` | Project management |
+| Project detail | `/workspace/:id/projects/:pid` | Project overview |
+| Issue list | `/workspace/:id/projects/:pid/issues` | Work item management |
+| Issue detail | `/workspace/:id/projects/:pid/issues/:iid` | Work item detail |
+| Board view | `/workspace/:id/projects/:pid/board` | Kanban board |
+| Cycles | `/workspace/:id/projects/:pid/cycles` | Sprint management |
+| Notification center | `/inbox` | Notifications |
 
-## 🔧 环境变量
+## Environment Variables
 
-创建 `.env` 文件：
+Create a `.env` file:
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8081
 ```
 
-## 📦 构建命令
+## Build Commands
 
 ```bash
-# 开发
+# Development
 bun run dev
 
-# 构建
+# Build
 bun run build
 
-# 预览
+# Preview
 bun run preview
 
-# 类型检查
+# Type check
 bun run check
 
-# 代码检查
+# Lint
 bunx eslint .
 
-# 格式化
+# Format
 bunx prettier --write .
 ```
 
-## 🐛 常见问题
+## FAQ
 
-### Q: 启动报错？
+### Q: Startup fails?
 
-A: 确保已安装 Bun 1.3+：
+A: Make sure Bun 1.3+ is installed:
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
 ```
 
-### Q: API 请求失败？
+### Q: API requests fail?
 
-A: 检查 `.env` 中的 `VITE_API_BASE_URL` 是否正确，确保后端服务已启动。
+A: Check that `VITE_API_BASE_URL` in `.env` is correct and that the backend service is running.
 
-### Q: 登录后跳转到空白页？
+### Q: Blank page after login?
 
-A: 打开浏览器控制台，查看是否有 API 错误。确认后端数据库已迁移。
+A: Open the browser console and look for API errors. Confirm that the backend database has been migrated.
 
-## 📖 开发文档
+## Development Docs
 
-- [SvelteKit 文档](https://kit.svelte.dev/docs)
-- [Tailwind CSS 文档](https://tailwindcss.com/docs)
-- [shadcn-svelte 文档](https://www.shadcn-svelte.com/)
+- [SvelteKit docs](https://kit.svelte.dev/docs)
+- [Tailwind CSS docs](https://tailwindcss.com/docs)
+- [shadcn-svelte docs](https://www.shadcn-svelte.com/)
 
-## 🎯 下一步
+## Next Steps
 
-1. 启动后端 API 服务
-2. 运行数据库迁移
-3. 启动前端开发服务器
-4. 访问 http://localhost:5173 并测试功能
+1. Start the backend API service
+2. Run the database migrations
+3. Start the frontend development server
+4. Open http://localhost:5173 and test the features

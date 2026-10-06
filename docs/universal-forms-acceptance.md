@@ -2,6 +2,14 @@
 
 This guide points operators and reviewers to the acceptance process for the universal forms, WASM plugin, MCP, webhook, connector, and restaurant ordering work.
 
+`.flow-gate/` is an ignored working directory, so a fresh checkout contains none of the
+`.flow-gate/universal-forms/` files named here. The acceptance evidence, sign-off status and
+screenshots are produced by the scripts this guide runs (`scripts/prepare-universal-forms-*`,
+`scripts/report-universal-forms-*`, `scripts/collect-universal-forms-ui-artifacts.sh`); the execution tracker, the user acceptance runbook and the
+other reviewer hand-off documents belong to the acceptance package of a delivery and must be
+placed under `SYLVODE_UF_REPORT_ROOT` (default `.flow-gate/universal-forms/`) before the scripts
+that read them are run. A script that needs one and does not find it fails.
+
 The authoritative execution tracker is outside the repository:
 
 ```text
