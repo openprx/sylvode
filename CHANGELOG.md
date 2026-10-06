@@ -254,7 +254,12 @@ replacement and the earliest removal.
   its input.
 - `projects create` under `mcp-server` and `sylvode` failed with ``missing field `key` ``
   because it offered no way to pass the required project key; it now takes `--key`.
-- `mcp-server` and `sylvode` no longer panic when stdout or stderr cannot be written.
+- `mcp-server` and `sylvode` no longer panic when stdout or stderr cannot be written. This
+  includes log lines: any log event (the legacy configuration notice, a `warn` from `tools call`,
+  the stdio server's startup lines) written to an unwritable stderr (`2>/dev/full`, a full disk
+  behind a redirected log) made the logger report the failure on that same stderr and panic with
+  exit 101. Log lines that cannot be written are now dropped, in `api`, `worker`, `mcp-server` and
+  `sylvode`, and the command exits as it would with a writable stderr.
 - `--config`, `--transport` and `--bind-addr` help printed backslash-escaped brackets.
 - The notice that `logging.output = "stdout"` was overridden was logged under a target the
   default filter drops, so it was never shown.
