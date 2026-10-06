@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.47 are released
-together as 0.3.47.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.48 are released
+together as 0.3.48.
 
 ## Upgrading from 0.3.3
 
@@ -72,6 +72,24 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.48
+
+### Fixed
+
+- **Shutdown really ends within its documented bound.** After `SIGTERM` the service waited for
+  every open request before it started the 40-second wait for background runs, so one client that
+  sent its headers and part of a body and then stalled (no signature needed) kept the process
+  alive indefinitely (60 seconds and more observed), until the service manager killed it. From
+  the signal on, the open requests and the background runs now share one deadline of
+  `5 + 2 × http_timeout_secs + 5` seconds (40 by default); a request still open then is closed and
+  the service exits 0.
+
+### Tests
+
+- With `http_timeout_secs = 1` (a 12-second bound) and a client stalled half-way through its
+  body, the service exits 0 within 14 seconds of `SIGTERM`. The test fails without the shared
+  deadline, and also when the bound is multiplied by 1000.
 
 ## 0.3.47
 

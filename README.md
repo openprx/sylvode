@@ -337,14 +337,15 @@ zombies.
 
 ### Shutdown
 
-On `SIGTERM` or `SIGINT` the service stops accepting connections and finishes the requests in
-flight. Every running `cli` executor (webhook-triggered or tunnel task) is stopped as above and
+On `SIGTERM` or `SIGINT` the service stops accepting connections and lets the requests in flight
+finish. Every running `cli` executor (webhook-triggered or tunnel task) is stopped as above and
 then sends its terminal callback with `status = "cancelled"`, which sets `update_state_on_fail`
 like a failure, so no issue is left `in_progress` by a run that no longer exists. On the webhook
 path this callback follows the same rules as a failure (it is not sent with
-`skip_callback_state = true`, which also suppresses the start callback). The service waits for
-these callbacks up to `5 + 2 × http_timeout_secs + 5` seconds (40 seconds by default), then
-exits 0. Give the service manager at least that long: systemd's default `TimeoutStopSec` (90 s)
+`skip_callback_state = true`, which also suppresses the start callback). The whole shutdown, the
+requests in flight and these callbacks together, takes at most `5 + 2 × http_timeout_secs + 5`
+seconds (40 seconds by default) from the signal: a request still open then (a client that stalled
+half-way, say) is closed, a callback not yet sent is dropped, and the service exits 0. Give the service manager at least that long: systemd's default `TimeoutStopSec` (90 s)
 is enough, `docker stop` needs `--time 45` (its default is 10 s).
 
 ### Environment
@@ -723,8 +724,8 @@ These configurations still start, but the service behaves differently:
   `trigger_kind`, not against `task_type` or the payload.
 - **Timeouts and shutdown stop the executor's whole process group** (see [Stopping
   commands](#stopping-commands)). On `SIGTERM` or `SIGINT` the service sends each running `cli`
-  executor's terminal callback (`cancelled`, which sets `update_state_on_fail`), waits up to 40
-  seconds by default and exits 0; 0.3.3 had no signal handling and was killed, leaving executors
+  executor's terminal callback (`cancelled`, which sets `update_state_on_fail`), takes at most 40
+  seconds by default, open requests included, and exits 0; 0.3.3 had no signal handling and was killed, leaving executors
   running and issues `in_progress`. Give the service manager enough stop time (see
   [Shutdown](#shutdown)).
 - **Tunnel envelopes** for another `agent_id` are refused, and with `hmac_secret` so are envelopes

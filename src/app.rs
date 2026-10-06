@@ -4,6 +4,7 @@ use axum::{
     routing::{get, post},
 };
 use std::ffi::OsString;
+use std::future::IntoFuture;
 use std::io::Write;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -163,8 +164,9 @@ fn serve_blocking(config_path: &str) -> ExitCode {
     runtime.block_on(serve(config))
 }
 
-/// How long shutdown waits for background runs: the process-group grace period, then a
-/// terminal callback of up to two requests (MCP sends a comment and a state update), plus slack.
+/// How long shutdown may take in all, from the signal to the exit: the requests in flight and the
+/// background runs share it. It allows the process-group grace period, then a terminal callback
+/// of up to two requests (MCP sends a comment and a state update), plus slack.
 fn shutdown_bound(http_timeout_secs: u64) -> Duration {
     process::TERMINATION_GRACE + Duration::from_secs(http_timeout_secs.saturating_mul(2)) + Duration::from_secs(5)
 }
@@ -213,27 +215,47 @@ async fn serve(config: config::Config) -> ExitCode {
             compat::CANONICAL_NAME
         ),
     }
-    // On a signal, background runs are cancelled at once, while in-flight requests finish.
+    // On a signal, background runs are cancelled at once while the requests in flight finish.
+    // From the moment shutdown begins, everything (those requests, then the background runs and
+    // their terminal callbacks) shares one deadline, `bound`: a request that never completes,
+    // such as a client that stalls half-way through its body, is cut off when it passes.
     let on_signal = background.clone();
-    let served = axum::serve(listener, app)
+    let http = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
             on_signal.begin_shutdown();
         })
-        .await;
-
+        .into_future();
+    tokio::pin!(http);
+    let finished_first = tokio::select! {
+        served = &mut http => Some(served),
+        () = background.cancelled() => None,
+    };
     // Also after a server error: running executors are stopped and report before the exit.
     background.begin_shutdown();
+    let deadline = tokio::time::Instant::now() + bound;
+    let served = match finished_first {
+        Some(served) => served,
+        None => tokio::time::timeout_at(deadline, http).await.unwrap_or_else(|_| {
+            tracing::warn!(
+                "request(s) still open {}s after shutdown began; closing them",
+                bound.as_secs()
+            );
+            Ok(())
+        }),
+    };
+
     let running = background.running();
+    let left = deadline.saturating_duration_since(tokio::time::Instant::now());
     if running > 0 {
         tracing::info!(
             "waiting up to {}s for {running} background run(s) to stop and report",
-            bound.as_secs()
+            left.as_secs()
         );
     }
-    if !background.finish(bound).await {
+    if !background.finish(left).await {
         tracing::error!(
-            "{} background run(s) did not finish within {}s; exiting anyway",
+            "{} background run(s) did not finish within {}s of shutdown; exiting anyway",
             background.running(),
             bound.as_secs()
         );
