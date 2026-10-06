@@ -222,6 +222,13 @@ replacement and the earliest removal.
 - Request tracing spans no longer contain query strings, and the reference Caddy and nginx
   configurations no longer log collaboration tickets or signed download signatures.
 - Auth cookies carry `Secure` (see **Breaking and behaviour changes**).
+- **A plugin could allocate unbounded host memory through table growth.** The plugin store
+  limited linear memory to `runtime.memory_bytes` but left the table element count at
+  wasmtime's default, which is unlimited, so a guest could `table.grow` hundreds of millions of
+  elements (about 8 bytes of host memory each) within one invocation's fuel budget. A plugin
+  table now holds at most 65,536 elements, its initial size included: a larger initial table
+  fails to instantiate and a larger `table.grow` returns `-1` to the guest. Present in every
+  release since 0.2.2.
 
 ### Removed
 

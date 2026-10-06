@@ -12,6 +12,12 @@ use super::manifest::PluginRuntimePolicy;
 
 const ABI_VERSION: i32 = 1;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+/// The most elements a plugin's table may hold, its initial size included.
+///
+/// A table element costs the host one pointer (8 bytes), so this caps table memory at 512 KiB
+/// per invocation. Plugins
+/// use their table for indirect calls only; a compiled Rust plugin has a few hundred entries.
+pub const MAX_TABLE_ELEMENTS: usize = 65_536;
 /// How often the caller re-advances the engine epoch after the deadline while it waits for the
 /// guest thread to return. One advance normally suffices; the repeats close the window where a
 /// store was created, or a guest observed the epoch, concurrently with the first advance.
@@ -243,13 +249,12 @@ fn invoke_wasm_plugin_sync(
         fuel_consumed: None,
     };
     let module = Module::new(engine, wasm_bytes).map_err(|err| without_store(format!("invalid wasm module: {err}")))?;
-    let limits = StoreLimitsBuilder::new()
-        .memory_size(policy.memory_bytes)
-        .instances(1)
-        .memories(1)
-        .tables(1)
-        .build();
-    let mut store = Store::new(engine, StoreState { limits });
+    let mut store = Store::new(
+        engine,
+        StoreState {
+            limits: plugin_store_limits(policy),
+        },
+    );
     store.limiter(|state| &mut state.limits);
     store
         .set_fuel(policy.fuel)
@@ -370,6 +375,26 @@ fn run_guest(
         .map_err(|err| GuestFailure::failed(format!("plugin output is not JSON: {err}")))
 }
 
+/// The resource limits of a plugin store. Every growable resource a store can allocate is pinned
+/// here rather than left at wasmtime's default, which for table elements is unlimited:
+///
+/// - one instance (the plugin itself; a plugin has no imports to instantiate anything else),
+/// - one linear memory of at most `runtime.memory_bytes`,
+/// - one table of at most [`MAX_TABLE_ELEMENTS`] elements, initial size included,
+/// - a refused growth returns `-1` to the guest instead of trapping, as the core spec defines.
+///
+/// A GC heap, when a module uses one, is bounded by the same `memory_size` limit.
+fn plugin_store_limits(policy: &PluginRuntimePolicy) -> StoreLimits {
+    StoreLimitsBuilder::new()
+        .memory_size(policy.memory_bytes)
+        .table_elements(MAX_TABLE_ELEMENTS)
+        .instances(1)
+        .memories(1)
+        .tables(1)
+        .trap_on_grow_failure(false)
+        .build()
+}
+
 fn build_engine() -> Result<Engine, String> {
     let mut config = Config::new();
     config.consume_fuel(true);
@@ -396,8 +421,8 @@ fn millis_u64(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        PluginFailureKind, PluginInvocationStatus, PluginRuntimePolicy, build_engine, invoke_on_engine,
-        invoke_wasm_plugin, validate_wasm_module,
+        MAX_TABLE_ELEMENTS, PluginFailureKind, PluginInvocationStatus, PluginRuntimePolicy, build_engine,
+        invoke_on_engine, invoke_wasm_plugin, plugin_store_limits, validate_wasm_module,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
@@ -596,6 +621,169 @@ mod tests {
             .expect_err("oversized initial memory should fail");
 
         assert!(err.message.contains("failed to instantiate wasm"), "{err}");
+    }
+
+    /// A module whose `openpr_invoke` grows its only table by `grow_by` elements and reports
+    /// whether the growth was refused.
+    fn table_grow_probe_wasm(initial_elements: u32, grow_by: u32) -> Vec<u8> {
+        wat::parse_str(format!(
+            r#"
+            (module
+              (memory (export "memory") 1)
+              (table $t {initial_elements} funcref)
+              (data (i32.const 1024) "{{\"grow\":\"denied\"}}")
+              (data (i32.const 2048) "{{\"grow\":\"allowed\"}}")
+              (func (export "openpr_alloc") (param i32) (result i32) i32.const 4096)
+              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+                ref.null func
+                i32.const {grow_by}
+                table.grow $t
+                i32.const -1
+                i32.eq
+                if (result i64)
+                  i64.const 1024
+                  i64.const 32
+                  i64.shl
+                  i64.const 17
+                  i64.or
+                else
+                  i64.const 2048
+                  i64.const 32
+                  i64.shl
+                  i64.const 18
+                  i64.or
+                end))
+            "#
+        ))
+        .expect("wat should compile")
+    }
+
+    /// Fuel is charged per table element, so the budget has to allow the growth to be attempted
+    /// for the limiter, not fuel, to be what refuses it.
+    const TABLE_PROBE_POLICY: PluginRuntimePolicy = PluginRuntimePolicy {
+        timeout_ms: 30_000,
+        fuel: 100_000_000,
+        memory_bytes: 64 * 1024,
+    };
+
+    /// A guest must not be able to allocate host memory through table growth: before the table
+    /// element limit, `table.grow` of this size succeeded and allocated about 8 bytes per element
+    /// outside `runtime.memory_bytes` (the audit measured 2.3 GB of RSS for 300 M elements).
+    #[tokio::test]
+    async fn table_growth_beyond_the_element_limit_is_refused() {
+        let grow_by = u32::try_from(MAX_TABLE_ELEMENTS * 16).expect("probe size fits in i32");
+        let output = invoke_wasm_plugin(table_grow_probe_wasm(1, grow_by), json!({}), TABLE_PROBE_POLICY)
+            .await
+            .expect("probe should run");
+
+        assert_eq!(
+            output.output.get("grow").and_then(serde_json::Value::as_str),
+            Some("denied")
+        );
+    }
+
+    #[tokio::test]
+    async fn table_growth_within_the_element_limit_is_allowed() {
+        let output = invoke_wasm_plugin(table_grow_probe_wasm(1, 100), json!({}), TABLE_PROBE_POLICY)
+            .await
+            .expect("probe should run");
+
+        assert_eq!(
+            output.output.get("grow").and_then(serde_json::Value::as_str),
+            Some("allowed")
+        );
+    }
+
+    #[tokio::test]
+    async fn an_initial_table_beyond_the_element_limit_is_rejected() {
+        let initial = u32::try_from(MAX_TABLE_ELEMENTS + 1).expect("probe size fits in u32");
+        let err = invoke_wasm_plugin(table_grow_probe_wasm(initial, 0), json!({}), TABLE_PROBE_POLICY)
+            .await
+            .expect_err("an oversized initial table must not instantiate");
+
+        assert!(err.message.contains("failed to instantiate wasm"), "{err}");
+    }
+
+    /// The echo module plus one extra item (a second memory, a second table).
+    fn echo_with_extra_wasm(extra: &str) -> Vec<u8> {
+        wat::parse_str(format!(
+            r#"
+            (module
+              (memory (export "memory") 1)
+              {extra}
+              (data (i32.const 1024) "{{\"ok\":true}}")
+              (func (export "openpr_alloc") (param i32) (result i32) i32.const 4096)
+              (func (export "openpr_invoke") (param i32) (param i32) (result i64)
+                i64.const 1024
+                i64.const 32
+                i64.shl
+                i64.const 11
+                i64.or))
+            "#
+        ))
+        .expect("wat should compile")
+    }
+
+    /// The engine accepts multi-memory modules, so the store limit is what keeps a plugin to one
+    /// linear memory (and so to one `runtime.memory_bytes` allowance).
+    #[tokio::test]
+    async fn a_second_linear_memory_is_refused() {
+        let err = invoke_wasm_plugin(
+            echo_with_extra_wasm("(memory $second 1)"),
+            json!({}),
+            PluginRuntimePolicy::default(),
+        )
+        .await
+        .expect_err("a second memory must not instantiate");
+
+        assert!(err.message.contains("failed to instantiate wasm"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_second_table_is_refused() {
+        let err = invoke_wasm_plugin(
+            echo_with_extra_wasm("(table $first 1 funcref) (table $second 1 funcref)"),
+            json!({}),
+            PluginRuntimePolicy::default(),
+        )
+        .await
+        .expect_err("a second table must not instantiate");
+
+        assert!(err.message.contains("failed to instantiate wasm"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn one_table_and_one_memory_are_allowed() {
+        let output = invoke_wasm_plugin(
+            echo_with_extra_wasm("(table $only 1 funcref)"),
+            json!({}),
+            PluginRuntimePolicy::default(),
+        )
+        .await
+        .expect("one memory and one table are within the limits");
+
+        assert_eq!(output.output, json!({"ok": true}));
+    }
+
+    /// A store built from the plugin limits holds exactly one instance: a second instantiation in
+    /// the same store is refused. The module has no memory or table, so only the instance count
+    /// can refuse it.
+    #[test]
+    fn a_plugin_store_admits_a_single_instance() {
+        let engine = build_engine().expect("engine should build");
+        let module = wasmtime::Module::new(&engine, "(module (func (export \"f\")))").expect("module should compile");
+        let mut store = wasmtime::Store::new(
+            &engine,
+            super::StoreState {
+                limits: plugin_store_limits(&PluginRuntimePolicy::default()),
+            },
+        );
+        store.limiter(|state| &mut state.limits);
+        store.set_epoch_deadline(u64::MAX);
+        wasmtime::Instance::new(&mut store, &module, &[]).expect("the first instance is within the limit");
+        let second = wasmtime::Instance::new(&mut store, &module, &[]);
+
+        assert!(second.is_err(), "a second instance must be refused");
     }
 
     #[test]
