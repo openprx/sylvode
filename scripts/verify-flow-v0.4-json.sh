@@ -29,6 +29,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EVIDENCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/evidence/v0.4"
 CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
+GATE_YAML=""
 REPO_ROOT="$ROOT_DIR"
 SCHEMA_PATH="$ROOT_DIR/docs/schemas/sylvode-flow-gate-v0.4.schema.json"
 RECEIPT_STATE_FILTER="$ROOT_DIR/scripts/lib/flow_gate_v0_4_receipt_state.jq"
@@ -57,6 +58,7 @@ Options:
   --contracts-root DIR  Root containing gates/v0.4-gate.yaml. Its artifacts,
                         required_commands and hard_gates key sets must exactly
                         match the schema. Default: $SYLVODE_CONTRACTS_ROOT
+  --gate-yaml PATH      Default: <contracts-root>/gates/v0.4-gate.yaml
   --schema PATH         Path to the v0.4 gate schema (structural
                         required-key check only -- this script does not
                         implement a general JSON Schema validator).
@@ -73,6 +75,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --evidence-root) EVIDENCE_ROOT="${2:?--evidence-root requires a DIR argument}"; shift 2 ;;
     --contracts-root) CONTRACTS_ROOT="${2:?--contracts-root requires a DIR argument}"; shift 2 ;;
+    --gate-yaml) GATE_YAML="${2:?--gate-yaml requires a PATH argument}"; shift 2 ;;
     --repo-root) REPO_ROOT="${2:?--repo-root requires a DIR argument}"; shift 2 ;;
     --schema) SCHEMA_PATH="${2:?--schema requires a PATH argument}"; shift 2 ;;
     --json) JSON_MODE=1; shift ;;
@@ -116,7 +119,6 @@ if [[ ! -f "$SCHEMA_PATH" ]]; then
   echo "FAIL: schema file not found: $SCHEMA_PATH" >&2
   exit 2
 fi
-GATE_YAML=""
 if [[ ! -f "$GATE_YAML" ]]; then
   echo "FAIL: v0.4 gate contract not found: $GATE_YAML" >&2
   exit 2
