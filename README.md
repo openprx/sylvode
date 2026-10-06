@@ -497,6 +497,8 @@ Signature behavior:
   its `id` repeats one accepted on this connection (`duplicate_envelope`, the last 4,096 ids are
   remembered).
 - Every inbound envelope whose `agent_id` is not this agent's is refused (`wrong_agent`).
+- A refused envelope of type `error` is dropped without an answer, so two ends that both answer
+  refusals cannot keep answering each other.
 - Without `hmac_secret`, inbound `sig` is not verified and inbound envelopes are not
   authenticated: anyone who can impersonate the control plane can dispatch tasks. Use `wss://` and
   set `hmac_secret`. A blank or example `hmac_secret` refuses start-up while the tunnel is enabled,
