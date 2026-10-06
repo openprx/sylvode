@@ -322,9 +322,18 @@ in it is still alive 5 seconds later, `SIGKILL`. This stops the processes an exe
 itself. A process that deliberately leaves its process group (`setsid`, `daemon`) is not
 reached. The timeout or cancellation callback is sent only after the group is gone.
 
+The group is signalled only while its leader (the command itself) has not been reaped, because
+until then the kernel cannot give the group id to another process. On Linux the service notices
+the command's exit without reaping it and reads the remaining members from `/proc`. On macOS a
+command's exit can only be noticed by reaping it, so a command that exits by itself is not
+followed by signals to its group (anything it left running there keeps running); on a timeout or
+shutdown the group gets `SIGTERM`, the full 5 seconds, then `SIGKILL`. A group the service is not
+permitted to signal (`EPERM`, such as a set-user-ID program) is reported and left alone instead of
+being waited for.
+
 In a container, run the image with an init process (`docker run --init`, or `init: true` in
-compose): without one, processes orphaned by an executor are never reaped and each stop waits the
-full 5 seconds.
+compose): without one, processes orphaned by an executor are never reaped and pile up as
+zombies.
 
 ### Shutdown
 
