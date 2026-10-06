@@ -18,6 +18,27 @@ async fn a_replayed_delivery_is_refused() {
     assert_eq!(second, 409, "{answer}");
 }
 
+/// Signature verification comes before the replay memory: a request whose signature is missing
+/// or wrong is refused without being remembered, so the same delivery, correctly signed, is still
+/// accepted once.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unverified_request_does_not_use_up_the_delivery_id() {
+    use crate::support::{post_with, sign};
+
+    let server = Server::start(CANONICAL, &config(), &[]).expect("server starts");
+    let body = bot_task("Nobody", "verify first").to_string();
+    let (status, _) = post_with(&server.url("/webhook"), &body, &[]).await;
+    assert_eq!(status, 401, "unsigned");
+    let bad = sign(&body, "not-the-secret");
+    let (status, _) = post_with(&server.url("/webhook"), &body, &[("x-webhook-signature", &bad)]).await;
+    assert_eq!(status, 401, "wrongly signed");
+
+    let (status, answer) = post_signed(&server.url("/webhook"), &body).await;
+    assert_eq!(status, 200, "the genuine delivery was refused: {answer}");
+    let (status, answer) = post_signed(&server.url("/webhook"), &body).await;
+    assert_eq!(status, 409, "{answer}");
+}
+
 /// A signed delivery whose timestamp is older than `max_delivery_age_secs` is refused with 401.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stale_delivery_is_refused() {

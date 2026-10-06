@@ -346,3 +346,23 @@ async fn misaddressed_stale_and_replayed_envelopes_are_refused() {
         "only one run"
     );
 }
+
+/// Signature verification comes before the replay memory: an envelope whose signature fails is
+/// not remembered, so the same envelope id, correctly signed, still runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wrongly_signed_envelope_does_not_use_up_its_id() {
+    let mut h = start(Options::default(), true).await;
+    let envelope = dispatch("ISSUE-12", None);
+
+    let forged = envelope.clone().signed("not-the-tunnel-secret");
+    h.peer.send(&forged).await;
+    let refused = next(&mut h.peer).await;
+    assert_eq!(refused.payload["reason"], "bad_signature", "{refused:?}");
+
+    let genuine = envelope.signed(TUNNEL_SECRET);
+    assert_eq!(genuine.id, forged.id);
+    h.peer.send(&genuine).await;
+    let ack = next(&mut h.peer).await;
+    assert_eq!(ack.msg_type, "task.ack", "{ack:?}");
+    assert_eq!(next(&mut h.peer).await.payload["status"], "success");
+}
