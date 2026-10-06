@@ -299,6 +299,8 @@ fn the_renderer_inserts_values_literally_under_the_system_bash_and_in_bash_3_2_m
 /// The same under a real bash 3.2, the version macOS ships, when the `docker.io/library/bash:3.2`
 /// image is present for podman (it is not pulled). Without it the test says so and checks nothing.
 #[test]
+// A check that is skipped must say so in the test output.
+#[allow(clippy::print_stderr)]
 fn the_renderer_inserts_values_literally_under_a_real_bash_3_2_when_available() {
     const IMAGE: &str = "docker.io/library/bash:3.2";
     let available = Command::new("podman")

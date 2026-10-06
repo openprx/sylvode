@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.38 are released
-together as 0.3.38.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.39 are released
+together as 0.3.39.
 
 ## Upgrading from 0.3.3
 
@@ -67,6 +67,24 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.39
+
+### Fixed
+
+- **The `/webhook` answer for a `cli` agent no longer waits for the start callback.** The start
+  callback was sent before answering, and with a slow or unreachable callback target the answer
+  took up to `http_timeout_secs` (15 seconds by default). Sylvode's worker times out after 10
+  seconds, records the dispatch as failed and sends the task again with `attempts + 1` (a new
+  replay key), so the task ran several times. The start callback is now sent in the background,
+  after the run has its `cli_max_concurrency` slot and before the executor starts, so it no
+  longer reports `in_progress` for a run that is still queued. Shutdown abandons a start callback
+  still in flight, does not start the executor, and sends the terminal `cancelled` callback.
+
+### Tests
+
+- With a callback target that accepts connections and never answers, `/webhook` answers in under
+  2 seconds (15 seconds before).
 
 ## 0.3.38
 

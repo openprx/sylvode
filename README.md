@@ -394,7 +394,10 @@ A callback is sent only when `[features].callback_enabled = true` and the agent 
 `callback_url`.
 
 - **When.** For a `cli` agent selected from a webhook delivery: before the run, a start callback
-  carrying `update_state_on_start`, if that is set; after the run, a final callback only when the
+  carrying `update_state_on_start`, if that is set. It is sent in the background once the run has
+  a `cli_max_concurrency` slot, so the `/webhook` answer never waits for it (Sylvode's worker gives
+  up after 10 seconds and retries the task, which would run it again); shutdown abandons a start
+  callback still in flight and the executor is not started. After the run, a final callback only when the
   run failed, timed out or was cancelled by shutdown (a successful agent reports through MCP
   itself), and only when `skip_callback_state` is `false`. For a tunnel task: a final callback after
   every run; with `skip_callback_state = true` it carries no state.

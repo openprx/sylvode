@@ -232,10 +232,10 @@ async fn a_comment_mention_task_reports_on_the_commented_issue() {
     let last = api.next(Duration::from_secs(10)).await.expect("final callback");
     assert_eq!(last.body["status"], "failed", "{:?}", last.body);
     assert_eq!(last.body["issue_id"], "REAL-ISSUE-ID", "{:?}", last.body);
-    let args = wait_lines(&argv, 4, Duration::from_secs(5));
+    let received = wait_lines(&argv, 4, Duration::from_secs(5));
     assert!(
-        args.iter().any(|arg| arg.starts_with("Fix issue REAL-ISSUE-ID:")),
-        "{args:?}"
+        received.iter().any(|arg| arg.starts_with("Fix issue REAL-ISSUE-ID:")),
+        "{received:?}"
     );
 }
 
@@ -296,4 +296,50 @@ async fn safe_mode_variables_turn_the_cli_path_off() {
             "{env:?}: {stderr:?}"
         );
     }
+}
+
+/// A TCP listener that accepts connections and never answers: a callback target that hangs.
+async fn black_hole() -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind black hole");
+    let url = format!("http://{}/callback", listener.local_addr().expect("black hole addr"));
+    let task = tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let _open = stream;
+                std::future::pending::<()>().await;
+            });
+        }
+    });
+    (url, task)
+}
+
+/// The `/webhook` answer does not wait for the start callback: with a callback target that never
+/// answers it comes back at once, well inside the sender's 10-second timeout (a slower answer
+/// makes the Sylvode worker retry the task, which runs it again).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_answer_does_not_wait_for_a_hanging_start_callback() {
+    let bin = TempDir::new("bin");
+    let marker = bin.file("ran");
+    write_script(bin.path(), "codex", &format!("echo ran > '{}'", marker.display()));
+    let (url, hole) = black_hole().await;
+    let api = StubApi::start().await;
+    let config = cli_config(&api, 30).replace(&api.url("/callback"), &url);
+    let server = Server::start(CANONICAL, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
+
+    let begun = Instant::now();
+    let (status, answer) = post_signed(&server.url("/webhook"), &bot_task("Fixer", "hanging api").to_string()).await;
+    let took = begun.elapsed();
+    assert_eq!(status, 200, "{answer}");
+    assert!(
+        answer["result"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("cli agent spawned"),
+        "{answer}"
+    );
+    assert!(took < Duration::from_secs(2), "answered after {took:?}");
+    drop(server);
+    hole.abort();
 }
