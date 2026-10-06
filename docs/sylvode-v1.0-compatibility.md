@@ -78,6 +78,30 @@ These identifiers keep their OpenPR-era names, with no removal planned:
 - The bot token prefix `opr_`.
 - Compose service labels (`api`, `worker`, `mcp-server`, `frontend`) and network names.
 - `OPENPR_TEST_DATABASE_URL`, a development and CI variable rather than a user entry point.
+- Other `OPENPR_*` environment variables read by the scripts under `scripts/`, the smokes, the
+  test suites and the release build (for example `OPENPR_FRONTEND_URL`, `OPENPR_V10_CAPACITY_RESULT`,
+  `OPENPR_BUILD_GIT_COMMIT`): CI jobs, release builds and recorded gate runs set them by name. The
+  legacy compose variables are the exception: they have `SYLVODE_*` names and warn (see the
+  compose row above).
+- Schema version strings such as `openpr.plugin.v1` and `openpr.event.v1`, and the schema
+  identifiers and file names `docs/schemas/openpr-*.schema.json`: documents and stored manifests
+  carry them.
+- The MCP skill key `openpr-mcp`: it is part of the resource URI `sylvode://skills/openpr-mcp`
+  and the `provider` value that migration `0029` wrote into scenario templates, as is the
+  `openpr-webhook` provider value.
+- The PostgreSQL `LISTEN`/`NOTIFY` channels `openpr_flow_fanout` and `openpr_flow_authz`: every
+  API process of a deployment listens on them, and during a rolling upgrade old and new processes
+  must keep hearing each other.
+- The browser storage key prefix `openpr:forms:import-mapping:`: it holds the import column
+  mappings users saved, which a rename would discard.
+- Synthetic user e-mails stored in the `users` table: `<id>@bot.openpr.local` for bot users,
+  `bot+<id>@openpr.local` as the bot token subject, and `admin@openpr.local` for the administrator
+  that migration `0008` seeds.
+- The backup file prefix `openpr_backup_` of `scripts/backup-db.sh`: the rotation and
+  `scripts/restore-db.sh` list existing backups by it.
+- The development database password `openpr_dev_password` of `scripts/dev-up.sh` and
+  `scripts/init-db.sh`: existing development volumes were initialised with it.
+- The Rust type names `OpenPrClient` and `OpenPrConfig`: internal, not visible to users.
 
 ## Upgrade sequence
 

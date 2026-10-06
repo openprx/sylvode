@@ -130,15 +130,19 @@ audits of the source tree followed by the forms regression tests. It requires
 ### Brand residue gate
 
 `scripts/verify-sylvode-brand-residue.sh --json` scans the tracked files of the Sylvode checkouts
-for `OpenPR` (case-sensitive, not part of `OpenPRX`) and lowercase `openpr` (not part of
-`openprx`). Every hit must be covered by an entry of
-`scripts/contracts/sylvode-brand-allowlist.json`: a reason code from a closed set
-(`stable_identifier`, `legacy_alias_documented`, `formerly_note`, `migration_page`,
+for `openpr` in any letter case (`OpenPR`, `OPENPR`, `OpenPr`, ...; not part of `openprx`, and not
+a camel-case word such as `openProject`) in three places: file content (UTF-8, or UTF-16 with a
+byte order mark or UTF-16 shape), tracked paths, and symbolic link targets. Every hit must be
+covered by an entry of `scripts/contracts/sylvode-brand-allowlist.json`: a reason code from a
+closed set (`stable_identifier`, `legacy_alias_documented`, `formerly_note`, `migration_page`,
 `redirect_rule`, `historical_document`, `frozen_evidence`, `legacy_behaviour_test`,
-`kept_repository_url`), one repository, path globs, a pattern and an explanation. Anything not
-covered fails with file:line. The script refuses an entry that waives the bare name across a
-whole repository, reports entries that cover nothing (a failure under `--strict`), and treats a
-requested repository that is missing, empty or not a git checkout as a failure.
+`kept_repository_url`, `internal_identifier`), one repository, path globs, a pattern, the places
+it applies to (`content` by default, `path` for file names and link targets) and an explanation.
+`internal_identifier` covers only identifier tokens in source files. Anything not covered fails
+with file:line. The script refuses an entry that waives the bare name across a whole repository,
+reports entries that cover nothing (a failure under `--strict`), treats a requested repository
+that is missing, empty or not a git checkout as a failure, and under `--release` also fails on a
+checkout with uncommitted changes, because the scan reads the working tree.
 
 CI runs the single-repository form with `--strict` plus `--self-test`, the built-in mutation
 controls. Before a release, run the five-repository form locally from sibling checkouts:

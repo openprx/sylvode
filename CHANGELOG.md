@@ -304,6 +304,15 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- The brand residue gate (`scripts/verify-sylvode-brand-residue.sh`) saw only `OpenPR` and
+  lowercase `openpr` in UTF-8 file content, so `OPENPR_*`, `OpenPr*`, file names, symbolic link
+  targets and UTF-16 text were never checked. It now matches `openpr` in any letter case in file
+  content (UTF-8 and UTF-16), tracked paths and link targets, adds the reason
+  `internal_identifier` (identifier tokens in source files only), and under `--release` fails on a
+  checkout with uncommitted changes. The allow-list classifies the newly visible names: legacy
+  compose variables, `OPENPR_TEST_DATABASE_URL`, the scripts' and tests' `OPENPR_*` inputs and the
+  Rust client types; four entries that were wider than their reason were narrowed. Every kept
+  identifier is listed under "Not renamed" in the v1.0 compatibility matrix.
 - The bun tests for the bot token form and the webhook event form only searched the page source,
   so a form that always sent `rest`, or a checkbox that did nothing, passed them. The request the
   members page sends is built by `createBotRequest` and the event selection by

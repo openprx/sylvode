@@ -2,17 +2,28 @@
 """Brand residue gate (ADR-0020 判据 4): every `OpenPR` / `openpr` in the tracked files of the
 Sylvode checkouts is either covered by a narrow, reasoned allow-list entry or a failure.
 
-A hit is one occurrence of `OpenPR` not followed by `X` (case-sensitive) or of `openpr` not
-followed by `x`. Files come from `git ls-files`, so build output, dependencies and anything
-ignored are excluded by construction.
+A hit is one occurrence of `openpr` in any letter case (`OpenPR`, `OPENPR`, `OpenPr`, `openpr`,
+...) not followed by `x` or `X`, except a camel-case word that only starts with it (`openProject`,
+`openPrintForm`: `open` + `Pr` + a lowercase letter). Three places are scanned for every tracked file (`git ls-files`,
+so build output, dependencies and anything ignored are excluded by construction):
+
+- its content, decoded as UTF-8, or as UTF-16 when it carries a UTF-16 byte order mark or its
+  first bytes are UTF-16 text; other files with a NUL byte in their first 8 KiB are binary and
+  their content is not scanned;
+- its path (the tracked file name and every directory in it);
+- for a symbolic link, its target.
 
 An allow-list entry covers a hit when its repository matches, one of its path globs matches the
-file, and one match of its pattern on that line spans the whole hit. Entries are refused when
-they are malformed, carry a reason outside the closed set, or waive the bare name across a whole
-repository. An entry that covers nothing in a scanned repository is stale.
+file, the entry applies to that place (`applies_to`: `content`, the default, and/or `path`, which
+covers paths and link targets), and one match of its pattern on that line (or on the path, or the
+link target) spans the whole hit. An entry with reason `internal_identifier` covers a hit only
+inside a source file (Rust, TypeScript, JavaScript, Svelte, shell or Python) and only when its
+pattern's match is a single identifier token. Entries are refused when they are malformed, carry a reason outside the
+closed set, or waive the bare name across a whole repository. An entry that covers nothing in a
+scanned repository is stale.
 
-Exit codes: 0 clean; 1 uncovered hits, an unreachable or empty repository, or (with --strict)
-a stale entry; 2 usage error or a refused allow-list.
+Exit codes: 0 clean; 1 uncovered hits, an unreachable or empty repository, a dirty checkout
+under --release, or (with --strict) a stale entry; 2 usage error or a refused allow-list.
 """
 
 from __future__ import annotations
@@ -28,7 +39,9 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-HIT = re.compile(r"OpenPR(?!X)|openpr(?!x)")
+# `open` + `Pr` + a lowercase letter is a camel-case word such as `openProject` or `openPrintForm`,
+# not the product name.
+HIT = re.compile(r"(?i:open)(?!Pr[a-z])(?i:pr)(?![xX])")
 
 REASONS = (
     "stable_identifier",
@@ -40,7 +53,13 @@ REASONS = (
     "frozen_evidence",
     "legacy_behaviour_test",
     "kept_repository_url",
+    "internal_identifier",
 )
+
+# `internal_identifier` entries cover identifiers in source code only.
+SOURCE_SUFFIXES = (".rs", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".svelte", ".sh", ".py")
+IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+APPLIES_TO = ("content", "path")
 
 EXPECTED_REPOS = ("sylvode", "openpr-webhook", "docs", "site", ".github")
 
@@ -53,6 +72,9 @@ BLANKET_PROBES = (
     "OpenPR.",
     "(openpr)",
     "use OpenPR to",
+    "OPENPR",
+    "OpenPr",
+    "Welcome to OPENPR",
 )
 
 
@@ -97,13 +119,20 @@ class Entry:
     paths: list[str]
     pattern: re.Pattern[str]
     explanation: str
+    applies_to: tuple[str, ...] = ("content",)
     path_res: list[re.Pattern[str]] = field(default_factory=list)
     covered: int = 0
 
-    def covers(self, repo: str, path: str, line: str, start: int, end: int) -> bool:
-        if repo != self.repo or not any(rx.match(path) for rx in self.path_res):
+    def covers(self, repo: str, path: str, line: str, start: int, end: int, place: str = "content") -> bool:
+        if repo != self.repo or place not in self.applies_to or not any(rx.match(path) for rx in self.path_res):
             return False
-        return any(m.start() <= start and end <= m.end() for m in self.pattern.finditer(line))
+        if self.reason == "internal_identifier" and not path.endswith(SOURCE_SUFFIXES):
+            return False
+        for m in self.pattern.finditer(line):
+            if m.start() <= start and end <= m.end():
+                if self.reason != "internal_identifier" or IDENTIFIER.match(m.group(0)):
+                    return True
+        return False
 
 
 def covers_bare_name(pattern: re.Pattern[str]) -> bool:
@@ -132,7 +161,7 @@ def load_allowlist(path: Path) -> list[Entry]:
         if not isinstance(raw, dict):
             problems.append(f"{where}: not an object")
             continue
-        unknown = set(raw) - {"id", "reason", "repo", "paths", "pattern", "explanation"}
+        unknown = set(raw) - {"id", "reason", "repo", "paths", "pattern", "explanation", "applies_to"}
         if unknown:
             problems.append(f"{where}: unknown keys {sorted(unknown)}")
         entry_id = raw.get("id")
@@ -169,6 +198,16 @@ def load_allowlist(path: Path) -> list[Entry]:
         if pattern is None:
             problems.append(f"{where}: pattern must be a non-empty regular expression")
             continue
+        applies_to = raw.get("applies_to", ["content"])
+        if (
+            not isinstance(applies_to, list)
+            or not applies_to
+            or not all(isinstance(a, str) and a in APPLIES_TO for a in applies_to)
+        ):
+            problems.append(f"{where}: applies_to must be a non-empty array of {', '.join(APPLIES_TO)}")
+            applies_to = ["content"]
+        if reason == "internal_identifier" and not all(p.endswith(SOURCE_SUFFIXES) or p.endswith("*") for p in paths):
+            problems.append(f"{where}: internal_identifier entries may only name source files")
         if covers_bare_name(pattern) and any(is_repository_wide(p) for p in paths):
             problems.append(
                 f"{where}: blanket waiver refused: a repository-wide path ({', '.join(paths)}) with a "
@@ -182,6 +221,7 @@ def load_allowlist(path: Path) -> list[Entry]:
                 paths=list(paths),
                 pattern=pattern,
                 explanation=str(explanation),
+                applies_to=tuple(applies_to),
                 path_res=[glob_to_regex(p) for p in paths],
             )
         )
@@ -231,9 +271,37 @@ def scan_repo(name: str, path: Path, entries: list[Entry]) -> dict:
         return result
     files = [f for f in listed.stdout.decode("utf-8", "surrogateescape").split("\0") if f]
     result["reachable"] = True
+
+    def record(rel: str, number: int, text: str, place: str) -> None:
+        for hit in HIT.finditer(text):
+            result["hits"] += 1
+            owner = next(
+                (e for e in entries if e.covers(name, rel, text, hit.start(), hit.end(), place)),
+                None,
+            )
+            if owner is None:
+                result["uncovered"].append(
+                    {"file": rel, "line": number, "column": hit.start() + 1, "place": place, "text": text.strip()[:240]}
+                )
+            else:
+                owner.covered += 1
+                result["covered"] += 1
+                result["hits_by_reason"][owner.reason] += 1
+
     for rel in files:
         full = path / rel
-        if full.is_symlink() or not full.is_file():
+        # The tracked path itself; line 0 marks a hit that is not in the content.
+        record(rel, 0, rel, "path")
+        if full.is_symlink():
+            try:
+                target = os.readlink(full)
+            except OSError as error:
+                result["errors"].append(f"{rel}: {error}")
+                continue
+            result["files_scanned"] += 1
+            record(rel, 0, target, "path")
+            continue
+        if not full.is_file():
             continue
         try:
             data = full.read_bytes()
@@ -241,29 +309,35 @@ def scan_repo(name: str, path: Path, entries: list[Entry]) -> dict:
             result["errors"].append(f"{rel}: {error}")
             continue
         result["files_scanned"] += 1
-        if b"\0" in data[:8192]:
-            continue
-        text = data.decode("utf-8", "replace")
-        if not HIT.search(text):
+        text = decode_text(data)
+        if text is None or not HIT.search(text):
             continue
         for number, line in enumerate(text.splitlines(), start=1):
-            for hit in HIT.finditer(line):
-                result["hits"] += 1
-                owner = next(
-                    (e for e in entries if e.covers(name, rel, line, hit.start(), hit.end())),
-                    None,
-                )
-                if owner is None:
-                    result["uncovered"].append(
-                        {"file": rel, "line": number, "column": hit.start() + 1, "text": line.strip()[:240]}
-                    )
-                else:
-                    owner.covered += 1
-                    result["covered"] += 1
-                    result["hits_by_reason"][owner.reason] += 1
+            record(rel, number, line, "content")
     if result["files_scanned"] == 0:
         result["errors"].append("zero files scanned")
     return result
+
+
+def decode_text(data: bytes) -> str | None:
+    """The file's text, or `None` for a binary file.
+
+    UTF-16 is recognised by its byte order mark, or, without one, by text whose first bytes
+    alternate between ASCII and NUL (the shape every Latin-script UTF-16 file has); anything else
+    with a NUL in the first 8 KiB is binary.
+    """
+    head = data[:8192]
+    if head.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", "replace")
+    if b"\0" not in head:
+        return data.decode("utf-8", "replace")
+    sample = head[: len(head) - len(head) % 2]
+    if len(sample) >= 4:
+        evens, odds = sample[0::2], sample[1::2]
+        for text_bytes, nul_bytes, codec in ((evens, odds, "utf-16-le"), (odds, evens, "utf-16-be")):
+            if nul_bytes.count(0) >= 0.9 * len(nul_bytes) and all(32 <= b < 127 or b in (9, 10, 13) for b in text_bytes):
+                return data.decode(codec, "replace")
+    return None
 
 
 def run_scan(repos: list[tuple[str, Path]], allowlist: Path, strict: bool, release: bool) -> tuple[dict, int]:
@@ -290,6 +364,10 @@ def run_scan(repos: list[tuple[str, Path]], allowlist: Path, strict: bool, relea
     report["entries_by_reason"] = {reason: sum(1 for e in entries if e.reason == reason) for reason in REASONS}
     uncovered = sum(len(r["uncovered"]) for r in report["repos"])
     broken = [r["name"] for r in report["repos"] if r["errors"] and (not r["reachable"] or r["files_scanned"] == 0)]
+    # A release is cut from commits: a dirty checkout is not what would be released, and the
+    # scan reads the working tree.
+    dirty = [r["name"] for r in report["repos"] if r["dirty"]] if release else []
+    report["dirty_repos"] = dirty
     report["summary"] = {
         "repos": len(report["repos"]),
         "files_scanned": sum(r["files_scanned"] for r in report["repos"]),
@@ -297,12 +375,14 @@ def run_scan(repos: list[tuple[str, Path]], allowlist: Path, strict: bool, relea
         "covered": sum(r["covered"] for r in report["repos"]),
         "uncovered": uncovered,
         "unreachable_or_empty": broken,
+        "dirty_under_release": dirty,
         "stale_entries": len(report["stale_entries"]),
         "warnings": len(report["stale_entries"]) if not strict else 0,
     }
     failed = bool(
         uncovered
         or broken
+        or dirty
         or report["missing_expected_repos"]
         or (strict and report["stale_entries"])
         or not repos
@@ -355,6 +435,57 @@ def self_test(name: str, source: Path, allowlist: Path) -> tuple[dict, int]:
         target.write_text(original, encoding="utf-8")
         found = any(u["file"] == "README.md" and "Run OpenPR for this." in u["text"] for r in injected["repos"] for u in r["uncovered"])
         controls.append({"control": "injected_uncovered_name_is_red", "expected_exit": 1, "exit": injected_exit, "reported": found})
+
+        # 1b. Every spelling and place the scan covers goes red when injected: an all-caps and a
+        # camel-case name in a document, a file name, a symbolic link target and UTF-16 text.
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+        variants = {
+            "all_caps_name": ("README.md", "Welcome to OPENPR.", "content"),
+            "camel_case_name": ("README.md", "The OpenPr thing.", "content"),
+            "file_name": ("docs/openpr-new-brand-file.md", "docs/openpr-new-brand-file.md", "path"),
+            "symlink_target": ("docs/brand-link", "openpr-target-name", "path"),
+            "utf16_text": ("docs/utf16-note.txt", "Run OpenPR now", "content"),
+        }
+        for control, (rel, needle, place) in variants.items():
+            target_path = copy / rel
+            original_text = target_path.read_text(encoding="utf-8") if target_path.is_file() and not target_path.is_symlink() else None
+            if control in ("all_caps_name", "camel_case_name"):
+                target_path.write_text((original_text or "") + f"\n{needle}\n", encoding="utf-8")
+            elif control == "file_name":
+                target_path.write_text("A note.\n", encoding="utf-8")
+            elif control == "symlink_target":
+                target_path.symlink_to(needle)
+            else:
+                target_path.write_bytes(("\ufeff" + needle + "\n").encode("utf-16-le"))
+            subprocess.run(["git", "-C", str(copy), "add", "-A"], capture_output=True, env=env, check=False)
+            report, exit_code = run_scan([(name, copy)], allowlist, strict=False, release=False)
+            reported = any(
+                u["file"] == rel and u["place"] == place and needle.split("/")[-1].split(".")[0][:6].lower() in u["text"].lower()
+                for r in report["repos"] for u in r["uncovered"]
+            )
+            if original_text is not None:
+                target_path.write_text(original_text, encoding="utf-8")
+            else:
+                target_path.unlink()
+            subprocess.run(["git", "-C", str(copy), "add", "-A"], capture_output=True, env=env, check=False)
+            controls.append({"control": f"injected_{control}_is_red", "expected_exit": 1, "exit": exit_code, "reported": reported})
+
+        # 1c. An internal_identifier entry does not cover the same identifier outside source code.
+        doc_target = copy / "README.md"
+        doc_original = doc_target.read_text(encoding="utf-8")
+        doc_target.write_text(doc_original + "\nThe client is OpenPrClient.\n", encoding="utf-8")
+        identifier_report, identifier_exit = run_scan([(name, copy)], allowlist, strict=False, release=False)
+        doc_target.write_text(doc_original, encoding="utf-8")
+        controls.append({"control": "internal_identifier_outside_source_is_red", "expected_exit": 1, "exit": identifier_exit,
+                         "uncovered": identifier_report["summary"]["uncovered"]})
+
+        # 1d. --release refuses a dirty checkout.
+        dirty_target = copy / "README.md"
+        dirty_target.write_text(doc_original + "\nlocal edit\n", encoding="utf-8")
+        dirty_report, dirty_exit = run_scan([(name, copy)], allowlist, strict=False, release=True)
+        dirty_target.write_text(doc_original, encoding="utf-8")
+        controls.append({"control": "release_refuses_a_dirty_checkout", "expected_exit": 1, "exit": dirty_exit,
+                         "dirty": dirty_report["dirty_repos"]})
 
         # 2. Deleting an entry that is in use goes red.
         document = json.loads(allowlist.read_text(encoding="utf-8"))
@@ -430,7 +561,7 @@ def self_test(name: str, source: Path, allowlist: Path) -> tuple[dict, int]:
                          "stale": strict_report["summary"]["stale_entries"]})
 
     ok = all(c.get("exit") == c["expected_exit"] for c in controls)
-    ok = ok and next(c for c in controls if c["control"] == "injected_uncovered_name_is_red").get("reported") is True
+    ok = ok and all(c.get("reported") is True for c in controls if c["control"].startswith("injected_"))
     ok = ok and next(c for c in controls if c["control"] == "stale_entry_warns").get("warnings", 0) >= 1
     return {"schema": "sylvode.brand-residue-self-test.v1", "repo": name, "controls": controls, "passed": ok}, 0 if ok else 1
 
