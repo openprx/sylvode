@@ -57,9 +57,22 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+      - name: Check that the tag matches the crate version
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [ "v$version" != "$TAG" ]; then
+            echo "Tag $TAG does not match the version $version in Cargo.toml" >&2
+            exit 1
+          fi
+      # The toolchain rust-toolchain.toml pins (keep the two equal): `[lints]` denies every
+      # warning, so a newer compiler with a new lint must not break a release.
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: stable
+          toolchain: 1.97.1
       - name: Test
         run: cargo test --locked --all-features --no-fail-fast
 
@@ -92,7 +105,8 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: stable
+          # The toolchain rust-toolchain.toml pins (keep the two equal), with the target added.
+          toolchain: 1.97.1
           targets: ${{ matrix.target }}
 
       - name: Install cross
@@ -141,7 +155,9 @@ jobs:
   image:
     # Builds the container image once and pushes the same manifest under both names, so
     # ghcr.io/openprx/sylvode-webhook and the legacy ghcr.io/openprx/openpr-webhook share a digest.
-    needs: [prepare, test]
+    # It waits for every archive: a failed archive build must not leave `latest` pointing at a
+    # version that is never released.
+    needs: [prepare, test, build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -170,7 +186,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}},value=${{ needs.prepare.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.tag }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ !contains(needs.prepare.outputs.tag, '-') }}
 
       - name: Build and push
         id: build
@@ -233,6 +249,7 @@ jobs:
           name: Sylvode Webhook ${{ needs.prepare.outputs.tag }}
           files: artifacts/*
           fail_on_unmatched_files: true
+          prerelease: ${{ contains(needs.prepare.outputs.tag, '-') }}
           body: |
             ## Sylvode Webhook ${{ needs.prepare.outputs.tag }}
 
@@ -251,8 +268,8 @@ jobs:
             aliases, each with its own `.sha256`. The legacy names are not removed before Sylvode v2.0.
 
             Container image: `ghcr.io/openprx/sylvode-webhook` (tags `<version>`, `<major>.<minor>`
-            and `latest`, without the leading `v`), also published as the legacy
-            `ghcr.io/openprx/openpr-webhook` with the same digest.
+            and `latest`, without the leading `v`; a pre-release gets only `<version>`), also
+            published as the legacy `ghcr.io/openprx/openpr-webhook` with the same digest.
 
             Read the upgrade notes in CHANGELOG.md before upgrading: some configurations that
             started before are refused now.

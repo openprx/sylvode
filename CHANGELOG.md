@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.49 are released
-together as 0.3.49.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.50 are released
+together as 0.3.50.
 
 ## Upgrading from 0.3.3
 
@@ -72,6 +72,23 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.50
+
+### Build
+
+- **The toolchain is pinned** in `rust-toolchain.toml` (1.97.1, with rustfmt and clippy), and the
+  release workflow builds and tests with that version. `[lints]` denies every warning, so a
+  floating `stable` would let any new lint of a new compiler fail a release. Clippy 1.97 asks for
+  `Duration::from_mins` where 1.98 does not; the code now uses it.
+
+### Release workflow
+
+- The container image, including `latest`, is pushed only after every archive was built, so a
+  failed archive build no longer leaves `latest` pointing at a version that is never released.
+- A pre-release tag (`v1.2.3-rc.1`) no longer moves `latest` and is published as a GitHub
+  pre-release.
+- The release refuses a tag that differs from the version in `Cargo.toml`.
 
 ## 0.3.49
 
