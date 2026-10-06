@@ -15,10 +15,12 @@ usage() {
 Usage: scripts/verify-sylvode-brand-residue.sh --json [--repo NAME=PATH]... [--strict] [--release]
        scripts/verify-sylvode-brand-residue.sh --json --self-test
 
-Scans the tracked files (`git ls-files`) of the Sylvode checkouts for the product name `OpenPR`
-(case-sensitive, not part of `OpenPRX`) and lowercase `openpr` (not part of `openprx`). Every
+Scans the tracked files (`git ls-files`) of the Sylvode checkouts for `openpr` in any letter
+case (`OpenPR`, `OPENPR`, `OpenPr`, ...; not part of `openprx`, not a camel-case word such as
+`openProject`) in file content (UTF-8 or UTF-16), tracked paths and symbolic link targets. Every
 hit must be covered by an entry of the allow-list, which gives a reason code, a repository, path
-globs, a pattern and an explanation. Anything not covered is a failure, listed with file:line.
+globs, a pattern, the places it applies to and an explanation. Anything not covered is a
+failure, listed with file:line.
 
 Repositories:
   This checkout is always scanned as `sylvode`. Add the sibling checkouts with --repo, or with
@@ -45,13 +47,16 @@ Options:
   --allowlist FILE    Default: scripts/contracts/sylvode-brand-allowlist.json
   --strict            An allow-list entry that covers nothing in a scanned repository fails
                       (otherwise it is counted as a warning).
-  --release           Require all five expected repositories.
+  --release           Require all five expected repositories, each with a clean working tree.
   --self-test         Run the built-in mutation controls against a temporary copy of this
-                      checkout: an injected uncovered name, a deleted entry that is in use, a
-                      blanket entry, an empty repository directory and a stale entry.
+                      checkout: injected uncovered names (mixed case, all caps, camel case, a
+                      file name, a link target, UTF-16 text), an internal identifier outside
+                      source code, a dirty checkout under --release, a deleted entry that is in
+                      use, a blanket entry, an empty repository directory and a stale entry.
 
 Exit codes: 0 clean; 1 uncovered hits, an unreachable or empty repository, a missing expected
-repository, a stale entry under --strict, or a failed mutation control; 2 usage error or a
+repository, a dirty checkout under --release, a stale entry under --strict, or a failed mutation
+control; 2 usage error or a
 refused allow-list (malformed, unknown reason code, or a blanket waiver).
 EOF
 }
