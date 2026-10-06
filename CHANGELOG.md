@@ -215,6 +215,8 @@ OpenPR name keeps working; see **Deprecated**.
 - The repository root carries exactly `LICENSE-MIT` and `LICENSE-APACHE`. `LICENSE-APACHE` is now
   the complete standard Apache License 2.0 text instead of a shortened rendering, the duplicate
   `LICENSE` file is gone, and `LICENSE-MIT` names OpenPRX Contributors as the copyright holder.
+  `LICENSE-APACHE` is byte-identical to the text published at apache.org, and `LICENSE-MIT` gives
+  2026, the year of the first commit.
   The licence itself (`MIT OR Apache-2.0`) is unchanged.
 - `scripts/bootstrap-restaurant-demo.sh` reads its inputs as `SYLVODE_API_URL`,
   `SYLVODE_DEMO_*` and `SYLVODE_MCP_BOT_TOKEN`. The `OPENPR_*` names still work with one
@@ -304,6 +306,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- `SECURITY.md` named a private reporting channel that is not enabled until the release is
+  published and called the release line "pre-1.0" next to a 1.x compatibility commitment. It now
+  says private vulnerability reporting is enabled with the release, to use the e-mail contact
+  while the **Report a vulnerability** button is absent, and that only the latest release is
+  supported.
 - `scripts/start.sh` copied a quoted `.env` value (`SYLVODE_FRONTEND_PORT="3999"`) with its quotes
   into the generated TOML, which then failed to load; values are unquoted as docker-compose does,
   and a port that is not a number is refused before any file is written. A legacy variable set

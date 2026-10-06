@@ -6,30 +6,32 @@ handle them privately until a fix is available.
 
 ## Supported versions
 
-Sylvode is pre-1.0. Security fixes land on `main` and ship in the next release of the
-latest release line. Older releases do not receive backports; upgrade to the latest
-release to get a fix.
+Security fixes land on `main` and ship in the next release. Only the latest release is
+supported; older releases do not receive backports, so upgrade to the latest release to get a
+fix.
 
 | Version | Supported |
 | --- | --- |
-| Latest release (currently the 0.2.x line) | Yes |
+| Latest release | Yes |
 | Any earlier release | No, upgrade to the latest release |
 
-The legacy names that the 1.x series keeps for compatibility (the `mcp-server` CLI
-subcommands, `config/openpr.toml`, `OPENPR_*` compose variables, `openpr://` resource URIs
-and `openpr-<target>` release archives) are part of the same build and receive the same
-fixes. See [the compatibility matrix](docs/sylvode-v1.0-compatibility.md).
+The legacy names that the compatibility matrix keeps (the `mcp-server` CLI subcommands,
+`config/openpr.toml`, `OPENPR_*` compose variables, `openpr://` resource URIs and
+`openpr-<target>` release archives) are part of the same build and receive the same fixes. See
+[the compatibility matrix](docs/sylvode-v1.0-compatibility.md).
 
 ## Reporting a vulnerability
 
 Please do not open a public issue, pull request or discussion for a security problem.
 
-Report it privately through GitHub security advisories:
+Report it privately through GitHub's private vulnerability reporting: open the repository's
+**Security** tab and choose **Report a vulnerability**
+(<https://github.com/openprx/sylvode/security/advisories/new>). Private reporting is enabled on
+the repository when this release is published. If you do not see the **Report a vulnerability**
+button, it is not enabled for you yet; use e-mail instead.
 
-<https://github.com/openprx/sylvode/security/advisories/new>
-
-If you cannot use GitHub, the OpenPRX organization's security contact is
-`security@openprx.dev`.
+By e-mail, write to `security@openprx.dev`, the OpenPRX organisation's published security
+contact. Do not put exploit details in any public channel while you wait for an answer.
 
 A useful report contains:
 
