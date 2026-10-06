@@ -304,6 +304,9 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- `auth.allow_insecure_cookies` treated any `server.bind_addr` host starting with `127.` as
+  loopback, including host names such as `127.example.org`. Only loopback IP addresses and
+  `localhost` count now.
 - `sylvode --help <workspace group>` printed internal source documentation as the program
   description and listed only the nine workspace groups. A help or version flag before the first
   group now always shows the top-level help of all fifteen groups, and no parser prints source

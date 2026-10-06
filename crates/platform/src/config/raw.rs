@@ -821,7 +821,7 @@ pub(super) fn is_loopback_bind_addr(bind_addr: &str) -> bool {
     let trimmed = bind_addr.trim();
     let host = split_host_port(trimmed).map_or_else(|| trimmed, |(host, _)| host);
     let host = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
-    matches!(host, "127.0.0.1" | "::1" | "localhost") || host.starts_with("127.")
+    host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 fn validate_port(field: &str, port: &str) -> Result<(), String> {

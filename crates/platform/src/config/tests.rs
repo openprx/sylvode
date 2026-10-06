@@ -1006,3 +1006,27 @@ fn debug_output_of_the_mcp_runtime_never_contains_a_secret() {
     assert!(!rendered.contains("mcp-inbound-token-value"), "{rendered}");
     assert!(rendered.contains("http://api:8080"), "{rendered}");
 }
+
+#[test]
+fn only_loopback_addresses_and_localhost_count_as_a_loopback_bind() {
+    for bind in [
+        "127.0.0.1:8081",
+        "127.10.20.30:8081",
+        "[::1]:8081",
+        "localhost:8081",
+        "127.0.0.1",
+    ] {
+        assert!(super::raw::is_loopback_bind_addr(bind), "{bind} is loopback");
+    }
+    for bind in [
+        "127.example.org:8081",
+        "127.0.0.1.example.org:8081",
+        "127.attacker:8081",
+        "0.0.0.0:8081",
+        "[::]:8081",
+        "10.0.0.1:8081",
+        "localhost.example.org:8081",
+    ] {
+        assert!(!super::raw::is_loopback_bind_addr(bind), "{bind} is not loopback");
+    }
+}

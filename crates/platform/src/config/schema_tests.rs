@@ -208,8 +208,9 @@ fn start_script_schema_lists_exactly_the_keys_the_binaries_accept() {
     );
 }
 
-/// The annotated example is the reference operators copy from; every key in it has to be one the
-/// binaries accept, and it has to parse as a whole once its commented keys are switched on.
+/// The annotated example is the reference operators copy from: every section header in it,
+/// commented or not, has to be a section the binaries accept, and every key under it a key of that
+/// section. (This compares names; the values are covered by the configuration loader's tests.)
 #[test]
 fn every_key_in_the_example_configuration_is_known_to_the_script() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/sylvode.example.toml");
@@ -220,7 +221,14 @@ fn every_key_in_the_example_configuration_is_known_to_the_script() {
     for line in text.lines() {
         let line = line.trim_start_matches('#').trim();
         if let Some(name) = line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
-            if listed.contains_key(name) {
+            if !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.')
+            {
+                if !listed.contains_key(name) {
+                    unknown.push(format!("[{name}]"));
+                }
                 name.clone_into(&mut section);
             }
             continue;
