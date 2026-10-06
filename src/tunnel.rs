@@ -271,19 +271,26 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
                         }
                     };
 
+                    // A refused envelope is answered with an `error`, except an `error` itself: a
+                    // peer that answers refusals the same way would otherwise keep both ends
+                    // answering each other.
+                    let answer_refusal = envelope.msg_type != "error";
+
                     if require_inbound_sig && envelope.sig.is_none() {
                         tracing::warn!(
                             msg_id = ?envelope.id,
                             "tunnel missing signature while require_inbound_sig=true"
                         );
-                        let _ = tx
-                            .send(build_envelope(
-                                "error",
-                                &agent_id,
-                                json!({"reason":"missing_signature","msg_id":envelope.id}),
-                                hmac_secret.as_deref(),
-                            ))
-                            .await;
+                        if answer_refusal {
+                            let _ = tx
+                                .send(build_envelope(
+                                    "error",
+                                    &agent_id,
+                                    json!({"reason":"missing_signature","msg_id":envelope.id}),
+                                    hmac_secret.as_deref(),
+                                ))
+                                .await;
+                        }
                         continue;
                     }
 
@@ -291,27 +298,31 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
                         && !verify_envelope_signature(&envelope, secret)
                     {
                         tracing::warn!(msg_id = ?envelope.id, "tunnel signature verify failed");
-                        let _ = tx
-                            .send(build_envelope(
-                                "error",
-                                &agent_id,
-                                json!({"reason":"bad_signature","msg_id":envelope.id}),
-                                hmac_secret.as_deref(),
-                            ))
-                            .await;
+                        if answer_refusal {
+                            let _ = tx
+                                .send(build_envelope(
+                                    "error",
+                                    &agent_id,
+                                    json!({"reason":"bad_signature","msg_id":envelope.id}),
+                                    hmac_secret.as_deref(),
+                                ))
+                                .await;
+                        }
                         continue;
                     }
 
                     if let Err(reason) = inbound.check(&envelope, &agent_id, hmac_secret.is_some()) {
                         tracing::warn!(msg_id = ?envelope.id, reason, "tunnel envelope refused");
-                        let _ = tx
-                            .send(build_envelope(
-                                "error",
-                                &agent_id,
-                                json!({"reason": reason, "msg_id": envelope.id}),
-                                hmac_secret.as_deref(),
-                            ))
-                            .await;
+                        if answer_refusal {
+                            let _ = tx
+                                .send(build_envelope(
+                                    "error",
+                                    &agent_id,
+                                    json!({"reason": reason, "msg_id": envelope.id}),
+                                    hmac_secret.as_deref(),
+                                ))
+                                .await;
+                        }
                         continue;
                     }
 

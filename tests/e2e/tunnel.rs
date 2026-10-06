@@ -366,3 +366,22 @@ async fn a_wrongly_signed_envelope_does_not_use_up_its_id() {
     assert_eq!(ack.msg_type, "task.ack", "{ack:?}");
     assert_eq!(next(&mut h.peer).await.payload["status"], "success");
 }
+
+/// An `error` envelope from the peer is never answered with an `error` of our own, whatever is
+/// wrong with it, so two ends that both report refusals cannot keep answering each other.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_error_envelope_is_not_answered() {
+    let mut h = start(Options::default(), true).await;
+    let forged = Envelope::new("error", AGENT_ID, json!({"reason": "bad_signature"})).signed("not-the-tunnel-secret");
+    h.peer.send(&forged).await;
+    let mut misaddressed = Envelope::new("error", "someone-else", json!({"reason": "wrong_agent"}));
+    misaddressed = misaddressed.signed(TUNNEL_SECRET);
+    h.peer.send(&misaddressed).await;
+    assert!(
+        h.peer.recv(Duration::from_millis(700)).await.is_none(),
+        "an error envelope was answered"
+    );
+
+    h.peer.send(&dispatch("ISSUE-13", None).signed(TUNNEL_SECRET)).await;
+    assert_eq!(next(&mut h.peer).await.msg_type, "task.ack");
+}
