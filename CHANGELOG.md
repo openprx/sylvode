@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.35 are released
-together as 0.3.35.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.36 are released
+together as 0.3.36.
 
 ## Upgrading from 0.3.3
 
@@ -57,14 +57,31 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   default 300) (0.3.23); signature headers that disagree are refused (0.3.9).
 - The `/webhook` answer's `result` no longer contains command output or remote error bodies
   (0.3.29).
-- A worker task's free-form `payload` no longer chooses the callback's issue or the agent type
-  (0.3.24), and `trigger_kinds` ignores `task_type` and payload fields (0.3.25).
+- A worker task's free-form `payload` no longer chooses the agent type, nor the callback's issue
+  of a `work_item` task (0.3.24); a `comment` task (a comment mentioning the bot) still takes its
+  issue from `payload.issue_id` (0.3.36). `trigger_kinds` ignores `task_type` and payload fields
+  (0.3.25).
 - Timeouts and shutdown stop the executor's whole process group; `SIGTERM` sends each running
   executor's terminal callback (`cancelled`) and waits up to 40 seconds by default (0.3.9, 0.3.21).
 - Tunnel envelopes for another `agent_id`, and signed envelopes that are stale or repeated, are
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.36
+
+### Fixed
+
+- **A task queued by a comment that mentions a bot reports on the commented issue again.** Since
+  0.3.24 the issue of a worker AI task was read only from `reference_id` with
+  `reference_type = "work_item"`, but Sylvode queues a mention as `reference_type = "comment"`,
+  `reference_id` = the comment, with the issue in `payload.issue_id`. Such tasks lost their issue:
+  the prompt said `Fix issue unknown`, and the start and final callbacks (with MCP,
+  `work_items.update`) targeted the issue `unknown`. The issue is now chosen per reference type,
+  from a table with one row per shape Sylvode sends: `work_item` takes `reference_id` (a
+  `payload.issue_id` is still ignored), `comment` takes `payload.issue_id`, anything else has no
+  issue. The README's [Agent selection](README.md#agent-selection) lists the shapes and the
+  remaining trust in a task created by hand by a project admin.
 
 ## 0.3.35
 
