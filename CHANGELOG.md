@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.43 are released
-together as 0.3.43.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.44 are released
+together as 0.3.44.
 
 ## Upgrading from 0.3.3
 
@@ -72,6 +72,15 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.44
+
+### Tests
+
+- The replay memory's window and bound are proven: a key is remembered for twice
+  `max_delivery_age_secs` (here 1000 s, so 2000 s) and at least 600 s, and the memory never holds
+  more than 10,000 keys, forgetting the oldest first. The tests fail when the window ignores
+  `max_delivery_age_secs` or the bound is removed.
 
 ## 0.3.43
 

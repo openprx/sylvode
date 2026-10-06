@@ -272,6 +272,52 @@ mod tests {
         assert!(guard.seen.len() <= CAPACITY);
     }
 
+    /// A key is remembered for twice the freshness window (at least ten minutes): a delivery that
+    /// is still fresh enough to pass the timestamp check is always still remembered.
+    #[test]
+    fn keys_are_remembered_for_twice_a_long_freshness_window() {
+        let mut guard = ReplayGuard::new(1000);
+        let start = Instant::now();
+        let body = json!({"task_id": "t-1", "attempts": 1});
+        assert_eq!(guard.check_at(&body, start, NOW), Ok(()));
+        assert!(matches!(
+            guard.check_at(&body, start + Duration::from_secs(1999), NOW),
+            Err(Refusal::Duplicate { .. })
+        ));
+        assert_eq!(guard.check_at(&body, start + Duration::from_secs(2000), NOW), Ok(()));
+
+        let mut short = ReplayGuard::new(10);
+        assert_eq!(short.check_at(&body, start, NOW), Ok(()));
+        assert!(matches!(
+            short.check_at(&body, start + Duration::from_secs(599), NOW),
+            Err(Refusal::Duplicate { .. })
+        ));
+        assert_eq!(short.check_at(&body, start + Duration::from_secs(600), NOW), Ok(()));
+    }
+
+    /// The memory never holds more than `CAPACITY` keys, and the oldest goes first.
+    #[test]
+    fn the_memory_is_bounded_and_forgets_the_oldest_key_first() {
+        let mut guard = ReplayGuard::new(300);
+        let now = Instant::now();
+        for n in 0..CAPACITY {
+            assert_eq!(guard.check_at(&json!({"id": format!("n-{n}")}), now, NOW), Ok(()));
+        }
+        assert_eq!(guard.seen.len(), CAPACITY);
+        assert_eq!(guard.check_at(&json!({"id": "one-more"}), now, NOW), Ok(()));
+        assert_eq!(guard.seen.len(), CAPACITY);
+        assert_eq!(guard.order.len(), CAPACITY);
+        assert_eq!(
+            guard.check_at(&json!({"id": "n-0"}), now, NOW),
+            Ok(()),
+            "the oldest was forgotten"
+        );
+        assert!(matches!(
+            guard.check_at(&json!({"id": "n-2"}), now, NOW),
+            Err(Refusal::Duplicate { .. })
+        ));
+    }
+
     #[test]
     fn a_body_without_identifying_fields_passes() {
         let mut guard = ReplayGuard::new(300);
