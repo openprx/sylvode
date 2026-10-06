@@ -580,6 +580,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--release", action="store_true")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     names = [name for name, _ in args.repo]
     if len(names) != len(set(names)):
@@ -591,12 +592,28 @@ def main(argv: list[str]) -> int:
             report, code = self_test(name, path, args.allowlist)
         else:
             report, code = run_scan(args.repo, args.allowlist, args.strict, args.release)
+            # The release gate reads these two like every other producer's: what was examined,
+            # and which commit of this checkout it was examined at.
+            report["executed_count"] = report["summary"]["files_scanned"]
+            report["executed_kind"] = "tracked_files_scanned"
+            report["source_head"] = next((r["head"] for r in report["repos"] if r["name"] == "sylvode"), None)
     except AllowlistError as error:
-        print(json.dumps({"schema": "sylvode.brand-residue.v1", "passed": False, "refused": str(error)}, indent=2))
+        report, code = {"schema": "sylvode.brand-residue.v1", "passed": False, "refused": str(error)}, 2
         print(f"FAIL: {error}", file=sys.stderr)
-        return 2
-    print(json.dumps(report, indent=2, sort_keys=False))
+    text = json.dumps(report, indent=2, sort_keys=False)
+    if args.output is not None:
+        write_atomically(args.output, text + "\n")
+    print(text)
     return code
+
+
+def write_atomically(path: Path, text: str) -> None:
+    """Writes the report next to its final name and renames it, so a reader never sees half."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".brand-residue.", dir=path.parent)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    os.replace(temporary, path)
 
 
 if __name__ == "__main__":

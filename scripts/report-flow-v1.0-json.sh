@@ -10,6 +10,14 @@ GATE=""
 PREDECESSOR=
 MANUAL_FROM=
 ORCHESTRATION_CONFIG=${OPENPR_FLOW_V1_ORCHESTRATION_CONFIG:-"${SYLVODE_SCRATCH}/v10-flow-gate.toml"}
+# The brand residue release gate scans four sibling checkouts besides this one: either a directory
+# holding them under their GitHub names, or one NAME=PATH per repository (which wins).
+SIBLINGS_ROOT=${SYLVODE_SIBLINGS_ROOT:-}
+BRAND_REPOS=()
+if [[ -n ${SYLVODE_BRAND_RESIDUE_REPOS:-} ]]; then
+ IFS=',' read -r -a env_brand_repos <<<"$SYLVODE_BRAND_RESIDUE_REPOS"
+ for item in "${env_brand_repos[@]}"; do [[ -n $item ]] && BRAND_REPOS+=("$item"); done
+fi
 while (($#)); do
  case "$1" in
   --repo-root) ROOT=${2:?}; shift 2;; --contracts-root) CONTRACTS=${2:?}; shift 2;;
@@ -17,6 +25,7 @@ while (($#)); do
   --predecessor-gate-result|--predecessor-evidence) PREDECESSOR=${2:?}; shift 2;;
   --manual-signoffs-from) MANUAL_FROM=${2:?}; shift 2;; --json) shift;;
   --orchestration-config) ORCHESTRATION_CONFIG=${2:?}; shift 2;;
+  --siblings-root) SIBLINGS_ROOT=${2:?}; shift 2;; --brand-repo) BRAND_REPOS+=("${2:?}"); shift 2;;
   *) echo "FAIL: unsupported argument: $1" >&2; exit 2;;
  esac
 done
@@ -26,6 +35,37 @@ done
 [[ -n $CONTRACTS && -d $CONTRACTS ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
 [[ -n $GATE ]] || GATE="$CONTRACTS/gates/v1.0-gate.yaml"
 [[ -n $MANUAL_FROM ]] || MANUAL_FROM="$EVIDENCE/gate-result.json"
+# Every automated hard gate the report derives, each from its producer's artifact below. The
+# contract's hard_gates must be exactly these plus frontend_track_accepted: a contract gate without
+# a producer, or a producer gate the contract does not declare, refuses the run before any producer
+# starts instead of turning silently into "failed" or "passed".
+PRODUCER_GATES="command_contended_document_cardinality rest_mcp_cli_surface_parity mcp_default_rest_coverage_three_adr_threat_exceptions_only v0_3_through_v0_9_receipts_hash_valid stable_contract_versions_frozen flow_limits_and_event_contracts_reverified export_package_v1_contract_reverified release_build_reproducible install_upgrade_rollback_reverified backup_restore_reverified old_client_compatibility_reverified production_slo_budget_met security_no_unresolved_high flow_forms_signoffs_independent runbook_and_rollback_ownership_complete tool_registry_expected_139_or_rebased brand_residue_release_gate openpr_compat_deprecation_verified"
+python3 - "$GATE" "$PRODUCER_GATES" <<'PY' || exit 2
+import sys
+import yaml
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        declared = set(yaml.safe_load(handle)["hard_gates"])
+except Exception as error:
+    print(f"FAIL: cannot read hard_gates from the v1.0 gate contract {sys.argv[1]}: {error}", file=sys.stderr)
+    raise SystemExit(2)
+derived = set(sys.argv[2].split()) | {"frontend_track_accepted"}
+without_producer, undeclared = sorted(declared - derived), sorted(derived - declared)
+if without_producer or undeclared:
+    print("FAIL: v1.0 gate contract drift: hard gates without a producer "
+          f"{without_producer}; producer gates the contract does not declare {undeclared}", file=sys.stderr)
+    raise SystemExit(2)
+PY
+# The four sibling checkouts, by residue-scan name and default directory under --siblings-root.
+BRAND_REPO_ARGS=()
+for pair in openpr-webhook=openpr-webhook docs=docs site=openprx-site .github=openprx-github; do
+ name=${pair%%=*}; path=
+ for item in ${BRAND_REPOS[@]+"${BRAND_REPOS[@]}"}; do [[ ${item%%=*} == "$name" ]] && path=${item#*=}; done
+ [[ -n $path || -z $SIBLINGS_ROOT ]] || path="$SIBLINGS_ROOT/${pair#*=}"
+ [[ -n $path ]] || { echo "FAIL: sibling checkout '$name' not given; pass --siblings-root DIR (or SYLVODE_SIBLINGS_ROOT) or --brand-repo $name=PATH (or SYLVODE_BRAND_RESIDUE_REPOS)" >&2; exit 2; }
+ BRAND_REPO_ARGS+=(--repo "$name=$path")
+done
 mapfile -t ORCHESTRATION_DATABASE_URLS < <(python3 - "$ORCHESTRATION_CONFIG" <<'PY'
 import pathlib
 import sys
@@ -53,7 +93,7 @@ OPENPR_BACKUP_RESTORE_ADMIN_URL=${OPENPR_BACKUP_RESTORE_ADMIN_URL:-${ORCHESTRATI
 mkdir -p "$EVIDENCE/logs"
 ROWS=$(mktemp "$EVIDENCE/.report-rows.XXXXXX"); trap 'rm -f "$ROWS"' EXIT
 run() { local id=$1 artifact=$2; shift 2; local log="$EVIDENCE/logs/report-$id.log"; set +e
- env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
+ env -u RUST_TEST_THREADS -u SYLVODE_BRAND_RESIDUE_REPOS CARGO_BUILD_JOBS=4 \
   OPENPR_TEST_DATABASE_URL="$OPENPR_TEST_DATABASE_URL" \
   OPENPR_BACKUP_SOURCE_DATABASE_URL="$OPENPR_BACKUP_SOURCE_DATABASE_URL" \
   OPENPR_BACKUP_RESTORE_ADMIN_URL="$OPENPR_BACKUP_RESTORE_ADMIN_URL" \
@@ -76,10 +116,12 @@ run runbook runbook-result.json "$ROOT/scripts/verify-flow-runbook-v1.0.sh" --ev
 run surface surface-coverage-result.json "$ROOT/scripts/verify-flow-surface-coverage.sh" --release 1.0 --contracts-root "$CONTRACTS" --evidence-root "$EVIDENCE" --repo-root "$ROOT" --json
 run cardinality cardinality-result.json "$ROOT/scripts/verify-flow-cardinality-v1.0.sh" --adr "$CONTRACTS/decisions/ADR-0013-multi-document-atomicity.md" --full-scan --contracts-root "$CONTRACTS" --evidence-root "$EVIDENCE" --repo-root "$ROOT" --json
 run registry tool-registry-result.json "$ROOT/scripts/verify-flow-tool-registry-v0.4.sh" --baseline "$CONTRACTS/contracts/tool-count-baseline.md" --release 1.0 --contracts-root "$CONTRACTS" --evidence-root "$EVIDENCE" --repo-root "$ROOT" --json
+run brand_residue brand-residue-result.json "$ROOT/scripts/verify-sylvode-brand-residue.sh" --release --strict --json "${BRAND_REPO_ARGS[@]}" --evidence-root "$EVIDENCE"
+run compat_deprecation compat-deprecation-result.json "$ROOT/scripts/verify-sylvode-brand-compat.sh" --release 1.0 --evidence-root "$EVIDENCE" --json
 
-python3 - "$ROOT" "$EVIDENCE" "$GATE" "$PREDECESSOR" "$MANUAL_FROM" "$ROWS" <<'PY'
+python3 - "$ROOT" "$EVIDENCE" "$GATE" "$PREDECESSOR" "$MANUAL_FROM" "$ROWS" "$PRODUCER_GATES" <<'PY'
 import datetime as dt,hashlib,json,os,pathlib,re,subprocess,sys,tempfile,yaml
-repo,evidence,gate_path,pred_path,manual_path,rows_path=map(pathlib.Path,sys.argv[1:])
+repo,evidence,gate_path,pred_path,manual_path,rows_path=map(pathlib.Path,sys.argv[1:7]); producer_gates=set(sys.argv[7].split())
 gate=yaml.safe_load(gate_path.read_text()); head=subprocess.check_output(["git","-C",str(repo),"rev-parse","HEAD"],text=True).strip()
 def load(name):
  try:return json.loads((evidence/name).read_text()),"parsed"
@@ -95,6 +137,21 @@ for raw in rows_path.read_text().splitlines():
  ok=code==0 and executed>0 and value.get("passed") is True
  checks.append({"id":cid,"artifact":artifact,"artifact_status":artifact_status,"status":"passed" if ok else "failed","exit_code":code,"executed_count":executed,"executed_kind":value.get("executed_kind","producer_defined"),"ignored_count":ignored,"command":command,"log":log,"sha256":hashlib.sha256((evidence/log).read_bytes()).hexdigest()})
 ok={r["id"]:r["status"]=="passed" for r in checks}; surface=artifacts["surface"]; registry=artifacts["registry"]
+# ADR-0020 判据 4: all five expected checkouts scanned, each non-empty and clean, nothing uncovered,
+# no stale allow-list entry under --strict, and this checkout scanned at the receipt's HEAD.
+residue=artifacts["brand_residue"]; residue_repos={r.get("name"):r for r in residue.get("repos",[]) if isinstance(r,dict)}
+residue_ok=(ok["brand_residue"] and residue.get("release") is True and residue.get("strict") is True
+ and residue.get("summary",{}).get("uncovered")==0 and residue.get("summary",{}).get("stale_entries")==0 and residue.get("stale_entries")==[]
+ and residue.get("missing_expected_repos")==[] and len(residue.get("repos",[]))==5 and set(residue_repos)=={"sylvode","openpr-webhook","docs","site",".github"}
+ and all(r.get("reachable") is True and int(r.get("files_scanned",0))>0 and r.get("dirty") is False and not r.get("errors") and not r.get("uncovered") for r in residue_repos.values())
+ and residue_repos.get("sylvode",{}).get("head")==head)
+# ADR-0020 判据 1/2/3 and D2: every check passed (the named-test checks included), every mutation
+# control detected, the v1.0 checks and the attribution-conflict mutation present, at this HEAD.
+compat=artifacts["compat_deprecation"]; compat_checks={c.get("name"):c for c in compat.get("checks",[]) if isinstance(c,dict)}; compat_mutations={m.get("name"):m for m in compat.get("mutation_controls",[]) if isinstance(m,dict)}
+compat_ok=(ok["compat_deprecation"] and compat.get("release")=="1.0.0" and compat.get("source_head")==head
+ and {"adr0020-cli-nine-groups-stdout-byte-equal","adr0020-legacy-warns-canonical-silent","adr0020-attribution-conflict-rejected","adr0020-resource-alias-meta-deprecation"}<=set(compat_checks)
+ and all(c.get("status")=="passed" for c in compat_checks.values()) and "attribution-conflict-resolves-to-canonical" in compat_mutations
+ and all(m.get("detected") is True for m in compat_mutations.values()))
 hard_bool={
  "command_contended_document_cardinality":ok["cardinality"],"rest_mcp_cli_surface_parity":ok["surface"],
  "mcp_default_rest_coverage_three_adr_threat_exceptions_only":ok["surface"] and surface.get("counts",{}).get("not_exposed",{}).get("mcp")==3,
@@ -104,8 +161,11 @@ hard_bool={
  "backup_restore_reverified":ok["backup"],"old_client_compatibility_reverified":ok["old_client"],
  "production_slo_budget_met":ok["slo"],"security_no_unresolved_high":ok["security"],
  "flow_forms_signoffs_independent":ok["forms"],"runbook_and_rollback_ownership_complete":ok["runbook"],
- "tool_registry_expected_139_or_rebased":ok["registry"] and registry.get("live_registry",{}).get("enumerated_total")==140 and registry.get("rebase_valid") is True}
-hard={k:("pending" if k=="frontend_track_accepted" else "passed" if hard_bool.get(k,False) else "failed") for k in gate["hard_gates"]}
+ "tool_registry_expected_139_or_rebased":ok["registry"] and registry.get("live_registry",{}).get("enumerated_total")==140 and registry.get("rebase_valid") is True,
+ "brand_residue_release_gate":residue_ok,"openpr_compat_deprecation_verified":compat_ok}
+if set(hard_bool)!=producer_gates or set(gate["hard_gates"])!=producer_gates|{"frontend_track_accepted"}:
+ print(f"FAIL: v1.0 gate contract drift: contract {sorted(gate['hard_gates'])}, derived {sorted(hard_bool)}",file=sys.stderr);raise SystemExit(2)
+hard={k:("pending" if k=="frontend_track_accepted" else "passed" if hard_bool[k] else "failed") for k in gate["hard_gates"]}
 manual={k:{"status":"pending","signed_by":None,"signed_at":None,"note":None} for k in ("release_owner","rollback_owner","on_call_runbook","stable_contract_approval")}
 try:
  old=json.loads(manual_path.read_text()).get("manual_signoffs",{})

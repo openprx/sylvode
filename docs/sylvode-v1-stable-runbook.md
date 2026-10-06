@@ -54,6 +54,15 @@ error rather than passing:
 | Orchestration config (`[flow_gate] test_database_url`, `backup_source_database_url`, `backup_restore_admin_url`) | `OPENPR_FLOW_V1_ORCHESTRATION_CONFIG` or `--orchestration-config PATH` of `scripts/report-flow-v1.0-json.sh` | `<SYLVODE_SCRATCH_ROOT>/v10-flow-gate.toml` (`.flow-gate/cache/v10-flow-gate.toml`) |
 | Universal Forms sign-off reports | `SYLVODE_UF_REPORT_ROOT` | `.flow-gate/universal-forms` |
 | Scratch trees and separate cargo targets | `SYLVODE_SCRATCH_ROOT` | `.flow-gate/cache` |
+| Sibling checkouts for the brand residue release gate | `SYLVODE_SIBLINGS_ROOT` or `--siblings-root DIR` of `scripts/report-flow-v1.0-json.sh`: the directory holding `openpr-webhook`, `docs`, `openprx-site` and `openprx-github` | none, required unless all four are given one by one |
+| One sibling checkout at another path | `SYLVODE_BRAND_RESIDUE_REPOS="NAME=PATH,..."` or `--brand-repo NAME=PATH` (repeatable) of `scripts/report-flow-v1.0-json.sh`, with `NAME` one of `openpr-webhook`, `docs`, `site`, `.github`; it wins over `--siblings-root` | none |
+
+`brand_residue_release_gate` runs `scripts/verify-sylvode-brand-residue.sh --release --strict`
+over this checkout and the four siblings. A sibling that is missing, empty, not a git checkout or
+has uncommitted changes turns the gate red; it is never skipped. `openpr_compat_deprecation_verified`
+runs `scripts/verify-sylvode-brand-compat.sh --release 1.0`, which needs no input beyond the
+toolchain (cargo, bun) and builds its attribution-header mutation in a detached worktree under
+`SYLVODE_SCRATCH_ROOT`.
 
 Evidence is written to `.flow-gate/evidence/v1.0` unless `--evidence-root` names another
 directory. The scripts need bash 4.3 or newer and GNU coreutils (`sha256sum`, `stat -c`); on macOS

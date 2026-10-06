@@ -8,11 +8,13 @@ JSON_MODE=0
 STRICT=0
 RELEASE=0
 SELF_TEST=0
+EVIDENCE_ROOT=
 REPOS=()
 
 usage() {
   cat <<'EOF'
 Usage: scripts/verify-sylvode-brand-residue.sh --json [--repo NAME=PATH]... [--strict] [--release]
+                                               [--evidence-root DIR]
        scripts/verify-sylvode-brand-residue.sh --json --self-test
 
 Scans the tracked files (`git ls-files`) of the Sylvode checkouts for `openpr` in any letter
@@ -48,6 +50,9 @@ Options:
   --strict            An allow-list entry that covers nothing in a scanned repository fails
                       (otherwise it is counted as a warning).
   --release           Require all five expected repositories, each with a clean working tree.
+  --evidence-root DIR Also write the report to DIR/brand-residue-result.json (the v1.0 gate
+                      artifact). A previous file there is removed first, so a run that produces
+                      no report leaves no artifact behind.
   --self-test         Run the built-in mutation controls against a temporary copy of this
                       checkout: injected uncovered names (mixed case, all caps, camel case, a
                       file name, a link target, UTF-16 text), an internal identifier outside
@@ -69,6 +74,7 @@ while (($#)); do
     --strict) STRICT=1; shift ;;
     --release) RELEASE=1; shift ;;
     --self-test) SELF_TEST=1; shift ;;
+    --evidence-root) EVIDENCE_ROOT="${2:?--evidence-root requires a directory}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "FAIL: unsupported argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -92,6 +98,12 @@ done
 [[ $RELEASE -eq 1 ]] && args+=(--release)
 if [[ $SELF_TEST -eq 1 ]]; then
   args=(--allowlist "$ALLOWLIST" --repo "sylvode=$REPO_ROOT" --self-test)
+fi
+if [[ -n $EVIDENCE_ROOT ]]; then
+  [[ $SELF_TEST -eq 0 ]] || { echo "FAIL: --evidence-root does not apply to --self-test" >&2; exit 2; }
+  mkdir -p "$EVIDENCE_ROOT"
+  rm -f -- "$EVIDENCE_ROOT/brand-residue-result.json"
+  args+=(--output "$EVIDENCE_ROOT/brand-residue-result.json")
 fi
 
 exec python3 "$REPO_ROOT/scripts/lib/sylvode_brand_residue.py" "${args[@]}"
