@@ -438,10 +438,15 @@
         "tests/executable_names.rs",
         "tests/http_signature.rs",
         "tests/install_scripts.rs",
-        "tests/legacy_environment.rs"
+        "tests/legacy_environment.rs",
+        "src/bin/openpr-webhook.rs"
       ],
       "pattern": "(?:ghcr\\.io/openprx/|/app/|target/release/|src/bin/)?openpr-webhook(?:[\\w.<>${}:-]*)?|openpr_webhook[\\w:\\[\\]=]*|dev\\.openpr\\.webhook|[Xx]-(?:OpenPR|openpr)-[A-Za-z-]+|LEGACY_\\w+|legacy_openpr_header\\w*",
-      "explanation": "Legacy executable, image, archive, service, launch agent, log target and signature/attribution header names kept through 1.x by ADR-0020 D4, with the code that resolves them. Limited to the files that carry the compatibility layer or document it: packaging, the compat module, the signature and attribution code, their tests, and the release notes."
+      "explanation": "Legacy executable, image, archive, service, launch agent, log target and signature/attribution header names kept through 1.x by ADR-0020 D4, with the code that resolves them. Limited to the files that carry the compatibility layer or document it: packaging, the compat module, the signature and attribution code, their tests, and the release notes.",
+      "applies_to": [
+        "content",
+        "path"
+      ]
     },
     {
       "id": "webhook-event-envelope-version",
@@ -485,7 +490,11 @@
         "site/*/sylvode/getting-started/migrating-from-openpr.md"
       ],
       "pattern": "(?i:openpr)",
-      "explanation": "The migration guide in every locale; it exists to list the OpenPR names and their replacements."
+      "explanation": "The migration guide in every locale; it exists to list the OpenPR names and their replacements.",
+      "applies_to": [
+        "content",
+        "path"
+      ]
     },
     {
       "id": "docs-migration-links",
@@ -565,7 +574,7 @@
         "site/*/sylvode-webhook/**",
         "site/*/sylvode/getting-started/migrating-from-openpr.md"
       ],
-      "pattern": "(?:ghcr\\.io/openprx/|/app/|target/release/)?openpr-webhook(?:[\\w.<>${}:-]*)?|openpr_webhook[\\w=.]*|dev\\.openpr\\.webhook|cd openpr-webhook",
+      "pattern": "(?:ghcr\\.io/openprx/|/app/|target/release/)?openpr-webhook(?:[\\w.<>${}:-]*)?|openpr_webhook[\\w=.]*|dev\\.openpr\\.webhook|cd openpr-webhook|OPENPR_WEBHOOK_[A-Z_]+",
       "explanation": "Legacy Sylvode Webhook executable, image, archive, service and log-target names kept through 1.x (ADR-0020 D4)."
     },
     {
@@ -670,7 +679,7 @@
       "paths": [
         "src/content/docs/**/build/webhook-dispatcher.md"
       ],
-      "pattern": "(?:ghcr\\.io/openprx/)?openpr-webhook",
+      "pattern": "(?:ghcr\\.io/openprx/)?openpr-webhook|OPENPR_WEBHOOK_SAFE_MODE",
       "explanation": "The legacy Sylvode Webhook executable and image names kept through 1.x (ADR-0020 D4)."
     },
     {
@@ -765,6 +774,41 @@
       ],
       "pattern": "\\bOpenPr[A-Za-z0-9_]*",
       "explanation": "Rust type names of the internal API client and configuration (OpenPrClient, OpenPrConfig); not visible to users, renamed only with a refactor that touches every caller. Two scripts name OpenPrConfig::load when they check or describe the Rust source."
+    },
+    {
+      "id": "webhook-legacy-environment",
+      "reason": "legacy_alias_documented",
+      "repo": "openpr-webhook",
+      "paths": [
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "README.md",
+        "src/compat.rs",
+        "src/config.rs",
+        "tests/**"
+      ],
+      "pattern": "OPENPR_WEBHOOK_SAFE_MODE|`OPENPR_\\*`",
+      "explanation": "The legacy safe-mode environment variable, still read with a deprecation notice (ADR-0020 D2), the code and tests that resolve it, and the release notes that describe it."
+    },
+    {
+      "id": "webhook-dispatcher-test-environment",
+      "reason": "legacy_behaviour_test",
+      "repo": "openpr-webhook",
+      "paths": [
+        "src/dispatcher.rs"
+      ],
+      "pattern": "OPENPR_API_URL = \"http://localhost:3000\"",
+      "explanation": "An environment entry in the dispatcher's test configurations, passed through to an agent unchanged; the test checks pass-through, not the name."
+    },
+    {
+      "id": "docs-legacy-environment-variables",
+      "reason": "legacy_alias_documented",
+      "repo": "docs",
+      "paths": [
+        "site/**"
+      ],
+      "pattern": "OPENPR_(?:WEBHOOK_[A-Z_]+|DEMO_ALLOW_REMOTE|BIND_HOST|API_PORT|FRONTEND_PORT|RUNTIME_BASE|FRONTEND_DOCKERFILE)\\b",
+      "explanation": "Legacy environment variables that scripts/start.sh, the demo bootstrap and Sylvode Webhook still read with a deprecation notice (ADR-0020 D2), named where the pages document them."
     }
   ]
 }
