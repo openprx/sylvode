@@ -304,7 +304,7 @@ contains "MCP app README documents bot token hash auth" "$ROOT_DIR/apps/mcp-serv
 contains "MCP app README documents workspace-scoped bot access" "$ROOT_DIR/apps/mcp-server/README.md" "a bot token can only act inside its workspace"
 not_contains "MCP app README does not claim auth is unenforced" "$ROOT_DIR/apps/mcp-server/README.md" "Authentication infrastructure exists but is not enforced"
 not_contains "MCP app README does not list stale JWT TODO" "$ROOT_DIR/apps/mcp-server/README.md" "Implement JWT token validation"
-contains "MCP regression stdio path targets API host port" "$ROOT_DIR/skills/openpr-mcp/scripts/mcp-regression.py" 'api_url = "http://localhost:8081"'
+contains "MCP regression stdio path targets API host port" "$ROOT_DIR/skills/openpr-mcp/scripts/mcp-regression.py" '"SYLVODE_MCP_REGRESSION_API_URL", "http://localhost:8081"'
 contains "MCP regression stdio path uses serve subcommand" "$ROOT_DIR/skills/openpr-mcp/scripts/mcp-regression.py" '[MCP_BIN,"serve","--transport","stdio","--config",MCP_CONFIG]'
 contains "MCP regression derives the expected registry count" "$ROOT_DIR/skills/openpr-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
 contains "MCP validation derives the expected registry count" "$ROOT_DIR/skills/openpr-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
