@@ -64,11 +64,12 @@ These areas carry the highest impact, and reports about them are especially welc
   MCP resources, export packages and signed download URLs.
 - **WASM plugin sandbox.** Any workspace member, and a bot token with write permission, can
   install a project plugin, so the sandbox is a security boundary. Plugins run in wasmtime
-  with no imports at all (a module that imports anything fails to instantiate), a fuel
-  budget, a memory limit, one instance, memory and table (of at most 65,536 elements), and
-  a wall-clock deadline that interrupts the guest. The manifest can raise these limits only up to fixed maxima
-  (30 s, 1,000,000,000 fuel, 128 MiB). Escaping the sandbox, reaching host I/O, exceeding
-  these limits, or crashing or stalling the API from a plugin is in scope.
+  with no imports at all (a module that imports anything fails to instantiate), a module size
+  limit of 4 MiB, a fuel budget, a memory limit, one instance, memory and table (of at most
+  65,536 elements), and a wall-clock deadline that covers compilation and interrupts the guest.
+  The manifest can raise these limits only up to fixed maxima (30 s, 1,000,000,000 fuel,
+  128 MiB). Escaping the sandbox, reaching host I/O, exceeding these limits, or crashing or
+  stalling the API from a plugin is in scope.
 - **MCP server and bot tokens.** Bot tokens (`opr_` prefix) are scoped to one workspace and
   carry `read`, `write` or `admin` permissions that the API enforces. Over the `http` and
   `sse` transports each request is made with the caller's own bearer token, which the MCP

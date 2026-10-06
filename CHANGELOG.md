@@ -38,6 +38,17 @@ OpenPR name keeps working; see **Deprecated**.
   trapped, now records its real `duration_ms` and `fuel_consumed` (previously `0` and `NULL`)
   in `plugin_invocations`, in the API response and in the `plugin.invoked` event. Guest trap
   messages include the full error chain, so fuel exhaustion is named.
+- **Plugin modules are limited to 4 MiB, and the deadline covers compilation.** Installing a
+  plugin whose decoded module exceeds 4,194,304 bytes is refused with 400 before the module is
+  decoded or compiled, and an installed module over the limit fails at invocation (`failed`).
+  `runtime.timeout_ms` now bounds the whole invocation from the moment the request starts:
+  waiting for a blocking thread, compiling and instantiating the module, and running the guest.
+  Previously compilation ran outside the deadline, so a large module held the request for as
+  long as compiling took, on every invocation. When the deadline passes before the guest has
+  started, the invocation returns `timeout` at once with no fuel recorded, and the guest never
+  runs. Each module is compiled on the invocation's own thread instead of the shared compilation
+  pool, so one large module no longer delays other plugins, and install-time validation runs off
+  the request threads.
 - **Conflicting MCP attribution headers are rejected.** The API accepts
   `X-Sylvode-MCP-Surface` / `X-Sylvode-MCP-Tool` and the legacy `X-OpenPR-MCP-*` headers. If the
   canonical and legacy header of a field, or repeated occurrences of either, carry different
