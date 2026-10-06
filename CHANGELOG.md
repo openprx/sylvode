@@ -316,6 +316,13 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- `mcp-server serve` had no SIGTERM or SIGINT handler: it died of the signal (exit 143) and
+  dropped the call it was serving, and as PID 1 of the compose `mcp-server` container it ignored
+  the signal and was killed by the runtime after 10 s. On SIGTERM or SIGINT it now stops accepting
+  connections (`http`, `sse`) or stops reading stdin (`stdio`), finishes the requests in flight,
+  delivers an SSE result before it ends that stream, flushes stdout and exits 0. Requests still
+  running 8 s after the signal are abandoned and logged, which keeps the stop inside the 10 s a
+  container runtime waits before SIGKILL.
 - `tools call` with a `cli_tools_call` token left no operation log: `bot_operation_logs` only
   accepted the surfaces `mcp_http`, `mcp_sse`, `mcp_stdio`, `cli` and `rest`, so every audit row of
   such a call was rejected by the table and only a warning was logged. Migration

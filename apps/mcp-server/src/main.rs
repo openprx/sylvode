@@ -20,9 +20,9 @@ use mcp_server::server::McpServer;
 use platform::config::{McpRuntime, McpTransport, Secret};
 use serde::Deserialize;
 use serde_json::json;
-use std::{collections::HashMap, convert::Infallible, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, watch};
 use tokio_stream::{StreamExt, wrappers::UnboundedReceiverStream};
 use uuid::Uuid;
 
@@ -32,8 +32,27 @@ use uuid::Uuid;
 /// request. Comfortably above any real Sylvode bot token, which is tens of bytes.
 const MAX_CALLER_TOKEN_LEN: usize = 8 * 1024;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// Longest time `serve` keeps answering the requests in flight after SIGTERM/SIGINT.
+///
+/// Below the 10 s a container runtime (Docker, Podman, compose) waits between SIGTERM and
+/// SIGKILL, so the drain finishes, and the process exits 0, before the runtime gives up on it.
+const SHUTDOWN_DRAIN_BOUND: Duration = Duration::from_secs(8);
+
+/// How long the runtime may wait for blocking work when the process exits.
+///
+/// The stdio transport reads stdin on a blocking thread whose read cannot be cancelled; while the
+/// parent keeps the pipe open that read never returns, and an unbounded runtime shutdown would
+/// wait on it forever after the server has already decided to stop.
+const RUNTIME_SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
+
+fn main() -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let result = runtime.block_on(run());
+    runtime.shutdown_timeout(RUNTIME_SHUTDOWN_GRACE);
+    result
+}
+
+async fn run() -> anyhow::Result<()> {
     let mut matches = Cli::command().get_matches();
     // Read before the conversion below, which moves the subcommand out of `matches`.
     let subcommand = cli::subcommand_path(&matches);
@@ -67,12 +86,121 @@ async fn main() -> anyhow::Result<()> {
 ///
 /// Both paths then do the same thing with the token they hold: forward it to the API
 /// verbatim and let the API authenticate it. Neither one parses or validates its contents.
+///
+/// Every transport stops on SIGTERM or SIGINT with exit code 0 once the requests in flight are
+/// answered, or after [`SHUTDOWN_DRAIN_BOUND`] at the latest (see [`Shutdown`]).
 async fn serve(mcp: &McpRuntime) -> anyhow::Result<()> {
+    let shutdown = Shutdown::install()?;
     match mcp.transport {
-        McpTransport::Stdio => run_stdio(cli::build_client(mcp, Some(cli::configured_bot_token(mcp)?))?).await,
-        McpTransport::Http => run_http(&mcp.bind_addr, cli::build_client(mcp, None)?).await,
-        McpTransport::Sse => run_sse(&mcp.bind_addr, cli::build_client(mcp, None)?).await,
+        McpTransport::Stdio => {
+            run_stdio(cli::build_client(mcp, Some(cli::configured_bot_token(mcp)?))?, shutdown).await
+        }
+        McpTransport::Http => run_http(&mcp.bind_addr, cli::build_client(mcp, None)?, shutdown).await,
+        McpTransport::Sse => run_sse(&mcp.bind_addr, cli::build_client(mcp, None)?, shutdown).await,
     }
+}
+
+/// The stop request of a `serve` process: SIGTERM or SIGINT (Ctrl-C).
+///
+/// The signal handlers are registered synchronously in [`Shutdown::install`], before the
+/// transport starts, so a signal can never arrive while the default disposition (terminate the
+/// process, exit 143) is still in place. A task turns the first signal into a `watch` flag that
+/// any number of waiters can observe.
+#[derive(Clone)]
+struct Shutdown {
+    requested: watch::Receiver<bool>,
+}
+
+impl Shutdown {
+    fn install() -> anyhow::Result<Self> {
+        let (sender, requested) = watch::channel(false);
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            let mut terminate = signal(SignalKind::terminate())?;
+            let mut interrupt = signal(SignalKind::interrupt())?;
+            tokio::spawn(async move {
+                let name = tokio::select! {
+                    _ = terminate.recv() => "SIGTERM",
+                    _ = interrupt.recv() => "SIGINT",
+                };
+                tracing::info!(signal = name, "MCP server shutdown requested");
+                if sender.send(true).is_err() {
+                    tracing::warn!("MCP server shutdown requested after every transport had already stopped");
+                }
+            });
+        }
+        #[cfg(not(unix))]
+        {
+            tokio::spawn(async move {
+                if let Err(error) = tokio::signal::ctrl_c().await {
+                    tracing::warn!(error = %error, "Ctrl-C handler failed; the MCP server cannot be stopped by signal");
+                    return;
+                }
+                tracing::info!(signal = "ctrl_c", "MCP server shutdown requested");
+                if sender.send(true).is_err() {
+                    tracing::warn!("MCP server shutdown requested after every transport had already stopped");
+                }
+            });
+        }
+        Ok(Self { requested })
+    }
+
+    /// Resolves once a stop has been requested. Never resolves if the signal task is gone without
+    /// having seen a signal, so a lost handler cannot be mistaken for a stop request.
+    async fn requested(&self) {
+        let mut requested = self.requested.clone();
+        if requested.wait_for(|stop| *stop).await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+
+    /// Resolves [`SHUTDOWN_DRAIN_BOUND`] after a stop was requested.
+    async fn drain_deadline(&self) {
+        self.requested().await;
+        tokio::time::sleep(SHUTDOWN_DRAIN_BOUND).await;
+    }
+}
+
+/// Serves `app` until a stop is requested, then drains.
+///
+/// On the signal the listener stops accepting connections, idle keep-alive connections are
+/// closed and every request in flight runs to completion. The SSE session table is emptied at
+/// the same moment: each `GET /sse` stream then ends as soon as no `POST /messages` in flight
+/// still holds its sender, which is after that message's result has been pushed onto it, so an
+/// open stream neither loses an answer nor keeps the process alive. Whatever is still running
+/// after [`SHUTDOWN_DRAIN_BOUND`] is abandoned and logged.
+async fn serve_until_shutdown(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    sessions: SseSessions,
+    shutdown: Shutdown,
+) -> anyhow::Result<()> {
+    let drain = {
+        let shutdown = shutdown.clone();
+        async move {
+            shutdown.requested().await;
+            tracing::info!(
+                drain_bound_ms = u64::try_from(SHUTDOWN_DRAIN_BOUND.as_millis()).unwrap_or(u64::MAX),
+                "MCP server draining: accepting no new connections and finishing the requests in flight"
+            );
+            sessions.lock().await.clear();
+        }
+    };
+    let server = std::future::IntoFuture::into_future(axum::serve(listener, app).with_graceful_shutdown(drain));
+    tokio::select! {
+        result = server => {
+            result?;
+            tracing::info!("MCP server stopped");
+        }
+        () = shutdown.drain_deadline() => {
+            tracing::warn!(
+                drain_bound_ms = u64::try_from(SHUTDOWN_DRAIN_BOUND.as_millis()).unwrap_or(u64::MAX),
+                "MCP server drain bound elapsed; stopping with requests still in flight"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The bot token one inbound HTTP/SSE request presented, on its way to the API.
@@ -150,10 +278,11 @@ fn serve_router(state: SseState, protected: Router<SseState>) -> Router {
         .with_state(state)
 }
 
-async fn run_http(bind_addr: &str, client: OpenPrClient) -> anyhow::Result<()> {
+async fn run_http(bind_addr: &str, client: OpenPrClient, shutdown: Shutdown) -> anyhow::Result<()> {
+    let sessions: SseSessions = Arc::new(Mutex::new(HashMap::new()));
     let state = SseState {
         client,
-        sessions: Arc::new(Mutex::new(HashMap::new())),
+        sessions: Arc::clone(&sessions),
     };
 
     let protected = Router::new()
@@ -168,8 +297,7 @@ async fn run_http(bind_addr: &str, client: OpenPrClient) -> anyhow::Result<()> {
         inbound_auth = INBOUND_AUTH_DESCRIPTION,
         "MCP HTTP transport started (JSON-RPC + SSE)"
     );
-    axum::serve(listener, app).await?;
-    Ok(())
+    serve_until_shutdown(listener, app, sessions, shutdown).await
 }
 
 /// How the networked transports report their inbound authentication in the startup log.
@@ -190,10 +318,13 @@ async fn handle_jsonrpc(
     )
 }
 
+/// Open SSE streams by session id; each entry is the sender that feeds one `GET /sse` stream.
+type SseSessions = Arc<Mutex<HashMap<String, mpsc::UnboundedSender<SseServerEvent>>>>;
+
 #[derive(Clone)]
 struct SseState {
     client: OpenPrClient,
-    sessions: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<SseServerEvent>>>>,
+    sessions: SseSessions,
 }
 
 #[derive(Debug)]
@@ -204,7 +335,7 @@ enum SseServerEvent {
 
 struct SessionGuard {
     session_id: String,
-    sessions: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<SseServerEvent>>>>,
+    sessions: SseSessions,
 }
 
 impl Drop for SessionGuard {
@@ -222,10 +353,11 @@ struct MessagesQuery {
     session_id: String,
 }
 
-async fn run_sse(bind_addr: &str, client: OpenPrClient) -> anyhow::Result<()> {
+async fn run_sse(bind_addr: &str, client: OpenPrClient, shutdown: Shutdown) -> anyhow::Result<()> {
+    let sessions: SseSessions = Arc::new(Mutex::new(HashMap::new()));
     let state = SseState {
         client,
-        sessions: Arc::new(Mutex::new(HashMap::new())),
+        sessions: Arc::clone(&sessions),
     };
 
     let protected = Router::new()
@@ -239,8 +371,7 @@ async fn run_sse(bind_addr: &str, client: OpenPrClient) -> anyhow::Result<()> {
         inbound_auth = INBOUND_AUTH_DESCRIPTION,
         "MCP SSE transport started"
     );
-    axum::serve(listener, app).await?;
-    Ok(())
+    serve_until_shutdown(listener, app, sessions, shutdown).await
 }
 
 async fn handle_sse_connect(
@@ -596,7 +727,12 @@ async fn read_headers_get_content_length(reader: &mut BufReader<tokio::io::Stdin
     content_length.unwrap_or(0)
 }
 
-async fn run_stdio(client: OpenPrClient) -> anyhow::Result<()> {
+/// The stdio transport: one JSON-RPC message at a time from stdin, answers on stdout.
+///
+/// On SIGTERM/SIGINT it stops reading. A message already being handled is finished and its
+/// answer written (bounded by [`SHUTDOWN_DRAIN_BOUND`]), stdout is flushed and the transport
+/// returns, so the process exits 0 even though the parent still holds stdin open.
+async fn run_stdio(client: OpenPrClient, shutdown: Shutdown) -> anyhow::Result<()> {
     tracing::info!("MCP stdio transport started");
 
     let server = McpServer::new(client);
@@ -606,7 +742,15 @@ async fn run_stdio(client: OpenPrClient) -> anyhow::Result<()> {
 
     loop {
         let mut line = String::new();
-        match reader.read_line(&mut line).await {
+        let read = tokio::select! {
+            biased;
+            () = shutdown.requested() => {
+                tracing::info!("MCP stdio transport stopping: no further input is read");
+                break;
+            }
+            read = reader.read_line(&mut line) => read,
+        };
+        match read {
             Ok(0) => {
                 tracing::info!("stdin closed, shutting down");
                 break;
@@ -616,54 +760,14 @@ async fn run_stdio(client: OpenPrClient) -> anyhow::Result<()> {
                 if trimmed.is_empty() {
                     continue;
                 }
-
-                // Detect Content-Length framing (used by Codex, Claude Desktop)
-                let (payload, frame) = if is_stdio_header_line(trimmed) {
-                    let cl = read_headers_get_content_length(&mut reader, trimmed).await;
-                    if cl == 0 {
-                        continue;
-                    }
-                    let mut body = vec![0u8; cl];
-                    if let Err(e) = reader.read_exact(&mut body).await {
-                        tracing::error!(error = %e, "Failed to read Content-Length body");
-                        continue;
-                    }
-                    (body, StdioFrame::ContentLength)
-                } else {
-                    // Line-delimited JSON
-                    (trimmed.as_bytes().to_vec(), StdioFrame::LineDelimited)
-                };
-
-                let request: JsonRpcRequest = match serde_json::from_slice(&payload) {
-                    Ok(req) => req,
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to parse request");
-                        let error_response = JsonRpcResponse::error(
-                            None,
-                            protocol::JsonRpcError::parse_error(format!("Invalid JSON: {e}")),
+                tokio::select! {
+                    () = process_stdio_message(&server, &mut reader, &mut stdout, trimmed) => {}
+                    () = shutdown.drain_deadline() => {
+                        tracing::warn!(
+                            drain_bound_ms = u64::try_from(SHUTDOWN_DRAIN_BOUND.as_millis()).unwrap_or(u64::MAX),
+                            "MCP stdio drain bound elapsed; stopping with a message still in flight"
                         );
-                        if let Ok(rj) = serde_json::to_string(&error_response) {
-                            let _ = write_stdio_response(&mut stdout, &rj, frame).await;
-                        }
-                        continue;
-                    }
-                };
-
-                tracing::debug!(method = %request.method, "Received request");
-
-                let response = server.handle_request(request).await;
-                let Some(response) = response else {
-                    continue;
-                };
-
-                match serde_json::to_string(&response) {
-                    Ok(response_json) => {
-                        if let Err(e) = write_stdio_response(&mut stdout, &response_json, frame).await {
-                            tracing::error!(error = %e, "Failed to write response");
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to serialize response");
+                        break;
                     }
                 }
             }
@@ -674,5 +778,62 @@ async fn run_stdio(client: OpenPrClient) -> anyhow::Result<()> {
         }
     }
 
+    stdout.flush().await?;
     Ok(())
+}
+
+/// Reads the rest of one stdio message that starts with `first_line`, handles it and writes the
+/// answer in the framing the message arrived in.
+async fn process_stdio_message(
+    server: &McpServer,
+    reader: &mut BufReader<tokio::io::Stdin>,
+    stdout: &mut tokio::io::Stdout,
+    first_line: &str,
+) {
+    // Detect Content-Length framing (used by Codex, Claude Desktop)
+    let (payload, frame) = if is_stdio_header_line(first_line) {
+        let cl = read_headers_get_content_length(reader, first_line).await;
+        if cl == 0 {
+            return;
+        }
+        let mut body = vec![0u8; cl];
+        if let Err(e) = reader.read_exact(&mut body).await {
+            tracing::error!(error = %e, "Failed to read Content-Length body");
+            return;
+        }
+        (body, StdioFrame::ContentLength)
+    } else {
+        // Line-delimited JSON
+        (first_line.as_bytes().to_vec(), StdioFrame::LineDelimited)
+    };
+
+    let request: JsonRpcRequest = match serde_json::from_slice(&payload) {
+        Ok(req) => req,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to parse request");
+            let error_response =
+                JsonRpcResponse::error(None, protocol::JsonRpcError::parse_error(format!("Invalid JSON: {e}")));
+            if let Ok(rj) = serde_json::to_string(&error_response) {
+                let _ = write_stdio_response(stdout, &rj, frame).await;
+            }
+            return;
+        }
+    };
+
+    tracing::debug!(method = %request.method, "Received request");
+
+    let Some(response) = server.handle_request(request).await else {
+        return;
+    };
+
+    match serde_json::to_string(&response) {
+        Ok(response_json) => {
+            if let Err(e) = write_stdio_response(stdout, &response_json, frame).await {
+                tracing::error!(error = %e, "Failed to write response");
+            }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to serialize response");
+        }
+    }
 }
