@@ -226,7 +226,7 @@ async fn terminate_tree(
     match signal_group(pgid, Some(Signal::SIGTERM)) {
         Signalled::Delivered => {}
         Signalled::Gone => return Some(reap(child, guard).await),
-        Signalled::Denied => return give_up(child, guard, exited).await,
+        Signalled::Denied => return give_up(child, guard),
     }
     let deadline = tokio::time::Instant::now() + grace;
     while tokio::time::Instant::now() < deadline {
@@ -240,27 +240,27 @@ async fn terminate_tree(
         "process group still running {grace:?} after SIGTERM; sending SIGKILL"
     );
     if signal_group(pgid, Some(Signal::SIGKILL)) == Signalled::Denied {
-        return give_up(child, guard, exited).await;
+        return give_up(child, guard);
     }
     Some(reap(child, guard).await)
 }
 
 /// The group cannot be signalled (`EPERM`, as for a set-user-ID program that changed its
-/// credentials). Waiting for a leader that might never exit would make the timeout meaningless,
-/// so only a leader known to have exited is reaped; a running one is left to `kill_on_drop` and
-/// to tokio, which reaps a dropped child once it exits.
+/// credentials; macOS also answers `EPERM` for a group whose only member is the leader's zombie).
+/// Nothing is signalled after this, so the leader may be reaped now if it has exited. Waiting for a
+/// leader that is still running and might never exit would make the timeout meaningless, so such
+/// a leader is left to `kill_on_drop` and to tokio, which reaps a dropped child once it exits.
 #[cfg(unix)]
-async fn give_up(
-    child: &mut tokio::process::Child,
-    guard: &mut GroupGuard,
-    exited: bool,
-) -> Option<std::io::Result<ExitStatus>> {
-    if exited {
-        return Some(reap(child, guard).await);
-    }
-    tracing::error!("the command's process group cannot be signalled; leaving it running");
+fn give_up(child: &mut tokio::process::Child, guard: &mut GroupGuard) -> Option<std::io::Result<ExitStatus>> {
     guard.disarm();
-    None
+    match child.try_wait() {
+        Ok(Some(status)) => Some(Ok(status)),
+        Ok(None) => {
+            tracing::error!("the command's process group cannot be signalled; leaving it running");
+            None
+        }
+        Err(e) => Some(Err(e)),
+    }
 }
 
 /// Without process groups only the direct child can be killed.
@@ -655,6 +655,31 @@ mod tests {
         assert_eq!(classify(7, Err(Errno::ESRCH)), Signalled::Gone);
         assert_eq!(classify(7, Err(Errno::EPERM)), Signalled::Denied);
         assert_eq!(classify(7, Err(Errno::EINVAL)), Signalled::Denied);
+    }
+
+    /// When the group cannot be signalled, a leader that has exited meanwhile is still reaped
+    /// with its status (macOS answers `EPERM` for a group left with only the leader's zombie), and
+    /// a leader still running is left alone instead of being waited for.
+    #[tokio::test]
+    async fn giving_up_reaps_an_exited_leader_and_leaves_a_running_one() {
+        let mut command = tokio::process::Command::new("sh");
+        command.args(["-c", "exit 4"]).process_group(0);
+        let mut child = command.spawn().expect("spawns");
+        let mut guard = GroupGuard::new(child.id());
+        assert!(matches!(wait_for_leader(&mut child).await, Leader::ExitedUnreaped));
+        let reaped = give_up(&mut child, &mut guard).expect("reaped").expect("status");
+        assert_eq!(reaped.code(), Some(4));
+        assert!(!guard.armed);
+
+        let mut command = tokio::process::Command::new("sleep");
+        command.arg("30").process_group(0).kill_on_drop(true);
+        let mut child = command.spawn().expect("spawns");
+        let pid = i32::try_from(child.id().expect("pid")).expect("pid fits");
+        let mut guard = GroupGuard::new(child.id());
+        assert!(give_up(&mut child, &mut guard).is_none());
+        assert!(!guard.armed, "nothing signals the group after giving up");
+        drop(child);
+        assert_eq!(wait_dead(&[pid], Duration::from_secs(2)).await, Vec::<i32>::new());
     }
 
     #[tokio::test]

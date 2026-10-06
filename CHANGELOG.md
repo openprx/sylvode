@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.51 are released
-together as 0.3.51.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.52 are released
+together as 0.3.52.
 
 ## Upgrading from 0.3.3
 
@@ -76,6 +76,22 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.52
+
+### Fixed
+
+- **A leader that exited is reaped even when its group cannot be signalled.** 0.3.47 left a leader
+  that was not known to have exited unreaped whenever `killpg` answered `EPERM`. macOS answers
+  `EPERM` for a group whose only member is the leader's zombie, so on macOS a timeout or shutdown
+  where everything died on `SIGTERM` logged an error and left the reaping to tokio. Since nothing
+  is signalled after `EPERM`, the leader is now reaped at once if it has exited; only a leader still
+  running is left alone.
+
+### Tests
+
+- Giving up on a group reaps an exited leader with its status and leaves a running one, which
+  `kill_on_drop` then kills.
 
 ## 0.3.51
 
