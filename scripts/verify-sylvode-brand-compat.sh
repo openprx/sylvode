@@ -5,15 +5,26 @@ mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 JSON_MODE=0
-EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v0.9"
+EVIDENCE_ROOT=
+# --release 1.0 adds the ADR-0020 checks of the v1.0 gate (`openpr_compat_deprecation_verified`):
+# the named CLI and resource-alias tests, the attribution-header conflict test and its mutation
+# control, and writes compat-deprecation-result.json. Without it the v0.9 run is unchanged.
+RELEASE=0.9
 while (($#)); do
   case "$1" in
     --json) JSON_MODE=1; shift ;;
     --evidence-root) EVIDENCE_ROOT=${2:?}; shift 2 ;;
+    --release) RELEASE=${2:?}; shift 2 ;;
     *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
   esac
 done
 [[ $JSON_MODE -eq 1 ]] || { echo "FAIL: require --json" >&2; exit 2; }
+case "$RELEASE" in
+  0.9) ARTIFACT_NAME=brand-compat-result.json; CACHE_NAME=v09-brand-compat ;;
+  1.0) ARTIFACT_NAME=compat-deprecation-result.json; CACHE_NAME=v10-compat-deprecation ;;
+  *) echo "FAIL: unsupported --release $RELEASE (0.9 or 1.0)" >&2; exit 2 ;;
+esac
+[[ -n $EVIDENCE_ROOT ]] || EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v$RELEASE"
 for command_name in cargo python3; do command -v "$command_name" >/dev/null || { echo "FAIL: missing $command_name" >&2; exit 2; }; done
 if command -v bun >/dev/null; then
   BUN=$(command -v bun)
@@ -24,9 +35,14 @@ else
   exit 2
 fi
 
-CACHE_ROOT="${SYLVODE_SCRATCH}/v09-brand-compat"
+CACHE_ROOT="${SYLVODE_SCRATCH}/$CACHE_NAME"
 LOG_ROOT="$CACHE_ROOT/logs"
-mkdir -p "$LOG_ROOT" "$EVIDENCE_ROOT"
+# The v1.0 artifact cites its logs by path and hash, so they live under the evidence root where
+# the verifier can read them again.
+if [[ $RELEASE == 1.0 ]]; then LOG_ROOT="$EVIDENCE_ROOT/logs/compat-deprecation"; fi
+mkdir -p "$CACHE_ROOT" "$LOG_ROOT" "$EVIDENCE_ROOT"
+# A v1.0 run that stops early must not leave an earlier run's artifact behind.
+if [[ $RELEASE == 1.0 ]]; then rm -f -- "$EVIDENCE_ROOT/$ARTIFACT_NAME" "$LOG_ROOT"/*.log; fi
 
 run_logged() {
   local name=$1
@@ -85,7 +101,53 @@ printf 'SYLVODE_API_PORT=18081\n' >"$ENV_FIXTURE"
 rm -f "$COMPAT_DIR/config/sylvode.toml"
 [[ $(cd "$COMPAT_DIR" && sylvode_select_config config/sylvode.toml config/openpr.toml 2>"$LOG_ROOT/notice-legacy-config.log") == config/openpr.toml ]]
 
-python3 - "$REPO_ROOT" "$EVIDENCE_ROOT" "$LOG_ROOT" "$CONFIG_CONFLICT_EXIT" "$ENV_CONFLICT_EXIT" <<'PY'
+CONFLICT_SEAM_APPLIED=0
+CONFLICT_MUTATION_EXIT=-1
+if [[ $RELEASE == 1.0 ]]; then
+  # ADR-0020 判据 3 (positive side) and the openpr:// `_meta.deprecation` read (D2).
+  run_logged attribution-conflict-test env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
+    cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p api --lib \
+    attribution_accepts_either_spelling_and_refuses_disagreement
+  run_logged resource-alias-deprecation-test env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
+    cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p mcp-server --test flow_policy_bypass_stdio_e2e \
+    all_resource_aliases_are_identical_over_stdio_http_and_sse
+
+  # ADR-0020 判据 3 (mutation control): in a detached worktree of HEAD, turn the conflict refusal
+  # into "take the canonical value" and run the same test, which must then fail.
+  MUTATION_RUN=$(mktemp -d "$CACHE_ROOT/conflict-mutation.XXXXXX")
+  cleanup_mutation() {
+    git -C "$REPO_ROOT" worktree remove --force "$MUTATION_RUN/tree" >/dev/null 2>&1 || true
+    rm -rf -- "$MUTATION_RUN"
+  }
+  trap cleanup_mutation EXIT
+  git -C "$REPO_ROOT" worktree add --detach "$MUTATION_RUN/tree" HEAD >/dev/null
+  if python3 - "$MUTATION_RUN/tree/apps/api/src/middleware/bot_auth.rs" <<'MUTATE'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+body = path.read_text()
+needle = "if values.any(|other| other.as_bytes() != first.as_bytes()) {"
+if body.count(needle) != 1:
+    raise SystemExit(1)
+# The canonical header is read first, so ignoring the disagreement keeps the canonical value.
+path.write_text(body.replace(needle, "if false && values.any(|other| other.as_bytes() != first.as_bytes()) {"))
+MUTATE
+  then
+    CONFLICT_SEAM_APPLIED=1
+    set +e
+    env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="$MUTATION_RUN/target" \
+      cargo test --manifest-path "$MUTATION_RUN/tree/Cargo.toml" -p api --lib \
+      attribution_accepts_either_spelling_and_refuses_disagreement >"$LOG_ROOT/attribution-conflict-mutation.log" 2>&1
+    CONFLICT_MUTATION_EXIT=$?
+    set -e
+  else
+    : >"$LOG_ROOT/attribution-conflict-mutation.log"
+  fi
+fi
+
+python3 - "$REPO_ROOT" "$EVIDENCE_ROOT" "$LOG_ROOT" "$CONFIG_CONFLICT_EXIT" "$ENV_CONFLICT_EXIT" \
+  "$RELEASE" "$ARTIFACT_NAME" "$CONFLICT_SEAM_APPLIED" "$CONFLICT_MUTATION_EXIT" <<'PY'
 import datetime as dt
 import hashlib
 import json
@@ -98,6 +160,8 @@ import tempfile
 
 repo, evidence, logs = map(pathlib.Path, sys.argv[1:4])
 config_conflict_exit, env_conflict_exit = map(int, sys.argv[4:6])
+target_release, artifact_name = sys.argv[6], sys.argv[7]
+conflict_seam_applied, conflict_mutation_exit = sys.argv[8] == "1", int(sys.argv[9])
 
 def log_check(name, required):
     path = logs / f"{name}.log"
@@ -204,10 +268,67 @@ mutations = [
     {"name":"operator-config-reverted", "detected":"config/openpr.toml" in operator_text.replace("config/sylvode.toml", "config/openpr.toml", 1)},
     {"name":"frontend-env-ignore-removed", "detected":not dockerignore_required.issubset(set(dockerignore) - {".env"})},
 ]
+coverage = None
+if target_release == "1.0":
+    # Each check names the tests it requires by their full name; a test that did not run, was
+    # ignored or failed fails the check (a count alone would let a renamed test slip out).
+    def named_tests(check_name, log_name, required):
+        path = logs / f"{log_name}.log"
+        body = path.read_text(errors="replace")
+        ran_ok = set(re.findall(r"^test (\S+) \.\.\. ok$", body, re.M))
+        failed = re.findall(r"^test (\S+) \.\.\. FAILED$", body, re.M)
+        summaries = re.findall(r"^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;", body, re.M)
+        executed = sum(int(passed) + int(failed_count) for _, passed, failed_count, _ in summaries)
+        ignored = sum(int(value) for *_, value in summaries)
+        missing = [name for name in required if name not in ran_ok]
+        ok = (not missing and not failed and executed > 0 and ignored == 0
+              and all(state == "ok" and int(failed_count) == 0 for state, _, failed_count, _ in summaries))
+        return {"name": check_name, "status": "passed" if ok else "failed", "required_tests": required,
+                "missing": missing, "failed": failed, "executed_count": executed, "ignored_count": ignored,
+                "log": str(path.relative_to(evidence)), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+    nine_groups = ["projects_are_the_same_command_under_both_names", "work_items_are_the_same_command_under_both_names",
+                   "comments_are_the_same_command_under_both_names", "labels_are_the_same_command_under_both_names",
+                   "sprints_are_the_same_command_under_both_names", "search_is_the_same_command_under_both_names",
+                   "files_are_the_same_command_under_both_names", "operation_logs_are_the_same_command_under_both_names",
+                   "tools_are_the_same_command_under_both_names", "sylvode_help_lists_all_fifteen_groups_and_no_serve"]
+    checks.append(named_tests("adr0020-cli-nine-groups-stdout-byte-equal", "mcp-deprecation-test", nine_groups))
+    checks.append(named_tests("adr0020-legacy-warns-canonical-silent", "mcp-deprecation-test", [
+        "legacy_workspace_commands_warn_once_on_stderr_and_sylvode_does_not",
+        "default_discovery_of_the_legacy_config_warns_once_per_process_on_stderr",
+        "explicit_legacy_config_and_canonical_discovery_do_not_warn",
+        "serve_over_stdio_keeps_stdout_for_protocol_frames_and_prints_no_notice"]))
+    conflict_test = "middleware::bot_auth::tests::attribution_accepts_either_spelling_and_refuses_disagreement"
+    checks.append(named_tests("adr0020-attribution-conflict-rejected", "attribution-conflict-test", [conflict_test]))
+    checks.append(named_tests("adr0020-resource-alias-meta-deprecation", "resource-alias-deprecation-test",
+                              ["all_resource_aliases_are_identical_over_stdio_http_and_sse"]))
+    mutation_log = logs / "attribution-conflict-mutation.log"
+    mutation_body = mutation_log.read_text(errors="replace")
+    target_failed = f"test {conflict_test} ... FAILED" in mutation_body
+    mutations.append({"name": "attribution-conflict-resolves-to-canonical", "seam_applied": conflict_seam_applied,
+                      "exit_code": conflict_mutation_exit, "target_test_failed": target_failed,
+                      "detected": conflict_seam_applied and conflict_mutation_exit != 0 and target_failed,
+                      "log": str(mutation_log.relative_to(evidence)),
+                      "sha256": hashlib.sha256(mutation_log.read_bytes()).hexdigest()})
+    # What this artifact proves, and what it does not; the gate claims nothing beyond it.
+    coverage = {
+        "criterion_1_legacy_warns_canonical_silent": ["adr0020-legacy-warns-canonical-silent", "notice-legacy-env",
+                                                      "notice-legacy-config", "notice-canonical-env-silent"],
+        "criterion_2_stdout_byte_comparison": ["adr0020-cli-nine-groups-stdout-byte-equal"],
+        "criterion_3_attribution_conflict_refused": ["adr0020-attribution-conflict-rejected",
+                                                     "mutation:attribution-conflict-resolves-to-canonical"],
+        "d2_openpr_resource_meta_deprecation": ["adr0020-resource-alias-meta-deprecation"],
+        "not_covered_by_this_artifact": {
+            "criterion_4_brand_residue": "brand_residue_release_gate (brand-residue-result.json)",
+            "criterion_5_published_release_assets": "GitHub release assets; not verifiable before the release",
+            "d3_attachment_count_headers_and_webhook_user_agent": "workspace cargo tests only",
+        },
+    }
+
 passed = all(check["status"] == "passed" for check in checks) and all(row["detected"] for row in mutations)
 result = {
     "schema_version": "sylvode.flow.brand-compat-result.v1",
-    "release": "0.9.0",
+    "release": f"{target_release}.0",
     "source_head": subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip(),
     "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     "checks": checks,
@@ -215,11 +336,13 @@ result = {
     "executed_count": len(checks) + len(mutations),
     "passed": passed,
 }
+if coverage is not None:
+    result["adr0020_coverage"] = coverage
 fd, temporary = tempfile.mkstemp(prefix=".brand-compat.", dir=evidence)
 with os.fdopen(fd, "w") as handle:
     json.dump(result, handle, sort_keys=True, indent=2)
     handle.write("\n")
-os.replace(temporary, evidence / "brand-compat-result.json")
+os.replace(temporary, evidence / artifact_name)
 print(json.dumps(result, sort_keys=True))
 raise SystemExit(0 if passed else 1)
 PY

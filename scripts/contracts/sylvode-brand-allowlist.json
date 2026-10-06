@@ -396,6 +396,30 @@
       "explanation": "The release form of the gate names the webhook checkout by its kept repository name (ADR-0020 D4)."
     },
     {
+      "id": "sylvode-v10-gate-sibling-checkouts",
+      "reason": "kept_repository_url",
+      "repo": "sylvode",
+      "paths": [
+        "docs/sylvode-v1-stable-runbook.md",
+        "scripts/report-flow-v1.0-json.sh",
+        "scripts/verify-flow-v1.0-json.sh"
+      ],
+      "pattern": "openpr-webhook",
+      "explanation": "The v1.0 gate chain and its runbook name the webhook checkout, and its residue-scan name, by the kept repository name (ADR-0020 D4)."
+    },
+    {
+      "id": "sylvode-v10-gate-keys",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "docs/sylvode-v1-stable-runbook.md",
+        "scripts/report-flow-v1.0-json.sh",
+        "scripts/verify-flow-v1.0-json.sh"
+      ],
+      "pattern": "openpr_compat_deprecation_verified",
+      "explanation": "A hard gate key the v1.0 gate contract defines (gates/v1.0-gate.yaml); the chain must spell it exactly as the contract does."
+    },
+    {
       "id": "webhook-repository-url",
       "reason": "kept_repository_url",
       "repo": "openpr-webhook",
