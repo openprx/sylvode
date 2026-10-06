@@ -64,26 +64,21 @@ impl CliError {
         }
     }
 
-    /// A transport-level failure: the request never reached a business decision at all (DNS,
-    /// connect, timeout, or a response that is not the `{code,message,data}` envelope the API
-    /// always answers with).
+    /// No response from the API: connection refused, DNS failure, TLS failure, timeout, a
+    /// connection dropped before the body arrived, or a reply that is not the API's
+    /// `{code,message,data}` envelope (a proxy error page, a truncated body), which the API itself
+    /// never sends.
     ///
-    /// What `error-mapping-v1.md` and `cli-surface-v1.md` fix for this case is implemented: exit
-    /// `9` ("draining/network/temporary service failure"; "网络失败 exit 9") and
-    /// `recoverable: true`. What they do not fix is the stable `code` and `details.reason`: the
-    /// only stable code with exit 9 is `server_draining`, whose required `details.reason` is
-    /// `drain` or `contention`, and a network failure is neither. The contract forbids guessing
-    /// either (a consumer must "不得猜测为维护或竞争"), so `details` stays `{}` rather than
-    /// carrying an invented reason, and the human message says "network failure" in so many
-    /// words (`api_client::unreachable_message`). The `server_draining` code with no `reason` is
-    /// the contract gap reported for a decision: a third reason or a CLI-local code would be a new
-    /// wire value, which is the contract owner's call, not this binary's.
+    /// `error-mapping-v1.md` "CLI 本地错误码 `network_error`": a CLI-local code like
+    /// `usage_error` that the server never produces, exit `9`, `recoverable: true` and
+    /// `details.reason` `"unreachable"`, its only value. It is not `server_draining`: that code
+    /// means the server answered and said it cannot serve right now, and here nothing answered.
     pub fn network(message: impl Into<String>) -> Self {
         Self {
-            code: "server_draining",
+            code: "network_error",
             message: message.into(),
             recoverable: true,
-            details: json!({}),
+            details: json!({ "reason": "unreachable" }),
             exit: exit::TEMPORARY,
         }
     }
@@ -104,11 +99,13 @@ impl CliError {
             message,
             error_code,
             details,
+            local_input,
         } = error;
 
         let Some(error_code) = error_code.as_deref() else {
             return match code {
                 Some(code) => Self::from_legacy_numeric_code(code, message),
+                None if local_input => Self::usage(message),
                 None => Self::network(message),
             };
         };
@@ -127,7 +124,7 @@ impl CliError {
             "authorization_churn" => Self::from_kind(ApiErrorKind::AuthorizationChurn, message, details),
             // Without this arm a `server_rejected` response falls through to the numeric
             // fallback below, which has no `500` case and therefore reports it as
-            // `Self::network` -- stable code `server_draining`, `recoverable: true`. The exit
+            // `Self::untyped_server_failure` -- code `server_draining`, `recoverable: true`. The exit
             // code would still be 9 by coincidence, and every other channel a caller reads would
             // be telling it to retry a write that can never succeed.
             "server_rejected" => Self::from_kind(ApiErrorKind::ServerRejected, message, details),
@@ -248,7 +245,23 @@ impl CliError {
                 details: json!({}),
                 exit: exit::INVALID,
             },
-            _ => Self::network(message),
+            _ => Self::untyped_server_failure(message),
+        }
+    }
+
+    /// The API answered with an envelope whose numeric code this binary has no mapping for and
+    /// no stable `error_code` (an untyped `500` from an endpoint that has not migrated to
+    /// `ApiError::typed`, or a newer server's code). The API did answer, so this is not
+    /// `network_error`; the contract names no code for it, so it keeps the shape it has always
+    /// had — exit 9, `recoverable: true`, code `server_draining` with empty `details` — rather than
+    /// inventing a wire value. This is a known contract gap, reported for the contract owner.
+    fn untyped_server_failure(message: String) -> Self {
+        Self {
+            code: "server_draining",
+            message,
+            recoverable: true,
+            details: json!({}),
+            exit: exit::TEMPORARY,
         }
     }
 
@@ -281,6 +294,7 @@ mod tests {
             message: "no".to_string(),
             error_code: Some(error_code.to_string()),
             details,
+            local_input: false,
         }
     }
 
@@ -360,6 +374,7 @@ mod tests {
             message: "issue not found".to_string(),
             error_code: None,
             details: None,
+            local_input: false,
         };
         assert_eq!(CliError::from_structured(untyped).exit, exit::NOT_FOUND);
     }
@@ -371,8 +386,30 @@ mod tests {
             message: "Request failed: connection refused".to_string(),
             error_code: None,
             details: None,
+            local_input: false,
         };
-        assert_eq!(CliError::from_structured(transport).exit, exit::TEMPORARY);
+        let error = CliError::from_structured(transport);
+        assert_eq!(error.exit, exit::TEMPORARY);
+        assert_eq!(error.code, "network_error");
+        assert!(error.recoverable);
+        assert_eq!(error.details, json!({ "reason": "unreachable" }));
+    }
+
+    /// A request stopped by a local problem was never sent: a usage error (exit 2), not a
+    /// network failure.
+    #[test]
+    fn from_structured_reports_local_input_failures_as_usage_errors() {
+        let local = StructuredApiError {
+            code: None,
+            message: "Failed to open package.zip: No such file or directory".to_string(),
+            error_code: None,
+            details: None,
+            local_input: true,
+        };
+        let error = CliError::from_structured(local);
+        assert_eq!(error.exit, exit::USAGE);
+        assert_eq!(error.code, "usage_error");
+        assert!(!error.recoverable);
     }
 
     #[test]
@@ -451,6 +488,7 @@ mod server_rejected_tests {
             message: "server_rejected".to_string(),
             error_code: Some("server_rejected".to_string()),
             details: Some(json!({"reason": "deterministic_database_refusal"})),
+            local_input: false,
         });
 
         assert_eq!(error.code, "server_rejected");
@@ -472,6 +510,7 @@ mod server_rejected_tests {
             message: "server_draining".to_string(),
             error_code: Some("server_draining".to_string()),
             details: Some(json!({"reason": "contention", "retry_after_ms": 200})),
+            local_input: false,
         });
         assert_eq!(draining.exit, exit::TEMPORARY);
         assert_ne!(
@@ -494,13 +533,14 @@ mod server_rejected_tests {
             "temporary / verify-mismatch / permanent-refusal must be three distinct exit codes"
         );
 
-        // The shape it used to fall into before the mapping arm existed: `network()`'s
-        // temporary-failure report, exit 9, recoverable.
+        // The shape it used to fall into before the mapping arm existed: the untyped server
+        // failure report, exit 9, recoverable.
         let unrecognised = CliError::from_structured(StructuredApiError {
             code: Some(500),
             message: "boom".to_string(),
             error_code: Some("some_future_code".to_string()),
             details: None,
+            local_input: false,
         });
         assert_eq!(unrecognised.code, "server_draining");
         assert!(unrecognised.recoverable);

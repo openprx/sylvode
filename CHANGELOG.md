@@ -78,6 +78,21 @@ OpenPR name keeps working; see **Deprecated**.
 - **Deprecation warnings on stderr and in logs.** Legacy entry points now announce themselves
   (see **Deprecated**). The warnings never change stdout or the exit code, but a wrapper that
   treats any stderr output as failure will notice them.
+- **Flow commands report an unreachable API as `network_error`.** When the API gives no
+  response at all (connection refused, DNS failure, TLS failure, timeout, a dropped connection, or
+  a reply that is not the API's envelope, such as a proxy error page), the `sylvode` Flow commands
+  (`features`, `objects`, `collections`, `records`, `collab`, `deliveries`) now report the CLI-local
+  code `network_error` with `recoverable: true` and `details: {"reason": "unreachable"}`, as the
+  error-mapping contract specifies. They previously reported `server_draining` with empty
+  `details`, which broke that code's contract (its `details.reason` is required and is only `drain`
+  or `contention`) and read like a server drain. The message now names the API URL and the cause
+  and says the command can be retried, and table format prints
+  `Error [network_error]: network failure: ...`. **Scripts that detect a network failure with
+  `error.code == "server_draining"` must change to `network_error`; scripts that use exit code 9
+  are unaffected.** A local problem that stops the request before anything is sent (no bot token
+  configured, a package file that cannot be opened) is now `usage_error` with exit 2 instead of
+  exit 9. The nine workspace groups keep the `mcp-server` behaviour (`Request failed: ...`,
+  exit 1).
 - **`tools call` declares its own transport surface.** `sylvode tools call` and
   `mcp-server tools call` now present the surface `cli_tools_call` to the API, as the MCP surface
   contract specifies; every other workspace and Flow command still presents `cli`. The API accepts
@@ -285,12 +300,6 @@ replacement and the earliest removal.
   from `SYLVODE_BIND_HOST` and `SYLVODE_FRONTEND_PORT`, with a comment to replace them with the
   public origin. Existing files are not rewritten; `--check-config` now warns when the list is
   empty and rejects entries that are not `scheme://host[:port]`.
-- `sylvode` Flow commands reported an unreachable API as `Request failed: error sending request
-  for url (...)` under the code `server_draining`, which reads like a server drain and hides the
-  cause. The message now says it is a network failure, names the API URL and the cause
-  (connection refused, DNS, timeout) and that the command can be retried. The envelope is
-  unchanged: exit 9, `recoverable: true`, code `server_draining` with empty `details`, because
-  the CLI contract defines no code or reason of its own for a network failure.
 - `work-items create/update --priority` offered `none`, which the API rejects; the accepted values
   are now exactly the tool's (`low`, `medium`, `high`, `urgent`) and anything else is refused
   before a request is sent.
