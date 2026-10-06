@@ -3,8 +3,8 @@
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the
 [GitHub releases page](https://github.com/openprx/openpr-webhook/releases). Versions 0.3.4 to 0.3.8
-were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.46 are released
-together as 0.3.46.
+were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.47 are released
+together as 0.3.47.
 
 ## Upgrading from 0.3.3
 
@@ -72,6 +72,31 @@ Each exits 1 at start-up with the error shown (logged as `failed to load config 
   refused (0.3.33).
 - The log target is `sylvode_webhook` (0.3.9); untrusted values are logged as escaped fields
   (0.3.28); the listening line names the bound address (0.3.19).
+
+## 0.3.47
+
+### Fixed
+
+- **A process group is signalled only while its id cannot belong to another process.** The
+  executor's group id is its pid. The leader was reaped first (on a normal exit, and while polling
+  after `SIGTERM`) and the group signalled afterwards; if the last member exited in between, the
+  kernel could give the id to an unrelated process, which the next `killpg` (up to `SIGKILL`)
+  would hit. The leader is now reaped last: on Linux its exit is noticed with `waitid(WNOWAIT)`,
+  which leaves the zombie that pins the id, and the remaining members are read from `/proc`; the
+  drop guard only signals while the leader is unreaped. On other Unix systems a command that exits
+  by itself is reaped at once and its group is no longer signalled; a timeout or cancellation
+  sends `SIGTERM`, waits the full grace period and sends `SIGKILL` before reaping.
+- **`EPERM` from `killpg` is no longer taken for "the group is gone".** The run then waited
+  forever for a leader it could not stop, so the timeout no longer applied. A group that cannot be
+  signalled is now logged as an error and left running; a timeout or cancellation is still
+  reported at once.
+
+### Tests
+
+- A member that receives the `SIGTERM` after its leader exited finds the leader's zombie still
+  there (the test fails, reading `released`, with the old order); the leader's exit is noticed
+  without reaping it; `ESRCH`, `EPERM` and other errors are told apart; `/proc` stat lines are
+  read for state and group.
 
 ## 0.3.46
 
