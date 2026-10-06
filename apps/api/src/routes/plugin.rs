@@ -270,7 +270,7 @@ pub async fn invoke_plugin(
     Path(plugin_id): Path<Uuid>,
     Json(req): Json<InvokePluginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let row = get_plugin_runtime_row(&state, plugin_id).await?;
+    let mut row = get_plugin_runtime_row(&state, plugin_id).await?;
     let (actor_id, _, is_bot) =
         require_workspace_access_from_auth(&state, &claims, bot.as_ref().map(|b| &b.0), row.workspace_id).await?;
     if row.status != "active" {
@@ -285,7 +285,7 @@ pub async fn invoke_plugin(
             "plugin manifest does not declare this hook/tool".to_string(),
         ));
     }
-    let Some(wasm_bytes) = row.wasm_bytes.clone() else {
+    let Some(wasm_bytes) = row.wasm_bytes.take() else {
         let tx = state.db.begin().await?;
         // Nothing ran, so nothing was spent: zero time, no fuel figure.
         let invocation = insert_invocation(
@@ -319,23 +319,35 @@ pub async fn invoke_plugin(
         "plugin_key": row.key,
         "payload": req.input,
     });
-    let result = invoke_wasm_plugin(wasm_bytes, input.clone(), manifest.capabilities.runtime).await;
-    let tx = state.db.begin().await?;
-    let invocation = match result {
-        Ok(output) => insert_success_invocation(&tx, &row, &hook_kind, input, output).await?,
-        Err(err) => insert_failed_invocation(&tx, &row, &hook_kind, input, err).await?,
-    };
-    insert_plugin_invoked_event(
-        &tx,
-        &row,
-        &invocation,
-        if is_bot { None } else { Some(actor_id) },
-        json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
-    )
-    .await?;
-    tx.commit().await?;
+    // The run and its record happen on a task of their own, so a cancelled request (a client
+    // that disconnects) still leaves its `plugin_invocations` row and `plugin.invoked` event; the
+    // guest is then bounded by its own deadline rather than by the request.
+    let record_state = state.clone();
+    let recorded = tokio::spawn(async move {
+        let result = invoke_wasm_plugin(wasm_bytes, input.clone(), manifest.capabilities.runtime).await;
+        let tx = record_state.db.begin().await?;
+        let invocation = match result {
+            Ok(output) => insert_success_invocation(&tx, &row, &hook_kind, input, output).await?,
+            Err(err) => insert_failed_invocation(&tx, &row, &hook_kind, input, err).await?,
+        };
+        insert_plugin_invoked_event(
+            &tx,
+            &row,
+            &invocation,
+            if is_bot { None } else { Some(actor_id) },
+            json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
+        )
+        .await?;
+        tx.commit().await?;
+        Ok::<_, ApiError>(invocation)
+    })
+    .await
+    .map_err(|err| {
+        tracing::error!(%plugin_id, error = %err, "plugin invocation task failed");
+        ApiError::Internal
+    })??;
 
-    Ok(ApiResponse::success(invocation))
+    Ok(ApiResponse::success(recorded))
 }
 
 pub async fn list_plugin_invocations(
@@ -737,7 +749,7 @@ mod invocation_record_database_tests {
         auth::{JwtClaims, TokenType},
         config::{AppConfig, Secret},
     };
-    use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
+    use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
     use serde_json::{Value, json};
     use uuid::Uuid;
 
@@ -895,6 +907,101 @@ mod invocation_record_database_tests {
             .await
             .expect("the response body is readable");
         serde_json::from_slice(&bytes).expect("the response body is JSON")
+    }
+
+    /// Waits until `plugin_id` has an invocation row, for runs whose request was cancelled.
+    async fn wait_for_record(db: &DatabaseConnection, plugin_id: Uuid) {
+        let started = std::time::Instant::now();
+        loop {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT 1 FROM plugin_invocations WHERE plugin_id = $1",
+                    vec![plugin_id.into()],
+                ))
+                .await
+                .expect("the invocation query runs");
+            if row.is_some() {
+                return;
+            }
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(20),
+                "no invocation of {plugin_id} was recorded after the request was cancelled"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
+    /// A request cancelled while its plugin runs (a client that disconnects drops the handler)
+    /// still records the run: the guest is bounded by its own deadline and recorded as `timeout`.
+    #[tokio::test]
+    async fn a_cancelled_invocation_is_still_recorded() {
+        let scratch = scratch_or_skip!("plugin_cancelled_record");
+        let state = state_for(scratch.db.clone());
+        let tenant = seed_tenant(&scratch.db, "pc").await;
+        let plugin_id = install(
+            &scratch.db,
+            &tenant,
+            "cancelled",
+            spin_forever_wasm(),
+            300,
+            1_000_000_000,
+        )
+        .await;
+
+        let cancelled =
+            tokio::time::timeout(std::time::Duration::from_millis(50), invoke(&state, &tenant, plugin_id)).await;
+        assert!(
+            cancelled.is_err(),
+            "the request must have been dropped before the run ended"
+        );
+        wait_for_record(&scratch.db, plugin_id).await;
+        let row = recorded(&scratch.db, plugin_id).await;
+
+        assert_eq!(row.status, "timeout", "{row:?}");
+        assert_eq!(row.event_status.as_deref(), Some("timeout"), "{row:?}");
+        scratch.drop_self().await;
+    }
+
+    /// The same for the automatic hook path: the write that triggered the hook is cancelled.
+    #[tokio::test]
+    async fn a_cancelled_hook_run_is_still_recorded() {
+        let scratch = scratch_or_skip!("plugin_cancelled_hook_record");
+        let state = state_for(scratch.db.clone());
+        let tenant = seed_tenant(&scratch.db, "pk").await;
+        let plugin_id = install(
+            &scratch.db,
+            &tenant,
+            "hookcancel",
+            spin_forever_wasm(),
+            300,
+            1_000_000_000,
+        )
+        .await;
+
+        let cancelled = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            run_event_handler_hooks(
+                &state,
+                tenant.workspace_id,
+                tenant.project_id,
+                Uuid::new_v4(),
+                "orders",
+                None,
+                "record.created",
+                json!({}),
+            ),
+        )
+        .await;
+        assert!(
+            cancelled.is_err(),
+            "the write must have been dropped before the run ended"
+        );
+        wait_for_record(&scratch.db, plugin_id).await;
+        let row = recorded(&scratch.db, plugin_id).await;
+
+        assert_eq!(row.status, "timeout", "{row:?}");
+        scratch.drop_self().await;
     }
 
     /// A deadline expiry is stored as `timeout`, not `failed`, with the elapsed wall time and the

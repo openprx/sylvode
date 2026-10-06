@@ -1,6 +1,8 @@
 // Public and framework-facing signatures remain stable during this behavior-neutral cleanup.
 #![allow(clippy::needless_pass_by_value)]
 
+use std::sync::Arc;
+
 use platform::app::AppState;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde_json::{Value, json};
@@ -11,7 +13,7 @@ use crate::{
     events::{BusinessEventInput, insert_business_event},
     forms::schema::parse_fields,
     plugins::{
-        manifest::{PluginHook, parse_manifest},
+        manifest::{PluginHook, PluginRuntimePolicy, parse_manifest},
         runtime::{PluginInvocationStatus, PluginRuntimeError, PluginRuntimeOutput, invoke_wasm_plugin},
     },
 };
@@ -41,7 +43,7 @@ pub async fn run_field_validator_hooks(
     let fields = parse_fields(schema).map_err(ApiError::BadRequest)?;
     let plugins = load_active_plugins(state, workspace_id, project_id).await?;
 
-    for plugin in plugins {
+    for plugin in plugins.into_iter().map(Arc::new) {
         let manifest = parse_manifest(&plugin.manifest).map_err(ApiError::BadRequest)?;
         let matching_hooks = manifest
             .capabilities
@@ -80,26 +82,22 @@ pub async fn run_field_validator_hooks(
                         "values": values,
                     }
                 });
-                let result =
-                    invoke_wasm_plugin(wasm_bytes.clone(), input.clone(), manifest.capabilities.runtime.clone()).await;
-                match result {
-                    Ok(output) => {
-                        if let Some(error) = validator_rejection_message(&output.output) {
-                            insert_hook_invocation(
-                                state,
-                                &plugin,
-                                "field_validator",
-                                input,
-                                output,
-                                Some(error.clone()),
-                            )
-                            .await?;
-                            return Err(ApiError::BadRequest(format!("field validator rejected value: {error}")));
-                        }
-                        insert_hook_invocation(state, &plugin, "field_validator", input, output, None).await?;
+                let run = run_and_record_hook(
+                    state,
+                    &plugin,
+                    "field_validator",
+                    wasm_bytes.clone(),
+                    input,
+                    manifest.capabilities.runtime.clone(),
+                    validator_rejection_message,
+                )
+                .await?;
+                match run {
+                    Ok((_, Some(error))) => {
+                        return Err(ApiError::BadRequest(format!("field validator rejected value: {error}")));
                     }
+                    Ok((_, None)) => {}
                     Err(error) => {
-                        insert_failed_hook_invocation(state, &plugin, "field_validator", input, &error).await?;
                         return Err(ApiError::BadRequest(format!("field validator plugin failed: {error}")));
                     }
                 }
@@ -124,7 +122,7 @@ pub async fn run_formula_hooks(
     }
     let plugins = load_active_plugins(state, workspace_id, project_id).await?;
 
-    for plugin in plugins {
+    for plugin in plugins.into_iter().map(Arc::new) {
         let manifest = parse_manifest(&plugin.manifest).map_err(ApiError::BadRequest)?;
         let matching_hooks = manifest
             .capabilities
@@ -153,16 +151,22 @@ pub async fn run_formula_hooks(
                     "values": values,
                 }
             });
-            let result =
-                invoke_wasm_plugin(wasm_bytes.clone(), input.clone(), manifest.capabilities.runtime.clone()).await;
-            match result {
-                Ok(output) => {
+            let run = run_and_record_hook(
+                state,
+                &plugin,
+                "formula",
+                wasm_bytes.clone(),
+                input,
+                manifest.capabilities.runtime.clone(),
+                no_rejection,
+            )
+            .await?;
+            match run {
+                Ok((output, _)) => {
                     let patch = formula_patch_from_output(&output.output, hook.field_key.as_deref())?;
-                    insert_hook_invocation(state, &plugin, "formula", input, output, None).await?;
                     merge_patch(&mut values, patch)?;
                 }
                 Err(error) => {
-                    insert_failed_hook_invocation(state, &plugin, "formula", input, &error).await?;
                     return Err(ApiError::BadRequest(format!("formula plugin failed: {error}")));
                 }
             }
@@ -184,7 +188,7 @@ pub async fn run_event_handler_hooks(
 ) -> Result<(), ApiError> {
     let plugins = load_active_plugins(state, workspace_id, project_id).await?;
 
-    for plugin in plugins {
+    for plugin in plugins.into_iter().map(Arc::new) {
         let manifest = parse_manifest(&plugin.manifest).map_err(ApiError::BadRequest)?;
         let matching_hooks = manifest
             .capabilities
@@ -215,20 +219,66 @@ pub async fn run_event_handler_hooks(
                     "event_payload": payload,
                 }
             });
-            let result =
-                invoke_wasm_plugin(wasm_bytes.clone(), input.clone(), manifest.capabilities.runtime.clone()).await;
-            match result {
-                Ok(output) => {
-                    insert_hook_invocation(state, &plugin, "event_handler", input, output, None).await?;
-                }
-                Err(error) => {
-                    insert_failed_hook_invocation(state, &plugin, "event_handler", input, &error).await?;
-                }
-            }
+            // An event handler's outcome is recorded and does not affect the caller.
+            let _recorded: HookRun = run_and_record_hook(
+                state,
+                &plugin,
+                "event_handler",
+                wasm_bytes.clone(),
+                input,
+                manifest.capabilities.runtime.clone(),
+                no_rejection,
+            )
+            .await?;
         }
     }
 
     Ok(())
+}
+
+/// A hook run as its record describes it: the guest's output and, for a validator, its rejection.
+type HookRun = Result<(PluginRuntimeOutput, Option<String>), PluginRuntimeError>;
+
+/// Runs one hook and records it in `plugin_invocations` (with its `plugin.invoked` event).
+///
+/// Both happen on a task of their own, so the record is written even when the request whose write
+/// triggered the hook is cancelled; the guest is then bounded by its own deadline rather than by
+/// the request. `rejection` reads a validator's refusal from the output, which records the run as
+/// `failed` with that message.
+async fn run_and_record_hook(
+    state: &AppState,
+    plugin: &Arc<PluginHookRow>,
+    hook_kind: &'static str,
+    wasm_bytes: Vec<u8>,
+    input: Value,
+    runtime: PluginRuntimePolicy,
+    rejection: fn(&Value) -> Option<String>,
+) -> Result<HookRun, ApiError> {
+    let state = state.clone();
+    let plugin = Arc::clone(plugin);
+    tokio::spawn(async move {
+        match invoke_wasm_plugin(wasm_bytes, input.clone(), runtime).await {
+            Ok(output) => {
+                let refused = rejection(&output.output);
+                insert_hook_invocation(&state, &plugin, hook_kind, input, output.clone(), refused.clone()).await?;
+                Ok(Ok((output, refused)))
+            }
+            Err(error) => {
+                insert_failed_hook_invocation(&state, &plugin, hook_kind, input, &error).await?;
+                Ok(Err(error))
+            }
+        }
+    })
+    .await
+    .map_err(|err| {
+        tracing::error!(hook_kind, error = %err, "plugin hook task failed");
+        ApiError::Internal
+    })?
+}
+
+/// For hooks whose output never refuses anything.
+const fn no_rejection(_: &Value) -> Option<String> {
+    None
 }
 
 fn hook_matches_form(hook: &PluginHook, form_key: &str) -> bool {

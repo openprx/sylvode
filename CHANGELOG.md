@@ -54,7 +54,11 @@ OpenPR name keeps working; see **Deprecated**.
   `timeout` instead of `failed`. Every failed invocation, whether timed out, out of fuel or
   trapped, now records its real `duration_ms` and `fuel_consumed` (previously `0` and `NULL`)
   in `plugin_invocations`, in the API response and in the `plugin.invoked` event. Guest trap
-  messages include the full error chain, so fuel exhaustion is named.
+  messages include the full error chain, so fuel exhaustion is named. A plugin run whose request
+  is cancelled (the client disconnects, or the form write that triggered a hook is dropped) is no
+  longer stopped with the request: it runs to its own deadline and is recorded like any other
+  run, where before nothing was recorded at all. A formula hook whose output the host refuses as
+  a patch is now recorded as `completed` (the plugin ran) before the write is refused.
 - **Plugin modules are limited to 4 MiB, and the deadline covers compilation.** Installing a
   plugin whose decoded module exceeds 4,194,304 bytes is refused with 400 before the module is
   decoded or compiled, and an installed module over the limit fails at invocation (`failed`).
