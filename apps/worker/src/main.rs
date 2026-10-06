@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use api::config::RuntimeConfig;
 use api::outbound::validate_outbound_url;
-use api::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, sign_payload};
+use api::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, WEBHOOK_USER_AGENT, sign_payload};
 use clap::Parser;
 use platform::{
     app::{AppState, FlowPermissionCacheSlot, connect_db},
@@ -339,6 +339,21 @@ async fn pickup_pending_tasks(db: &sea_orm::DatabaseConnection, limit: i64) -> a
     Ok(tasks)
 }
 
+/// The signed AI-task delivery, with the `User-Agent` every outbound webhook delivery carries.
+fn dispatch_request(
+    client: &reqwest::Client,
+    target: reqwest::Url,
+    signature: &str,
+    raw_body: String,
+) -> reqwest::RequestBuilder {
+    client
+        .post(target)
+        .header(CONTENT_TYPE, "application/json")
+        .header(reqwest::header::USER_AGENT, WEBHOOK_USER_AGENT)
+        .header(WEBHOOK_SIGNATURE_HEADER, format!("sha256={signature}"))
+        .body(raw_body)
+}
+
 async fn dispatch_task(
     db: &sea_orm::DatabaseConnection,
     client: &reqwest::Client,
@@ -397,13 +412,7 @@ async fn dispatch_task(
     let signature = sign_payload(&webhook.secret, &raw_body)
         .map_err(|err| anyhow::anyhow!("webhook {} signing failed: {err}", webhook.webhook_id))?;
 
-    let response = client
-        .post(target)
-        .header(CONTENT_TYPE, "application/json")
-        .header(WEBHOOK_SIGNATURE_HEADER, format!("sha256={signature}"))
-        .body(raw_body)
-        .send()
-        .await?;
+    let response = dispatch_request(client, target, &signature, raw_body).send().await?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
         let text = response.text().await.unwrap_or_default();
@@ -677,5 +686,37 @@ async fn shutdown_signal() {
         if let Err(err) = tokio::signal::ctrl_c().await {
             tracing::warn!(error = %err, "ctrl_c signal error");
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::dispatch_request;
+
+    /// The AI-task delivery carries the same `User-Agent` as every other outbound webhook
+    /// delivery (ADR-0020 D3), next to its signature.
+    #[test]
+    fn the_ai_task_delivery_carries_the_webhook_user_agent() {
+        let client = reqwest::Client::new();
+        let target = reqwest::Url::parse("https://receiver.example/hook").expect("valid url");
+        let request = dispatch_request(&client, target, "abc", "{}".to_string())
+            .build()
+            .expect("the request builds");
+
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::USER_AGENT)
+                .map(reqwest::header::HeaderValue::as_bytes),
+            Some(b"Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)".as_slice())
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("X-Webhook-Signature")
+                .map(reqwest::header::HeaderValue::as_bytes),
+            Some(b"sha256=abc".as_slice())
+        );
     }
 }

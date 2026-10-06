@@ -36,7 +36,7 @@ use uuid::Uuid;
 use crate::error::ApiError;
 use crate::flow::collab::limits::SUBSCRIBERS_PER_WORKSPACE_MAX;
 use crate::outbound::validate_outbound_url;
-use crate::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, sign_payload};
+use crate::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, WEBHOOK_USER_AGENT, sign_payload};
 
 // ---------------------------------------------------------------------------------------------
 // Test-only fault injection (`events-v1.md` "展开是一个事务": the only way to prove step (b)'s
@@ -1068,6 +1068,7 @@ async fn attempt_delivery(
     let response = client
         .post(target)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(reqwest::header::USER_AGENT, WEBHOOK_USER_AGENT)
         .header(WEBHOOK_SIGNATURE_HEADER, format!("sha256={signature}"))
         .header(DELIVERY_ID_HEADER, delivery.id.to_string())
         .body(raw_body)
@@ -3184,6 +3185,17 @@ mod dispatcher_database_tests {
             .expect("signature header exists");
         let expected = super::sign_payload("rotated-secret", body).expect("rotated payload signs");
         assert_eq!(signature, format!("sha256={expected}"));
+        let user_agent = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("user-agent").then(|| value.trim())
+            })
+            .expect("user-agent header exists");
+        assert_eq!(
+            user_agent, "Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)",
+            "the dispatcher sends the same User-Agent as every other webhook delivery"
+        );
         assert_eq!(
             count(
                 &scratch.db,
