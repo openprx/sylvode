@@ -39,6 +39,10 @@ Plugins use `openpr.plugin.v1` manifests and a small core WASM ABI:
 
 WASM modules run under wasmtime with fuel, timeout, and memory limits. Plugins have no host imports or WASI access in the current runtime.
 
+A plugin module may be at most 4 MiB (4,194,304 bytes). The limit is checked at install, before the module is decoded or compiled, and again at every invocation. Compilation cannot be interrupted, so the module size is what bounds how long one invocation can keep a thread compiling; a plugin implements the three-export ABI with no imports, and an optimised Rust plugin that reads and writes JSON is a few hundred KiB.
+
+`runtime.timeout_ms` bounds the whole invocation from the moment the request starts: waiting for a thread, compiling and instantiating the module, and running the guest. If the deadline passes before the guest starts, the invocation is a `timeout` with no fuel recorded and the guest never runs; a running guest is interrupted.
+
 Each invocation gets its own store with fixed resource limits: one instance, one linear memory of at most `runtime.memory_bytes`, and one table of at most 65,536 elements (initial size included). A growth beyond a limit returns `-1` to the guest; a module whose initial memory or table already exceeds it, or that declares a second memory or table, fails to instantiate.
 
 Every run is recorded in `plugin_invocations` with `status` set to `completed`, `failed`, or `timeout`. `timeout` means the wall-clock deadline (`runtime.timeout_ms`) expired, and its `error_message` reads `wasm execution timeout after {N}ms`; every other run that produced no output, including fuel exhaustion and guest traps, is `failed`. `duration_ms` is the elapsed wall time of the run for every status, and `fuel_consumed` is recorded whenever the runtime got far enough to know it (including fuel exhaustion, traps, and timeouts); it is null only when it is unknown, for example when the module does not compile.

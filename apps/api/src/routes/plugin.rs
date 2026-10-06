@@ -9,6 +9,7 @@ use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, Transactio
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
@@ -18,7 +19,8 @@ use crate::{
     plugins::{
         manifest::parse_manifest,
         runtime::{
-            PluginInvocationStatus, PluginRuntimeError, PluginRuntimeOutput, invoke_wasm_plugin, validate_wasm_module,
+            MAX_MODULE_BYTES, PluginInvocationStatus, PluginRuntimeError, PluginRuntimeOutput, invoke_wasm_plugin,
+            validate_wasm_module_blocking,
         },
     },
     response::{ApiResponse, PaginatedData},
@@ -155,7 +157,7 @@ pub async fn install_project_plugin(
         ensure_project_actor(&state, &claims, bot.as_ref().map(|b| &b.0), project_id).await?;
     let manifest = parse_manifest(&req.manifest).map_err(ApiError::BadRequest)?;
     let manifest_value = serde_json::to_value(&manifest).map_err(|_| ApiError::Internal)?;
-    let (wasm_bytes, wasm_sha256) = decode_and_validate_wasm(req.wasm_base64.as_deref())?;
+    let (wasm_bytes, wasm_sha256) = decode_and_validate_wasm(req.wasm_base64.as_deref()).await?;
     let status = normalize_plugin_status(req.status.as_deref())?;
 
     let tx = state.db.begin().await?;
@@ -641,16 +643,30 @@ fn normalize_hook_kind(value: &str) -> Result<String, ApiError> {
     Ok(value.to_string())
 }
 
-fn decode_and_validate_wasm(value: Option<&str>) -> Result<(Option<Vec<u8>>, Option<String>), ApiError> {
+/// The longest `wasm_base64` that can decode to a module within [`MAX_MODULE_BYTES`].
+const MAX_MODULE_BASE64_LEN: usize = MAX_MODULE_BYTES.div_ceil(3) * 4;
+
+/// Decodes `wasm_base64`, refuses a module over [`MAX_MODULE_BYTES`] before decoding or
+/// compiling it, and validates the module on a blocking thread.
+async fn decode_and_validate_wasm(value: Option<&str>) -> Result<(Option<Vec<u8>>, Option<String>), ApiError> {
     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok((None, None));
     };
-    let bytes = STANDARD
+    if value.len() > MAX_MODULE_BASE64_LEN {
+        return Err(ApiError::BadRequest(format!(
+            "wasm_base64 is {} characters; plugin modules are limited to {MAX_MODULE_BYTES} bytes",
+            value.len()
+        )));
+    }
+    let bytes: Arc<[u8]> = STANDARD
         .decode(value.as_bytes())
-        .map_err(|err| ApiError::BadRequest(format!("wasm_base64 is invalid: {err}")))?;
-    validate_wasm_module(&bytes).map_err(ApiError::BadRequest)?;
+        .map_err(|err| ApiError::BadRequest(format!("wasm_base64 is invalid: {err}")))?
+        .into();
+    validate_wasm_module_blocking(Arc::clone(&bytes))
+        .await
+        .map_err(ApiError::BadRequest)?;
     let hash = Sha256::digest(&bytes);
-    Ok((Some(bytes), Some(format!("{hash:x}"))))
+    Ok((Some(bytes.to_vec()), Some(format!("{hash:x}"))))
 }
 
 fn map_plugin_insert_error(err: sea_orm::DbErr) -> ApiError {
@@ -664,7 +680,8 @@ fn map_plugin_insert_error(err: sea_orm::DbErr) -> ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_and_validate_wasm, normalize_plugin_status};
+    use super::{ApiError, MAX_MODULE_BYTES, STANDARD, decode_and_validate_wasm, normalize_plugin_status};
+    use base64::Engine as _;
 
     #[test]
     fn normalizes_plugin_status() {
@@ -673,9 +690,35 @@ mod tests {
         assert!(normalize_plugin_status(Some("deleted")).is_err());
     }
 
-    #[test]
-    fn rejects_invalid_wasm_base64() {
-        assert!(decode_and_validate_wasm(Some("not wasm")).is_err());
+    #[tokio::test]
+    async fn rejects_invalid_wasm_base64() {
+        assert!(decode_and_validate_wasm(Some("not wasm")).await.is_err());
+    }
+
+    /// An install whose module is over the size limit is refused from its encoded length, before
+    /// anything is decoded or compiled; one at the limit is decoded and validated as usual.
+    #[tokio::test]
+    async fn refuses_a_module_over_the_size_limit_at_install() {
+        let oversized = STANDARD.encode(vec![0_u8; MAX_MODULE_BYTES + 1]);
+        let Err(ApiError::BadRequest(message)) = decode_and_validate_wasm(Some(&oversized)).await else {
+            panic!("an oversized module must be refused");
+        };
+        assert!(
+            message.contains("plugin modules are limited to 4194304 bytes"),
+            "{message}"
+        );
+
+        let at_limit = STANDARD.encode(vec![0_u8; MAX_MODULE_BYTES]);
+        let Err(ApiError::BadRequest(message)) = decode_and_validate_wasm(Some(&at_limit)).await else {
+            panic!("zero bytes are not a module");
+        };
+        assert!(message.starts_with("invalid wasm module"), "{message}");
+
+        let valid = STANDARD.encode(wat::parse_str("(module)").expect("wat should compile"));
+        let (bytes, hash) = decode_and_validate_wasm(Some(&valid))
+            .await
+            .expect("a small module is accepted");
+        assert!(bytes.is_some() && hash.is_some());
     }
 }
 
