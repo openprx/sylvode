@@ -246,34 +246,41 @@ fn is_placeholder(secret: &str) -> bool {
     PLACEHOLDER_SECRETS.contains(&secret.trim())
 }
 
+/// Whether `url` names a loopback host exactly: `localhost` (any case), an address in
+/// `127.0.0.0/8`, or `::1`, with no user information. The host is taken from the parsed URL, so
+/// `localhost.evil`, `localhost:x@evil.com` (whose host is `evil.com`) and a bracketed host other
+/// than `::1` do not count; an IPv4-mapped IPv6 address does not either.
+fn is_loopback_url(url: &url::Url) -> bool {
+    if !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
 /// Whether `listen` (`host:port`) binds only a loopback interface. A host name other than
 /// `localhost` may resolve to anything, so it does not count as loopback.
 fn is_loopback_listen(listen: &str) -> bool {
-    if let Ok(addr) = listen.parse::<std::net::SocketAddr>() {
-        return addr.ip().is_loopback();
-    }
-    listen
-        .rsplit_once(':')
-        .is_some_and(|(host, _)| host.eq_ignore_ascii_case("localhost"))
+    url::Url::parse(&format!("http://{listen}/")).is_ok_and(|url| {
+        url.port().is_some()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && is_loopback_url(&url)
+    })
 }
 
-/// Whether `url` is a `ws://` URL whose host is not loopback.
+/// Whether `url` is a `ws://` URL whose host is not loopback. A `ws://` URL that does not parse is
+/// treated as remote.
 fn is_remote_plain_ws(url: &str) -> bool {
-    let Some((scheme, rest)) = url.split_once("://") else {
-        return false;
-    };
-    if !scheme.eq_ignore_ascii_case("ws") {
-        return false;
-    }
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host_port = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
-    let host = host_port.strip_prefix('[').map_or_else(
-        || host_port.split_once(':').map_or(host_port, |(host, _)| host),
-        |bracketed| bracketed.split_once(']').map_or(bracketed, |(host, _)| host),
-    );
-    let loopback =
-        host.eq_ignore_ascii_case("localhost") || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
-    !loopback
+    url::Url::parse(url).map_or_else(
+        |_| url.get(..5).is_some_and(|scheme| scheme.eq_ignore_ascii_case("ws://")),
+        |parsed| parsed.scheme() == "ws" && !is_loopback_url(&parsed),
+    )
 }
 
 /// Every trigger kind a Sylvode deployment sends, the closed set `route.trigger_kinds` may name.
@@ -1026,7 +1033,22 @@ url = "http://127.0.0.1:9000/hook"
     /// Unsigned requests on an interface other than loopback are refused unless acknowledged.
     #[test]
     fn refuses_allow_unsigned_on_a_non_loopback_address_without_acknowledgement() {
-        for listen in ["0.0.0.0:9090", "[::]:9090", "192.168.1.5:9090", "example.com:9090"] {
+        for listen in [
+            "0.0.0.0:9090",
+            "[::]:9090",
+            "192.168.1.5:9090",
+            "example.com:9090",
+            // Names and addresses that only look like loopback.
+            "localhost.evil:9090",
+            "localhost.:9090",
+            "127.0.0.1.evil.com:9090",
+            "[::ffff:127.0.0.1]:9090",
+            "[2001:db8::1]:9090",
+            "[fe80::1]:9090",
+            "[evil.com]:9090",
+            "user@localhost:9090",
+            "localhost:9090@evil.com:1",
+        ] {
             let err = load_str(&security_config(listen, "allow_unsigned = true"))
                 .expect_err("unsigned on a non-loopback address is refused");
             assert!(err.contains("security.allow_unsigned"), "{listen}: {err}");
@@ -1096,6 +1118,16 @@ url = "http://127.0.0.1:9000/hook"
             "ws://control.example.com/tunnel",
             "ws://10.0.0.5:8080/t",
             "WS://example.com",
+            // Hosts that only look like loopback, and loopback behind userinfo.
+            "ws://localhost.evil/t",
+            "ws://localhost:x@evil.com/t",
+            "ws://127.0.0.1:x@evil.com/t",
+            "ws://user:pw@127.0.0.1/t",
+            "ws://user@localhost/t",
+            "ws://127.0.0.1.evil.com/t",
+            "ws://[2001:db8::1]/t",
+            "ws://[::ffff:127.0.0.1]/t",
+            "ws://[evil.com]/t",
         ] {
             let err = load_str(&with_url(url, "")).expect_err("plain ws to a remote host is refused");
             assert!(err.contains("tunnel.url"), "{url}: {err}");

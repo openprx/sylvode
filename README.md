@@ -218,7 +218,8 @@ mcp_config_path = "/path/to/mcp-config.json"
 ```
 
 `allow_unsigned = true` turns signature verification off and logs a warning at start-up. On a
-`listen` address other than loopback (`127.0.0.0/8`, `::1` or `localhost`) it is refused unless
+`listen` address other than loopback (exactly `127.0.0.0/8`, `::1` or `localhost`; not
+`localhost.example`, an IPv4-mapped address or any other name) it is refused unless
 `allow_unsigned_non_loopback = true` acknowledges that anyone who can reach the port can trigger
 agents. With `allow_unsigned = false` and no `webhook_secrets`, every request is answered `401`,
 and start-up logs a warning saying so.
