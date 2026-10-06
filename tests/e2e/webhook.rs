@@ -185,3 +185,40 @@ async fn the_documented_one_string_openclaw_command_runs_with_a_notice() {
         ]
     );
 }
+
+/// A request that never finishes cannot hold up shutdown: with `http_timeout_secs = 1` the bound
+/// is 5 + 2 × 1 + 5 = 12 seconds, and a client that sent the headers and 3 of 100 body bytes and
+/// then stalled is cut off by then; the service exits 0.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stalled_request_does_not_hold_up_shutdown_beyond_the_bound() {
+    use tokio::io::AsyncWriteExt;
+
+    let config = config().replace("[security]", "[runtime]\nhttp_timeout_secs = 1\n\n[security]");
+    let mut server = Server::start(CANONICAL, &config, &[]).expect("server starts");
+    let mut stalled = tokio::net::TcpStream::connect(server.addr).await.expect("connect");
+    stalled
+        .write_all(
+            b"POST /webhook HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"a",
+        )
+        .await
+        .expect("send a partial request");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let begun = std::time::Instant::now();
+    server.terminate();
+    let (code, _) = server
+        .wait_exit(std::time::Duration::from_secs(20))
+        .expect("the service exits although a request is still open");
+    let took = begun.elapsed();
+    assert_eq!(code, Some(0));
+    assert!(took < std::time::Duration::from_secs(14), "exited after {took:?}");
+    assert!(
+        server
+            .stdout()
+            .iter()
+            .any(|line| line.contains("request(s) still open") && line.contains("12s")),
+        "{:?}",
+        server.stdout()
+    );
+    drop(stalled);
+}
