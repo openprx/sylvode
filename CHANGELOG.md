@@ -256,6 +256,12 @@ replacement and the earliest removal.
 - **rustls upgraded from 0.23.40 to 0.23.45** for RUSTSEC-2026-0285 (TLS 1.3 handshake messages
   accepted across encryption level boundaries). Every release up to and including 0.2.21, and
   builds up to 0.2.324, used an affected version for their TLS client connections (outbound HTTP, and PostgreSQL when TLS is used).
+- **AI task references are checked against the project.** `POST /api/v1/projects/{id}/ai/tasks`
+  accepted any `reference_id`, which is handed to the project's AI participant and recorded as the
+  causation of the task's events, so a project admin could point the agent at an entity of another
+  project or workspace. The reference must now be a work item of the project, a comment on one, or
+  a proposal of the project's workspace; anything else, and a `reference_id` without a
+  `reference_type`, is refused with 400. Present in 0.2.21.
 - **Six cross-tenant reads and writes closed.** Draft, open, voting and rejected proposals were
   visible to any authenticated user of the instance, the project context's recent decisions had
   no tenant filter, and issue links, bot label batches, sprint assignment and bot mentions did not

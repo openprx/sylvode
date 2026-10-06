@@ -523,6 +523,7 @@ pub async fn create_project_ai_task(
         return Err(ApiError::BadRequest("invalid reference_type".to_string()));
     }
 
+    ensure_reference_in_project(&state.db, project_id, req.reference_type.as_deref(), req.reference_id).await?;
     ensure_project_ai_participant(&state, project_id, req.ai_participant_id).await?;
 
     let task = create_ai_task(
@@ -577,6 +578,56 @@ async fn ensure_project_ai_participant(
     }
 
     Ok(())
+}
+
+/// Refuses a task reference that does not name an entity of this project.
+///
+/// The reference is handed to the project's AI participant, which acts on it with its own
+/// credentials, and recorded as the causation of the task's events, so it must belong to the
+/// project the task is created in: a work item of the project, a comment on one, or a proposal
+/// of the project's workspace (proposal ids are `PROP-<uuid>` or the bare uuid). A reference to
+/// anything else — another project's or workspace's entity, or one that does not exist — is
+/// refused the same way, so the response does not reveal which. A `reference_id` needs a
+/// `reference_type`; a type without an id names nothing and is accepted as before.
+async fn ensure_reference_in_project(
+    db: &impl ConnectionTrait,
+    project_id: Uuid,
+    reference_type: Option<&str>,
+    reference_id: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let Some(reference_id) = reference_id else {
+        return Ok(());
+    };
+    let sql = match reference_type {
+        Some("work_item") => "SELECT 1 FROM work_items WHERE id = $2 AND project_id = $1",
+        Some("comment") => {
+            "SELECT 1 FROM comments c INNER JOIN work_items w ON w.id = c.work_item_id \
+             WHERE c.id = $2 AND w.project_id = $1"
+        }
+        Some("proposal") => {
+            "SELECT 1 FROM proposals p INNER JOIN projects pr ON pr.workspace_id = p.workspace_id \
+             WHERE pr.id = $1 AND p.id IN ($2::text, 'PROP-' || $2::text)"
+        }
+        Some(_) => return Err(ApiError::BadRequest("invalid reference_type".to_string())),
+        None => {
+            return Err(ApiError::BadRequest("reference_id requires reference_type".to_string()));
+        }
+    };
+    let found = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            sql,
+            vec![project_id.into(), reference_id.into()],
+        ))
+        .await?
+        .is_some();
+    if found {
+        Ok(())
+    } else {
+        Err(ApiError::BadRequest(
+            "reference_id does not name an entity of this project".to_string(),
+        ))
+    }
 }
 
 async fn ensure_actor_can_operate(state: &AppState, task: &AiTaskRow, actor_id: Uuid) -> Result<(), ApiError> {
@@ -638,4 +689,169 @@ async fn find_project(state: &AppState, project_id: Uuid) -> Result<ProjectRow, 
 
 fn parse_user_id(claims: &JwtClaims) -> Result<Uuid, ApiError> {
     Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))
+}
+
+/// `ensure_reference_in_project` against a migrated scratch database with two tenants.
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod reference_scope_database_tests {
+    use super::ensure_reference_in_project;
+    use crate::error::ApiError;
+    use crate::routes::context::tenant_fixture::{exec, seed_proposal, seed_tenant, seed_work_item};
+    use crate::scratch_or_skip;
+    use uuid::Uuid;
+
+    fn refused(result: &Result<(), ApiError>) -> bool {
+        matches!(result, Err(ApiError::BadRequest(_)))
+    }
+
+    #[tokio::test]
+    async fn a_task_reference_must_name_an_entity_of_the_project() {
+        let scratch = scratch_or_skip!("ai_task_reference_scope");
+        let db = &scratch.db;
+        let own = seed_tenant(db, "ra").await;
+        let other = seed_tenant(db, "rb").await;
+        let own_item = seed_work_item(db, &own, "own").await;
+        let other_item = seed_work_item(db, &other, "other").await;
+        let own_comment = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO comments (id, work_item_id, author_id, body) VALUES ($1, $2, $3, 'c')",
+            vec![own_comment.into(), own_item.into(), own.member_id.into()],
+        )
+        .await;
+        let other_comment = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO comments (id, work_item_id, author_id, body) VALUES ($1, $2, $3, 'c')",
+            vec![other_comment.into(), other_item.into(), other.member_id.into()],
+        )
+        .await;
+        let proposal_uuid =
+            |id: &str| Uuid::parse_str(id.trim_start_matches("PROP-")).expect("proposal ids carry a uuid");
+        let own_proposal = proposal_uuid(&seed_proposal(db, Some(own.workspace_id), own.member_id).await);
+        let other_proposal = proposal_uuid(&seed_proposal(db, Some(other.workspace_id), other.member_id).await);
+        let unattributed = proposal_uuid(&seed_proposal(db, None, own.member_id).await);
+        let project = own.project_id;
+
+        for (kind, id) in [
+            ("work_item", own_item),
+            ("comment", own_comment),
+            ("proposal", own_proposal),
+        ] {
+            ensure_reference_in_project(db, project, Some(kind), Some(id))
+                .await
+                .unwrap_or_else(|err| panic!("own {kind} must be accepted: {err:?}"));
+        }
+        for (kind, id) in [
+            ("work_item", other_item),
+            ("work_item", own_comment),
+            ("work_item", Uuid::new_v4()),
+            ("comment", other_comment),
+            ("comment", own_item),
+            ("proposal", other_proposal),
+            ("proposal", unattributed),
+            ("proposal", own_item),
+        ] {
+            assert!(
+                refused(&ensure_reference_in_project(db, project, Some(kind), Some(id)).await),
+                "{kind} {id} is not an entity of the project and must be refused"
+            );
+        }
+        assert!(refused(
+            &ensure_reference_in_project(db, project, None, Some(own_item)).await
+        ));
+        ensure_reference_in_project(db, project, Some("work_item"), None)
+            .await
+            .expect("a type without an id names nothing");
+        ensure_reference_in_project(db, project, None, None)
+            .await
+            .expect("no reference at all");
+        scratch.drop_self().await;
+    }
+
+    fn state_for(db: sea_orm::DatabaseConnection) -> platform::app::AppState {
+        use platform::config::{AppConfig, Secret};
+        platform::app::AppState {
+            cfg: AppConfig {
+                app_name: "ai-task-reference-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new("ai-task-reference-test-secret"),
+                jwt_access_ttl_seconds: 900,
+                jwt_refresh_ttl_seconds: 3600,
+                default_author_id: None,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db,
+            flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
+        }
+    }
+
+    /// The route applies the check: a foreign work item is refused before anything else about
+    /// the task is looked at, and the project's own work item passes it (and then fails only on
+    /// the absent AI participant).
+    #[tokio::test]
+    async fn create_project_ai_task_refuses_a_reference_outside_the_project() {
+        use super::{CreateAiTaskRequest, create_project_ai_task};
+        use axum::extract::{Extension, Json, Path, State};
+        use platform::auth::{JwtClaims, TokenType};
+
+        let scratch = scratch_or_skip!("ai_task_reference_route");
+        let db = &scratch.db;
+        let own = seed_tenant(db, "rr").await;
+        let other = seed_tenant(db, "rs").await;
+        let own_item = seed_work_item(db, &own, "own").await;
+        let other_item = seed_work_item(db, &other, "other").await;
+        exec(
+            db,
+            "UPDATE users SET role = 'admin' WHERE id = $1",
+            vec![own.member_id.into()],
+        )
+        .await;
+        let state = state_for(db.clone());
+        let claims = JwtClaims {
+            sub: own.member_id.to_string(),
+            email: format!("{}@tenant.test", own.member_id),
+            token_type: TokenType::Access,
+            iat: 0,
+            exp: 0,
+        };
+        let request = |reference_id| CreateAiTaskRequest {
+            ai_participant_id: Uuid::new_v4(),
+            task_type: "review_requested".to_string(),
+            reference_type: Some("work_item".to_string()),
+            reference_id: Some(reference_id),
+            priority: None,
+            payload: None,
+            idempotency_key: None,
+            max_attempts: None,
+        };
+
+        let foreign = create_project_ai_task(
+            State(state.clone()),
+            Extension(claims.clone()),
+            Path(own.project_id),
+            Json(request(other_item)),
+        )
+        .await;
+        let Err(ApiError::BadRequest(message)) = foreign else {
+            panic!("a foreign reference must be refused");
+        };
+        assert!(message.contains("reference_id"), "{message}");
+
+        let own_reference = create_project_ai_task(
+            State(state),
+            Extension(claims),
+            Path(own.project_id),
+            Json(request(own_item)),
+        )
+        .await;
+        let Err(ApiError::BadRequest(message)) = own_reference else {
+            panic!("no AI participant exists, so the task cannot be created");
+        };
+        assert!(message.contains("ai participant"), "{message}");
+        scratch.drop_self().await;
+    }
 }
