@@ -304,6 +304,10 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- The bun tests for the bot token form and the webhook event form only searched the page source,
+  so a form that always sent `rest`, or a checkbox that did nothing, passed them. The request the
+  members page sends is built by `createBotRequest` and the event selection by
+  `toggleWebhookEvent`, both tested for their behaviour, and the page checks ignore comments.
 - `auth.allow_insecure_cookies` treated any `server.bind_addr` host starting with `127.` as
   loopback, including host names such as `127.example.org`. Only loopback IP addresses and
   `localhost` count now.

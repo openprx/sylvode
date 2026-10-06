@@ -13,9 +13,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Suite, assert, assertDeepEqual, finish } from './support/harness';
+import { withoutComments } from './support/source';
 import {
 	WEBHOOK_EVENTS,
 	WEBHOOK_EVENT_GROUPS,
+	toggleWebhookEvent,
 	webhookEventGroupKey,
 	webhookEventLabelKey
 } from '../src/lib/webhooks/events';
@@ -71,8 +73,33 @@ for (const locale of LOCALES) {
 	});
 }
 
+suite.check('toggling an event adds it when absent and removes it when present, keeping the rest', () => {
+	const start = ['issue.created', 'comment.created'];
+	const added = toggleWebhookEvent(start, 'label.added');
+	assertDeepEqual(added, ['issue.created', 'comment.created', 'label.added'], 'add');
+	assertDeepEqual(start, ['issue.created', 'comment.created'], 'the selection passed in is not modified');
+	const removed = toggleWebhookEvent(added, 'issue.created');
+	assertDeepEqual(removed, ['comment.created', 'label.added'], 'remove');
+	assertDeepEqual(toggleWebhookEvent(toggleWebhookEvent([], 'ai.task_failed'), 'ai.task_failed'), [], 'round trip');
+	let selection: string[] = [];
+	for (const event of WEBHOOK_EVENTS) selection = toggleWebhookEvent(selection, event);
+	assertDeepEqual(selection, [...WEBHOOK_EVENTS], 'every event can be selected');
+});
+
+suite.check('each checkbox toggles its own event through toggleWebhookEvent', () => {
+	const code = withoutComments(readFileSync(PAGE, 'utf8'));
+	assert(
+		/form\.events = toggleWebhookEvent\(form\.events, eventName\)/.test(code),
+		'toggleEvent must apply toggleWebhookEvent to the selection'
+	);
+	assert(
+		/checked=\{form\.events\.includes\(eventName\)\}\s*onchange=\{\(\) => toggleEvent\(eventName\)\}/.test(code),
+		'each checkbox must reflect and toggle its own event'
+	);
+});
+
 suite.check('the webhook page renders its checkboxes from the shared constant', () => {
-	const page = readFileSync(PAGE, 'utf8');
+	const page = withoutComments(readFileSync(PAGE, 'utf8'));
 	assert(/\{#each WEBHOOK_EVENT_GROUPS as entry/.test(page), 'the page does not iterate WEBHOOK_EVENT_GROUPS');
 	assert(!/eventOptions\s*=/.test(page), 'the page still declares its own event list');
 });
