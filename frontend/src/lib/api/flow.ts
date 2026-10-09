@@ -184,6 +184,28 @@ export interface FlowReferenceReceipt {
 	permission_state: BridgePermissionState;
 }
 
+/** `POST /flow/conversions/preview` body (`rest-api-v1.md` v0.7 table). `mapping` is free-form on
+ * the wire; its real shape is per `target_type` (`apps/api/src/flow/bridge.rs::preview_conversion`
+ * and `execute_conversion`): `form_record` reads `target_form_id` (required), `title` (optional,
+ * defaults to the Page title) and `values` (constant field values keyed by form field key). */
+export interface FlowConversionPreviewInput {
+	source_object_id: string;
+	source_frontier: string;
+	target_type: 'form' | 'form_record';
+	mapping: Record<string, unknown>;
+	idempotency_key: string;
+}
+
+/** `POST /flow/conversions` body. `preview_id`, `source_frontier` and `target_schema_version`
+ * must be copied from the preview response. */
+export interface FlowConversionCommitInput {
+	preview_id: string;
+	source_frontier: string;
+	target_schema_version: number;
+	idempotency_key: string;
+	confirm: true;
+}
+
 export interface FlowConversionPreview {
 	preview_id: string;
 	expires_at: string;
@@ -621,23 +643,11 @@ export const flowApi = {
 		);
 	},
 
-	previewConversion(input: {
-		source_object_id: string;
-		source_frontier: string;
-		target_type: 'form' | 'form_record';
-		mapping: Record<string, unknown>;
-		idempotency_key: string;
-	}): Promise<ApiResult<FlowConversionPreview>> {
+	previewConversion(input: FlowConversionPreviewInput): Promise<ApiResult<FlowConversionPreview>> {
 		return apiClient.post<FlowConversionPreview>('/api/v1/flow/conversions/preview', input);
 	},
 
-	commitConversion(input: {
-		preview_id: string;
-		source_frontier: string;
-		target_schema_version: number;
-		idempotency_key: string;
-		confirm: true;
-	}): Promise<ApiResult<FlowConversionJob>> {
+	commitConversion(input: FlowConversionCommitInput): Promise<ApiResult<FlowConversionJob>> {
 		return apiClient.post<FlowConversionJob>('/api/v1/flow/conversions', input);
 	},
 

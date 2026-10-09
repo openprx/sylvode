@@ -2334,7 +2334,8 @@
     "flowSettings": "Sylvode - Flow 设置",
     "flowPackage": "Sylvode - Flow 导出与导入",
     "flowImportReport": "Sylvode - Flow 导入报告",
-    "flowOperations": "Sylvode - Flow 运维"
+    "flowOperations": "Sylvode - Flow 运维",
+    "flowConvert": "Sylvode - 转换为 Forms"
   },
   "flow": {
     "nav": {
@@ -2919,6 +2920,143 @@
         "rejected": "服务器拒绝了此请求。",
         "unavailable": "服务暂时不可用，请重试。",
         "unexpectedResponse": "服务器返回了意外的响应，未将其显示为已保存。"
+      }
+    },
+    "bridge": {
+      "convert": {
+        "panelAction": "转换为 Forms…",
+        "heading": "转换为 Forms 记录",
+        "description": "用此 Page 创建一条万能表单记录。创建前会先由服务器生成预览供你核对。",
+        "stepsLabel": "转换步骤",
+        "stepOf": "第 {n} 步，共 {total} 步：{name}",
+        "step": {
+          "source": "来源",
+          "mapping": "目标与映射",
+          "preview": "预览",
+          "commit": "确认"
+        },
+        "unsupported": {
+          "title": "该对象无法转换",
+          "body": "只有 Flow Page 可以转换为 Forms 记录。"
+        },
+        "notFound": {
+          "title": "Page 不可用",
+          "body": "该 Page 不存在，或你无权访问。"
+        },
+        "source": {
+          "title": "页面",
+          "documentSeq": "文档序号",
+          "frontier": "来源 frontier"
+        },
+        "ownership": {
+          "title": "转换的结果",
+          "source": "此 Page 仍属于 Flow，转换不会修改它。",
+          "target": "新记录属于万能表单，遵循该表单的权限。",
+          "noSync": "之后任一侧的变化都不会覆盖另一侧，两者之间没有持续同步。"
+        },
+        "mapping": {
+          "project": "项目",
+          "chooseProject": "选择项目",
+          "noProjects": "此工作区没有可用的项目。",
+          "form": "表单",
+          "chooseForm": "选择表单",
+          "formsFailed": "无法加载该项目的表单。",
+          "noForms": "该项目没有表单。",
+          "recordTitle": "记录标题",
+          "recordTitleHint": "默认使用 Page 标题；留空同样使用 Page 标题。",
+          "valuesHint": "填写新记录的初始字段值。Page 正文不会被复制到字段中。",
+          "noFields": "该表单没有需要填写的字段。",
+          "unset": "未设置",
+          "serverFilled": "创建记录时由 Forms 自动填写。",
+          "unsupportedField": "此向导无法填写该类型的字段，可在转换后到 Forms 中编辑。",
+          "problem": {
+            "required": "此字段为必填项。",
+            "unmappableRequired": "此必填字段无法在本向导中填写，因此无法从这里创建记录。",
+            "invalidInteger": "请输入整数。",
+            "invalidDecimal": "请输入数字，例如 12.5。",
+            "outOfRange": "该值超出此字段允许的范围。",
+            "invalidOption": "请从列出的选项中选择。",
+            "invalidBoolean": "请选择是或否。"
+          }
+        },
+        "preview": {
+          "running": "正在向服务器请求预览…",
+          "notCommitted": "这是预览，尚未创建任何内容。",
+          "schemaVersion": "目标 schema 版本",
+          "estimatedObjects": "将创建的对象数",
+          "expiresAt": "预览过期时间",
+          "countdown": "剩余 {time}",
+          "sourceFrontier": "来源 frontier",
+          "permission": "你经由桥接拥有的权限",
+          "mapping": "映射",
+          "titleFromPage": "Page 标题",
+          "warnings": "警告",
+          "noWarnings": "没有警告。",
+          "expired": "此预览已过期。请重新预览后再转换。"
+        },
+        "permission": {
+          "access": {
+            "controlled": "你可以经由桥接对该表单执行操作。",
+            "readOnly": "经由桥接你只能查看该表单。"
+          },
+          "configuration": {
+            "explicit": "该表单为你的角色配置了明确的权限策略。",
+            "unconfigured": "该表单没有为你的角色配置权限策略，因此桥接只允许查看。需由表单管理员配置策略后才能创建记录。"
+          },
+          "action": {
+            "formView": "查看表单",
+            "recordCreate": "创建记录",
+            "recordUpdate": "更新记录",
+            "recordDelete": "删除记录",
+            "recordExport": "导出记录"
+          },
+          "limit": {
+            "fieldRead": "部分字段对你不可见。",
+            "fieldWrite": "部分字段对你不可写；为这些字段填写的值会在转换时被拒绝。",
+            "record": "你只能操作自己拥有的记录。"
+          }
+        },
+        "commit": {
+          "source": "来源 Page",
+          "target": "目标表单",
+          "expired": "预览在确认前已过期。请返回并重新预览。",
+          "acknowledge": "我已核对预览，确认创建这条 Forms 记录。",
+          "submit": "转换",
+          "retry": "重试转换",
+          "committing": "正在转换…"
+        },
+        "action": {
+          "back": "上一步",
+          "next": "下一步",
+          "runPreview": "生成预览",
+          "toCommit": "继续确认",
+          "retryPreview": "重试预览",
+          "previewAgain": "重新预览",
+          "refreshSource": "重新读取 Page 并重新预览",
+          "backToPreview": "返回预览",
+          "backToMapping": "返回映射",
+          "reload": "重新加载"
+        },
+        "error": {
+          "policyRejected": "按当前权限或目标 schema，不允许执行此转换。",
+          "notFound": "Page 或目标表单不可用。",
+          "rejected": "服务器拒绝了此请求。请检查目标和字段值。",
+          "conflict": "此请求与之前的请求冲突。请重新预览。",
+          "unavailable": "服务器暂不可用，请重试。",
+          "sourceUnavailable": "无法加载该 Page。"
+        },
+        "value": {
+          "yes": "是",
+          "no": "否"
+        },
+        "live": {
+          "step": "第 {n} 步，共 {total} 步：{name}",
+          "previewing": "正在请求预览",
+          "previewReady": "预览已就绪",
+          "refreshing": "正在重新读取 Page",
+          "committing": "正在转换",
+          "committed": "转换已提交"
+        }
       }
     }
   }

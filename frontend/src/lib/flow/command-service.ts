@@ -33,6 +33,10 @@ import {
 	type CreateFlowObjectInput,
 	type CreateTicketInput,
 	type ExecuteFlowCommandInput,
+	type FlowConversionCommitInput,
+	type FlowConversionJob,
+	type FlowConversionPreview,
+	type FlowConversionPreviewInput,
 	type FlowDiffResponse,
 	type FlowFeatureFlags,
 	type FlowFeatureUpdate,
@@ -183,6 +187,21 @@ export class FlowCommandService {
 		input: ReplayDeliveriesInput
 	): Promise<ApiResult<FlowReplayResponse>> {
 		return flowApi.replayDeliveries(workspaceId, input);
+	}
+
+	// v0.7 Forms Bridge conversion (`surface-coverage-v1.md`: Convert preview / Convert confirm are
+	// `adapter:CommandService` consumers). The key comes from the caller's intent
+	// (`lib/flow/convert-wizard.ts`), and the raw `ApiResult` is returned so the wizard can branch
+	// on `error_code`.
+
+	async convertPreview(
+		input: FlowConversionPreviewInput
+	): Promise<ApiResult<FlowConversionPreview>> {
+		return flowApi.previewConversion(input);
+	}
+
+	async convertCommit(input: FlowConversionCommitInput): Promise<ApiResult<FlowConversionJob>> {
+		return flowApi.commitConversion(input);
 	}
 }
 
