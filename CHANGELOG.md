@@ -176,6 +176,14 @@ OpenPR name keeps working; see **Deprecated**.
     five-step wizard (choose file, upload with progress and cancel, mapping and policies, server
     preview, exact-hash confirmation) that keeps checksum, format and policy errors on screen and
     out of confirm, and opens a report page that resumes polling after a reload.
+  - Web UI: a workspace Flow operations panel under
+    `/workspace/{workspaceId}/settings/flow/operations` for workspace owners and admins, usable
+    while Flow is disabled. It shows health (auto-refreshed every 15 seconds, pausable, stale
+    sample kept on a failed refresh, dead-letter counted apart from cancelled deliveries), lag
+    with a projection-lag badge and per-object rows, and integrity per document; runs verify as a
+    dry run; runs compact and rebuild-projection as a dry-run receipt followed by an execute that
+    requires the exact target id typed by the user; and replays deliveries after a dry-run
+    summary and an explicit acknowledgement, refusing windows older than 30 days locally.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

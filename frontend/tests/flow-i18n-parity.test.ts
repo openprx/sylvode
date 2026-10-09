@@ -48,8 +48,8 @@ const SYNC_STATES = [
 ] as const satisfies readonly SyncState[];
 
 /** The `flow.*` namespaces `ui-surface-v1.md`'s i18n baseline lists as in force from v0.4, with
- * the later-version ones (`flow.collection.*` v0.6, `flow.bridge.*` v0.7, `flow.operations.*`
- * v0.8) deliberately excluded and named here so the exclusion is visible rather than implied. */
+ * the later-version ones (`flow.collection.*` v0.6, `flow.bridge.*` v0.7) deliberately excluded
+ * and named here so the exclusion is visible rather than implied. */
 const V04_REQUIRED_NAMESPACES = [
 	'flow.nav',
 	'flow.canvas',
@@ -61,7 +61,10 @@ const V04_REQUIRED_NAMESPACES = [
 	'flow.search',
 	'flow.recovery'
 ] as const;
-const LATER_VERSION_NAMESPACES = ['flow.collection', 'flow.bridge', 'flow.operations'] as const;
+const LATER_VERSION_NAMESPACES = ['flow.collection', 'flow.bridge'] as const;
+/** v0.8 namespaces that now have a shipped UI and therefore must be populated in both locales:
+ * `flow.operations.*` is the workspace operations panel (`settings/flow/operations`). */
+const V08_DELIVERED_NAMESPACES = ['flow.operations'] as const;
 
 type Json = { [key: string]: Json } | string | number | boolean | null;
 
@@ -167,15 +170,18 @@ suite.check('no flow.* value is its own key (the "missing key rendered as copy" 
 
 // ---- 3. required namespaces, and only the in-scope ones ------------------------------------
 
-suite.check('every v0.4 flow namespace is populated in both locales', () => {
-	for (const locale of LOCALES) {
-		const keys = flowKeys(locale);
-		for (const namespace of V04_REQUIRED_NAMESPACES) {
-			const populated = [...keys].some((key) => key.startsWith(`${namespace}.`));
-			assert(populated, `${locale}.json has no keys under ${namespace}.*`);
+suite.check(
+	'every v0.4 flow namespace and delivered v0.8 namespace is populated in both locales',
+	() => {
+		for (const locale of LOCALES) {
+			const keys = flowKeys(locale);
+			for (const namespace of [...V04_REQUIRED_NAMESPACES, ...V08_DELIVERED_NAMESPACES]) {
+				const populated = [...keys].some((key) => key.startsWith(`${namespace}.`));
+				assert(populated, `${locale}.json has no keys under ${namespace}.*`);
+			}
 		}
 	}
-});
+);
 
 suite.check('later-version namespaces are absent (they are not v0.4 deliverables)', () => {
 	for (const locale of LOCALES) {

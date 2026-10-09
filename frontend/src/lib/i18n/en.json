@@ -2333,7 +2333,8 @@
     "flow": "Flow",
     "flowSettings": "Sylvode - Flow Settings",
     "flowPackage": "Sylvode - Flow Export and Import",
-    "flowImportReport": "Sylvode - Flow Import Report"
+    "flowImportReport": "Sylvode - Flow Import Report",
+    "flowOperations": "Sylvode - Flow Operations"
   },
   "flow": {
     "nav": {
@@ -2410,7 +2411,8 @@
         "contention": "Retrying, please wait."
       },
       "checksum_mismatch": "The package failed its integrity check. Obtain the package again and upload it.",
-      "unsupported_format": "This package format or engine version is not supported. Export it with a compatible version."
+      "unsupported_format": "This package format or engine version is not supported. Export it with a compatible version.",
+      "server_rejected": "The server permanently rejected this request. It will not succeed if repeated."
     },
     "history": {
       "title": "History",
@@ -2518,6 +2520,11 @@
         "heading": "Export and import",
         "description": "Export this workspace as a package, or import a package into it.",
         "open": "Open export and import"
+      },
+      "operations": {
+        "heading": "Operations",
+        "description": "Health, lag, integrity checks and maintenance for this workspace's Flow data. Available even while Flow is disabled.",
+        "open": "Open operations"
       }
     },
     "package": {
@@ -2707,6 +2714,211 @@
         "sourceObject": "Source object",
         "targetObject": "Imported object",
         "detachedHeading": "Detached references"
+      }
+    },
+    "operations": {
+      "title": "Flow operations",
+      "subtitle": "Health, lag, integrity and maintenance for this workspace. Every change is previewed with a dry run first.",
+      "loading": "Loading…",
+      "forbiddenTitle": "Workspace admins only",
+      "backToSettings": "Back to Flow settings",
+      "refresh": "Refresh",
+      "retry": "Retry",
+      "none": "None",
+      "seconds": "{n} s",
+      "bytes": "{n} bytes",
+      "perSecond": "{n}/s",
+      "status": {
+        "unknown": "Unknown status"
+      },
+      "health": {
+        "heading": "Health",
+        "status": {
+          "healthy": "Healthy",
+          "degraded": "Degraded"
+        },
+        "degradedNotice": "Sync is degraded: some events or deliveries failed. See dead-letter below.",
+        "connections": "Connections (this API instance)",
+        "acceptRate": "Accepted changes",
+        "rejectRate": "Rejected commands",
+        "queueDepth": "Queued maintenance jobs",
+        "oldestJobAge": "Oldest queued job",
+        "storageBytes": "Document storage",
+        "deadLetter": {
+          "heading": "Dead-letter",
+          "total": "Failed total",
+          "dispatchFailed": "Failed dispatch",
+          "deliveryFailed": "Failed deliveries",
+          "oldestFailedAge": "Oldest failure",
+          "clear": "Nothing is dead-lettered."
+        },
+        "cancelled": {
+          "heading": "Cancelled deliveries",
+          "note": "Normal cancellations (the subscriber was removed). Not counted as dead-letter."
+        },
+        "autoRefresh": "Refreshes every 15 seconds.",
+        "pause": "Pause auto-refresh",
+        "resume": "Resume auto-refresh",
+        "paused": "Auto-refresh is paused.",
+        "stale": "Refresh failed. Showing the last successful sample from {time}.",
+        "updatedAt": "Updated {time}.",
+        "loadFailed": "Health could not be loaded."
+      },
+      "lag": {
+        "heading": "Lag",
+        "projection": "Projection",
+        "search": "Search index",
+        "fanout": "Fan-out",
+        "max": "Max",
+        "p95": "p95",
+        "badge": "Projection lag {n}",
+        "badgeOk": "Projections up to date",
+        "itemsHeading": "Projection lag by object",
+        "objectId": "Object",
+        "headSeq": "Head seq",
+        "projectionSeq": "Projection seq",
+        "lagValue": "Lag",
+        "empty": "No objects to show.",
+        "previous": "Previous page",
+        "next": "Next page",
+        "page": "Page {n}",
+        "loadFailed": "Lag could not be loaded."
+      },
+      "integrity": {
+        "heading": "Integrity",
+        "status": {
+          "healthy": "Healthy",
+          "integrity_error": "Integrity errors found"
+        },
+        "checked": "Checked",
+        "healthy": "Healthy",
+        "failed": "Failed",
+        "checkedAt": "Checked at {time}.",
+        "limit": "Documents to check",
+        "limitNote": "Shows the first {n} documents. Documents that fail the check are counted but not listed.",
+        "documentId": "Document",
+        "objectId": "Object",
+        "headSeq": "Head seq",
+        "projectionSeq": "Projection seq",
+        "semanticHash": "Semantic hash",
+        "actions": "Actions",
+        "verify": "Verify",
+        "compact": "Compact",
+        "rebuild": "Rebuild projection",
+        "empty": "No documents in this workspace.",
+        "loadFailed": "Integrity could not be loaded.",
+        "manual": {
+          "heading": "Operate on an id",
+          "description": "Enter a document id to verify or compact it, or an object id to rebuild its projection.",
+          "documentId": "Document id",
+          "objectId": "Object id",
+          "invalid": "Enter a valid id."
+        }
+      },
+      "drawer": {
+        "title": {
+          "verify": "Verify document",
+          "compact": "Compact document",
+          "rebuild": "Rebuild projection"
+        },
+        "targetDocument": "Target document",
+        "targetObject": "Target object",
+        "deep": "Deep check",
+        "expectedHead": "Expected head seq",
+        "expectedHeadOptional": "Optional. Leave blank to check the current head.",
+        "expectedHeadRequired": "Required. The server refuses the operation if the document is no longer at this head.",
+        "invalidHead": "Enter a whole number.",
+        "runVerify": "Run verify",
+        "dryRun": "Run dry run",
+        "running": "Working…",
+        "previewHeading": "Dry-run receipt",
+        "previewNote": "Preview only. Nothing was changed.",
+        "confirmLabelDocument": "Type the document id to confirm",
+        "confirmLabelObject": "Type the object id to confirm",
+        "confirmMismatch": "This id does not match the target.",
+        "execute": {
+          "compact": "Compact now",
+          "rebuild": "Rebuild now"
+        },
+        "executedHeading": "Execution receipt",
+        "executedNote": "Executed on the server.",
+        "permanent": "This operation cannot be retried. Close it and review the target."
+      },
+      "receipt": {
+        "operationId": "Operation id",
+        "operation": "Operation",
+        "status": "Status",
+        "mode": "Mode",
+        "modeDryRun": "Dry run (no changes)",
+        "modeExecute": "Executed",
+        "expectedHead": "Expected head seq",
+        "field": {
+          "deep": "Deep check",
+          "head_seq": "Head seq",
+          "head_frontier": "Head frontier",
+          "snapshot_seq": "Snapshot seq",
+          "tail_updates": "Tail updates",
+          "tail_bytes": "Tail bytes",
+          "would_compact": "Would compact",
+          "semantic_hash": "Semantic hash",
+          "snapshot_checksum": "Snapshot checksum",
+          "deleted_updates": "Deleted updates",
+          "lagging_clients": "Lagging clients",
+          "forced_resync_clients": "Clients forced to resync",
+          "before_hash": "Projection hash before",
+          "after_hash": "Projection hash after",
+          "changed": "Changed",
+          "executed": "Executed",
+          "projection_seq": "Projection seq",
+          "workspace_id": "Workspace",
+          "object_id": "Object",
+          "document_id": "Document"
+        }
+      },
+      "replay": {
+        "heading": "Delivery replay",
+        "description": "Rebuild missing webhook deliveries or requeue failed ones. The window must start less than {days} days ago.",
+        "modeLabel": "Mode",
+        "mode": {
+          "rebuild": "Rebuild missing deliveries",
+          "requeue_failed": "Requeue failed deliveries"
+        },
+        "eventType": "Event type (optional)",
+        "subscriberKind": "Subscriber kind",
+        "subscriberAny": "Any",
+        "subscriberWebhook": "Webhook",
+        "subscriberId": "Subscriber id (optional)",
+        "from": "From (inclusive)",
+        "to": "To (exclusive)",
+        "dryRun": "Run dry run",
+        "previewHeading": "Dry-run summary",
+        "previewNote": "Preview only. Nothing was replayed.",
+        "acknowledge": "I reviewed this summary and want to run the replay for this exact window.",
+        "execute": "Run replay",
+        "executedHeading": "Replay result",
+        "executedNote": "Executed on the server.",
+        "replayed": "Deliveries rebuilt",
+        "skippedAlreadyDelivered": "Skipped (already delivered)",
+        "requeued": "Deliveries requeued",
+        "skippedNotFailed": "Skipped (not failed)",
+        "deliveryIds": "Delivery ids",
+        "window": "Window",
+        "windowValue": "{from} to {to}",
+        "error": {
+          "invalidDate": "Enter both a start and an end time.",
+          "empty": "The start must be before the end.",
+          "future": "The end cannot be in the future.",
+          "tooOld": "The window must start less than {days} days ago.",
+          "invalidSubscriber": "The subscriber id is not a valid id.",
+          "malformed": "The server returned a result that does not match the requested mode. Nothing is shown as replayed."
+        }
+      },
+      "error": {
+        "notFound": "No document or object with this id was found.",
+        "conflict": "The document changed or this request no longer matches. Run a new dry run.",
+        "rejected": "The server rejected this request.",
+        "unavailable": "The service is temporarily unavailable. Try again.",
+        "unexpectedResponse": "The server returned an unexpected response. Nothing is shown as saved."
       }
     }
   }
