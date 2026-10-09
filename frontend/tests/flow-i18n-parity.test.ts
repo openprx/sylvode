@@ -101,7 +101,8 @@ function flowSourceFiles(): string[] {
 	const roots = [
 		'src/lib/flow',
 		'src/lib/components/flow',
-		'src/routes/(app)/workspace/[workspaceId]/flow'
+		'src/routes/(app)/workspace/[workspaceId]/flow',
+		'src/routes/(app)/workspace/[workspaceId]/settings/flow'
 	];
 	const out: string[] = [];
 	const walk = (dir: string): void => {

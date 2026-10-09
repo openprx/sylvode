@@ -4,6 +4,7 @@
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { workspacesApi, type Workspace } from '$lib/api/workspaces';
 	import { toast } from '$lib/stores/toast';
 	import { requireRouteParam } from '$lib/utils/route-params';
@@ -11,6 +12,7 @@
 	import Input from '$lib/components/Input.svelte';
 	import Textarea from '$lib/components/Textarea.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import { resolveWorkspaceAdmin } from '$lib/flow/flow-settings';
 
 	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
 
@@ -19,8 +21,10 @@
 	let deleting = $state(false);
 	let workspace = $state<Workspace | null>(null);
 	let form = $state({ name: '', slug: '', description: '' });
+	let canManageFlow = $state(false);
 
 	onMount(async () => {
+		void resolveWorkspaceAdmin(workspaceId).then((isAdmin) => (canManageFlow = isAdmin));
 		await loadWorkspace();
 	});
 
@@ -120,6 +124,20 @@
 				</Button>
 			</div>
 		</Card>
+
+		{#if canManageFlow}
+			<Card>
+				<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+					<div>
+						<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">{$t('flow.settings.entry.title')}</h2>
+						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('flow.settings.entry.description')}</p>
+					</div>
+					<Button variant="secondary" onclick={() => goto(resolve(`/workspace/${workspaceId}/settings/flow`))}>
+						{$t('flow.settings.entry.open')}
+					</Button>
+				</div>
+			</Card>
+		{/if}
 
 		<Card>
 			<h2 class="text-lg font-semibold text-red-700">{$t('workspace.dangerZone')}</h2>
