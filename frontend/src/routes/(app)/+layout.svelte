@@ -64,6 +64,10 @@
 		if (pathname === '/admin/settings') return $t('pageTitle.adminSettings');
 		if (/^\/workspace\/[^/]+\/settings$/.test(pathname)) return $t('pageTitle.workspaceSettings');
 		if (/^\/workspace\/[^/]+\/settings\/flow$/.test(pathname)) return $t('pageTitle.flowSettings');
+		if (/^\/workspace\/[^/]+\/settings\/flow\/package$/.test(pathname))
+			return $t('pageTitle.flowPackage');
+		if (/^\/workspace\/[^/]+\/settings\/flow\/package\/imports\/[^/]+$/.test(pathname))
+			return $t('pageTitle.flowImportReport');
 		if (/^\/workspace\/[^/]+\/members$/.test(pathname)) return $t('pageTitle.workspaceMembers');
 		if (/^\/workspace\/[^/]+\/webhooks$/.test(pathname)) return $t('pageTitle.workspaceWebhooks');
 		if (/^\/workspace\/[^/]+\/connections$/.test(pathname)) return $t('pageTitle.workspaceConnections');

@@ -6,6 +6,7 @@
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/stores';
+	import { resolve } from '$app/paths';
 	import Card from '$lib/components/Card.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Modal from '$lib/components/Modal.svelte';
@@ -348,6 +349,25 @@
 				>
 					{$t('flow.settings.level.apply')}
 				</button>
+			</div>
+		</Card>
+
+		<Card>
+			<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+				<div>
+					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+						{$t('flow.settings.package.heading')}
+					</h2>
+					<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+						{$t('flow.settings.package.description')}
+					</p>
+				</div>
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/settings/flow/package', { workspaceId })}
+					class="inline-flex min-h-11 shrink-0 items-center justify-center rounded-md border border-blue-300 px-4 text-sm font-medium text-blue-700 hover:bg-blue-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 motion-safe:transition-colors dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/30"
+				>
+					{$t('flow.settings.package.open')}
+				</a>
 			</div>
 		</Card>
 	{/if}

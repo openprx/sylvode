@@ -2331,7 +2331,9 @@
     "trustAppeals": "Sylvode - Trust Appeals",
     "login": "Sylvode - Login",
     "flow": "Flow",
-    "flowSettings": "Sylvode - Flow Settings"
+    "flowSettings": "Sylvode - Flow Settings",
+    "flowPackage": "Sylvode - Flow Export and Import",
+    "flowImportReport": "Sylvode - Flow Import Report"
   },
   "flow": {
     "nav": {
@@ -2406,7 +2408,9 @@
       "server_draining": {
         "drain": "The service is undergoing maintenance and will reconnect automatically.",
         "contention": "Retrying, please wait."
-      }
+      },
+      "checksum_mismatch": "The package failed its integrity check. Obtain the package again and upload it.",
+      "unsupported_format": "This package format or engine version is not supported. Export it with a compatible version."
     },
     "history": {
       "title": "History",
@@ -2509,6 +2513,200 @@
         "title": "Sylvode Flow",
         "description": "Turn Flow on or off for this workspace and set the default member level.",
         "open": "Open Flow settings"
+      },
+      "package": {
+        "heading": "Export and import",
+        "description": "Export this workspace as a package, or import a package into it.",
+        "open": "Open export and import"
+      }
+    },
+    "package": {
+      "title": "Flow export and import",
+      "subtitle": "Move Flow pages between workspaces as a verified package.",
+      "loading": "Loading…",
+      "forbiddenTitle": "Workspace admins only",
+      "backToSettings": "Back to Flow settings",
+      "bytes": "{n} bytes",
+      "kib": "{n} KiB",
+      "mib": "{n} MiB",
+      "retry": "Retry",
+      "error": {
+        "rejected": "The server rejected this request.",
+        "unavailable": "The service is temporarily unavailable. Try again.",
+        "expired": "The upload or preview has expired or is no longer available. Upload the package again."
+      }
+    },
+    "export": {
+      "heading": "Export",
+      "description": "Create a package of this workspace's Flow pages.",
+      "scopeLabel": "Scope",
+      "scopeWorkspace": "Entire workspace",
+      "includeHistory": "Include history",
+      "start": "Export",
+      "exporting": "Exporting…",
+      "recentHeading": "Recent exports",
+      "recentEmpty": "No exports yet.",
+      "jobId": "Job",
+      "checksum": "Checksum (SHA-256)",
+      "size": "Size",
+      "expiresAt": "Expires",
+      "polling": "(checking…)",
+      "download": "Download package",
+      "downloading": "Downloading…",
+      "status": {
+        "label": "Status",
+        "loading": "Loading…",
+        "queued": "Queued",
+        "running": "Running",
+        "completed": "Completed",
+        "failed": "Failed",
+        "expired": "Expired",
+        "cancelled": "Cancelled",
+        "unknown": "Unknown status ({status})"
+      },
+      "live": {
+        "starting": "Starting export…",
+        "started": "Export started.",
+        "finished": "Export finished: {status}",
+        "downloaded": "Downloaded {name}"
+      },
+      "error": {
+        "empty": "There is nothing to export in this scope, or the workspace is not accessible.",
+        "conflict": "This export conflicts with an earlier request. Change the options and try again."
+      }
+    },
+    "import": {
+      "heading": "Import",
+      "description": "Upload a package, review the server preview, and confirm the exact package hash before anything is written.",
+      "stepsLabel": "Import steps",
+      "stepOf": "Step {n} of {total}: {name}",
+      "step": {
+        "file": "Choose file",
+        "upload": "Upload",
+        "options": "Mapping and policy",
+        "preview": "Preview",
+        "confirm": "Confirm"
+      },
+      "file": {
+        "label": "Package file ({ext})",
+        "hint": "Maximum size {max}. The file is not opened in the browser.",
+        "selected": "{name} ({size})",
+        "rejectExtension": "Choose a file whose name ends in {ext}.",
+        "rejectEmpty": "The file is empty.",
+        "rejectTooLarge": "The file is larger than the {max} limit."
+      },
+      "upload": {
+        "progress": "Uploaded {loaded} of {total}",
+        "state": {
+          "idle": "Not uploaded yet.",
+          "uploading": "Uploading…",
+          "uploaded": "Uploaded and verified by the server.",
+          "failed": "Upload failed.",
+          "cancelled": "Upload cancelled."
+        },
+        "cancel": "Cancel upload",
+        "start": "Start upload",
+        "restart": "Upload again"
+      },
+      "options": {
+        "externalLegend": "References to objects outside the package",
+        "external": {
+          "reject": "Reject the import",
+          "detach": "Detach the references"
+        },
+        "conflictLegend": "If these objects were already imported",
+        "conflict": {
+          "reject_existing": "Reject the import",
+          "reuse_import_lineage": "Reuse the earlier import"
+        },
+        "includeHistory": "The package includes history",
+        "mappingLegend": "Project mapping",
+        "mappingHint": "Every source project in the package must be mapped to a project here or to Unprojected. Packages without projects need no mapping.",
+        "sourceProject": "Source project ID",
+        "targetProject": "Target",
+        "unprojected": "Unprojected",
+        "removeMapping": "Remove",
+        "addMapping": "Add project mapping",
+        "mappingInvalid": "Each source project ID must be a valid, unique UUID."
+      },
+      "packageSha256": "Package SHA-256",
+      "mappingHash": "Mapping hash",
+      "preview": {
+        "running": "Running server preview…",
+        "packageId": "Package ID",
+        "objectMapping": "Objects to import",
+        "estimated": "Estimated changes",
+        "kind": {
+          "objects": "{n} objects",
+          "documents": "{n} documents",
+          "relations": "{n} relations"
+        },
+        "expiresIn": "Preview expires in",
+        "expired": "Expired",
+        "conflicts": "Conflicts",
+        "warnings": "Warnings",
+        "none": "None",
+        "rerun": "Run preview again"
+      },
+      "confirm": {
+        "copy": "Copy hash",
+        "copied": "Hash copied",
+        "summary": "{objects} objects will be created in this workspace (conflict policy: {policy}).",
+        "acknowledge": "I have checked that this package hash matches the package I intend to import",
+        "expired": "The preview has expired. Go back and run the preview again.",
+        "expiresIn": "Preview expires in {time}",
+        "commit": "Import",
+        "committing": "Importing…"
+      },
+      "blockingTitle": "This package cannot be imported",
+      "back": "Back",
+      "next": "Next",
+      "runPreview": "Run preview",
+      "live": {
+        "step": "Step {n} of {total}: {name}",
+        "uploading": "Uploading…",
+        "uploaded": "Upload complete.",
+        "cancelled": "Upload cancelled.",
+        "previewing": "Running server preview…",
+        "committed": "Import submitted."
+      },
+      "error": {
+        "previewRejected": "The server rejected the preview. Check that \"includes history\" matches the package and that every source project is mapped.",
+        "conflict": "These objects were already imported into this workspace. Choose \"Reuse the earlier import\" or import a different package.",
+        "commitConflict": "The import no longer matches its preview. Run the preview again.",
+        "pending": "The import is still running."
+      },
+      "report": {
+        "title": "Import report",
+        "back": "Back to export and import",
+        "loading": "Loading report…",
+        "pending": "The import is still running. This page updates automatically.",
+        "notFoundTitle": "Import not found",
+        "notFound": "This import does not exist or you cannot view it.",
+        "ready": "Import report loaded.",
+        "statusLabel": "Status",
+        "status": {
+          "completed": "Completed",
+          "failed": "Failed",
+          "unknown": "Unknown status ({status})"
+        },
+        "conflictPolicy": "Conflict policy",
+        "startedAt": "Started",
+        "finishedAt": "Finished",
+        "actor": "Imported by",
+        "auditEvent": "Audit event",
+        "countsHeading": "Counts",
+        "count": {
+          "planned": "Planned",
+          "created": "Created",
+          "reused": "Reused",
+          "detached": "Detached",
+          "failed": "Failed"
+        },
+        "objectMappingHeading": "Object mapping",
+        "sourceObject": "Source object",
+        "targetObject": "Imported object",
+        "detachedHeading": "Detached references"
       }
     }
   }

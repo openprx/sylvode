@@ -170,6 +170,12 @@ OpenPR name keeps working; see **Deprecated**.
     workspace owners and admins, which shows the current flag, default member level and
     authorization epoch, and turns Flow on or off or changes the default member level after an
     explicit confirmation; the sidebar shows the Flow entry only while Flow is enabled.
+  - Web UI: a workspace package export and import page under
+    `/workspace/{workspaceId}/settings/flow/package` for workspace owners and admins. Export
+    polls the job and downloads the `.sylvode-flow.zip` after checking its SHA-256; import is a
+    five-step wizard (choose file, upload with progress and cancel, mapping and policies, server
+    preview, exact-hash confirmation) that keeps checksum, format and policy errors on screen and
+    out of confirm, and opens a report page that resumes polling after a reload.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

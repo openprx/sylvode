@@ -18,12 +18,29 @@ export interface ApiResult<T> {
 	details?: unknown;
 }
 
+/** Upload progress for a request body (`XMLHttpRequest.upload.onprogress`). `total` is `null`
+ * when the browser cannot compute it. */
+export interface UploadProgress {
+	loaded: number;
+	total: number | null;
+}
+
 export interface PaginatedData<T> {
 	items: T[];
 	total: number;
 	page: number;
 	per_page: number;
 	total_pages: number;
+}
+
+function normalizeEnvelope<T>(parsed: Partial<ApiResult<T>>): ApiResult<T> {
+	return {
+		code: typeof parsed.code === 'number' ? parsed.code : 500,
+		message: typeof parsed.message === 'string' ? parsed.message : 'Invalid response format',
+		data: (parsed.data as T | null) ?? null,
+		...(typeof parsed.error_code === 'string' ? { error_code: parsed.error_code } : {}),
+		...(parsed.details === undefined ? {} : { details: parsed.details })
+	};
 }
 
 class ApiClient {
@@ -172,13 +189,7 @@ class ApiClient {
 			});
 
 			const parsed = (await res.json()) as Partial<ApiResult<T>>;
-			const result: ApiResult<T> = {
-				code: typeof parsed.code === 'number' ? parsed.code : 500,
-				message: typeof parsed.message === 'string' ? parsed.message : 'Invalid response format',
-				data: (parsed.data as T | null) ?? null,
-				...(typeof parsed.error_code === 'string' ? { error_code: parsed.error_code } : {}),
-				...(parsed.details === undefined ? {} : { details: parsed.details })
-			};
+			const result = normalizeEnvelope<T>(parsed);
 
 			if (result.code === 401) {
 				const isRefreshEndpoint = endpoint === '/api/v1/auth/refresh';
@@ -217,6 +228,120 @@ class ApiClient {
 		signal?: AbortSignal
 	): Promise<ApiResult<T>> {
 		return this.request<T>('POST', endpoint, data, true, headers, signal);
+	}
+
+	/**
+	 * `postFormData` with upload progress. `fetch` cannot report request-body progress, so when
+	 * the runtime has `XMLHttpRequest` and the caller asked for progress this goes over XHR
+	 * (same base URL, bearer token, cookies, extra headers, abort signal, envelope normalisation
+	 * and single 401 refresh-and-retry as `request`). Runtimes without `XMLHttpRequest` (Bun unit
+	 * tests, SSR) fall back to `request`, which reports no progress.
+	 */
+	postFormDataWithProgress<T>(
+		endpoint: string,
+		data: FormData,
+		headers: Record<string, string> = {},
+		signal?: AbortSignal,
+		onProgress?: (progress: UploadProgress) => void
+	): Promise<ApiResult<T>> {
+		if (!onProgress || typeof XMLHttpRequest === 'undefined') {
+			return this.request<T>('POST', endpoint, data, true, headers, signal);
+		}
+		return this.xhrFormData<T>(endpoint, data, headers, signal, onProgress, true);
+	}
+
+	private async xhrFormData<T>(
+		endpoint: string,
+		data: FormData,
+		headers: Record<string, string>,
+		signal: AbortSignal | undefined,
+		onProgress: (progress: UploadProgress) => void,
+		retryAfterRefresh: boolean
+	): Promise<ApiResult<T>> {
+		const result = await new Promise<ApiResult<T>>((resolve) => {
+			const failed = (message: string): ApiResult<T> => ({ code: 500, message, data: null });
+			if (signal?.aborted) {
+				resolve(failed('Request aborted'));
+				return;
+			}
+			const xhr = new XMLHttpRequest();
+			xhr.open('POST', `${this.baseUrl}${endpoint}`);
+			xhr.withCredentials = true;
+			if (this.token) xhr.setRequestHeader('Authorization', `Bearer ${this.token}`);
+			for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+			xhr.upload.onprogress = (event) => {
+				onProgress({ loaded: event.loaded, total: event.lengthComputable ? event.total : null });
+			};
+			const onAbort = () => xhr.abort();
+			signal?.addEventListener('abort', onAbort, { once: true });
+			const settle = (value: ApiResult<T>) => {
+				signal?.removeEventListener('abort', onAbort);
+				resolve(value);
+			};
+			xhr.onload = () => {
+				try {
+					settle(normalizeEnvelope<T>(JSON.parse(xhr.responseText) as Partial<ApiResult<T>>));
+				} catch {
+					settle(failed('Invalid response format'));
+				}
+			};
+			xhr.onerror = () => settle(failed('Network error'));
+			xhr.onabort = () => settle(failed('Request aborted'));
+			xhr.send(data);
+		});
+		if (result.code === 401 && retryAfterRefresh) {
+			if (await this.refreshAccessTokenOnce()) {
+				return this.xhrFormData<T>(endpoint, data, headers, signal, onProgress, false);
+			}
+			this.clearAuth();
+			this.redirectToLogin();
+		} else if (result.code === 401) {
+			this.clearAuth();
+			this.redirectToLogin();
+		}
+		return result;
+	}
+
+	/**
+	 * GET a binary body with the same auth as `request` (bearer token + cookies, one 401
+	 * refresh-and-retry). A JSON response is a business rejection and comes back as its normalised
+	 * envelope with `data: null`; anything else is returned as a `Blob` plus the response headers.
+	 */
+	async getBinary(
+		endpoint: string,
+		retryAfterRefresh: boolean = true
+	): Promise<ApiResult<{ blob: Blob; headers: Headers }>> {
+		const headers = new Headers();
+		if (this.token) headers.set('Authorization', `Bearer ${this.token}`);
+		try {
+			const res = await fetch(`${this.baseUrl}${endpoint}`, {
+				method: 'GET',
+				headers,
+				credentials: 'include'
+			});
+			const contentType = res.headers.get('Content-Type') ?? '';
+			if (contentType.startsWith('application/json')) {
+				const result = normalizeEnvelope<{ blob: Blob; headers: Headers }>(
+					(await res.json()) as Partial<ApiResult<{ blob: Blob; headers: Headers }>>
+				);
+				if (result.code === 401) {
+					if (retryAfterRefresh && (await this.refreshAccessTokenOnce())) {
+						return this.getBinary(endpoint, false);
+					}
+					this.clearAuth();
+					this.redirectToLogin();
+				}
+				return { ...result, data: null };
+			}
+			if (!res.ok) return { code: res.status, message: 'Download failed', data: null };
+			return { code: 0, message: 'ok', data: { blob: await res.blob(), headers: res.headers } };
+		} catch (error) {
+			return {
+				code: 500,
+				message: error instanceof Error ? error.message : 'Network error',
+				data: null
+			};
+		}
 	}
 
 	patch<T>(endpoint: string, data?: unknown): Promise<ApiResult<T>> {

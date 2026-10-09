@@ -17,7 +17,9 @@
 // uses elsewhere): it compiles against the frozen contract and will 404 until the server routes
 // it, which is a normal `ApiResult` error a caller can already handle, not a silent wrong result.
 
-import { apiClient, type ApiResult } from './client';
+import { apiClient, type ApiResult, type UploadProgress } from './client';
+
+export type { UploadProgress };
 
 export type FlowObjectType = 'page' | 'navigator';
 
@@ -225,6 +227,32 @@ export interface FlowPackageImportPreview {
 	warnings: string[];
 	estimated_changes: Record<string, number>;
 	expires_at: string;
+}
+
+/** `POST /workspaces/{workspace_id}/flow/exports` body (`rest-api-v1.md` v0.8 table). The
+ * workspace scope only accepts `format:"package"` at the accepted head (no `at_seq`). */
+export interface CreateWorkspaceExportInput {
+	format: 'package';
+	include_history: boolean;
+	project_id?: string;
+	idempotency_key: string;
+}
+
+/** Export job receipt. `POST .../exports` returns it without `download_url`; `GET
+ * /flow/exports/{job_id}` adds `download_url` (`apps/api/src/routes/flow.rs::get_flow_export`).
+ * `error` is in the contract row but the server does not emit it at this baseline. */
+export interface FlowExportJob {
+	job_id: string;
+	status: string;
+	format: string;
+	workspace_id?: string;
+	object_id?: string;
+	package_schema?: string;
+	checksum: string;
+	size: number;
+	expires_at: string;
+	download_url?: string;
+	error?: string | null;
 }
 
 export interface FlowPackageImportJobReceipt {
@@ -484,16 +512,52 @@ export const flowApi = {
 		file: Blob,
 		filename: string,
 		idempotencyKey: string,
-		signal?: AbortSignal
+		signal?: AbortSignal,
+		onProgress?: (progress: UploadProgress) => void
 	): Promise<ApiResult<FlowPackageArtifactReceipt>> {
 		const body = new FormData();
 		body.append('package', file, filename);
-		return apiClient.postFormData<FlowPackageArtifactReceipt>(
+		// XHR when the runtime has it (browser upload progress), `fetch` otherwise -- see
+		// `ApiClient.postFormDataWithProgress`.
+		return apiClient.postFormDataWithProgress<FlowPackageArtifactReceipt>(
 			`/api/v1/workspaces/${workspaceId}/flow/import-artifacts`,
 			body,
 			{ 'Idempotency-Key': idempotencyKey },
-			signal
+			signal,
+			onProgress
 		);
+	},
+
+	exportWorkspace(
+		workspaceId: string,
+		input: CreateWorkspaceExportInput
+	): Promise<ApiResult<FlowExportJob>> {
+		return apiClient.post<FlowExportJob>(`/api/v1/workspaces/${workspaceId}/flow/exports`, input);
+	},
+
+	getExportJob(jobId: string): Promise<ApiResult<FlowExportJob>> {
+		return apiClient.get<FlowExportJob>(`/api/v1/flow/exports/${jobId}`);
+	},
+
+	/**
+	 * Downloads an export artifact through `download_url` (`GET /flow/exports/{job_id}/artifact`)
+	 * with the caller's bearer token, so the download works for token-only sessions that carry no
+	 * auth cookie. Only same-API relative paths are accepted; anything else is refused before a
+	 * request is made. The server's `x-flow-package-sha256` header comes back as `sha256`.
+	 */
+	async downloadExportArtifact(
+		downloadUrl: string
+	): Promise<ApiResult<{ blob: Blob; sha256: string | null }>> {
+		if (!/^\/api\/v1\/flow\/exports\/[^/?#]+\/artifact$/.test(downloadUrl)) {
+			return { code: 400, message: 'Unsupported download URL', data: null };
+		}
+		const result = await apiClient.getBinary(downloadUrl);
+		if (result.code !== 0 || !result.data) return { ...result, data: null };
+		return {
+			code: 0,
+			message: result.message,
+			data: { blob: result.data.blob, sha256: result.data.headers.get('x-flow-package-sha256') }
+		};
 	},
 
 	previewPackageImport(

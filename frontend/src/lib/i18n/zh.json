@@ -2331,7 +2331,9 @@
     "trustAppeals": "Sylvode - 积分申诉",
     "login": "Sylvode - 登录",
     "flow": "Flow",
-    "flowSettings": "Sylvode - Flow 设置"
+    "flowSettings": "Sylvode - Flow 设置",
+    "flowPackage": "Sylvode - Flow 导出与导入",
+    "flowImportReport": "Sylvode - Flow 导入报告"
   },
   "flow": {
     "nav": {
@@ -2406,7 +2408,9 @@
       "server_draining": {
         "drain": "服务正在维护，将自动重新连接",
         "contention": "正在重试，请稍候"
-      }
+      },
+      "checksum_mismatch": "包完整性校验失败，请重新获取该包后再上传",
+      "unsupported_format": "不支持该包格式或引擎版本，请使用兼容版本重新导出"
     },
     "history": {
       "title": "历史记录",
@@ -2509,6 +2513,200 @@
         "title": "Sylvode Flow 协作",
         "description": "为本工作区开启或关闭 Flow，并设置默认成员档位。",
         "open": "打开 Flow 设置"
+      },
+      "package": {
+        "heading": "导出与导入",
+        "description": "把本工作区导出为包，或把包导入本工作区。",
+        "open": "打开导出与导入"
+      }
+    },
+    "package": {
+      "title": "Flow 导出与导入",
+      "subtitle": "以经过校验的包在工作区之间迁移 Flow 页面。",
+      "loading": "加载中…",
+      "forbiddenTitle": "仅工作区管理员可用",
+      "backToSettings": "返回 Flow 设置",
+      "bytes": "{n} 字节",
+      "kib": "{n} 千字节",
+      "mib": "{n} 兆字节",
+      "retry": "重试",
+      "error": {
+        "rejected": "服务器拒绝了该请求",
+        "unavailable": "服务暂时不可用，请重试",
+        "expired": "上传或预览已过期或不再可用，请重新上传该包"
+      }
+    },
+    "export": {
+      "heading": "导出",
+      "description": "把本工作区的 Flow 页面打包。",
+      "scopeLabel": "范围",
+      "scopeWorkspace": "整个工作区",
+      "includeHistory": "包含历史",
+      "start": "导出",
+      "exporting": "导出中…",
+      "recentHeading": "最近的导出",
+      "recentEmpty": "还没有导出记录。",
+      "jobId": "任务",
+      "checksum": "校验和（SHA-256）",
+      "size": "大小",
+      "expiresAt": "过期时间",
+      "polling": "（查询中…）",
+      "download": "下载包",
+      "downloading": "下载中…",
+      "status": {
+        "label": "状态",
+        "loading": "加载中…",
+        "queued": "排队中",
+        "running": "进行中",
+        "completed": "已完成",
+        "failed": "失败",
+        "expired": "已过期",
+        "cancelled": "已取消",
+        "unknown": "未知状态（{status}）"
+      },
+      "live": {
+        "starting": "正在开始导出…",
+        "started": "导出已开始。",
+        "finished": "导出结束：{status}",
+        "downloaded": "已下载 {name}"
+      },
+      "error": {
+        "empty": "该范围内没有可导出的内容，或无法访问该工作区",
+        "conflict": "该导出与之前的请求冲突，请修改选项后重试"
+      }
+    },
+    "import": {
+      "heading": "导入",
+      "description": "上传包、查看服务器预览，并在写入任何内容之前核对准确的包哈希。",
+      "stepsLabel": "导入步骤",
+      "stepOf": "第 {n} 步，共 {total} 步：{name}",
+      "step": {
+        "file": "选择文件",
+        "upload": "上传",
+        "options": "映射与策略",
+        "preview": "预览",
+        "confirm": "确认"
+      },
+      "file": {
+        "label": "包文件（{ext}）",
+        "hint": "最大 {max}。浏览器不会打开该文件。",
+        "selected": "{name}（{size}）",
+        "rejectExtension": "请选择文件名以 {ext} 结尾的文件。",
+        "rejectEmpty": "文件为空。",
+        "rejectTooLarge": "文件超过 {max} 的上限。"
+      },
+      "upload": {
+        "progress": "已上传 {loaded}，共 {total}",
+        "state": {
+          "idle": "尚未上传。",
+          "uploading": "上传中…",
+          "uploaded": "已上传并通过服务器校验。",
+          "failed": "上传失败。",
+          "cancelled": "上传已取消。"
+        },
+        "cancel": "取消上传",
+        "start": "开始上传",
+        "restart": "重新上传"
+      },
+      "options": {
+        "externalLegend": "指向包外对象的引用",
+        "external": {
+          "reject": "拒绝导入",
+          "detach": "断开这些引用"
+        },
+        "conflictLegend": "如果这些对象之前已导入过",
+        "conflict": {
+          "reject_existing": "拒绝导入",
+          "reuse_import_lineage": "复用之前的导入"
+        },
+        "includeHistory": "该包包含历史",
+        "mappingLegend": "项目映射",
+        "mappingHint": "包中每个源项目都必须映射到本工作区的某个项目或“不归属项目”。不含项目的包无需映射。",
+        "sourceProject": "源项目 ID",
+        "targetProject": "目标",
+        "unprojected": "不归属项目",
+        "removeMapping": "移除",
+        "addMapping": "添加项目映射",
+        "mappingInvalid": "每个源项目 ID 都必须是有效且不重复的 UUID。"
+      },
+      "packageSha256": "包 SHA-256",
+      "mappingHash": "映射哈希",
+      "preview": {
+        "running": "正在执行服务器预览…",
+        "packageId": "包 ID",
+        "objectMapping": "将导入的对象",
+        "estimated": "预计变化",
+        "kind": {
+          "objects": "{n} 个对象",
+          "documents": "{n} 个文档",
+          "relations": "{n} 个关系"
+        },
+        "expiresIn": "预览剩余有效期",
+        "expired": "已过期",
+        "conflicts": "冲突",
+        "warnings": "警告",
+        "none": "无",
+        "rerun": "重新预览"
+      },
+      "confirm": {
+        "copy": "复制哈希",
+        "copied": "哈希已复制",
+        "summary": "将在本工作区创建 {objects} 个对象（冲突策略：{policy}）。",
+        "acknowledge": "我已核对该包哈希与我要导入的包一致",
+        "expired": "预览已过期，请返回并重新预览。",
+        "expiresIn": "预览剩余有效期 {time}",
+        "commit": "导入",
+        "committing": "导入中…"
+      },
+      "blockingTitle": "该包无法导入",
+      "back": "上一步",
+      "next": "下一步",
+      "runPreview": "运行预览",
+      "live": {
+        "step": "第 {n} 步，共 {total} 步：{name}",
+        "uploading": "上传中…",
+        "uploaded": "上传完成。",
+        "cancelled": "上传已取消。",
+        "previewing": "正在执行服务器预览…",
+        "committed": "导入已提交。"
+      },
+      "error": {
+        "previewRejected": "服务器拒绝了预览。请确认“包含历史”与包一致，并且每个源项目都已映射。",
+        "conflict": "这些对象已导入过本工作区。请选择“复用之前的导入”，或导入其他包。",
+        "commitConflict": "该导入已与其预览不一致，请重新预览。",
+        "pending": "导入仍在进行中。"
+      },
+      "report": {
+        "title": "导入报告",
+        "back": "返回导出与导入",
+        "loading": "正在加载报告…",
+        "pending": "导入仍在进行中，本页会自动更新。",
+        "notFoundTitle": "未找到该导入",
+        "notFound": "该导入不存在，或你无权查看。",
+        "ready": "导入报告已加载。",
+        "statusLabel": "状态",
+        "status": {
+          "completed": "已完成",
+          "failed": "失败",
+          "unknown": "未知状态（{status}）"
+        },
+        "conflictPolicy": "冲突策略",
+        "startedAt": "开始时间",
+        "finishedAt": "结束时间",
+        "actor": "导入人",
+        "auditEvent": "审计事件",
+        "countsHeading": "计数",
+        "count": {
+          "planned": "计划",
+          "created": "新建",
+          "reused": "复用",
+          "detached": "断开",
+          "failed": "失败"
+        },
+        "objectMappingHeading": "对象映射",
+        "sourceObject": "源对象",
+        "targetObject": "导入后的对象",
+        "detachedHeading": "已断开的引用"
       }
     }
   }
