@@ -4,7 +4,7 @@
  * The API binds every bot credential to exactly one surface when it is created
  * (`workspace_bots.transport_surface`) and refuses it on any other: a token created for `rest`
  * gets 401 through the MCP server and through the CLI. The list mirrors the server's own
- * allow-list in `apps/api/src/routes/bot.rs` (`normalize_transport_surface`), in the same order;
+ * allow-list `EventSurface::BOT_CREDENTIAL_SURFACES` (`apps/api/src/flow/event_origin.rs`), in the same order;
  * `tests/bot-transport-surfaces.test.ts` fails when the two drift apart.
  *
  * Every surface has a label and a one-line description under `members.surface.<surface>` in
