@@ -29,6 +29,7 @@ import {
 	flowApi,
 	type AcceptedChange,
 	type CollabTicket,
+	type CompactDocumentInput,
 	type CreateFlowObjectInput,
 	type CreateTicketInput,
 	type ExecuteFlowCommandInput,
@@ -38,8 +39,13 @@ import {
 	type FlowHistoryResponse,
 	type FlowNavigatorResponse,
 	type FlowObjectListResponse,
+	type FlowOperationReceipt,
+	type FlowReplayResponse,
 	type ListFlowObjectsQuery,
-	type SetFlowFeatureInput
+	type RebuildProjectionInput,
+	type ReplayDeliveriesInput,
+	type SetFlowFeatureInput,
+	type VerifyDocumentInput
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
 import type { FlowError } from './types';
@@ -144,6 +150,39 @@ export class FlowCommandService {
 		input: SetFlowFeatureInput
 	): Promise<ApiResult<FlowFeatureUpdate>> {
 		return flowApi.setFeatureFlags(workspaceId, input);
+	}
+
+	// v0.8 admin maintenance writes (`surface-coverage-v1.md`: verify / compact / rebuild /
+	// replay are `adapter:CommandService` consumers). Same rule as `setFlowFeature`: the key comes
+	// from the caller's intent (`lib/flow/operations-service.ts`), and the raw `ApiResult` is
+	// returned so the caller can branch on `error_code`.
+
+	async verifyDocument(
+		documentId: string,
+		input: VerifyDocumentInput
+	): Promise<ApiResult<FlowOperationReceipt>> {
+		return flowApi.verifyDocument(documentId, input);
+	}
+
+	async compactDocument(
+		documentId: string,
+		input: CompactDocumentInput
+	): Promise<ApiResult<FlowOperationReceipt>> {
+		return flowApi.compactDocument(documentId, input);
+	}
+
+	async rebuildProjection(
+		objectId: string,
+		input: RebuildProjectionInput
+	): Promise<ApiResult<FlowOperationReceipt>> {
+		return flowApi.rebuildProjection(objectId, input);
+	}
+
+	async replayDeliveries(
+		workspaceId: string,
+		input: ReplayDeliveriesInput
+	): Promise<ApiResult<FlowReplayResponse>> {
+		return flowApi.replayDeliveries(workspaceId, input);
 	}
 }
 

@@ -1,7 +1,7 @@
 {
 	"name": "frontend",
 	"private": true,
-	"version": "0.2.401",
+	"version": "0.2.402",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
@@ -30,6 +30,7 @@
 		"test:flow-settings": "bun tests/flow-settings.test.ts",
 		"test:flow-package-wizard": "bun tests/flow-package-wizard.test.ts",
 		"test:flow-package-export": "bun tests/flow-package-export.test.ts",
+		"test:flow-operations": "bun tests/flow-operations.test.ts",
 		"smoke:restaurant-ordering": "node scripts/smoke-restaurant-ordering.mjs",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write ."

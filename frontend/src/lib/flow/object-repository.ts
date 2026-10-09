@@ -14,7 +14,16 @@
 // chunk out of every route that isn't Flow.
 
 import { writable, type Readable } from 'svelte/store';
-import { flowApi, type FlowBootstrap, type FlowObjectView } from '$lib/api/flow';
+import {
+	flowApi,
+	type FlowAdminHealth,
+	type FlowAdminIntegrity,
+	type FlowAdminLag,
+	type FlowBootstrap,
+	type FlowObjectView,
+	type FlowProjectionLag
+} from '$lib/api/flow';
+import type { ApiResult } from '$lib/api/client';
 import { FlowCommandService } from './command-service';
 import { LoroObjectSession, type AcceptedNotice, type SnapshotPayload } from './object-session';
 import { LiveProjectionStore } from './projection-store';
@@ -298,6 +307,32 @@ export class FlowObjectRepository {
 			entry.doc.import(fromBase64(update.bytes));
 		}
 		entry.projection.applyEngineDiff({ documentId: entry.handle.documentId } satisfies EngineDiff, bootstrap.head_seq);
+	}
+
+	// v0.8 workspace operations reads (`surface-coverage-v1.md`: admin health / lag / integrity
+	// dashboards and the projection-lag badge are `adapter:ObjectRepository` consumers). They
+	// return the raw `ApiResult` so the operations panel can branch on `error_code` itself.
+
+	getAdminHealth(workspaceId: string): Promise<ApiResult<FlowAdminHealth>> {
+		return flowApi.getAdminHealth(workspaceId);
+	}
+
+	getAdminLag(workspaceId: string): Promise<ApiResult<FlowAdminLag>> {
+		return flowApi.getAdminLag(workspaceId);
+	}
+
+	getAdminIntegrity(
+		workspaceId: string,
+		query: { scope: 'summary' | 'documents'; limit?: number }
+	): Promise<ApiResult<FlowAdminIntegrity>> {
+		return flowApi.getAdminIntegrity(workspaceId, query);
+	}
+
+	getProjectionLag(
+		workspaceId: string,
+		query: { cursor?: string; limit?: number } = {}
+	): Promise<ApiResult<FlowProjectionLag>> {
+		return flowApi.getProjectionLag(workspaceId, query);
 	}
 }
 

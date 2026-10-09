@@ -281,6 +281,151 @@ export interface FlowPackageImportReport {
 	audit_event_id: string;
 }
 
+/** `GET /admin/workspaces/{workspace_id}/flow/health` (`rest-api-v1.md` v0.8 table;
+ * `apps/api/src/flow/operations.rs::workspace_health`). Ages are seconds (`null` when nothing is
+ * pending/failed). `delivery_cancelled` is a normal cancellation (`subscriber_gone`) and is NOT
+ * part of `dead_letter`. The server emits `status` as `healthy` or `degraded`. */
+export interface FlowAdminHealth {
+	status: string;
+	connections: number;
+	accept_rate: number;
+	reject_rate: number;
+	queue_depth: number;
+	oldest_job_age: number | null;
+	storage_bytes: number;
+	dead_letter: {
+		dispatch_failed: number;
+		delivery_failed: number;
+		oldest_failed_age: number | null;
+	};
+	delivery_cancelled: number;
+}
+
+export interface FlowAdminLagGroup {
+	max: number;
+	p95: number;
+	/** Always `[]` at this baseline (`operations.rs::workspace_lag`); the per-object rows come
+	 * from `GET .../flow/projection-lag` instead. */
+	items: unknown[];
+}
+
+/** `GET /admin/workspaces/{workspace_id}/flow/lag`. The server takes no `cursor`/`limit` at this
+ * baseline and always returns `next_cursor: null`. */
+export interface FlowAdminLag {
+	projection: FlowAdminLagGroup;
+	search: FlowAdminLagGroup;
+	fanout: FlowAdminLagGroup;
+	next_cursor?: string | null;
+}
+
+/** One `documents[]` row of `GET .../flow/integrity?scope=documents`
+ * (`apps/api/src/flow/collab/integrity.rs::DocumentFingerprint`). Documents whose fingerprint
+ * fails are only counted in `counts.failed`; they are not listed. */
+export interface FlowDocumentFingerprint {
+	workspace_id: string;
+	object_id: string;
+	document_id: string;
+	head_seq: number;
+	head_frontier: string;
+	semantic_hash: string;
+	projection_seq: number;
+}
+
+export interface FlowAdminIntegrity {
+	status: string;
+	checked_at: string;
+	counts: { checked: number; healthy: number; failed: number };
+	documents?: FlowDocumentFingerprint[] | null;
+}
+
+/** `OperationReceipt` as the server emits it (`apps/api/src/flow/operations.rs::OperationReceipt`).
+ * This differs from `rest-api-v1.md`'s public-type sketch (`mode`/`scope`/`changes`/`warnings`/
+ * `started_at`/`audit_event_id`): the wire carries `dry_run` and an operation-specific `result`. */
+export interface FlowOperationReceipt {
+	operation_id: string;
+	operation: string;
+	status: string;
+	dry_run: boolean;
+	workspace_id: string;
+	object_id: string;
+	document_id: string;
+	expected_head_seq: number;
+	result: Record<string, unknown>;
+}
+
+export interface VerifyDocumentInput {
+	dry_run: true;
+	deep: boolean;
+	expected_head_seq?: number;
+	idempotency_key: string;
+}
+
+export interface CompactDocumentInput {
+	dry_run: boolean;
+	expected_head_seq: number;
+	retain_after_seq?: number;
+	confirm_document_id?: string;
+	idempotency_key: string;
+}
+
+export interface RebuildProjectionInput {
+	dry_run: boolean;
+	expected_head_seq: number;
+	confirm_object_id?: string;
+	idempotency_key: string;
+}
+
+export type FlowReplayMode = 'rebuild' | 'requeue_failed';
+
+/** `POST /admin/workspaces/{workspace_id}/flow/deliveries/replay`. The server requires
+ * `confirm: true` on every request, dry-run included (`routes/flow.rs::post_flow_delivery_replay`). */
+export interface ReplayDeliveriesInput {
+	mode: FlowReplayMode;
+	event_type?: string;
+	subscriber_kind?: string;
+	subscriber_id?: string;
+	from: string;
+	to: string;
+	dry_run: boolean;
+	confirm: true;
+	idempotency_key: string;
+}
+
+export interface FlowReplayWindow {
+	from: string;
+	to: string;
+}
+
+/** `ReplayResult` is untagged on the wire: the mode is only recoverable from the request. */
+export type FlowReplayResponse =
+	| {
+			replayed: number;
+			skipped_already_delivered: number;
+			rebuilt_delivery_ids: string[];
+			window: FlowReplayWindow;
+	  }
+	| {
+			requeued: number;
+			skipped_not_failed: number;
+			requeued_delivery_ids: string[];
+			window: FlowReplayWindow;
+	  };
+
+/** `GET /workspaces/{workspace_id}/flow/projection-lag` (`apps/api/src/flow/model.rs`). */
+export interface FlowProjectionLagItem {
+	object_id: string;
+	head_seq: number;
+	projection_seq: number;
+	lag: number;
+}
+
+export interface FlowProjectionLag {
+	max_lag: number;
+	p95_lag: number;
+	items: FlowProjectionLagItem[];
+	next_cursor?: string;
+}
+
 /** v0.4 command types (`rest-api-v1.md`'s `POST .../commands` row). */
 export type FlowCommandType =
 	| 'set_title'
@@ -600,6 +745,79 @@ export const flowApi = {
 	): Promise<ApiResult<FlowPackageImportReport>> {
 		return apiClient.get<FlowPackageImportReport>(
 			`/api/v1/workspaces/${workspaceId}/flow/imports/${importId}`
+		);
+	},
+
+	getProjectionLag(
+		workspaceId: string,
+		query: { project_id?: string; cursor?: string; limit?: number } = {}
+	): Promise<ApiResult<FlowProjectionLag>> {
+		const qs = buildQuery({
+			project_id: query.project_id,
+			cursor: query.cursor,
+			limit: query.limit
+		});
+		return apiClient.get<FlowProjectionLag>(
+			`/api/v1/workspaces/${workspaceId}/flow/projection-lag${qs}`
+		);
+	},
+
+	getAdminHealth(workspaceId: string): Promise<ApiResult<FlowAdminHealth>> {
+		return apiClient.get<FlowAdminHealth>(`/api/v1/admin/workspaces/${workspaceId}/flow/health`);
+	},
+
+	getAdminLag(workspaceId: string): Promise<ApiResult<FlowAdminLag>> {
+		return apiClient.get<FlowAdminLag>(`/api/v1/admin/workspaces/${workspaceId}/flow/lag`);
+	},
+
+	/** `cursor` is rejected server-side at this baseline (400), so none is sent. */
+	getAdminIntegrity(
+		workspaceId: string,
+		query: { scope: 'summary' | 'documents'; limit?: number }
+	): Promise<ApiResult<FlowAdminIntegrity>> {
+		const qs = buildQuery({ scope: query.scope, limit: query.limit });
+		return apiClient.get<FlowAdminIntegrity>(
+			`/api/v1/admin/workspaces/${workspaceId}/flow/integrity${qs}`
+		);
+	},
+
+	verifyDocument(
+		documentId: string,
+		input: VerifyDocumentInput
+	): Promise<ApiResult<FlowOperationReceipt>> {
+		return apiClient.post<FlowOperationReceipt>(
+			`/api/v1/admin/flow/documents/${documentId}/verify`,
+			input
+		);
+	},
+
+	compactDocument(
+		documentId: string,
+		input: CompactDocumentInput
+	): Promise<ApiResult<FlowOperationReceipt>> {
+		return apiClient.post<FlowOperationReceipt>(
+			`/api/v1/admin/flow/documents/${documentId}/compact`,
+			input
+		);
+	},
+
+	rebuildProjection(
+		objectId: string,
+		input: RebuildProjectionInput
+	): Promise<ApiResult<FlowOperationReceipt>> {
+		return apiClient.post<FlowOperationReceipt>(
+			`/api/v1/admin/flow/objects/${objectId}/rebuild-projection`,
+			input
+		);
+	},
+
+	replayDeliveries(
+		workspaceId: string,
+		input: ReplayDeliveriesInput
+	): Promise<ApiResult<FlowReplayResponse>> {
+		return apiClient.post<FlowReplayResponse>(
+			`/api/v1/admin/workspaces/${workspaceId}/flow/deliveries/replay`,
+			input
 		);
 	},
 

@@ -2333,7 +2333,8 @@
     "flow": "Flow",
     "flowSettings": "Sylvode - Flow 设置",
     "flowPackage": "Sylvode - Flow 导出与导入",
-    "flowImportReport": "Sylvode - Flow 导入报告"
+    "flowImportReport": "Sylvode - Flow 导入报告",
+    "flowOperations": "Sylvode - Flow 运维"
   },
   "flow": {
     "nav": {
@@ -2410,7 +2411,8 @@
         "contention": "正在重试，请稍候"
       },
       "checksum_mismatch": "包完整性校验失败，请重新获取该包后再上传",
-      "unsupported_format": "不支持该包格式或引擎版本，请使用兼容版本重新导出"
+      "unsupported_format": "不支持该包格式或引擎版本，请使用兼容版本重新导出",
+      "server_rejected": "服务器已永久拒绝此请求，重复提交也不会成功。"
     },
     "history": {
       "title": "历史记录",
@@ -2518,6 +2520,11 @@
         "heading": "导出与导入",
         "description": "把本工作区导出为包，或把包导入本工作区。",
         "open": "打开导出与导入"
+      },
+      "operations": {
+        "heading": "运维",
+        "description": "查看本工作区 Flow 数据的健康、延迟与完整性，并执行维护操作。Flow 关闭时也可使用。",
+        "open": "打开运维面板"
       }
     },
     "package": {
@@ -2707,6 +2714,211 @@
         "sourceObject": "源对象",
         "targetObject": "导入后的对象",
         "detachedHeading": "已断开的引用"
+      }
+    },
+    "operations": {
+      "title": "Flow 运维",
+      "subtitle": "本工作区的健康、延迟、完整性与维护。所有变更都先以演练方式预览。",
+      "loading": "加载中…",
+      "forbiddenTitle": "仅工作区管理员可用",
+      "backToSettings": "返回 Flow 设置",
+      "refresh": "刷新",
+      "retry": "重试",
+      "none": "无",
+      "seconds": "{n} 秒",
+      "bytes": "{n} 字节",
+      "perSecond": "{n} 次/秒",
+      "status": {
+        "unknown": "未知状态"
+      },
+      "health": {
+        "heading": "健康",
+        "status": {
+          "healthy": "正常",
+          "degraded": "降级"
+        },
+        "degradedNotice": "同步处于降级状态：部分事件或投递失败，详见下方死信。",
+        "connections": "连接数（本 API 实例）",
+        "acceptRate": "已接受的变更",
+        "rejectRate": "被拒绝的命令",
+        "queueDepth": "排队中的维护任务",
+        "oldestJobAge": "最早排队任务时长",
+        "storageBytes": "文档存储",
+        "deadLetter": {
+          "heading": "死信",
+          "total": "失败合计",
+          "dispatchFailed": "分发失败",
+          "deliveryFailed": "投递失败",
+          "oldestFailedAge": "最早失败时长",
+          "clear": "当前没有死信。"
+        },
+        "cancelled": {
+          "heading": "已取消的投递",
+          "note": "正常取消（订阅方已删除），不计入死信。"
+        },
+        "autoRefresh": "每 15 秒自动刷新。",
+        "pause": "暂停自动刷新",
+        "resume": "恢复自动刷新",
+        "paused": "自动刷新已暂停。",
+        "stale": "刷新失败，正在显示 {time} 的上一次成功数据。",
+        "updatedAt": "更新于 {time}。",
+        "loadFailed": "无法加载健康数据。"
+      },
+      "lag": {
+        "heading": "延迟",
+        "projection": "投影",
+        "search": "搜索索引",
+        "fanout": "扇出",
+        "max": "最大值",
+        "p95": "p95 分位",
+        "badge": "投影延迟 {n}",
+        "badgeOk": "投影已是最新",
+        "itemsHeading": "各对象的投影延迟",
+        "objectId": "对象",
+        "headSeq": "Head 序号",
+        "projectionSeq": "投影序号",
+        "lagValue": "延迟",
+        "empty": "没有可显示的对象。",
+        "previous": "上一页",
+        "next": "下一页",
+        "page": "第 {n} 页",
+        "loadFailed": "无法加载延迟数据。"
+      },
+      "integrity": {
+        "heading": "完整性",
+        "status": {
+          "healthy": "正常",
+          "integrity_error": "发现完整性错误"
+        },
+        "checked": "已检查",
+        "healthy": "正常",
+        "failed": "失败",
+        "checkedAt": "检查时间 {time}。",
+        "limit": "检查文档数",
+        "limitNote": "显示前 {n} 个文档。检查失败的文档只计数，不列出。",
+        "documentId": "文档",
+        "objectId": "对象",
+        "headSeq": "Head 序号",
+        "projectionSeq": "投影序号",
+        "semanticHash": "语义哈希",
+        "actions": "操作",
+        "verify": "校验",
+        "compact": "压缩",
+        "rebuild": "重建投影",
+        "empty": "本工作区没有文档。",
+        "loadFailed": "无法加载完整性数据。",
+        "manual": {
+          "heading": "按 ID 操作",
+          "description": "输入文档 ID 以校验或压缩该文档，或输入对象 ID 以重建其投影。",
+          "documentId": "文档 ID",
+          "objectId": "对象 ID",
+          "invalid": "请输入有效的 ID。"
+        }
+      },
+      "drawer": {
+        "title": {
+          "verify": "校验文档",
+          "compact": "压缩文档",
+          "rebuild": "重建投影"
+        },
+        "targetDocument": "目标文档",
+        "targetObject": "目标对象",
+        "deep": "深度检查",
+        "expectedHead": "期望 Head 序号",
+        "expectedHeadOptional": "可选。留空则检查当前 Head。",
+        "expectedHeadRequired": "必填。若文档已不在此 Head，服务器会拒绝操作。",
+        "invalidHead": "请输入整数。",
+        "runVerify": "执行校验",
+        "dryRun": "执行演练",
+        "running": "处理中…",
+        "previewHeading": "演练收据",
+        "previewNote": "仅为预览，未做任何更改。",
+        "confirmLabelDocument": "输入文档 ID 以确认",
+        "confirmLabelObject": "输入对象 ID 以确认",
+        "confirmMismatch": "该 ID 与目标不一致。",
+        "execute": {
+          "compact": "立即压缩",
+          "rebuild": "立即重建"
+        },
+        "executedHeading": "执行收据",
+        "executedNote": "已在服务器上执行。",
+        "permanent": "此操作不可重试，请关闭后检查目标。"
+      },
+      "receipt": {
+        "operationId": "操作 ID",
+        "operation": "操作",
+        "status": "状态",
+        "mode": "模式",
+        "modeDryRun": "演练（未更改）",
+        "modeExecute": "已执行",
+        "expectedHead": "期望 Head 序号",
+        "field": {
+          "deep": "深度检查",
+          "head_seq": "Head 序号",
+          "head_frontier": "Head 前沿",
+          "snapshot_seq": "快照序号",
+          "tail_updates": "尾部更新数",
+          "tail_bytes": "尾部字节数",
+          "would_compact": "是否会压缩",
+          "semantic_hash": "语义哈希",
+          "snapshot_checksum": "快照校验和",
+          "deleted_updates": "已删除更新数",
+          "lagging_clients": "落后的客户端",
+          "forced_resync_clients": "被强制重新同步的客户端",
+          "before_hash": "重建前投影哈希",
+          "after_hash": "重建后投影哈希",
+          "changed": "是否变化",
+          "executed": "是否已执行",
+          "projection_seq": "投影序号",
+          "workspace_id": "工作区",
+          "object_id": "对象",
+          "document_id": "文档"
+        }
+      },
+      "replay": {
+        "heading": "投递重放",
+        "description": "重建缺失的 Webhook 投递，或将失败的投递重新入队。时间窗起点必须在 {days} 天以内。",
+        "modeLabel": "模式",
+        "mode": {
+          "rebuild": "重建缺失投递",
+          "requeue_failed": "重新入队失败投递"
+        },
+        "eventType": "事件类型（可选）",
+        "subscriberKind": "订阅方类型",
+        "subscriberAny": "全部",
+        "subscriberWebhook": "Webhook 订阅",
+        "subscriberId": "订阅方 ID（可选）",
+        "from": "开始（含）",
+        "to": "结束（不含）",
+        "dryRun": "执行演练",
+        "previewHeading": "演练摘要",
+        "previewNote": "仅为预览，未重放任何投递。",
+        "acknowledge": "我已核对此摘要，确认对这个时间窗执行重放。",
+        "execute": "执行重放",
+        "executedHeading": "重放结果",
+        "executedNote": "已在服务器上执行。",
+        "replayed": "已重建的投递",
+        "skippedAlreadyDelivered": "已跳过（已投递）",
+        "requeued": "已重新入队的投递",
+        "skippedNotFailed": "已跳过（未失败）",
+        "deliveryIds": "投递 ID",
+        "window": "时间窗",
+        "windowValue": "{from} 至 {to}",
+        "error": {
+          "invalidDate": "请填写开始和结束时间。",
+          "empty": "开始时间必须早于结束时间。",
+          "future": "结束时间不能晚于当前时间。",
+          "tooOld": "时间窗起点必须在 {days} 天以内。",
+          "invalidSubscriber": "订阅方 ID 不是有效的 ID。",
+          "malformed": "服务器返回的结果与所选模式不符，未将其显示为已重放。"
+        }
+      },
+      "error": {
+        "notFound": "未找到该 ID 对应的文档或对象。",
+        "conflict": "文档已变化或请求已不匹配，请重新执行演练。",
+        "rejected": "服务器拒绝了此请求。",
+        "unavailable": "服务暂时不可用，请重试。",
+        "unexpectedResponse": "服务器返回了意外的响应，未将其显示为已保存。"
       }
     }
   }
