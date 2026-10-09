@@ -11,6 +11,7 @@
 	import { t } from 'svelte-i18n';
 	import { projectOptionsStore } from '$lib/stores/project-options';
 	import { workspacesApi } from '$lib/api/workspaces';
+	import { flowFeatureStore } from '$lib/stores/flow-feature';
 
 	let { children } = $props();
 
@@ -62,6 +63,7 @@
 		if (pathname === '/admin/users') return $t('pageTitle.adminUsers');
 		if (pathname === '/admin/settings') return $t('pageTitle.adminSettings');
 		if (/^\/workspace\/[^/]+\/settings$/.test(pathname)) return $t('pageTitle.workspaceSettings');
+		if (/^\/workspace\/[^/]+\/settings\/flow$/.test(pathname)) return $t('pageTitle.flowSettings');
 		if (/^\/workspace\/[^/]+\/members$/.test(pathname)) return $t('pageTitle.workspaceMembers');
 		if (/^\/workspace\/[^/]+\/webhooks$/.test(pathname)) return $t('pageTitle.workspaceWebhooks');
 		if (/^\/workspace\/[^/]+\/connections$/.test(pathname)) return $t('pageTitle.workspaceConnections');
@@ -83,21 +85,32 @@
 
 	const workspaceNavLinks = $derived.by(() => {
 		if (!currentWorkspaceId) {
-			return [] as Array<{ href: string; label: string }>;
+			return [] as Array<{ href: string; label: string; exact?: boolean }>;
 		}
 
-		const links = [
+		const links: Array<{ href: string; label: string; exact?: boolean }> = [
 			{ href: `/workspace/${currentWorkspaceId}/projects`, label: $t('nav.projectList') }
 		];
+		// Rendered only while the workspace's `flow_enabled` is known to be true (fail closed).
+		if ($flowFeatureStore[currentWorkspaceId] === true) {
+			links.push({ href: `/workspace/${currentWorkspaceId}/flow`, label: $t('nav.flow') });
+		}
 		if (isWorkspaceAdmin) {
 			links.push(
 				{ href: `/workspace/${currentWorkspaceId}/members`, label: $t('nav.members') },
 				{ href: `/workspace/${currentWorkspaceId}/webhooks`, label: $t('nav.webhook') },
 				{ href: `/workspace/${currentWorkspaceId}/connections`, label: $t('nav.connections') },
-				{ href: `/workspace/${currentWorkspaceId}/settings`, label: $t('nav.workspaceSettings') }
+				{ href: `/workspace/${currentWorkspaceId}/settings`, label: $t('nav.workspaceSettings'), exact: true },
+				{ href: `/workspace/${currentWorkspaceId}/settings/flow`, label: $t('nav.flowSettings') }
 			);
 		}
 		return links;
+	});
+
+	// One flag read per workspace change; any non-success result reads as disabled.
+	$effect(() => {
+		const workspaceId = currentWorkspaceId;
+		if (workspaceId) void flowFeatureStore.refresh(workspaceId);
 	});
 
 	onMount(() => {
@@ -374,7 +387,7 @@
 							{#each workspaceNavLinks as link}
 								<a
 									href={link.href}
-									class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(link.href)
+									class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(link.href, link.exact)
 										? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
 										: 'text-slate-700 dark:text-slate-300'}"
 								>

@@ -166,6 +166,10 @@ OpenPR name keeps working; see **Deprecated**.
   - Administrative maintenance: document compaction and verification, projection rebuilds,
     quarantine repair, delivery replay, and workspace health, integrity and lag reports.
   - Web UI: a Flow navigator and an object canvas under `/workspace/{workspaceId}/flow`.
+  - Web UI: a workspace Flow settings page under `/workspace/{workspaceId}/settings/flow` for
+    workspace owners and admins, which shows the current flag, default member level and
+    authorization epoch, and turns Flow on or off or changes the default member level after an
+    explicit confirmation; the sidebar shows the Flow entry only while Flow is enabled.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

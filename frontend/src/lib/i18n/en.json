@@ -63,7 +63,9 @@
     "trustAppeals": "Trust Appeals",
     "governanceConfig": "Governance Config",
     "governanceAuditLogs": "Governance Audit Logs",
-    "governanceCenter": "Governance Center"
+    "governanceCenter": "Governance Center",
+    "flow": "Flow",
+    "flowSettings": "Flow settings"
   },
   "workspace": {
     "welcome": "Welcome back",
@@ -2328,7 +2330,8 @@
     "aiLearning": "Sylvode - AI Learning",
     "trustAppeals": "Sylvode - Trust Appeals",
     "login": "Sylvode - Login",
-    "flow": "Flow"
+    "flow": "Flow",
+    "flowSettings": "Sylvode - Flow Settings"
   },
   "flow": {
     "nav": {
@@ -2441,6 +2444,72 @@
       "reload": "Reload from server",
       "reloaded": "Reloaded the latest server content",
       "dismiss": "Dismiss"
+    },
+    "settings": {
+      "title": "Sylvode Flow settings",
+      "subtitle": "Workspace-wide Flow switch and default member access level.",
+      "loading": "Loading Flow settings…",
+      "status": {
+        "heading": "Current state",
+        "flowEnabled": "Flow",
+        "on": "Enabled",
+        "off": "Disabled",
+        "defaultMemberLevel": "Default member level",
+        "authzEpoch": "Authorization epoch",
+        "authzEpochHint": "Read-only. Advances whenever access-affecting settings change.",
+        "updatedAt": "Last updated",
+        "updatedBy": "Updated by",
+        "never": "Never"
+      },
+      "toggle": {
+        "heading": "Flow availability",
+        "descriptionOn": "Flow is available to members of this workspace.",
+        "descriptionOff": "Flow is turned off. Its navigation entry is hidden and its pages are unavailable.",
+        "enable": "Enable Flow",
+        "disable": "Disable Flow"
+      },
+      "disableConfirm": {
+        "title": "Disable Flow for this workspace?",
+        "intro": "Disabling Flow takes effect for every member immediately:",
+        "consequenceNav": "The Flow entry disappears from navigation.",
+        "consequenceSessions": "Active collaboration connections are closed.",
+        "consequenceDirectUrl": "Direct links to Flow pages stop working.",
+        "acknowledge": "I understand the consequences of disabling Flow",
+        "confirm": "Disable Flow"
+      },
+      "level": {
+        "heading": "Default member level",
+        "description": "The baseline access every workspace member gets on Flow objects unless a grant says otherwise.",
+        "label": "Default member level",
+        "apply": "Apply level",
+        "full_access": "Full access",
+        "edit": "Edit",
+        "comment": "Comment",
+        "view": "View"
+      },
+      "levelConfirm": {
+        "title": "Change the workspace-wide baseline?",
+        "body": "The default member level changes from {from} to {to} for every member of this workspace at once.",
+        "epoch": "This advances the authorization epoch and invalidates every cached permission in the workspace.",
+        "acknowledge": "I understand this changes access for the whole workspace",
+        "confirm": "Change level"
+      },
+      "saving": "Saving…",
+      "saved": "Saved. Event {eventId}",
+      "savedNoEvent": "Saved. Nothing changed, so no event was recorded.",
+      "retry": "Retry",
+      "forbiddenTitle": "Flow settings are not available",
+      "error": {
+        "loadFailed": "Flow settings could not be loaded.",
+        "unavailable": "The service is unavailable. Your change was not saved; you can retry it.",
+        "conflict": "This change conflicts with an earlier request and was not applied.",
+        "rejected": "The change was rejected and was not applied."
+      },
+      "entry": {
+        "title": "Sylvode Flow",
+        "description": "Turn Flow on or off for this workspace and set the default member level.",
+        "open": "Open Flow settings"
+      }
     }
   }
 }

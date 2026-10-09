@@ -63,7 +63,9 @@
     "trustAppeals": "信任申诉",
     "governanceConfig": "治理配置",
     "governanceAuditLogs": "治理审计日志",
-    "governanceCenter": "治理中心"
+    "governanceCenter": "治理中心",
+    "flow": "Flow",
+    "flowSettings": "Flow 设置"
   },
   "workspace": {
     "welcome": "欢迎回来",
@@ -2328,7 +2330,8 @@
     "aiLearning": "Sylvode - AI 学习轨迹",
     "trustAppeals": "Sylvode - 积分申诉",
     "login": "Sylvode - 登录",
-    "flow": "Flow"
+    "flow": "Flow",
+    "flowSettings": "Sylvode - Flow 设置"
   },
   "flow": {
     "nav": {
@@ -2441,6 +2444,72 @@
       "reload": "从服务器重新加载",
       "reloaded": "已重新加载最新的服务器内容",
       "dismiss": "关闭"
+    },
+    "settings": {
+      "title": "Sylvode Flow 设置",
+      "subtitle": "工作区级 Flow 开关与默认成员档位。",
+      "loading": "正在加载 Flow 设置…",
+      "status": {
+        "heading": "当前状态",
+        "flowEnabled": "Flow 状态",
+        "on": "已启用",
+        "off": "已禁用",
+        "defaultMemberLevel": "默认成员档位",
+        "authzEpoch": "授权纪元",
+        "authzEpochHint": "只读。影响权限的设置变更时自动推进。",
+        "updatedAt": "最近更新",
+        "updatedBy": "更新人",
+        "never": "从未"
+      },
+      "toggle": {
+        "heading": "Flow 可用性",
+        "descriptionOn": "本工作区成员可以使用 Flow。",
+        "descriptionOff": "Flow 已关闭：导航入口隐藏，页面不可访问。",
+        "enable": "启用 Flow",
+        "disable": "禁用 Flow"
+      },
+      "disableConfirm": {
+        "title": "确定为本工作区禁用 Flow？",
+        "intro": "禁用会立即对所有成员生效：",
+        "consequenceNav": "导航中的 Flow 入口消失。",
+        "consequenceSessions": "所有活动的协作连接会被关闭。",
+        "consequenceDirectUrl": "Flow 页面的直接链接将不可用。",
+        "acknowledge": "我已了解禁用 Flow 的后果",
+        "confirm": "禁用 Flow"
+      },
+      "level": {
+        "heading": "默认成员档位",
+        "description": "没有单独授权时，工作区成员在 Flow 对象上获得的基线权限。",
+        "label": "默认成员档位",
+        "apply": "应用档位",
+        "full_access": "完全访问",
+        "edit": "编辑",
+        "comment": "评论",
+        "view": "查看"
+      },
+      "levelConfirm": {
+        "title": "确定变更全工作区基线？",
+        "body": "默认成员档位将从 {from} 改为 {to}，一次性作用于本工作区全部成员。",
+        "epoch": "此操作会推进授权纪元，并使整个工作区的有效权限缓存失效。",
+        "acknowledge": "我已了解这会改变整个工作区的访问权限",
+        "confirm": "变更档位"
+      },
+      "saving": "正在保存…",
+      "saved": "已保存，事件 {eventId}",
+      "savedNoEvent": "已保存。设置未变化，未记录事件。",
+      "retry": "重试",
+      "forbiddenTitle": "无法查看 Flow 设置",
+      "error": {
+        "loadFailed": "无法加载 Flow 设置。",
+        "unavailable": "服务暂不可用，变更未保存，可以重试。",
+        "conflict": "该变更与之前的请求冲突，未生效。",
+        "rejected": "变更被拒绝，未生效。"
+      },
+      "entry": {
+        "title": "Sylvode Flow 协作",
+        "description": "为本工作区开启或关闭 Flow，并设置默认成员档位。",
+        "open": "打开 Flow 设置"
+      }
     }
   }
 }

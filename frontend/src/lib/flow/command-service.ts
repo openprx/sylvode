@@ -33,10 +33,13 @@ import {
 	type CreateTicketInput,
 	type ExecuteFlowCommandInput,
 	type FlowDiffResponse,
+	type FlowFeatureFlags,
+	type FlowFeatureUpdate,
 	type FlowHistoryResponse,
 	type FlowNavigatorResponse,
 	type FlowObjectListResponse,
-	type ListFlowObjectsQuery
+	type ListFlowObjectsQuery,
+	type SetFlowFeatureInput
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
 import type { FlowError } from './types';
@@ -121,6 +124,26 @@ export class FlowCommandService {
 		query: { before_seq?: number; limit?: number } = {}
 	): Promise<ApiResult<FlowHistoryResponse>> {
 		return flowApi.getHistory(objectId, query);
+	}
+
+	/** Workspace Flow settings read (`GET .../features/flow`). Returns the raw `ApiResult` so the
+	 * route guard, the sidebar store and the settings page can each fail closed on their own
+	 * terms. */
+	async getFlowFeature(workspaceId: string): Promise<ApiResult<FlowFeatureFlags>> {
+		return flowApi.getFeatureFlags(workspaceId);
+	}
+
+	/**
+	 * Workspace Flow settings write (`PUT .../features/flow`). The idempotency key is supplied by
+	 * the caller's intent (`FlowSettingsController`), never minted here: a retry of the same
+	 * intent must resend the same key, which a per-call `newIdempotencyKey()` would break. Returns
+	 * the raw `ApiResult` so the caller can branch on `error_code`.
+	 */
+	async setFlowFeature(
+		workspaceId: string,
+		input: SetFlowFeatureInput
+	): Promise<ApiResult<FlowFeatureUpdate>> {
+		return flowApi.setFeatureFlags(workspaceId, input);
 	}
 }
 

@@ -136,12 +136,32 @@ export interface CollabDiagnostics {
 	integrity_state: string;
 }
 
+/** `flow_workspace_settings.default_member_level`'s closed set (`rest-api-v1.md` v0.4 table). */
+export const FLOW_MEMBER_LEVELS = ['full_access', 'edit', 'comment', 'view'] as const;
+export type FlowMemberLevel = (typeof FLOW_MEMBER_LEVELS)[number];
+
 export interface FlowFeatureFlags {
 	flow_enabled: boolean;
-	default_member_level: 'full_access' | 'edit' | 'comment' | 'view';
+	default_member_level: FlowMemberLevel;
+	/** Read-only. Advanced server-side by every authorization-affecting transition. */
 	authz_epoch: number;
-	updated_at: string;
+	/** `null` while the workspace has no `flow_workspace_settings` row yet. */
+	updated_at: string | null;
 	updated_by: string | null;
+}
+
+/** `PUT /workspaces/{workspace_id}/features/flow` request. Both fields are optional but the
+ * request must carry at least one of them (`rest-api-v1.md`); callers build it through
+ * `FlowSettingsController`, which refuses an empty change before any request is made. */
+export interface SetFlowFeatureInput {
+	enabled?: boolean;
+	default_member_level?: FlowMemberLevel;
+	idempotency_key: string;
+}
+
+/** `PUT` response: the `GET` shape plus `event_id` (`null` when nothing observable changed). */
+export interface FlowFeatureUpdate extends FlowFeatureFlags {
+	event_id: string | null;
 }
 
 export interface BridgePermissionState {
@@ -374,14 +394,25 @@ export const flowApi = {
 	},
 
 	/**
-	 * `GET /workspaces/{workspace_id}/features/flow` (`rest-api-v1.md` v0.4 table). Not yet routed
-	 * server-side at this repo's baseline -- callers MUST treat any non-success `ApiResult`
-	 * (including a transport-level failure from calling an unrouted path) as `flow_enabled=false`,
+	 * `GET /workspaces/{workspace_id}/features/flow` (`rest-api-v1.md` v0.4 table; routed in
+	 * `apps/api/src/main.rs`). Callers MUST treat any non-success `ApiResult` (including a
+	 * transport-level failure) as `flow_enabled=false`,
 	 * matching the fail-closed default `flow_workspace_settings.flow_enabled` already has in
 	 * `apps/api/src/flow/repository.rs::fetch_flow_enabled`.
 	 */
 	getFeatureFlags(workspaceId: string): Promise<ApiResult<FlowFeatureFlags>> {
 		return apiClient.get<FlowFeatureFlags>(`/api/v1/workspaces/${workspaceId}/features/flow`);
+	},
+
+	/** `PUT /workspaces/{workspace_id}/features/flow` -- workspace admin only. */
+	setFeatureFlags(
+		workspaceId: string,
+		input: SetFlowFeatureInput
+	): Promise<ApiResult<FlowFeatureUpdate>> {
+		return apiClient.put<FlowFeatureUpdate>(
+			`/api/v1/workspaces/${workspaceId}/features/flow`,
+			input
+		);
 	},
 
 	executeCommand(
