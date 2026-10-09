@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
+	import { resolve } from '$app/paths';
 	import type { FlowHistoryEntry, FlowObjectView } from '$lib/api/flow';
 	import { FlowCommandService } from '$lib/flow/command-service';
 	import { toast } from '$lib/stores/toast';
@@ -98,6 +99,21 @@
 			</div>
 		</dl>
 	</section>
+
+	{#if object.object_type === 'page'}
+		<section>
+			<a
+				href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]/convert', {
+					workspaceId: object.workspace_id,
+					objectId: object.id
+				})}
+				class="flex min-h-11 items-center justify-center rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+				data-testid="flow-panel-convert"
+			>
+				{$t('flow.bridge.convert.panelAction')}
+			</a>
+		</section>
+	{/if}
 
 	<section>
 		<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">{$t('flow.history.title')}</h2>

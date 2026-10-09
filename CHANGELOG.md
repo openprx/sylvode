@@ -184,6 +184,13 @@ OpenPR name keeps working; see **Deprecated**.
     dry run; runs compact and rebuild-projection as a dry-run receipt followed by an execute that
     requires the exact target id typed by the user; and replays deliveries after a dry-run
     summary and an explicit acknowledgement, refusing windows older than 30 days locally.
+  - Web UI: a conversion wizard under `/workspace/{workspaceId}/flow/{objectId}/convert`,
+    opened from the object panel's "Convert to Forms…" action on a Page, that turns the Page into
+    a Universal Forms record in four steps that cannot be skipped: source (frontier, document
+    sequence and what the conversion does to ownership), target project, form and constant field
+    values, server preview (schema version, object count, permission decision, countdown to
+    expiry), and an acknowledged commit that sends the preview's own identifiers. A stale source
+    is re-read and previewed again; an expired preview cannot be committed.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

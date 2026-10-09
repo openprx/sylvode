@@ -70,6 +70,8 @@
 			return $t('pageTitle.flowImportReport');
 		if (/^\/workspace\/[^/]+\/settings\/flow\/operations$/.test(pathname))
 			return $t('pageTitle.flowOperations');
+		if (/^\/workspace\/[^/]+\/flow\/[^/]+\/convert$/.test(pathname))
+			return $t('pageTitle.flowConvert');
 		if (/^\/workspace\/[^/]+\/members$/.test(pathname)) return $t('pageTitle.workspaceMembers');
 		if (/^\/workspace\/[^/]+\/webhooks$/.test(pathname)) return $t('pageTitle.workspaceWebhooks');
 		if (/^\/workspace\/[^/]+\/connections$/.test(pathname)) return $t('pageTitle.workspaceConnections');

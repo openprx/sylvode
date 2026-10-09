@@ -309,6 +309,13 @@ export class FlowObjectRepository {
 		entry.projection.applyEngineDiff({ documentId: entry.handle.documentId } satisfies EngineDiff, bootstrap.head_seq);
 	}
 
+	/** One object's current server view (`GET /flow/objects/{id}`) without opening a collaboration
+	 * session or an engine doc. Used by surfaces that only need the accepted head (title, type,
+	 * `document_seq`, `frontier`), e.g. the conversion wizard. Returns the raw `ApiResult`. */
+	get(objectId: string): Promise<ApiResult<FlowObjectView>> {
+		return flowApi.getObject(objectId);
+	}
+
 	// v0.8 workspace operations reads (`surface-coverage-v1.md`: admin health / lag / integrity
 	// dashboards and the projection-lag badge are `adapter:ObjectRepository` consumers). They
 	// return the raw `ApiResult` so the operations panel can branch on `error_code` itself.

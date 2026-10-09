@@ -2334,7 +2334,8 @@
     "flowSettings": "Sylvode - Flow Settings",
     "flowPackage": "Sylvode - Flow Export and Import",
     "flowImportReport": "Sylvode - Flow Import Report",
-    "flowOperations": "Sylvode - Flow Operations"
+    "flowOperations": "Sylvode - Flow Operations",
+    "flowConvert": "Sylvode - Convert to Forms"
   },
   "flow": {
     "nav": {
@@ -2919,6 +2920,143 @@
         "rejected": "The server rejected this request.",
         "unavailable": "The service is temporarily unavailable. Try again.",
         "unexpectedResponse": "The server returned an unexpected response. Nothing is shown as saved."
+      }
+    },
+    "bridge": {
+      "convert": {
+        "panelAction": "Convert to Forms…",
+        "heading": "Convert to a Forms record",
+        "description": "Create a Universal Forms record from this Page. You review a server preview before anything is created.",
+        "stepsLabel": "Conversion steps",
+        "stepOf": "Step {n} of {total}: {name}",
+        "step": {
+          "source": "Source",
+          "mapping": "Target and mapping",
+          "preview": "Preview",
+          "commit": "Confirm"
+        },
+        "unsupported": {
+          "title": "This object cannot be converted",
+          "body": "Only Flow Pages can be converted to a Forms record."
+        },
+        "notFound": {
+          "title": "Page not available",
+          "body": "This Page does not exist or you do not have access to it."
+        },
+        "source": {
+          "title": "Page",
+          "documentSeq": "Document sequence",
+          "frontier": "Source frontier"
+        },
+        "ownership": {
+          "title": "What converting does",
+          "source": "This Page stays in Flow and is not changed by the conversion.",
+          "target": "The new record belongs to Universal Forms and follows that form's permissions.",
+          "noSync": "Later changes on either side do not overwrite the other; there is no ongoing sync."
+        },
+        "mapping": {
+          "project": "Project",
+          "chooseProject": "Choose a project",
+          "noProjects": "This workspace has no projects you can use.",
+          "form": "Form",
+          "chooseForm": "Choose a form",
+          "formsFailed": "The project's forms could not be loaded.",
+          "noForms": "This project has no forms.",
+          "recordTitle": "Record title",
+          "recordTitleHint": "Defaults to the Page title. Leave it empty to use the Page title.",
+          "valuesHint": "Enter the values the new record starts with. Page content is not copied into fields.",
+          "noFields": "This form has no fields to fill.",
+          "unset": "Not set",
+          "serverFilled": "Filled in by Forms when the record is created.",
+          "unsupportedField": "This field type cannot be filled in this wizard. You can edit it in Forms after the conversion.",
+          "problem": {
+            "required": "This field is required.",
+            "unmappableRequired": "This required field cannot be filled in this wizard, so the record cannot be created from here.",
+            "invalidInteger": "Enter a whole number.",
+            "invalidDecimal": "Enter a number, for example 12.5.",
+            "outOfRange": "The value is out of range for this field.",
+            "invalidOption": "Choose one of the listed options.",
+            "invalidBoolean": "Choose Yes or No."
+          }
+        },
+        "preview": {
+          "running": "Requesting a preview from the server…",
+          "notCommitted": "This is a preview. Nothing has been created yet.",
+          "schemaVersion": "Target schema version",
+          "estimatedObjects": "Objects to create",
+          "expiresAt": "Preview expires",
+          "countdown": "{time} left",
+          "sourceFrontier": "Source frontier",
+          "permission": "Your access through the bridge",
+          "mapping": "Mapping",
+          "titleFromPage": "Page title",
+          "warnings": "Warnings",
+          "noWarnings": "No warnings.",
+          "expired": "This preview has expired. Run the preview again before converting."
+        },
+        "permission": {
+          "access": {
+            "controlled": "You can act on this form through the bridge.",
+            "readOnly": "Through the bridge you can only view this form."
+          },
+          "configuration": {
+            "explicit": "The form has an explicit permission policy for your role.",
+            "unconfigured": "The form has no permission policy for your role, so the bridge only allows viewing. A form admin must configure a policy to allow creating records."
+          },
+          "action": {
+            "formView": "View the form",
+            "recordCreate": "Create records",
+            "recordUpdate": "Update records",
+            "recordDelete": "Delete records",
+            "recordExport": "Export records"
+          },
+          "limit": {
+            "fieldRead": "Some fields are hidden from you.",
+            "fieldWrite": "Some fields are not writable for you; values for them are rejected when converting.",
+            "record": "You can only work with records you own."
+          }
+        },
+        "commit": {
+          "source": "Source Page",
+          "target": "Target form",
+          "expired": "The preview expired before it was confirmed. Go back and run the preview again.",
+          "acknowledge": "I have reviewed the preview and want to create this Forms record.",
+          "submit": "Convert",
+          "retry": "Retry conversion",
+          "committing": "Converting…"
+        },
+        "action": {
+          "back": "Back",
+          "next": "Next",
+          "runPreview": "Run preview",
+          "toCommit": "Continue to confirm",
+          "retryPreview": "Retry preview",
+          "previewAgain": "Run preview again",
+          "refreshSource": "Re-read the Page and preview again",
+          "backToPreview": "Back to preview",
+          "backToMapping": "Back to mapping",
+          "reload": "Reload"
+        },
+        "error": {
+          "policyRejected": "The conversion is not permitted with the current permissions or target schema.",
+          "notFound": "The Page or the target form is not available.",
+          "rejected": "The server rejected this request. Check the target and the values.",
+          "conflict": "The request conflicts with an earlier one. Run the preview again.",
+          "unavailable": "The server is unavailable. Try again.",
+          "sourceUnavailable": "The Page could not be loaded."
+        },
+        "value": {
+          "yes": "Yes",
+          "no": "No"
+        },
+        "live": {
+          "step": "Step {n} of {total}: {name}",
+          "previewing": "Requesting preview",
+          "previewReady": "Preview ready",
+          "refreshing": "Re-reading the Page",
+          "committing": "Converting",
+          "committed": "Conversion submitted"
+        }
       }
     }
   }

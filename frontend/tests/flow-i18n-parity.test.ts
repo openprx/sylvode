@@ -61,10 +61,12 @@ const V04_REQUIRED_NAMESPACES = [
 	'flow.search',
 	'flow.recovery'
 ] as const;
-const LATER_VERSION_NAMESPACES = ['flow.collection', 'flow.bridge'] as const;
-/** v0.8 namespaces that now have a shipped UI and therefore must be populated in both locales:
- * `flow.operations.*` is the workspace operations panel (`settings/flow/operations`). */
-const V08_DELIVERED_NAMESPACES = ['flow.operations'] as const;
+const LATER_VERSION_NAMESPACES = ['flow.collection'] as const;
+/** Later-version namespaces that now have a shipped UI and therefore must be populated in both
+ * locales: `flow.bridge.*` (v0.7) is the Page -> Forms conversion wizard
+ * (`flow/[objectId]/convert`); `flow.operations.*` (v0.8) is the workspace operations panel
+ * (`settings/flow/operations`). */
+const DELIVERED_LATER_NAMESPACES = ['flow.bridge', 'flow.operations'] as const;
 
 type Json = { [key: string]: Json } | string | number | boolean | null;
 
@@ -171,11 +173,11 @@ suite.check('no flow.* value is its own key (the "missing key rendered as copy" 
 // ---- 3. required namespaces, and only the in-scope ones ------------------------------------
 
 suite.check(
-	'every v0.4 flow namespace and delivered v0.8 namespace is populated in both locales',
+	'every v0.4 flow namespace and delivered later-version namespace is populated in both locales',
 	() => {
 		for (const locale of LOCALES) {
 			const keys = flowKeys(locale);
-			for (const namespace of [...V04_REQUIRED_NAMESPACES, ...V08_DELIVERED_NAMESPACES]) {
+			for (const namespace of [...V04_REQUIRED_NAMESPACES, ...DELIVERED_LATER_NAMESPACES]) {
 				const populated = [...keys].some((key) => key.startsWith(`${namespace}.`));
 				assert(populated, `${locale}.json has no keys under ${namespace}.*`);
 			}
