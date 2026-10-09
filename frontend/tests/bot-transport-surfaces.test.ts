@@ -4,9 +4,12 @@
  *
  * A bot credential is accepted on one surface only (`apps/api/src/middleware/bot_auth.rs`,
  * `credential_bound_surface`), so a form that cannot choose one issues tokens that are refused
- * everywhere but the REST API. The server's allow-list is read out of
- * `apps/api/src/routes/bot.rs` at run time and compared with `BOT_TRANSPORT_SURFACES`, so adding
- * a surface on either side without the other fails here.
+ * everywhere but the REST API. The server's single allow-list,
+ * `EventSurface::BOT_CREDENTIAL_SURFACES` in `apps/api/src/flow/event_origin.rs`, is read at run
+ * time, spelled through `EventSurface::as_wire`, and compared with `BOT_TRANSPORT_SURFACES`, so
+ * adding a surface on either side without the other fails here. The route that validates
+ * `transport_surface` (`apps/api/src/routes/bot.rs`) is checked to still validate against that
+ * list rather than a copy of its own.
  *
  * The page itself is checked for the three places the surface has to appear: the create form
  * (as a required choice), the bot list and the token-reveal dialog.
@@ -36,14 +39,66 @@ const MEMBERS_PAGE = join(
 
 const suite = new Suite('bot-transport-surfaces');
 
-/** The surfaces `normalize_transport_surface` accepts, in source order. */
+const EVENT_ORIGIN = 'apps/api/src/flow/event_origin.rs';
+const BOT_ROUTE = 'apps/api/src/routes/bot.rs';
+
+/** Rust source with line and block comments removed, so commented-out code is never matched. */
+function rustCode(relative: string): string {
+	return readFileSync(join(REPO, relative), 'utf8')
+		.replace(/\/\*[\s\S]*?\*\//g, '')
+		.replace(/\/\/[^\n]*/g, '');
+}
+
+/**
+ * The surfaces `EventSurface::BOT_CREDENTIAL_SURFACES` lists, in source order, as wire strings.
+ *
+ * Every step fails loudly when the source no longer has the expected shape; there is no fallback
+ * list, because a fallback would turn a drift into a pass.
+ */
 function serverSurfaces(): string[] {
-	const source = readFileSync(join(REPO, 'apps/api/src/routes/bot.rs'), 'utf8');
-	const body = source.match(/fn normalize_transport_surface[\s\S]*?\n\}/);
-	assert(body, 'apps/api/src/routes/bot.rs no longer defines normalize_transport_surface');
-	const list = body[0].match(/if \[([^\]]*)\]\.contains/);
-	assert(list, 'normalize_transport_surface no longer checks an inline array of surfaces');
-	return [...list[1].matchAll(/"([a-z_]+)"/g)].map((match) => match[1]);
+	const code = rustCode(EVENT_ORIGIN);
+
+	const enumBody = code.match(/pub enum EventSurface \{([^}]*)\}/);
+	assert(enumBody, `${EVENT_ORIGIN} no longer defines pub enum EventSurface`);
+	const variants = [...enumBody[1].matchAll(/\b([A-Z][A-Za-z0-9]*)\s*,?/g)].map((m) => m[1]);
+	assert(variants.length > 0, `${EVENT_ORIGIN}: EventSurface has no variants this test can read`);
+
+	const implStart = code.indexOf('impl EventSurface {');
+	assert(implStart >= 0, `${EVENT_ORIGIN} no longer has an inherent impl EventSurface block`);
+	const impl = code.slice(implStart);
+
+	const asWire = impl.match(/fn as_wire\(self\)[^{]*\{\s*match self \{([^}]*)\}/);
+	assert(asWire, `${EVENT_ORIGIN}: EventSurface::as_wire is no longer a plain match on self`);
+	const wire = new Map<string, string>();
+	for (const arm of asWire[1].matchAll(/Self::([A-Za-z0-9]+)\s*=>\s*"([a-z0-9_]+)"/g)) {
+		wire.set(arm[1], arm[2]);
+	}
+	assertDeepEqual(
+		[...wire.keys()].sort(),
+		[...variants].sort(),
+		`${EVENT_ORIGIN}: as_wire must spell every EventSurface variant exactly once`
+	);
+
+	const list = impl.match(
+		/pub const BOT_CREDENTIAL_SURFACES:\s*\[Self;\s*(\d+)\]\s*=\s*\[([^\]]*)\];/
+	);
+	assert(list, `${EVENT_ORIGIN} no longer defines EventSurface::BOT_CREDENTIAL_SURFACES as [Self; N]`);
+	const declared = Number(list[1]);
+	const items = list[2]
+		.split(',')
+		.map((item) => item.trim())
+		.filter((item) => item !== '');
+	assert(
+		items.length === declared,
+		`${EVENT_ORIGIN}: BOT_CREDENTIAL_SURFACES declares ${declared} entries but this test read ${items.length}`
+	);
+	return items.map((item) => {
+		const variant = item.match(/^Self::([A-Za-z0-9]+)$/);
+		assert(variant, `${EVENT_ORIGIN}: BOT_CREDENTIAL_SURFACES entry "${item}" is not Self::<Variant>`);
+		const spelled = wire.get(variant[1]);
+		assert(spelled, `${EVENT_ORIGIN}: BOT_CREDENTIAL_SURFACES entry ${item} has no as_wire spelling`);
+		return spelled;
+	});
 }
 
 function lookup(tree: unknown, key: string): unknown {
@@ -56,7 +111,31 @@ function lookup(tree: unknown, key: string): unknown {
 }
 
 suite.check('the form offers exactly the surfaces the API accepts, in the same order', () => {
-	assertDeepEqual([...BOT_TRANSPORT_SURFACES], serverSurfaces(), 'frontend vs apps/api/src/routes/bot.rs');
+	assertDeepEqual(
+		[...BOT_TRANSPORT_SURFACES],
+		serverSurfaces(),
+		`frontend vs EventSurface::BOT_CREDENTIAL_SURFACES in ${EVENT_ORIGIN}`
+	);
+});
+
+suite.check('the API validates transport_surface against that one list, not a copy of its own', () => {
+	const code = rustCode(BOT_ROUTE);
+	const body = code.match(/fn normalize_transport_surface\([\s\S]*?\n\}/);
+	assert(body, `${BOT_ROUTE} no longer defines normalize_transport_surface`);
+	assert(
+		/EventSurface::from_bot_credential_label\(/.test(body[0]),
+		'normalize_transport_surface must accept exactly what EventSurface::from_bot_credential_label accepts'
+	);
+	assert(
+		!/"(?:rest|mcp_http|mcp_sse|mcp_stdio|cli|cli_tools_call|web|worker|system)"\s*[,\]]/.test(body[0]),
+		'normalize_transport_surface must not carry its own list of surfaces'
+	);
+	const parse = rustCode(EVENT_ORIGIN).match(/fn from_bot_credential_label\([\s\S]*?\n\s{4}\}/);
+	assert(parse, `${EVENT_ORIGIN} no longer defines EventSurface::from_bot_credential_label`);
+	assert(
+		/Self::BOT_CREDENTIAL_SURFACES/.test(parse[0]),
+		'from_bot_credential_label must parse against Self::BOT_CREDENTIAL_SURFACES'
+	);
 });
 
 suite.check('the API default for an omitted surface is still rest, which the form never relies on', () => {
