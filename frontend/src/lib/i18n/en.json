@@ -107,7 +107,31 @@
     "namePlaceholder": "e.g. Product Team",
     "slugPlaceholder": "e.g. product-team",
     "descriptionPlaceholder": "Optional workspace description",
-    "editWorkspace": "Edit Workspace"
+    "editWorkspace": "Edit Workspace",
+    "home": {
+      "title": "Workspace home",
+      "slugLabel": "Slug",
+      "roleLabel": "Your role",
+      "sections": "Workspace sections",
+      "notFoundTitle": "Workspace unavailable",
+      "notFoundBody": "This workspace does not exist or you do not have access to it.",
+      "backToList": "Back to workspaces",
+      "loadFailed": "Could not load this workspace.",
+      "projectsTitle": "Projects",
+      "projectTotal": "Total: {count}",
+      "recentProjects": "Recent projects",
+      "allProjects": "All projects",
+      "projectsLoadFailed": "Could not load the project list.",
+      "emptyTitle": "No projects yet",
+      "emptyBody": "Projects are created from the project list.",
+      "newProject": "New project",
+      "flowTitle": "Sylvode Flow",
+      "flowOpenBody": "Pages, databases and canvases that the workspace edits together.",
+      "flowOpen": "Open Flow",
+      "flowDisabledBody": "Flow is not enabled for this workspace.",
+      "flowEnable": "Enable in Flow settings",
+      "adminTitle": "Administration"
+    }
   },
   "project": {
     "title": "Projects",
@@ -2336,7 +2360,12 @@
     "flowImportReport": "Sylvode - Flow Import Report",
     "flowOperations": "Sylvode - Flow Operations",
     "flowConvert": "Sylvode - Convert to Forms",
-    "flowConversion": "Sylvode - Conversion Job"
+    "flowConversion": "Sylvode - Conversion Job",
+    "workspaceHome": "Sylvode - Workspace Home",
+    "workspaceHomeWithName": "Sylvode - {name}",
+    "flowWorkspace": "Sylvode - Flow",
+    "workspaceWorkflows": "Sylvode - Workflows",
+    "formRecordWithTitle": "Sylvode - {title}"
   },
   "flow": {
     "nav": {

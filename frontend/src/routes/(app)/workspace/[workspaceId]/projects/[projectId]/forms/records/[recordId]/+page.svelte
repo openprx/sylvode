@@ -629,10 +629,16 @@
 		commentDraft = '';
 		toast.success($t('forms.recordCommentAdded'));
 	}
+
+	const documentTitle = $derived(
+		$t('pageTitle.formRecordWithTitle', {
+			values: { title: record?.title ?? $t('forms.recordTitle') }
+		})
+	);
 </script>
 
 <svelte:head>
-	<title>{record?.title ?? $t('forms.recordTitle')} · Sylvode</title>
+	<title>{documentTitle}</title>
 </svelte:head>
 
 <div class="min-h-screen bg-slate-50 px-4 py-6 dark:bg-slate-950 sm:px-6 lg:px-8">

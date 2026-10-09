@@ -98,7 +98,7 @@
 	}
 
 	function goToWorkspace(workspaceId: string) {
-		goto(`/workspace/${workspaceId}/projects`);
+		goto(`/workspace/${workspaceId}`);
 	}
 
 	function goToIssue(workspaceId: string, projectId: string, issueId: string) {

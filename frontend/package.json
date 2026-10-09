@@ -1,7 +1,7 @@
 {
 	"name": "frontend",
 	"private": true,
-	"version": "0.2.404",
+	"version": "0.2.405",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
@@ -33,6 +33,7 @@
 		"test:flow-operations": "bun tests/flow-operations.test.ts",
 		"test:flow-convert-wizard": "bun tests/flow-convert-wizard.test.ts",
 		"test:flow-conversion-job": "bun tests/flow-conversion-job.test.ts",
+		"test:workspace-home": "bun tests/workspace-home.test.ts",
 		"smoke:restaurant-ordering": "node scripts/smoke-restaurant-ordering.mjs",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write ."

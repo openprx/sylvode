@@ -224,6 +224,14 @@ OpenPR name keeps working; see **Deprecated**.
   CI runs it for this repository; the five-repository form is a local release gate.
 - **Project policies in the repository**: `SECURITY.md` (how to report a vulnerability and what is
   in scope), this `CHANGELOG.md`, and a rewritten `CONTRIBUTING.md`.
+- **Workspace home page** at `/workspace/{workspaceId}`, which used to render a 404. It shows the
+  workspace name, slug and the viewer's role, the project total with the five most recently
+  updated projects, a Sylvode Flow card (a link into Flow when it is enabled, a link to the Flow
+  settings for admins when it is not, nothing for other members) and, for owners and admins,
+  links to Members, Webhooks, Operation Records and Settings. Clicking a workspace on
+  `/workspace` now opens this page instead of the project list. The page title is
+  `Sylvode - <workspace name>`, and the Operation Records, Flow, Workflows and Forms record pages
+  now carry the same `Sylvode - ` title prefix as every other page.
 
 ### Changed
 
