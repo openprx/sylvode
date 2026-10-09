@@ -2335,7 +2335,8 @@
     "flowPackage": "Sylvode - Flow Export and Import",
     "flowImportReport": "Sylvode - Flow Import Report",
     "flowOperations": "Sylvode - Flow Operations",
-    "flowConvert": "Sylvode - Convert to Forms"
+    "flowConvert": "Sylvode - Convert to Forms",
+    "flowConversion": "Sylvode - Conversion Job"
   },
   "flow": {
     "nav": {
@@ -3056,6 +3057,69 @@
           "refreshing": "Re-reading the Page",
           "committing": "Converting",
           "committed": "Conversion submitted"
+        }
+      },
+      "job": {
+        "heading": "Conversion job",
+        "description": "The status and result of converting a Flow Page into Forms. While the job is running this page refreshes by itself.",
+        "jobId": "Job ID",
+        "loading": "Loading the conversion job…",
+        "polling": "Converting… This page refreshes automatically.",
+        "pollFailed": "The latest status could not be loaded. Trying again automatically.",
+        "notFoundTitle": "Conversion job not available",
+        "notFound": "This conversion job does not exist, or you do not have access to it.",
+        "statusLabel": "Status",
+        "status": {
+          "started": "In progress",
+          "completed": "Completed",
+          "failed": "Failed",
+          "unknown": "Unknown status"
+        },
+        "field": {
+          "source": "Source Page",
+          "sourceHidden": "You cannot open this Page. Only its ID is shown.",
+          "sourceLoading": "Loading the Page…",
+          "sourceFrontier": "Source frontier",
+          "targetSchemaVersion": "Target schema version",
+          "lineage": "Lineage ID",
+          "lineageNone": "No lineage recorded yet.",
+          "warnings": "Warnings",
+          "warningsNone": "No warnings.",
+          "error": "Error",
+          "createdTargets": "Created records",
+          "createdTargetsNone": "Nothing has been created yet.",
+          "targetLoading": "Looking up the record…",
+          "targetUnresolved": "Not available as a Forms record you can open. Only its ID is shown.",
+          "targetUntitled": "Untitled record"
+        },
+        "action": {
+          "copyId": "Copy ID",
+          "copied": "ID copied.",
+          "copyFailed": "The ID could not be copied. Select it and copy it manually.",
+          "retry": "Retry conversion",
+          "retrying": "Retrying…",
+          "newConversion": "Start a new conversion from the Page"
+        },
+        "retry": {
+          "confirmTitle": "Retry this conversion?",
+          "confirmBody": "The conversion runs again from the original preview. All permissions are checked again, and it fails if the Page or the target form has changed since the preview.",
+          "confirm": "Retry",
+          "cancel": "Cancel"
+        },
+        "error": {
+          "notFound": "This conversion job does not exist, or you do not have access to it.",
+          "staleFrontier": "The Page has changed since the preview, so this job cannot be retried. Start a new conversion from the Page.",
+          "policyRejected": "This job cannot be retried with the current permissions, preview or target schema. Start a new conversion from the Page.",
+          "rejected": "The server rejected this request.",
+          "conflict": "The request conflicts with an earlier one. Reload the page.",
+          "unavailable": "The server is unavailable. Try again.",
+          "jobFailed": "The conversion failed. Nothing was created by the failed attempt."
+        },
+        "live": {
+          "completed": "The conversion is complete.",
+          "failed": "The conversion failed.",
+          "retrying": "Retrying the conversion.",
+          "notFound": "The conversion job is not available."
         }
       }
     }

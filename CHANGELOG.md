@@ -191,6 +191,13 @@ OpenPR name keeps working; see **Deprecated**.
     values, server preview (schema version, object count, permission decision, countdown to
     expiry), and an acknowledged commit that sends the preview's own identifiers. A stale source
     is re-read and previewed again; an expired preview cannot be committed.
+  - Web UI: a conversion job page under `/workspace/{workspaceId}/flow/conversions/{jobId}`,
+    where the wizard lands after a commit. It polls the job until it is completed or failed and
+    shows the status, the source Page (linked when the viewer can open it), source frontier,
+    target schema version, lineage, warnings and error, and links each created record to its
+    Forms record page (an id that is not a readable record is shown with a copy button). A failed
+    job can be retried after an explicit confirmation, reusing one idempotency key per job; a
+    permanent rejection withdraws the retry. Missing and inaccessible jobs look the same.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

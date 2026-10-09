@@ -72,6 +72,8 @@
 			return $t('pageTitle.flowOperations');
 		if (/^\/workspace\/[^/]+\/flow\/[^/]+\/convert$/.test(pathname))
 			return $t('pageTitle.flowConvert');
+		if (/^\/workspace\/[^/]+\/flow\/conversions\/[^/]+$/.test(pathname))
+			return $t('pageTitle.flowConversion');
 		if (/^\/workspace\/[^/]+\/members$/.test(pathname)) return $t('pageTitle.workspaceMembers');
 		if (/^\/workspace\/[^/]+\/webhooks$/.test(pathname)) return $t('pageTitle.workspaceWebhooks');
 		if (/^\/workspace\/[^/]+\/connections$/.test(pathname)) return $t('pageTitle.workspaceConnections');

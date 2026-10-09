@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { expect, test, type APIRequestContext, type Page, type Request } from '@playwright/test';
 
 /**
@@ -16,9 +17,17 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  * `source_frontier` and `target_schema_version` from their own preview response, and the API
  * shows a completed job whose created record carries the mapped values.
  *
- * FP-N5 (the conversion job page) is not built yet: after the commit the wizard navigates to
- * `/workspace/{id}/flow/conversions/{job_id}`, and this spec asserts that URL and checks the job
- * over REST instead of on the page.
+ * After the commit the wizard lands on the conversion job page
+ * (`/workspace/{id}/flow/conversions/{job_id}`, FP-N5). The page must reach the `completed`
+ * terminal status, show the source Page (linked, with its title), frontier, schema version and
+ * lineage exactly as the API reports them, and link the created record to its Forms record page,
+ * which the spec then opens. A random job id, another user's job id and a malformed id all get
+ * the same safe empty state.
+ *
+ * The production API never stores a `failed` job (its only producer, the conversion fault hook in
+ * `apps/api/src/flow/bridge.rs`, is compiled for tests only), so the retry path is driven against
+ * a completed job that the spec marks `failed` directly in PostgreSQL. That needs
+ * E2E_DATABASE_URL (the API's database); without it the retry test is skipped and says so.
  *
  * Needs BASE_URL to serve the built frontend with `/api` proxied to the API on the same origin
  * (as `frontend/nginx.conf` does). Registration after the first account needs an instance admin:
@@ -56,6 +65,9 @@ type Job = {
 	created_target_ids: string[];
 	source_frontier: string;
 	target_schema_version: number;
+	lineage_id: string | null;
+	warnings: unknown[];
+	error: string | null;
 };
 
 async function unwrap<T>(response: Awaited<ReturnType<APIRequestContext['get']>>): Promise<T> {
@@ -330,11 +342,20 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	await expect(convert).toBeDisabled();
 	await acknowledge.check();
 	const commitPromise = commitResponse();
+	const jobReadPromise = page.waitForResponse(
+		(res) =>
+			res.request().method() === 'GET' &&
+			/^\/api\/v1\/flow\/conversions\/[^/]+$/.test(new URL(res.url()).pathname)
+	);
 	await convert.click();
 	const committed = ((await (await commitPromise).json()) as Envelope<Job>).data;
 	await expect(page).toHaveURL(
 		new RegExp(`/workspace/${workspace.id}/flow/conversions/${committed.job_id}$`)
 	);
+	// The landing page reads the job itself (FP-N5), through the contract path.
+	const jobRead = await jobReadPromise;
+	expect(new URL(jobRead.url()).pathname).toBe(`/api/v1/flow/conversions/${committed.job_id}`);
+	expect(((await jobRead.json()) as Envelope<Job>).data.status).toBe('completed');
 
 	// ---- wire: every commit field comes from its own preview response ----
 	expect(commitBodies).toHaveLength(2);
@@ -380,4 +401,370 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	);
 	expect(source.frontier).toBe(after.frontier);
 	expect(source.title).toBe(renamed);
+
+	// ---- the conversion job page (FP-N5) shows the job exactly as the API reports it ----
+	await expect(page).toHaveTitle('Sylvode - Conversion Job');
+	const status = page.getByTestId('flow-conversion-status');
+	await expect(status).toHaveAttribute('data-status', 'completed');
+	await expect(status).toHaveText('Completed');
+	await expect(page.getByTestId('flow-conversion-polling')).toHaveCount(0);
+	await expect(page.getByTestId('flow-conversion-job-id')).toHaveText(committed.job_id);
+	const sourceLink = page.getByTestId('flow-conversion-source-link');
+	await expect(sourceLink).toHaveText(renamed);
+	await expect(sourceLink).toHaveAttribute('href', `/workspace/${workspace.id}/flow/${objectId}`);
+	await expect(page.getByTestId('flow-conversion-frontier')).toHaveText(job.source_frontier);
+	await expect(page.getByTestId('flow-conversion-schema-version')).toHaveText(
+		String(job.target_schema_version)
+	);
+	expect(job.lineage_id).toBeTruthy();
+	await expect(page.getByTestId('flow-conversion-lineage')).toHaveText(job.lineage_id ?? '');
+	await expect(page.getByTestId('flow-conversion-warnings')).toHaveAttribute(
+		'data-count',
+		String(job.warnings.length)
+	);
+	await expect(page.getByTestId('flow-conversion-error')).toHaveCount(0);
+	await expect(page.getByTestId('flow-conversion-retry')).toHaveCount(0);
+	const targets = page.getByTestId('flow-conversion-target');
+	await expect(targets).toHaveCount(1);
+	await expect(targets.first()).toHaveAttribute('data-target-id', job.created_target_ids[0]);
+	await expect(targets.first()).toHaveAttribute('data-state', 'record');
+	const recordHref = `/workspace/${workspace.id}/projects/${project.id}/forms/records/${job.created_target_ids[0]}`;
+	const recordLink = page.getByTestId('flow-conversion-target-link');
+	await expect(recordLink).toHaveText(renamed);
+	await expect(recordLink).toHaveAttribute('href', recordHref);
+
+	// A reload of the deep link reads the job again and lands on the same terminal state.
+	await page.reload();
+	await expect(status).toHaveAttribute('data-status', 'completed');
+	await expect(recordLink).toHaveAttribute('href', recordHref);
+	await recordLink.click();
+	await expect(page).toHaveURL(new RegExp(`${recordHref}$`));
+	await expect(page.getByRole('heading', { level: 1, name: renamed })).toBeVisible();
+});
+
+type ConversionSetup = {
+	ownerLogin: LoginData;
+	auth: { Authorization: string };
+	workspaceId: string;
+	projectId: string;
+	formId: string;
+	objectId: string;
+};
+
+/** Over REST: an owner with a Flow-enabled workspace, a project, a form whose owner role may
+ * create records, and one Page. */
+async function conversionSetup(
+	request: APIRequestContext,
+	label: string
+): Promise<ConversionSetup> {
+	const admin = await instanceAdmin(request);
+	const who = {
+		email: `convert-${label}-${runId}@e2e.sylvode.test`,
+		password: `Convert-${label}-${runId}-1!`
+	};
+	await unwrap(
+		await request.post('/api/v1/auth/register', {
+			headers: { Authorization: `Bearer ${admin.tokens.access_token}` },
+			data: { ...who, name: `Convert ${label}` }
+		})
+	);
+	const ownerLogin = await login(request, who);
+	const auth = { Authorization: `Bearer ${ownerLogin.tokens.access_token}` };
+	const workspace = await unwrap<{ id: string }>(
+		await request.post('/api/v1/workspaces', {
+			headers: auth,
+			data: {
+				slug: `cnv-${label}-${runId}`,
+				name: `Convert ${label} ${runId}`
+			}
+		})
+	);
+	await unwrap(
+		await request.put(`/api/v1/workspaces/${workspace.id}/features/flow`, {
+			headers: auth,
+			data: { enabled: true, idempotency_key: crypto.randomUUID() }
+		})
+	);
+	const project = await unwrap<{ id: string }>(
+		await request.post(`/api/v1/workspaces/${workspace.id}/projects`, {
+			headers: auth,
+			data: { name: `Planning ${label} ${runId}`, key: 'PLN' }
+		})
+	);
+	const form = await unwrap<{ id: string }>(
+		await request.post(`/api/v1/projects/${project.id}/forms`, {
+			headers: auth,
+			data: {
+				key: 'plans',
+				name: 'Plans',
+				schema: {
+					version: 'openpr.form.schema.v1',
+					fields: [{ field_id: 'fld_note', key: 'note', label: 'Note', type: 'text' }]
+				}
+			}
+		})
+	);
+	await unwrap(
+		await request.patch(`/api/v1/forms/${form.id}/permissions`, {
+			headers: auth,
+			data: {
+				policies: [
+					{
+						subject_type: 'role',
+						subject_id: 'owner',
+						policy: { actions: { 'form.view': true, 'record.create': true } }
+					}
+				]
+			}
+		})
+	);
+	const created = await unwrap<{ object: { id: string } }>(
+		await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+			headers: auth,
+			data: {
+				object_type: 'page',
+				title: `Retry plan ${label} ${runId}`,
+				idempotency_key: crypto.randomUUID()
+			}
+		})
+	);
+	return {
+		ownerLogin,
+		auth,
+		workspaceId: workspace.id,
+		projectId: project.id,
+		formId: form.id,
+		objectId: created.object.id
+	};
+}
+
+/** Preview + commit over REST; returns the committed job and its preview id. */
+async function convertOverRest(
+	request: APIRequestContext,
+	setup: ConversionSetup
+): Promise<{ job: Job; previewId: string }> {
+	const source = await unwrap<ObjectView>(
+		await request.get(`/api/v1/flow/objects/${setup.objectId}`, {
+			headers: setup.auth
+		})
+	);
+	const preview = await unwrap<Preview>(
+		await request.post('/api/v1/flow/conversions/preview', {
+			headers: setup.auth,
+			data: {
+				source_object_id: setup.objectId,
+				source_frontier: source.frontier,
+				target_type: 'form_record',
+				mapping: {
+					target_form_id: setup.formId,
+					values: { note: 'from REST' }
+				},
+				idempotency_key: crypto.randomUUID()
+			}
+		})
+	);
+	const job = await unwrap<Job>(
+		await request.post('/api/v1/flow/conversions', {
+			headers: setup.auth,
+			data: {
+				preview_id: preview.preview_id,
+				source_frontier: preview.source_frontier,
+				target_schema_version: preview.target_schema_version,
+				idempotency_key: crypto.randomUUID(),
+				confirm: true
+			}
+		})
+	);
+	expect(job.status).toBe('completed');
+	return { job, previewId: preview.preview_id };
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Runs one statement against the API's database with `:'id'` bound by psql. */
+function sql(statement: string, id: string): void {
+	expect(id).toMatch(UUID);
+	execFileSync(
+		'psql',
+		[process.env.E2E_DATABASE_URL ?? '', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-v', `id=${id}`],
+		{ input: statement, stdio: ['pipe', 'ignore', 'inherit'] }
+	);
+}
+
+/** The fixture the production API cannot produce: a job in the backend's `failed` state with no
+ * created target, as `record_failed_conversion` leaves it. */
+function markJobFailed(jobId: string): void {
+	sql(
+		"UPDATE flow_conversion_jobs SET status = 'failed', error_code = 'injected_before_target_create', lineage_id = NULL, created_target_ids = ARRAY[]::uuid[] WHERE id = :'id';",
+		jobId
+	);
+}
+
+test('a random, malformed or foreign conversion job id gets the same safe empty state', async ({
+	page,
+	request
+}) => {
+	const owner = await conversionSetup(request, 'safe');
+	const other = await conversionSetup(request, 'other');
+	const { job: foreignJob } = await convertOverRest(request, other);
+
+	const reads: string[] = [];
+	page.on('request', (req: Request) => {
+		const path = new URL(req.url()).pathname;
+		if (path.startsWith('/api/v1/flow/conversions/') || path.startsWith('/api/v1/flow/objects/'))
+			reads.push(path);
+	});
+	await signInAs(page, owner.ownerLogin);
+	const notFound = page.getByTestId('flow-conversion-not-found');
+	const empty = 'This conversion job does not exist, or you do not have access to it.';
+
+	for (const jobId of [crypto.randomUUID(), foreignJob.job_id]) {
+		const readPromise = page.waitForResponse(
+			(res) => new URL(res.url()).pathname === `/api/v1/flow/conversions/${jobId}`
+		);
+		await page.goto(`/workspace/${owner.workspaceId}/flow/conversions/${jobId}`);
+		const read = (await (await readPromise).json()) as Envelope<null>;
+		expect(read.code).toBe(404);
+		await expect(page).toHaveTitle('Sylvode - Conversion Job');
+		await expect(notFound).toBeVisible();
+		await expect(notFound).toContainText(empty);
+		await expect(page.getByTestId('flow-conversion-status')).toHaveCount(0);
+		await expect(page.getByTestId('flow-conversion-retry')).toHaveCount(0);
+		await expect(page.getByTestId('flow-conversion-source')).toHaveCount(0);
+		// The static `conversions` segment wins over the sibling `[objectId]` routes.
+		await expect(page.getByTestId('flow-convert')).toHaveCount(0);
+	}
+
+	await page.goto(`/workspace/${owner.workspaceId}/flow/conversions/not-a-job-id`);
+	await expect(notFound).toBeVisible();
+	await expect(notFound).toContainText(empty);
+
+	// The navigator reads the owner's own workspace objects. Neither the `conversions` segment nor
+	// the foreign job's source Page is ever read as an object.
+	const objectReads = reads.filter((path) => path.startsWith('/api/v1/flow/objects/'));
+	expect(objectReads.filter((path) => path.startsWith('/api/v1/flow/objects/conversions'))).toEqual(
+		[]
+	);
+	expect(objectReads.filter((path) => path.includes(other.objectId))).toEqual([]);
+	expect(reads.filter((path) => path.includes('not-a-job-id'))).toEqual([]);
+});
+
+test('a failed job is retried only after confirmation, with one key per job; a permanent rejection withdraws retry', async ({
+	page,
+	request
+}) => {
+	test.skip(
+		!process.env.E2E_DATABASE_URL,
+		'E2E_DATABASE_URL is not set: the production API never stores a failed job, so the fixture is written in SQL'
+	);
+	const setup = await conversionSetup(request, 'retry');
+	const first = await convertOverRest(request, setup);
+	markJobFailed(first.job.job_id);
+
+	const retryPath = `/api/v1/flow/conversions/${first.job.job_id}/retry`;
+	const retryBodies: Array<Record<string, unknown>> = [];
+	page.on('request', (req: Request) => {
+		if (req.method() === 'POST' && new URL(req.url()).pathname.endsWith('/retry'))
+			retryBodies.push(req.postDataJSON() as Record<string, unknown>);
+	});
+	// The first retry answer is a synthetic 503, so the second click must resend the same key.
+	let interceptedOnce = false;
+	await page.route(`**${retryPath}`, async (route) => {
+		if (interceptedOnce) return route.continue();
+		interceptedOnce = true;
+		return route.fulfill({
+			contentType: 'application/json',
+			body: JSON.stringify({ code: 503, message: 'unavailable', data: null })
+		});
+	});
+
+	await signInAs(page, setup.ownerLogin);
+	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${first.job.job_id}`);
+	const status = page.getByTestId('flow-conversion-status');
+	await expect(status).toHaveAttribute('data-status', 'failed');
+	await expect(status).toHaveText('Failed');
+	await expect(page.getByTestId('flow-conversion-error')).toHaveText(
+		'The conversion failed. Nothing was created by the failed attempt.'
+	);
+	await expect(page.getByTestId('flow-conversion-targets-empty')).toBeVisible();
+	await expect(page.getByTestId('flow-conversion-lineage')).toHaveText('No lineage recorded yet.');
+
+	const retry = page.getByTestId('flow-conversion-retry');
+	const dialog = page.getByTestId('flow-conversion-retry-dialog');
+	await expect(retry).toBeEnabled();
+	await retry.click();
+	await expect(dialog).toBeVisible();
+	await expect(page.getByTestId('flow-conversion-retry-cancel')).toBeFocused();
+	await page.getByTestId('flow-conversion-retry-cancel').click();
+	await expect(dialog).toHaveCount(0);
+	expect(retryBodies).toHaveLength(0);
+
+	await retry.click();
+	await page.getByTestId('flow-conversion-retry-confirm').click();
+	const retryError = page.getByTestId('flow-conversion-retry-error');
+	await expect(retryError).toHaveAttribute('data-kind', 'unavailable');
+	await expect(retry).toBeEnabled();
+	expect(retryBodies).toHaveLength(1);
+
+	const retryResponse = page.waitForResponse(
+		(res) => new URL(res.url()).pathname === retryPath && res.request().method() === 'POST'
+	);
+	await retry.click();
+	await page.getByTestId('flow-conversion-retry-confirm').click();
+	const retried = ((await (await retryResponse).json()) as Envelope<Job>).data;
+	expect(retryBodies).toHaveLength(2);
+	expect(retryBodies[0]).toEqual({
+		idempotency_key: expect.any(String),
+		confirm: true
+	});
+	expect(retryBodies[1]).toEqual(retryBodies[0]);
+	expect(retried.status).toBe('completed');
+	expect(retried.created_target_ids).toHaveLength(1);
+
+	await expect(status).toHaveAttribute('data-status', 'completed');
+	await expect(retry).toHaveCount(0);
+	await expect(retryError).toHaveCount(0);
+	const target = page.getByTestId('flow-conversion-target');
+	await expect(target).toHaveAttribute('data-state', 'record');
+	await expect(page.getByTestId('flow-conversion-target-link')).toHaveAttribute(
+		'href',
+		`/workspace/${setup.workspaceId}/projects/${setup.projectId}/forms/records/${retried.created_target_ids[0]}`
+	);
+	const afterRetry = await unwrap<Job>(
+		await request.get(`/api/v1/flow/conversions/${first.job.job_id}`, {
+			headers: setup.auth
+		})
+	);
+	expect(afterRetry.status).toBe('completed');
+	expect(afterRetry.created_target_ids).toEqual(retried.created_target_ids);
+
+	// A failed job whose preview has expired: the retry is a permanent `policy_rejected`, so the
+	// action is withdrawn and the page offers a new conversion from the Page instead.
+	const second = await convertOverRest(request, setup);
+	markJobFailed(second.job.job_id);
+	sql(
+		"UPDATE flow_conversion_previews SET expires_at = now() - interval '1 second' WHERE id = :'id';",
+		second.previewId
+	);
+	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${second.job.job_id}`);
+	await expect(status).toHaveAttribute('data-status', 'failed');
+	const rejectedResponse = page.waitForResponse(
+		(res) => new URL(res.url()).pathname === `/api/v1/flow/conversions/${second.job.job_id}/retry`
+	);
+	await retry.click();
+	await page.getByTestId('flow-conversion-retry-confirm').click();
+	const rejected = (await (await rejectedResponse).json()) as Envelope<null>;
+	expect(rejected.error_code).toBe('policy_rejected');
+	await expect(retryError).toHaveAttribute('data-kind', 'policy_rejected');
+	await expect(retry).toHaveCount(0);
+	await expect(page.getByTestId('flow-conversion-new')).toHaveAttribute(
+		'href',
+		`/workspace/${setup.workspaceId}/flow/${setup.objectId}/convert`
+	);
+	const stillFailed = await unwrap<Job>(
+		await request.get(`/api/v1/flow/conversions/${second.job.job_id}`, {
+			headers: setup.auth
+		})
+	);
+	expect(stillFailed.status).toBe('failed');
 });
