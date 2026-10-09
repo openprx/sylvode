@@ -22,7 +22,7 @@ import { join, relative } from 'node:path';
 import { Suite, assert, assertNotEqual, finish } from './support/harness';
 import {
 	FLOW_ERROR_CODES,
-	PACKAGE_ROUND_TRIP_ONLY_ERROR_CODES,
+	PACKAGE_ROUND_TRIP_ERROR_CODES,
 	SERVER_DRAINING_REASONS
 } from '../src/lib/flow/errors';
 import type { SyncState } from '../src/lib/flow/types';
@@ -203,20 +203,19 @@ suite.check('every v0.4 stable error code has a zh and en key', () => {
 	}
 });
 
-suite.check('package-round-trip-only codes are the ONLY stable codes without a v0.4 key', () => {
-	// `error-mapping-v1.md`'s table has these two marked "n/a；import/export REST only": their
-	// producer is the v0.8 package surface (`contracts/export-package-v1.md`), unreachable in
-	// v0.4. Asserting they are absent -- rather than just not asserting they are present --
-	// is what stops this exclusion from quietly widening to cover a code that IS reachable.
-	for (const code of PACKAGE_ROUND_TRIP_ONLY_ERROR_CODES) {
+suite.check('package round-trip codes are reachable stable codes with zh and en keys', () => {
+	// `error-mapping-v1.md` marks these two "n/a；import/export REST only". The v0.8 package
+	// wizard consumes that REST surface, so they must be in FLOW_ERROR_CODES (and therefore
+	// covered by the check above) and carry their `flow.error.<code>` UI-column keys.
+	for (const code of PACKAGE_ROUND_TRIP_ERROR_CODES) {
 		assert(
-			!(FLOW_ERROR_CODES as readonly string[]).includes(code),
-			`${code} is in FLOW_ERROR_CODES, so it is reachable and must not be on the excluded list`
+			(FLOW_ERROR_CODES as readonly string[]).includes(code),
+			`${code} is produced by the package surface the UI consumes but is not in FLOW_ERROR_CODES`
 		);
 		for (const locale of LOCALES) {
 			assert(
-				value(locale, `flow.error.${code}`) === undefined,
-				`${locale}.json declares flow.error.${code}, whose only producer is the v0.8 package surface`
+				value(locale, `flow.error.${code}`) !== undefined,
+				`${locale}.json is missing flow.error.${code}`
 			);
 		}
 	}

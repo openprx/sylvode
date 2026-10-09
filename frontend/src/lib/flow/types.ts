@@ -43,7 +43,9 @@ export type FlowErrorCode =
 	| 'limit_exceeded'
 	| 'resync_required'
 	| 'authorization_churn'
-	| 'server_draining';
+	| 'server_draining'
+	| 'checksum_mismatch'
+	| 'unsupported_format';
 
 export interface FlowDrainDetails {
 	readonly reason: 'drain' | 'contention';

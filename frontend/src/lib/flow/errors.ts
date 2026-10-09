@@ -12,13 +12,14 @@
 
 import type { FlowError, FlowErrorCode, SyncState } from './types';
 
-/** Every stable error code this v0.4 client can actually receive, as a runtime value.
+/** Every stable error code this client can actually receive, as a runtime value.
  *
- * `contracts/error-mapping-v1.md`'s "稳定错误的五层映射" table has fourteen rows; two of them
- * (`checksum_mismatch`, `unsupported_format`) are marked "n/a；import/export REST only" and are
- * produced solely by the v0.8 package round-trip surface (`contracts/export-package-v1.md`),
- * which has no v0.4 wire path. They are listed separately below rather than silently omitted, so
- * that "which codes are excluded, and why" is an assertable fact instead of an oversight. */
+ * `contracts/error-mapping-v1.md`'s "稳定错误的五层映射" table has fourteen rows. Two of them
+ * (`checksum_mismatch`, `unsupported_format`) are marked "n/a；import/export REST only": their
+ * only producer is the v0.8 package round-trip surface (`contracts/export-package-v1.md`). That
+ * surface is consumed by the package export/import wizard (`package-wizard.ts`,
+ * `package-export.ts`), so both are reachable and listed here; `PACKAGE_ROUND_TRIP_ERROR_CODES`
+ * names them so the parity gate can assert they stay covered. */
 export const FLOW_ERROR_CODES = [
 	'unauthenticated',
 	'forbidden',
@@ -31,15 +32,16 @@ export const FLOW_ERROR_CODES = [
 	'limit_exceeded',
 	'resync_required',
 	'authorization_churn',
-	'server_draining'
-] as const satisfies readonly FlowErrorCode[];
-
-/** Stable codes that exist in `error-mapping-v1.md` but whose only producer is the v0.8
- * export/import package surface ("n/a；import/export REST only"). Not reachable in v0.4. */
-export const PACKAGE_ROUND_TRIP_ONLY_ERROR_CODES = [
+	'server_draining',
 	'checksum_mismatch',
 	'unsupported_format'
-] as const;
+] as const satisfies readonly FlowErrorCode[];
+
+/** The stable codes whose only producer is the v0.8 import/export REST surface
+ * (`error-mapping-v1.md`: "n/a；import/export REST only"). Both are permanent failures
+ * (`recoverable=false`): the package has to be obtained again or produced by a compatible
+ * exporter. */
+export const PACKAGE_ROUND_TRIP_ERROR_CODES = ['checksum_mismatch', 'unsupported_format'] as const;
 
 /** `server_draining`'s frozen, REQUIRED discriminator values. */
 export const SERVER_DRAINING_REASONS = ['drain', 'contention'] as const;
