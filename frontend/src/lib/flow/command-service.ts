@@ -203,6 +203,18 @@ export class FlowCommandService {
 	async convertCommit(input: FlowConversionCommitInput): Promise<ApiResult<FlowConversionJob>> {
 		return flowApi.commitConversion(input);
 	}
+
+	// Convert status / Convert retry (`surface-coverage-v1.md`: both `adapter:CommandService`).
+	// The retry key comes from the caller (`lib/flow/conversion-job.ts` fixes one per job), and the
+	// raw `ApiResult` is returned so the job page can branch on `error_code`.
+
+	async convertStatus(jobId: string): Promise<ApiResult<FlowConversionJob>> {
+		return flowApi.getConversion(jobId);
+	}
+
+	async convertRetry(jobId: string, idempotencyKey: string): Promise<ApiResult<FlowConversionJob>> {
+		return flowApi.retryConversion(jobId, idempotencyKey);
+	}
 }
 
 function mapErrorCode(code: number): FlowError {

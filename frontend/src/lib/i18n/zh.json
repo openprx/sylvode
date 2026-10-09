@@ -2335,7 +2335,8 @@
     "flowPackage": "Sylvode - Flow 导出与导入",
     "flowImportReport": "Sylvode - Flow 导入报告",
     "flowOperations": "Sylvode - Flow 运维",
-    "flowConvert": "Sylvode - 转换为 Forms"
+    "flowConvert": "Sylvode - 转换为 Forms",
+    "flowConversion": "Sylvode - 转换任务"
   },
   "flow": {
     "nav": {
@@ -3056,6 +3057,69 @@
           "refreshing": "正在重新读取 Page",
           "committing": "正在转换",
           "committed": "转换已提交"
+        }
+      },
+      "job": {
+        "heading": "转换任务",
+        "description": "将 Flow 页面转换为 Forms 的状态与结果。任务运行期间本页会自动刷新。",
+        "jobId": "任务 ID",
+        "loading": "正在加载转换任务…",
+        "polling": "正在转换……本页会自动刷新。",
+        "pollFailed": "无法获取最新状态，正在自动重试。",
+        "notFoundTitle": "转换任务不可用",
+        "notFound": "该转换任务不存在，或你没有访问权限。",
+        "statusLabel": "状态",
+        "status": {
+          "started": "进行中",
+          "completed": "已完成",
+          "failed": "失败",
+          "unknown": "未知状态"
+        },
+        "field": {
+          "source": "来源页面",
+          "sourceHidden": "你无法打开该页面，仅显示其 ID。",
+          "sourceLoading": "正在加载页面…",
+          "sourceFrontier": "来源版本前沿（frontier）",
+          "targetSchemaVersion": "目标 schema 版本",
+          "lineage": "血缘 ID",
+          "lineageNone": "尚未记录血缘。",
+          "warnings": "警告",
+          "warningsNone": "无警告。",
+          "error": "错误",
+          "createdTargets": "已创建的记录",
+          "createdTargetsNone": "尚未创建任何内容。",
+          "targetLoading": "正在查找记录…",
+          "targetUnresolved": "不是你可打开的 Forms 记录，仅显示其 ID。",
+          "targetUntitled": "无标题记录"
+        },
+        "action": {
+          "copyId": "复制 ID",
+          "copied": "已复制 ID。",
+          "copyFailed": "无法复制 ID，请手动选中复制。",
+          "retry": "重试转换",
+          "retrying": "正在重试…",
+          "newConversion": "从页面重新发起转换"
+        },
+        "retry": {
+          "confirmTitle": "重试此转换？",
+          "confirmBody": "转换将按原预览重新执行，所有权限都会重新校验；若预览之后页面或目标表单已变化，重试会失败。",
+          "confirm": "重试",
+          "cancel": "取消"
+        },
+        "error": {
+          "notFound": "该转换任务不存在，或你没有访问权限。",
+          "staleFrontier": "预览之后页面已变化，此任务无法重试。请从页面重新发起转换。",
+          "policyRejected": "在当前权限、预览或目标 schema 下此任务无法重试。请从页面重新发起转换。",
+          "rejected": "服务器拒绝了此请求。",
+          "conflict": "此请求与先前的请求冲突，请刷新页面。",
+          "unavailable": "服务器暂不可用，请重试。",
+          "jobFailed": "转换失败，失败的尝试没有创建任何内容。"
+        },
+        "live": {
+          "completed": "转换已完成。",
+          "failed": "转换失败。",
+          "retrying": "正在重试转换。",
+          "notFound": "转换任务不可用。"
         }
       }
     }

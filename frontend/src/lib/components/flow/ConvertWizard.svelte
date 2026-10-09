@@ -5,6 +5,7 @@
 	import { onDestroy, onMount, tick, untrack } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import Card from '$lib/components/Card.svelte';
 	import type { FlowCommandService } from '$lib/flow/command-service';
 	import type { FlowObjectRepository } from '$lib/flow/object-repository';
@@ -156,10 +157,12 @@
 		const outcome = await wizard.commit();
 		if (outcome.status === 'committed') {
 			announce('flow.bridge.convert.live.committed');
-			// The conversion job page is FP-N5's route; it is not in the route tree yet, so the typed
-			// `resolve()` cannot name it.
-			// eslint-disable-next-line svelte/no-navigation-without-resolve
-			await goto(`/workspace/${workspaceId}/flow/conversions/${outcome.jobId}`);
+			await goto(
+				resolve('/(app)/workspace/[workspaceId]/flow/conversions/[jobId]', {
+					workspaceId,
+					jobId: outcome.jobId
+				})
+			);
 		} else if (outcome.status === 'failed') {
 			announce(outcome.failure.messageKey);
 		}
