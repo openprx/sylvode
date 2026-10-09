@@ -12,6 +12,7 @@
 	import { projectOptionsStore } from '$lib/stores/project-options';
 	import { workspacesApi } from '$lib/api/workspaces';
 	import { flowFeatureStore } from '$lib/stores/flow-feature';
+	import { isWorkspaceHomePath, workspaceHomeNames, workspaceHomeTitle } from '$lib/workspace/home';
 
 	let { children } = $props();
 
@@ -35,6 +36,13 @@
 		const pathname = $page.url.pathname;
 
 		if (pathname === '/workspace') return $t('pageTitle.workspace');
+		if (isWorkspaceHomePath(pathname)) {
+			const workspaceId = pathname.split('/')[2] ?? '';
+			return workspaceHomeTitle(
+				(key, options) => $t(key, options),
+				$workspaceHomeNames[workspaceId]
+			);
+		}
 		if (pathname === '/governance') return $t('pageTitle.governanceCenter');
 		if (pathname === '/proposals') return $t('pageTitle.proposals');
 		if (pathname === '/proposals/new') return $t('pageTitle.proposalNew');
@@ -74,9 +82,11 @@
 			return $t('pageTitle.flowConvert');
 		if (/^\/workspace\/[^/]+\/flow\/conversions\/[^/]+$/.test(pathname))
 			return $t('pageTitle.flowConversion');
+		if (/^\/workspace\/[^/]+\/flow(\/[^/]+)?$/.test(pathname)) return $t('pageTitle.flowWorkspace');
 		if (/^\/workspace\/[^/]+\/members$/.test(pathname)) return $t('pageTitle.workspaceMembers');
 		if (/^\/workspace\/[^/]+\/webhooks$/.test(pathname)) return $t('pageTitle.workspaceWebhooks');
 		if (/^\/workspace\/[^/]+\/connections$/.test(pathname)) return $t('pageTitle.workspaceConnections');
+		if (/^\/workspace\/[^/]+\/workflows$/.test(pathname)) return $t('pageTitle.workspaceWorkflows');
 		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/issues\/[^/]+$/.test(pathname)) return $t('pageTitle.issueDetail');
 		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/issues$/.test(pathname)) return $t('pageTitle.issueList');
 		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/board$/.test(pathname)) return $t('pageTitle.projectBoard');

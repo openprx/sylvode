@@ -84,10 +84,6 @@
 	}
 </script>
 
-<svelte:head>
-	<title>{$t('connections.title')}</title>
-</svelte:head>
-
 <div class="mx-auto max-w-7xl space-y-6">
 	<header class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 		<div>

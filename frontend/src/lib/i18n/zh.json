@@ -107,7 +107,31 @@
     "namePlaceholder": "例如：产品团队",
     "slugPlaceholder": "例如：product-team",
     "descriptionPlaceholder": "可选，描述这个工作区的用途",
-    "editWorkspace": "编辑工作区"
+    "editWorkspace": "编辑工作区",
+    "home": {
+      "title": "工作区首页",
+      "slugLabel": "标识",
+      "roleLabel": "你的角色",
+      "sections": "工作区入口",
+      "notFoundTitle": "工作区不可用",
+      "notFoundBody": "该工作区不存在，或你没有访问权限。",
+      "backToList": "返回工作区列表",
+      "loadFailed": "无法加载该工作区。",
+      "projectsTitle": "项目",
+      "projectTotal": "共 {count} 个",
+      "recentProjects": "最近项目",
+      "allProjects": "全部项目",
+      "projectsLoadFailed": "无法加载项目列表。",
+      "emptyTitle": "还没有项目",
+      "emptyBody": "项目在项目列表页创建。",
+      "newProject": "新建项目",
+      "flowTitle": "Sylvode Flow",
+      "flowOpenBody": "工作区共同编辑的页面、数据库与画布。",
+      "flowOpen": "打开 Flow",
+      "flowDisabledBody": "该工作区尚未启用 Flow。",
+      "flowEnable": "前往 Flow 设置启用",
+      "adminTitle": "管理"
+    }
   },
   "project": {
     "title": "项目",
@@ -2336,7 +2360,12 @@
     "flowImportReport": "Sylvode - Flow 导入报告",
     "flowOperations": "Sylvode - Flow 运维",
     "flowConvert": "Sylvode - 转换为 Forms",
-    "flowConversion": "Sylvode - 转换任务"
+    "flowConversion": "Sylvode - 转换任务",
+    "workspaceHome": "Sylvode - 工作区首页",
+    "workspaceHomeWithName": "Sylvode - {name}",
+    "flowWorkspace": "Sylvode - Flow",
+    "workspaceWorkflows": "Sylvode - 工作流管理",
+    "formRecordWithTitle": "Sylvode - {title}"
   },
   "flow": {
     "nav": {
