@@ -2394,6 +2394,35 @@
         "moveAfter": "Move after next",
         "moveInside": "Move inside (not available this version)",
         "moveOutside": "Move outside (not available this version)"
+      },
+      "newMenu": "New",
+      "collectionBadge": "Collection",
+      "createCollection": {
+        "menuItem": "New Collection",
+        "title": "New Collection",
+        "nameLabel": "Name",
+        "fieldsLabel": "Initial fields",
+        "fieldsHint": "Text fields the collection starts with. You can leave this empty.",
+        "noFields": "No initial fields.",
+        "fieldLabel": "Field {position} name",
+        "fieldTypeText": "Text",
+        "remove": "Remove",
+        "removeField": "Remove field {position}",
+        "addField": "Add text field",
+        "defaultFieldLabel": "Name",
+        "viewLabel": "Initial view",
+        "viewName": {
+          "table": "Table",
+          "board": "Board"
+        },
+        "submit": "Create",
+        "creating": "Creating…",
+        "titleRequired": "Enter a name for the collection.",
+        "tooLong": "Names can be at most 500 characters.",
+        "fieldLabelRequired": "Every field needs a name, or remove the empty field.",
+        "notRetryable": "Change the form before trying again.",
+        "busy": "Already creating, please wait.",
+        "failed": "The collection could not be created."
       }
     },
     "canvas": {
@@ -2547,7 +2576,27 @@
     },
     "search": {
       "title": "Search",
-      "comingSoon": "Flow search is not available in this version yet."
+      "label": "Search Flow objects",
+      "placeholder": "Search pages…",
+      "requireCurrent": "Only show results from an up-to-date index",
+      "searching": "Searching…",
+      "empty": "No matching objects.",
+      "resultsLabel": "Search results",
+      "resultCount": "{count} results",
+      "stale": "Stale",
+      "staleHint": "The index is {lag} changes behind this object. Open it to see the current content.",
+      "frontierStale": "The search index is {lag} changes behind; newer content may be missing.",
+      "type": {
+        "page": "Page",
+        "collection": "Collection",
+        "navigator": "Navigator"
+      },
+      "error": {
+        "staleFrontier": "The search index is not up to date yet. Turn off \"Only show results from an up-to-date index\" or try again shortly.",
+        "tooBroad": "This search is too broad. Add more words.",
+        "tooLong": "Search text can be at most 256 characters.",
+        "generic": "Search failed. Try again."
+      }
     },
     "recovery": {
       "download": "Download recovery draft",
@@ -3380,6 +3429,12 @@
         "rejected": "The sharing change was rejected.",
         "unavailable": "Sharing is temporarily unavailable. Try again."
       }
+    },
+    "lag": {
+      "loading": "Checking sync status…",
+      "synced": "Synced",
+      "lagging": "Syncing: up to {max} changes behind (p95 {p95})",
+      "unavailable": "Sync status unavailable"
     }
   }
 }

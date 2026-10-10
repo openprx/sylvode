@@ -240,6 +240,16 @@ OpenPR name keeps working; see **Deprecated**.
     controller refreshed every 30 seconds, and a standalone Collection create session that keeps
     one idempotency key and one set of field and view ids per intent. `CommandService.createObject`
     accepts the caller's idempotency key and throws the typed `error_code`.
+  - Web UI: the navigator searches Flow objects as you type (one request 200ms after the last
+    keystroke, the previous one cancelled). Results are a keyboard listbox (`aria-activedescendant`,
+    arrow keys, Home, End, Enter opens the object page, which reads the current object); a hit
+    whose index lags the document is marked Stale, and a lagging index frontier is shown. An
+    optional "up-to-date index only" switch sends `freshness=require_current` and shows the
+    `stale_frontier` refusal instead of falling back. The navigator header shows the workspace
+    projection lag (`max_lag`, `p95_lag`, refreshed every 30 seconds, `aria-live`), a New menu
+    with New Page and New Collection, and 44px header buttons instead of the emoji glyphs. New
+    Collection asks for a name, optional text fields (one default field) and a table or board
+    view and creates it with one `POST .../flow/objects`; Collections are listed in the tree.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

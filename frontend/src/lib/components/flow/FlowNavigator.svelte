@@ -46,6 +46,14 @@
 	} from '$lib/flow/navigator-reorder';
 	import { FLOW_REPOSITORY_CONTEXT } from '$lib/flow/context-keys';
 	import { resolveRenderer } from '$lib/flow/renderer-registry';
+	import {
+		FlowNavigatorSearch,
+		SEARCH_QUERY_MAX_CHARS,
+		type SearchSnapshot
+	} from '$lib/flow/navigator-search';
+	import { FlowLagBadge, type LagBadgeState } from '$lib/flow/navigator-lag';
+	import type { AcceptedChange } from '$lib/api/flow';
+	import CreateCollectionDialog from './CreateCollectionDialog.svelte';
 
 	// `contracts/ui-surface-v1.md` "Renderer registry": an unregistered `${objectType}:${viewType}`
 	// must fail to read-only/unsupported rather than the route always assuming a tree renders.
@@ -72,6 +80,36 @@
 	let draftSiblingOrder = $state<string[]>([]); // object ids, lift-mode only, visual-only until drop
 	let announcement = $state('');
 	let creatingParentId = $state<string | null | undefined>(undefined);
+
+	// v0.5 Flow search (`ui-surface-v1.md` "后续版本 UI 派生" v0.5) and the v0.6 standalone
+	// Collection create; debounce/abort/keyboard state lives in `$lib/flow/navigator-search`, the
+	// lag badge's refresh loop in `$lib/flow/navigator-lag`.
+	const search = new FlowNavigatorSearch(
+		() => workspaceId,
+		(snapshot) => (searchState = snapshot),
+		{
+			reads: repository
+		}
+	);
+	let searchState = $state<SearchSnapshot>(search.snapshot);
+	let searchInput = $state('');
+	const searchListId = 'flow-search-results';
+	const searchOptionId = (index: number): string => `${searchListId}-option-${index}`;
+	const searchOpen = $derived(searchState.status !== 'idle');
+
+	const lagBadge = new FlowLagBadge(
+		() => workspaceId,
+		(state) => (lagState = state),
+		{
+			reads: repository
+		}
+	);
+	let lagState = $state<LagBadgeState>(lagBadge.current);
+
+	let newMenuOpen = $state(false);
+	let newMenuButton = $state<HTMLButtonElement | null>(null);
+	let newMenuEl = $state<HTMLDivElement | null>(null);
+	let collectionDialogOpen = $state(false);
 
 	function orderOf(objectId: string): string {
 		if (!navEntry) return '';
@@ -195,7 +233,9 @@
 	async function loadObjects(): Promise<void> {
 		const result = await commandService.listObjects(workspaceId, { limit: 100 });
 		if (result.code === 0 && result.data) {
-			objects = result.data.items.filter((o) => o.object_type === 'page');
+			objects = result.data.items.filter(
+				(o) => o.object_type === 'page' || o.object_type === 'collection'
+			);
 		}
 	}
 
@@ -224,12 +264,114 @@
 				loading = false;
 			}
 		})();
-		return () => controller.abort();
+		lagBadge.start();
+		return () => {
+			controller.abort();
+			lagBadge.stop();
+			search.dispose();
+		};
 	});
 
 	onDestroy(() => {
 		if (navEntry) void repository.close(navEntry.handle.objectId);
 	});
+
+	function onSearchInput(): void {
+		search.setQuery(searchInput);
+	}
+
+	function openSearchRow(index: number): void {
+		const row = searchState.rows[index];
+		if (!row) return;
+		searchInput = '';
+		search.clear();
+		select(row.id);
+	}
+
+	function onSearchKeydown(event: KeyboardEvent): void {
+		if (event.key === 'Escape') {
+			if (searchInput === '') return;
+			event.preventDefault();
+			searchInput = '';
+			search.clear();
+			return;
+		}
+		if (event.key === 'Enter') {
+			if (searchState.activeIndex < 0) return;
+			event.preventDefault();
+			openSearchRow(searchState.activeIndex);
+			return;
+		}
+		if (!searchOpen) return;
+		if (search.handleKey(event.key)) event.preventDefault();
+	}
+
+	function onFreshnessChange(event: Event): void {
+		const checked = (event.currentTarget as HTMLInputElement).checked;
+		search.setFreshness(checked ? 'require_current' : 'allow_stale');
+	}
+
+	function newMenuItems(): HTMLElement[] {
+		return newMenuEl ? [...newMenuEl.querySelectorAll<HTMLElement>('[role="menuitem"]')] : [];
+	}
+
+	function toggleNewMenu(): void {
+		newMenuOpen = !newMenuOpen;
+		if (newMenuOpen) queueMicrotask(() => newMenuItems()[0]?.focus());
+	}
+
+	function closeNewMenu(returnFocus: boolean): void {
+		newMenuOpen = false;
+		if (returnFocus) newMenuButton?.focus();
+	}
+
+	function onNewMenuKeydown(event: KeyboardEvent): void {
+		const items = newMenuItems();
+		const index = items.indexOf(document.activeElement as HTMLElement);
+		switch (event.key) {
+			case 'Escape':
+				event.preventDefault();
+				closeNewMenu(true);
+				return;
+			case 'ArrowDown':
+				event.preventDefault();
+				items[Math.min(index + 1, items.length - 1)]?.focus();
+				return;
+			case 'ArrowUp':
+				event.preventDefault();
+				items[Math.max(index - 1, 0)]?.focus();
+				return;
+			case 'Home':
+				event.preventDefault();
+				items[0]?.focus();
+				return;
+			case 'End':
+				event.preventDefault();
+				items.at(-1)?.focus();
+				return;
+			case 'Tab':
+				closeNewMenu(false);
+				return;
+			default:
+				return;
+		}
+	}
+
+	function chooseNewPage(): void {
+		closeNewMenu(false);
+		void createPage();
+	}
+
+	function chooseNewCollection(): void {
+		closeNewMenu(false);
+		collectionDialogOpen = true;
+	}
+
+	function onCollectionCreated(change: AcceptedChange): void {
+		collectionDialogOpen = false;
+		placeCreatedObject(change);
+		select(change.object.id);
+	}
 
 	function announce(key: string, values?: Record<string, unknown>): void {
 		announcement = get(t)(key, { values });
@@ -444,19 +586,25 @@
 				parent_object_id: parentId,
 				title: get(t)('flow.nav.untitled')
 			});
-			objects = [...objects, created.object];
-			if (navEntry) {
-				const siblings = orderedSiblingsOf(created.object.id).filter(
-					(o) => o.id !== created.object.id
-				);
-				getNamedMap(navEntry.doc, 'order').set(created.object.id, appendOrderKey(siblings));
-				navEntry.doc.commit();
-				orderVersion += 1;
-			}
+			placeCreatedObject(created);
 			if (parentId) expanded = new Set(expanded).add(parentId);
 			select(created.object.id);
 		} finally {
 			creatingParentId = undefined;
+		}
+	}
+
+	/** Adds a just-created object to the tree and appends it to its siblings' order. The one
+	 * create-side order write, shared by Page and Collection create. */
+	function placeCreatedObject(created: AcceptedChange): void {
+		objects = [...objects.filter((o) => o.id !== created.object.id), created.object];
+		if (navEntry) {
+			const siblings = orderedSiblingsOf(created.object.id).filter(
+				(o) => o.id !== created.object.id
+			);
+			getNamedMap(navEntry.doc, 'order').set(created.object.id, appendOrderKey(siblings));
+			navEntry.doc.commit();
+			orderVersion += 1;
 		}
 	}
 </script>
@@ -471,37 +619,220 @@
 		<span class="text-sm font-semibold text-slate-900 dark:text-slate-100"
 			>{$t('flow.nav.title')}</span
 		>
-		<div class="flex items-center gap-1">
-			<!-- `flow.search.*` (`i18n v0.4 基线`): Flow search is v0.5 scope
-				 (`ui-surface-v1.md` "后续版本 UI 派生" v0.5: "Navigator/command palette 增加 Flow
-				 search"). The entry point exists and is disabled/announced rather than the key
-				 sitting unused, matching the "禁止...缺 key 时把 key string 当发布文案" rule by
-				 never rendering the key as anything other than real, honest UI copy. -->
+		<div class="relative flex items-center gap-1">
 			<button
 				type="button"
-				class="rounded p-1 text-slate-400 dark:text-slate-500"
-				disabled
-				aria-disabled="true"
-				aria-label={$t('flow.search.comingSoon')}
-				title={$t('flow.search.comingSoon')}
-			>
-				🔍
-			</button>
-			<button
-				type="button"
-				class="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-				onclick={() => createPage()}
+				bind:this={newMenuButton}
+				class="flex min-h-11 min-w-11 items-center justify-center rounded text-slate-600 hover:bg-slate-200 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+				onclick={toggleNewMenu}
 				disabled={creatingParentId !== undefined}
-				aria-label={$t('flow.nav.newPage')}
-				title={$t('flow.nav.newPage')}
+				aria-haspopup="menu"
+				aria-expanded={newMenuOpen}
+				aria-label={$t('flow.nav.newMenu')}
+				title={$t('flow.nav.newMenu')}
+				data-testid="flow-nav-new"
 			>
-				+
+				<svg
+					class="h-5 w-5"
+					fill="none"
+					stroke="currentColor"
+					viewBox="0 0 24 24"
+					aria-hidden="true"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M12 5v14M5 12h14"
+					/>
+				</svg>
 			</button>
+			{#if newMenuOpen}
+				<div
+					class="fixed inset-0 z-40"
+					role="presentation"
+					onclick={() => closeNewMenu(false)}
+				></div>
+				<div
+					bind:this={newMenuEl}
+					class="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
+					role="menu"
+					tabindex="-1"
+					aria-label={$t('flow.nav.newMenu')}
+					onkeydown={onNewMenuKeydown}
+				>
+					<button
+						type="button"
+						role="menuitem"
+						class="block min-h-11 w-full px-3 text-left text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
+						onclick={chooseNewPage}
+					>
+						{$t('flow.nav.newPage')}
+					</button>
+					<button
+						type="button"
+						role="menuitem"
+						class="block min-h-11 w-full px-3 text-left text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
+						onclick={chooseNewCollection}
+					>
+						{$t('flow.nav.createCollection.menuItem')}
+					</button>
+				</div>
+			{/if}
 		</div>
 	</div>
 
+	<p
+		class="border-b border-slate-200 px-3 py-1 text-xs dark:border-slate-800 {lagState.kind ===
+		'lagging'
+			? 'text-amber-700 dark:text-amber-300'
+			: 'text-slate-500 dark:text-slate-400'}"
+		role="status"
+		aria-live="polite"
+		data-testid="flow-lag-badge"
+		data-lag-state={lagState.kind}
+	>
+		{#if lagState.kind === 'loading'}
+			{$t('flow.lag.loading')}
+		{:else if lagState.kind === 'synced'}
+			{$t('flow.lag.synced')}
+		{:else if lagState.kind === 'lagging'}
+			{$t('flow.lag.lagging', { values: { max: lagState.maxLag, p95: lagState.p95Lag } })}
+		{:else}
+			{$t('flow.lag.unavailable')}
+		{/if}
+	</p>
+
+	<div class="border-b border-slate-200 p-2 dark:border-slate-800">
+		<input
+			type="search"
+			role="combobox"
+			bind:value={searchInput}
+			oninput={onSearchInput}
+			onkeydown={onSearchKeydown}
+			maxlength={SEARCH_QUERY_MAX_CHARS}
+			placeholder={$t('flow.search.placeholder')}
+			aria-label={$t('flow.search.label')}
+			aria-autocomplete="list"
+			aria-expanded={searchOpen}
+			aria-controls={searchListId}
+			aria-activedescendant={searchOpen && searchState.activeIndex >= 0
+				? searchOptionId(searchState.activeIndex)
+				: undefined}
+			class="min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+			data-testid="flow-search-input"
+		/>
+		{#if searchOpen}
+			<label
+				class="mt-1 flex min-h-11 items-center gap-2 text-xs text-slate-600 dark:text-slate-400"
+			>
+				<input
+					type="checkbox"
+					checked={searchState.freshness === 'require_current'}
+					onchange={onFreshnessChange}
+					data-testid="flow-search-require-current"
+				/>
+				<span>{$t('flow.search.requireCurrent')}</span>
+			</label>
+		{/if}
+	</div>
+
 	<div class="flex-1 overflow-y-auto p-2">
-		{#if !navRenderer}
+		{#if searchOpen}
+			<div data-testid="flow-search-panel">
+				{#if searchState.status === 'pending' || searchState.status === 'loading'}
+					<p class="p-2 text-sm text-slate-500 dark:text-slate-400">
+						{$t('flow.search.searching')}
+					</p>
+				{:else if searchState.status === 'error' && searchState.failureKey}
+					<p
+						class="p-2 text-sm text-red-600 dark:text-red-400"
+						role="alert"
+						data-testid="flow-search-error"
+						data-error-code={searchState.failureCode ?? ''}
+					>
+						{$t(searchState.failureKey)}
+					</p>
+				{:else if searchState.status === 'ready' && searchState.rows.length === 0}
+					<p class="p-2 text-sm text-slate-500 dark:text-slate-400" data-testid="flow-search-empty">
+						{$t('flow.search.empty')}
+					</p>
+				{/if}
+				{#if searchState.status === 'ready' && searchState.frontierStale}
+					<p
+						class="px-2 pb-1 text-xs text-amber-700 dark:text-amber-300"
+						data-testid="flow-search-frontier-stale"
+					>
+						{$t('flow.search.frontierStale', { values: { lag: searchState.frontierLag } })}
+					</p>
+				{/if}
+				<ul
+					id={searchListId}
+					role="listbox"
+					aria-label={$t('flow.search.resultsLabel')}
+					class="space-y-1"
+				>
+					{#each searchState.rows as row, index (row.id)}
+						<!-- Focus stays in the combobox input (aria-activedescendant); the option is
+							 activated by pointer here and by Enter on the input. -->
+						<!-- svelte-ignore a11y_click_events_have_key_events -->
+						<li
+							id={searchOptionId(index)}
+							role="option"
+							aria-selected={index === searchState.activeIndex}
+							class={`min-h-11 cursor-pointer rounded px-2 py-1.5 text-sm ${
+								index === searchState.activeIndex
+									? 'bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-100'
+									: 'text-slate-700 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800'
+							}`}
+							onclick={() => openSearchRow(index)}
+							onmousemove={() => {
+								if (index !== searchState.activeIndex) search.setActive(index);
+							}}
+							data-testid="flow-search-result"
+							data-object-id={row.id}
+						>
+							<span class="flex items-center gap-2">
+								<span class="flex-1 truncate font-medium"
+									>{row.title || $t('flow.nav.untitled')}</span
+								>
+								<span class="shrink-0 text-xs text-slate-500 dark:text-slate-400"
+									>{$t(
+										row.objectType === 'collection'
+											? 'flow.search.type.collection'
+											: row.objectType === 'navigator'
+												? 'flow.search.type.navigator'
+												: 'flow.search.type.page'
+									)}</span
+								>
+								{#if row.stale}
+									<span
+										class="shrink-0 rounded bg-amber-100 px-1 text-xs text-amber-800 dark:bg-amber-900/50 dark:text-amber-200"
+										data-testid="flow-search-stale"
+										title={$t('flow.search.staleHint', { values: { lag: row.lag } })}
+									>
+										{$t('flow.search.stale')}
+									</span>
+								{/if}
+							</span>
+							{#if row.snippet.length > 0}
+								<span class="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400"
+									>{#each row.snippet as segment, segmentIndex (segmentIndex)}{#if segment.match}<mark
+												class="bg-yellow-200 text-inherit dark:bg-yellow-700/60"
+												>{segment.text}</mark
+											>{:else}{segment.text}{/if}{/each}</span
+								>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+				<p class="sr-only" aria-live="polite" role="status">
+					{searchState.status === 'ready'
+						? $t('flow.search.resultCount', { values: { count: searchState.rows.length } })
+						: ''}
+				</p>
+			</div>
+		{:else if !navRenderer}
 			<p class="p-2 text-sm text-slate-500 dark:text-slate-400">{$t('flow.canvas.unsupported')}</p>
 		{:else if loading}
 			<p class="p-2 text-sm text-slate-500 dark:text-slate-400">{$t('flow.nav.loading')}</p>
@@ -563,6 +894,12 @@
 							<span class="w-4 shrink-0"></span>
 						{/if}
 						<span class="truncate">{node.object.title || $t('flow.nav.untitled')}</span>
+						{#if node.object.object_type === 'collection'}
+							<span
+								class="ml-auto shrink-0 text-xs text-slate-500 dark:text-slate-400"
+								data-testid="flow-nav-collection-badge">{$t('flow.nav.collectionBadge')}</span
+							>
+						{/if}
 					</div>
 					{#if expanded.has(node.object.id)}
 						<div role="group">
@@ -584,6 +921,13 @@
 
 	<div aria-live="polite" class="sr-only" role="status">{announcement}</div>
 </nav>
+
+<CreateCollectionDialog
+	open={collectionDialogOpen}
+	{workspaceId}
+	oncreated={onCollectionCreated}
+	onclose={() => (collectionDialogOpen = false)}
+/>
 
 {#if contextMenuFor && contextMenuPos}
 	<div
