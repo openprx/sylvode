@@ -218,6 +218,12 @@ OpenPR name keeps working; see **Deprecated**.
     acknowledgement before `confirm_self_lockout` is sent. After a change the panel shows the
     server's response and reads the grants again. Without full access no grant list is shown and
     nothing can be changed.
+  - Web UI: a Relations section in the object panel, loaded the first time it is opened and
+    paged with the server's opaque cursor, with direction and relation-type filters. Each
+    visible relation links to its target object; a relation whose target the viewer cannot see
+    is shown as a placeholder with no link and no copy action. A relation that is not provably
+    in the object's workspace, a malformed row, or a rejected read hides every relation and
+    shows an integrity error instead.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which
