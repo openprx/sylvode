@@ -113,10 +113,14 @@ jobs:
         if: matrix.use_cross
         run: |
           cross build --release -p api --bin api --target ${{ matrix.target }}
+          # The API spawns this for every Flow collaborative write and looks for it next to its
+          # own executable, so it ships in the same archive directory as api.
+          cross build --release -p collab-core --bin collab-isolated-apply-worker --target ${{ matrix.target }}
           cross build --release -p worker --bin worker --target ${{ matrix.target }}
           cross build --release -p mcp-server --bin mcp-server --target ${{ matrix.target }}
           cross build --release -p mcp-server --bin sylvode --target ${{ matrix.target }}
 
+      # Builds every workspace binary, collab-isolated-apply-worker included.
       - name: Build all binaries (native)
         if: "!matrix.use_cross"
         run: cargo build --release --target ${{ matrix.target }}
@@ -125,7 +129,8 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p staging
-          for bin in api worker mcp-server sylvode; do
+          # collab-isolated-apply-worker must stay in the same directory as api.
+          for bin in api collab-isolated-apply-worker worker mcp-server sylvode; do
             test -x target/${{ matrix.target }}/release/$bin
             cp target/${{ matrix.target }}/release/$bin staging/
             chmod +x staging/$bin
@@ -142,7 +147,8 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force staging
-          foreach ($bin in @("api", "worker", "mcp-server", "sylvode")) {
+          # collab-isolated-apply-worker must stay in the same directory as api.
+          foreach ($bin in @("api", "collab-isolated-apply-worker", "worker", "mcp-server", "sylvode")) {
             $src = "target/${{ matrix.target }}/release/$bin.exe"
             if (-not (Test-Path $src)) { throw "missing release binary: $src" }
             Copy-Item $src staging/
@@ -233,6 +239,20 @@ jobs:
             test -s "artifacts/$file.sha256" || { echo "::error::missing checksum $file.sha256"; exit 1; }
           done
           (cd artifacts && sha256sum -c ./*.sha256)
+          # Flow collaborative writes need collab-isolated-apply-worker beside api, in every
+          # platform archive and its deprecated alias.
+          for archive in artifacts/*-linux-*.tar.gz artifacts/*-macos-*.tar.gz; do
+            listing="$(tar tzf "$archive")"
+            for bin in api collab-isolated-apply-worker; do
+              grep -qx "$bin" <<<"$listing" || { echo "::error::$archive lacks $bin"; exit 1; }
+            done
+          done
+          for archive in artifacts/*-windows-*.zip; do
+            listing="$(unzip -Z1 "$archive")"
+            for bin in api.exe collab-isolated-apply-worker.exe; do
+              grep -qx "$bin" <<<"$listing" || { echo "::error::$archive lacks $bin"; exit 1; }
+            done
+          done
 
       - name: Create Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
@@ -258,8 +278,10 @@ jobs:
             | Windows | x86_64 | `sylvode-windows-amd64.zip` |
             | Frontend | Static | `sylvode-frontend.tar.gz` |
 
-            Each archive contains `api`, `worker`, legacy-compatible `mcp-server`, and
-            the new `sylvode` CLI, with a `.sha256` file to check it (`sha256sum -c`).
+            Each archive contains `api`, `collab-isolated-apply-worker`, `worker`,
+            legacy-compatible `mcp-server`, and the new `sylvode` CLI, with a `.sha256` file to
+            check it (`sha256sum -c`). Keep `collab-isolated-apply-worker` in the same directory
+            as `api`: the API spawns it for every Flow collaborative write.
             Matching `openpr-*` archive names are published as deprecated aliases with the same
             content; they are not removed before Sylvode v2.0.
 

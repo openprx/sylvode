@@ -565,7 +565,8 @@ fi
 # installed) passes --no-build; the binaries must then already sit in target/release.
 if [ "$MODE" = "--no-build" ]; then
   missing_binaries=()
-  for binary in api worker mcp-server; do
+  # collab-isolated-apply-worker ships next to api in the api image (Flow collaborative writes).
+  for binary in api collab-isolated-apply-worker worker mcp-server; do
     [ -x "target/release/$binary" ] || missing_binaries+=("target/release/$binary")
   done
   if [ "${#missing_binaries[@]}" -ne 0 ]; then

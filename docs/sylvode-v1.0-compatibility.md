@@ -106,8 +106,12 @@ These identifiers keep their OpenPR-era names, with no removal planned:
 ## Upgrade sequence
 
 1. Back up the database and the existing configuration.
-2. Install the v1.0 binaries. Existing `mcp-server` invocations and old configuration continue
-   to work; they now print the deprecation warnings above. **Bot tokens are the exception.**
+2. Install the v1.0 binaries: `api`, `collab-isolated-apply-worker`, `worker`, `mcp-server` and
+   `sylvode`. `collab-isolated-apply-worker` is new in v1.0 and **must be installed in the same
+   directory as `api`** (or named by `COLLAB_ISOLATED_APPLY_WORKER_PATH`): the API spawns it for
+   every Flow collaborative write, and without it every edit fails with
+   `worker binary 'collab-isolated-apply-worker' not found next to ...`. Existing `mcp-server`
+   invocations and old configuration continue to work; they now print the deprecation warnings above. **Bot tokens are the exception.**
    Migration `0062_flow_forms_bridge.sql` runs
    `ALTER TABLE workspace_bots ADD COLUMN IF NOT EXISTS transport_surface TEXT NOT NULL DEFAULT 'rest';`,
    which binds every bot token that exists at upgrade time to the `rest` surface, and the API
