@@ -376,6 +376,9 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- `GET /api/v1/workspaces/{workspace_id}/projects` honours `page` and `per_page` (default 20,
+  at most 100) and reports the real `total` / `total_pages`; it used to ignore both and always
+  return every project. A request with neither parameter still returns the whole list.
 - Flow: every error the Flow REST surface constructs (`/api/v1/flow/**`, the workspace Flow
   feature, projection-lag, conversion, package import/export and operations endpoints, and the
   collab ticket/WebSocket routes) is now a typed envelope carrying `error_code` (and `details`
