@@ -1570,7 +1570,7 @@ pub struct GetFlowObjectBootstrapQuery {
 }
 
 /// `GET /api/v1/flow/objects/{object_id}/bootstrap` (`rest-api-v1.md`: "**user only**；object
-/// read/write；flag").
+/// read（`view` 档即可，与 WS `open`/`snapshot` 同档）；flag").
 ///
 /// Unlike every other handler in this module, a bot token is rejected outright rather than
 /// folded into the workspace-access check — matching `routes::collab::create_ticket`'s identical
@@ -1599,7 +1599,7 @@ pub async fn get_flow_object_bootstrap(
             &extensions,
             workspace_id,
             object_id,
-            crate::flow::collab::authz::PermissionLevel::Edit,
+            crate::flow::collab::authz::PermissionLevel::View,
         )
         .await?
         else {
@@ -14082,6 +14082,45 @@ mod flow_database_tests {
             include_str!("../main.rs").contains("get(routes::flow::get_flow_object_schema)"),
             "main.rs must route the schema resource to the record-aware handler"
         );
+        scratch.drop_self().await;
+    }
+
+    /// FP2-B6 (`rest-api-v1.md` bootstrap row, 2026-10-10): the REST bootstrap needs `view`, the
+    /// same level as the WebSocket `open`/`snapshot` that shares its loader.
+    #[tokio::test]
+    async fn fp2_b6_view_member_can_bootstrap_like_the_websocket_snapshot() {
+        let scratch = scratch_or_skip!("fp2-b6-bootstrap-view");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let viewer_id = seed_member(&state, workspace_id).await;
+        let outsider_id = seed_user(&state).await;
+        exec(
+            &state,
+            "UPDATE flow_workspace_settings SET default_member_level = 'view' WHERE workspace_id = $1",
+            vec![workspace_id.into()],
+        )
+        .await;
+        let page_id = create_page_as_owner(&state, workspace_id, owner_id, "Viewable").await;
+        let (status_code, viewer) = fp2_b6_route(
+            &state,
+            viewer_id,
+            "GET",
+            &format!("/api/v1/flow/objects/{page_id}/bootstrap"),
+            None,
+        )
+        .await;
+        assert_eq!(status_code, 200, "{viewer}");
+        assert_eq!(viewer["code"], 0, "a view member bootstraps: {viewer}");
+        assert!(viewer["data"]["snapshot_base64"].is_string(), "{viewer}");
+        let (_, outsider) = fp2_b6_route(
+            &state,
+            outsider_id,
+            "GET",
+            &format!("/api/v1/flow/objects/{page_id}/bootstrap"),
+            None,
+        )
+        .await;
+        assert_ne!(outsider["code"], 0, "a non-member still cannot bootstrap: {outsider}");
         scratch.drop_self().await;
     }
 }

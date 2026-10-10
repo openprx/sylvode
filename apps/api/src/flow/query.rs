@@ -321,7 +321,7 @@ pub async fn get_object(
 }
 
 /// `GET /api/v1/flow/objects/{object_id}/bootstrap` (`rest-api-v1.md`: "**user only**；object
-/// read/write；flag").
+/// read（`view` 档即可）；flag").
 ///
 /// `known_seq`/`known_frontier` are accepted and shape-validated (a malformed `known_frontier` is
 /// `invalid_update`) but do not change the response: this endpoint always returns the *current*

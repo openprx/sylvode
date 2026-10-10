@@ -507,6 +507,9 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow: `GET /flow/objects/{id}/bootstrap` needs `view`, the level the WebSocket `open` and
+  `snapshot` (which use the same loader) already need; it used to require `edit`, so a read-only
+  member could watch a document live but not download its bootstrap.
 - Flow Collections: `GET /flow/collections/{id}/records` honours `view_id`. Records are queried
   with the view's saved `config.filter`, `config.sort` and `config.group_field_id`; an explicit
   `filter`, `sort` or `group` parameter overrides the saved value for that part only, and a
