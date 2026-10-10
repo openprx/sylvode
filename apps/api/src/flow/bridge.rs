@@ -1182,23 +1182,32 @@ async fn load_job<C: ConnectionTrait>(conn: &C, job_id: Uuid) -> Result<Conversi
 
 #[cfg(test)]
 fn conversion_fault(preview_id: Uuid, point: &str) -> bool {
-    let (selected_preview, selected) = *CONVERSION_FAULT_FOR_TEST.lock();
+    let selected = CONVERSION_FAULT_FOR_TEST.lock().get(&preview_id).copied().unwrap_or(0);
     let selected_point = match selected {
-        1 => "before_target_create",
-        2 => "after_target_create_before_lineage",
-        3 => "after_commit_before_response",
-        _ => "",
+        1 => point == "before_target_create",
+        2 => point == "after_target_create_before_lineage",
+        3 => point == "after_commit_before_response",
+        // The run fails and recording that failure fails too.
+        4 => matches!(point, "before_target_create" | "record_failure"),
+        _ => false,
     };
-    (selected_preview == Some(preview_id) && selected_point == point)
-        || std::env::var("OPENPR_FLOW_TEST_CONVERSION_FAULT").is_ok_and(|value| value == point)
+    selected_point || std::env::var("OPENPR_FLOW_TEST_CONVERSION_FAULT").is_ok_and(|value| value == point)
 }
 
+/// Fault points armed per preview, so tests running in parallel never see each other's faults.
 #[cfg(test)]
-static CONVERSION_FAULT_FOR_TEST: parking_lot::Mutex<(Option<Uuid>, u8)> = parking_lot::Mutex::new((None, 0));
+static CONVERSION_FAULT_FOR_TEST: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<Uuid, u8>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
 
+/// Arms fault `point` for runs of `preview_id`; `0` disarms it.
 #[cfg(test)]
-pub(crate) fn set_conversion_fault_for_test(preview_id: Option<Uuid>, point: u8) {
-    *CONVERSION_FAULT_FOR_TEST.lock() = (preview_id, point);
+pub(crate) fn set_conversion_fault_for_test(preview_id: Uuid, point: u8) {
+    let mut faults = CONVERSION_FAULT_FOR_TEST.lock();
+    if point == 0 {
+        faults.remove(&preview_id);
+    } else {
+        faults.insert(preview_id, point);
+    }
 }
 
 #[cfg(not(test))]
@@ -1380,6 +1389,9 @@ async fn claim_retry_job(
 /// (a business transition caused by the run's `started` event). `false` means the job was no
 /// longer `started` (the failure came after the run committed) and nothing was written.
 async fn fail_conversion_job(state: &AppState, run: &ConversionRun, error_code: &str) -> Result<bool, ApiError> {
+    if conversion_fault(run.preview.id, "record_failure") {
+        return Err(ApiError::internal());
+    }
     let tx = state.db.begin().await?;
     let failed = tx
         .execute(Statement::from_sql_and_values(
@@ -1518,17 +1530,31 @@ async fn execute_claimed(
         Ok(job) => Ok(job),
         Err(error) => {
             let (typed, code) = conversion_failure(run.job_id, error);
+            // `details.job_status` is the status the job row really has once this answer is sent.
             let job_status = match fail_conversion_job(state, &run, code).await {
                 Ok(true) => Some("failed".to_string()),
-                // The run had already committed: report the status the job really has.
-                Ok(false) => load_job(&state.db, run.job_id).await.ok().map(|job| job.status),
+                // The job had already left `started` (the run committed before failing, or another
+                // request moved it on): report the status it really has.
+                Ok(false) => match load_job(&state.db, run.job_id).await {
+                    Ok(job) => Some(job.status),
+                    Err(load_error) => {
+                        tracing::error!(
+                            job_id = %run.job_id,
+                            error = ?load_error,
+                            "flow conversion job status could not be read after a failed run"
+                        );
+                        None
+                    }
+                },
+                // Nothing was written: the job is still `started`, and the periodic sweep fails it
+                // once it is stale.
                 Err(record_error) => {
                     tracing::error!(
                         job_id = %run.job_id,
                         error = ?record_error,
                         "flow conversion failure could not be recorded; the job stays started"
                     );
-                    None
+                    Some("started".to_string())
                 }
             };
             let typed = typed.with_detail("job_id", json!(run.job_id));

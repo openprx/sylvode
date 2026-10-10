@@ -55,8 +55,9 @@ pub struct OperationReceipt {
     pub warnings: Vec<&'static str>,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
-    /// `business_events.id` of the execute's audit row; `null` for a dry-run.
-    pub audit_event_id: Option<Uuid>,
+    /// `business_events.id` of the run's audit row: the execute's domain event, or a dry-run's
+    /// `audit_only` preview event. Never null (`rest-api-v1.md`).
+    pub audit_event_id: Uuid,
 }
 
 /// Exact scope an operation ran against.
@@ -167,12 +168,7 @@ fn observed_head_seq(result: &Value) -> Option<i64> {
     })
 }
 
-fn build_receipt(
-    operation: &str,
-    scope: &DocumentScope,
-    run: CompletedRun,
-    audit_event_id: Option<Uuid>,
-) -> OperationReceipt {
+fn build_receipt(operation: &str, scope: &DocumentScope, run: CompletedRun, audit_event_id: Uuid) -> OperationReceipt {
     OperationReceipt {
         operation_id: run.id,
         operation: operation.to_string(),
@@ -204,19 +200,25 @@ struct AuditEventRow {
     id: Uuid,
 }
 
+/// The audit row of a completed run. A completed run without one cannot answer a receipt
+/// (`audit_event_id` is never null), so its replay fails closed as `server_rejected`.
 async fn stored_audit_event_id(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     operation_id: Uuid,
-) -> Result<Option<Uuid>, ApiError> {
-    Ok(AuditEventRow::find_by_statement(Statement::from_sql_and_values(
+) -> Result<Uuid, ApiError> {
+    AuditEventRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT id FROM business_events WHERE workspace_id=$1 AND idempotency_key=$2",
         vec![workspace_id.into(), audit_idempotency_key(operation_id).into()],
     ))
     .one(db)
     .await?
-    .map(|row| row.id))
+    .map(|row| row.id)
+    .ok_or_else(|| {
+        tracing::error!(%operation_id, "completed flow operation run has no audit event");
+        ApiError::internal()
+    })
 }
 
 fn operation_audit_event(
@@ -440,7 +442,8 @@ async fn claim(
 /// The audit fact a completed run carries into its receipt.
 enum RunAudit {
     /// An execute whose `delivery_class=business` event was already written inside the domain
-    /// transaction (`None` only for an execute that has no audit row of its own).
+    /// transaction. `None` (an execute that produced no audit row) is refused by [`finish`]
+    /// rather than answered with a null `audit_event_id`.
     Executed(Option<Uuid>),
     /// A dry-run: its `delivery_class=audit_only` event is written by [`finish`] in the same
     /// transaction that completes the run, so a completed dry-run always has its audit row.
@@ -460,9 +463,12 @@ async fn finish(
     let completed = async {
         let tx = db.begin().await?;
         let audit_event_id = match audit {
-            RunAudit::Executed(event_id) => event_id,
+            RunAudit::Executed(event_id) => event_id.ok_or_else(|| {
+                tracing::error!(operation_id = %id, operation, "executed flow operation has no audit event");
+                ApiError::internal()
+            })?,
             // `dispatch: None` is `delivery_class=audit_only`: no `event_dispatch` row, no webhook.
-            RunAudit::Preview(input) => Some(insert_flow_event(&tx, *input, None).await?.event_id),
+            RunAudit::Preview(input) => insert_flow_event(&tx, *input, None).await?.event_id,
         };
         let times = RunTimes::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
