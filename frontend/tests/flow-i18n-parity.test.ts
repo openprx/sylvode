@@ -211,6 +211,21 @@ suite.check('every v0.4 stable error code has a zh and en key', () => {
 	}
 });
 
+suite.check('server_rejected is a registered stable code, so the key check above covers it', () => {
+	// Frozen 2026-08-31 (`error-mapping-v1.md`): permanent, "不得提示重试". The operations panel
+	// and the conversion job page receive it; they classify it through FLOW_ERROR_CODES.
+	assert(
+		(FLOW_ERROR_CODES as readonly string[]).includes('server_rejected'),
+		'server_rejected is missing from FLOW_ERROR_CODES'
+	);
+	for (const locale of LOCALES) {
+		assert(
+			value(locale, 'flow.error.server_rejected') !== undefined,
+			`${locale}.json is missing flow.error.server_rejected`
+		);
+	}
+});
+
 suite.check('package round-trip codes are reachable stable codes with zh and en keys', () => {
 	// `error-mapping-v1.md` marks these two "n/a；import/export REST only". The v0.8 package
 	// wizard consumes that REST surface, so they must be in FLOW_ERROR_CODES (and therefore

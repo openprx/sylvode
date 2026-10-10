@@ -97,11 +97,6 @@ export function classifyOperationsError(
 			permanent: !flowError.recoverable
 		};
 	}
-	if (result.error_code === 'server_rejected') {
-		// `error-mapping-v1.md`: permanent, "不得提示重试". Not (yet) in `FLOW_ERROR_CODES` -- the
-		// shared client registry has no `server_rejected` producer wired -- so it is matched here.
-		return failed('flow.error.server_rejected', false, true);
-	}
 	if (typeof result.error_code === 'string') {
 		return failed('flow.operations.error.rejected', false, true);
 	}

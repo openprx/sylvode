@@ -19,7 +19,12 @@ import type { FlowError, FlowErrorCode, SyncState } from './types';
  * only producer is the v0.8 package round-trip surface (`contracts/export-package-v1.md`). That
  * surface is consumed by the package export/import wizard (`package-wizard.ts`,
  * `package-export.ts`), so both are reachable and listed here; `PACKAGE_ROUND_TRIP_ERROR_CODES`
- * names them so the parity gate can assert they stay covered. */
+ * names them so the parity gate can assert they stay covered.
+ *
+ * `server_rejected` (frozen 2026-08-31, `error-mapping-v1.md`) is a permanent failure
+ * (`recoverable=false`, "不得提示重试"); every surface that can receive it (operations, conversion
+ * jobs, the collab `rejected` frame) classifies it through this registry, so the parity gate
+ * covers its zh/en keys like every other stable code. */
 export const FLOW_ERROR_CODES = [
 	'unauthenticated',
 	'forbidden',
@@ -33,6 +38,7 @@ export const FLOW_ERROR_CODES = [
 	'resync_required',
 	'authorization_churn',
 	'server_draining',
+	'server_rejected',
 	'checksum_mismatch',
 	'unsupported_format'
 ] as const satisfies readonly FlowErrorCode[];
