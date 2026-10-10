@@ -39,19 +39,30 @@
 //! `unwrap`/`expect`/`panic` in production code, and unwinding through a partially-shared runtime
 //! state is not something this process needs to make safe -- every path here terminates through
 //! [`respond_and_exit`], which always calls `libc::_exit`).
+//!
+//! Everything above is Linux-only, the platform matrix `ADR-0014` declares for this boundary. On
+//! every other target this binary compiles to a stub `main` that refuses on stderr and exits `2`
+//! (see the bottom of this file), so release archives carry the same file set on every platform.
 
 #![allow(unsafe_code)]
 
+#[cfg(target_os = "linux")]
 use std::io::Write;
 
+#[cfg(target_os = "linux")]
 use collab_core::error::CollabError;
+#[cfg(target_os = "linux")]
 use collab_core::isolation::{alloc, child_runtime, host, wire};
+#[cfg(target_os = "linux")]
 use collab_core::limits::{DocumentLimits, check_snapshot};
+#[cfg(target_os = "linux")]
 use collab_core::{CollabEngine, LoroCollabEngine};
 
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static ALLOCATOR: alloc::CountingAllocator = alloc::CountingAllocator;
 
+#[cfg(target_os = "linux")]
 fn main() {
     // Set before reading anything from the caller: catches allocations that bypass the counting
     // allocator (a raw `mmap`, an FFI allocator) at any point in this process's life, not only
@@ -99,6 +110,7 @@ fn main() {
     respond_and_exit(&decode_apply_check_and_export(base_engine, &update));
 }
 
+#[cfg(target_os = "linux")]
 fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> wire::Outcome {
     child_runtime::arm_sigprof();
     alloc::arm();
@@ -117,6 +129,7 @@ fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> w
     }
 }
 
+#[cfg(target_os = "linux")]
 fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::ReplayDiffResult, CollabError> {
     let request = wire::decode_replay_diff_request(request_bytes).map_err(|error| CollabError::DecodeFailed {
         input: "update",
@@ -175,6 +188,7 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
 /// Exits (without a further response) on any I/O failure, the same way every other setup-phase
 /// failure in `main` does -- a write failure this early means the parent cannot receive a useful
 /// response of any shape.
+#[cfg(target_os = "linux")]
 fn write_marker_or_exit() {
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
@@ -198,6 +212,7 @@ fn write_marker_or_exit() {
 /// tests concurrently in one process, would risk killing the entire test run under real CPU load,
 /// not just this one test's work. The real armed path is only ever exercised by spawning the
 /// actual compiled worker binary as a subprocess, which `isolation::host`'s own tests do.
+#[cfg(target_os = "linux")]
 fn run_metered(engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngine, wire::Outcome> {
     child_runtime::arm_sigprof();
     alloc::arm();
@@ -213,6 +228,7 @@ fn run_metered(engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngi
 /// branch exists only so `isolation::host`'s own boundary tests can substitute a precisely
 /// controllable synthetic workload for the real decode/apply/validate pipeline, still inside this
 /// exact arm/disarm pair.
+#[cfg(target_os = "linux")]
 fn metered_workload(engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngine, wire::Outcome> {
     #[cfg(debug_assertions)]
     if let Some(workload) = test_injection::workload_from_env() {
@@ -224,6 +240,7 @@ fn metered_workload(engine: LoroCollabEngine, update: &[u8]) -> Result<LoroColla
 /// The pure decode/apply/shape-validate logic, with no timer or allocator side effects of its own
 /// -- safe to unit test directly (see [`run_metered`]'s doc comment for why that function itself
 /// is not).
+#[cfg(target_os = "linux")]
 fn decode_apply_and_check(mut engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngine, wire::Outcome> {
     if let Err(err) = engine.import_update(update) {
         return Err(wire::Outcome::Rejected(err));
@@ -255,6 +272,7 @@ fn decode_apply_and_check(mut engine: LoroCollabEngine, update: &[u8]) -> Result
 /// `export_snapshot` costing roughly as much CPU time as `import_update` itself, so leaving it
 /// inside the window (as an earlier version of this file did) was spending real budget on work the
 /// contract does not ask this ceiling to bound.
+#[cfg(target_os = "linux")]
 fn decode_apply_check_and_export(engine: LoroCollabEngine, update: &[u8]) -> wire::Outcome {
     match run_metered(engine, update) {
         Ok(accepted) => match accepted.export_snapshot() {
@@ -272,6 +290,7 @@ fn decode_apply_check_and_export(engine: LoroCollabEngine, update: &[u8]) -> wir
 /// [`write_marker_or_exit`] the moment unmetered setup finished, before entering (or definitively
 /// skipping) the metered window. See that function's doc comment for why the marker must be sent
 /// there and not here.
+#[cfg(target_os = "linux")]
 fn respond_and_exit(outcome: &wire::Outcome) -> ! {
     let payload = wire::encode_outcome(outcome).unwrap_or_default();
     let Ok(framed) = host::encode_response_frame(&payload) else {
@@ -294,6 +313,7 @@ fn respond_and_exit(outcome: &wire::Outcome) -> ! {
 
 /// Exits `status` without writing any response frame at all -- used only for failures the parent
 /// must recognize as a host failure (non-zero exit), never as a business rejection.
+#[cfg(target_os = "linux")]
 fn exit_without_response(status: i32) -> ! {
     // SAFETY: `_exit` takes a plain `c_int` status code and has no preconditions.
     unsafe {
@@ -324,7 +344,7 @@ fn exit_without_response(status: i32) -> ! {
 /// sets that variable on the *child's own* environment before spawning it --
 /// `isolation::host::isolated_apply` (the production call site) never sets it, and never forwards
 /// it from its own caller (`apps/api`) either.
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, target_os = "linux"))]
 mod test_injection {
     use std::time::Duration;
 
@@ -452,7 +472,7 @@ mod test_injection {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
@@ -531,4 +551,24 @@ mod tests {
         };
         assert_eq!(limit_kind, "document_text_chars");
     }
+}
+
+/// Off Linux there is no isolation boundary to run (`ADR-0014` declares the enforcement platform
+/// matrix as Linux), so this binary only exists so every release archive ships the same file set.
+/// It never reads its input and never decodes anything: it says why on stderr and exits `2`, which
+/// a caller would classify as a host failure, never as an accepted or rejected update. `apps/api`
+/// on these targets does not spawn it at all (`collab_core::isolation::isolated_apply` returns
+/// `UnsupportedPlatform` directly).
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    use std::io::Write;
+
+    // Best effort: the exit status alone already carries the outcome, so a failed stderr write
+    // changes nothing about what the caller observes.
+    let _ = writeln!(
+        std::io::stderr(),
+        "collab-isolated-apply-worker: the isolated-apply boundary requires Linux (ADR-0014); unsupported on {}",
+        std::env::consts::OS
+    );
+    std::process::exit(2);
 }

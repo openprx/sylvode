@@ -28,6 +28,8 @@ pub const ISOLATED_APPLY_MEMORY_BYTES_MAX: u64 = 134_217_728;
 /// [`DECODE_APPLY_CPU_MS_MAX`] in microseconds, for `child_runtime::arm_sigprof`'s `itimerval`
 /// (`tv_usec` is `libc::suseconds_t`, `i64` on this target). Derived, not a separate frozen value,
 /// so a future edit to the millisecond ceiling cannot leave the microsecond timer arm stale.
+/// Linux-only, like its sole consumer `child_runtime`.
+#[cfg(target_os = "linux")]
 #[allow(
     clippy::cast_possible_wrap,
     reason = "DECODE_APPLY_CPU_MS_MAX * 1_000 is 50_000, far inside i64's range -- clippy is \
@@ -39,6 +41,7 @@ pub const DECODE_APPLY_CPU_MS_MAX_MICROS: i64 = (DECODE_APPLY_CPU_MS_MAX * 1_000
 // hand-edits `DECODE_APPLY_CPU_MS_MAX_MICROS` back into a separate literal) without keeping it in
 // sync with `DECODE_APPLY_CPU_MS_MAX`, this fails the build rather than silently arming a
 // `SIGPROF` timer that no longer matches the millisecond value everything else reports.
+#[cfg(target_os = "linux")]
 #[allow(
     clippy::cast_possible_wrap,
     reason = "same justification as DECODE_APPLY_CPU_MS_MAX_MICROS's own cast above -- this is the \
@@ -57,6 +60,7 @@ mod tests {
         assert_eq!(DECODE_APPLY_CPU_MS_MAX, 50);
         assert_eq!(DECODE_APPLY_WALL_MS_MAX, 100);
         assert_eq!(ISOLATED_APPLY_MEMORY_BYTES_MAX, 134_217_728);
+        #[cfg(target_os = "linux")]
         assert_eq!(DECODE_APPLY_CPU_MS_MAX_MICROS, 50_000);
     }
 }

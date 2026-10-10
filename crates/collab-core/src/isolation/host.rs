@@ -48,9 +48,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::error::CollabError;
-
 use super::limits::DECODE_APPLY_WALL_MS_MAX;
+use super::outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess};
 use super::wire::{self, MAX_RESPONSE_PAYLOAD_BYTES, Outcome};
 
 const RESPONSE_FRAME_HEADER_BYTES: usize = 8;
@@ -60,34 +59,6 @@ const RESPONSE_FRAME_HEADER_BYTES: usize = 8;
 pub const WORKER_BINARY_PATH_ENV: &str = "COLLAB_ISOLATED_APPLY_WORKER_PATH";
 
 const WORKER_BINARY_NAME: &str = "collab-isolated-apply-worker";
-
-#[derive(Debug)]
-pub struct IsolatedApplySuccess {
-    pub snapshot: Vec<u8>,
-}
-
-pub type IsolatedDiffSuccess = wire::ReplayDiffResult;
-
-/// Why [`isolated_apply`] did not return a candidate document.
-#[derive(Debug)]
-pub enum IsolatedApplyError {
-    /// The worker reported an ordinary, in-band rejection: `import_update` failed to decode, or
-    /// the merged result violated a `check_snapshot` structural ceiling. Identical in shape to
-    /// what a direct in-process call would have produced.
-    Collab(CollabError),
-    /// The worker was terminated by its own `SIGPROF` timer before it could report anything else.
-    CpuCeiling,
-    /// This host's independent wall-clock watchdog `SIGKILL`ed the worker before it produced a
-    /// response.
-    WallCeiling,
-    /// The worker aborted itself (`SIGABRT`): the counting allocator (or the `RLIMIT_AS`
-    /// backstop) rejected an allocation that would have crossed the memory ceiling.
-    MemoryCeiling,
-    /// The isolation mechanism itself did not function as intended -- could not spawn the worker,
-    /// its response frame/payload was corrupt, or it exited/was killed for a reason unrelated to
-    /// any ceiling. Not a business rejection; callers should treat this as an internal error.
-    HostFailure(String),
-}
 
 /// Resolves the isolated-apply worker binary's path.
 ///
@@ -504,6 +475,8 @@ fn decode_response_frame(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
 mod tests {
     use super::*;
     use std::sync::OnceLock;
+
+    use crate::error::CollabError;
 
     use parking_lot::Mutex;
 

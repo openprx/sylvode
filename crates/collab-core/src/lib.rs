@@ -38,7 +38,6 @@
 pub mod engine;
 pub mod error;
 pub mod frontier;
-#[cfg(target_os = "linux")]
 pub mod isolation;
 pub mod limits;
 pub mod operation;

@@ -16,6 +16,10 @@
 //! - [`host`] -- parent-side orchestration: spawn, wall watchdog, response-frame decode,
 //!   exit-signal classification.
 //!
+//! `alloc`, `child_runtime`, and `host` are compiled only for Linux, the platform matrix
+//! `ADR-0014` declares. On every other target [`isolated_apply`] and [`isolated_diff`] keep their
+//! signatures but always return [`IsolatedApplyError::UnsupportedPlatform`].
+//!
 //! # Why `unsafe_code` is allowed here
 //!
 //! The workspace root `Cargo.toml` sets `unsafe_code = "deny"` via `[workspace.lints.rust]`, cast
@@ -26,16 +30,28 @@
 //! `undocumented_unsafe_blocks = "deny"` is *not* overridden and still applies here).
 #![allow(unsafe_code, clippy::too_long_first_doc_paragraph)]
 
+// `alloc`, `child_runtime`, and `host` are the enforcing boundary itself and exist only on Linux
+// (`ADR-0014`: "P2 平台矩阵在 gate 里显式声明为 Linux"). Everything a caller names -- the entry
+// points' signatures, their result types, the wire codec, and the frozen ceilings -- is
+// platform-neutral, so `apps/api` compiles on every release target; off Linux the entry points
+// come from `unsupported` and always refuse.
+#[cfg(target_os = "linux")]
 pub mod alloc;
+#[cfg(target_os = "linux")]
 pub mod child_runtime;
+#[cfg(target_os = "linux")]
 pub mod host;
 mod limits;
+mod outcome;
+#[cfg(not(target_os = "linux"))]
+mod unsupported;
 pub mod wire;
 
-pub use host::{
-    IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WORKER_BINARY_PATH_ENV, isolated_apply,
-    isolated_diff,
-};
+#[cfg(target_os = "linux")]
+pub use host::{WORKER_BINARY_PATH_ENV, isolated_apply, isolated_diff};
+pub use outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess};
+#[cfg(not(target_os = "linux"))]
+pub use unsupported::{isolated_apply, isolated_diff};
 // Single source of truth for these three (`isolation::limits`'s own module doc explains why):
 // `host`, `alloc`, and `child_runtime` all `use` them from there rather than declaring their own
 // copies, so this re-export and every enforcement site name the identical constant.

@@ -247,7 +247,7 @@ pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
 /// [`io::ErrorKind::UnexpectedEof`]/`InvalidData` for a truncated or malformed payload (an empty
 /// payload, an unrecognized tag byte, a declared field longer than its cap, or non-UTF-8 bytes in
 /// a string field) -- the caller (`isolation::host::isolated_apply`) treats any of these as
-/// [`super::host::IsolatedApplyError::HostFailure`], never as a business rejection.
+/// [`super::IsolatedApplyError::HostFailure`], never as a business rejection.
 pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
     let mut cursor = payload;
     let mut tag = [0u8; 1];
