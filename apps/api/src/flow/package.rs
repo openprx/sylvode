@@ -118,6 +118,11 @@ pub struct ExportPackageManifest {
     /// pre-existing bytes (the locked fixture archive hash included).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub projects: Vec<PackageProject>,
+    /// Optional `export-package-v1.md` manifest `warnings[]`, e.g. `secret_record_excluded:<record_id>`
+    /// for a Record a workspace export skipped under field secrecy (`rest-api-v1.md` v0.6). Omitted
+    /// when empty for the same byte-stability reason as `projects`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -835,6 +840,7 @@ mod tests {
                 permission_snapshot_at: "2026-09-12T12:00:00Z".to_string(),
             },
             projects: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 

@@ -597,11 +597,18 @@ replacement and the earliest removal.
   `invalid_update` instead of a 500. A `select`/`multi_select` field's `config.options` must be
   an array of distinct, non-empty strings on `field_create`, `field_update` and an initial
   schema; fields without `options` stay unconstrained.
-- Flow Collections (security): under `field_secrecy_enabled`, every representation of a Record
-  now applies the records query's redaction (`semantic_content` is `{}`): the single-object read
+- Flow Collections (security): under `field_secrecy_enabled`, the single-object read
   `GET /flow/objects/{record_id}` in both renders, the object list, the object diff, and Record
-  command responses (`object.semantic_content` and `semantic_diff`). They used to return every
-  `record_property` value, including restricted ones, and the Record body.
+  command responses (`object.semantic_content` and `semantic_diff`) apply the records query's
+  redaction (`semantic_content` is `{}`). They used to return every `record_property` value,
+  including restricted ones, and the Record body.
+- Flow exports (security): an object export of a Record under `field_secrecy_enabled` applies the
+  same redaction. `json` carries `semantic_content: {}`, `markdown` and `csv` carry the title
+  only, and `package` (which would contain the Record's full collaboration snapshot) is refused
+  with `policy_rejected` and `details.reason = "field_secrecy"`. A workspace package skips such
+  Records' documents and lists each one in the manifest `warnings[]` as
+  `secret_record_excluded:<record_id>`. Object exports used to return the restricted values
+  verbatim to any member who could view the Record, including through MCP `objects.export`.
 - Browser E2E stack: `scripts/e2e-web-stack.sh up` also starts the background worker on the
   same configuration (it is the only writer of the Flow search index), stops it on `down`, and
   refuses to start when `worker` is missing from `E2E_BIN_DIR`. The CI Web E2E job runs every

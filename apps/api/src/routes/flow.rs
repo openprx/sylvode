@@ -11614,6 +11614,7 @@ mod flow_database_tests {
                 permission_snapshot_at: "2026-09-12T12:00:00Z".to_string(),
             },
             projects: Vec::new(),
+            warnings: Vec::new(),
         };
         let package_with_snapshot = |snapshot: Vec<u8>| {
             build_package(
