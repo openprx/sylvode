@@ -606,6 +606,12 @@ replacement and the earliest removal.
   command responses (`object.semantic_content` and `semantic_diff`) apply the records query's
   redaction (`semantic_content` is `{}`). They used to return every `record_property` value,
   including restricted ones, and the Record body.
+- Flow authorization: `PUT /flow/objects/{id}/grants` and `PUT /flow/objects/{id}/inheritance`
+  compare a replayed `idempotency_key`'s request body (roster, levels, `inherit_from_parent`,
+  `initial_grants`, `confirm_self_lockout`) with the first request's. A different body answers
+  `invalid_update` with `details.reason = "idempotency_key_body_drift"` and changes nothing; it
+  used to return the first request's receipt with `applied: true` and silently drop the new
+  roster. A key first used before this release cannot be verified and is refused the same way.
 - Flow exports (security): an object export of a Record under `field_secrecy_enabled` applies the
   same redaction. `json` carries `semantic_content: {}`, `markdown` and `csv` carry the title
   only, and `package` (which would contain the Record's full collaboration snapshot) is refused
