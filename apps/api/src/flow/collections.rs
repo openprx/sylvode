@@ -1547,7 +1547,9 @@ async fn validate_properties_against_fields<C: ConnectionTrait>(
                         .and_then(|raw| Uuid::parse_str(raw).ok())
                         .ok_or_else(|| invalid_field_value(field_id, "relation value must contain UUID strings"))
                 })
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            // Distinct ids: a value naming the same object twice must not read as one id missing.
+            let ids: Vec<Uuid> = ids.into_iter().collect();
             let count = CountRow::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "SELECT count(*) AS count FROM flow_objects \
@@ -5929,6 +5931,54 @@ mod database_tests {
                 );
             }
         }
+        scratch.drop_self().await;
+    }
+
+    /// A relation value that names the same in-workspace object twice is a valid value: the
+    /// workspace check counts distinct ids, so a repeated id is not mistaken for one outside the
+    /// workspace (`invalid_field_value`). An id that really is missing is still refused.
+    #[tokio::test]
+    async fn a_relation_value_repeating_an_id_is_not_invalid_field_value() {
+        let scratch = scratch_or_skip!("relation_duplicate_ids");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed(&state).await;
+        let collection_id = create_object_for(&state, workspace_id, owner_id, "collection", "Relations").await;
+        let target = create_object_for(&state, workspace_id, owner_id, "page", "Target").await;
+        let relation_field = Uuid::new_v4();
+        command(
+            &state,
+            owner_id,
+            collection_id,
+            "field_create",
+            json!({"field_id": relation_field, "label": "Links", "field_type": "relation"}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("relation field creates");
+        command(
+            &state,
+            owner_id,
+            collection_id,
+            "record_create",
+            json!({"properties": {relation_field.to_string(): [target.to_string(), target.to_string()]}}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("a repeated in-workspace id is accepted");
+        let refused = command(
+            &state,
+            owner_id,
+            collection_id,
+            "record_create",
+            json!({"properties": {relation_field.to_string(): [target.to_string(), Uuid::new_v4().to_string()]}}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect_err("an id outside the workspace is refused");
+        let (kind, reason, field_id) = fp2_b6_reason(&refused);
+        assert_eq!(kind, ApiErrorKind::InvalidUpdate, "{refused:?}");
+        assert_eq!(reason.as_deref(), Some("invalid_field_value"), "{refused:?}");
+        assert_eq!(field_id, Some(relation_field.to_string()), "{refused:?}");
         scratch.drop_self().await;
     }
 }

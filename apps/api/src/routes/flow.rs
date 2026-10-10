@@ -5751,13 +5751,6 @@ mod flow_database_tests {
         assert_eq!(after_head.head_seq, source_head.head_seq);
         assert_eq!(after_head.head_frontier, source_head.head_frontier);
 
-        struct FaultReset;
-        impl Drop for FaultReset {
-            fn drop(&mut self) {
-                crate::flow::bridge::set_conversion_fault_for_test(None, 0);
-            }
-        }
-        let _fault_reset = FaultReset;
         for fault in [1_u8, 2_u8] {
             let preview = body_json(to_response(
                 post_flow_conversion_preview(
@@ -5771,7 +5764,7 @@ mod flow_database_tests {
             .await;
             let fault_preview_id =
                 Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
-            crate::flow::bridge::set_conversion_fault_for_test(Some(fault_preview_id), fault);
+            crate::flow::bridge::set_conversion_fault_for_test(fault_preview_id, fault);
             let failed = body_json(to_response(
                 post_flow_conversion(
                     State(state.clone()),
@@ -5788,7 +5781,7 @@ mod flow_database_tests {
                 .await,
             ))
             .await;
-            crate::flow::bridge::set_conversion_fault_for_test(None, 0);
+            crate::flow::bridge::set_conversion_fault_for_test(fault_preview_id, 0);
             // The caller gets the typed failure; the job row records it with a stable code.
             assert_eq!(failed["error_code"], "server_rejected", "fault {fault}: {failed}");
             assert!(failed["data"].is_null(), "fault {fault}: {failed}");
@@ -5843,7 +5836,7 @@ mod flow_database_tests {
         .await;
         let expiring_preview_id =
             Uuid::parse_str(expiring_preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
-        crate::flow::bridge::set_conversion_fault_for_test(Some(expiring_preview_id), 1);
+        crate::flow::bridge::set_conversion_fault_for_test(expiring_preview_id, 1);
         let expired_failed = body_json(to_response(
             post_flow_conversion(
                 State(state.clone()),
@@ -5860,7 +5853,7 @@ mod flow_database_tests {
             .await,
         ))
         .await;
-        crate::flow::bridge::set_conversion_fault_for_test(None, 0);
+        crate::flow::bridge::set_conversion_fault_for_test(expiring_preview_id, 0);
         assert_eq!(expired_failed["error_code"], "server_rejected", "{expired_failed}");
         let expired_job_id = state
             .db
@@ -5918,10 +5911,10 @@ mod flow_database_tests {
             idempotency_key: last_key.clone(),
             confirm: true,
         };
-        crate::flow::bridge::set_conversion_fault_for_test(Some(last_preview_id), 3);
+        crate::flow::bridge::set_conversion_fault_for_test(last_preview_id, 3);
         let lost_response =
             post_flow_conversion(State(state.clone()), claims_for(owner_id), None, Json(last_input())).await;
-        crate::flow::bridge::set_conversion_fault_for_test(None, 0);
+        crate::flow::bridge::set_conversion_fault_for_test(last_preview_id, 0);
         assert!(
             lost_response.is_err(),
             "post-commit response injection must surface an error"
@@ -12416,6 +12409,64 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
+    /// `rest-api-v1.md`: an `OperationReceipt`'s `audit_event_id` is never null. A replayed
+    /// operation whose audit row cannot be found (a run recorded without one) fails closed with
+    /// `server_rejected` instead of answering a receipt with `audit_event_id: null`.
+    #[tokio::test]
+    async fn an_operation_replay_without_its_audit_row_fails_closed_instead_of_a_null_audit_event_id() {
+        let scratch = scratch_or_skip!("operation-audit-never-null");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "audit never null").await;
+        let document_id = document_of(&state, object_id).await;
+        let head = crate::flow::collab::bootstrap::load(&state.db, document_id)
+            .await
+            .expect("bootstrap loads")
+            .head_seq;
+        let compact = || {
+            post_flow_compact_document(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(document_id),
+                Json(CompactDocumentRequest {
+                    dry_run: false,
+                    expected_head_seq: Some(head),
+                    retain_after_seq: None,
+                    confirm_document_id: Some(document_id),
+                    idempotency_key: "audit-never-null".to_string(),
+                }),
+            )
+        };
+        let executed = body_json(to_response(compact().await)).await;
+        let event_id = Uuid::parse_str(
+            executed["data"]["audit_event_id"]
+                .as_str()
+                .unwrap_or_else(|| panic!("execute audit_event_id must be set: {executed}")),
+        )
+        .expect("audit_event_id is a uuid");
+        // The run's audit row is gone (a run recorded without one).
+        exec(
+            &state,
+            "DELETE FROM event_dispatch WHERE event_id = $1",
+            vec![event_id.into()],
+        )
+        .await;
+        exec(
+            &state,
+            "DELETE FROM business_events WHERE id = $1",
+            vec![event_id.into()],
+        )
+        .await;
+        let replayed = body_json(to_response(compact().await)).await;
+        assert!(
+            !replayed["data"].get("audit_event_id").is_some_and(Value::is_null),
+            "a receipt must never carry audit_event_id: null: {replayed}"
+        );
+        assert_typed(&replayed, "server_rejected", 500);
+        scratch.drop_self().await;
+    }
+
     /// FP2-B3 ruling 1 (`events-v1.md`): every dry-run writes one `delivery_class=audit_only`
     /// preview event (no `event_dispatch` row) whose id is the receipt's `audit_event_id`; an
     /// execute writes exactly one business `completed` event plus one dispatch row; a same-key
@@ -13642,6 +13693,37 @@ mod flow_database_tests {
         )
         .await;
         (events, dispatch)
+    }
+
+    /// `rest-api-v1.md` v0.7: a commit that fails after its job exists names the job and the
+    /// status it really has in `details.job_status`. An ordinary failure records `failed`; when
+    /// recording the failure itself fails the job is still `started` (the reaper fails it later);
+    /// a failure after the run committed reports `completed`. The field is never left out.
+    #[tokio::test]
+    async fn a_failed_conversion_commit_reports_the_jobs_real_status() {
+        let scratch = scratch_or_skip!("conversion-job-status");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        for (fault, expected) in [(1_u8, "failed"), (4_u8, "started"), (3_u8, "completed")] {
+            let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+            crate::flow::bridge::set_conversion_fault_for_test(preview_id, fault);
+            let body = fp2_b4_commit(&state, &fx, preview_id, 1, &format!("job-status-{fault}")).await;
+            crate::flow::bridge::set_conversion_fault_for_test(preview_id, 0);
+            assert_typed(&body, "server_rejected", 500);
+            assert_eq!(body["details"]["job_status"], expected, "fault {fault}: {body}");
+            let jobs = fp2_b4_jobs_of_preview(&state, preview_id).await;
+            assert_eq!(jobs.len(), 1, "fault {fault}");
+            assert_eq!(
+                body["details"]["job_id"],
+                jobs[0].id.to_string(),
+                "fault {fault}: {body}"
+            );
+            assert_eq!(
+                jobs[0].status, expected,
+                "fault {fault}: the reported status is the stored one"
+            );
+        }
+        scratch.drop_self().await;
     }
 
     /// FP2-B4 ruling 2: a job left `started` past the threshold (its run crashed) is reaped to

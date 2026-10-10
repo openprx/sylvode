@@ -608,6 +608,16 @@ replacement and the earliest removal.
   command responses (`object.semantic_content` and `semantic_diff`) apply the records query's
   redaction (`semantic_content` is `{}`). They used to return every `record_property` value,
   including restricted ones, and the Record body.
+- Flow maintenance operations: `OperationReceipt.audit_event_id` is never null. A replayed
+  operation whose audit row cannot be found, or an execute that produced none, answers
+  `server_rejected` instead of a receipt with `audit_event_id: null`.
+- Flow conversions: when a commit or retry fails after its job exists, `details.job_status` is
+  always present and is the status the job row really has: `failed` normally, `started` when
+  recording the failure itself failed (the periodic sweep fails the job later), `completed` when
+  the run had committed before the error.
+- Flow Collections: a `relation` value that names the same object more than once is accepted
+  when that object is in the Collection's workspace; it used to be refused as
+  `invalid_field_value` because repeated ids were counted as missing ones.
 - Flow collaboration (security): every `presence` frame the server fans out, live or in the
   snapshot a joining session receives, carries `actor: {"user_id": ...}`, the user of the
   connection that sent it as authenticated by its collaboration ticket. The payload is still
