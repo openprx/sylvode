@@ -1760,7 +1760,19 @@ async fn handle_client_frame(
                     // can land while this write is waiting for the document coordinator/row lock;
                     // routing the submitter's own receipt through the same path preserves strict
                     // seq order and backfills that peer commit before acknowledging this one.
-                    handle_outbound_frame(&state.db, document_id, socket, sequencer, pending_updates, frame).await;
+                    //
+                    // The one exception is a receipt for a seq this subscription has already
+                    // passed: `write::accept_update` returns the original receipt of an
+                    // already-committed `update_id` (a retry after a lost answer), and the
+                    // sequencer would drop it as a duplicate, leaving the retry unanswered
+                    // (`collab-protocol-v1.md`, 2026-10-10: a replay must be answered with the
+                    // original receipt). It is answered directly; it advances nothing, and the
+                    // client's own sequencing ignores the already-applied seq.
+                    if accepted.head_seq < sequencer.next_expected_seq() {
+                        send(socket, &frame).await;
+                    } else {
+                        handle_outbound_frame(&state.db, document_id, socket, sequencer, pending_updates, frame).await;
+                    }
                 }
                 Ok(AcceptOutcome::Rejected(rejected)) => {
                     if rejected.code == RejectedCode::ServerRejected {
@@ -5971,6 +5983,61 @@ mod tests {
                 "B was downgraded to view: its write must be policy_rejected: {answer:?}"
             );
             assert_eq!(count_collab_updates(&state, document_id).await, updates_before);
+            scratch.drop_self().await;
+        }
+
+        /// FP2-B6 (`collab-protocol-v1.md` 2026-10-10): re-sending an already-committed
+        /// `update_id` is answered with the original receipt (same seq, frontier and event id),
+        /// on a fresh connection and on the connection that committed it.
+        #[tokio::test]
+        async fn fp2_b6_same_update_id_replay_is_answered_with_the_original_receipt() {
+            let scratch = scratch_or_skip!("fp2-b6-replay-answer");
+            let state = state_for(scratch.db.clone());
+            let (workspace_id, owner_id) = seed_workspace(&state).await;
+            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let addr = spawn_server(state.clone()).await;
+            let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-replay").await;
+            let (mut first_ws, _, _, _) = open_session_full(addr, &ticket, "b6-replay", document_id).await;
+            let update = next_update_frame(&state, document_id).await;
+            let update_id = fp2_b6_update_id(&update);
+            send_frame(&mut first_ws, &update).await;
+            let Some(Frame::Accepted {
+                head_seq,
+                head_frontier,
+                event_id,
+                ..
+            }) = fp2_b6_answer(&mut first_ws, update_id).await
+            else {
+                panic!("the first send is accepted");
+            };
+            let updates_after_commit = count_collab_updates(&state, document_id).await;
+
+            send_frame(&mut first_ws, &update).await;
+            let same_connection = fp2_b6_answer(&mut first_ws, update_id).await;
+            assert!(
+                matches!(&same_connection, Some(Frame::Accepted { head_seq: s, head_frontier: f, event_id: e, .. })
+                    if *s == head_seq && *f == head_frontier && *e == event_id),
+                "a replay on the committing connection is answered with the original receipt: {same_connection:?}"
+            );
+
+            let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-replay").await;
+            let (mut second_ws, snapshot_head, _, _) = open_session_full(addr, &ticket, "b6-replay", document_id).await;
+            assert!(
+                snapshot_head >= head_seq,
+                "the reconnect snapshot already contains the update"
+            );
+            send_frame(&mut second_ws, &update).await;
+            let reconnected = fp2_b6_answer(&mut second_ws, update_id).await;
+            assert!(
+                matches!(&reconnected, Some(Frame::Accepted { head_seq: s, head_frontier: f, event_id: e, .. })
+                    if *s == head_seq && *f == head_frontier && *e == event_id),
+                "a replay after reconnecting is answered with the original receipt: {reconnected:?}"
+            );
+            assert_eq!(
+                count_collab_updates(&state, document_id).await,
+                updates_after_commit,
+                "a replay writes nothing"
+            );
             scratch.drop_self().await;
         }
     }
