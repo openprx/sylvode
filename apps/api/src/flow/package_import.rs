@@ -1,6 +1,6 @@
 //! Isolated upload, frozen preview, and atomic promotion for Flow package v1 imports.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Cursor, Read};
 
 use base64::Engine as _;
@@ -16,7 +16,7 @@ use crate::error::{ApiError, ServerDrainingReason};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
 use crate::flow::IN_FLIGHT_RETRY_AFTER_MS;
 
-use super::package::{ExportPackageManifest, VerifiedPackage, verify_package};
+use super::package::{ExportPackageManifest, PackageEngine, VerifiedPackage, verify_package};
 use super::{import::BoundedImportStager, projection, repository};
 
 const IMPORT_ARTIFACT_TTL_MINUTES: i64 = 30;
@@ -117,12 +117,32 @@ pub struct FrozenImportMapping {
     pub conflict_policy: ConflictPolicy,
 }
 
+/// One source project referenced by the package's objects. `title` comes from the package's
+/// optional `projects` manifest field and is `null` for packages exported without it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ManifestProjectSummary {
+    pub source_project_id: Uuid,
+    pub title: Option<String>,
+}
+
+/// `rest-api-v1.md` v0.8 `imports/preview` `manifest_summary`:
+/// `{projects:[{source_project_id,title}],object_count,document_count,package_schema,engine}`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ManifestSummary {
+    pub projects: Vec<ManifestProjectSummary>,
+    pub object_count: u64,
+    pub document_count: u64,
+    pub package_schema: String,
+    pub engine: PackageEngine,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportPreviewReceipt {
     pub preview_id: Uuid,
     pub package_id: Uuid,
     pub package_sha256: String,
     pub mapping_hash: String,
+    pub manifest_summary: ManifestSummary,
     pub mapping: FrozenImportMapping,
     pub conflicts: Vec<String>,
     pub warnings: Vec<String>,
@@ -358,7 +378,7 @@ pub async fn preview_package_import(
     });
     let request_hash = sha256_json(&request_json)?;
     if let Some(existing) = existing_preview(db, request, &request_hash).await? {
-        return preview_receipt(existing, &plan.verified.manifest);
+        return preview_receipt(existing, &plan);
     }
     let prior_targets = lineage_targets(db, request.workspace_id, &plan).await?;
     let conflicts: Vec<String> = prior_targets
@@ -376,6 +396,8 @@ pub async fn preview_package_import(
     let expires_at = Utc::now() + Duration::minutes(IMPORT_ARTIFACT_TTL_MINUTES);
     let package_id = parse_manifest_uuid(&plan.verified.manifest)?;
     let estimated_changes = estimated_changes(&plan);
+    let summary = manifest_summary(&plan);
+    let summary_json = serde_json::to_value(&summary).map_err(|_| ApiError::internal())?;
     let tx = db.begin().await?;
     lock_authorization_epoch(&tx, request.workspace_id).await?;
     tx.execute(Statement::from_sql_and_values(
@@ -387,7 +409,7 @@ pub async fn preview_package_import(
             preview_id.into(), request.workspace_id.into(), request.artifact_id.into(),
             request.principal.kind.clone().into(), request.principal.id.into(), artifact.package_sha256.clone().into(),
             mapping_hash.clone().into(), mapping_json.into(), request_json.clone().into(),
-            manifest_summary(&plan.verified.manifest).into(), json!(conflicts).into(), json!(estimated_changes).into(),
+            summary_json.into(), json!(conflicts).into(), json!(estimated_changes).into(),
             request.idempotency_key.clone().into(), request_hash.into(), expires_at.into(),
         ],
     )).await?;
@@ -409,6 +431,7 @@ pub async fn preview_package_import(
         package_id,
         package_sha256: artifact.package_sha256,
         mapping_hash,
+        manifest_summary: summary,
         mapping,
         conflicts,
         warnings: Vec::new(),
@@ -714,15 +737,13 @@ async fn existing_preview(
     Ok(row)
 }
 
-fn preview_receipt(
-    row: ExistingPreviewRow,
-    manifest: &ExportPackageManifest,
-) -> Result<ImportPreviewReceipt, ApiError> {
+fn preview_receipt(row: ExistingPreviewRow, plan: &PackagePlan) -> Result<ImportPreviewReceipt, ApiError> {
     Ok(ImportPreviewReceipt {
         preview_id: row.id,
-        package_id: parse_manifest_uuid(manifest)?,
+        package_id: parse_manifest_uuid(&plan.verified.manifest)?,
         package_sha256: row.package_sha256,
         mapping_hash: row.mapping_hash,
+        manifest_summary: manifest_summary(plan),
         mapping: serde_json::from_value(row.mapping).map_err(|_| ApiError::internal())?,
         conflicts: serde_json::from_value(row.conflicts).map_err(|_| ApiError::internal())?,
         warnings: serde_json::from_value(row.warnings).map_err(|_| ApiError::internal())?,
@@ -1333,8 +1354,35 @@ fn estimated_changes(plan: &PackagePlan) -> BTreeMap<String, u64> {
     ])
 }
 
-fn manifest_summary(manifest: &ExportPackageManifest) -> Value {
-    json!({"schema":manifest.schema,"package_id":manifest.package_id,"source":manifest.source,"counts":manifest.counts,"history":manifest.history})
+fn manifest_summary(plan: &PackagePlan) -> ManifestSummary {
+    let manifest = &plan.verified.manifest;
+    let titles: HashMap<&str, &str> = manifest
+        .projects
+        .iter()
+        .map(|project| (project.source_project_id.as_str(), project.title.as_str()))
+        .collect();
+    let projects = source_projects(plan)
+        .into_iter()
+        .map(|source_project_id| ManifestProjectSummary {
+            source_project_id,
+            title: titles
+                .get(source_project_id.to_string().as_str())
+                .map(|title| (*title).to_string()),
+        })
+        .collect();
+    ManifestSummary {
+        projects,
+        object_count: manifest.counts.objects,
+        document_count: manifest.counts.documents,
+        package_schema: manifest.schema.clone(),
+        engine: manifest.engine.clone(),
+    }
+}
+
+/// Every source project the package's objects reference, in id order. Derived from the verified
+/// object metadata, not from the optional manifest list, so it is complete for any v1 package.
+fn source_projects(plan: &PackagePlan) -> BTreeSet<Uuid> {
+    plan.objects.iter().filter_map(|row| row.project_id).collect()
 }
 
 fn sha256_json(value: &Value) -> Result<String, ApiError> {

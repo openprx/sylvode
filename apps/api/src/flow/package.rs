@@ -88,6 +88,17 @@ pub struct ExportPolicy {
     pub permission_snapshot_at: String,
 }
 
+/// A source project referenced by objects in the package, with its title at export time.
+///
+/// Carried in the optional `projects` manifest field (`export-package-v1.md`: a new optional v1
+/// manifest field stays backward compatible) so an import preview can list the source projects the
+/// caller has to map without reaching into the source workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageProject {
+    pub source_project_id: String,
+    pub title: String,
+}
+
 /// Frozen manifest fields. Unknown fields are accepted by Serde so a v1 reader remains compatible
 /// with future optional v1 fields; required fields below are still strongly typed and validated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +114,10 @@ pub struct ExportPackageManifest {
     pub counts: PackageCounts,
     pub members: Vec<PackageMember>,
     pub export_policy: ExportPolicy,
+    /// Optional; omitted when empty so packages without project references keep their exact
+    /// pre-existing bytes (the locked fixture archive hash included).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<PackageProject>,
 }
 
 #[derive(Debug, Clone)]
@@ -819,6 +834,7 @@ mod tests {
                 complete: true,
                 permission_snapshot_at: "2026-09-12T12:00:00Z".to_string(),
             },
+            projects: Vec::new(),
         }
     }
 
