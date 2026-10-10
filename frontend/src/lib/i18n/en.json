@@ -2637,7 +2637,8 @@
       "retry": "Try again",
       "error": {
         "integrity": "Relations could not be verified, so none are shown.",
-        "unavailable": "Relations could not be loaded."
+        "unavailable": "Relations could not be loaded.",
+        "crossWorkspace": "A relation points to another workspace. It was recorded as an integrity issue, so no relations are shown; a workspace administrator has to review it on the operations page."
       }
     },
     "search": {
@@ -3689,7 +3690,12 @@
       "saveBody": "Save body",
       "discard": "Discard",
       "unsaved": "Unsaved changes",
-      "bodySaved": "Saved"
+      "bodySaved": "Saved",
+      "bodyWithheld": "Field secrecy is on for this collection, so the body cannot be read under field secrecy and cannot be viewed or edited here.",
+      "archive": "Archive record",
+      "archiveConfirmBody": "Archiving removes this record from the collection's list. Archive it?",
+      "archiveConfirm": "Archive",
+      "archiving": "Archiving…"
     },
     "presence": {
       "listLabel": "People on this page",

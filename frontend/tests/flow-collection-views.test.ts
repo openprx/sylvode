@@ -705,7 +705,7 @@ await suite.checkAsync(
 		await controller.loadMore();
 		assertEqual(controller.snapshot().rows.length, 300, '300 rows loaded');
 		assertEqual(repo.listQueries[1].cursor, 'cursor-1', 'paging sends the cursor');
-		assertEqual(repo.listQueries[1].sort?.field_id, F_COUNT, 'with the same query (the view sort)');
+		assertEqual(repo.listQueries[1].view_id, V_TABLE, 'with the same query (the saved view)');
 		for (let scrollTop = 0; scrollTop < 300 * 48; scrollTop += 900) {
 			const window = virtualWindow({
 				scrollTop,
@@ -1113,6 +1113,218 @@ suite.check('every static key the collection layer selects exists in zh and en',
 		}
 	}
 });
+
+// ---- FP2-M9: saved-view reads, field errors, withheld body, archive ---------------------------
+
+await suite.checkAsync(
+	'records are read by view_id; only a draft query is sent explicitly, without view_id',
+	async () => {
+		const repo = fakeRepository([page(['a'], undefined)]);
+		const controller = new CollectionViewController(COLLECTION, repo, fakeWrites());
+		await controller.load();
+		assertDeepEqual(
+			repo.listQueries[0],
+			{ view_id: V_TABLE, cursor: undefined, limit: 50 },
+			'the saved view is named, its filter/sort are not repeated'
+		);
+		await controller.setDraftQuery({ sort: { field_id: F_NAME, direction: 'asc' } });
+		const drafted = repo.listQueries[1];
+		assertEqual(drafted.view_id, undefined, 'a draft query carries no view_id');
+		assertDeepEqual(drafted.sort, { field_id: F_NAME, direction: 'asc' }, 'the draft sort');
+		await controller.setDraftQuery({ filter: null });
+		assertEqual(repo.listQueries[2].filter, undefined, 'a cleared filter is not refilled');
+		assertEqual(repo.listQueries[2].view_id, undefined, 'still no view_id');
+		await controller.clearDraftQuery();
+		assertEqual(repo.listQueries[3].view_id, V_TABLE, 'back on the saved view');
+		await controller.setActiveView(V_BOARD);
+		assertEqual(repo.listQueries[4].view_id, V_BOARD, 'board view by id');
+		assertEqual(
+			repo.listQueries[4].group,
+			F_STATUS,
+			'the board has no saved group: the fallback select field is sent explicitly'
+		);
+	}
+);
+
+await suite.checkAsync(
+	'invalid_field_value is shown on the cell details.field_id names, with its own wording',
+	async () => {
+		const repo = fakeRepository([page(['a'], undefined)]);
+		const writes = fakeWrites();
+		const controller = new CollectionViewController(COLLECTION, repo, writes);
+		await controller.load();
+		writes.failNext.push({
+			code: 'invalid_update',
+			recoverable: false,
+			origin: 'server',
+			details: { reason: 'invalid_field_value', field_id: F_STATUS }
+		});
+		controller.setDraft('a', F_NAME, 'x');
+		assertEqual(await controller.commitCell('a', F_NAME), false, 'refused');
+		const status = controller.snapshot().cellStatus;
+		assertDeepEqual(
+			status[`a:${F_STATUS}`],
+			{
+				state: 'error',
+				key: 'flow.error.invalid_update_reason.invalid_field_value',
+				code: 'invalid_field_value'
+			},
+			'the named cell shows the reason'
+		);
+		assertEqual(status[`a:${F_NAME}`], undefined, 'the committed cell is not left saving');
+		writes.failNext.push({
+			code: 'invalid_update',
+			recoverable: false,
+			origin: 'server',
+			details: { reason: 'invalid_field_value', field_id: F_NAME }
+		});
+		controller.setDraft('a', F_NAME, 'y');
+		await controller.commitCell('a', F_NAME);
+		assertEqual(
+			controller.snapshot().cellStatus[`a:${F_NAME}`]?.state === 'error' &&
+				(controller.snapshot().cellStatus[`a:${F_NAME}`] as { key: string }).key,
+			'flow.error.invalid_update_reason.invalid_field_value',
+			'not the generic invalid_update wording'
+		);
+		assertEqual(controller.draftFor('a', F_NAME), 'y', 'the draft is kept for correction');
+		writes.failNext.push({
+			code: 'invalid_update',
+			recoverable: false,
+			origin: 'server',
+			details: { reason: 'invalid_field_value', field_id: F_STATUS }
+		});
+		const created = await controller.createRecord({ [F_STATUS]: 'Todo' });
+		assertDeepEqual(
+			created,
+			{
+				ok: false,
+				key: 'flow.error.invalid_update_reason.invalid_field_value',
+				code: 'invalid_field_value',
+				fieldId: F_STATUS
+			},
+			'a refused create names the field'
+		);
+		writes.failNext.push({ code: 'invalid_update', recoverable: false, origin: 'server' });
+		controller.setDraft('a', F_NAME, 'z');
+		await controller.commitCell('a', F_NAME);
+		assertEqual(
+			(controller.snapshot().cellStatus[`a:${F_NAME}`] as { key: string }).key,
+			'flow.error.invalid_update',
+			'no reason: the generic wording'
+		);
+	}
+);
+
+await suite.checkAsync(
+	'field secrecy withholds the body: placeholder state, no editor write, controls stay readable',
+	async () => {
+		const withheldRead = (repo: FakeRepository, content: unknown) => {
+			repo.openRecord = async (recordId: string) => {
+				repo.opened.push(recordId);
+				repo.open.set(recordId, (repo.open.get(recordId) ?? 0) + 1);
+				return objectView(recordId, {
+					frontier: `fr-${recordId}-panel`,
+					semantic_content: content
+				});
+			};
+		};
+		const secret = fakeRepository([page(['a'], undefined)]);
+		secret.describe = description({ field_secrecy_enabled: true });
+		withheldRead(secret, {});
+		const writes = fakeWrites();
+		const controller = new CollectionViewController(COLLECTION, secret, writes);
+		await controller.load();
+		await controller.openPanel('a');
+		const panel = controller.snapshot().panel;
+		assertEqual(panel?.bodyWithheld, true, 'withheld under field secrecy');
+		assertEqual(panel?.body, null, 'no body text is invented');
+		controller.setBodyDraft('a', 'overwrite');
+		assertEqual(await controller.commitBody('a'), false, 'a withheld body cannot be saved');
+		assertEqual(writes.executed.length, 0, 'nothing sent');
+
+		const restricted = fakeRepository([page(['a'], undefined)]);
+		restricted.describe = description({
+			fields: [
+				...description().fields,
+				fieldView(F_SECRET, 'Salary', 'number', 9, { restricted: true })
+			]
+		});
+		withheldRead(restricted, {});
+		const viaField = new CollectionViewController(COLLECTION, restricted, fakeWrites());
+		await viaField.load();
+		await viaField.openPanel('a');
+		assertEqual(viaField.snapshot().panel?.bodyWithheld, true, 'a restricted field also counts');
+
+		const open = fakeRepository([page(['a'], undefined)]);
+		withheldRead(open, {});
+		const noSecrecy = new CollectionViewController(COLLECTION, open, fakeWrites());
+		await noSecrecy.load();
+		await noSecrecy.openPanel('a');
+		assertEqual(
+			noSecrecy.snapshot().panel?.bodyWithheld,
+			false,
+			'without secrecy an empty content is just an empty body'
+		);
+
+		const readable = fakeRepository([page(['a'], undefined)]);
+		readable.describe = description({ field_secrecy_enabled: true });
+		const withNodes = new CollectionViewController(COLLECTION, readable, fakeWrites());
+		await withNodes.load();
+		await withNodes.openPanel('a');
+		assertEqual(withNodes.snapshot().panel?.bodyWithheld, false, 'content present: readable');
+		assertEqual(withNodes.snapshot().panel?.body, 'body of a', 'and shown');
+	}
+);
+
+await suite.checkAsync(
+	'record_archive needs confirmation; retry reuses the key; success drops the row and the panel',
+	async () => {
+		const repo = fakeRepository([page(['a', 'b'], undefined)]);
+		const writes = fakeWrites();
+		const controller = new CollectionViewController(COLLECTION, repo, writes);
+		await controller.load();
+		await controller.openPanel('a');
+		assertDeepEqual(
+			await controller.archiveRecord('a', false),
+			{ kind: 'needs_confirmation' },
+			'unconfirmed'
+		);
+		assertEqual(
+			await controller
+				.archiveRecord('a', undefined as unknown as boolean)
+				.then((outcome) => outcome.kind),
+			'needs_confirmation',
+			'no default confirmation'
+		);
+		assertEqual(writes.executed.length, 0, 'nothing sent without confirmation');
+		writes.failNext.push({
+			code: 'server_draining',
+			recoverable: true,
+			origin: 'server',
+			details: { reason: 'contention', retry_after_ms: 0 }
+		});
+		const failed = await controller.archiveRecord('a', true);
+		assertEqual(failed.kind, 'failed', 'first attempt fails');
+		assertEqual(controller.snapshot().panel?.recordId, 'a', 'panel stays on failure');
+		repo.pages = [page(['b'], undefined)];
+		const archived = await controller.archiveRecord('a', true);
+		assertEqual(archived.kind, 'archived', 'archived');
+		assertDeepEqual(
+			writes.executed[0].command,
+			{ type: 'record_archive', payload: { record_id: 'a' } },
+			'record_archive on the collection'
+		);
+		assertEqual(writes.executed[0].objectId, COLLECTION, 'sent to the collection');
+		assertEqual(writes.executed[1].key, writes.executed[0].key, 'the retry reuses the key');
+		assertEqual(controller.snapshot().panel, null, 'panel closed');
+		assertDeepEqual(
+			controller.snapshot().rows.map((row) => row.recordId),
+			['b'],
+			'the row left the list'
+		);
+		assertEqual(repo.open.size, 0, 'the record document was released');
+	}
+);
 
 export const result = suite.result();
 

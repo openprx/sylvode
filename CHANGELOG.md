@@ -157,6 +157,12 @@ OpenPR name keeps working; see **Deprecated**.
 
 ### Added
 
+- Flow Collections on the Web: the record panel can archive a record (`record_archive`) after an
+  in-place confirmation. Records are read with the active view's `view_id` (an unsaved draft
+  query is still sent explicitly), an `invalid_field_value` refusal is shown on the cell its
+  `details.field_id` names, a record whose content the server withholds under field secrecy shows
+  that its body cannot be read instead of an empty, editable body, and the relations panel words a
+  `cross_workspace_relation` refusal as such.
 - Flow conversion jobs: a job the stale-`started` sweep failed carries
   `error_reason: "stale_started"` next to `error: "server_rejected"` in every job response
   (`GET /flow/conversions/{job_id}`, commit and retry), so a client can offer a retry for an

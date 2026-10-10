@@ -2637,7 +2637,8 @@
       "retry": "重试",
       "error": {
         "integrity": "关联无法校验，因此不显示任何关联。",
-        "unavailable": "无法加载关联。"
+        "unavailable": "无法加载关联。",
+        "crossWorkspace": "有关联指向另一个工作区，已记录为完整性问题，因此不显示任何关联。请工作区管理员在运维页处理。"
       }
     },
     "search": {
@@ -3689,7 +3690,12 @@
       "saveBody": "保存正文",
       "discard": "放弃",
       "unsaved": "有未保存的修改",
-      "bodySaved": "已保存"
+      "bodySaved": "已保存",
+      "bodyWithheld": "此集合开启了字段保密，正文在字段保密下不可读，因此无法在此查看或编辑。",
+      "archive": "归档记录",
+      "archiveConfirmBody": "归档后此记录将从集合列表中移除。确定要归档吗？",
+      "archiveConfirm": "确认归档",
+      "archiving": "正在归档…"
     },
     "presence": {
       "listLabel": "正在此页的成员",

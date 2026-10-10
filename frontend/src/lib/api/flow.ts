@@ -744,8 +744,10 @@ export interface FlowRecordSort {
 
 /** `GET /flow/collections/{id}/records` query (`routes/flow.rs::GetCollectionRecordsQuery`):
  * `filter`/`sort` are JSON-encoded, `field_ids` comma-separated, `limit` 1..=100 (default 50).
- * The handler has no `view_id` parameter, so the view's filter/sort are sent explicitly. */
+ * `view_id` applies that view's saved filter/sort/group; an explicit `filter`/`sort`/`group`
+ * overrides the saved value for that part only. */
 export interface FlowCollectionRecordsQuery {
+	view_id?: string;
 	filter?: FlowRecordFilter;
 	sort?: FlowRecordSort;
 	group?: string;
@@ -1390,6 +1392,7 @@ export const flowApi = {
 		query: FlowCollectionRecordsQuery = {}
 	): Promise<ApiResult<FlowCollectionRecordsResponse>> {
 		const qs = buildQuery({
+			view_id: query.view_id,
 			filter: query.filter ? JSON.stringify(query.filter) : undefined,
 			sort: query.sort ? JSON.stringify(query.sort) : undefined,
 			group: query.group,

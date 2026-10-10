@@ -9,6 +9,11 @@
 	// `record:body` node's `body` property) and a Record admits no collaboration session
 	// (`collab/ticket.rs::object_type_admits_collab_session`), so it is edited as text and saved
 	// with `record_patch`, not mounted in the Page canvas.
+	//
+	// Under field secrecy the server withholds the record's whole `semantic_content`, body
+	// included; the body section then says so and offers no editor (an empty text box would invite
+	// overwriting a body the user cannot see). Archiving (`record_archive`) asks for confirmation
+	// in place first.
 	import { t } from 'svelte-i18n';
 	import {
 		CollectionViewController,
@@ -39,6 +44,31 @@
 	const bodyDraft = $derived(panel ? snapshot.bodyDrafts[panel.recordId] : undefined);
 	const bodyValue = $derived(bodyDraft ?? panel?.body ?? '');
 	const headingId = $derived(`record-panel-title-${panel?.recordId ?? 'none'}`);
+
+	// Ephemeral archive confirmation; the controller refuses without `confirmed === true`.
+	let archiveConfirming = $state(false);
+	let archiveBusy = $state(false);
+	let archiveErrorKey = $state<string | null>(null);
+	let archiveFor = $state<string | null>(null);
+
+	$effect(() => {
+		const recordId = panel?.recordId ?? null;
+		if (recordId !== archiveFor) {
+			archiveFor = recordId;
+			archiveConfirming = false;
+			archiveErrorKey = null;
+		}
+	});
+
+	async function archive(): Promise<void> {
+		if (!panel || archiveBusy) return;
+		archiveBusy = true;
+		archiveErrorKey = null;
+		const outcome = await controller.archiveRecord(panel.recordId, true);
+		archiveBusy = false;
+		if (outcome.kind === 'failed') archiveErrorKey = outcome.key;
+		else if (outcome.kind === 'archived') archiveConfirming = false;
+	}
 
 	function onKeydown(event: KeyboardEvent): void {
 		if (event.key === 'Escape' && !standalone) {
@@ -156,51 +186,111 @@
 				class="space-y-2 border-t border-slate-200 px-4 py-3 dark:border-slate-800"
 				aria-label={$t('flow.record.body')}
 			>
-				<label
-					for={`record-body-${panel.recordId}`}
-					class="block text-xs font-semibold tracking-wide text-slate-500 uppercase"
-				>
-					{$t('flow.record.body')}
-				</label>
-				<textarea
-					id={`record-body-${panel.recordId}`}
-					class="min-h-40 w-full rounded border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-					placeholder={$t('flow.record.bodyPlaceholder')}
-					value={bodyValue}
-					data-testid="record-panel-body"
-					oninput={(event) => controller.setBodyDraft(panel.recordId, event.currentTarget.value)}
-				></textarea>
-				<div class="flex flex-wrap items-center gap-2">
-					<button
-						type="button"
-						class="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
-						disabled={bodyDraft === undefined || panel.bodyStatus?.state === 'saving'}
-						data-testid="record-panel-body-save"
-						onclick={() => void controller.commitBody(panel.recordId)}
-						>{$t('flow.record.saveBody')}</button
+				{#if panel.bodyWithheld}
+					<h3 class="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+						{$t('flow.record.body')}
+					</h3>
+					<p
+						class="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600 dark:border-slate-600 dark:text-slate-300"
+						data-testid="record-panel-body-withheld"
 					>
-					{#if bodyDraft !== undefined}
+						{$t('flow.record.bodyWithheld')}
+					</p>
+				{:else}
+					<label
+						for={`record-body-${panel.recordId}`}
+						class="block text-xs font-semibold tracking-wide text-slate-500 uppercase"
+					>
+						{$t('flow.record.body')}
+					</label>
+					<textarea
+						id={`record-body-${panel.recordId}`}
+						class="min-h-40 w-full rounded border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+						placeholder={$t('flow.record.bodyPlaceholder')}
+						value={bodyValue}
+						data-testid="record-panel-body"
+						oninput={(event) => controller.setBodyDraft(panel.recordId, event.currentTarget.value)}
+					></textarea>
+					<div class="flex flex-wrap items-center gap-2">
 						<button
 							type="button"
-							class="min-h-11 rounded px-3 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-							onclick={() => controller.discardBodyDraft(panel.recordId)}
-							>{$t('flow.record.discard')}</button
+							class="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
+							disabled={bodyDraft === undefined || panel.bodyStatus?.state === 'saving'}
+							data-testid="record-panel-body-save"
+							onclick={() => void controller.commitBody(panel.recordId)}
+							>{$t('flow.record.saveBody')}</button
 						>
-					{/if}
-					<span class="text-xs" aria-live="polite" data-testid="record-panel-body-status">
-						{#if panel.bodyStatus?.state === 'saving'}
-							{$t('flow.collection.cell.saving')}
-						{:else if panel.bodyStatus?.state === 'conflict'}
-							<span class="text-red-600">{$t('flow.collection.cell.conflict')}</span>
-						{:else if panel.bodyStatus?.state === 'error'}
-							<span class="text-red-600">{$t(panel.bodyStatus.key)}</span>
-						{:else if bodyDraft !== undefined}
-							<span class="text-amber-700 dark:text-amber-300">{$t('flow.record.unsaved')}</span>
-						{:else}
-							{$t('flow.record.bodySaved')}
+						{#if bodyDraft !== undefined}
+							<button
+								type="button"
+								class="min-h-11 rounded px-3 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+								onclick={() => controller.discardBodyDraft(panel.recordId)}
+								>{$t('flow.record.discard')}</button
+							>
 						{/if}
-					</span>
-				</div>
+						<span class="text-xs" aria-live="polite" data-testid="record-panel-body-status">
+							{#if panel.bodyStatus?.state === 'saving'}
+								{$t('flow.collection.cell.saving')}
+							{:else if panel.bodyStatus?.state === 'conflict'}
+								<span class="text-red-600">{$t('flow.collection.cell.conflict')}</span>
+							{:else if panel.bodyStatus?.state === 'error'}
+								<span class="text-red-600">{$t(panel.bodyStatus.key)}</span>
+							{:else if bodyDraft !== undefined}
+								<span class="text-amber-700 dark:text-amber-300">{$t('flow.record.unsaved')}</span>
+							{:else}
+								{$t('flow.record.bodySaved')}
+							{/if}
+						</span>
+					</div>
+				{/if}
+			</section>
+
+			<section
+				class="space-y-2 border-t border-slate-200 px-4 py-3 dark:border-slate-800"
+				aria-label={$t('flow.record.archive')}
+			>
+				{#if archiveConfirming}
+					<div class="space-y-2" role="group" aria-labelledby={`record-archive-${panel.recordId}`}>
+						<p
+							id={`record-archive-${panel.recordId}`}
+							class="text-sm text-slate-700 dark:text-slate-200"
+						>
+							{$t('flow.record.archiveConfirmBody')}
+						</p>
+						<div class="flex flex-wrap items-center gap-2">
+							<button
+								type="button"
+								class="min-h-11 rounded bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
+								disabled={archiveBusy}
+								data-testid="record-panel-archive-confirm"
+								onclick={() => void archive()}>{$t('flow.record.archiveConfirm')}</button
+							>
+							<button
+								type="button"
+								class="min-h-11 rounded px-3 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+								disabled={archiveBusy}
+								onclick={() => {
+									archiveConfirming = false;
+									archiveErrorKey = null;
+								}}>{$t('common.cancel')}</button
+							>
+						</div>
+					</div>
+				{:else}
+					<button
+						type="button"
+						class="min-h-11 rounded px-3 text-sm text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-red-300 dark:hover:bg-red-950"
+						data-testid="record-panel-archive"
+						onclick={() => (archiveConfirming = true)}>{$t('flow.record.archive')}</button
+					>
+				{/if}
+				<p class="text-xs text-red-600 dark:text-red-400" aria-live="polite">
+					{#if archiveBusy}
+						<span class="text-slate-500">{$t('flow.record.archiving')}</span>
+					{:else if archiveErrorKey}
+						<span role="alert">{$t(archiveErrorKey)}</span>
+					{/if}
+				</p>
 			</section>
 		{/if}
 	</aside>

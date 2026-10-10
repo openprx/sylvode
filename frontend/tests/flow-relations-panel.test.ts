@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { Suite, assert, assertDeepEqual, assertEqual, finish } from './support/harness';
 import {
 	FlowRelationsController,
+	RELATION_CROSS_WORKSPACE_KEY,
 	RELATION_DIRECTION_KEYS,
 	RELATION_INTEGRITY_KEY,
 	parseRelationRow,
@@ -230,6 +231,24 @@ await suite.checkAsync(
 			[rejected.controller.snapshot.rows.length, rejected.controller.snapshot.failureKey],
 			[0, RELATION_INTEGRITY_KEY],
 			'server invalid_update: rows dropped, integrity copy'
+		);
+		// The named reason gets its own copy; the message is never read.
+		const named = harness([
+			ok({ items: [visible(1)], next_cursor: 'c' }),
+			{
+				code: 400,
+				message: 'project_unmapped',
+				data: null,
+				error_code: 'invalid_update',
+				details: { reason: 'cross_workspace_relation' }
+			}
+		]);
+		await named.controller.load();
+		await named.controller.loadMore();
+		assertDeepEqual(
+			[named.controller.snapshot.rows.length, named.controller.snapshot.failureKey],
+			[0, RELATION_CROSS_WORKSPACE_KEY],
+			'cross_workspace_relation: rows dropped, cross-workspace integrity copy'
 		);
 		for (const bad of [
 			{ visibility: 'secret' },

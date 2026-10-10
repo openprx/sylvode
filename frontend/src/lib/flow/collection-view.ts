@@ -18,7 +18,15 @@
 // - the draft filter/sort/group is ephemeral (a query parameter only); only "save view" in
 //   schema mode writes it, with `view_update`;
 // - one intent = one idempotency key: a retry of the same write reuses its key, a different
-//   value, frontier or target is a new intent.
+//   value, frontier or target is a new intent;
+// - records are read with the active view's `view_id`, so the server applies the saved
+//   filter/sort/group; only an ephemeral draft query is sent explicitly, without `view_id`;
+// - an `invalid_update` with `details.reason="invalid_field_value"` is shown on the cell its
+//   `details.field_id` names, with that reason's wording;
+// - under field secrecy a record's `semantic_content` is withheld whole (`{}`), body included
+//   (`rest-api-v1.md` v0.6 "field secrecy 下的 `semantic_content`"): the body is then shown as
+//   unreadable and cannot be edited, never as an empty text that a save would overwrite;
+// - archiving a record (`record_archive`) needs the user's explicit confirmation.
 
 import { writable, type Readable } from 'svelte/store';
 import type {
@@ -34,7 +42,12 @@ import type {
 	FlowRecordSort
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
-import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
+import {
+	flowErrorDetailKey,
+	flowErrorFromEnvelope,
+	flowErrorI18nKey,
+	invalidUpdateDisposition
+} from './errors';
 import type { FlowError } from './types';
 import {
 	COLLECTION_LABEL_MAX_CHARS,
@@ -96,6 +109,9 @@ export interface RecordPanelState {
 	readonly status: 'opening' | 'open' | 'error';
 	/** The stored body (`record:body`), `null` when the record has none. */
 	readonly body: string | null;
+	/** The server withheld the record's `semantic_content` under field secrecy: the body cannot
+	 * be read, so it is neither shown as empty nor editable. */
+	readonly bodyWithheld: boolean;
 	readonly errorKey: string | null;
 	readonly bodyStatus: CellStatus | null;
 }
@@ -137,7 +153,18 @@ export interface CollectionViewState {
 
 export type SchemaOutcome =
 	| { readonly ok: true }
-	| { readonly ok: false; readonly key: string; readonly code: string | null };
+	| {
+			readonly ok: false;
+			readonly key: string;
+			readonly code: string | null;
+			/** The field a refusal names (`invalid_field_value`'s `details.field_id`). */
+			readonly fieldId?: string;
+	  };
+
+export type ArchiveRecordOutcome =
+	| { readonly kind: 'needs_confirmation' }
+	| { readonly kind: 'archived' }
+	| { readonly kind: 'failed'; readonly key: string; readonly code: string };
 
 export const SCHEMA_MODE_REQUIRED_KEY = 'flow.collection.schema.required';
 export const RECORD_STALE_KEY = 'flow.collection.record.stale';
@@ -182,6 +209,36 @@ function recordBody(view: FlowObjectView): string | null {
 	if (typeof properties !== 'object' || properties === null) return null;
 	const body = (properties as Record<string, unknown>).body;
 	return typeof body === 'string' ? body : null;
+}
+
+/** Whether the server withheld this record's content: field secrecy is on for the Collection
+ * and `semantic_content` came back as the empty object. A record that merely has no body still
+ * carries its `nodes`. */
+function bodyWithheld(view: FlowObjectView, collection: ParsedCollection | null): boolean {
+	const secret =
+		collection !== null &&
+		(collection.fieldSecrecyEnabled || collection.fields.some((field) => field.restricted));
+	if (!secret) return false;
+	const content = view.semantic_content;
+	return (
+		typeof content === 'object' &&
+		content !== null &&
+		!Array.isArray(content) &&
+		Object.keys(content).length === 0
+	);
+}
+
+/** `details.field_id` of an `invalid_field_value` refusal, else `null`. */
+function invalidFieldId(error: FlowError): string | null {
+	if (invalidUpdateDisposition(error)?.reason !== 'invalid_field_value') return null;
+	const fieldId = (error.details as { field_id?: unknown } | undefined)?.field_id;
+	return typeof fieldId === 'string' && fieldId.length > 0 ? fieldId : null;
+}
+
+/** A refusal's status for a cell: the named reason's key and code when it has one. */
+function cellError(error: FlowError): CellStatus {
+	const reason = invalidUpdateDisposition(error)?.reason;
+	return { state: 'error', key: flowErrorDetailKey(error), code: reason ?? error.code };
 }
 
 function rowFromItem(item: FlowCollectionRecordsResponse['items'][number]): RecordRow {
@@ -312,12 +369,24 @@ export class CollectionViewController {
 		const view = this.activeView();
 		const group =
 			view?.kind === 'board' ? (this.boardGroupField()?.fieldId ?? undefined) : undefined;
+		const page = { cursor: cursor ?? undefined, limit: RECORD_PAGE_SIZE };
+		if (view && !this.current.draftQuery) {
+			// The saved view: the server reads its filter/sort/group by `view_id`. A board whose
+			// saved group does not name a live select field falls back to another one here, and
+			// only that fallback is sent explicitly.
+			return {
+				view_id: view.viewId,
+				...(group !== undefined && group !== view.query.groupFieldId ? { group } : {}),
+				...page
+			};
+		}
+		// An ephemeral draft (or no view at all): everything explicit and no `view_id`, so a part
+		// the draft cleared is not filled back in from the saved view.
 		return {
 			filter: query.filter ?? undefined,
 			sort: query.sort ?? undefined,
 			group,
-			cursor: cursor ?? undefined,
-			limit: RECORD_PAGE_SIZE
+			...page
 		};
 	}
 
@@ -524,11 +593,10 @@ export class CollectionViewController {
 				await this.reloadRecords();
 				return false;
 			}
-			this.setCellStatus(recordId, fieldId, {
-				state: 'error',
-				key: flowErrorI18nKey(error),
-				code: error.code
-			});
+			// `invalid_field_value` names the refused field; its cell shows the reason.
+			const target = invalidFieldId(error) ?? fieldId;
+			if (target !== fieldId) this.setCellStatus(recordId, fieldId, null);
+			this.setCellStatus(recordId, target, cellError(error));
 			return false;
 		}
 	}
@@ -567,7 +635,14 @@ export class CollectionViewController {
 			);
 		} catch (raw) {
 			const error = asFlowError(raw);
-			return { ok: false, key: flowErrorI18nKey(error), code: error.code };
+			const status = cellError(error);
+			const fieldId = invalidFieldId(error);
+			return {
+				ok: false,
+				key: status.state === 'error' ? status.key : flowErrorI18nKey(error),
+				code: status.state === 'error' ? status.code : error.code,
+				...(fieldId ? { fieldId } : {})
+			};
 		}
 		this.intents.delete('record_create');
 		await this.reloadRecords();
@@ -582,7 +657,14 @@ export class CollectionViewController {
 		this.closeOpenedRecord();
 		this.openedRecordId = recordId;
 		this.patch({
-			panel: { recordId, status: 'opening', body: null, errorKey: null, bodyStatus: null }
+			panel: {
+				recordId,
+				status: 'opening',
+				body: null,
+				bodyWithheld: false,
+				errorKey: null,
+				bodyStatus: null
+			}
 		});
 		try {
 			const view = await this.reads.openRecord(recordId);
@@ -594,6 +676,7 @@ export class CollectionViewController {
 					recordId,
 					status: 'open',
 					body: recordBody(view),
+					bodyWithheld: bodyWithheld(view, this.current.collection),
 					errorKey: null,
 					bodyStatus: null
 				}
@@ -609,6 +692,7 @@ export class CollectionViewController {
 					recordId,
 					status: 'error',
 					body: null,
+					bodyWithheld: false,
 					errorKey: flowErrorI18nKey(error),
 					bodyStatus: null
 				}
@@ -651,6 +735,9 @@ export class CollectionViewController {
 		const draft = this.current.bodyDrafts[recordId];
 		const frontier = this.frontiers.get(recordId);
 		if (draft === undefined || frontier === undefined) return false;
+		// A withheld body is not known to be empty: saving would overwrite what the user cannot see.
+		const panel = this.current.panel;
+		if (panel && panel.recordId === recordId && panel.bodyWithheld) return false;
 		const key = this.intentKey(`body:${recordId}`, JSON.stringify([frontier, draft]));
 		this.setBodyStatus(recordId, { state: 'saving' });
 		try {
@@ -691,7 +778,13 @@ export class CollectionViewController {
 			this.frontiers.set(recordId, view.frontier);
 			const panel = this.current.panel;
 			if (panel && panel.recordId === recordId) {
-				this.patch({ panel: { ...panel, body: recordBody(view) } });
+				this.patch({
+					panel: {
+						...panel,
+						body: recordBody(view),
+						bodyWithheld: bodyWithheld(view, this.current.collection)
+					}
+				});
 			}
 		} catch (raw) {
 			this.openedRecordId = null;
@@ -702,6 +795,46 @@ export class CollectionViewController {
 				code: error.code
 			});
 		}
+	}
+
+	/**
+	 * Archives one record with `record_archive` -- only after the user confirmed (`confirmed`
+	 * comes from their action, never a default). A retry of the same archive reuses its key. On
+	 * success the record leaves the list and its panel closes.
+	 */
+	async archiveRecord(recordId: string, confirmed: boolean): Promise<ArchiveRecordOutcome> {
+		if (confirmed !== true) return { kind: 'needs_confirmation' };
+		const key = this.intentKey(`archive:${recordId}`, recordId);
+		try {
+			await this.writes.execute(
+				this.collectionId,
+				{ type: 'record_archive', payload: { record_id: recordId } },
+				{ idempotencyKey: key }
+			);
+		} catch (raw) {
+			const error = asFlowError(raw);
+			const status = cellError(error);
+			return {
+				kind: 'failed',
+				key: status.state === 'error' ? status.key : flowErrorI18nKey(error),
+				code: error.code
+			};
+		}
+		if (this.disposed) return { kind: 'archived' };
+		this.intents.delete(`archive:${recordId}`);
+		if (this.current.panel?.recordId === recordId) this.closePanel();
+		const drafts = { ...this.current.drafts };
+		delete drafts[recordId];
+		const bodyDrafts = { ...this.current.bodyDrafts };
+		delete bodyDrafts[recordId];
+		this.frontiers.delete(recordId);
+		this.patch({
+			rows: this.current.rows.filter((row) => row.recordId !== recordId),
+			drafts,
+			bodyDrafts
+		});
+		await this.reloadRecords();
+		return { kind: 'archived' };
 	}
 
 	// ---- schema mode --------------------------------------------------------------------------
