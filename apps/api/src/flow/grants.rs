@@ -34,6 +34,7 @@ use platform::app::AppState;
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::Serialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{ApiError, ApiErrorKind};
@@ -844,8 +845,9 @@ async fn apply_in_transaction(
         ));
     }
 
+    let request_sha256 = request_fingerprint(object_id, &change, confirm_self_lockout);
     if !dry_run && let Some(existing) = repository::find_idempotent_event(tx, workspace_id, idempotency_key).await? {
-        return replay(tx, workspace_id, object_id, caller_before, &existing).await;
+        return replay(tx, workspace_id, object_id, caller_before, &existing, &request_sha256).await;
     }
 
     let before_rows = grants_on(tx, &[object_id]).await?;
@@ -1014,7 +1016,16 @@ async fn apply_in_transaction(
         }
     }
 
-    let event_id = write_events(tx, workspace_id, object_id, caller, &events, idempotency_key).await?;
+    let event_id = write_events(
+        tx,
+        workspace_id,
+        object_id,
+        caller,
+        &events,
+        idempotency_key,
+        &request_sha256,
+    )
+    .await?;
 
     // Every authorization change advances the epoch in its own transaction (`ADR-0012` §3.1 point
     // 1), which is what makes a content write that checked permission before this commit fail its
@@ -1096,6 +1107,7 @@ async fn write_events(
     caller: &Caller,
     events: &[(&'static str, serde_json::Value)],
     idempotency_key: &str,
+    request_sha256: &str,
 ) -> Result<Option<Uuid>, ApiError> {
     let dispatch_max_attempts = crate::config::runtime().flow.dispatch_max_attempts;
     let Some(primary_index) = primary_event_index(events) else {
@@ -1119,7 +1131,11 @@ async fn write_events(
                 actor_id: if caller.is_bot() { None } else { Some(caller.actor_id) },
                 source: caller.origin.source_json(),
                 payload: payload.clone(),
-                metadata: json!({ "principal_kind": caller.principal_kind }),
+                // The request fingerprint a replay of this key is compared against.
+                metadata: json!({
+                    "principal_kind": caller.principal_kind,
+                    REQUEST_SHA256_METADATA_KEY: request_sha256,
+                }),
                 // Every event this one request writes shares the request's correlation
                 // (`events-v1.md`: "首个用户请求生成 `correlation_id`").
                 correlation_id: Some(caller.origin.correlation_id),
@@ -1155,22 +1171,73 @@ async fn write_events(
     Ok(primary)
 }
 
-/// A repeated `idempotency_key` returns the original event id and the *current* levels rather
-/// than re-applying anything: the state the first request produced is already in place, so
-/// "before" and "after" are the same thing, and saying so is more honest than replaying a diff
-/// this request did not cause.
+/// `business_events.metadata` key holding [`request_fingerprint`] of the request that wrote the
+/// event.
+const REQUEST_SHA256_METADATA_KEY: &str = "idempotency_request_sha256";
+
+/// SHA-256 over the canonical form of one authorization request body: the operation, the
+/// object, `confirm_self_lockout` and the validated change, with grant rosters sorted so that two
+/// spellings of the same roster are the same request. A replay under the same key must match it
+/// (`error-mapping-v1.md`: `idempotency_key_body_drift`).
+fn request_fingerprint(object_id: Uuid, change: &Change, confirm_self_lockout: bool) -> String {
+    let roster = |grants: &[Grant]| {
+        let mut entries: Vec<(&'static str, Uuid, &'static str)> = grants
+            .iter()
+            .map(|grant| (grant.kind.as_str(), grant.id, grant.level.as_wire()))
+            .collect();
+        entries.sort_unstable();
+        entries
+    };
+    let body = match change {
+        Change::ReplaceGrants(grants) => json!({
+            "operation": "replace_grants",
+            "object_id": object_id,
+            "confirm_self_lockout": confirm_self_lockout,
+            "grants": roster(grants),
+        }),
+        Change::SetInheritance {
+            inherit_from_parent,
+            initial_grants,
+        } => json!({
+            "operation": "set_inheritance",
+            "object_id": object_id,
+            "confirm_self_lockout": confirm_self_lockout,
+            "inherit_from_parent": inherit_from_parent,
+            "initial_grants": initial_grants.as_deref().map(roster),
+        }),
+    };
+    hex::encode(Sha256::digest(body.to_string().as_bytes()))
+}
+
+/// A repeated `idempotency_key` with the same request body returns the original event id and the
+/// *current* levels rather than re-applying anything: the state the first request produced is
+/// already in place, so "before" and "after" are the same thing, and saying so is more honest
+/// than replaying a diff this request did not cause. A different body under the key is
+/// `idempotency_key_body_drift`; an event written before fingerprints were recorded cannot be
+/// verified and is refused the same way rather than assumed to match.
 async fn replay(
     tx: &DatabaseTransaction,
     workspace_id: Uuid,
     object_id: Uuid,
     caller_level: PermissionLevel,
     existing: &repository::IdempotentEvent,
+    request_sha256: &str,
 ) -> Result<(Outcome, Disposition), ApiError> {
     if !existing.event_type.starts_with(FLOW_PERMISSION_EVENT_TYPE_PREFIX)
         || existing.aggregate_id != object_id.to_string()
     {
         return Err(ApiError::idempotency_key_body_drift(
             "idempotency_key was already used for a different operation",
+        ));
+    }
+    if existing
+        .metadata
+        .get(REQUEST_SHA256_METADATA_KEY)
+        .and_then(serde_json::Value::as_str)
+        != Some(request_sha256)
+    {
+        return Err(ApiError::idempotency_key_body_drift(
+            "idempotency_key was already used with a different authorization request body",
         ));
     }
     let rows = grants_on(tx, &[object_id]).await?;
@@ -3420,6 +3487,134 @@ mod database_tests {
             );
         }
 
+        scratch.drop_self().await;
+    }
+
+    /// `error-mapping-v1.md`: an idempotency key replayed with a different request body is
+    /// `invalid_update{reason:"idempotency_key_body_drift"}`, not the original receipt. Both
+    /// authorization PUTs: the same key with the same body still replays (`applied:true`, the
+    /// original event id, nothing new written); the same key with another roster, another level,
+    /// another `inherit_from_parent` or another `initial_grants` is refused and changes nothing.
+    #[tokio::test]
+    async fn a_replayed_authorization_key_with_a_different_body_is_body_drift() {
+        let scratch = scratch_or_skip!("grants_body_drift");
+        let state = state_for(scratch.db.clone());
+        let fx = seed_workspace(&scratch.db).await;
+        let page = create(&state, &fx, "page", None).await;
+        let owner = || user(fx.owner_id, "owner");
+        let put = |grants: Vec<GrantRequest>, key: &str| SetGrantsInput {
+            object_id: page,
+            caller: owner(),
+            grants,
+            confirm_self_lockout: false,
+            dry_run: false,
+            idempotency_key: key.to_string(),
+        };
+        let drift_reason = |err: &ApiError| match err {
+            ApiError::Typed {
+                kind: ApiErrorKind::InvalidUpdate,
+                details: Some(details),
+                ..
+            } => details
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            _ => None,
+        };
+
+        let first = set_grants(
+            &state,
+            fx.workspace_id,
+            put(vec![grant_of("user", fx.member_id, "view")], "grants-drift"),
+        )
+        .await
+        .expect("the first request applies");
+        let events_after_first = event_count(&scratch.db, fx.workspace_id).await;
+        let same = set_grants(
+            &state,
+            fx.workspace_id,
+            put(vec![grant_of("user", fx.member_id, "view")], "grants-drift"),
+        )
+        .await
+        .expect("the identical retry replays");
+        assert!(same.applied);
+        assert_eq!(same.event_id, first.event_id, "the replay names the original event");
+        for (label, grants) in [
+            ("another level", vec![grant_of("user", fx.member_id, "edit")]),
+            (
+                "another roster",
+                vec![
+                    grant_of("user", fx.member_id, "view"),
+                    grant_of("bot", fx.bot_id, "edit"),
+                ],
+            ),
+            ("an empty roster", Vec::new()),
+        ] {
+            let drifted = set_grants(&state, fx.workspace_id, put(grants, "grants-drift"))
+                .await
+                .expect_err("a different body under the same key is refused");
+            assert_eq!(
+                drift_reason(&drifted).as_deref(),
+                Some("idempotency_key_body_drift"),
+                "{label}: {drifted:?}"
+            );
+        }
+        assert_eq!(
+            explicit_roster(&scratch.db, page).await,
+            vec![("user".to_string(), fx.member_id, "view".to_string())],
+            "no drifted request changed the roster"
+        );
+        assert_eq!(event_count(&scratch.db, fx.workspace_id).await, events_after_first);
+
+        let boundary = |inherit_from_parent: bool, initial_grants: Option<Vec<GrantRequest>>| SetInheritanceInput {
+            object_id: page,
+            caller: owner(),
+            inherit_from_parent,
+            initial_grants,
+            confirm_self_lockout: false,
+            dry_run: false,
+            idempotency_key: "inheritance-drift".to_string(),
+        };
+        let cut = set_inheritance(
+            &state,
+            fx.workspace_id,
+            boundary(false, Some(vec![grant_of("user", fx.member_id, "edit")])),
+        )
+        .await
+        .expect("the boundary applies");
+        let replayed = set_inheritance(
+            &state,
+            fx.workspace_id,
+            boundary(false, Some(vec![grant_of("user", fx.member_id, "edit")])),
+        )
+        .await
+        .expect("the identical boundary retry replays");
+        assert_eq!(replayed.event_id, cut.event_id);
+        for (label, input) in [
+            (
+                "inherit flipped",
+                boundary(true, Some(vec![grant_of("user", fx.member_id, "edit")])),
+            ),
+            ("initial_grants omitted", boundary(false, None)),
+            (
+                "initial_grants changed",
+                boundary(false, Some(vec![grant_of("user", fx.member_id, "view")])),
+            ),
+        ] {
+            let drifted = set_inheritance(&state, fx.workspace_id, input)
+                .await
+                .expect_err("a different boundary body under the same key is refused");
+            assert_eq!(
+                drift_reason(&drifted).as_deref(),
+                Some("idempotency_key_body_drift"),
+                "{label}: {drifted:?}"
+            );
+        }
+        assert!(!inherit_flag(&scratch.db, page).await, "the boundary stays");
+        assert_eq!(
+            explicit_roster(&scratch.db, page).await,
+            vec![("user".to_string(), fx.member_id, "edit".to_string())]
+        );
         scratch.drop_self().await;
     }
 }
