@@ -410,6 +410,13 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Web UI, Flow conversion job page: shows the job's `target_type`, words the stored `error`
+  through `flow.error.<code>`, shows each warning by its code, and words a refused retry by
+  cause (`stale_frontier`, `policy_rejected` with `target_schema_changed` or
+  `permission_unconfigured`) before reading the job again. The retry confirmation no longer
+  says the retry depends on the original preview. The browser spec now builds failed jobs
+  through the production path (permission revoked between preview and commit) and proves a
+  retry succeeds after the preview TTL has passed.
 - Web UI, Flow convert wizard: `policy_rejected` is worded by its `details.reason`. A commit
   refused with `preview_expired` or `target_schema_changed` returns to the preview step and
   previews again under a new key (after reading the form again for a schema change);

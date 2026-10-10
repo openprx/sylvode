@@ -3227,7 +3227,8 @@
           "createdTargetsNone": "尚未创建任何内容。",
           "targetLoading": "正在查找记录…",
           "targetUnresolved": "不是你可打开的 Forms 记录，仅显示其 ID。",
-          "targetUntitled": "无标题记录"
+          "targetUntitled": "无标题记录",
+          "targetType": "创建内容"
         },
         "action": {
           "copyId": "复制 ID",
@@ -3239,24 +3240,31 @@
         },
         "retry": {
           "confirmTitle": "重试此转换？",
-          "confirmBody": "转换将按原预览重新执行，所有权限都会重新校验；若预览之后页面或目标表单已变化，重试会失败。",
+          "confirmBody": "转换将按本任务记录的页面版本与表单 schema 重新执行。所有权限都会重新校验；若此后页面或目标表单已变化，重试会失败。",
           "confirm": "重试",
           "cancel": "取消"
         },
         "error": {
           "notFound": "该转换任务不存在，或你没有访问权限。",
           "staleFrontier": "预览之后页面已变化，此任务无法重试。请从页面重新发起转换。",
-          "policyRejected": "在当前权限、预览或目标 schema 下此任务无法重试。请从页面重新发起转换。",
+          "policyRejected": "以当前权限无法重试该任务。请从页面重新发起转换。",
           "rejected": "服务器拒绝了此请求。",
           "conflict": "此请求与先前的请求冲突，请刷新页面。",
           "unavailable": "服务器暂不可用，请重试。",
-          "jobFailed": "转换失败，失败的尝试没有创建任何内容。"
+          "jobFailed": "转换失败，失败的尝试没有创建任何内容。",
+          "targetSchemaChanged": "自本任务预览以来目标表单的字段已变化，因此无法重试。请从页面重新发起转换。",
+          "permissionUnconfigured": "目标表单没有权限策略，因此无法重试。请联系工作区管理员为表单配置权限。"
         },
         "live": {
           "completed": "转换已完成。",
           "failed": "转换失败。",
           "retrying": "正在重试转换。",
           "notFound": "转换任务不可用。"
+        },
+        "targetType": {
+          "form": "一个 Forms 表单",
+          "formRecord": "一条 Forms 记录",
+          "unknown": "未知目标类型"
         }
       },
       "warning": {
