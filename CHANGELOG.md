@@ -157,6 +157,9 @@ OpenPR name keeps working; see **Deprecated**.
 
 ### Added
 
+- Flow Share panel: the add picker offers the workspace's active bots next to its members, so a
+  grant can name a bot (`principal_kind = "bot"`). Listing bots needs a workspace owner or admin;
+  other managers still see the members.
 - Flow Collections on the Web: the record panel can archive a record (`record_archive`) after an
   in-place confirmation. Records are read with the active view's `view_id` (an unsaved draft
   query is still sent explicitly), an `invalid_field_value` refusal is shown on the cell its

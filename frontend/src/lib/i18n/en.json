@@ -3536,11 +3536,15 @@
       "removeFor": "Remove {name}",
       "clear": "Remove everyone",
       "add": {
-        "heading": "Add a person",
+        "heading": "Add a person or bot",
         "person": "Person",
         "choose": "Choose a person",
         "level": "Access",
-        "submit": "Add"
+        "submit": "Add",
+        "subject": "Person or bot",
+        "chooseSubject": "Choose a person or bot",
+        "members": "Members",
+        "bots": "Bots"
       },
       "confirm": {
         "title": "Review the access change",

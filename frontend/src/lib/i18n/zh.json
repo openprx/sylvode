@@ -3536,11 +3536,15 @@
       "removeFor": "移除 {name}",
       "clear": "全部移除",
       "add": {
-        "heading": "添加成员",
+        "heading": "添加成员或机器人",
         "person": "成员",
         "choose": "选择成员",
         "level": "权限",
-        "submit": "添加"
+        "submit": "添加",
+        "subject": "成员或机器人",
+        "chooseSubject": "选择成员或机器人",
+        "members": "成员",
+        "bots": "机器人"
       },
       "confirm": {
         "title": "确认权限变更",

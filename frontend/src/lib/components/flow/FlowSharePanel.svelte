@@ -71,6 +71,11 @@
 		)
 	);
 
+	const memberCandidates = $derived(
+		addCandidates.filter((entry) => entry.principal_kind === 'user')
+	);
+	const botCandidates = $derived(addCandidates.filter((entry) => entry.principal_kind === 'bot'));
+
 	async function run(change: ShareChange): Promise<void> {
 		if (!controller) return;
 		const outcome = await controller.propose(change);
@@ -261,18 +266,34 @@
 				</h3>
 				<label class="block">
 					<span class="mb-1 block text-xs text-slate-500 dark:text-slate-400"
-						>{$t('flow.share.add.person')}</span
+						>{$t('flow.share.add.subject')}</span
 					>
 					<select
-						aria-label={$t('flow.share.add.person')}
+						aria-label={$t('flow.share.add.subject')}
 						class={selectClass}
 						bind:value={addPrincipal}
 						disabled={busy}
+						data-testid="flow-share-add-principal"
 					>
-						<option value="">{$t('flow.share.add.choose')}</option>
-						{#each addCandidates as entry (`${entry.principal_kind}:${entry.principal_id}`)}
-							<option value={`${entry.principal_kind}:${entry.principal_id}`}>{entry.label}</option>
-						{/each}
+						<option value="">{$t('flow.share.add.chooseSubject')}</option>
+						{#if memberCandidates.length > 0}
+							<optgroup label={$t('flow.share.add.members')}>
+								{#each memberCandidates as entry (`${entry.principal_kind}:${entry.principal_id}`)}
+									<option value={`${entry.principal_kind}:${entry.principal_id}`}
+										>{entry.label}</option
+									>
+								{/each}
+							</optgroup>
+						{/if}
+						{#if botCandidates.length > 0}
+							<optgroup label={$t('flow.share.add.bots')}>
+								{#each botCandidates as entry (`${entry.principal_kind}:${entry.principal_id}`)}
+									<option value={`${entry.principal_kind}:${entry.principal_id}`}
+										>{entry.label}</option
+									>
+								{/each}
+							</optgroup>
+						{/if}
 					</select>
 				</label>
 				<label class="block">
