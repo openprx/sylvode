@@ -6019,6 +6019,166 @@ mod tests {
             scratch.drop_self().await;
         }
 
+        /// `domain-model-v1.md` (`authz_epoch`): a connection admitted read-only caches its level
+        /// too. Once the actor is granted `edit` (the epoch advances), its next write on the
+        /// *same* connection is re-sourced and accepted instead of answered from the stale cache.
+        #[tokio::test]
+        async fn a_read_only_connection_granted_edit_is_resourced_and_accepted() {
+            let scratch = scratch_or_skip!("read-only-upgrade-resource");
+            let state = state_for(scratch.db.clone());
+            let (workspace_id, owner_id) = seed_workspace(&state).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let member_id = fp2_b6_member(&state, workspace_id).await;
+            exec(
+                &state,
+                "UPDATE flow_workspace_settings SET default_member_level = 'view' WHERE workspace_id = $1",
+                vec![workspace_id.into()],
+            )
+            .await;
+            let addr = spawn_server(state.clone()).await;
+            let ticket = issue_ticket(addr, &jwt_for(member_id), workspace_id, document_id, "upgrade-member").await;
+            let (mut member, _, _, _) = open_session_full(addr, &ticket, "upgrade-member", document_id).await;
+
+            let refused = next_update_frame(&state, document_id).await;
+            send_frame(&mut member, &refused).await;
+            let answer = fp2_b6_answer(&mut member, fp2_b6_update_id(&refused)).await;
+            assert!(
+                matches!(
+                    answer,
+                    Some(Frame::Rejected {
+                        code: RejectedCode::PolicyRejected,
+                        ..
+                    })
+                ),
+                "a view-level connection cannot write: {answer:?}"
+            );
+
+            fp2_b6_set_grant(&state, workspace_id, owner_id, object_id, member_id, "edit").await;
+            let updates_before = count_collab_updates(&state, document_id).await;
+            let upgraded = next_update_frame(&state, document_id).await;
+            send_frame(&mut member, &upgraded).await;
+            let answer = fp2_b6_answer(&mut member, fp2_b6_update_id(&upgraded)).await;
+            assert!(
+                matches!(answer, Some(Frame::Accepted { .. })),
+                "the connection is re-sourced after the grant and its write accepted: {answer:?}"
+            );
+            assert_eq!(count_collab_updates(&state, document_id).await, updates_before + 1);
+            scratch.drop_self().await;
+        }
+
+        /// The other side of re-sourcing: an existing connection whose actor has since been removed
+        /// from the workspace, or left below `view` by a new boundary, is re-sourced to "may not
+        /// write" and its write is `policy_rejected` with nothing committed -- even though the
+        /// refreshed `checked_epoch` would now pass the commit-time fence. The authorization change
+        /// is made in SQL with no revocation notice, i.e. the window in which the epoch fence and
+        /// re-sourcing are the only barrier.
+        #[tokio::test]
+        async fn connections_whose_actor_lost_access_are_refused_after_resourcing() {
+            let scratch = scratch_or_skip!("lost-access-resource");
+            let state = state_for(scratch.db.clone());
+            let (workspace_id, owner_id) = seed_workspace(&state).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let removed = fp2_b6_member(&state, workspace_id).await;
+            let fenced = fp2_b6_member(&state, workspace_id).await;
+            exec(
+                &state,
+                "UPDATE flow_workspace_settings SET default_member_level = 'view' WHERE workspace_id = $1",
+                vec![workspace_id.into()],
+            )
+            .await;
+            // One whole-table grant replacement naming both members.
+            crate::flow::grants::set_grants(
+                &state,
+                workspace_id,
+                crate::flow::grants::SetGrantsInput {
+                    object_id,
+                    caller: crate::flow::grants::Caller {
+                        actor_id: owner_id,
+                        principal_kind: "user".to_string(),
+                        role: "owner".to_string(),
+                        origin: crate::flow::event_origin::CommandOrigin::first_request_from(
+                            crate::flow::event_origin::EventSurface::Rest,
+                        ),
+                    },
+                    grants: [removed, fenced]
+                        .into_iter()
+                        .map(|principal_id| crate::flow::grants::GrantRequest {
+                            principal_kind: "user".to_string(),
+                            principal_id,
+                            level: "edit".to_string(),
+                        })
+                        .collect(),
+                    confirm_self_lockout: false,
+                    dry_run: false,
+                    idempotency_key: Uuid::new_v4().to_string(),
+                },
+            )
+            .await
+            .expect("the grant change commits");
+            let addr = spawn_server(state.clone()).await;
+            let mut sockets = Vec::new();
+            for (member, label) in [(removed, "lost-removed"), (fenced, "lost-fenced")] {
+                let ticket = issue_ticket(addr, &jwt_for(member), workspace_id, document_id, label).await;
+                let (mut ws, _, _, _) = open_session_full(addr, &ticket, label, document_id).await;
+                let update = next_update_frame(&state, document_id).await;
+                send_frame(&mut ws, &update).await;
+                let answer = fp2_b6_answer(&mut ws, fp2_b6_update_id(&update)).await;
+                assert!(
+                    matches!(answer, Some(Frame::Accepted { .. })),
+                    "{label} writes while edit: {answer:?}"
+                );
+                sockets.push((ws, label));
+            }
+
+            let bump = "UPDATE flow_workspace_settings SET authz_epoch = authz_epoch + 1 WHERE workspace_id = $1";
+            // `removed` leaves the workspace.
+            exec(&state, bump, vec![workspace_id.into()]).await;
+            exec(
+                &state,
+                "DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
+                vec![workspace_id.into(), removed.into()],
+            )
+            .await;
+            // `fenced` stays a member, but the page becomes a boundary with no grant for it.
+            exec(&state, bump, vec![workspace_id.into()]).await;
+            exec(
+                &state,
+                "UPDATE flow_objects SET inherit_from_parent = false WHERE id = $1",
+                vec![object_id.into()],
+            )
+            .await;
+            exec(
+                &state,
+                "DELETE FROM flow_object_grants WHERE object_id = $1 AND principal_id = $2",
+                vec![object_id.into(), fenced.into()],
+            )
+            .await;
+
+            for (ws, label) in &mut sockets {
+                let updates_before = count_collab_updates(&state, document_id).await;
+                let update = next_update_frame(&state, document_id).await;
+                send_frame(ws, &update).await;
+                let answer = fp2_b6_answer(ws, fp2_b6_update_id(&update)).await;
+                assert!(
+                    matches!(
+                        answer,
+                        Some(Frame::Rejected {
+                            code: RejectedCode::PolicyRejected,
+                            write_state: WriteState::NotApplied,
+                            ..
+                        })
+                    ),
+                    "{label}: a connection whose actor lost access must be policy_rejected: {answer:?}"
+                );
+                assert_eq!(
+                    count_collab_updates(&state, document_id).await,
+                    updates_before,
+                    "{label}: nothing is committed"
+                );
+            }
+            scratch.drop_self().await;
+        }
+
         /// FP2-B6 (`collab-protocol-v1.md` 2026-10-10): re-sending an already-committed
         /// `update_id` is answered with the original receipt (same seq, frontier and event id),
         /// on a fresh connection and on the connection that committed it.
