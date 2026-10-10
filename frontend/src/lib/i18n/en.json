@@ -3227,7 +3227,8 @@
           "createdTargetsNone": "Nothing has been created yet.",
           "targetLoading": "Looking up the record…",
           "targetUnresolved": "Not available as a Forms record you can open. Only its ID is shown.",
-          "targetUntitled": "Untitled record"
+          "targetUntitled": "Untitled record",
+          "targetType": "Creates"
         },
         "action": {
           "copyId": "Copy ID",
@@ -3239,24 +3240,31 @@
         },
         "retry": {
           "confirmTitle": "Retry this conversion?",
-          "confirmBody": "The conversion runs again from the original preview. All permissions are checked again, and it fails if the Page or the target form has changed since the preview.",
+          "confirmBody": "The conversion runs again against the Page version and form schema this job recorded. All permissions are checked again, and it fails if the Page or the target form has changed since then.",
           "confirm": "Retry",
           "cancel": "Cancel"
         },
         "error": {
           "notFound": "This conversion job does not exist, or you do not have access to it.",
           "staleFrontier": "The Page has changed since the preview, so this job cannot be retried. Start a new conversion from the Page.",
-          "policyRejected": "This job cannot be retried with the current permissions, preview or target schema. Start a new conversion from the Page.",
+          "policyRejected": "This job cannot be retried with the current permissions. Start a new conversion from the Page.",
           "rejected": "The server rejected this request.",
           "conflict": "The request conflicts with an earlier one. Reload the page.",
           "unavailable": "The server is unavailable. Try again.",
-          "jobFailed": "The conversion failed. Nothing was created by the failed attempt."
+          "jobFailed": "The conversion failed. Nothing was created by the failed attempt.",
+          "targetSchemaChanged": "The target form's fields changed since this job's preview, so this job cannot be retried. Start a new conversion from the Page.",
+          "permissionUnconfigured": "The target form has no permission policy, so this job cannot be retried. Ask a workspace admin to configure the form's permissions."
         },
         "live": {
           "completed": "The conversion is complete.",
           "failed": "The conversion failed.",
           "retrying": "Retrying the conversion.",
           "notFound": "The conversion job is not available."
+        },
+        "targetType": {
+          "form": "A Forms form",
+          "formRecord": "A Forms record",
+          "unknown": "Unknown target type"
         }
       },
       "warning": {

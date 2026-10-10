@@ -24,9 +24,14 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  * which the spec then opens. A random job id, another user's job id and a malformed id all get
  * the same safe empty state.
  *
- * The production API never stores a `failed` job (its only producer, the conversion fault hook in
- * `apps/api/src/flow/bridge.rs`, is compiled for tests only), so the retry path is driven against
- * a completed job that the spec marks `failed` directly in PostgreSQL. That needs:
+ * Failed jobs come from the production path (B4): the target form's `record.create` is revoked
+ * between preview and commit, the run re-checks it after the job row exists, so the job is stored
+ * `failed` and the typed error carries `details.job_id`. The wizard then hands over to the job
+ * page. The retry is confirmed, reuses one key across a synthetic 503, and succeeds although the
+ * job's preview expired 20 minutes ago (retry does not depend on the preview TTL). A failed job
+ * whose Page moved on gets a permanent `stale_frontier`, and one whose target form schema changed
+ * gets `policy_rejected` / `target_schema_changed`; both withdraw retry with their own wording.
+ * Moving the preview TTL into the past is the one step written in SQL, so it needs:
  *
  *   E2E_DATABASE_URL      libpq URL of the database the API under test uses, e.g.
  *                         `postgres://user:pass@127.0.0.1:5432/sylvode`; `psql` must be on PATH.
@@ -600,13 +605,75 @@ function sql(statement: string, id: string): void {
 	);
 }
 
-/** The fixture the production API cannot produce: a job in the backend's `failed` state with no
- * created target, as `record_failed_conversion` leaves it. */
-function markJobFailed(jobId: string): void {
-	sql(
-		"UPDATE flow_conversion_jobs SET status = 'failed', error_code = 'injected_before_target_create', lineage_id = NULL, created_target_ids = ARRAY[]::uuid[] WHERE id = :'id';",
-		jobId
+/** Sets whether the owner role may create records in the setup form (production API path). */
+async function setRecordCreate(
+	request: APIRequestContext,
+	setup: ConversionSetup,
+	allowed: boolean
+): Promise<void> {
+	await unwrap(
+		await request.patch(`/api/v1/forms/${setup.formId}/permissions`, {
+			headers: setup.auth,
+			data: {
+				policies: [
+					{
+						subject_type: 'role',
+						subject_id: 'owner',
+						policy: { actions: { 'form.view': true, 'record.create': allowed } }
+					}
+				]
+			}
+		})
 	);
+}
+
+type FailedCommit = {
+	code: number;
+	error_code?: string;
+	data: null;
+	details?: { job_id?: string; job_status?: string; reason?: string };
+};
+
+/** Production-path failed job: preview, then revoke `record.create`, then commit. The commit's
+ * run re-checks the target permission after the job row exists, so the job is stored `failed`
+ * (error `policy_rejected`) and the typed error names it (`details.job_id`, B4). The permission
+ * is granted again afterwards, so a retry can succeed. */
+async function failedJobOverRest(
+	request: APIRequestContext,
+	setup: ConversionSetup
+): Promise<{ jobId: string; previewId: string }> {
+	const source = await unwrap<ObjectView>(
+		await request.get(`/api/v1/flow/objects/${setup.objectId}`, { headers: setup.auth })
+	);
+	const preview = await unwrap<Preview>(
+		await request.post('/api/v1/flow/conversions/preview', {
+			headers: setup.auth,
+			data: {
+				source_object_id: setup.objectId,
+				source_frontier: source.frontier,
+				target_type: 'form_record',
+				mapping: { target_form_id: setup.formId, values: { note: 'from REST' } },
+				idempotency_key: crypto.randomUUID()
+			}
+		})
+	);
+	await setRecordCreate(request, setup, false);
+	const response = await request.post('/api/v1/flow/conversions', {
+		headers: setup.auth,
+		data: {
+			preview_id: preview.preview_id,
+			source_frontier: preview.source_frontier,
+			target_schema_version: preview.target_schema_version,
+			idempotency_key: crypto.randomUUID(),
+			confirm: true
+		}
+	});
+	const refused = (await response.json()) as FailedCommit;
+	expect(refused.error_code).toBe('policy_rejected');
+	expect(refused.details?.job_status).toBe('failed');
+	expect(refused.details?.job_id).toMatch(UUID);
+	await setRecordCreate(request, setup, true);
+	return { jobId: refused.details?.job_id ?? '', previewId: preview.preview_id };
 }
 
 test('a random, malformed or foreign conversion job id gets the same safe empty state', async ({
@@ -658,13 +725,13 @@ test('a random, malformed or foreign conversion job id gets the same safe empty 
 	expect(reads.filter((path) => path.includes('not-a-job-id'))).toEqual([]);
 });
 
-test('a failed job is retried only after confirmation, with one key per job; a permanent rejection withdraws retry', async ({
+test('a failed job is retried only after confirmation, with one key per job, independent of the preview TTL; stale or schema-changed retries withdraw retry', async ({
 	page,
 	request
 }) => {
 	const missingDatabase = !process.env.E2E_DATABASE_URL;
 	const skipReason =
-		'E2E_DATABASE_URL is not set: the production API never stores a failed job, so the retry fixture is written in SQL';
+		'E2E_DATABASE_URL is not set: the preview TTL is moved into the past in SQL to prove a retry does not depend on it';
 	if (missingDatabase) {
 		expect(
 			process.env.E2E_REQUIRE_DATABASE,
@@ -674,10 +741,70 @@ test('a failed job is retried only after confirmation, with one key per job; a p
 	}
 	test.skip(missingDatabase, skipReason);
 	const setup = await conversionSetup(request, 'retry');
-	const first = await convertOverRest(request, setup);
-	markJobFailed(first.job.job_id);
 
-	const retryPath = `/api/v1/flow/conversions/${first.job.job_id}/retry`;
+	// ---- 1. the wizard commit fails after its job exists: the wizard hands over to the job ----
+	await signInAs(page, setup.ownerLogin);
+	await page.goto(`/workspace/${setup.workspaceId}/flow/${setup.objectId}/convert`);
+	const step = page.getByTestId('flow-convert-step');
+	const next = page.getByTestId('flow-convert-next');
+	await expect(step).toHaveText('Step 1 of 4: Source');
+	await next.click();
+	await page.getByLabel('Project').selectOption(setup.projectId);
+	const formSelect = page.getByLabel('Form', { exact: true });
+	await expect(formSelect).toBeEnabled();
+	await formSelect.selectOption(setup.formId);
+	// `note` is left empty on purpose: the preview warns about it (`<code>:<field_key>`).
+	await next.click();
+	await expect(step).toHaveText('Step 3 of 4: Preview');
+	const warning = page.getByTestId('flow-convert-warning');
+	await expect(warning).toHaveCount(1);
+	await expect(warning).toHaveAttribute('data-code', 'target_value_missing');
+	await expect(warning).toHaveText('No value for field "Note"; it will be left empty.');
+	await next.click();
+	await expect(step).toHaveText('Step 4 of 4: Confirm');
+	// The target permission is revoked between preview and commit.
+	await setRecordCreate(request, setup, false);
+	await page.getByTestId('flow-convert-acknowledge').check();
+	const wizardCommit = page.waitForResponse(
+		(res) =>
+			res.request().method() === 'POST' &&
+			new URL(res.url()).pathname === '/api/v1/flow/conversions'
+	);
+	await page.getByTestId('flow-convert-commit-button').click();
+	const refused = (await (await wizardCommit).json()) as FailedCommit;
+	expect(refused.error_code).toBe('policy_rejected');
+	expect(refused.details?.job_status).toBe('failed');
+	const firstJobId = refused.details?.job_id ?? '';
+	expect(firstJobId).toMatch(UUID);
+	await expect(page).toHaveURL(
+		new RegExp(`/workspace/${setup.workspaceId}/flow/conversions/${firstJobId}$`)
+	);
+	await setRecordCreate(request, setup, true);
+
+	const status = page.getByTestId('flow-conversion-status');
+	await expect(status).toHaveAttribute('data-status', 'failed');
+	await expect(status).toHaveText('Failed');
+	const storedError = page.getByTestId('flow-conversion-error');
+	await expect(storedError).toHaveAttribute('data-code', 'policy_rejected');
+	await expect(storedError).toHaveText('That action was rejected by policy.');
+	await expect(page.getByTestId('flow-conversion-target-type')).toHaveText('A Forms record');
+	await expect(page.getByTestId('flow-conversion-targets-empty')).toBeVisible();
+	await expect(page.getByTestId('flow-conversion-lineage')).toHaveText('No lineage recorded yet.');
+	const firstFailed = await unwrap<Job>(
+		await request.get(`/api/v1/flow/conversions/${firstJobId}`, { headers: setup.auth })
+	);
+	expect(firstFailed.status).toBe('failed');
+	expect(firstFailed.error).toBe('policy_rejected');
+	expect(firstFailed.created_target_ids).toEqual([]);
+
+	// The job's preview is long expired: the retry runs against the job's own frontier and
+	// schema version, not the preview TTL (`rest-api-v1.md` v0.7, 2026-10-10).
+	sql(
+		"UPDATE flow_conversion_previews SET expires_at = now() - interval '20 minutes' WHERE id = (SELECT preview_id FROM flow_conversion_jobs WHERE id = :'id');",
+		firstJobId
+	);
+
+	const retryPath = `/api/v1/flow/conversions/${firstJobId}/retry`;
 	const retryBodies: Array<Record<string, unknown>> = [];
 	page.on('request', (req: Request) => {
 		if (req.method() === 'POST' && new URL(req.url()).pathname.endsWith('/retry'))
@@ -693,17 +820,6 @@ test('a failed job is retried only after confirmation, with one key per job; a p
 			body: JSON.stringify({ code: 503, message: 'unavailable', data: null })
 		});
 	});
-
-	await signInAs(page, setup.ownerLogin);
-	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${first.job.job_id}`);
-	const status = page.getByTestId('flow-conversion-status');
-	await expect(status).toHaveAttribute('data-status', 'failed');
-	await expect(status).toHaveText('Failed');
-	await expect(page.getByTestId('flow-conversion-error')).toHaveText(
-		'The conversion failed. Nothing was created by the failed attempt.'
-	);
-	await expect(page.getByTestId('flow-conversion-targets-empty')).toBeVisible();
-	await expect(page.getByTestId('flow-conversion-lineage')).toHaveText('No lineage recorded yet.');
 
 	const retry = page.getByTestId('flow-conversion-retry');
 	const dialog = page.getByTestId('flow-conversion-retry-dialog');
@@ -734,12 +850,15 @@ test('a failed job is retried only after confirmation, with one key per job; a p
 		confirm: true
 	});
 	expect(retryBodies[1]).toEqual(retryBodies[0]);
+	expect(retried.job_id).toBe(firstJobId);
 	expect(retried.status).toBe('completed');
+	expect(retried.error).toBeNull();
 	expect(retried.created_target_ids).toHaveLength(1);
 
 	await expect(status).toHaveAttribute('data-status', 'completed');
 	await expect(retry).toHaveCount(0);
 	await expect(retryError).toHaveCount(0);
+	await expect(storedError).toHaveCount(0);
 	const target = page.getByTestId('flow-conversion-target');
 	await expect(target).toHaveAttribute('data-state', 'record');
 	await expect(page.getByTestId('flow-conversion-target-link')).toHaveAttribute(
@@ -747,42 +866,85 @@ test('a failed job is retried only after confirmation, with one key per job; a p
 		`/workspace/${setup.workspaceId}/projects/${setup.projectId}/forms/records/${retried.created_target_ids[0]}`
 	);
 	const afterRetry = await unwrap<Job>(
-		await request.get(`/api/v1/flow/conversions/${first.job.job_id}`, {
-			headers: setup.auth
-		})
+		await request.get(`/api/v1/flow/conversions/${firstJobId}`, { headers: setup.auth })
 	);
 	expect(afterRetry.status).toBe('completed');
 	expect(afterRetry.created_target_ids).toEqual(retried.created_target_ids);
 
-	// A failed job whose preview has expired: the retry is a permanent `policy_rejected`, so the
-	// action is withdrawn and the page offers a new conversion from the Page instead.
-	const second = await convertOverRest(request, setup);
-	markJobFailed(second.job.job_id);
-	sql(
-		"UPDATE flow_conversion_previews SET expires_at = now() - interval '1 second' WHERE id = :'id';",
-		second.previewId
+	// ---- 2. the Page moved on after the failure: the retry is a permanent `stale_frontier` ----
+	const second = await failedJobOverRest(request, setup);
+	await unwrap(
+		await request.post(`/api/v1/flow/objects/${setup.objectId}/commands`, {
+			headers: setup.auth,
+			data: {
+				command: { type: 'set_title', payload: { title: `Retry plan moved ${runId}` } },
+				idempotency_key: crypto.randomUUID()
+			}
+		})
 	);
-	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${second.job.job_id}`);
+	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${second.jobId}`);
 	await expect(status).toHaveAttribute('data-status', 'failed');
-	const rejectedResponse = page.waitForResponse(
-		(res) => new URL(res.url()).pathname === `/api/v1/flow/conversions/${second.job.job_id}/retry`
+	const staleResponse = page.waitForResponse(
+		(res) => new URL(res.url()).pathname === `/api/v1/flow/conversions/${second.jobId}/retry`
 	);
 	await retry.click();
 	await page.getByTestId('flow-conversion-retry-confirm').click();
-	const rejected = (await (await rejectedResponse).json()) as Envelope<null>;
-	expect(rejected.error_code).toBe('policy_rejected');
-	await expect(retryError).toHaveAttribute('data-kind', 'policy_rejected');
+	const stale = (await (await staleResponse).json()) as FailedCommit;
+	expect(stale.error_code).toBe('stale_frontier');
+	await expect(retryError).toHaveAttribute('data-kind', 'stale_frontier');
+	await expect(retryError).toHaveText(
+		'The Page has changed since the preview, so this job cannot be retried. Start a new conversion from the Page.'
+	);
 	await expect(retry).toHaveCount(0);
 	await expect(page.getByTestId('flow-conversion-new')).toHaveAttribute(
 		'href',
 		`/workspace/${setup.workspaceId}/flow/${setup.objectId}/convert`
 	);
-	const stillFailed = await unwrap<Job>(
-		await request.get(`/api/v1/flow/conversions/${second.job.job_id}`, {
-			headers: setup.auth
+	// The refused retry re-reads the job: its stored error is now the stale frontier.
+	await expect(storedError).toHaveAttribute('data-code', 'stale_frontier');
+	const stillStale = await unwrap<Job>(
+		await request.get(`/api/v1/flow/conversions/${second.jobId}`, { headers: setup.auth })
+	);
+	expect(stillStale.status).toBe('failed');
+	expect(stillStale.error).toBe('stale_frontier');
+
+	// ---- 3. the target form schema changed after the failure: `target_schema_changed` ----
+	const third = await failedJobOverRest(request, setup);
+	await unwrap(
+		await request.patch(`/api/v1/forms/${setup.formId}`, {
+			headers: setup.auth,
+			data: {
+				schema: {
+					version: 'openpr.form.schema.v1',
+					fields: [
+						{ field_id: 'fld_note', key: 'note', label: 'Note', type: 'text' },
+						{ field_id: 'fld_extra', key: 'extra', label: 'Extra', type: 'text' }
+					]
+				}
+			}
 		})
 	);
-	expect(stillFailed.status).toBe('failed');
+	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${third.jobId}`);
+	await expect(status).toHaveAttribute('data-status', 'failed');
+	const schemaResponse = page.waitForResponse(
+		(res) => new URL(res.url()).pathname === `/api/v1/flow/conversions/${third.jobId}/retry`
+	);
+	await retry.click();
+	await page.getByTestId('flow-conversion-retry-confirm').click();
+	const schema = (await (await schemaResponse).json()) as FailedCommit;
+	expect(schema.error_code).toBe('policy_rejected');
+	expect(schema.details?.reason).toBe('target_schema_changed');
+	await expect(retryError).toHaveAttribute('data-kind', 'policy_rejected');
+	await expect(retryError).toHaveAttribute('data-reason', 'target_schema_changed');
+	await expect(retryError).toHaveText(
+		"The target form's fields changed since this job's preview, so this job cannot be retried. Start a new conversion from the Page."
+	);
+	await expect(retry).toHaveCount(0);
+	const stillSchema = await unwrap<Job>(
+		await request.get(`/api/v1/flow/conversions/${third.jobId}`, { headers: setup.auth })
+	);
+	expect(stillSchema.status).toBe('failed');
+	expect(stillSchema.created_target_ids).toEqual([]);
 });
 
 test('390x844: the navigator is a closed drawer and the object, convert and job pages use the full width', async ({

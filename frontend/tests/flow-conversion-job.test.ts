@@ -22,10 +22,12 @@ import {
 	ConversionJobController,
 	JOB_FAILURE_KEYS,
 	JOB_STATUS_KEYS,
+	JOB_TARGET_TYPE_KEYS,
 	canRetry,
 	classifyJobFailure,
 	isTerminalConversionStatus,
 	jobErrorKey,
+	jobTargetTypeKey,
 	type ConversionJobDeps,
 	type ConversionJobSnapshot
 } from '../src/lib/flow/conversion-job';
@@ -590,6 +592,114 @@ await suite.checkAsync(
 	}
 );
 
+// ---- 6b. B4 job shape: target_type, stable error, retry reasons, reaped started --------------
+
+await suite.checkAsync(
+	'target_type is carried and worded; an unknown value is "unknown"',
+	async () => {
+		const h = harness({ reads: [ok(job({ target_type: 'form' }))] });
+		await h.controller.poll();
+		assertEqual(h.controller.snapshot().job?.target_type, 'form', 'kept on the snapshot');
+		assertEqual(jobTargetTypeKey('form'), JOB_TARGET_TYPE_KEYS.form, 'form');
+		assertEqual(jobTargetTypeKey('form_record'), JOB_TARGET_TYPE_KEYS.form_record, 'form_record');
+		assertEqual(jobTargetTypeKey('table'), JOB_TARGET_TYPE_KEYS.unknown, 'unknown');
+		assertEqual(jobTargetTypeKey(undefined), JOB_TARGET_TYPE_KEYS.unknown, 'missing');
+	}
+);
+
+suite.check('every stable code a failed job can store is worded by flow.error.<code>', () => {
+	for (const code of [
+		'policy_rejected',
+		'stale_frontier',
+		'invalid_update',
+		'not_found',
+		'server_draining',
+		'limit_exceeded'
+	]) {
+		const key = jobErrorKey(code);
+		assert(key !== null && key.startsWith('flow.error.'), `${code}: ${key}`);
+	}
+	assertEqual(jobErrorKey('server_rejected'), 'flow.error.server_rejected', 'server_rejected');
+});
+
+await suite.checkAsync(
+	'retry stale_frontier and target_schema_changed are worded apart; the job is read again',
+	async () => {
+		const cases = [
+			{
+				reply: err(409, {
+					error_code: 'stale_frontier',
+					details: { job_id: JOB, job_status: 'failed' }
+				}),
+				kind: 'stale_frontier',
+				reason: null,
+				key: JOB_FAILURE_KEYS.stale_frontier,
+				stored: 'stale_frontier'
+			},
+			{
+				reply: err(403, {
+					error_code: 'policy_rejected',
+					details: { reason: 'target_schema_changed', job_id: JOB, job_status: 'failed' }
+				}),
+				kind: 'policy_rejected',
+				reason: 'target_schema_changed',
+				key: JOB_FAILURE_KEYS.target_schema_changed,
+				stored: 'policy_rejected'
+			},
+			{
+				reply: err(403, {
+					error_code: 'policy_rejected',
+					details: { reason: 'permission_unconfigured' }
+				}),
+				kind: 'policy_rejected',
+				reason: 'permission_unconfigured',
+				key: JOB_FAILURE_KEYS.permission_unconfigured,
+				stored: 'policy_rejected'
+			}
+		] as const;
+		for (const c of cases) {
+			const h = harness({
+				reads: [ok(failed('policy_rejected')), ok(failed(c.stored))],
+				retries: [c.reply]
+			});
+			await h.controller.poll();
+			const readsBefore = h.reads.length;
+			h.controller.requestRetry();
+			const outcome = await h.controller.confirmRetry();
+			assert(outcome.status === 'failed', `${c.kind}: failed`);
+			assertEqual(outcome.failure.kind, c.kind, `${c.kind}: kind`);
+			assertEqual(outcome.failure.reason, c.reason, `${c.kind}: reason`);
+			assertEqual(outcome.failure.messageKey, c.key, `${c.kind}: wording`);
+			assertEqual(h.controller.snapshot().canRetry, false, `${c.kind}: withdrawn`);
+			assertEqual(h.reads.length, readsBefore + 1, `${c.kind}: the job is read once more`);
+			assertEqual(h.controller.snapshot().job?.error, c.stored, `${c.kind}: new stored error`);
+		}
+		assertEqual(
+			classifyJobFailure({ code: 403, error_code: 'policy_rejected', details: { reason: 'nope' } })
+				.messageKey,
+			JOB_FAILURE_KEYS.policy_rejected,
+			'unknown reason keeps the generic wording'
+		);
+	}
+);
+
+await suite.checkAsync(
+	'a started job keeps being polled until the server reaps it to failed / server_rejected',
+	async () => {
+		const h = harness({
+			reads: [ok(started()), ok(started()), ok(started()), ok(failed('server_rejected'))]
+		});
+		await h.controller.poll();
+		const snap = h.controller.snapshot();
+		assertEqual(h.reads.length, 4, 'polled through the started reads');
+		assertEqual(snap.job?.status, 'failed', 'the reaped status is shown');
+		assertEqual(snap.terminal, true, 'terminal');
+		assertEqual(snap.polling, false, 'polling stopped');
+		assertEqual(jobErrorKey(snap.job?.error ?? null), 'flow.error.server_rejected', 'wording');
+		assertEqual(snap.canRetry, false, 'server_rejected is not offered for retry');
+	}
+);
+
 // ---- 7. error and i18n keys -------------------------------------------------------------------
 
 suite.check('a stored error code is shown through a key, never as text', () => {
@@ -624,6 +734,7 @@ suite.check('every static key and every key the view uses exists in zh and en', 
 	const all = [
 		...Object.values(JOB_STATUS_KEYS),
 		...Object.values(JOB_FAILURE_KEYS),
+		...Object.values(JOB_TARGET_TYPE_KEYS),
 		...used,
 		'pageTitle.flowConversion'
 	];

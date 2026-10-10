@@ -8,11 +8,17 @@
 //   (`migrations/0062_flow_forms_bridge.sql:84` CHECK constraint; written by
 //   `flow/bridge.rs:1309` `'started'`, `:1457` `'completed'`, `:1183-1184` `'failed'`);
 // - terminal: `completed` and `failed`. `started` is the only non-terminal value;
-// - retryable: `failed` only. `retry_conversion` (`flow/bridge.rs:1595-1630`) replays a
-//   `completed` job or a repeated key (`:1621`) and rejects every other non-`failed` status with
-//   `policy_rejected` (`:1624-1626`); a real retry re-runs `execute_conversion` with every
-//   permission re-checked against the original preview (`:1628`, `:1215-1300`);
-// - `error` is the job's stored `error_code` (`:1098`), a code, never driver text.
+// - retryable: `failed` only. `retry_conversion` replays a `completed` job or a repeated key and
+//   rejects every other non-`failed` status with `policy_rejected`; a real retry re-runs the
+//   conversion with every permission re-checked against the frontier and target schema version
+//   the JOB recorded -- it does not depend on the preview TTL (`rest-api-v1.md` v0.7, frozen
+//   2026-10-10). A source that moved on answers `stale_frontier`; a target schema that changed
+//   answers `policy_rejected` with `details.reason = "target_schema_changed"`;
+// - `error` is the job's stored stable error code (one of the 14 in `error-mapping-v1.md`),
+//   worded through `flow.error.<code>`, never driver text;
+// - a job left `started` past the server's threshold is reaped to `failed` /
+//   `error = "server_rejected"` server-side (at API start and by a retry); this page keeps
+//   polling a `started` job, so the reaped status appears without a reload.
 //
 // Rules this module owns, so they are unit-testable without a component:
 // - the job is polled immediately, then after 1s, 2s, 4s and every 5s (`exportPollDelay`) until a
@@ -24,12 +30,14 @@
 //   confirmation (`requestRetry` -> `confirmRetry`), and with ONE idempotency key per job id that
 //   every retry of that job reuses; a `server_rejected` job or rejection is permanent and never
 //   offers retry; any other permanent retry rejection also withdraws the retry action;
+// - a refused retry re-reads the job once, so its new stored `error` is shown;
 // - errors branch on `error_code` first and the numeric code second, never on `message`.
 
 import type { ApiResult } from '$lib/api/client';
 import type { FlowConversionJob, FlowObjectView } from '$lib/api/flow';
 import { formsApi, type FormRecord } from '$lib/api/forms';
 import type { FlowCommandService } from './command-service';
+import { POLICY_REJECTED_REASONS, type PolicyRejectedReason } from './convert-wizard';
 import { FLOW_ERROR_CODES, flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
 import type { FlowObjectRepository } from './object-repository';
 import { exportPollDelay, newIdempotencyKey } from './package-export';
@@ -76,6 +84,21 @@ export const JOB_STATUS_KEYS: Readonly<Record<ConversionJobStatus | 'unknown', s
 	unknown: 'flow.bridge.job.status.unknown'
 };
 
+export const JOB_TARGET_TYPE_KEYS: Readonly<
+	Record<FlowConversionJob['target_type'] | 'unknown', string>
+> = {
+	form: 'flow.bridge.job.targetType.form',
+	form_record: 'flow.bridge.job.targetType.formRecord',
+	unknown: 'flow.bridge.job.targetType.unknown'
+};
+
+/** The wording for a job's `target_type`; a value this client does not know is "unknown". */
+export function jobTargetTypeKey(targetType: unknown): string {
+	return targetType === 'form' || targetType === 'form_record'
+		? JOB_TARGET_TYPE_KEYS[targetType]
+		: JOB_TARGET_TYPE_KEYS.unknown;
+}
+
 export function jobStatusKey(status: string): string {
 	return isKnownConversionStatus(status) ? JOB_STATUS_KEYS[status] : JOB_STATUS_KEYS.unknown;
 }
@@ -86,6 +109,8 @@ export const JOB_FAILURE_KEYS = {
 	server_rejected: 'flow.error.server_rejected',
 	stale_frontier: 'flow.bridge.job.error.staleFrontier',
 	policy_rejected: 'flow.bridge.job.error.policyRejected',
+	target_schema_changed: 'flow.bridge.job.error.targetSchemaChanged',
+	permission_unconfigured: 'flow.bridge.job.error.permissionUnconfigured',
 	rejected: 'flow.bridge.job.error.rejected',
 	conflict: 'flow.bridge.job.error.conflict',
 	unavailable: 'flow.bridge.job.error.unavailable',
@@ -119,10 +144,26 @@ export interface JobFailure {
 	readonly messageKey: string;
 	/** Whether sending the same request again (same key) may succeed. */
 	readonly retryable: boolean;
+	/** `policy_rejected.details.reason` when it is an approved conversion reason. */
+	readonly reason: PolicyRejectedReason | null;
 }
 
-function failure(kind: JobFailureKind, messageKey: string, retryable: boolean): JobFailure {
-	return { kind, messageKey, retryable };
+function failure(
+	kind: JobFailureKind,
+	messageKey: string,
+	retryable: boolean,
+	reason: PolicyRejectedReason | null = null
+): JobFailure {
+	return { kind, messageKey, retryable, reason };
+}
+
+function policyReason(details: unknown): PolicyRejectedReason | null {
+	if (!details || typeof details !== 'object') return null;
+	const reason = (details as { reason?: unknown }).reason;
+	return typeof reason === 'string' &&
+		(POLICY_REJECTED_REASONS as readonly string[]).includes(reason)
+		? (reason as PolicyRejectedReason)
+		: null;
 }
 
 /**
@@ -130,9 +171,10 @@ function failure(kind: JobFailureKind, messageKey: string, retryable: boolean): 
  * numeric code second, `message` never.
  *
  * `stale_frontier` and `policy_rejected` on retry are permanent for THIS job: the retry re-runs
- * the original preview, which is pinned to its frontier, schema version and expiry
- * (`bridge.rs:1229` expiry, `:1240-1245` frontier, `:1277-1282` schema version), so the same
- * request cannot succeed later.
+ * against the frontier and target schema version the job recorded, so once the Page or the form
+ * moved on the same request cannot succeed later. `policy_rejected` is worded by its
+ * `details.reason` (`target_schema_changed`, `permission_unconfigured`); without an approved
+ * reason it keeps the generic wording.
  */
 export function classifyJobFailure(
 	result: Pick<ApiResult<unknown>, 'code' | 'error_code' | 'details'>
@@ -150,8 +192,16 @@ export function classifyJobFailure(
 				return failure('unauthenticated', JOB_FAILURE_KEYS.unauthenticated, false);
 			case 'stale_frontier':
 				return failure('stale_frontier', JOB_FAILURE_KEYS.stale_frontier, false);
-			case 'policy_rejected':
-				return failure('policy_rejected', JOB_FAILURE_KEYS.policy_rejected, false);
+			case 'policy_rejected': {
+				const reason = policyReason(result.details);
+				const key =
+					reason === 'target_schema_changed'
+						? JOB_FAILURE_KEYS.target_schema_changed
+						: reason === 'permission_unconfigured'
+							? JOB_FAILURE_KEYS.permission_unconfigured
+							: JOB_FAILURE_KEYS.policy_rejected;
+				return failure('policy_rejected', key, false, reason);
+			}
 			default:
 				return failure('flow_error', flowErrorI18nKey(flowError), flowError.recoverable);
 		}
@@ -387,6 +437,9 @@ export class ConversionJobController {
 		if (!retryFailure.retryable) this.retryWithdrawn = true;
 		this.retryFailure = retryFailure;
 		this.emit();
+		// A refused retry may have changed the stored job (e.g. a new `error` code): read it again.
+		const reread = await this.read();
+		if (reread.code === 0 && reread.data && !this.disposed) await this.applyJob(reread.data);
 		return { status: 'failed', failure: retryFailure };
 	}
 

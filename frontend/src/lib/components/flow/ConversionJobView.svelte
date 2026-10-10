@@ -14,8 +14,10 @@
 		ConversionJobController,
 		jobErrorKey,
 		jobStatusKey,
+		jobTargetTypeKey,
 		type ConversionJobSnapshot
 	} from '$lib/flow/conversion-job';
+	import { parseConversionWarnings } from '$lib/flow/convert-wizard';
 	import type { FlowObjectRepository } from '$lib/flow/object-repository';
 
 	interface Props {
@@ -92,10 +94,6 @@
 		} catch {
 			copyState = { id, ok: false };
 		}
-	}
-
-	function warningText(warning: unknown): string {
-		return typeof warning === 'string' ? warning : JSON.stringify(warning);
 	}
 
 	const statusClass: Record<string, string> = {
@@ -233,6 +231,15 @@
 						{/if}
 					</dd>
 
+					<dt class={dtClass}>{$t('flow.bridge.job.field.targetType')}</dt>
+					<dd
+						class={ddClass}
+						data-testid="flow-conversion-target-type"
+						data-target-type={job.target_type}
+					>
+						{$t(jobTargetTypeKey(job.target_type))}
+					</dd>
+
 					<dt class={dtClass}>{$t('flow.bridge.job.field.sourceFrontier')}</dt>
 					<dd class={monoClass} data-testid="flow-conversion-frontier">{job.source_frontier}</dd>
 
@@ -259,9 +266,11 @@
 								>{$t('flow.bridge.job.field.warningsNone')}</span
 							>
 						{:else}
-							<ul class="list-disc space-y-1 pl-5">
-								{#each job.warnings as warning, index (index)}
-									<li class={monoClass}>{warningText(warning)}</li>
+							<ul class="list-disc space-y-1 pl-5 text-sm">
+								{#each parseConversionWarnings(job.warnings) as warning, index (index)}
+									<li data-testid="flow-conversion-warning" data-code={warning.code ?? 'unknown'}>
+										{$t(warning.messageKey, { values: { field: warning.field } })}
+									</li>
 								{/each}
 							</ul>
 						{/if}
@@ -269,7 +278,11 @@
 
 					{#if errorKey}
 						<dt class={dtClass}>{$t('flow.bridge.job.field.error')}</dt>
-						<dd class="text-sm text-red-700 dark:text-red-300" data-testid="flow-conversion-error">
+						<dd
+							class="text-sm text-red-700 dark:text-red-300"
+							data-testid="flow-conversion-error"
+							data-code={job.error}
+						>
 							{$t(errorKey)}
 						</dd>
 					{/if}
@@ -360,6 +373,7 @@
 								role="alert"
 								data-testid="flow-conversion-retry-error"
 								data-kind={snap.retryFailure.kind}
+								data-reason={snap.retryFailure.reason ?? undefined}
 							>
 								{$t(snap.retryFailure.messageKey)}
 							</p>
