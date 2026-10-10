@@ -52,6 +52,22 @@ struct Args {
     build_info: bool,
 }
 
+/// Logs once per process, at startup, when this build has no `ADR-0014` isolated-apply boundary
+/// (every target except Linux). Such a server still serves Projects, Forms, MCP, and Flow reads,
+/// but every Flow collaborative write and object diff is refused with `server_rejected`
+/// (`details.reason = "isolated_apply_unsupported_platform"`); an operator should learn that from
+/// the log at boot, not from the first refused write.
+fn warn_if_flow_collab_writes_unsupported() {
+    if cfg!(not(target_os = "linux")) {
+        tracing::warn!(
+            os = std::env::consts::OS,
+            "Flow collaborative writes are unavailable on this platform (ADR-0014): the isolated-apply \
+             boundary requires a Linux server; Flow writes and object diffs will be rejected with \
+             server_rejected"
+        );
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -68,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(notice) = platform::config::take_legacy_discovery_notice() {
         tracing::warn!("{notice}");
     }
+    warn_if_flow_collab_writes_unsupported();
 
     // from_config first: it reports a missing database url and signing key together, so the
     // operator fixes both in one pass instead of being walked through them one at a time.
