@@ -2465,7 +2465,8 @@
       "embed": {
         "collectionLabel": "嵌入的数据集 {title}",
         "open": "打开"
-      }
+      },
+      "readOnlyNotice": "你可以查看此页，但无法编辑。"
     },
     "block": {
       "handleLabel": "拖动手柄",
@@ -2482,7 +2483,8 @@
       "resyncing": "正在同步…",
       "auth_required": "需要重新登录",
       "read_only": "只读",
-      "error": "同步出错"
+      "error": "同步出错",
+      "pending": "{count} 条待同步"
     },
     "error": {
       "unauthenticated": "登录状态已失效，请重新登录",
@@ -2502,7 +2504,15 @@
       },
       "checksum_mismatch": "包完整性校验失败，请重新获取该包后再上传",
       "unsupported_format": "不支持该包格式或引擎版本，请使用兼容版本重新导出",
-      "server_rejected": "服务器已永久拒绝此请求，重复提交也不会成功。"
+      "server_rejected": "服务器已永久拒绝此请求，重复提交也不会成功。",
+      "invalid_update_reason": {
+        "subtree_spans_multiple_projects": "此子树跨越了多个项目（正常情况下不会出现）。已停止普通写入，需要工作区管理员执行完整性修复。",
+        "child_project_must_match_parent": "子对象必须与父对象位于同一项目。请使用父对象的项目，或不指定项目。",
+        "project_unmapped": "包内有项目未映射。请将其映射到目标项目后重新预览。",
+        "idempotency_key_body_drift": "该请求复用了属于另一项修改的幂等键，必须以新键作为新修改发送。",
+        "invalid_field_value": "某个字段值不符合字段类型，请修正后重试。"
+      },
+      "integrityRepairLink": "打开工作区运维页"
     },
     "history": {
       "title": "历史记录",
@@ -2632,7 +2642,27 @@
       "downloadFailed": "恢复草稿下载失败",
       "reload": "从服务器重新加载",
       "reloaded": "已重新加载最新的服务器内容",
-      "dismiss": "关闭"
+      "dismiss": "关闭",
+      "title": "恢复草稿",
+      "summary": "有 {count} 项修改未能保存，已保留在恢复草稿中。",
+      "permanent": "服务器已永久拒绝此页的修改。{count} 项修改保留在恢复草稿中，重试不会成功。",
+      "downloadJson": "下载草稿（JSON）",
+      "copyText": "复制为文本",
+      "copied": "恢复草稿已复制",
+      "copyFailed": "无法复制恢复草稿",
+      "discard": "丢弃草稿",
+      "textHeader": "恢复草稿：{count} 项修改未能保存",
+      "textLine": "{index}. {intent}：{reason}（{source}）",
+      "textContent": "当时的本地内容：",
+      "intent": {
+        "content_edit": "内容修改",
+        "navigator_reorder": "导航排序"
+      },
+      "source": {
+        "server": "被服务器拒绝",
+        "precheck": "未发送：已不再通过权限或上限检查",
+        "dependency": "未发送：它依赖一项已被拒绝的较早修改"
+      }
     },
     "settings": {
       "title": "Sylvode Flow 设置",
@@ -3632,6 +3662,10 @@
       "discard": "放弃",
       "unsaved": "有未保存的修改",
       "bodySaved": "已保存"
+    },
+    "presence": {
+      "listLabel": "正在此页的成员",
+      "editing": "{name} 正在此页"
     }
   }
 }

@@ -7,6 +7,7 @@
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/stores';
+	import { resolve } from '$app/paths';
 	import { requireRouteParam } from '$lib/utils/route-params';
 	import type { FlowObjectRepository, OpenFlowObjectResult } from '$lib/flow/object-repository';
 	import { FLOW_REPOSITORY_CONTEXT } from '$lib/flow/context-keys';
@@ -15,9 +16,14 @@
 	import FlowCanvas from '$lib/components/flow/FlowCanvas.svelte';
 	import FlowContextPanel from '$lib/components/flow/FlowContextPanel.svelte';
 	import FlowSyncIndicator from '$lib/components/flow/FlowSyncIndicator.svelte';
+	import FlowRecoveryDraftPanel from '$lib/components/flow/FlowRecoveryDraftPanel.svelte';
 	import CollectionRenderer from '$lib/components/flow/collection/CollectionRenderer.svelte';
 	import type { FlowError, SyncState } from '$lib/flow/types';
-	import { flowErrorI18nKey } from '$lib/flow/errors';
+	import { flowErrorDetailKey, flowErrorI18nKey, invalidUpdateDisposition } from '$lib/flow/errors';
+	import type { RecoveryDraftEntry } from '$lib/flow/outbox';
+	import { presenceColor, type PresenceCursor } from '$lib/flow/presence';
+	import { authStore } from '$lib/stores/auth';
+	import { get } from 'svelte/store';
 	import type { FlowObjectView } from '$lib/api/flow';
 
 	const repository = getContext<FlowObjectRepository>(FLOW_REPOSITORY_CONTEXT);
@@ -43,6 +49,10 @@
 	// through `repository.open` (no engine doc, no WebSocket).
 	let collectionObject = $state<FlowObjectView | null>(null);
 	let syncState = $state<SyncState>('local');
+	let pending = $state(0);
+	let drafts = $state<ReadonlyArray<RecoveryDraftEntry>>([]);
+	let readOnly = $state(false);
+	let docGeneration = $state(0);
 	let title = $state('');
 	let titleSaveTimer: ReturnType<typeof setTimeout> | null = null;
 	let reloading = $state(false);
@@ -50,12 +60,15 @@
 	let openedObjectId: string | null = null;
 	let unsubscribeState: (() => void) | null = null;
 	let unsubscribeFlowError: (() => void) | null = null;
+	let unsubscribeOthers: Array<() => void> = [];
 
 	function teardownSubscriptions(): void {
 		unsubscribeState?.();
 		unsubscribeState = null;
 		unsubscribeFlowError?.();
 		unsubscribeFlowError = null;
+		for (const unsubscribe of unsubscribeOthers) unsubscribe();
+		unsubscribeOthers = [];
 	}
 
 	async function openCurrent(): Promise<void> {
@@ -108,6 +121,21 @@
 			unsubscribeFlowError = opened.flowError.subscribe((value) => {
 				if (value) runtimeError = value;
 			});
+			unsubscribeOthers = [
+				opened.pending.subscribe((value) => (pending = value)),
+				opened.recoveryDraft.subscribe((value) => (drafts = value)),
+				opened.readOnly.subscribe((value) => (readOnly = value)),
+				opened.docGeneration.subscribe((value) => (docGeneration = value))
+			];
+			// Presence identity: who this user is, as a summary (id, display name, colour).
+			const user = get(authStore).user;
+			if (user) {
+				opened.session.setPresenceIdentity({
+					userId: user.id,
+					name: user.name || user.email,
+					color: presenceColor(user.id)
+				});
+			}
 		} catch (error) {
 			const fallback = await unsupportedFallback(objectId);
 			if (openedObjectId !== objectId) return;
@@ -150,6 +178,37 @@
 		runtimeError = null;
 	}
 
+	function reportPresence(cursor: PresenceCursor | null): void {
+		entry?.session.setPresence(cursor);
+	}
+
+	// The defensive `invalid_update` reason: stop ordinary writes and point at the workspace
+	// operations page, where an administrator runs the integrity tools.
+	const integrityRepair = $derived(
+		runtimeError !== null && invalidUpdateDisposition(runtimeError)?.action === 'integrity_repair'
+	);
+	const permanentFailure = $derived(
+		syncState === 'error' && runtimeError?.code === 'server_rejected'
+	);
+
+	async function copyRecoveryDraft(): Promise<void> {
+		if (!entry) return;
+		try {
+			const text = repository.recoveryDraftText(entry.handle.objectId, (key, values) =>
+				$t(key, values ? { values } : undefined)
+			);
+			await navigator.clipboard.writeText(text);
+			toast.success($t('flow.recovery.copied'));
+		} catch {
+			toast.error($t('flow.recovery.copyFailed'));
+		}
+	}
+
+	async function discardRecoveryDraft(): Promise<void> {
+		if (!entry) return;
+		await repository.clearRecoveryDraft(entry.handle.objectId);
+	}
+
 	// `policy_rejected`/`invalid_update`/`stale_frontier`: the rejected intent cannot be replayed
 	// (no outbox this round -- see `object-session.ts`'s header comment), so offer a local
 	// snapshot download instead of silently losing it (`ui-surface-v1.md` step 5: "不能重放的
@@ -161,14 +220,14 @@
 				runtimeError.code === 'stale_frontier')
 	);
 
-	function downloadRecoveryDraft(): void {
+	async function downloadRecoveryDraft(): Promise<void> {
 		if (!entry) return;
 		try {
-			const blob = repository.exportRecoveryDraft(entry.handle.objectId);
+			const blob = await repository.exportRecoveryDraft(entry.handle.objectId);
 			const url = URL.createObjectURL(blob);
 			const link = document.createElement('a');
 			link.href = url;
-			link.download = `${entry.handle.objectId}-recovery-draft.bin`;
+			link.download = `${entry.handle.objectId}-recovery-draft.json`;
 			document.body.appendChild(link);
 			link.click();
 			link.remove();
@@ -196,6 +255,17 @@
 		} finally {
 			reloading = false;
 		}
+	}
+
+	/** Safe numeric/string details (limit, observed, ...) for the error copy's placeholders. */
+	function runtimeErrorValues(error: FlowError): Record<string, string | number> {
+		const details = error.details;
+		if (typeof details !== 'object' || details === null) return {};
+		const out: Record<string, string | number> = {};
+		for (const [key, value] of Object.entries(details as Record<string, unknown>)) {
+			if (typeof value === 'string' || typeof value === 'number') out[key] = value;
+		}
+		return out;
 	}
 
 	// `contracts/ui-surface-v1.md` "Renderer registry": an unregistered `${objectType}:${viewType}`
@@ -280,11 +350,12 @@
 		<input
 			bind:value={title}
 			oninput={onTitleInput}
+			readonly={readOnly}
 			placeholder={$t('flow.titlePlaceholder')}
 			aria-label={$t('flow.panel.title')}
 			class="flex-1 truncate border-none bg-transparent text-lg font-semibold text-slate-900 outline-none dark:text-slate-100"
 		/>
-		<FlowSyncIndicator state={syncState} />
+		<FlowSyncIndicator state={syncState} {pending} />
 	</div>
 
 	{#if runtimeError}
@@ -296,7 +367,22 @@
 				 `reason === 'drain' ? drain : contention` ternary this replaced silently rendered a
 				 `server_draining` with a MISSING required discriminator as an ordinary contention
 				 retry, which `error-mapping-v1.md` forbids ("缺失/未知 reason 违反协议"). -->
-			<span class="flex-1">{$t(flowErrorI18nKey(runtimeError))}</span>
+			<span class="flex-1" data-testid="flow-runtime-error" data-error-code={runtimeError.code}
+				>{$t(flowErrorDetailKey(runtimeError), {
+					values: runtimeErrorValues(runtimeError)
+				})}</span
+			>
+			{#if integrityRepair}
+				<a
+					class="font-medium underline underline-offset-2 hover:no-underline"
+					href={resolve('/(app)/workspace/[workspaceId]/settings/flow/operations', {
+						workspaceId: entry.handle.workspaceId
+					})}
+					data-testid="flow-integrity-repair-link"
+				>
+					{$t('flow.error.integrityRepairLink')}
+				</a>
+			{/if}
 			{#if canDownloadDraft}
 				<button
 					type="button"
@@ -324,14 +410,30 @@
 		</div>
 	{/if}
 
+	{#if drafts.length > 0}
+		<FlowRecoveryDraftPanel
+			entries={drafts}
+			permanent={permanentFailure}
+			ondownload={() => void downloadRecoveryDraft()}
+			oncopy={() => void copyRecoveryDraft()}
+			ondiscard={() => void discardRecoveryDraft()}
+		/>
+	{/if}
+
 	<!-- Below lg the context panel stacks under the canvas and the column scrolls (390px phones). -->
 	<div class="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
 		{#if canvasRenderer}
-			<FlowCanvas
-				doc={entry.doc}
-				workspaceId={entry.handle.workspaceId}
-				objectId={entry.handle.objectId}
-			/>
+			<!-- A rebuild from the accepted snapshot replaces the engine doc; remount on it. -->
+			{#key docGeneration}
+				<FlowCanvas
+					doc={entry.doc}
+					workspaceId={entry.handle.workspaceId}
+					objectId={entry.handle.objectId}
+					{readOnly}
+					presence={entry.presence}
+					onPresenceCursor={reportPresence}
+				/>
+			{/key}
 		{:else}
 			<div class="flex flex-1 items-center justify-center p-8 text-center">
 				<p class="text-sm text-slate-500 dark:text-slate-400">{$t('flow.canvas.unsupported')}</p>

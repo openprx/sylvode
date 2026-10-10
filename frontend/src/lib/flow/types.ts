@@ -253,7 +253,7 @@ export interface ObjectRepositoryContract {
 	/** Best-effort local snapshot export for an intent that could not be replayed
 	 * (`ui-surface-v1.md` step 5: "policy_rejected/invalid_update...不能重放的 intent 进入
 	 * recovery draft"). */
-	exportRecoveryDraft(objectId: string): Blob;
+	exportRecoveryDraft(objectId: string): Promise<Blob>;
 }
 
 export interface ObjectSessionContract {

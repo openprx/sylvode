@@ -2465,7 +2465,8 @@
       "embed": {
         "collectionLabel": "Embedded Collection {title}",
         "open": "Open"
-      }
+      },
+      "readOnlyNotice": "You can view this page but not edit it."
     },
     "block": {
       "handleLabel": "Drag handle",
@@ -2482,7 +2483,8 @@
       "resyncing": "Resyncing…",
       "auth_required": "Sign-in required",
       "read_only": "Read-only",
-      "error": "Sync error"
+      "error": "Sync error",
+      "pending": "{count} pending"
     },
     "error": {
       "unauthenticated": "Your session has expired. Please sign in again.",
@@ -2502,7 +2504,15 @@
       },
       "checksum_mismatch": "The package failed its integrity check. Obtain the package again and upload it.",
       "unsupported_format": "This package format or engine version is not supported. Export it with a compatible version.",
-      "server_rejected": "The server permanently rejected this request. It will not succeed if repeated."
+      "server_rejected": "The server permanently rejected this request. It will not succeed if repeated.",
+      "invalid_update_reason": {
+        "subtree_spans_multiple_projects": "This subtree spans more than one project, which should never happen. Normal edits are stopped; a workspace administrator has to run an integrity repair.",
+        "child_project_must_match_parent": "A child must be in the same project as its parent. Use the parent's project, or leave the project empty.",
+        "project_unmapped": "A project in the package has no mapping. Map it to a target project and preview again.",
+        "idempotency_key_body_drift": "This request reused an idempotency key that belongs to a different change; it has to be sent as a new change with a new key.",
+        "invalid_field_value": "A field value does not fit the field's type. Correct it and try again."
+      },
+      "integrityRepairLink": "Open workspace operations"
     },
     "history": {
       "title": "History",
@@ -2632,7 +2642,27 @@
       "downloadFailed": "Could not download the recovery draft",
       "reload": "Reload from server",
       "reloaded": "Reloaded the latest server content",
-      "dismiss": "Dismiss"
+      "dismiss": "Dismiss",
+      "title": "Recovery draft",
+      "summary": "{count} change(s) could not be saved and were kept in a recovery draft.",
+      "permanent": "The server permanently refused this page's changes. {count} change(s) are kept in a recovery draft; retrying will not help.",
+      "downloadJson": "Download draft (JSON)",
+      "copyText": "Copy as text",
+      "copied": "Recovery draft copied",
+      "copyFailed": "Could not copy the recovery draft",
+      "discard": "Discard draft",
+      "textHeader": "Recovery draft: {count} change(s) could not be saved",
+      "textLine": "{index}. {intent}: {reason} ({source})",
+      "textContent": "Local content at the time:",
+      "intent": {
+        "content_edit": "Content edit",
+        "navigator_reorder": "Navigator reorder"
+      },
+      "source": {
+        "server": "refused by the server",
+        "precheck": "not sent: it no longer passes the permission or limit check",
+        "dependency": "not sent: it builds on an earlier change that was refused"
+      }
     },
     "settings": {
       "title": "Sylvode Flow settings",
@@ -3632,6 +3662,10 @@
       "discard": "Discard",
       "unsaved": "Unsaved changes",
       "bodySaved": "Saved"
+    },
+    "presence": {
+      "listLabel": "People on this page",
+      "editing": "{name} is here"
     }
   }
 }

@@ -37,10 +37,25 @@ import {
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
 import { FlowCommandService } from './command-service';
-import { LoroObjectSession, type AcceptedNotice, type SnapshotPayload } from './object-session';
+import {
+	LoroObjectSession,
+	type AcceptedNotice,
+	type SessionOptions,
+	type SnapshotPayload
+} from './object-session';
 import { LiveProjectionStore } from './projection-store';
-import { negotiateFlowLimitsVersion } from './limits';
-import { flowErrorFromEnvelope } from './errors';
+import { checkUpdateBytes, negotiateFlowLimitsVersion } from './limits';
+import { clientError, flowErrorFromEnvelope } from './errors';
+import { openOutboxStore, type OutboxStore, type RecoveryDraftEntry } from './outbox';
+import {
+	FlowOfflineSync,
+	type OfflineSyncHost,
+	type OfflineSyncOptions,
+	type ScratchReplica,
+	type ScratchVerdict
+} from './offline-sync';
+import { buildRecoveryDraftDocument, recoveryDraftText } from './recovery-draft';
+import type { RemotePresence } from './presence';
 import type { EngineDiff, FlowError, ObjectHandle, ObjectProjection, SyncState } from './types';
 // `LoroDocType` (from `loro-prosemirror`, type-only) is the specific `{doc, data}` container
 // shape `LoroSyncPlugin`/`LoroUndoPlugin` require; `loro-crdt`'s own `LoroDoc` generic defaults
@@ -119,12 +134,85 @@ export interface OpenFlowObjectResult {
 	readonly handle: ObjectHandle;
 	readonly session: LoroObjectSession;
 	readonly projection: LiveProjectionStore;
+	/** The CURRENT engine doc. A recovery rebuild replaces it (see `docGeneration`), so read it
+	 * when needed rather than caching it. */
 	readonly doc: LoroDocType;
+	/** Bumps whenever `doc` was replaced by a rebuild from the accepted snapshot; a canvas bound to
+	 * the old doc remounts on it. */
+	readonly docGeneration: Readable<number>;
 	readonly flowError: Readable<FlowError | null>;
+	/** Local updates waiting for the server (the indicator's pending count). */
+	readonly pending: Readable<number>;
+	/** Intents that could not be replayed, with their reasons. */
+	readonly recoveryDraft: Readable<ReadonlyArray<RecoveryDraftEntry>>;
+	/** The user may not write this object (`view`/`comment`, or revoked mid-session). */
+	readonly readOnly: Readable<boolean>;
+	/** Remote peers on this document (ephemeral, never in the engine doc). */
+	readonly presence: Readable<ReadonlyArray<RemotePresence>>;
+	/** The outbox controller (diagnostics and tests; components use the stores above). */
+	readonly offline: FlowOfflineSync;
 }
 
-interface OpenEntry extends OpenFlowObjectResult {
-	refCount: number;
+/** Test seams for `FlowObjectRepository`. Production passes nothing. */
+export interface FlowObjectRepositoryOptions {
+	readonly outboxStore?: OutboxStore;
+	readonly session?: SessionOptions;
+	readonly offlineSync?: OfflineSyncOptions;
+}
+
+/** Effective levels that may write a document (`ADR-0012`: "`edit` 起可写、`view` 只读"). */
+const WRITABLE_LEVELS: ReadonlySet<string> = new Set(['edit', 'full_access']);
+
+class OpenEntry implements OpenFlowObjectResult {
+	readonly handle: ObjectHandle;
+	readonly session: LoroObjectSession;
+	readonly projection: LiveProjectionStore;
+	readonly flowError: Readable<FlowError | null>;
+	readonly docGeneration: Readable<number>;
+	readonly pending: Readable<number>;
+	readonly recoveryDraft: Readable<ReadonlyArray<RecoveryDraftEntry>>;
+	readonly readOnly: Readable<boolean>;
+	readonly presence: Readable<ReadonlyArray<RemotePresence>>;
+	readonly offline: FlowOfflineSync;
+	readonly generationStore: ReturnType<typeof writable<number>>;
+	readonly readOnlyStore: ReturnType<typeof writable<boolean>>;
+	refCount = 1;
+	current: LoroDocType;
+	/** Docs replaced by a rebuild; freed on close, once nothing can still be bound to them. */
+	readonly retired: LoroDocType[] = [];
+	unsubscribeLocal: (() => void) | null = null;
+	/** The next session `snapshot` replaces the doc instead of merging into it. */
+	rebuildOnSnapshot = false;
+	rebuildDone: (() => void) | null = null;
+
+	constructor(input: {
+		handle: ObjectHandle;
+		session: LoroObjectSession;
+		projection: LiveProjectionStore;
+		flowError: Readable<FlowError | null>;
+		doc: LoroDocType;
+		offline: FlowOfflineSync;
+		generationStore: ReturnType<typeof writable<number>>;
+		readOnlyStore: ReturnType<typeof writable<boolean>>;
+	}) {
+		this.handle = input.handle;
+		this.session = input.session;
+		this.projection = input.projection;
+		this.flowError = input.flowError;
+		this.current = input.doc;
+		this.offline = input.offline;
+		this.generationStore = input.generationStore;
+		this.readOnlyStore = input.readOnlyStore;
+		this.docGeneration = readonlyStore(input.generationStore);
+		this.readOnly = readonlyStore(input.readOnlyStore);
+		this.pending = input.offline.pending;
+		this.recoveryDraft = input.offline.recoveryDraft;
+		this.presence = input.session.presence;
+	}
+
+	get doc(): LoroDocType {
+		return this.current;
+	}
 }
 
 interface OpenRecordEntry {
@@ -152,6 +240,21 @@ function fromBase64(value: string): Uint8Array {
 // TypeScript's structural typing would reject `open`'s covariant return.
 export class FlowObjectRepository {
 	private readonly open_ = new Map<string, OpenEntry>();
+	private readonly options: FlowObjectRepositoryOptions;
+	private outboxStore: Promise<OutboxStore> | null = null;
+
+	constructor(options: FlowObjectRepositoryOptions = {}) {
+		this.options = options;
+	}
+
+	private outbox(): Promise<OutboxStore> {
+		if (!this.outboxStore) {
+			this.outboxStore = this.options.outboxStore
+				? Promise.resolve(this.options.outboxStore)
+				: openOutboxStore();
+		}
+		return this.outboxStore;
+	}
 	// Record documents opened by a record panel (`openRecord`). A Record is server-only
 	// (`flow/collab/ticket.rs::object_type_admits_collab_session` refuses a collab session and
 	// `query.rs::get_bootstrap` refuses its bootstrap), so "opening" its document is the one REST
@@ -225,42 +328,68 @@ export class FlowObjectRepository {
 
 		const projection = new LiveProjectionStore(objectToProjection(object));
 		const flowErrorStore = writable<FlowError | null>(null);
+		const generationStore = writable(0);
+		const readOnlyStore = writable(false);
 		let lastKnownFrontierBase64 = '';
+		// Assigned right below; the session hooks only run after `connect`, by which time it is set.
+		let entry: OpenEntry | null = null;
+		const liveDoc = (): LoroDocType => entry?.doc ?? doc;
 
-		const session = new LoroObjectSession({
-			onSnapshot: (payload: SnapshotPayload) => {
-				doc.import(payload.snapshotBytes);
-				for (const update of payload.tailUpdates) {
-					doc.import(update.bytes);
+		const session = new LoroObjectSession(
+			{
+				onSnapshot: (payload: SnapshotPayload) => {
+					if (entry?.rebuildOnSnapshot) {
+						// A rebuild requested by the outbox for a user the REST bootstrap refuses:
+						// this snapshot (the same loader) becomes the whole new doc.
+						entry.rebuildOnSnapshot = false;
+						void this.rebuildFromSnapshotPayload(entry, payload);
+						lastKnownFrontierBase64 = payload.headFrontier;
+						return;
+					}
+					const target = liveDoc();
+					target.import(payload.snapshotBytes);
+					for (const update of payload.tailUpdates) {
+						target.import(update.bytes);
+					}
+					lastKnownFrontierBase64 = payload.headFrontier;
+					projection.applyEngineDiff({ documentId: object.document_id } satisfies EngineDiff, payload.headSeq);
+					void writeCachedSnapshot({
+						objectId: input.objectId,
+						snapshotBytes: target.export({ mode: 'snapshot' }),
+						headSeq: payload.headSeq,
+						headFrontier: payload.headFrontier,
+						cachedAt: Date.now()
+					});
+				},
+				onAccepted: (notice: AcceptedNotice) => {
+					// A peer's committed update arrives with its bytes and is applied in seq order
+					// (the session already checked `seq == last+1`). `import` is not a local
+					// change, so it never re-enters the outbox below.
+					if (notice.remoteBytes) liveDoc().import(notice.remoteBytes);
+					lastKnownFrontierBase64 = notice.headFrontier;
+					projection.applyEngineDiff({ documentId: object.document_id } satisfies EngineDiff, notice.headSeq);
+				},
+				onFlowError: (error: FlowError) => {
+					flowErrorStore.set(error);
+				},
+				onConnected: () => {
+					entry?.offline.onConnected();
+				},
+				onTerminal: (error: FlowError) => {
+					void entry?.offline.onTerminal({
+						code: 'server_rejected',
+						source: 'server',
+						details: error.details
+					});
+				},
+				onRevoked: (error: FlowError) => {
+					readOnlyStore.set(true);
+					void entry?.offline.onRevoked({ code: error.code, source: 'server' });
 				}
-				lastKnownFrontierBase64 = payload.headFrontier;
-				projection.applyEngineDiff({ documentId: object.document_id } satisfies EngineDiff, payload.headSeq);
-				void writeCachedSnapshot({
-					objectId: input.objectId,
-					snapshotBytes: doc.export({ mode: 'snapshot' }),
-					headSeq: payload.headSeq,
-					headFrontier: payload.headFrontier,
-					cachedAt: Date.now()
-				});
 			},
-			onAccepted: (notice: AcceptedNotice) => {
-				lastKnownFrontierBase64 = notice.headFrontier;
-				projection.applyEngineDiff({ documentId: object.document_id } satisfies EngineDiff, notice.headSeq);
-			},
-			onFlowError: (error: FlowError) => {
-				flowErrorStore.set(error);
-			}
-		}, this.commandService);
-
-		// Every local mutation of `doc` -- whether from `EditorAdapter`'s ProseMirror binding, a
-		// navigator reorder, or a title edit -- funnels through this single subscription, so there
-		// is exactly one path that ever calls `session.submit()` no matter which UI surface
-		// produced the change ("同一 update 只由 Session 发出").
-		doc.subscribeLocalUpdates((bytes: Uint8Array) => {
-			void session
-				.submit({ bytes, baseFrontier: lastKnownFrontierBase64 }, { kind: 'content_edit' })
-				.catch((error: FlowError) => flowErrorStore.set(error));
-		});
+			this.commandService,
+			this.options.session
+		);
 
 		const handle: ObjectHandle = {
 			workspaceId: input.workspaceId,
@@ -269,6 +398,67 @@ export class FlowObjectRepository {
 			documentId: object.document_id,
 			object
 		};
+
+		const host: OfflineSyncHost = {
+			objectId: input.objectId,
+			documentId: object.document_id,
+			peerId: () => liveDoc().peerIdStr,
+			limitViolation: (bytes) => {
+				const violation = checkUpdateBytes(bytes, session.effectiveLimits);
+				return violation
+					? clientError('limit_exceeded', {
+							limit_kind: violation.limitKind,
+							limit: violation.limit,
+							observed: violation.observed
+						})
+					: null;
+			},
+			canWrite: () => this.canWrite(input.objectId),
+			bootstrap: () => this.acceptedBootstrap(input.objectId),
+			replaceWithAccepted: (bootstrap) => this.replaceWithAccepted(bootstrap),
+			rebuildFromAccepted: (bootstrap) => this.rebuildFromAccepted(bootstrap),
+			rebuildFromSessionSnapshot: async () => {
+				if (!entry) return;
+				const target = entry;
+				const rebuilt = new Promise<void>((resolve) => {
+					target.rebuildDone = resolve;
+				});
+				target.rebuildOnSnapshot = true;
+				await session.reconnect('stale_frontier');
+				// Resolves on the swap; bounded so a connection that never comes back cannot
+				// park the outbox (the next connect's snapshot still performs the rebuild).
+				await Promise.race([rebuilt, new Promise<void>((resolve) => setTimeout(resolve, 15_000))]);
+			},
+			importIntoLive: (bytes) => {
+				liveDoc().import(bytes);
+			},
+			scratchFrom: (bootstrap) => scratchReplicaFrom(bootstrap),
+			enterReadOnly: () => {
+				session.setPermissionReadOnly(true);
+				readOnlyStore.set(true);
+			},
+			reportError: (error) => flowErrorStore.set(error)
+		};
+		const offline = new FlowOfflineSync(await this.outbox(), session, host, this.options.offlineSync);
+		await offline.load();
+
+		entry = new OpenEntry({
+			handle,
+			session,
+			projection,
+			flowError: flowErrorStore,
+			doc,
+			offline,
+			generationStore,
+			readOnlyStore
+		});
+		const opened = entry;
+		// Every local mutation of the doc -- whether from `EditorAdapter`'s ProseMirror binding, a
+		// navigator reorder, or a title edit -- funnels through this single subscription into the
+		// outbox, which sends through the session, so there is exactly one path that ever calls
+		// `session.submit()` no matter which UI surface produced the change ("同一 update 只由
+		// Session 发出").
+		this.subscribeLocal(opened, () => lastKnownFrontierBase64);
 
 		// Cold-start hint only: paints the last known state immediately while the real WS
 		// snapshot loads, then gets overwritten wholesale by the first `onSnapshot` above. Not a
@@ -279,11 +469,94 @@ export class FlowObjectRepository {
 			projection.applyEngineDiff({ documentId: object.document_id } satisfies EngineDiff, cached.headSeq);
 		}
 
-		await session.connect(handle);
+		// The permission re-check runs beside the connect: a `view`/`comment` user gets a
+		// read-only canvas before the editor ever mounts (`ADR-0012`: "`view` 只读").
+		const [writable_] = await Promise.all([this.canWrite(input.objectId), session.connect(handle)]);
+		if (!writable_) {
+			session.setPermissionReadOnly(true);
+			offline.setReadOnly(true);
+			readOnlyStore.set(true);
+		}
 
-		const entry: OpenEntry = { handle, session, projection, doc, flowError: flowErrorStore, refCount: 1 };
-		this.open_.set(input.objectId, entry);
-		return entry;
+		this.open_.set(input.objectId, opened);
+		return opened;
+	}
+
+	/** Routes the current doc's local updates into the outbox. Re-run after every rebuild. */
+	private subscribeLocal(entry: OpenEntry, frontier: () => string): void {
+		entry.unsubscribeLocal?.();
+		const target = entry.doc;
+		const unsubscribe = target.subscribeLocalUpdates((bytes: Uint8Array) => {
+			void entry.offline.enqueue(bytes, frontier(), { kind: 'content_edit' });
+		});
+		entry.unsubscribeLocal = unsubscribe;
+		this.frontiers.set(entry.handle.objectId, frontier);
+	}
+
+	private readonly frontiers = new Map<string, () => string>();
+
+	/**
+	 * The policy re-check the outbox and the read-only mode use: this user's own effective level on
+	 * the object (`GET .../grants` returns it to every caller with at least `view`). A transport
+	 * failure answers `true` -- the server stays the authority and will refuse a write it does not
+	 * allow; a pre-check must not turn a network blip into a read-only canvas.
+	 */
+	async canWrite(objectId: string): Promise<boolean> {
+		const result = await flowApi.getGrants(objectId);
+		if (result.code === 0 && result.data) return WRITABLE_LEVELS.has(result.data.effective_level);
+		const typed = flowErrorFromEnvelope(result);
+		if (typed && (typed.code === 'forbidden' || typed.code === 'not_found' || typed.code === 'policy_rejected')) {
+			return false;
+		}
+		return true;
+	}
+
+	/** The REST bootstrap for the outbox, or `null` when this user may not read it there (the
+	 * server requires `edit` for it, `routes/flow.rs::get_flow_object_bootstrap`). */
+	private async acceptedBootstrap(objectId: string): Promise<FlowBootstrap | null> {
+		try {
+			return await this.bootstrap(objectId);
+		} catch (error) {
+			const code = (error as FlowError).code;
+			if (code === 'forbidden' || code === 'not_found') return null;
+			throw error;
+		}
+	}
+
+	private async rebuildFromSnapshotPayload(entry: OpenEntry, payload: SnapshotPayload): Promise<void> {
+		const { LoroDoc } = await loadLoro();
+		const fresh = new LoroDoc() as unknown as LoroDocType;
+		fresh.import(payload.snapshotBytes);
+		for (const update of payload.tailUpdates) fresh.import(update.bytes);
+		this.swapDoc(entry, fresh, payload.headSeq, () => payload.headFrontier);
+		entry.rebuildDone?.();
+		entry.rebuildDone = null;
+	}
+
+	private swapDoc(entry: OpenEntry, fresh: LoroDocType, headSeq: number, fallbackFrontier: () => string): void {
+		entry.retired.push(entry.current);
+		entry.current = fresh;
+		const frontier = this.frontiers.get(entry.handle.objectId) ?? fallbackFrontier;
+		this.subscribeLocal(entry, frontier);
+		entry.projection.applyEngineDiff({ documentId: entry.handle.documentId } satisfies EngineDiff, headSeq);
+		entry.generationStore.update((n) => n + 1);
+	}
+
+	/**
+	 * Rebuilds an open document's engine doc from exactly one accepted bootstrap, so the local doc
+	 * equals what the server accepted (`versions/v0.5-collaboration.md`: "重连拒绝后以 accepted
+	 * snapshot 重建"). A refused intent's operations live only in the recovery draft afterwards.
+	 * The old doc is retired (the canvas still bound to it remounts on `docGeneration`) and freed
+	 * on close.
+	 */
+	async rebuildFromAccepted(bootstrap: FlowBootstrap): Promise<void> {
+		const entry = this.open_.get(bootstrap.object_id);
+		if (!entry) return;
+		const { LoroDoc } = await loadLoro();
+		const fresh = new LoroDoc() as unknown as LoroDocType;
+		fresh.import(fromBase64(bootstrap.snapshot_base64));
+		for (const update of bootstrap.tail_updates) fresh.import(fromBase64(update.bytes));
+		this.swapDoc(entry, fresh, bootstrap.head_seq, () => bootstrap.head_frontier);
 	}
 
 	async close(objectId: string): Promise<void> {
@@ -292,8 +565,12 @@ export class FlowObjectRepository {
 		entry.refCount -= 1;
 		if (entry.refCount > 0) return;
 		this.open_.delete(objectId);
+		this.frontiers.delete(objectId);
+		entry.offline.dispose();
+		entry.unsubscribeLocal?.();
 		await entry.session.dispose();
 		entry.doc.free();
+		for (const retired of entry.retired) retired.free();
 	}
 
 	getProjection(objectId: string): Readable<ObjectProjection> {
@@ -314,20 +591,42 @@ export class FlowObjectRepository {
 	 * outside `loro-prosemirror`'s narrowed `{doc, data}` container names. */
 	setTitle(objectId: string, title: string): void {
 		const entry = this.open_.get(objectId);
-		if (!entry) return;
+		if (!entry || entry.session.isReadOnly) return;
 		getNamedMap(entry.doc, 'meta').set('title', title);
 		entry.doc.commit();
 		entry.projection.updateObjectMeta({ title });
 	}
 
-	/** `exportRecoveryDraft` (`ui-surface-v1.md`): a best-effort local snapshot the user can save
-	 * when an intent could not be replayed. Exports the current in-memory doc snapshot bytes --
-	 * not a semantic/markdown rendering, since that would require the full projection pipeline. */
-	exportRecoveryDraft(objectId: string): Blob {
+	/** `exportRecoveryDraft` (`ui-surface-v1.md`): the recovery draft as a JSON document -- every
+	 * intent that could not be replayed, with its reason and its raw update bytes, plus the local
+	 * document content -- so a refused edit is never silently lost. */
+	async exportRecoveryDraft(objectId: string): Promise<Blob> {
+		const document = this.recoveryDraftDocument(objectId);
+		return new Blob([JSON.stringify(document, null, 2)], { type: 'application/json' });
+	}
+
+	/** The same draft as copyable text, labelled through the caller's translator. */
+	recoveryDraftText(
+		objectId: string,
+		translate: (key: string, values?: Record<string, string | number>) => string
+	): string {
+		return recoveryDraftText(this.recoveryDraftDocument(objectId), translate);
+	}
+
+	/** Forgets the recovery draft of an open object (the user took it away). */
+	async clearRecoveryDraft(objectId: string): Promise<void> {
+		await this.open_.get(objectId)?.offline.clearDraft();
+	}
+
+	private recoveryDraftDocument(objectId: string) {
 		const entry = this.open_.get(objectId);
 		if (!entry) throw new Error(`FlowObjectRepository.exportRecoveryDraft: ${objectId} is not open`);
-		const bytes = entry.doc.export({ mode: 'snapshot' });
-		return new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' });
+		return buildRecoveryDraftDocument({
+			objectId,
+			documentId: entry.handle.documentId,
+			entries: entry.offline.draftEntries,
+			localDocument: entry.doc.toJSON()
+		});
 	}
 
 	/** `GET .../bootstrap` (`ObjectRepositoryContract.bootstrap`). Independent of the live
@@ -354,7 +653,9 @@ export class FlowObjectRepository {
 	private adoptBootstrapLimits(bootstrap: FlowBootstrap): void {
 		const entry = this.open_.get(bootstrap.object_id);
 		if (!entry) return;
-		entry.session.adoptLimits(negotiateFlowLimitsVersion(bootstrap.limits));
+		const negotiation = negotiateFlowLimitsVersion(bootstrap.limits);
+		entry.session.adoptLimits(negotiation);
+		if (negotiation.outcome !== 'supported') entry.offline.setReadOnly(true);
 	}
 
 	/** `ObjectRepositoryContract.replaceWithAccepted`: imports a bootstrap's snapshot+tail into the
@@ -536,5 +837,28 @@ function objectToProjection(object: FlowObjectView): ObjectProjection {
 		frontier: object.frontier,
 		projectionSeq: object.projection_seq,
 		parentId: object.parent_id ?? null
+	};
+}
+
+/** A throwaway Loro replica of one accepted bootstrap, used by the outbox to tell whether a
+ * queued update is new to the server, already accepted, or dependent on something the server
+ * never accepted (`offline-sync.ts`). Never bound to an editor, never sent anywhere. */
+async function scratchReplicaFrom(bootstrap: FlowBootstrap): Promise<ScratchReplica> {
+	const { LoroDoc } = await loadLoro();
+	const replica = new LoroDoc();
+	replica.import(fromBase64(bootstrap.snapshot_base64));
+	for (const update of bootstrap.tail_updates) replica.import(fromBase64(update.bytes));
+	return {
+		classify(bytes: Uint8Array): ScratchVerdict {
+			const status = replica.import(bytes);
+			if (status.pending && status.pending.size > 0) return 'pending';
+			return status.success.size > 0 ? 'new' : 'known';
+		},
+		apply(bytes: Uint8Array): void {
+			replica.import(bytes);
+		},
+		dispose(): void {
+			replica.free();
+		}
 	};
 }

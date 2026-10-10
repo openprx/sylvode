@@ -10,18 +10,27 @@
 
 	import { onDestroy, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
+	import type { Readable } from 'svelte/store';
 	import { FlowEditorAdapter, type FlowBlockType, type SlashMenuState } from '$lib/flow/editor-adapter';
 	import type { LoroDocType } from 'loro-prosemirror';
 	import { SLASH_BRIDGE_OPTIONS, type SlashBridgeOption } from '$lib/flow/slash-bridge';
+	import type { PresenceCursor, RemotePresence } from '$lib/flow/presence';
 	import FlowPageBlocks from './FlowPageBlocks.svelte';
 
 	interface Props {
 		doc: LoroDocType;
 		workspaceId: string;
 		objectId: string;
+		/** `view`/`comment`, or write access revoked: no typing, no slash menu, no block handle. */
+		readOnly?: boolean;
+		/** Remote peers on this document (ephemeral; rendered as decorations only). */
+		presence?: Readable<ReadonlyArray<RemotePresence>>;
+		/** Receives the local caret/selection for the session's presence frame. */
+		onPresenceCursor?: (cursor: PresenceCursor | null) => void;
 	}
 
-	let { doc, workspaceId, objectId }: Props = $props();
+	let { doc, workspaceId, objectId, readOnly = false, presence, onPresenceCursor }: Props = $props();
+	let peers = $state<ReadonlyArray<RemotePresence>>([]);
 
 	let pageBlocks: FlowPageBlocks | undefined = $state();
 
@@ -57,12 +66,32 @@
 		adapter = new FlowEditorAdapter(doc, {
 			onSlashMenu: (state) => {
 				slashMenu = state;
-			}
+			},
+			onPresenceCursor: (cursor) => onPresenceCursor?.(cursor)
 		});
-		if (host) void adapter.mount(host, 'root');
+		adapter.setEditable(!readOnly);
+		const mounted = adapter;
+		if (host)
+			void mounted.mount(host, 'root').then(() => {
+				mounted.setEditable(!readOnly);
+				mounted.setRemotePresence(peers);
+			});
+		const unsubscribe = presence?.subscribe((value) => {
+			peers = value;
+			mounted.setRemotePresence(value);
+		});
 		return () => {
+			unsubscribe?.();
 			void adapter?.destroy();
 		};
+	});
+
+	$effect(() => {
+		adapter?.setEditable(!readOnly);
+		if (readOnly) {
+			slashMenu = { active: false, query: '', coords: null };
+			hoverHandle = null;
+		}
 	});
 
 	onDestroy(() => {
@@ -81,7 +110,7 @@
 	}
 
 	function onHostMouseMove(event: MouseEvent): void {
-		if (!adapter || !host) return;
+		if (!adapter || !host || readOnly) return;
 		const pos = adapter.posAtClientPoint(event.clientX, event.clientY);
 		if (pos === null) {
 			hoverHandle = null;
@@ -106,8 +135,36 @@
 	role="presentation"
 	onmousemove={onHostMouseMove}
 	onmouseleave={onHostMouseLeave}
+	data-testid="flow-canvas"
+	data-read-only={readOnly ? 'true' : 'false'}
 >
-	{#if hoverHandle}
+	{#if peers.length > 0}
+		<ul
+			class="mx-auto mb-3 flex max-w-3xl flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400"
+			aria-label={$t('flow.presence.listLabel')}
+			data-testid="flow-presence-list"
+		>
+			{#each peers as peer (peer.sessionId)}
+				<li class="flex items-center gap-1" data-presence-user={peer.user.userId}>
+					<span
+						class="inline-block h-2.5 w-2.5 rounded-full"
+						style={`background-color: ${peer.user.color}`}
+						aria-hidden="true"
+					></span>
+					<span>{$t('flow.presence.editing', { values: { name: peer.user.name } })}</span>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+	{#if readOnly}
+		<p
+			class="mx-auto mb-3 max-w-3xl text-xs text-slate-500 dark:text-slate-400"
+			data-testid="flow-canvas-read-only"
+		>
+			{$t('flow.canvas.readOnlyNotice')}
+		</p>
+	{/if}
+	{#if hoverHandle && !readOnly}
 		<div
 			class="absolute -left-1 flex -translate-x-full items-center gap-0.5 opacity-70 hover:opacity-100"
 			style={`top: ${hoverHandle.top}px`}
@@ -142,9 +199,9 @@
 		data-placeholder={$t('flow.canvas.placeholder')}
 	></div>
 
-	<FlowPageBlocks bind:this={pageBlocks} {doc} {workspaceId} {objectId} />
+	<FlowPageBlocks bind:this={pageBlocks} {doc} {workspaceId} {objectId} {readOnly} />
 
-	{#if slashMenu.active && slashMenu.coords}
+	{#if slashMenu.active && slashMenu.coords && !readOnly}
 		<div
 			class="fixed z-50 w-72 rounded-md border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
 			style={`left: ${slashMenu.coords.left}px; top: ${slashMenu.coords.top + 4}px`}
@@ -216,5 +273,46 @@
 	}
 	:global(.dark .flow-canvas pre) {
 		background: theme('colors.slate.900');
+	}
+	:global(.flow-canvas .flow-presence-caret) {
+		position: relative;
+		margin-left: -1px;
+		margin-right: -1px;
+		border-left: 2px solid;
+		pointer-events: none;
+	}
+	:global(.flow-canvas .flow-presence-caret::after) {
+		content: attr(data-presence-name);
+		background-color: var(--flow-presence-color);
+		position: absolute;
+		top: -1.35em;
+		left: -2px;
+		white-space: nowrap;
+		border-radius: 0.25rem;
+		padding: 0 0.25rem;
+		font-size: 0.7rem;
+		line-height: 1.2rem;
+		color: white;
+		user-select: none;
+	}
+	:global(.flow-canvas .flow-presence-avatar::after) {
+		content: attr(data-initials);
+	}
+	:global(.flow-canvas .flow-presence-avatar) {
+		position: absolute;
+		left: -2.25rem;
+		display: inline-flex;
+		height: 1.25rem;
+		width: 1.25rem;
+		align-items: center;
+		justify-content: center;
+		border-radius: 9999px;
+		font-size: 0.6rem;
+		color: white;
+		user-select: none;
+		pointer-events: none;
+	}
+	:global(.flow-canvas .ProseMirror > *) {
+		position: relative;
 	}
 </style>
