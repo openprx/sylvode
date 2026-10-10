@@ -397,7 +397,9 @@ replacement and the earliest removal.
   `started_at`, `finished_at` and `audit_event_id` — alongside the existing fields. An executed
   compaction or rebuild now writes its audit `business_events` row (`flow.compaction.completed` /
   `flow.repair.completed`) in the same transaction as the change, and `audit_event_id` is that
-  row's id (also on idempotent replay); it is `null` for a dry-run.
+  row's id (also on idempotent replay). A dry-run (compact, rebuild, verify) writes one
+  `delivery_class=audit_only` event (`flow.compaction.previewed` / `flow.repair.previewed`, no
+  dispatch row, no webhook) and its `audit_event_id` is that row's id.
 - Flow export: an accepted, authorized export that fails while rendering (a canonical
   snapshot/update integrity check, or a server-side refusal) is now recorded as a `failed` job
   whose `error` carries the stable code (for example `checksum_mismatch`). `POST` returns that

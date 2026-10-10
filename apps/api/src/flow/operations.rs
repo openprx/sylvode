@@ -194,7 +194,7 @@ fn build_receipt(
         warnings: operation_warnings(operation, run.dry_run, &run.result),
         started_at: run.started_at,
         finished_at: run.finished_at,
-        audit_event_id: if run.dry_run { None } else { audit_event_id },
+        audit_event_id,
         result: run.result,
     }
 }
@@ -424,11 +424,7 @@ async fn claim(
             "identical maintenance operation is still running",
         ));
     }
-    let audit_event_id = if prior.dry_run {
-        None
-    } else {
-        stored_audit_event_id(db, scope.workspace_id, prior.id).await?
-    };
+    let audit_event_id = stored_audit_event_id(db, scope.workspace_id, prior.id).await?;
     let run = CompletedRun {
         id: prior.id,
         status: prior.status,
@@ -441,6 +437,16 @@ async fn claim(
     Ok(Err(build_receipt(operation, scope, run, audit_event_id)))
 }
 
+/// The audit fact a completed run carries into its receipt.
+enum RunAudit {
+    /// An execute whose `delivery_class=business` event was already written inside the domain
+    /// transaction (`None` only for an execute that has no audit row of its own).
+    Executed(Option<Uuid>),
+    /// A dry-run: its `delivery_class=audit_only` event is written by [`finish`] in the same
+    /// transaction that completes the run, so a completed dry-run always has its audit row.
+    Preview(Box<BusinessEventInput>),
+}
+
 async fn finish(
     db: &DatabaseConnection,
     id: Uuid,
@@ -449,17 +455,35 @@ async fn finish(
     dry_run: bool,
     expected_head_seq: i64,
     result: Value,
-    audit_event_id: Option<Uuid>,
+    audit: RunAudit,
 ) -> Result<OperationReceipt, ApiError> {
-    let times = RunTimes::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "UPDATE flow_operation_runs SET status='completed',result_redacted=$2,finished_at=now() WHERE id=$1 \
-         RETURNING created_at,finished_at",
-        vec![id.into(), result.clone().into()],
-    ))
-    .one(db)
-    .await?
-    .ok_or_else(ApiError::internal)?;
+    let completed = async {
+        let tx = db.begin().await?;
+        let audit_event_id = match audit {
+            RunAudit::Executed(event_id) => event_id,
+            // `dispatch: None` is `delivery_class=audit_only`: no `event_dispatch` row, no webhook.
+            RunAudit::Preview(input) => Some(insert_flow_event(&tx, *input, None).await?.event_id),
+        };
+        let times = RunTimes::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE flow_operation_runs SET status='completed',result_redacted=$2,finished_at=now() WHERE id=$1 \
+             RETURNING created_at,finished_at",
+            vec![id.into(), result.clone().into()],
+        ))
+        .one(&tx)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+        tx.commit().await?;
+        Ok::<_, ApiError>((times, audit_event_id))
+    }
+    .await;
+    let (times, audit_event_id) = match completed {
+        Ok(completed) => completed,
+        Err(error) => {
+            abandon(db, id).await;
+            return Err(error);
+        }
+    };
     let run = CompletedRun {
         id,
         status: "completed".to_string(),
@@ -470,6 +494,91 @@ async fn finish(
         finished_at: times.finished_at,
     };
     Ok(build_receipt(operation, scope, run, audit_event_id))
+}
+
+/// The `audit_only` dry-run event (`events-v1.md` `flow.compaction.previewed` /
+/// `flow.repair.previewed`): ids, head, boundary and checksum summary only, never content.
+fn preview_event(
+    operation: &str,
+    scope: &DocumentScope,
+    operation_id: Uuid,
+    principal: Principal,
+    origin: &CommandOrigin,
+    result: &Value,
+) -> BusinessEventInput {
+    let (event_type, aggregate_type, payload) = match operation {
+        "compact" => (
+            "flow.compaction.previewed",
+            "flow_compaction",
+            json!({
+                "operation_id": operation_id,
+                "document_id": scope.document_id,
+                "head_seq": result.get("head_seq"),
+                "boundary_seq": result.get("snapshot_seq"),
+                "estimated_bytes": result.get("tail_bytes"),
+                "would_compact": result.get("would_compact"),
+            }),
+        ),
+        "rebuild_projection" => (
+            "flow.repair.previewed",
+            "flow_repair",
+            json!({
+                "operation_id": operation_id,
+                "kind": "rebuild_projection",
+                "scope_kind": "object",
+                "scope_id": scope.object_id,
+                "head_seq": result.get("head_seq"),
+                "before_hash": result.get("before_hash"),
+                "after_hash": result.get("after_hash"),
+            }),
+        ),
+        _ => (
+            "flow.repair.previewed",
+            "flow_repair",
+            json!({
+                "operation_id": operation_id,
+                "kind": operation,
+                "scope_kind": "document",
+                "scope_id": scope.document_id,
+                "head_seq": result.pointer("/fingerprint/head_seq"),
+                "semantic_hash": result.pointer("/fingerprint/semantic_hash"),
+            }),
+        ),
+    };
+    operation_audit_event(
+        scope,
+        operation_id,
+        principal,
+        origin,
+        event_type,
+        aggregate_type,
+        payload,
+    )
+}
+
+/// Picks the receipt's audit fact: the dry-run preview row, or the execute's domain-transaction row.
+fn run_audit(
+    operation: &str,
+    scope: &DocumentScope,
+    run: (Uuid, bool),
+    principal: Principal,
+    origin: &CommandOrigin,
+    result: &Value,
+    executed_event_id: Option<Uuid>,
+) -> RunAudit {
+    let (operation_id, dry_run) = run;
+    if dry_run {
+        RunAudit::Preview(Box::new(preview_event(
+            operation,
+            scope,
+            operation_id,
+            principal,
+            origin,
+            result,
+        )))
+    } else {
+        RunAudit::Executed(executed_event_id)
+    }
 }
 
 async fn abandon(db: &DatabaseConnection, id: Uuid) {
@@ -811,17 +920,16 @@ pub async fn compact_document(
     .await;
     match outcome {
         Ok((result, audit_event_id)) => {
-            finish(
-                db,
-                id,
+            let audit = run_audit(
                 "compact",
                 scope,
-                dry_run,
-                expected_head_seq,
-                result,
+                (id, dry_run),
+                principal,
+                origin,
+                &result,
                 audit_event_id,
-            )
-            .await
+            );
+            finish(db, id, "compact", scope, dry_run, expected_head_seq, result, audit).await
         }
         Err(error) => {
             abandon(db, id).await;
@@ -880,6 +988,15 @@ pub async fn rebuild_projection(
                 abandon(db, id).await;
                 return Err(ApiError::internal());
             };
+            let audit = run_audit(
+                "rebuild_projection",
+                scope,
+                (id, dry_run),
+                principal,
+                origin,
+                &result,
+                audit_event_id,
+            );
             finish(
                 db,
                 id,
@@ -888,7 +1005,7 @@ pub async fn rebuild_projection(
                 dry_run,
                 expected_head_seq,
                 result,
-                audit_event_id,
+                audit,
             )
             .await
         }
@@ -906,6 +1023,7 @@ pub async fn verify_document(
     deep: bool,
     principal: Principal,
     idempotency_key: &str,
+    origin: &CommandOrigin,
 ) -> Result<OperationReceipt, ApiError> {
     let id = match claim(
         db,
@@ -924,17 +1042,9 @@ pub async fn verify_document(
     };
     match integrity::document_fingerprint(db, scope.document_id).await {
         Ok(fingerprint) if fingerprint.head_seq == expected_head_seq => {
-            finish(
-                db,
-                id,
-                "verify_document",
-                scope,
-                true,
-                expected_head_seq,
-                json!({"deep": deep, "fingerprint": fingerprint}),
-                None,
-            )
-            .await
+            let result = json!({"deep": deep, "fingerprint": fingerprint});
+            let audit = run_audit("verify_document", scope, (id, true), principal, origin, &result, None);
+            finish(db, id, "verify_document", scope, true, expected_head_seq, result, audit).await
         }
         Ok(_) => {
             abandon(db, id).await;
