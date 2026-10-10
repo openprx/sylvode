@@ -55,6 +55,28 @@ use crate::{
     response::ApiResponse,
 };
 
+/// The query-string extractor of every Flow route: axum's [`Query`] with a typed rejection.
+///
+/// A query string that does not deserialize (a non-numeric `limit`, a non-UUID `view_id`, ...)
+/// answers `invalid_update` in the business envelope like every other Flow input error, instead
+/// of axum's plain-text 400.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FlowQuery<T>(pub T);
+
+impl<T, S> axum::extract::FromRequestParts<S> for FlowQuery<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut axum::http::request::Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Query::<T>::try_from_uri(&parts.uri)
+            .map(|Query(value)| Self(value))
+            .map_err(|rejection| ApiError::invalid_update(rejection.body_text()))
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PackageExportRequest {
     pub format: String,
@@ -1123,7 +1145,7 @@ pub async fn get_flow_admin_lag(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(workspace_id): Path<Uuid>,
-    Query(query): Query<AdminLagQuery>,
+    FlowQuery(query): FlowQuery<AdminLagQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_exact_admin_tool(bot.as_ref(), "collab.status")?;
     let extensions = build_auth_extensions(claims, bot);
@@ -1145,7 +1167,7 @@ pub async fn get_flow_admin_integrity(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(workspace_id): Path<Uuid>,
-    Query(query): Query<AdminIntegrityQuery>,
+    FlowQuery(query): FlowQuery<AdminIntegrityQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_exact_admin_tool(bot.as_ref(), "objects.integrity")?;
     let extensions = build_auth_extensions(claims, bot);
@@ -1242,7 +1264,7 @@ pub async fn list_flow_objects(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(workspace_id): Path<Uuid>,
-    Query(params): Query<ListFlowObjectsQuery>,
+    FlowQuery(params): FlowQuery<ListFlowObjectsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
@@ -1307,7 +1329,7 @@ pub async fn get_flow_collection(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(collection_id): Path<Uuid>,
-    Query(params): Query<DescribeCollectionQuery>,
+    FlowQuery(params): FlowQuery<DescribeCollectionQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
@@ -1332,7 +1354,7 @@ pub async fn get_flow_object_schema(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(object_id): Path<Uuid>,
-    Query(params): Query<DescribeCollectionQuery>,
+    FlowQuery(params): FlowQuery<DescribeCollectionQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
@@ -1408,7 +1430,7 @@ pub async fn get_flow_collection_records(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(collection_id): Path<Uuid>,
-    Query(params): Query<GetCollectionRecordsQuery>,
+    FlowQuery(params): FlowQuery<GetCollectionRecordsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let request = RecordQueryPayload {
         filter: parse_json_query(params.filter, "filter")?,
@@ -1509,7 +1531,7 @@ pub async fn get_flow_navigator(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(workspace_id): Path<Uuid>,
-    Query(params): Query<GetFlowNavigatorQuery>,
+    FlowQuery(params): FlowQuery<GetFlowNavigatorQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
@@ -1536,7 +1558,7 @@ pub async fn get_flow_object(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(object_id): Path<Uuid>,
-    Query(params): Query<GetFlowObjectQuery>,
+    FlowQuery(params): FlowQuery<GetFlowObjectQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
@@ -1582,7 +1604,7 @@ pub async fn get_flow_object_bootstrap(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(object_id): Path<Uuid>,
-    Query(params): Query<GetFlowObjectBootstrapQuery>,
+    FlowQuery(params): FlowQuery<GetFlowObjectBootstrapQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     if bot.is_some() {
         return Err(ApiError::forbidden(
@@ -1696,7 +1718,7 @@ pub async fn get_flow_object_relations(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(object_id): Path<Uuid>,
-    Query(params): Query<FlowRelationsQuery>,
+    FlowQuery(params): FlowQuery<FlowRelationsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
@@ -1746,7 +1768,7 @@ pub async fn get_flow_object_history(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(object_id): Path<Uuid>,
-    Query(params): Query<FlowObjectHistoryQuery>,
+    FlowQuery(params): FlowQuery<FlowObjectHistoryQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
@@ -1790,7 +1812,7 @@ pub async fn get_flow_object_diff(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(object_id): Path<Uuid>,
-    Query(params): Query<FlowObjectDiffQuery>,
+    FlowQuery(params): FlowQuery<FlowObjectDiffQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
@@ -1842,7 +1864,7 @@ pub async fn get_flow_projection_lag(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(workspace_id): Path<Uuid>,
-    Query(params): Query<ProjectionLagQuery>,
+    FlowQuery(params): FlowQuery<ProjectionLagQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
@@ -1890,7 +1912,7 @@ pub async fn get_flow_search(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(workspace_id): Path<Uuid>,
-    Query(params): Query<FlowSearchQuery>,
+    FlowQuery(params): FlowQuery<FlowSearchQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
@@ -2049,7 +2071,9 @@ mod flow_database_tests {
     use crate::routes::member::{
         AddMemberRequest, UpdateMemberRoleRequest, add_member, remove_member, update_member_role,
     };
-    use axum::extract::{Path, Query, State};
+    use axum::extract::{Path, State};
+
+    use super::FlowQuery;
     use axum::http::HeaderMap;
     use axum::{Extension, Json};
 
@@ -2667,7 +2691,7 @@ mod flow_database_tests {
                 claims.clone(),
                 None,
                 Path(object_id),
-                Query(GetFlowObjectQuery {
+                FlowQuery(GetFlowObjectQuery {
                     at_seq: None,
                     render: None,
                 }),
@@ -2687,7 +2711,7 @@ mod flow_database_tests {
                 claims.clone(),
                 None,
                 Path(workspace_id),
-                Query(ListFlowObjectsQuery {
+                FlowQuery(ListFlowObjectsQuery {
                     project_id: None,
                     unprojected: false,
                     object_type: None,
@@ -2714,7 +2738,7 @@ mod flow_database_tests {
                 claims.clone(),
                 None,
                 Path(object_id),
-                Query(FlowObjectHistoryQuery {
+                FlowQuery(FlowObjectHistoryQuery {
                     before_seq: None,
                     limit: None,
                 }),
@@ -2757,7 +2781,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(object_id),
-                Query(GetFlowObjectQuery {
+                FlowQuery(GetFlowObjectQuery {
                     at_seq: None,
                     render: Some("markdown".to_string()),
                 }),
@@ -2876,7 +2900,7 @@ mod flow_database_tests {
                 claims,
                 None,
                 Path(Uuid::new_v4()),
-                Query(GetFlowObjectQuery {
+                FlowQuery(GetFlowObjectQuery {
                     at_seq: None,
                     render: None,
                 }),
@@ -2922,7 +2946,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(ListFlowObjectsQuery {
+                FlowQuery(ListFlowObjectsQuery {
                     project_id: None,
                     unprojected: false,
                     object_type: None,
@@ -2966,7 +2990,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(restricted_id),
-                Query(GetFlowObjectQuery {
+                FlowQuery(GetFlowObjectQuery {
                     at_seq: None,
                     render: None,
                 }),
@@ -2980,7 +3004,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(restricted_id),
-                Query(GetFlowObjectBootstrapQuery {
+                FlowQuery(GetFlowObjectBootstrapQuery {
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -2994,7 +3018,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(restricted_id),
-                Query(FlowObjectHistoryQuery {
+                FlowQuery(FlowObjectHistoryQuery {
                     before_seq: None,
                     limit: None,
                 }),
@@ -3049,7 +3073,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(object_id),
-                Query(GetFlowObjectQuery {
+                FlowQuery(GetFlowObjectQuery {
                     at_seq: None,
                     render: None,
                 }),
@@ -3535,7 +3559,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(object_id),
-                Query(GetFlowObjectQuery {
+                FlowQuery(GetFlowObjectQuery {
                     at_seq: None,
                     render: None,
                 }),
@@ -3574,7 +3598,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(object_ids[0]),
-                Query(GetFlowObjectQuery {
+                FlowQuery(GetFlowObjectQuery {
                     at_seq: None,
                     render: None,
                 }),
@@ -3591,7 +3615,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(object_ids[1]),
-                Query(GetFlowObjectBootstrapQuery {
+                FlowQuery(GetFlowObjectBootstrapQuery {
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -3608,7 +3632,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(object_ids[2]),
-                Query(FlowObjectHistoryQuery {
+                FlowQuery(FlowObjectHistoryQuery {
                     before_seq: None,
                     limit: None,
                 }),
@@ -3630,7 +3654,7 @@ mod flow_database_tests {
                             claims_for(member_id),
                             None,
                             Path(object_id),
-                            Query(GetFlowObjectQuery {
+                            FlowQuery(GetFlowObjectQuery {
                                 at_seq: None,
                                 render: None,
                             }),
@@ -3646,7 +3670,7 @@ mod flow_database_tests {
                             claims_for(member_id),
                             None,
                             Path(object_id),
-                            Query(GetFlowObjectBootstrapQuery {
+                            FlowQuery(GetFlowObjectBootstrapQuery {
                                 known_seq: None,
                                 known_frontier: None,
                             }),
@@ -3662,7 +3686,7 @@ mod flow_database_tests {
                             claims_for(member_id),
                             None,
                             Path(object_id),
-                            Query(FlowObjectHistoryQuery {
+                            FlowQuery(FlowObjectHistoryQuery {
                                 before_seq: None,
                                 limit: None,
                             }),
@@ -3688,7 +3712,7 @@ mod flow_database_tests {
                             claims_for(member_id),
                             None,
                             Path(object_id),
-                            Query(GetFlowObjectQuery {
+                            FlowQuery(GetFlowObjectQuery {
                                 at_seq: None,
                                 render: None,
                             }),
@@ -3704,7 +3728,7 @@ mod flow_database_tests {
                             claims_for(member_id),
                             None,
                             Path(object_id),
-                            Query(GetFlowObjectBootstrapQuery {
+                            FlowQuery(GetFlowObjectBootstrapQuery {
                                 known_seq: None,
                                 known_frontier: None,
                             }),
@@ -3720,7 +3744,7 @@ mod flow_database_tests {
                             claims_for(member_id),
                             None,
                             Path(object_id),
-                            Query(FlowObjectHistoryQuery {
+                            FlowQuery(FlowObjectHistoryQuery {
                                 before_seq: None,
                                 limit: None,
                             }),
@@ -3754,7 +3778,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(workspace_id),
-                Query(ListFlowObjectsQuery {
+                FlowQuery(ListFlowObjectsQuery {
                     project_id: None,
                     unprojected: false,
                     object_type: None,
@@ -3780,7 +3804,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(workspace_id),
-                Query(ListFlowObjectsQuery {
+                FlowQuery(ListFlowObjectsQuery {
                     project_id: None,
                     unprojected: false,
                     object_type: None,
@@ -3954,7 +3978,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(ListFlowObjectsQuery {
+                FlowQuery(ListFlowObjectsQuery {
                     project_id: None,
                     unprojected: false,
                     object_type: None,
@@ -4030,7 +4054,7 @@ mod flow_database_tests {
                     claims_for(member_id),
                     None,
                     Path(workspace_id),
-                    Query(ListFlowObjectsQuery {
+                    FlowQuery(ListFlowObjectsQuery {
                         project_id: None,
                         unprojected: false,
                         object_type: None,
@@ -4238,7 +4262,7 @@ mod flow_database_tests {
                 claims,
                 None,
                 Path(workspace_id),
-                Query(GetFlowNavigatorQuery {
+                FlowQuery(GetFlowNavigatorQuery {
                     project_id: None,
                     depth: Some(20),
                     include_archived: false,
@@ -4390,7 +4414,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(workspace_id),
-                Query(current),
+                FlowQuery(current),
             )
             .await,
         ))
@@ -4830,7 +4854,7 @@ mod flow_database_tests {
                 claims_for(guest_id),
                 None,
                 Path(workspace_id),
-                Query(ListFlowObjectsQuery {
+                FlowQuery(ListFlowObjectsQuery {
                     project_id: None,
                     unprojected: false,
                     object_type: None,
@@ -4875,7 +4899,7 @@ mod flow_database_tests {
                 claims_for(guest_id),
                 None,
                 Path(workspace_id),
-                Query(ListFlowObjectsQuery {
+                FlowQuery(ListFlowObjectsQuery {
                     project_id: None,
                     unprojected: false,
                     object_type: None,
@@ -4905,7 +4929,7 @@ mod flow_database_tests {
                 claims_for(guest_id),
                 None,
                 Path(visible_id),
-                Query(GetFlowObjectQuery {
+                FlowQuery(GetFlowObjectQuery {
                     at_seq: None,
                     render: None,
                 }),
@@ -4921,7 +4945,7 @@ mod flow_database_tests {
                 claims_for(guest_id),
                 None,
                 Path(hidden_id),
-                Query(GetFlowObjectQuery {
+                FlowQuery(GetFlowObjectQuery {
                     at_seq: None,
                     render: None,
                 }),
@@ -6803,7 +6827,7 @@ mod flow_database_tests {
                 claims.clone(),
                 None,
                 Path(object_id),
-                Query(GetFlowObjectQuery {
+                FlowQuery(GetFlowObjectQuery {
                     at_seq: None,
                     render: None,
                 }),
@@ -6894,7 +6918,7 @@ mod flow_database_tests {
                 claims.clone(),
                 None,
                 Path(object_id),
-                Query(FlowObjectDiffQuery {
+                FlowQuery(FlowObjectDiffQuery {
                     from_seq: Some(0),
                     to_seq: Some(2),
                     render: Some("markdown".to_string()),
@@ -6933,7 +6957,7 @@ mod flow_database_tests {
                     claims.clone(),
                     None,
                     Path(object_id),
-                    Query(FlowObjectDiffQuery {
+                    FlowQuery(FlowObjectDiffQuery {
                         from_seq: Some(from_seq),
                         to_seq: Some(to_seq),
                         render: None,
@@ -6953,7 +6977,7 @@ mod flow_database_tests {
                 claims.clone(),
                 None,
                 Path(object_id),
-                Query(FlowObjectDiffQuery {
+                FlowQuery(FlowObjectDiffQuery {
                     from_seq: Some(0),
                     to_seq: Some(3),
                     render: None,
@@ -6977,7 +7001,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(object_id),
-                Query(FlowObjectDiffQuery {
+                FlowQuery(FlowObjectDiffQuery {
                     from_seq: Some(0),
                     to_seq: Some(0),
                     render: None,
@@ -6992,7 +7016,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(Uuid::new_v4()),
-                Query(FlowObjectDiffQuery {
+                FlowQuery(FlowObjectDiffQuery {
                     from_seq: Some(0),
                     to_seq: Some(0),
                     render: None,
@@ -7034,7 +7058,7 @@ mod flow_database_tests {
                             claims_for(member_id),
                             None,
                             Path(target),
-                            Query(FlowObjectDiffQuery {
+                            FlowQuery(FlowObjectDiffQuery {
                                 from_seq: malformed.from_seq,
                                 to_seq: malformed.to_seq,
                                 render: malformed.render.clone(),
@@ -7068,7 +7092,7 @@ mod flow_database_tests {
                 claims.clone(),
                 None,
                 Path(object_id),
-                Query(FlowObjectDiffQuery {
+                FlowQuery(FlowObjectDiffQuery {
                     from_seq: Some(0),
                     to_seq: Some(2),
                     render: None,
@@ -7121,7 +7145,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(object_id),
-                Query(FlowObjectDiffQuery {
+                FlowQuery(FlowObjectDiffQuery {
                     from_seq: Some(0),
                     to_seq: Some(1001),
                     render: None,
@@ -7193,7 +7217,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(ProjectionLagQuery {
+                FlowQuery(ProjectionLagQuery {
                     project_id: None,
                     cursor: None,
                     limit: Some(2),
@@ -7245,7 +7269,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(ProjectionLagQuery {
+                FlowQuery(ProjectionLagQuery {
                     project_id: None,
                     cursor: Some(cursor),
                     limit: Some(2),
@@ -7277,7 +7301,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(ProjectionLagQuery {
+                FlowQuery(ProjectionLagQuery {
                     project_id: None,
                     cursor: None,
                     limit: Some(101),
@@ -7360,7 +7384,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(ProjectionLagQuery {
+                FlowQuery(ProjectionLagQuery {
                     project_id: None,
                     cursor: None,
                     limit: Some(50),
@@ -7384,7 +7408,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(ProjectionLagQuery {
+                FlowQuery(ProjectionLagQuery {
                     project_id: None,
                     cursor: Some(cursor),
                     limit: Some(50),
@@ -7456,7 +7480,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(first_query),
+                FlowQuery(first_query),
             )
             .await,
         ))
@@ -7502,7 +7526,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(second_query),
+                FlowQuery(second_query),
             )
             .await,
         ))
@@ -7594,7 +7618,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(workspace_id),
-                Query(search_query("unique-frontier-needle")),
+                FlowQuery(search_query("unique-frontier-needle")),
             )
             .await,
         ))
@@ -7626,7 +7650,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(workspace_id),
-                Query(search_query("shared")),
+                FlowQuery(search_query("shared")),
             )
             .await,
         ))
@@ -7695,7 +7719,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(search_query("needle")),
+                FlowQuery(search_query("needle")),
             )
             .await,
         ))
@@ -7727,7 +7751,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(current),
+                FlowQuery(current),
             )
             .await,
         ))
@@ -7752,7 +7776,7 @@ mod flow_database_tests {
                 claims_for(member_id),
                 None,
                 Path(workspace_id),
-                Query(member_fresh),
+                FlowQuery(member_fresh),
             )
             .await,
         ))
@@ -7771,7 +7795,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(workspace_id),
-                Query(owner_current),
+                FlowQuery(owner_current),
             )
             .await,
         ))
@@ -7799,7 +7823,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(workspace_id),
-                Query(none),
+                FlowQuery(none),
             )
             .await,
         ))
@@ -7818,7 +7842,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(workspace_id),
-                Query(both),
+                FlowQuery(both),
             )
             .await,
         ))
@@ -7839,7 +7863,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 Some(bot.clone()),
                 Path(workspace_id),
-                Query(search_query("needle")),
+                FlowQuery(search_query("needle")),
             )
             .await,
         ))
@@ -7857,7 +7881,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 Some(bot),
                 Path(workspace_id),
-                Query(bot_single),
+                FlowQuery(bot_single),
             )
             .await,
         ))
@@ -7918,7 +7942,7 @@ mod flow_database_tests {
                 claims.clone(),
                 None,
                 Path(object_id),
-                Query(GetFlowObjectBootstrapQuery {
+                FlowQuery(GetFlowObjectBootstrapQuery {
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -7959,7 +7983,7 @@ mod flow_database_tests {
                 claims.clone(),
                 Some(bot_ctx),
                 Path(object_id),
-                Query(GetFlowObjectBootstrapQuery {
+                FlowQuery(GetFlowObjectBootstrapQuery {
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -8459,7 +8483,7 @@ mod flow_database_tests {
                 claims,
                 None,
                 Path(object_id),
-                Query(GetFlowObjectQuery {
+                FlowQuery(GetFlowObjectQuery {
                     at_seq: None,
                     render: None,
                 }),
@@ -8763,7 +8787,7 @@ mod flow_database_tests {
                 claims.clone(),
                 None,
                 Path(workspace_id),
-                Query(list_query(Some(PAGE_LIMIT_MAX))),
+                FlowQuery(list_query(Some(PAGE_LIMIT_MAX))),
             )
             .await,
         );
@@ -8781,7 +8805,7 @@ mod flow_database_tests {
                 claims.clone(),
                 None,
                 Path(workspace_id),
-                Query(list_query(Some(PAGE_LIMIT_MAX + 1))),
+                FlowQuery(list_query(Some(PAGE_LIMIT_MAX + 1))),
             )
             .await,
         );
@@ -10027,7 +10051,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(source),
-                Query(FlowRelationsQuery {
+                FlowQuery(FlowRelationsQuery {
                     direction: Some("outgoing".to_string()),
                     relation_type: Some("related_to".to_string()),
                     cursor: None,
@@ -10399,7 +10423,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(workspace_id),
-                Query(super::AdminLagQuery::default()),
+                FlowQuery(super::AdminLagQuery::default()),
             )
             .await,
         ))
@@ -10412,7 +10436,7 @@ mod flow_database_tests {
                 claims_for(owner_id),
                 None,
                 Path(workspace_id),
-                Query(super::AdminIntegrityQuery {
+                FlowQuery(super::AdminIntegrityQuery {
                     scope: Some("documents".to_string()),
                     cursor: None,
                     limit: Some(50),
@@ -11966,7 +11990,7 @@ mod flow_database_tests {
                 claims_for(user),
                 None,
                 Path(workspace_id),
-                Query(ProjectionLagQuery {
+                FlowQuery(ProjectionLagQuery {
                     project_id: None,
                     cursor: None,
                     limit: Some(10),
@@ -12881,6 +12905,62 @@ mod flow_database_tests {
             .expect("response body reads");
         serde_json::from_slice(&bytes)
             .unwrap_or_else(|_| json!({"non_json_body": String::from_utf8_lossy(&bytes).to_string()}))
+    }
+
+    /// A Flow query string that does not parse (a non-numeric `limit`, a non-UUID `view_id`, ...)
+    /// is a typed `invalid_update` envelope, not axum's plain-text 400 query rejection.
+    #[tokio::test]
+    async fn unparseable_flow_query_parameters_are_typed_invalid_update() {
+        use tower::ServiceExt as _;
+        let scratch = scratch_or_skip!("typed-query-rejection");
+        let state = state_for(scratch.db.clone());
+        let (workspace, owner_id) = seed_workspace(&state, true).await;
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/admin/workspaces/{workspace_id}/flow/lag",
+                axum::routing::get(get_flow_admin_lag),
+            )
+            .route(
+                "/api/v1/flow/collections/{collection_id}/records",
+                axum::routing::get(super::get_flow_collection_records),
+            )
+            .route(
+                "/api/v1/workspaces/{workspace_id}/flow/objects",
+                axum::routing::get(super::list_flow_objects),
+            )
+            .route(
+                "/api/v1/flow/objects/{object_id}/history",
+                axum::routing::get(super::get_flow_object_history),
+            )
+            .layer(claims_for(owner_id))
+            .with_state(state.clone());
+        let object = Uuid::new_v4();
+        for uri in [
+            format!("/api/v1/admin/workspaces/{workspace}/flow/lag?limit=abc"),
+            format!("/api/v1/flow/collections/{object}/records?view_id=not-a-uuid"),
+            format!("/api/v1/flow/collections/{object}/records?limit=-1"),
+            format!("/api/v1/workspaces/{workspace}/flow/objects?limit=many"),
+            format!("/api/v1/flow/objects/{object}/history?before_seq=x"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri(&uri)
+                        .body(axum::body::Body::empty())
+                        .expect("the request builds"),
+                )
+                .await
+                .expect("the router answers");
+            assert_eq!(response.status(), axum::http::StatusCode::OK, "{uri}");
+            let bytes = to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("response body reads");
+            let body: Value = serde_json::from_slice(&bytes)
+                .unwrap_or_else(|_| panic!("{uri}: not a JSON envelope: {}", String::from_utf8_lossy(&bytes)));
+            assert_typed(&body, "invalid_update", 400);
+        }
+        scratch.drop_self().await;
     }
 
     /// FP2-B4 N5-⑦: a malformed conversion/job id is a typed `not_found` envelope on every
