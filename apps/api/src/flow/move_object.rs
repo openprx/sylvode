@@ -444,7 +444,7 @@ fn fresh_entry_id(snapshot: &collab_core::SemanticSnapshot, object_id: Uuid) -> 
     }
     // Unreachable: `nodes.len() + 1` candidates were probed against `nodes.len()` entries.
     tracing::error!(%object_id, nodes = snapshot.nodes.len(), "move_object: no free navigator entry id");
-    Err(ApiError::Internal)
+    Err(ApiError::internal())
 }
 
 /// One navigator document's whole share of one move: the moved object's entry, plus every
@@ -835,7 +835,7 @@ async fn plan_document(
             // `hydrate_and_apply` never returns `Rejected(Accepted(..))`; treating it as an
             // internal error is the fail-closed reading of an impossible state.
             tracing::error!(%document_id, "move_object: hydrate_and_apply returned an accepted outcome in a rejection");
-            Err(ApiError::Internal)
+            Err(ApiError::internal())
         }
     }
 }
@@ -1105,7 +1105,7 @@ async fn run_locked_phase(
             rewritten,
             "move_object: the cascade rewrote a different number of rows than it locked"
         );
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
 
     // `ADR-0012` §4.1, applied to the move: the caller may hold `full_access` only through the
@@ -1528,9 +1528,9 @@ pub async fn execute_on(
 
     let source = repository::fetch_movable_object(&state.db, input.object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     if source.workspace_id != workspace_id {
-        return Err(ApiError::NotFound("flow object not found".to_string()));
+        return Err(ApiError::not_found("flow object not found".to_string()));
     }
     if source.lifecycle_status != "active" {
         return Err(ApiError::invalid_update("an archived object cannot be moved"));
@@ -1545,7 +1545,7 @@ pub async fn execute_on(
 
     let target = repository::fetch_movable_object(&state.db, payload.target_object_id)
         .await?
-        .ok_or_else(|| ApiError::BadRequest("target_object_id not found".to_string()))?;
+        .ok_or_else(|| ApiError::invalid_update("target_object_id not found".to_string()))?;
     if target.workspace_id != workspace_id {
         // Cross-workspace: fail closed and leave an integrity record, exactly as `create_object`
         // does for a cross-workspace parent (`rest-api-v1.md`'s "RelationView" rule).
@@ -1605,7 +1605,7 @@ pub async fn execute_on(
             observed = document_lock_order.len(),
             "move_object: contended document set exceeded its declared ceiling"
         );
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
 
     // `ADR-0013` §2.2 R17 step two: a scope change takes the whole subtree with it, a re-parent
@@ -1729,7 +1729,7 @@ pub async fn execute_on(
 
         let outcome = match outcome {
             Ok(outcome) => outcome,
-            Err(err @ ApiError::Database(_)) if err.is_known_transient_database_failure() => {
+            Err(err) if err.is_known_transient_database_failure() => {
                 // A lock/statement timeout is the same not-applied transient contention handled
                 // by the drift branch below: the transaction has been rolled back before any
                 // commit was issued, so it is safe to rebuild the document plans and retry.
@@ -1791,7 +1791,7 @@ pub async fn execute_on(
             }
             LockedOutcome::AlreadyCommitted => {
                 let _ = tx.rollback().await;
-                return replay(state, workspace_id, input).await?.ok_or(ApiError::Internal);
+                return replay(state, workspace_id, input).await?.ok_or_else(ApiError::internal);
             }
             LockedOutcome::Drift(reason) => {
                 let _ = tx.rollback().await;
@@ -1854,7 +1854,7 @@ async fn build_response(
 ) -> Result<AcceptedChange, ApiError> {
     let view = repository::fetch_object_view(&ctx.state.db, plan.object_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     let mut change = accepted_change_from_row(view, event_id);
     // `rest-api-v1.md`: a cross-object command "返回全部 `affected_object_ids`". The response is
     // wider than the event's envelope set on purpose — it also names the two navigator objects,
@@ -1920,7 +1920,7 @@ async fn replay(
     }
     let view = repository::fetch_object_view(&state.db, input.object_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     Ok(Some(accepted_change_from_row(view, existing.id)))
 }
 

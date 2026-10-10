@@ -246,29 +246,29 @@ fn validate(input: &CreateObjectInput) -> Result<(), ApiError> {
         ));
     }
     if !REGISTERED_OBJECT_TYPES.contains(&input.object_type.as_str()) {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::invalid_update(format!(
             "object_type must be one of {REGISTERED_OBJECT_TYPES:?}"
         )));
     }
     let title = input.title.trim();
     if title.is_empty() {
-        return Err(ApiError::BadRequest("title must not be empty".to_string()));
+        return Err(ApiError::invalid_update("title must not be empty".to_string()));
     }
     if title.chars().count() > TITLE_MAX_CHARS {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::invalid_update(format!(
             "title must be at most {TITLE_MAX_CHARS} characters"
         )));
     }
     let key_bytes = input.idempotency_key.len();
     if !(IDEMPOTENCY_KEY_MIN_BYTES..=IDEMPOTENCY_KEY_MAX_BYTES).contains(&key_bytes) {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::invalid_update(format!(
             "idempotency_key must be {IDEMPOTENCY_KEY_MIN_BYTES}-{IDEMPOTENCY_KEY_MAX_BYTES} bytes"
         )));
     }
     if let Some(message) = &input.message
         && message.chars().count() > MESSAGE_MAX_CHARS
     {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::invalid_update(format!(
             "message must be at most {MESSAGE_MAX_CHARS} characters"
         )));
     }
@@ -310,7 +310,7 @@ pub(super) async fn record_cross_workspace_relation_and_fail_closed(
     {
         tracing::error!(error = %err, "failed to record integrity alert for a cross-workspace relation");
     }
-    ApiError::BadRequest("invalid_update".to_string())
+    ApiError::invalid_update("invalid_update".to_string())
 }
 
 /// Resolves an already-committed `flow.object.created` event for `idempotency_key` into the
@@ -339,27 +339,26 @@ async fn replay_created_object(
         return Ok(None);
     };
     if existing.event_type != "flow.object.created" {
-        return Err(ApiError::Conflict(
-            "idempotency_key was already used for a different operation".to_string(),
+        return Err(ApiError::idempotency_key_body_drift(
+            "idempotency_key was already used for a different operation",
         ));
     }
     let Some(stored_body) = existing.metadata.get("idempotency_body") else {
-        return Err(ApiError::Conflict(
-            "idempotency_key belongs to a create event whose complete request body cannot be verified".to_string(),
+        return Err(ApiError::invalid_update(
+            "idempotency_key belongs to a create event whose complete request body cannot be verified",
         ));
     };
-    let stored_body: CreateObjectIdempotencyBody = serde_json::from_value(stored_body.clone()).map_err(|_| {
-        ApiError::Conflict("idempotency_key belongs to a create event with an invalid request identity".to_string())
-    })?;
+    let stored_body: CreateObjectIdempotencyBody =
+        serde_json::from_value(stored_body.clone()).map_err(|_| ApiError::internal())?;
     if stored_body != *requested_body {
-        return Err(ApiError::Conflict(
-            "idempotency_key was already used with a different create request body".to_string(),
+        return Err(ApiError::idempotency_key_body_drift(
+            "idempotency_key was already used with a different create request body",
         ));
     }
-    let object_id = Uuid::parse_str(&existing.aggregate_id).map_err(|_| ApiError::Internal)?;
+    let object_id = Uuid::parse_str(&existing.aggregate_id).map_err(|_| ApiError::internal())?;
     let view = repository::fetch_object_view(&state.db, object_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     Ok(Some(accepted_change_from_row(view, existing.id)))
 }
 
@@ -416,7 +415,7 @@ async fn create_object_inner(
     if let Some(project_id) = input.project_id {
         let project_workspace = repository::fetch_project_workspace(&state.db, project_id)
             .await?
-            .ok_or_else(|| ApiError::BadRequest("project not found".to_string()))?;
+            .ok_or_else(|| ApiError::invalid_update("project not found".to_string()))?;
         if project_workspace != input.workspace_id {
             return Err(record_cross_workspace_relation_and_fail_closed(
                 state,
@@ -447,15 +446,15 @@ async fn create_object_inner(
             .await?
             .is_some()
     {
-        return Err(ApiError::Conflict(
-            "workspace project scope already has a canonical navigator root".to_string(),
+        return Err(ApiError::invalid_update(
+            "workspace project scope already has a canonical navigator root",
         ));
     }
 
     if let Some(parent_id) = effective_parent_id {
         let parent = repository::fetch_parent_object(&state.db, parent_id)
             .await?
-            .ok_or_else(|| ApiError::BadRequest("parent_object_id not found".to_string()))?;
+            .ok_or_else(|| ApiError::invalid_update("parent_object_id not found".to_string()))?;
         if parent.workspace_id != input.workspace_id {
             return Err(record_cross_workspace_relation_and_fail_closed(
                 state,
@@ -468,7 +467,7 @@ async fn create_object_inner(
             .await);
         }
         if parent.lifecycle_status == "archived" {
-            return Err(ApiError::BadRequest("parent_object_id is archived".to_string()));
+            return Err(ApiError::invalid_update("parent_object_id is archived".to_string()));
         }
         // `ADR-0013` §2.2 R17: a non-root object sits in its parent's project scope. Until this
         // check existed, `project_id` and `parent_object_id` were validated *independently* -- each
@@ -536,21 +535,21 @@ async fn create_object_inner(
     let mut engine = LoroCollabEngine::new_empty(rand::random());
     engine.set_title(&title).map_err(|err| {
         tracing::error!(error = %err, "collab-core: set_title failed on a brand-new document");
-        ApiError::Internal
+        ApiError::internal()
     })?;
     if let Some(schema) = initial_collection_schema.as_ref() {
         super::collections::apply_initial_collection_schema(&mut engine, schema)?;
     }
     let snapshot = engine.export_snapshot().map_err(|err| {
         tracing::error!(error = %err, "collab-core: export_snapshot failed on a brand-new document");
-        ApiError::Internal
+        ApiError::internal()
     })?;
     let frontier = engine.frontier();
     let semantic = engine.semantic_snapshot().map_err(|err| {
         tracing::error!(error = %err, "collab-core: semantic_snapshot failed on a brand-new document");
-        ApiError::Internal
+        ApiError::internal()
     })?;
-    let state_json = projection::state_json(&semantic).map_err(|_| ApiError::Internal)?;
+    let state_json = projection::state_json(&semantic).map_err(|_| ApiError::internal())?;
     let plain_text = projection::plain_text(&semantic);
 
     let object_id = Uuid::new_v4();
@@ -676,7 +675,7 @@ async fn create_object_inner(
             // `was_new == false` is only reachable once the conflicting row is committed and
             // visible (`ON CONFLICT DO NOTHING` waits out an in-flight speculative insertion
             // before deciding), so the event this just conflicted with must be readable here.
-            .ok_or(ApiError::Internal);
+            .ok_or_else(ApiError::internal);
     }
     let event_id = outcome.event_id;
 
@@ -746,20 +745,20 @@ pub struct SetFlowFeatureInput {
 
 fn validate_set_flow_feature(input: &SetFlowFeatureInput) -> Result<(), ApiError> {
     if input.enabled.is_none() && input.default_member_level.is_none() {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "at least one of enabled or default_member_level must be supplied".to_string(),
         ));
     }
     if let Some(level) = input.default_member_level.as_deref()
         && !MEMBER_LEVELS.contains(&level)
     {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::invalid_update(format!(
             "default_member_level must be one of {MEMBER_LEVELS:?}"
         )));
     }
     let key_bytes = input.idempotency_key.len();
     if !(IDEMPOTENCY_KEY_MIN_BYTES..=IDEMPOTENCY_KEY_MAX_BYTES).contains(&key_bytes) {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::invalid_update(format!(
             "idempotency_key must be {IDEMPOTENCY_KEY_MIN_BYTES}-{IDEMPOTENCY_KEY_MAX_BYTES} bytes"
         )));
     }
@@ -783,8 +782,8 @@ pub async fn set_flow_feature(state: &AppState, input: SetFlowFeatureInput) -> R
             && existing.event_type != "flow.feature.disabled"
             && existing.event_type != "flow.permission.baseline_changed"
         {
-            return Err(ApiError::Conflict(
-                "idempotency_key was already used for a different operation".to_string(),
+            return Err(ApiError::idempotency_key_body_drift(
+                "idempotency_key was already used for a different operation",
             ));
         }
         let row = repository::fetch_flow_settings(&state.db, input.workspace_id).await?;
@@ -799,7 +798,7 @@ pub async fn set_flow_feature(state: &AppState, input: SetFlowFeatureInput) -> R
     repository::ensure_flow_settings_row(&tx, input.workspace_id).await?;
     let current = repository::fetch_flow_settings_for_update(&tx, input.workspace_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
 
     let new_enabled = input.enabled.unwrap_or(current.flow_enabled);
     let transition = input.enabled.filter(|&enabled| enabled != current.flow_enabled);
@@ -1052,7 +1051,7 @@ struct LifecyclePlan {
 impl LifecyclePlan {
     fn derive(object_id: Uuid, rows: Vec<repository::LifecycleScopeRow>) -> Result<Self, ApiError> {
         if rows.is_empty() {
-            return Err(ApiError::NotFound("flow object not found".to_string()));
+            return Err(ApiError::not_found("flow object not found".to_string()));
         }
         if rows.iter().any(|row| row.invalid_tree) {
             return Err(ApiError::invalid_update(
@@ -1239,14 +1238,14 @@ impl ExecuteCommandInput {
 fn validate_execute_command_input(input: &ExecuteCommandInput) -> Result<(), ApiError> {
     let key_bytes = input.idempotency_key.len();
     if !(IDEMPOTENCY_KEY_MIN_BYTES..=IDEMPOTENCY_KEY_MAX_BYTES).contains(&key_bytes) {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::invalid_update(format!(
             "idempotency_key must be {IDEMPOTENCY_KEY_MIN_BYTES}-{IDEMPOTENCY_KEY_MAX_BYTES} bytes"
         )));
     }
     if let Some(message) = &input.message
         && message.chars().count() > MESSAGE_MAX_CHARS
     {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::invalid_update(format!(
             "message must be at most {MESSAGE_MAX_CHARS} characters"
         )));
     }
@@ -1358,7 +1357,7 @@ pub async fn execute_command(state: &AppState, input: ExecuteCommandInput) -> Re
 
     let view_row = repository::fetch_object_view(&state.db, input.object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     let workspace_id = view_row.workspace_id;
     let document_id = view_row.document_id;
     let object_type = view_row.object_type.clone();
@@ -1418,8 +1417,8 @@ async fn execute_command_authorized(
             repository::find_idempotent_event(&state.db, workspace_id, &input.idempotency_key).await?
     {
         if existing.event_type != kind.event_type() {
-            return Err(ApiError::Conflict(
-                "idempotency_key was already used for a different operation".to_string(),
+            return Err(ApiError::idempotency_key_body_drift(
+                "idempotency_key was already used for a different operation",
             ));
         }
         // Same event type, different target. `business_events`' idempotency index is
@@ -1432,13 +1431,13 @@ async fn execute_command_authorized(
             CommandKind::Lifecycle(_) | CommandKind::Governance(_) | CommandKind::Collection(_) => input.object_id,
         };
         if existing.aggregate_id != expected_aggregate.to_string() {
-            return Err(ApiError::Conflict(
-                "idempotency_key was already used for a different operation".to_string(),
+            return Err(ApiError::idempotency_key_body_drift(
+                "idempotency_key was already used for a different operation",
             ));
         }
         let current = repository::fetch_object_view(&state.db, input.object_id)
             .await?
-            .ok_or(ApiError::Internal)?;
+            .ok_or_else(ApiError::internal)?;
         return Ok(accepted_change_from_row(current, existing.id));
     }
 
@@ -1476,7 +1475,7 @@ async fn execute_command_authorized(
         }
         CommandKind::Lifecycle(_)
         | CommandKind::Governance(GovernanceCommandType::Link | GovernanceCommandType::Unlink) => {
-            Err(ApiError::Internal)
+            Err(ApiError::internal())
         }
         // The `full_access` check above is an early rejection (and the one that produces the
         // `flow.command.rejected` audit row); `move_object` re-decides both sides of
@@ -1488,7 +1487,7 @@ async fn execute_command_authorized(
         CommandKind::Collection(collection_kind) => {
             let target = repository::fetch_object_view(&state.db, input.object_id)
                 .await?
-                .ok_or(ApiError::Internal)?;
+                .ok_or_else(ApiError::internal)?;
             super::collections::execute(state, input, workspace_id, checked_epoch, collection_kind, &target).await
         }
     }
@@ -1561,7 +1560,7 @@ fn check_semantic_patch_json_bytes(payload: &Value) -> Result<(), ApiError> {
 fn parse_node_id(raw: &str, field: &str) -> Result<NodeId, ApiError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed.len() > NODE_ID_MAX_BYTES {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::invalid_update(format!(
             "{field} must be 1-{NODE_ID_MAX_BYTES} non-whitespace-only characters"
         )));
     }
@@ -1570,7 +1569,7 @@ fn parse_node_id(raw: &str, field: &str) -> Result<NodeId, ApiError> {
 
 fn parse_payload<T: serde::de::DeserializeOwned>(command_type: &str, payload: &Value) -> Result<T, ApiError> {
     serde_json::from_value(payload.clone())
-        .map_err(|err| ApiError::BadRequest(format!("invalid payload for {command_type}: {err}")))
+        .map_err(|err| ApiError::invalid_update(format!("invalid payload for {command_type}: {err}")))
 }
 
 /// Maps a [`CollabError`] to the typed `invalid_update`/`limit_exceeded` [`ApiErrorKind`]s
@@ -1648,10 +1647,10 @@ fn apply_content_command(
             let payload: SetTitlePayload = parse_payload("set_title", payload)?;
             let title = payload.title.trim();
             if title.is_empty() {
-                return Err(ApiError::BadRequest("title must not be empty".to_string()));
+                return Err(ApiError::invalid_update("title must not be empty".to_string()));
             }
             if title.chars().count() > TITLE_MAX_CHARS {
-                return Err(ApiError::BadRequest(format!(
+                return Err(ApiError::invalid_update(format!(
                     "title must be at most {TITLE_MAX_CHARS} characters"
                 )));
             }
@@ -1680,7 +1679,7 @@ fn apply_content_command(
             let payload: UpdateBlockPayload = parse_payload("update_block", payload)?;
             let id = parse_node_id(&payload.block_id, "block_id")?;
             if payload.text.is_none() && payload.properties.is_empty() {
-                return Err(ApiError::BadRequest(
+                return Err(ApiError::invalid_update(
                     "update_block requires at least one of text or properties".to_string(),
                 ));
             }
@@ -1690,9 +1689,9 @@ fn apply_content_command(
                 let node = existing
                     .nodes
                     .get(&id)
-                    .ok_or_else(|| ApiError::BadRequest(format!("unknown node id '{id}'")))?;
+                    .ok_or_else(|| ApiError::invalid_update(format!("unknown node id '{id}'")))?;
                 let old_len = u32::try_from(node.text.len())
-                    .map_err(|_| ApiError::BadRequest("block text too large to update".to_string()))?;
+                    .map_err(|_| ApiError::invalid_update("block text too large to update".to_string()))?;
                 if old_len > 0 {
                     ops.push(Operation::DeleteText {
                         id: id.clone(),
@@ -1786,7 +1785,7 @@ pub(super) fn map_write_rejection(rejected: &write::Rejected) -> ApiError {
         RejectedCode::Unauthenticated => ApiError::unauthenticated("unauthenticated"),
         RejectedCode::Forbidden => ApiError::typed(ApiErrorKind::Forbidden, "forbidden"),
         RejectedCode::FeatureDisabled => ApiError::feature_disabled("feature_disabled"),
-        RejectedCode::NotFound => ApiError::NotFound("not_found".to_string()),
+        RejectedCode::NotFound => ApiError::not_found("not_found".to_string()),
         RejectedCode::UnsupportedProtocol => ApiError::unsupported_protocol("unsupported_protocol"),
         RejectedCode::InvalidUpdate => ApiError::invalid_update("invalid_update"),
         RejectedCode::PolicyRejected => ApiError::policy_rejected("policy_rejected"),
@@ -1852,14 +1851,15 @@ pub(super) fn map_write_rejection(rejected: &write::Rejected) -> ApiError {
                 // `error-mapping-v1.md`: "缺失/未知 reason 是 producer contract violation... 不得
                 // 猜测为维护或竞争、不得用 message 补判" -- the write path never producing a
                 // recognized reason here is a bug in that path, not something to paper over with a
-                // guessed discriminant; the caller still gets a safe, generically-retryable
-                // rejection instead of a fabricated `ServerDraining` reason.
+                // guessed discriminant. It is reported as a typed `server_rejected` with no
+                // `details.reason` (FP2-B1: no untyped envelope on the Flow surface) rather than a
+                // fabricated `ServerDraining` reason.
                 other => {
                     tracing::error!(
                         reason = ?other,
                         "write path rejected with server_draining but no recognized reason; this is a producer contract violation"
                     );
-                    ApiError::Conflict("server_draining".to_string())
+                    ApiError::internal()
                 }
             }
         }
@@ -1892,7 +1892,7 @@ async fn replay_content_command(
     }
     let view = repository::fetch_object_view(&state.db, object_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     Ok(Some(accepted_change_from_row(view, existing.id)))
 }
 
@@ -1919,7 +1919,7 @@ async fn execute_content_command(
         .as_deref()
         .map(frame::decode_bytes)
         .transpose()
-        .map_err(|_| ApiError::BadRequest("expected_frontier is not valid base64".to_string()))?;
+        .map_err(|_| ApiError::invalid_update("expected_frontier is not valid base64".to_string()))?;
 
     let boot = bootstrap::load(&state.db, document_id).await?;
     let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|err| map_collab_error(&err))?;
@@ -2020,7 +2020,7 @@ async fn execute_content_command(
 
     let view = repository::fetch_object_view(&state.db, input.object_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     let object = super::query::object_view_from_row(view);
     Ok(AcceptedChange {
         accepted_seq: accepted.head_seq,
@@ -2098,7 +2098,7 @@ async fn execute_lifecycle_command(
     kind: LifecycleCommandType,
 ) -> Result<AcceptedChange, ApiError> {
     if input.expected_frontier.is_some() {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "expected_frontier is not accepted for archive/restore: this command never advances a document head"
                 .to_string(),
         ));
@@ -2115,13 +2115,13 @@ async fn execute_lifecycle_command(
 
     if let Some(existing) = repository::find_idempotent_event(&state.db, workspace_id, &input.idempotency_key).await? {
         if existing.event_type != event_type || existing.aggregate_id != input.object_id.to_string() {
-            return Err(ApiError::Conflict(
-                "idempotency_key was already used for a different operation".to_string(),
+            return Err(ApiError::idempotency_key_body_drift(
+                "idempotency_key was already used for a different operation",
             ));
         }
         let current = repository::fetch_object_view(&state.db, input.object_id)
             .await?
-            .ok_or(ApiError::Internal)?;
+            .ok_or_else(ApiError::internal)?;
         let mut change = accepted_change_from_row(current, existing.id);
         change.affected_object_ids = lifecycle_replay_affected_ids(&existing.metadata, input.object_id);
         return Ok(change);
@@ -2137,14 +2137,14 @@ async fn execute_lifecycle_command(
     // function's caller already checked `effective_permission` could still land as a committed
     // `archived`/`restored` transition). Reuses `fence_epoch_for_share` exactly as
     // `write::run_locked_phase` does for content commands: only a genuine epoch mismatch
-    // (`ApiError::Conflict`) means the caller's permission is stale; any other error (a
+    // (the fence's `policy_rejected`) means the caller's permission is stale; any other error (a
     // `lock_timeout` hit while waiting on the `FOR SHARE`, a dropped connection, ...) says
     // nothing about authorization and must propagate as a real `Err` rather than being folded
     // into a permanent, non-recoverable rejection -- the exact class of bug `12700c4` fixed for
     // the content write path, which this lifecycle path must not reintroduce.
     match authz::fence_epoch_for_share(&tx, workspace_id, checked_epoch).await {
         Ok(()) => {}
-        Err(ApiError::Conflict(_)) => {
+        Err(err) if err.kind() == ApiErrorKind::PolicyRejected => {
             let _ = tx.rollback().await;
             return Err(ApiError::policy_rejected(
                 "authz_epoch advanced since permission was checked; command rejected",
@@ -2160,16 +2160,20 @@ async fn execute_lifecycle_command(
     let locked = repository::lock_objects_for_update(&tx, &affected_object_ids).await?;
     if locked.len() != affected_object_ids.len() {
         let _ = tx.rollback().await;
-        return Err(ApiError::Conflict(
-            "the lifecycle impact set changed while it was being locked; retry".to_string(),
+        return Err(ApiError::stale_frontier(
+            "the lifecycle impact set changed while it was being locked; retry",
+            None,
+            None,
         ));
     }
 
     let rechecked = lifecycle_plan(&tx, workspace_id, input.object_id).await?;
     if rechecked != prepared {
         let _ = tx.rollback().await;
-        return Err(ApiError::Conflict(
-            "the lifecycle impact set changed after authorization; retry".to_string(),
+        return Err(ApiError::stale_frontier(
+            "the lifecycle impact set changed after authorization; retry",
+            None,
+            None,
         ));
     }
     if let Err(err) = authorize_lifecycle_plan(&tx, input, workspace_id, &rechecked).await {
@@ -2181,7 +2185,7 @@ async fn execute_lifecycle_command(
 
     if kind == LifecycleCommandType::Archive && root.lifecycle_status == "archived" {
         let _ = tx.rollback().await;
-        return Err(ApiError::Conflict("object is already archived".to_string()));
+        return Err(ApiError::invalid_update("object is already archived"));
     }
 
     let archived_at = if target_status == "archived" {
@@ -2207,8 +2211,10 @@ async fn execute_lifecycle_command(
     .await?;
     if changed != u64::try_from(affected_object_ids.len()).unwrap_or(u64::MAX) {
         let _ = tx.rollback().await;
-        return Err(ApiError::Conflict(
-            "the lifecycle impact set changed while it was being updated; retry".to_string(),
+        return Err(ApiError::stale_frontier(
+            "the lifecycle impact set changed while it was being updated; retry",
+            None,
+            None,
         ));
     }
 
@@ -2260,7 +2266,7 @@ async fn execute_lifecycle_command(
 
     let view = repository::fetch_object_view(&state.db, input.object_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     let mut change = accepted_change_from_row(view, event_id);
     change.affected_object_ids = affected_object_ids;
     Ok(change)
@@ -2616,10 +2622,16 @@ mod typed_error_mapping_tests {
             Some(json!({ "reason": "maintenance_window" })),
         ));
 
-        assert!(matches!(missing_reason, ApiError::Conflict(_)));
-        assert!(matches!(unknown_reason, ApiError::Conflict(_)));
-        assert_eq!(missing_reason.kind(), ApiErrorKind::Unclassified);
-        assert_eq!(unknown_reason.kind(), ApiErrorKind::Unclassified);
+        // FP2-B1: still no fabricated `server_draining` reason, but no longer an untyped legacy
+        // envelope either -- a producer contract violation is reported as `server_rejected`
+        // without any `details.reason` (no approved reason names it).
+        for err in [missing_reason, unknown_reason] {
+            assert_eq!(err.kind(), ApiErrorKind::ServerRejected);
+            let ApiError::Typed { details, .. } = err else {
+                panic!("expected a typed error");
+            };
+            assert!(details.is_none(), "no reason may be fabricated: {details:?}");
+        }
     }
 
     #[test]
@@ -3529,7 +3541,7 @@ mod database_tests {
             .await
             .expect("archive task joins")
             .expect_err("the transaction must reject a rederived lifecycle plan");
-        assert!(matches!(err, ApiError::Conflict(_)), "type drift: {err:?}");
+        assert!(err.kind() == ApiErrorKind::StaleFrontier, "type drift: {err:?}");
         assert_eq!(lifecycle_statuses(&scratch.db, &[collection]).await[0].1, "active");
         assert_eq!(lifecycle_event_count(&scratch.db, collection).await, 0);
 
@@ -4587,7 +4599,7 @@ mod database_tests {
         let rejected = execute_command(&state, command_input("archive", serde_json::json!({})))
             .await
             .expect_err("archiving an already-archived object is a conflict");
-        assert!(matches!(rejected, ApiError::Conflict(_)), "{rejected:?}");
+        assert!(rejected.kind() == ApiErrorKind::InvalidUpdate, "{rejected:?}");
 
         // (5) the workspace feature flag producer
         set_flow_feature(

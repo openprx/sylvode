@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use super::collab::bootstrap;
 use super::projection;
-use crate::error::ApiError;
+use crate::error::{ApiError, ApiErrorKind};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProjectionRebuildResult {
@@ -66,13 +66,13 @@ struct SearchRow {
 fn projection_hash(row: &ProjectionRow) -> Result<String, ApiError> {
     serde_json::to_vec(row)
         .map(|bytes| bootstrap::content_hash(&bytes))
-        .map_err(|_| ApiError::Internal)
+        .map_err(|_| ApiError::internal())
 }
 
 fn search_hash(row: &SearchRow) -> Result<String, ApiError> {
     serde_json::to_vec(row)
         .map(|bytes| bootstrap::content_hash(&bytes))
-        .map_err(|_| ApiError::Internal)
+        .map_err(|_| ApiError::internal())
 }
 
 async fn projection_row<C: ConnectionTrait>(conn: &C, object_id: Uuid) -> Result<Option<ProjectionRow>, ApiError> {
@@ -116,34 +116,36 @@ pub async fn rebuild_projection(
     ))
     .one(db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     let boot = bootstrap::load(db, identity.document).await?;
     if let Some(expected) = expected_head_seq
         && expected != boot.head_seq
     {
-        return Err(ApiError::Conflict(
-            "expected_head_seq does not match current head".to_string(),
+        return Err(ApiError::stale_frontier(
+            "expected_head_seq does not match current head",
+            Some(boot.head_seq),
+            None,
         ));
     }
     if execute && expected_head_seq.is_none() {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "expected_head_seq is required for execute".to_string(),
         ));
     }
 
-    let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|_| ApiError::Internal)?;
+    let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|_| ApiError::internal())?;
     for update in &boot.tail_updates {
-        engine.import_update(&update.bytes).map_err(|_| ApiError::Internal)?;
+        engine.import_update(&update.bytes).map_err(|_| ApiError::internal())?;
     }
     if engine.frontier().as_bytes() != boot.head_frontier.as_slice() {
-        return Err(ApiError::Conflict("resync_required".to_string()));
+        return Err(ApiError::resync_required("resync_required", None));
     }
-    let semantic = engine.semantic_snapshot().map_err(|_| ApiError::Internal)?;
+    let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;
     let desired = ProjectionRow {
         document_seq: boot.head_seq,
         document_frontier: boot.head_frontier.clone(),
-        title: engine.title().map_err(|_| ApiError::Internal)?,
-        state: projection::state_json(&semantic).map_err(|_| ApiError::Internal)?,
+        title: engine.title().map_err(|_| ApiError::internal())?,
+        state: projection::state_json(&semantic).map_err(|_| ApiError::internal())?,
         plain_text: projection::plain_text(&semantic),
     };
     let before = projection_row(db, object_id).await?;
@@ -161,11 +163,13 @@ pub async fn rebuild_projection(
         ))
         .one(&tx)
         .await?
-        .ok_or_else(|| ApiError::NotFound("collab document not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("collab document not found".to_string()))?;
         if locked.head_seq != boot.head_seq || locked.head_frontier != boot.head_frontier {
             tx.rollback().await?;
-            return Err(ApiError::Conflict(
-                "document head changed during projection rebuild".to_string(),
+            return Err(ApiError::stale_frontier(
+                "document head changed during projection rebuild",
+                Some(locked.head_seq),
+                None,
             ));
         }
         tx.execute(Statement::from_sql_and_values(
@@ -188,12 +192,11 @@ pub async fn rebuild_projection(
         ))
         .await?;
         tx.commit().await?;
-        let persisted = projection_row(db, object_id)
-            .await?
-            .ok_or_else(|| ApiError::Conflict("projection missing after rebuild".to_string()))?;
+        let persisted = projection_row(db, object_id).await?.ok_or_else(ApiError::internal)?;
         if projection_hash(&persisted)? != after_hash {
-            return Err(ApiError::Conflict(
-                "projection checksum mismatch after rebuild".to_string(),
+            return Err(ApiError::typed(
+                ApiErrorKind::ServerRejected,
+                "projection checksum mismatch after rebuild",
             ));
         }
     }
@@ -225,19 +228,19 @@ pub async fn rebuild_search(
     ))
     .one(db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
-    let source = projection_row(db, object_id)
-        .await?
-        .ok_or_else(|| ApiError::Conflict("accepted projection missing".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
+    let source = projection_row(db, object_id).await?.ok_or_else(ApiError::internal)?;
     if let Some(expected) = expected_head_seq
         && expected != source.document_seq
     {
-        return Err(ApiError::Conflict(
-            "expected_head_seq does not match projection head".to_string(),
+        return Err(ApiError::stale_frontier(
+            "expected_head_seq does not match projection head",
+            Some(source.document_seq),
+            None,
         ));
     }
     if execute && expected_head_seq.is_none() {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "expected_head_seq is required for execute".to_string(),
         ));
     }
@@ -262,17 +265,17 @@ pub async fn rebuild_search(
         ))
         .one(&tx)
         .await?
-        .ok_or_else(|| ApiError::NotFound("collab document not found".to_string()))?;
-        let locked_source = projection_row(&tx, object_id)
-            .await?
-            .ok_or_else(|| ApiError::Conflict("accepted projection missing".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("collab document not found".to_string()))?;
+        let locked_source = projection_row(&tx, object_id).await?.ok_or_else(ApiError::internal)?;
         if locked.head_seq != source.document_seq
             || locked.head_frontier != source.document_frontier
             || projection_hash(&locked_source)? != projection_hash(&source)?
         {
             tx.rollback().await?;
-            return Err(ApiError::Conflict(
-                "projection changed during search rebuild".to_string(),
+            return Err(ApiError::stale_frontier(
+                "projection changed during search rebuild",
+                Some(locked.head_seq),
+                None,
             ));
         }
         tx.execute(Statement::from_sql_and_values(
@@ -293,11 +296,12 @@ pub async fn rebuild_search(
         ))
         .await?;
         tx.commit().await?;
-        let persisted = search_row(db, object_id)
-            .await?
-            .ok_or_else(|| ApiError::Conflict("search row missing after rebuild".to_string()))?;
+        let persisted = search_row(db, object_id).await?.ok_or_else(ApiError::internal)?;
         if search_hash(&persisted)? != after_hash {
-            return Err(ApiError::Conflict("search checksum mismatch after rebuild".to_string()));
+            return Err(ApiError::typed(
+                ApiErrorKind::ServerRejected,
+                "search checksum mismatch after rebuild",
+            ));
         }
     }
 
@@ -320,7 +324,7 @@ mod database_tests {
     use uuid::Uuid;
 
     use super::{rebuild_projection, rebuild_search};
-    use crate::error::ApiError;
+    use crate::error::ApiErrorKind;
 
     const TEST_DATABASE_URL_ENV: &str = "OPENPR_TEST_DATABASE_URL";
 
@@ -507,7 +511,7 @@ mod database_tests {
         assert_eq!(clean.before_hash.as_deref(), Some(clean.after_hash.as_str()));
         assert!(matches!(
             rebuild_projection(&scratch.db, object_id, Some(1), true).await,
-            Err(ApiError::Conflict(_))
+            Err(ref e) if e.kind() == ApiErrorKind::StaleFrontier
         ));
 
         scratch
@@ -554,7 +558,7 @@ mod database_tests {
         assert_eq!(rebuilt_search_title, "canonical title");
         assert!(matches!(
             rebuild_search(&scratch.db, object_id, Some(1), true).await,
-            Err(ApiError::Conflict(_))
+            Err(ref e) if e.kind() == ApiErrorKind::StaleFrontier
         ));
 
         scratch.drop_self().await;

@@ -37,23 +37,23 @@ pub async fn document_fingerprint(db: &DatabaseConnection, document_id: Uuid) ->
     let boot = bootstrap::load(db, document_id).await?;
     let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|error| {
         tracing::error!(%error, %document_id, "document fingerprint snapshot decode failed");
-        ApiError::Internal
+        ApiError::internal()
     })?;
     for update in &boot.tail_updates {
         engine.import_update(&update.bytes).map_err(|error| {
             tracing::error!(%error, %document_id, seq = update.seq, "document fingerprint tail replay failed");
-            ApiError::Internal
+            ApiError::internal()
         })?;
     }
     if engine.frontier().as_bytes() != boot.head_frontier.as_slice() {
         tracing::error!(%document_id, "document fingerprint replay frontier mismatch");
-        return Err(ApiError::Conflict("resync_required".to_string()));
+        return Err(ApiError::resync_required("resync_required", None));
     }
     let semantic_hash = engine
         .semantic_snapshot()
         .map_err(|error| {
             tracing::error!(%error, %document_id, "document fingerprint semantic snapshot failed");
-            ApiError::Internal
+            ApiError::internal()
         })?
         .semantic_hash();
 
@@ -68,7 +68,7 @@ pub async fn document_fingerprint(db: &DatabaseConnection, document_id: Uuid) ->
     ))
     .one(db)
     .await?
-    .ok_or_else(|| ApiError::Conflict("document projection missing during integrity verification".to_string()))?;
+    .ok_or_else(ApiError::internal)?;
 
     Ok(DocumentFingerprint {
         workspace_id: identity.workspace_id,

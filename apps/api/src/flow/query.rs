@@ -163,7 +163,7 @@ async fn scan_projection_lag_within_budget(
             return Ok(None);
         };
         if visible.len() != batch_len {
-            return Err(ApiError::Internal);
+            return Err(ApiError::internal());
         }
         for (row, is_visible) in batch.into_iter().zip(visible) {
             examined = examined.saturating_add(1);
@@ -224,7 +224,7 @@ async fn scan_history_within_budget(
 pub fn validate_limit(limit: Option<u64>) -> Result<u64, ApiError> {
     match limit {
         None => Ok(DEFAULT_LIST_LIMIT),
-        Some(0) => Err(ApiError::BadRequest("limit must be at least 1".to_string())),
+        Some(0) => Err(ApiError::invalid_update("limit must be at least 1".to_string())),
         Some(value) if value > MAX_LIST_LIMIT => Err(ApiError::limit_exceeded(
             format!("limit must be at most {MAX_LIST_LIMIT}"),
             "page_size",
@@ -271,7 +271,7 @@ impl Render {
         match raw {
             None | Some("semantic_json") => Ok(Self::SemanticJson),
             Some("markdown") => Ok(Self::Markdown),
-            Some(other) => Err(ApiError::BadRequest(format!(
+            Some(other) => Err(ApiError::invalid_update(format!(
                 "render must be semantic_json or markdown, got '{other}'"
             ))),
         }
@@ -287,10 +287,10 @@ pub async fn get_object(
     let object_id = access.object_id();
     let row = repository::fetch_object_view(&state.db, object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     runtime::runtime().ensure_workspace_accepting(row.workspace_id)?;
     if row.workspace_id != access.workspace_id() {
-        return Err(ApiError::NotFound("flow object not found".to_string()));
+        return Err(ApiError::not_found("flow object not found".to_string()));
     }
 
     // This package ships no content commands, so `document_seq` never advances past 0 for any
@@ -299,7 +299,7 @@ pub async fn get_object(
     if let Some(requested) = at_seq
         && requested != row.document_seq
     {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::invalid_update(format!(
             "at_seq {requested} is out of range; this object's only available seq is {}",
             row.document_seq
         )));
@@ -308,7 +308,7 @@ pub async fn get_object(
     let mut view = object_view_from_row(row);
     if render == Render::Markdown {
         let snapshot: SemanticSnapshot =
-            serde_json::from_value(view.semantic_content.clone()).map_err(|_| ApiError::Internal)?;
+            serde_json::from_value(view.semantic_content.clone()).map_err(|_| ApiError::internal())?;
         view.semantic_content = json!({ "rendered": projection::render_markdown(&view.title, &snapshot) });
     }
     if !policy::ensure_epoch_current(state, access.context()).await? {
@@ -345,18 +345,18 @@ pub async fn get_bootstrap(
     if let Some(raw) = known_frontier.as_deref() {
         base64::engine::general_purpose::STANDARD
             .decode(raw)
-            .map_err(|_| ApiError::BadRequest("invalid_update: known_frontier is not valid base64".to_string()))?;
+            .map_err(|_| ApiError::invalid_update("invalid_update: known_frontier is not valid base64".to_string()))?;
     }
 
     let row = repository::fetch_object_view(&state.db, object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     runtime::runtime().ensure_workspace_accepting(row.workspace_id)?;
     if row.workspace_id != access.workspace_id() {
-        return Err(ApiError::NotFound("flow object not found".to_string()));
+        return Err(ApiError::not_found("flow object not found".to_string()));
     }
     if matches!(row.object_type.as_str(), "collection" | "record") {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
             "collection and record documents are server-only; use typed collection endpoints".to_string(),
         ));
     }
@@ -379,7 +379,7 @@ pub async fn get_bootstrap(
         // whose advancement is mid-retry) can still land here. v0.4 has no delete/retention
         // compaction path before v0.8 to fall back on either way, so the only fail-closed response
         // available is the same one the loader itself already uses for a corrupted tail.
-        return Err(ApiError::Conflict("resync_required".to_string()));
+        return Err(ApiError::resync_required("resync_required", None));
     }
 
     let response = Bootstrap {
@@ -431,11 +431,11 @@ pub async fn list_objects(
     params: ListObjectsParams,
 ) -> Result<Option<FlowObjectListResponse>, ApiError> {
     if params.workspace_id != access.workspace_id() {
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
     runtime::runtime().ensure_workspace_accepting(params.workspace_id)?;
     if params.project_id.is_some() && params.unprojected {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "project_id and unprojected=true are mutually exclusive".to_string(),
         ));
     }
@@ -478,7 +478,7 @@ pub async fn list_objects(
 }
 
 fn navigator_positions(state: serde_json::Value) -> Result<std::collections::HashMap<Uuid, String>, ApiError> {
-    let snapshot: SemanticSnapshot = serde_json::from_value(state).map_err(|_| ApiError::Internal)?;
+    let snapshot: SemanticSnapshot = serde_json::from_value(state).map_err(|_| ApiError::internal())?;
     let mut positions = std::collections::HashMap::new();
     for (entry_id, node) in snapshot.nodes {
         if node.deleted || node.parent.is_some() || node.kind != NodeKind::NavigatorNode {
@@ -506,7 +506,7 @@ pub async fn get_navigator(
 ) -> Result<Option<NavigatorResponse>, ApiError> {
     let depth = depth.unwrap_or(MAX_NAVIGATOR_DEPTH);
     if !(1..=MAX_NAVIGATOR_DEPTH).contains(&depth) {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::invalid_update(format!(
             "depth must be between 1 and {MAX_NAVIGATOR_DEPTH}"
         )));
     }
@@ -514,14 +514,14 @@ pub async fn get_navigator(
     let root_object_id = repository::ensure_navigator_root(&state.db, access.workspace_id(), project_id).await?;
     let ordering = repository::fetch_navigator_document(&state.db, access.workspace_id(), project_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("navigator for the requested scope not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("navigator for the requested scope not found".to_string()))?;
     if ordering.object_id != root_object_id {
         tracing::error!(%root_object_id, ordering_object_id = %ordering.object_id, "navigator root predicates disagreed");
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
     let ordering_view = repository::fetch_object_view(&state.db, ordering.object_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     let positions = navigator_positions(ordering_view.projection_state)?;
     let rows = repository::fetch_navigator_nodes(
         &state.db,
@@ -574,10 +574,10 @@ pub async fn get_history(
     let object_id = access.object_id();
     let row = repository::fetch_object_view(&state.db, object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     runtime::runtime().ensure_workspace_accepting(row.workspace_id)?;
     if row.workspace_id != access.workspace_id() {
-        return Err(ApiError::NotFound("flow object not found".to_string()));
+        return Err(ApiError::not_found("flow object not found".to_string()));
     }
     let limit = validate_limit(limit)?;
     let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
@@ -645,10 +645,10 @@ pub async fn get_object_diff(
     let object_id = access.object_id();
     let rows = repository::fetch_diff_history(&state.db, object_id, to_seq, limits::AUTHORIZED_SCAN_ROWS_MAX)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     runtime::runtime().ensure_workspace_accepting(rows.workspace_id)?;
     if rows.workspace_id != access.workspace_id() {
-        return Err(ApiError::NotFound("flow object not found".to_string()));
+        return Err(ApiError::not_found("flow object not found".to_string()));
     }
     if to_seq > rows.head_seq {
         let head_frontier = base64::engine::general_purpose::STANDARD.encode(&rows.head_frontier);
@@ -733,7 +733,7 @@ pub async fn get_object_diff(
         .await
         .map_err(|error| {
             tracing::error!(%error, "diff replay isolation task failed");
-            ApiError::Internal
+            ApiError::internal()
         })?;
     let result = match isolated {
         Ok(result) => result,
@@ -804,7 +804,7 @@ fn isolated_diff_error(
         IsolatedApplyError::Collab(_) => history_invalid(),
         IsolatedApplyError::HostFailure(error) => {
             tracing::error!(%error, %object_id, "diff replay isolation host failed");
-            ApiError::Internal
+            ApiError::internal()
         }
         IsolatedApplyError::UnsupportedPlatform { os } => {
             tracing::error!(
@@ -851,7 +851,7 @@ pub async fn get_projection_lag(
     params: ProjectionLagParams,
 ) -> Result<Option<ProjectionLagResponse>, ApiError> {
     if params.workspace_id != access.workspace_id() {
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
     runtime::runtime().ensure_workspace_accepting(params.workspace_id)?;
     let limit = validate_limit(params.limit)?;
@@ -943,15 +943,15 @@ fn encode_cursor(created_at: DateTime<Utc>, id: Uuid) -> String {
 fn decode_cursor(raw: &str) -> Result<(DateTime<Utc>, Uuid), ApiError> {
     let bytes = BASE64_URL
         .decode(raw)
-        .map_err(|_| ApiError::BadRequest("cursor is not valid".to_string()))?;
-    let text = String::from_utf8(bytes).map_err(|_| ApiError::BadRequest("cursor is not valid".to_string()))?;
+        .map_err(|_| ApiError::invalid_update("cursor is not valid".to_string()))?;
+    let text = String::from_utf8(bytes).map_err(|_| ApiError::invalid_update("cursor is not valid".to_string()))?;
     let (created_at_raw, id_raw) = text
         .split_once('|')
-        .ok_or_else(|| ApiError::BadRequest("cursor is not valid".to_string()))?;
+        .ok_or_else(|| ApiError::invalid_update("cursor is not valid".to_string()))?;
     let created_at = DateTime::parse_from_rfc3339(created_at_raw)
-        .map_err(|_| ApiError::BadRequest("cursor is not valid".to_string()))?
+        .map_err(|_| ApiError::invalid_update("cursor is not valid".to_string()))?
         .with_timezone(&Utc);
-    let id = Uuid::parse_str(id_raw).map_err(|_| ApiError::BadRequest("cursor is not valid".to_string()))?;
+    let id = Uuid::parse_str(id_raw).map_err(|_| ApiError::invalid_update("cursor is not valid".to_string()))?;
     Ok((created_at, id))
 }
 

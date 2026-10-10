@@ -523,7 +523,7 @@ fn isolated_apply_rejection(
                 document_id = %document_id,
                 "collab write: isolated apply host failure"
             );
-            Err(ApiError::Internal)
+            Err(ApiError::internal())
         }
         IsolatedApplyError::UnsupportedPlatform { os } => {
             tracing::error!(
@@ -588,7 +588,7 @@ pub(crate) async fn hydrate_and_apply(
         Ok(None) => {
             let boot = match bootstrap::load(db, document_id).await {
                 Ok(boot) => boot,
-                Err(ApiError::Conflict(_)) => {
+                Err(err) if err.kind() == ApiErrorKind::ResyncRequired => {
                     return Ok(HydrateOutcome::Rejected(rejected(
                         RejectedCode::ResyncRequired,
                         true,
@@ -600,12 +600,12 @@ pub(crate) async fn hydrate_and_apply(
             };
             let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|err| {
                 tracing::error!(error = %err, "collab write: bootstrap snapshot failed to decode");
-                ApiError::Internal
+                ApiError::internal()
             })?;
             for tail in &boot.tail_updates {
                 engine.import_update(&tail.bytes).map_err(|err| {
                     tracing::error!(error = %err, "collab write: bootstrap tail update failed to re-apply");
-                    ApiError::Internal
+                    ApiError::internal()
                 })?;
             }
             engine
@@ -622,7 +622,7 @@ pub(crate) async fn hydrate_and_apply(
     // below) so a hot document's next write hits cache even after this one started from a miss.
     let base_snapshot_bytes = base_engine.export_snapshot().map_err(|err| {
         tracing::error!(error = %err, "collab write: base engine export_snapshot failed before isolated apply");
-        ApiError::Internal
+        ApiError::internal()
     })?;
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let decoded_bytes_hint = base_snapshot_bytes.len() as u64;
@@ -659,7 +659,7 @@ pub(crate) async fn hydrate_and_apply(
     .await
     .map_err(|err| {
         tracing::error!(error = %err, "collab write: isolated apply task panicked or was cancelled");
-        ApiError::Internal
+        ApiError::internal()
     })?;
 
     let candidate_snapshot = match isolated_result {
@@ -674,20 +674,20 @@ pub(crate) async fn hydrate_and_apply(
     // on attacker-controlled input directly.
     let candidate = LoroCollabEngine::load(&candidate_snapshot).map_err(|err| {
         tracing::error!(error = %err, "collab write: reload of isolated-apply result snapshot failed");
-        ApiError::Internal
+        ApiError::internal()
     })?;
     let after_frontier = candidate.frontier().as_bytes().to_vec();
 
     let semantic = candidate.semantic_snapshot().map_err(|err| {
         tracing::error!(error = %err, "collab write: semantic_snapshot failed after a successful isolated apply");
-        ApiError::Internal
+        ApiError::internal()
     })?;
 
     let title = candidate.title().map_err(|err| {
         tracing::error!(error = %err, "collab write: title read failed after a successful isolated apply");
-        ApiError::Internal
+        ApiError::internal()
     })?;
-    let state_json = projection::state_json(&semantic).map_err(|_| ApiError::Internal)?;
+    let state_json = projection::state_json(&semantic).map_err(|_| ApiError::internal())?;
     let plain_text = projection::plain_text(&semantic);
     let content_hash_hex = content_hash(bytes);
 
@@ -759,7 +759,7 @@ async fn stage_locked_writes(
     set_locked_phase_statement_budgets(tx, 1).await?;
 
     // [layer 1] the commit-time epoch fence, held to commit. Only a genuine epoch mismatch
-    // (`ApiError::Conflict` -- `authz_epoch` really did move past `checked_epoch`) means the
+    // (the fence's `policy_rejected` -- `authz_epoch` really did move past `checked_epoch`) means the
     // caller's permission is stale and must come back as a permanent, non-recoverable
     // `PolicyRejected`. Any other error here (a `lock_timeout`/`statement_timeout` hit while
     // waiting on the `FOR SHARE`, a dropped connection, ...) says nothing about authorization at
@@ -769,7 +769,7 @@ async fn stage_locked_writes(
     // policy rejection (never retried, since `EpochMismatch` is a terminal branch below).
     match fence_epoch_for_share(tx, request.workspace_id, request.checked_epoch).await {
         Ok(()) => {}
-        Err(ApiError::Conflict(_)) => return Ok(StagedOutcome::EpochMismatch),
+        Err(err) if err.kind() == ApiErrorKind::PolicyRejected => return Ok(StagedOutcome::EpochMismatch),
         Err(err) => return Err(err),
     }
 
@@ -836,7 +836,7 @@ pub(crate) async fn stage_one_document(
     ))
     .one(tx)
     .await?
-    .ok_or(ApiError::Internal)?;
+    .ok_or_else(ApiError::internal)?;
 
     if locked.head_seq != prepared.observed.head_seq {
         return Ok(StagedOutcome::Rebase);
@@ -962,7 +962,7 @@ pub(crate) async fn stage_one_document(
     ))
     .one(tx)
     .await?
-    .ok_or(ApiError::Internal)?;
+    .ok_or_else(ApiError::internal)?;
 
     Ok(StagedOutcome::Ready(StagedWrite {
         event_id: accepted_event.event_id,

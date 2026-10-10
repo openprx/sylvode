@@ -50,7 +50,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::error::ApiError;
+use crate::error::{ApiError, ApiErrorKind};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, FlowEventOutcome, insert_flow_event};
 
 use super::collab::{authz, limits};
@@ -189,10 +189,10 @@ async fn replay(
             "idempotency_key was already used for a different operation",
         ));
     }
-    let relation_id = payload_uuid(&event.payload, "relation_id").ok_or(ApiError::Internal)?;
+    let relation_id = payload_uuid(&event.payload, "relation_id").ok_or_else(ApiError::internal)?;
     let current = repository::fetch_object_view(&state.db, input.object_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     let mut change = accepted_change_from_row(current, event.id);
     change.affected_object_ids = [
         payload_uuid(&event.payload, "source_object_id"),
@@ -205,9 +205,9 @@ async fn replay(
         GovernanceCommandType::Link => json!({
             "relation": {
                 "relation_id": relation_id,
-                "relation_type": event.payload.get("relation_type").ok_or(ApiError::Internal)?,
+                "relation_type": event.payload.get("relation_type").ok_or_else(ApiError::internal)?,
                 "source_object_id": input.object_id,
-                "target_object_id": payload_uuid(&event.payload, "target_object_id").ok_or(ApiError::Internal)?,
+                "target_object_id": payload_uuid(&event.payload, "target_object_id").ok_or_else(ApiError::internal)?,
             },
             "existing_document_cardinality": 0,
         }),
@@ -216,7 +216,7 @@ async fn replay(
             "event_id": event.id,
             "existing_document_cardinality": 0,
         }),
-        GovernanceCommandType::MoveObject => return Err(ApiError::Internal),
+        GovernanceCommandType::MoveObject => return Err(ApiError::internal()),
     });
     Ok(Some(change))
 }
@@ -299,7 +299,7 @@ pub async fn execute_command(
     match kind {
         GovernanceCommandType::Link => execute_link(state, input, workspace_id, checked_epoch).await,
         GovernanceCommandType::Unlink => execute_unlink(state, input, workspace_id, checked_epoch).await,
-        GovernanceCommandType::MoveObject => Err(ApiError::Internal),
+        GovernanceCommandType::MoveObject => Err(ApiError::internal()),
     }
 }
 
@@ -334,13 +334,13 @@ async fn execute_link(
     repository::fetch_object_workspace(&state.db, payload.target_object_id)
         .await?
         .filter(|target_workspace| *target_workspace == workspace_id)
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     authorize_both(&state.db, input, workspace_id, payload.target_object_id).await?;
 
     let tx = state.db.begin().await?;
     match authz::fence_epoch_for_share(&tx, workspace_id, checked_epoch).await {
         Ok(()) => {}
-        Err(ApiError::Conflict(_)) => {
+        Err(err) if err.kind() == ApiErrorKind::PolicyRejected => {
             let _ = tx.rollback().await;
             return Err(ApiError::policy_rejected(
                 "authz_epoch advanced since relation permission was checked",
@@ -415,7 +415,7 @@ async fn execute_link(
             None,
         )
         .await?
-        .ok_or(ApiError::Internal);
+        .ok_or_else(ApiError::internal);
     }
     tx.commit().await?;
     build_change(
@@ -454,13 +454,13 @@ async fn execute_unlink(
     let relation = find_relation(&state.db, payload.relation_id)
         .await?
         .filter(|row| row.workspace_id == workspace_id && row.source_object_id == input.object_id)
-        .ok_or_else(|| ApiError::NotFound("flow relation not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow relation not found".to_string()))?;
     authorize_both(&state.db, input, workspace_id, relation.target_object_id).await?;
 
     let tx = state.db.begin().await?;
     match authz::fence_epoch_for_share(&tx, workspace_id, checked_epoch).await {
         Ok(()) => {}
-        Err(ApiError::Conflict(_)) => {
+        Err(err) if err.kind() == ApiErrorKind::PolicyRejected => {
             let _ = tx.rollback().await;
             return Err(ApiError::policy_rejected(
                 "authz_epoch advanced since relation permission was checked",
@@ -483,7 +483,7 @@ async fn execute_unlink(
     ))
     .one(&tx)
     .await?
-    .ok_or_else(|| ApiError::NotFound("flow relation not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("flow relation not found".to_string()))?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "DELETE FROM flow_relations WHERE id = $1",
@@ -512,7 +512,7 @@ async fn execute_unlink(
             Some(payload.relation_id),
         )
         .await?
-        .ok_or(ApiError::Internal);
+        .ok_or_else(ApiError::internal);
     }
     tx.commit().await?;
     build_change(
@@ -577,7 +577,7 @@ async fn build_change(
 ) -> Result<AcceptedChange, ApiError> {
     let current = repository::fetch_object_view(&state.db, input.object_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     let mut change = accepted_change_from_row(current, event_id);
     change.affected_object_ids = vec![input.object_id, target_object_id];
     change.command_result = Some(linked_relation_type.map_or_else(
@@ -656,7 +656,7 @@ fn cursor_key(secret: &str) -> Result<LessSafeKey, ApiError> {
     digest.update(secret.as_bytes());
     UnboundKey::new(&aead::CHACHA20_POLY1305, &digest.finalize())
         .map(LessSafeKey::new)
-        .map_err(|_| ApiError::Internal)
+        .map_err(|_| ApiError::internal())
 }
 
 #[allow(clippy::print_stderr)]
@@ -669,12 +669,12 @@ fn encode_cursor(secret: &str, created_at: DateTime<Utc>, id: Uuid) -> Result<St
     let mut nonce_bytes = [0u8; aead::NONCE_LEN];
     SystemRandom::new()
         .fill(&mut nonce_bytes)
-        .map_err(|_| ApiError::Internal)?;
+        .map_err(|_| ApiError::internal())?;
     let nonce = Nonce::assume_unique_for_key(nonce_bytes);
     let mut encrypted = format!("{}|{id}", created_at.to_rfc3339()).into_bytes();
     cursor_key(secret)?
         .seal_in_place_append_tag(nonce, Aad::from(CURSOR_AAD), &mut encrypted)
-        .map_err(|_| ApiError::Internal)?;
+        .map_err(|_| ApiError::internal())?;
     let mut token = Vec::with_capacity(1 + aead::NONCE_LEN + encrypted.len());
     token.push(CURSOR_VERSION);
     token.extend_from_slice(&nonce_bytes);
@@ -894,10 +894,10 @@ pub async fn list_relations(
                 properties: row.properties,
                 created_at: row.created_at.to_rfc3339(),
                 other_object: Box::new(RelatedObjectView {
-                    id: row.other_id.ok_or(ApiError::Internal)?,
-                    object_type: row.other_object_type.ok_or(ApiError::Internal)?,
-                    title: row.other_title.ok_or(ApiError::Internal)?,
-                    lifecycle_status: row.other_lifecycle_status.ok_or(ApiError::Internal)?,
+                    id: row.other_id.ok_or_else(ApiError::internal)?,
+                    object_type: row.other_object_type.ok_or_else(ApiError::internal)?,
+                    title: row.other_title.ok_or_else(ApiError::internal)?,
+                    lifecycle_status: row.other_lifecycle_status.ok_or_else(ApiError::internal)?,
                     project_id: row.other_project_id,
                 }),
             })

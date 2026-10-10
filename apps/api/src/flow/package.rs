@@ -145,7 +145,7 @@ pub fn build_package(
     validate_manifest_compatibility(&manifest)?;
     validate_member_layout(&manifest, &manifest.members)?;
 
-    let manifest_bytes = serde_jcs::to_vec(&manifest).map_err(|_| ApiError::Internal)?;
+    let manifest_bytes = serde_jcs::to_vec(&manifest).map_err(|_| ApiError::internal())?;
     let checksums = render_checksums(&manifest_bytes, &manifest.members);
     let cursor = Cursor::new(Vec::new());
     let mut writer = ZipWriter::new(cursor);
@@ -155,19 +155,19 @@ pub fn build_package(
         .unix_permissions(0o600);
     writer
         .start_file(MANIFEST_PATH, options)
-        .map_err(|_| ApiError::Internal)?;
-    writer.write_all(&manifest_bytes).map_err(|_| ApiError::Internal)?;
+        .map_err(|_| ApiError::internal())?;
+    writer.write_all(&manifest_bytes).map_err(|_| ApiError::internal())?;
     writer
         .start_file(CHECKSUMS_PATH, options)
-        .map_err(|_| ApiError::Internal)?;
-    writer.write_all(&checksums).map_err(|_| ApiError::Internal)?;
+        .map_err(|_| ApiError::internal())?;
+    writer.write_all(&checksums).map_err(|_| ApiError::internal())?;
     for input in inputs {
         writer
             .start_file(&input.path, options)
-            .map_err(|_| ApiError::Internal)?;
-        writer.write_all(&input.bytes).map_err(|_| ApiError::Internal)?;
+            .map_err(|_| ApiError::internal())?;
+        writer.write_all(&input.bytes).map_err(|_| ApiError::internal())?;
     }
-    let bytes = writer.finish().map_err(|_| ApiError::Internal)?.into_inner();
+    let bytes = writer.finish().map_err(|_| ApiError::internal())?.into_inner();
     let package_sha256 = sha256_hex(&bytes);
     Ok(BuiltPackage {
         bytes,

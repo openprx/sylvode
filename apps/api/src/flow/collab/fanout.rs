@@ -74,7 +74,7 @@ pub async fn publish_document_update(
     ))
     .one(db)
     .await?
-    .ok_or(ApiError::Internal)?;
+    .ok_or_else(ApiError::internal)?;
     Ok(notice.id)
 }
 

@@ -352,10 +352,10 @@ async fn source_actor(
 ) -> Result<(repository::ObjectViewRow, BridgeActor), ApiError> {
     let source = repository::fetch_object_view(&state.db, source_object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     let (actor_id, role, is_bot) = policy::resolve_flow_principal(state, extensions, source.workspace_id)
         .await
-        .map_err(|_| ApiError::NotFound("flow object not found".to_string()))?;
+        .map_err(|_| ApiError::not_found("flow object not found".to_string()))?;
     let principal_kind = if is_bot { "bot" } else { "user" };
     let flow_level = authz::effective_permission(
         &state.db,
@@ -366,9 +366,9 @@ async fn source_actor(
         &role,
     )
     .await
-    .map_err(|_| ApiError::NotFound("flow object not found".to_string()))?;
+    .map_err(|_| ApiError::not_found("flow object not found".to_string()))?;
     if flow_level < minimum {
-        return Err(ApiError::NotFound("flow object not found".to_string()));
+        return Err(ApiError::not_found("flow object not found".to_string()));
     }
     Ok((
         source,
@@ -418,7 +418,7 @@ async fn target_view<C: ConnectionTrait>(
             .await?
         }
         _ => {
-            return Err(ApiError::BadRequest(
+            return Err(ApiError::invalid_update(
                 "target_type must be form or form_record".to_string(),
             ));
         }
@@ -540,11 +540,11 @@ async fn lock_and_reauthorize_reference(
             ))
             .one(tx)
             .await?
-            .ok_or_else(|| ApiError::NotFound("bridge target not found".to_string()))?
+            .ok_or_else(|| ApiError::not_found("bridge target not found".to_string()))?
             .form_id
         }
         _ => {
-            return Err(ApiError::BadRequest(
+            return Err(ApiError::invalid_update(
                 "target_type must be form or form_record".to_string(),
             ));
         }
@@ -557,10 +557,10 @@ async fn lock_and_reauthorize_reference(
     .await?;
     let target = target_view(tx, source.workspace_id, target_type, target_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("bridge target not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("bridge target not found".to_string()))?;
     let permission = target_permission(tx, actor, &target)
         .await?
-        .ok_or_else(|| ApiError::NotFound("bridge target not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("bridge target not found".to_string()))?;
     Ok((target, permission))
 }
 
@@ -578,10 +578,10 @@ pub async fn create_reference(
     origin: CommandOrigin,
 ) -> Result<ReferenceReceipt, ApiError> {
     if input.idempotency_key.trim().is_empty() {
-        return Err(ApiError::BadRequest("idempotency_key is required".to_string()));
+        return Err(ApiError::invalid_update("idempotency_key is required".to_string()));
     }
     if !input.display.is_object() {
-        return Err(ApiError::BadRequest("display must be an object".to_string()));
+        return Err(ApiError::invalid_update("display must be an object".to_string()));
     }
     let (source, mut actor) = source_actor(state, extensions, source_object_id, PermissionLevel::Edit).await?;
     if !bridge_enabled(&state.db, source.workspace_id).await? {
@@ -626,7 +626,7 @@ pub async fn create_reference(
         ))
         .one(&tx)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
         let same_source = existing.source_object_id == source.id;
         let same_target = existing.target_type == input.target_type && existing.target_id == input.target_id;
         let same_display = existing.display == input.display;
@@ -748,7 +748,7 @@ pub async fn remove_reference(
     origin: CommandOrigin,
 ) -> Result<RemoveReferenceReceipt, ApiError> {
     if idempotency_key.trim().is_empty() {
-        return Err(ApiError::BadRequest("Idempotency-Key is required".to_string()));
+        return Err(ApiError::invalid_update("Idempotency-Key is required".to_string()));
     }
     let (source, actor) = source_actor(state, extensions, source_object_id, PermissionLevel::Edit).await?;
     let tx = state.db.begin().await?;
@@ -760,7 +760,7 @@ pub async fn remove_reference(
     ))
     .one(&tx)
     .await?
-    .ok_or_else(|| ApiError::NotFound("reference not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("reference not found".to_string()))?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE flow_bridge_references SET removed_at = COALESCE(removed_at, now()) WHERE id = $1",
@@ -877,8 +877,10 @@ fn mapping_uuid(mapping: &Value, key: &str) -> Result<Uuid, ApiError> {
     mapping
         .get(key)
         .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::BadRequest(format!("mapping.{key} is required")))
-        .and_then(|value| Uuid::parse_str(value).map_err(|_| ApiError::BadRequest(format!("mapping.{key} is invalid"))))
+        .ok_or_else(|| ApiError::invalid_update(format!("mapping.{key} is required")))
+        .and_then(|value| {
+            Uuid::parse_str(value).map_err(|_| ApiError::invalid_update(format!("mapping.{key} is invalid")))
+        })
 }
 
 fn current_frontier(source: &repository::ObjectViewRow) -> String {
@@ -929,13 +931,13 @@ pub async fn preview_conversion(
     input: ConversionPreviewInput,
 ) -> Result<ConversionPreviewResponse, ApiError> {
     if input.idempotency_key.trim().is_empty() || !input.mapping.is_object() {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "idempotency_key and object mapping are required".to_string(),
         ));
     }
     let (source, actor) = source_actor(state, extensions, input.source_object_id, PermissionLevel::Edit).await?;
     if actor.role == "__flow_guest" {
-        return Err(ApiError::NotFound("bridge target not found".to_string()));
+        return Err(ApiError::not_found("bridge target not found".to_string()));
     }
     if !bridge_enabled(&state.db, source.workspace_id).await? {
         return Err(ApiError::policy_rejected("forms bridge conversion is not permitted"));
@@ -975,7 +977,7 @@ pub async fn preview_conversion(
             let form_id = mapping_uuid(&input.mapping, "target_form_id")?;
             let target = target_view(&state.db, source.workspace_id, "form", form_id)
                 .await?
-                .ok_or_else(|| ApiError::NotFound("bridge target not found".to_string()))?;
+                .ok_or_else(|| ApiError::not_found("bridge target not found".to_string()))?;
             let permission = target_permission(&state.db, &actor, &target).await?;
             let permission = match permission {
                 Some(decision) if decision.allows("record.create") => decision,
@@ -986,16 +988,16 @@ pub async fn preview_conversion(
                     ));
                 }
                 None => {
-                    return Err(ApiError::NotFound("bridge target not found".to_string()));
+                    return Err(ApiError::not_found("bridge target not found".to_string()));
                 }
             };
             let (project_id, schema_version, _) = form_schema(&state.db, source.workspace_id, form_id)
                 .await?
-                .ok_or_else(|| ApiError::NotFound("bridge target not found".to_string()))?;
+                .ok_or_else(|| ApiError::not_found("bridge target not found".to_string()))?;
             (project_id, Some(form_id), schema_version, permission.state)
         }
         _ => {
-            return Err(ApiError::BadRequest(
+            return Err(ApiError::invalid_update(
                 "target_type must be form or form_record".to_string(),
             ));
         }
@@ -1020,12 +1022,12 @@ pub async fn preview_conversion(
             || existing.target_schema_version != target_schema_version
             || existing.mapping != input.mapping
         {
-            return Err(ApiError::BadRequest(
+            return Err(ApiError::invalid_update(
                 "idempotency_key was already used with different conversion preview input".to_string(),
             ));
         }
         let permission_decision =
-            serde_json::from_value(existing.permission_snapshot).map_err(|_| ApiError::Internal)?;
+            serde_json::from_value(existing.permission_snapshot).map_err(|_| ApiError::internal())?;
         return Ok(ConversionPreviewResponse {
             preview_id: existing.id,
             expires_at: existing.expires_at,
@@ -1040,7 +1042,7 @@ pub async fn preview_conversion(
 
     let preview_id = Uuid::new_v4();
     let expires_at = Utc::now() + chrono::Duration::minutes(15);
-    let permission_snapshot = serde_json::to_value(&permission).map_err(|_| ApiError::Internal)?;
+    let permission_snapshot = serde_json::to_value(&permission).map_err(|_| ApiError::internal())?;
     state
         .db
         .execute(Statement::from_sql_and_values(
@@ -1089,7 +1091,7 @@ async fn load_preview<C: ConnectionTrait>(conn: &C, preview_id: Uuid) -> Result<
     ))
     .one(conn)
     .await?
-    .ok_or_else(|| ApiError::NotFound("conversion preview not found".to_string()))
+    .ok_or_else(|| ApiError::not_found("conversion preview not found".to_string()))
 }
 
 async fn load_job<C: ConnectionTrait>(conn: &C, job_id: Uuid) -> Result<ConversionJobResponse, ApiError> {
@@ -1101,7 +1103,7 @@ async fn load_job<C: ConnectionTrait>(conn: &C, job_id: Uuid) -> Result<Conversi
     ))
     .one(conn)
     .await?
-    .ok_or_else(|| ApiError::NotFound("conversion job not found".to_string()))
+    .ok_or_else(|| ApiError::not_found("conversion job not found".to_string()))
 }
 
 #[cfg(test)]
@@ -1223,7 +1225,7 @@ async fn execute_conversion(
 ) -> Result<ConversionJobResponse, ApiError> {
     let (source, mut actor) = source_actor(state, extensions, preview.source_object_id, PermissionLevel::View).await?;
     if actor.id != preview.actor_id && !matches!(actor.role.as_str(), "owner" | "admin") {
-        return Err(ApiError::NotFound("conversion job not found".to_string()));
+        return Err(ApiError::not_found("conversion job not found".to_string()));
     }
     let tx = state.db.begin().await?;
     if preview.expires_at <= Utc::now() {
@@ -1476,7 +1478,7 @@ async fn execute_conversion(
         crate::forms::native_create::finish_record_creation(state, form, creation).await?;
     }
     if conversion_fault(preview.id, "after_commit_before_response") {
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
     load_job(&state.db, job_id).await
 }
@@ -1488,7 +1490,7 @@ pub async fn commit_conversion(
     origin: CommandOrigin,
 ) -> Result<ConversionJobResponse, ApiError> {
     if !input.confirm || input.idempotency_key.trim().is_empty() {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "confirm=true and idempotency_key are required".to_string(),
         ));
     }
@@ -1520,7 +1522,7 @@ pub async fn commit_conversion(
     .await?
     {
         if existing.preview_id != preview.id {
-            return Err(ApiError::BadRequest(
+            return Err(ApiError::invalid_update(
                 "idempotency_key was already used with a different conversion preview".to_string(),
             ));
         }
@@ -1555,10 +1557,10 @@ pub async fn conversion_status(
     ))
     .one(&state.db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("conversion job not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("conversion job not found".to_string()))?;
     let (_, actor) = source_actor(state, extensions, scope.source_object_id, PermissionLevel::View).await?;
     if actor.id != scope.actor_id && !matches!(actor.role.as_str(), "owner" | "admin") {
-        return Err(ApiError::NotFound("conversion job not found".to_string()));
+        return Err(ApiError::not_found("conversion job not found".to_string()));
     }
     load_job(&state.db, job_id).await
 }
@@ -1581,10 +1583,10 @@ pub async fn conversion_owner(
     ))
     .one(&state.db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("conversion not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("conversion not found".to_string()))?;
     let (source, actor) = source_actor(state, extensions, scope.source_object_id, PermissionLevel::View).await?;
     if actor.id != scope.actor_id && !matches!(actor.role.as_str(), "owner" | "admin") {
-        return Err(ApiError::NotFound("conversion not found".to_string()));
+        return Err(ApiError::not_found("conversion not found".to_string()));
     }
     Ok(ConversionOwnerResponse {
         source_object_id: source.id,
@@ -1600,7 +1602,7 @@ pub async fn retry_conversion(
     origin: CommandOrigin,
 ) -> Result<ConversionJobResponse, ApiError> {
     if !input.confirm || input.idempotency_key.trim().is_empty() {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "confirm=true and idempotency_key are required".to_string(),
         ));
     }
@@ -1617,7 +1619,7 @@ pub async fn retry_conversion(
     ))
     .one(&state.db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("conversion job not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("conversion job not found".to_string()))?;
     if job.status == "completed" || job.idempotency_key == input.idempotency_key {
         return load_job(&state.db, job_id).await;
     }

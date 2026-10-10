@@ -127,7 +127,7 @@ fn package_source_head() -> Result<String, ApiError> {
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     {
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
     Ok(head.to_string())
 }
@@ -136,7 +136,7 @@ fn require_package_tool(bot: Option<&Extension<BotAuthContext>>, expected: &str)
     if let Some(Extension(context)) = bot
         && context.tool_name.as_deref().is_some_and(|tool| tool != expected)
     {
-        return Err(ApiError::Forbidden(format!(
+        return Err(ApiError::forbidden(format!(
             "package operation requires the exact {expected} tool policy"
         )));
     }
@@ -227,7 +227,7 @@ async fn export_job_workspace(db: &sea_orm::DatabaseConnection, job_id: Uuid) ->
             vec![job_id.into()],
         ))
         .await?
-        .ok_or_else(|| ApiError::NotFound("export job not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("export job not found".to_string()))?;
     row.try_get("", "workspace_id").map_err(Into::into)
 }
 
@@ -239,12 +239,14 @@ pub async fn get_flow_export(
 ) -> Result<impl IntoResponse, ApiError> {
     let workspace_id = export_job_workspace(&state.db, job_id).await?;
     let extensions = build_auth_extensions(claims, bot);
-    let (actor_id, role, is_bot) = require_workspace_access(&state, &extensions, workspace_id).await?;
+    let (actor_id, role, is_bot) = require_workspace_access(&state, &extensions, workspace_id)
+        .await
+        .map_err(ApiError::into_typed)?;
     let receipt =
         crate::flow::export::get_package_export(&state.db, job_id, &package_export_principal(actor_id, role, is_bot))
             .await?;
-    let mut data = serde_json::to_value(receipt).map_err(|_| ApiError::Internal)?;
-    data.as_object_mut().ok_or(ApiError::Internal)?.insert(
+    let mut data = serde_json::to_value(receipt).map_err(|_| ApiError::internal())?;
+    data.as_object_mut().ok_or_else(ApiError::internal)?.insert(
         "download_url".to_string(),
         json!(format!("/api/v1/flow/exports/{job_id}/artifact")),
     );
@@ -259,7 +261,9 @@ pub async fn get_flow_export_artifact(
 ) -> Result<impl IntoResponse, ApiError> {
     let workspace_id = export_job_workspace(&state.db, job_id).await?;
     let extensions = build_auth_extensions(claims, bot);
-    let (actor_id, role, is_bot) = require_workspace_access(&state, &extensions, workspace_id).await?;
+    let (actor_id, role, is_bot) = require_workspace_access(&state, &extensions, workspace_id)
+        .await
+        .map_err(ApiError::into_typed)?;
     let (bytes, hash, format) = crate::flow::export::download_package_export(
         &state.db,
         job_id,
@@ -272,12 +276,12 @@ pub async fn get_flow_export_artifact(
         "markdown" => "text/markdown; charset=utf-8",
         "csv" => "text/csv; charset=utf-8",
         "package" => "application/vnd.sylvode.flow-package+zip;version=1",
-        _ => return Err(ApiError::Internal),
+        _ => return Err(ApiError::internal()),
     };
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     headers.insert(
         "x-flow-package-sha256",
-        HeaderValue::from_str(&hash).map_err(|_| ApiError::Internal)?,
+        HeaderValue::from_str(&hash).map_err(|_| ApiError::internal())?,
     );
     Ok((headers, bytes))
 }
@@ -302,121 +306,124 @@ pub async fn post_flow_import_artifact(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();
-    let (artifact_id, package_sha256, expires_at) =
-        if content_type.starts_with("multipart/form-data") {
-            let mut multipart = Multipart::from_request(request, &state)
-                .await
-                .map_err(|_| ApiError::BadRequest("invalid multipart package upload".to_string()))?;
-            let mut stager = crate::flow::import::BoundedImportStager::new(Vec::new(), std::io::sink());
-            let mut seen = false;
-            while let Some(mut field) = multipart
-                .next_field()
+    let (artifact_id, package_sha256, expires_at) = if content_type.starts_with("multipart/form-data") {
+        let mut multipart = Multipart::from_request(request, &state)
+            .await
+            .map_err(|_| ApiError::invalid_update("invalid multipart package upload".to_string()))?;
+        let mut stager = crate::flow::import::BoundedImportStager::new(Vec::new(), std::io::sink());
+        let mut seen = false;
+        while let Some(mut field) = multipart
+            .next_field()
+            .await
+            .map_err(|_| ApiError::invalid_update("multipart package stream failed"))?
+        {
+            if field.name() != Some("package") || seen {
+                return Err(ApiError::invalid_update(
+                    "multipart upload requires exactly one package field".to_string(),
+                ));
+            }
+            seen = true;
+            while let Some(chunk) = field
+                .chunk()
                 .await
                 .map_err(|_| ApiError::invalid_update("multipart package stream failed"))?
             {
-                if field.name() != Some("package") || seen {
-                    return Err(ApiError::BadRequest(
-                        "multipart upload requires exactly one package field".to_string(),
+                stager.write_archive_chunk(&chunk)?;
+            }
+        }
+        if !seen {
+            return Err(ApiError::invalid_update(
+                "multipart package field is missing".to_string(),
+            ));
+        }
+        stager.finish_archive()?;
+        let (bytes, _) = stager.into_stages()?;
+        crate::flow::package_import::upload_package_artifact(
+            &state.db,
+            workspace_id,
+            &principal,
+            bytes,
+            None,
+            &multipart_idempotency_key,
+        )
+        .await?
+    } else {
+        let Json(req) = Json::<PackageArtifactRequest>::from_request(request, &state)
+            .await
+            .map_err(|_| ApiError::invalid_update("invalid import artifact JSON".to_string()))?;
+        if req.idempotency_key.trim().is_empty() {
+            return Err(ApiError::invalid_update(
+                "JSON artifact source requires idempotency_key".to_string(),
+            ));
+        }
+        match req.source.kind.as_str() {
+            "inline_base64" => {
+                let encoded = req.source.package_base64.as_deref().ok_or_else(|| {
+                    ApiError::invalid_update("inline_base64 source requires package_base64".to_string())
+                })?;
+                if req.source.object_key.is_some() || req.source.size.is_some() {
+                    return Err(ApiError::invalid_update(
+                        "inline_base64 source cannot carry staged object fields".to_string(),
                     ));
                 }
-                seen = true;
-                while let Some(chunk) = field
-                    .chunk()
-                    .await
-                    .map_err(|_| ApiError::invalid_update("multipart package stream failed"))?
-                {
-                    stager.write_archive_chunk(&chunk)?;
+                crate::flow::package_import::upload_inline_base64_artifact(
+                    &state.db,
+                    workspace_id,
+                    &principal,
+                    encoded.as_bytes(),
+                    req.source.package_sha256.as_deref(),
+                    &req.idempotency_key,
+                )
+                .await?
+            }
+            "staged_object" => {
+                if req.source.package_base64.is_some() {
+                    return Err(ApiError::invalid_update(
+                        "staged_object source cannot carry package_base64".to_string(),
+                    ));
                 }
+                let object_key =
+                    req.source.object_key.as_deref().ok_or_else(|| {
+                        ApiError::invalid_update("staged_object source requires object_key".to_string())
+                    })?;
+                let expected_size = req
+                    .source
+                    .size
+                    .ok_or_else(|| ApiError::invalid_update("staged_object source requires size".to_string()))?;
+                let expected_hash = req.source.package_sha256.as_deref().ok_or_else(|| {
+                    ApiError::invalid_update("staged_object source requires package_sha256".to_string())
+                })?;
+                let trusted_prefix = format!("flow-package-staging/{workspace_id}/");
+                if !object_key.starts_with(&trusted_prefix) {
+                    return Err(ApiError::forbidden(
+                        "staged package object is not bound to the target workspace".to_string(),
+                    ));
+                }
+                let bytes = crate::services::object_storage::ObjectStorage::from_runtime_config()?
+                    .get(object_key)
+                    .await?;
+                if u64::try_from(bytes.len()).ok() != Some(expected_size) {
+                    return Err(ApiError::invalid_update(
+                        "staged package size does not match".to_string(),
+                    ));
+                }
+                crate::flow::package_import::upload_package_artifact(
+                    &state.db,
+                    workspace_id,
+                    &principal,
+                    bytes,
+                    Some(expected_hash),
+                    &req.idempotency_key,
+                )
+                .await?
             }
-            if !seen {
-                return Err(ApiError::BadRequest("multipart package field is missing".to_string()));
-            }
-            stager.finish_archive()?;
-            let (bytes, _) = stager.into_stages()?;
-            crate::flow::package_import::upload_package_artifact(
-                &state.db,
-                workspace_id,
-                &principal,
-                bytes,
-                None,
-                &multipart_idempotency_key,
-            )
-            .await?
-        } else {
-            let Json(req) = Json::<PackageArtifactRequest>::from_request(request, &state)
-                .await
-                .map_err(|_| ApiError::BadRequest("invalid import artifact JSON".to_string()))?;
-            if req.idempotency_key.trim().is_empty() {
-                return Err(ApiError::BadRequest(
-                    "JSON artifact source requires idempotency_key".to_string(),
+            _ => {
+                return Err(ApiError::invalid_update(
+                    "artifact source kind must be inline_base64 or staged_object".to_string(),
                 ));
             }
-            match req.source.kind.as_str() {
-                "inline_base64" => {
-                    let encoded = req.source.package_base64.as_deref().ok_or_else(|| {
-                        ApiError::BadRequest("inline_base64 source requires package_base64".to_string())
-                    })?;
-                    if req.source.object_key.is_some() || req.source.size.is_some() {
-                        return Err(ApiError::BadRequest(
-                            "inline_base64 source cannot carry staged object fields".to_string(),
-                        ));
-                    }
-                    crate::flow::package_import::upload_inline_base64_artifact(
-                        &state.db,
-                        workspace_id,
-                        &principal,
-                        encoded.as_bytes(),
-                        req.source.package_sha256.as_deref(),
-                        &req.idempotency_key,
-                    )
-                    .await?
-                }
-                "staged_object" => {
-                    if req.source.package_base64.is_some() {
-                        return Err(ApiError::BadRequest(
-                            "staged_object source cannot carry package_base64".to_string(),
-                        ));
-                    }
-                    let object_key =
-                        req.source.object_key.as_deref().ok_or_else(|| {
-                            ApiError::BadRequest("staged_object source requires object_key".to_string())
-                        })?;
-                    let expected_size = req
-                        .source
-                        .size
-                        .ok_or_else(|| ApiError::BadRequest("staged_object source requires size".to_string()))?;
-                    let expected_hash = req.source.package_sha256.as_deref().ok_or_else(|| {
-                        ApiError::BadRequest("staged_object source requires package_sha256".to_string())
-                    })?;
-                    let trusted_prefix = format!("flow-package-staging/{workspace_id}/");
-                    if !object_key.starts_with(&trusted_prefix) {
-                        return Err(ApiError::Forbidden(
-                            "staged package object is not bound to the target workspace".to_string(),
-                        ));
-                    }
-                    let bytes = crate::services::object_storage::ObjectStorage::from_runtime_config()?
-                        .get(object_key)
-                        .await?;
-                    if u64::try_from(bytes.len()).ok() != Some(expected_size) {
-                        return Err(ApiError::BadRequest("staged package size does not match".to_string()));
-                    }
-                    crate::flow::package_import::upload_package_artifact(
-                        &state.db,
-                        workspace_id,
-                        &principal,
-                        bytes,
-                        Some(expected_hash),
-                        &req.idempotency_key,
-                    )
-                    .await?
-                }
-                _ => {
-                    return Err(ApiError::BadRequest(
-                        "artifact source kind must be inline_base64 or staged_object".to_string(),
-                    ));
-                }
-            }
-        };
+        }
+    };
     let size: i64 = state
         .db
         .query_one(Statement::from_sql_and_values(
@@ -425,7 +432,7 @@ pub async fn post_flow_import_artifact(
             vec![artifact_id.into()],
         ))
         .await?
-        .ok_or(ApiError::Internal)?
+        .ok_or_else(ApiError::internal)?
         .try_get("", "size_bytes")?;
     Ok(ApiResponse::success(
         json!({"artifact_id":artifact_id,"package_sha256":package_sha256,"size":size,"expires_at":expires_at}),
@@ -710,14 +717,14 @@ pub async fn post_flow_delivery_replay(
     Json(req): Json<ReplayDeliveriesRequest>,
 ) -> Result<axum::response::Response, ApiError> {
     if !req.confirm || req.idempotency_key.trim().is_empty() {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "confirm=true and a non-empty idempotency_key are required".to_string(),
         ));
     }
     if let Some(Extension(context)) = &bot
         && context.tool_name.as_deref() != Some("deliveries.replay")
     {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
             "delivery replay requires the exact deliveries.replay tool policy".to_string(),
         ));
     }
@@ -725,7 +732,7 @@ pub async fn post_flow_delivery_replay(
     let (principal_id, _role, is_bot) =
         policy::require_flow_workspace_admin_access(&state, &extensions, workspace_id).await?;
     let principal_kind = if is_bot { "bot" } else { "user" };
-    let request_bytes = serde_json::to_vec(&req).map_err(|_| ApiError::Internal)?;
+    let request_bytes = serde_json::to_vec(&req).map_err(|_| ApiError::internal())?;
     let request_hash = format!("{:x}", Sha256::digest(request_bytes));
 
     let inserted = state
@@ -759,16 +766,18 @@ pub async fn post_flow_delivery_replay(
         ))
         .one(&state.db)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
         if prior.request_hash != request_hash {
-            return Err(ApiError::Conflict("idempotency key body drift".to_string()));
+            return Err(ApiError::idempotency_key_body_drift("idempotency key body drift"));
         }
         if prior.status != "completed" {
-            return Err(ApiError::Conflict(
-                "identical replay request is still running".to_string(),
+            return Err(ApiError::server_draining(
+                crate::error::ServerDrainingReason::Contention,
+                crate::flow::IN_FLIGHT_RETRY_AFTER_MS,
+                "identical replay request is still running",
             ));
         }
-        return Ok(ApiResponse::success(prior.result_redacted.ok_or(ApiError::Internal)?).into_response());
+        return Ok(ApiResponse::success(prior.result_redacted.ok_or_else(ApiError::internal)?).into_response());
     }
 
     let request = crate::events::dispatcher::ReplayRequest {
@@ -802,7 +811,7 @@ pub async fn post_flow_delivery_replay(
             return Err(error);
         }
     };
-    let result_json = serde_json::to_value(&result).map_err(|_| ApiError::Internal)?;
+    let result_json = serde_json::to_value(&result).map_err(|_| ApiError::internal())?;
     state
         .db
         .execute(Statement::from_sql_and_values(
@@ -825,7 +834,7 @@ fn require_exact_admin_tool(bot: Option<&Extension<BotAuthContext>>, expected: &
     if let Some(Extension(context)) = bot
         && context.tool_name.as_deref() != Some(expected)
     {
-        return Err(ApiError::Forbidden(format!(
+        return Err(ApiError::forbidden(format!(
             "operation requires the exact {expected} tool policy"
         )));
     }
@@ -883,14 +892,14 @@ pub async fn post_flow_compact_document(
         policy::require_flow_workspace_admin_access(&state, &extensions, scope.workspace_id).await?;
     let expected = req
         .expected_head_seq
-        .ok_or_else(|| ApiError::BadRequest("expected_head_seq is required".to_string()))?;
+        .ok_or_else(|| ApiError::invalid_update("expected_head_seq is required".to_string()))?;
     if !req.dry_run && req.confirm_document_id != Some(document_id) {
-        return Err(ApiError::Forbidden(
-            "execute requires confirm_document_id matching the path document".to_string(),
+        return Err(ApiError::policy_rejected(
+            "execute requires confirm_document_id matching the path document",
         ));
     }
     if req.retain_after_seq.is_some_and(|seq| seq != expected) {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "retain_after_seq currently must equal expected_head_seq".to_string(),
         ));
     }
@@ -933,10 +942,10 @@ pub async fn post_flow_rebuild_projection(
         policy::require_flow_workspace_admin_access(&state, &extensions, scope.workspace_id).await?;
     let expected = req
         .expected_head_seq
-        .ok_or_else(|| ApiError::BadRequest("expected_head_seq is required".to_string()))?;
+        .ok_or_else(|| ApiError::invalid_update("expected_head_seq is required".to_string()))?;
     if !req.dry_run && req.confirm_object_id != Some(object_id) {
-        return Err(ApiError::Forbidden(
-            "execute requires confirm_object_id matching the path object".to_string(),
+        return Err(ApiError::policy_rejected(
+            "execute requires confirm_object_id matching the path object",
         ));
     }
     Ok(ApiResponse::success(
@@ -978,9 +987,7 @@ pub async fn post_flow_repair_quarantine(
 ) -> Result<impl IntoResponse, ApiError> {
     require_exact_admin_tool(bot.as_ref(), "collab.repair_quarantine")?;
     if !req.dry_run && req.confirm_quarantine != Some(true) {
-        return Err(ApiError::Forbidden(
-            "execute requires confirm_quarantine=true".to_string(),
-        ));
+        return Err(ApiError::policy_rejected("execute requires confirm_quarantine=true"));
     }
     let extensions = build_auth_extensions(claims, bot);
     let (scope, principal_id, is_bot) = match req.scope {
@@ -1048,7 +1055,7 @@ pub async fn post_flow_verify_document(
 ) -> Result<impl IntoResponse, ApiError> {
     require_exact_admin_tool(bot.as_ref(), "objects.integrity")?;
     if !req.dry_run {
-        return Err(ApiError::BadRequest("document verify is dry_run only".to_string()));
+        return Err(ApiError::invalid_update("document verify is dry_run only".to_string()));
     }
     let extensions = build_auth_extensions(claims, bot);
     let scope = crate::flow::operations::document_scope(&state.db, document_id).await?;
@@ -1118,14 +1125,18 @@ pub async fn get_flow_admin_integrity(
     let extensions = build_auth_extensions(claims, bot);
     policy::require_flow_workspace_admin_access(&state, &extensions, workspace_id).await?;
     if query.cursor.is_some() {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "integrity cursor is not available on the first v0.8 page".to_string(),
         ));
     }
     let include_documents = match query.scope.as_deref().unwrap_or("summary") {
         "summary" => false,
         "documents" => true,
-        _ => return Err(ApiError::BadRequest("scope must be summary or documents".to_string())),
+        _ => {
+            return Err(ApiError::invalid_update(
+                "scope must be summary or documents".to_string(),
+            ));
+        }
     };
     Ok(ApiResponse::success(
         crate::flow::operations::workspace_integrity(
@@ -1256,7 +1267,7 @@ async fn collection_read_access(
 ) -> Result<Option<policy::AuthorizedFlowObject>, ApiError> {
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, collection_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("collection not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("collection not found".to_string()))?;
     policy::require_flow_object_access(
         state,
         extensions,
@@ -1388,7 +1399,7 @@ pub async fn post_flow_collection_record(
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, collection_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("collection not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("collection not found".to_string()))?;
     let (actor_id, role, is_bot) = policy::require_flow_workspace_access(&state, &extensions, workspace_id).await?;
     let accepted = crate::flow::command::execute_command(
         &state,
@@ -1456,7 +1467,7 @@ pub async fn get_flow_object(
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     let render = Render::parse(params.render.as_deref())?;
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
         let Some(access) = policy::require_flow_object_access(
@@ -1500,14 +1511,14 @@ pub async fn get_flow_object_bootstrap(
     Query(params): Query<GetFlowObjectBootstrapQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     if bot.is_some() {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
             "bot tokens cannot call the bootstrap endpoint; user access token only".to_string(),
         ));
     }
     let extensions = build_auth_extensions(claims, None);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
         let Some(access) = policy::require_flow_object_access(
             &state,
@@ -1564,7 +1575,7 @@ pub async fn post_flow_object_command(
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     let (actor_id, role, is_bot) = policy::require_flow_workspace_access(&state, &extensions, workspace_id).await?;
 
     // This surface has no client-id handshake like the WebSocket ticket flow (`ADR-0007`), so a
@@ -1616,7 +1627,7 @@ pub async fn get_flow_object_relations(
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     let direction = relations::RelationDirection::parse(params.direction.as_deref())?;
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
         let Some(access) = policy::require_flow_object_access(
@@ -1666,7 +1677,7 @@ pub async fn get_flow_object_history(
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
         let Some(access) = policy::require_flow_object_access(
             &state,
@@ -1710,7 +1721,7 @@ pub async fn get_flow_object_diff(
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
         let Some(access) = policy::require_flow_object_access(
             &state,
@@ -4059,7 +4070,9 @@ mod flow_database_tests {
                 .await,
             ))
             .await;
-            assert_eq!(body["code"], 409, "{field} drift reused the original receipt: {body}");
+            assert_eq!(body["code"], 400, "{field} drift reused the original receipt: {body}");
+            assert_eq!(body["error_code"], "invalid_update", "{body}");
+            assert_eq!(body["details"]["reason"], "idempotency_key_body_drift", "{body}");
             assert_eq!(
                 body["message"], "idempotency_key was already used with a different create request body",
                 "{field} drift returned the wrong conflict: {body}"
@@ -11144,6 +11157,237 @@ mod flow_database_tests {
             "compression-ratio rejection must write neither staging nor canonical rows"
         );
 
+        scratch.drop_self().await;
+    }
+
+    // ---- FP2-B1: every Flow error path below answers with a typed `error_code` ----
+
+    /// Asserts the typed envelope shape `error-mapping-v1.md` requires: a stable `error_code`, the
+    /// matching numeric `code`, and an explicit `data: null`.
+    fn assert_typed(body: &Value, error_code: &str, code: i64) {
+        assert_eq!(body["error_code"], error_code, "{body}");
+        assert_eq!(body["code"], code, "{body}");
+        assert!(body.get("data").is_some_and(Value::is_null), "{body}");
+    }
+
+    #[tokio::test]
+    async fn fp2_b1_non_admin_put_features_flow_is_typed_forbidden() {
+        let scratch = scratch_or_skip!("fp2-b1-features-forbidden");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, _owner_id) = seed_workspace(&state, true).await;
+        let member_id = seed_member(&state, workspace_id).await;
+        let body = body_json(to_response(
+            set_flow_feature(
+                State(state.clone()),
+                claims_for(member_id),
+                None,
+                Path(workspace_id),
+                Json(SetFlowFeatureRequest {
+                    enabled: Some(false),
+                    default_member_level: None,
+                    idempotency_key: Uuid::new_v4().to_string(),
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_typed(&body, "forbidden", 403);
+
+        // A non-member must not learn the workspace exists: still `not_found`, now typed.
+        let outsider = seed_user(&state).await;
+        let body = body_json(to_response(
+            set_flow_feature(
+                State(state.clone()),
+                claims_for(outsider),
+                None,
+                Path(workspace_id),
+                Json(SetFlowFeatureRequest {
+                    enabled: Some(false),
+                    default_member_level: None,
+                    idempotency_key: Uuid::new_v4().to_string(),
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_typed(&body, "not_found", 404);
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn fp2_b1_projection_lag_with_flow_disabled_is_feature_disabled() {
+        let scratch = scratch_or_skip!("fp2-b1-lag-feature-disabled");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, false).await;
+        let lag = |user: Uuid| {
+            get_flow_projection_lag(
+                State(state.clone()),
+                claims_for(user),
+                None,
+                Path(workspace_id),
+                Query(ProjectionLagQuery {
+                    project_id: None,
+                    cursor: None,
+                    limit: Some(10),
+                }),
+            )
+        };
+        let body = body_json(to_response(lag(owner_id).await)).await;
+        assert_typed(&body, "feature_disabled", 403);
+        scratch.drop_self().await;
+    }
+
+    /// The two 409-era causes on the operations surface are now told apart by `error_code`:
+    /// replaying a key with a changed body is `invalid_update` + `idempotency_key_body_drift`,
+    /// a stale expected head is `stale_frontier` without that reason.
+    #[tokio::test]
+    async fn fp2_b1_idempotency_body_drift_and_stale_frontier_are_distinct_typed_codes() {
+        let scratch = scratch_or_skip!("fp2-b1-drift-vs-stale");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let now = chrono::Utc::now();
+        let request = ReplayDeliveriesRequest {
+            mode: crate::events::dispatcher::ReplayMode::Rebuild,
+            event_type: None,
+            subscriber_kind: Some("webhook".to_string()),
+            subscriber_id: None,
+            from: now - chrono::Duration::hours(2),
+            to: now - chrono::Duration::hours(1),
+            dry_run: true,
+            confirm: true,
+            idempotency_key: "fp2-b1-replay-key".to_string(),
+        };
+        let replay = |req: ReplayDeliveriesRequest| {
+            post_flow_delivery_replay(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(workspace_id),
+                Json(req),
+            )
+        };
+        let first = body_json(to_response(replay(request.clone()).await)).await;
+        assert_eq!(first["code"], 0, "{first}");
+        let mut drift = request;
+        drift.event_type = Some("flow.object.created".to_string());
+        let body = body_json(to_response(replay(drift).await)).await;
+        assert_typed(&body, "invalid_update", 400);
+        assert_eq!(body["details"]["reason"], "idempotency_key_body_drift", "{body}");
+
+        // Same reason on the maintenance-operation ledger (`flow::operations::claim`).
+        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "fp2 b1 compact").await;
+        let document_id = document_of(&state, object_id).await;
+        let compact = |expected: i64, key: &str| {
+            post_flow_compact_document(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(document_id),
+                Json(CompactDocumentRequest {
+                    dry_run: true,
+                    expected_head_seq: Some(expected),
+                    retain_after_seq: None,
+                    confirm_document_id: None,
+                    idempotency_key: key.to_string(),
+                }),
+            )
+        };
+        let behind = body_json(to_response(compact(9_999, "fp2-b1-compact-stale").await)).await;
+        assert_typed(&behind, "stale_frontier", 409);
+        assert!(behind["details"].get("reason").is_none(), "{behind}");
+        assert!(behind["details"]["current_seq"].is_i64(), "{behind}");
+
+        let head = crate::flow::collab::bootstrap::load(&state.db, document_id)
+            .await
+            .expect("bootstrap loads")
+            .head_seq;
+        let ok = body_json(to_response(compact(head, "fp2-b1-compact-key").await)).await;
+        assert_eq!(ok["code"], 0, "{ok}");
+        let drifted = body_json(to_response(compact(head + 1, "fp2-b1-compact-key").await)).await;
+        assert_typed(&drifted, "invalid_update", 400);
+        assert_eq!(drifted["details"]["reason"], "idempotency_key_body_drift", "{drifted}");
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn fp2_b1_conversion_get_and_retry_of_unknown_job_are_typed_not_found() {
+        let scratch = scratch_or_skip!("fp2-b1-conversion-not-found");
+        let state = state_for(scratch.db.clone());
+        let (_workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let missing = Uuid::new_v4();
+        let body = body_json(to_response(
+            get_flow_conversion(State(state.clone()), claims_for(owner_id), None, Path(missing)).await,
+        ))
+        .await;
+        assert_typed(&body, "not_found", 404);
+        let body = body_json(to_response(
+            post_flow_conversion_retry(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(missing),
+                Json(crate::flow::bridge::ConversionRetryInput {
+                    idempotency_key: Uuid::new_v4().to_string(),
+                    confirm: true,
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_typed(&body, "not_found", 404);
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn fp2_b1_import_preview_of_a_bad_artifact_is_typed() {
+        let scratch = scratch_or_skip!("fp2-b1-import-bad-artifact");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let preview = body_json(to_response(
+            super::post_flow_import_preview(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(workspace_id),
+                Json(super::PackageImportPreviewRequest {
+                    artifact_id: Uuid::new_v4(),
+                    project_mapping: std::collections::BTreeMap::new(),
+                    external_reference_policy: crate::flow::package_import::ExternalReferencePolicy::Reject,
+                    conflict_policy: crate::flow::package_import::ConflictPolicy::RejectExisting,
+                    include_history: false,
+                    idempotency_key: Uuid::new_v4().to_string(),
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_typed(&preview, "not_found", 404);
+
+        // An artifact whose bytes are not a package at all.
+        let garbage = base64::engine::general_purpose::STANDARD.encode(b"definitely not a zip archive");
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                json!({
+                    "source": {"kind": "inline_base64", "package_base64": garbage},
+                    "idempotency_key": Uuid::new_v4().to_string(),
+                })
+                .to_string(),
+            ))
+            .expect("request builds");
+        let upload = body_json(to_response(
+            super::post_flow_import_artifact(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(workspace_id),
+                request,
+            )
+            .await,
+        ))
+        .await;
+        assert_typed(&upload, "unsupported_format", 400);
         scratch.drop_self().await;
     }
 }

@@ -41,7 +41,7 @@ pub struct IssuedTicket {
 fn validate_client_id(client_id: &str) -> Result<(), ApiError> {
     let trimmed = client_id.trim();
     if trimmed.is_empty() || trimmed.len() > 256 {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "client_id must be 1-256 non-whitespace-only characters".to_string(),
         ));
     }
@@ -88,9 +88,9 @@ pub async fn issue(
 ) -> Result<IssuedTicket, ApiError> {
     validate_client_id(&input.client_id)?;
     let normalized_origin = origin::normalize(&input.origin)
-        .ok_or_else(|| ApiError::BadRequest("origin is not a well-formed scheme://host[:port]".to_string()))?;
+        .ok_or_else(|| ApiError::invalid_update("origin is not a well-formed scheme://host[:port]".to_string()))?;
     if !origin::is_allowed(&normalized_origin, allowed_origins) {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
             "origin is not allowlisted for collab tickets".to_string(),
         ));
     }
@@ -109,7 +109,7 @@ pub async fn issue(
     .one(&tx)
     .await?
     .map(|r| r.role)
-    .ok_or_else(|| ApiError::Forbidden("not a member of this workspace".to_string()))?;
+    .ok_or_else(|| ApiError::forbidden("not a member of this workspace".to_string()))?;
 
     // Check the rollout flag before trying to lock its settings row. A missing settings row is
     // deliberately the same `feature_disabled` answer as an explicit false value; asking the
@@ -129,7 +129,7 @@ pub async fn issue(
     .one(&tx)
     .await?
     .map(|row| row.role)
-    .ok_or_else(|| ApiError::Forbidden("not a member of this workspace".to_string()))?;
+    .ok_or_else(|| ApiError::forbidden("not a member of this workspace".to_string()))?;
 
     // `ADR-0018` clarifies ADR-0007's "read+write ACL" wording as checking both ACLs rather than
     // requiring write authority: view and comment principals may obtain read-only sessions.
@@ -170,9 +170,9 @@ pub async fn issue(
     ))
     .one(&tx)
     .await?
-    .ok_or_else(|| ApiError::NotFound("document not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("document not found".to_string()))?;
     if !object_type_admits_collab_session(&doc.object_type) {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
             "collection and record documents require server-only typed commands".to_string(),
         ));
     }
@@ -187,7 +187,7 @@ pub async fn issue(
     )
     .await?;
     if !permission_admits_session(level) {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
             "document view access is required to open a collab session".to_string(),
         ));
     }
@@ -222,7 +222,7 @@ pub async fn issue(
     ))
     .one(&tx)
     .await?
-    .ok_or(ApiError::Internal)?;
+    .ok_or_else(ApiError::internal)?;
     tx.commit().await?;
 
     Ok(IssuedTicket {
@@ -264,7 +264,7 @@ pub async fn consume<C: ConnectionTrait>(
     raw_origin: &str,
 ) -> Result<ConsumedTicket, ApiError> {
     let normalized_origin =
-        origin::normalize(raw_origin).ok_or_else(|| ApiError::Unauthorized("invalid ticket".to_string()))?;
+        origin::normalize(raw_origin).ok_or_else(|| ApiError::unauthenticated("invalid ticket".to_string()))?;
     let ticket_hash = sha256_hex(raw_ticket);
 
     #[derive(FromQueryResult)]
@@ -290,7 +290,7 @@ pub async fn consume<C: ConnectionTrait>(
     ))
     .one(conn)
     .await?
-    .ok_or_else(|| ApiError::Unauthorized("invalid ticket".to_string()))?;
+    .ok_or_else(|| ApiError::unauthenticated("invalid ticket".to_string()))?;
 
     Ok(ConsumedTicket {
         user_id: row.user_id,

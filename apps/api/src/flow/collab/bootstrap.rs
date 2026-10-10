@@ -199,7 +199,7 @@ pub async fn load(db: &DatabaseConnection, document_id: Uuid) -> Result<Bootstra
     ))
     .one(&tx)
     .await?
-    .ok_or_else(|| ApiError::NotFound("document not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("document not found".to_string()))?;
     let workspace_id = doc.workspace_id;
 
     if content_hash(&doc.snapshot) != doc.snapshot_checksum {
@@ -329,7 +329,7 @@ async fn resync_required(db: &DatabaseConnection, workspace_id: Uuid, document_i
     {
         tracing::error!(error = %err, "failed to record integrity alert for a resync_required fail-closed bootstrap");
     }
-    ApiError::Conflict("resync_required".to_string())
+    ApiError::resync_required("resync_required", None)
 }
 
 /// One `collab_updates` row shaped for [`fetch_update_range`]'s egress-gap backfill use: every

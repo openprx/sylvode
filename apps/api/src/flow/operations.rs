@@ -11,8 +11,9 @@ use uuid::Uuid;
 use super::collab::{bootstrap, compaction, integrity, snapshot};
 use super::event_origin::CommandOrigin;
 use super::maintenance;
-use crate::error::ApiError;
+use crate::error::{ApiError, ServerDrainingReason};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
+use crate::flow::IN_FLIGHT_RETRY_AFTER_MS;
 
 #[derive(Debug, Clone, FromQueryResult)]
 pub struct DocumentScope {
@@ -112,7 +113,7 @@ pub async fn document_scope(db: &DatabaseConnection, document_id: Uuid) -> Resul
     ))
     .one(db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("collab document not found".to_string()))
+    .ok_or_else(|| ApiError::not_found("collab document not found".to_string()))
 }
 
 pub async fn object_scope(db: &DatabaseConnection, object_id: Uuid) -> Result<DocumentScope, ApiError> {
@@ -124,7 +125,7 @@ pub async fn object_scope(db: &DatabaseConnection, object_id: Uuid) -> Result<Do
     ))
     .one(db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))
+    .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))
 }
 
 fn request_hash(
@@ -157,7 +158,7 @@ async fn claim(
     extra: &Value,
 ) -> Result<Result<Uuid, OperationReceipt>, ApiError> {
     if idempotency_key.trim().is_empty() {
-        return Err(ApiError::BadRequest("idempotency_key is required".to_string()));
+        return Err(ApiError::invalid_update("idempotency_key is required".to_string()));
     }
     let principal_kind = if principal.is_bot { "bot" } else { "user" };
     let hash = request_hash(operation, scope, dry_run, expected_head_seq, extra);
@@ -201,13 +202,15 @@ async fn claim(
     ))
     .one(db)
     .await?
-    .ok_or(ApiError::Internal)?;
+    .ok_or_else(ApiError::internal)?;
     if prior.request_hash.as_deref() != Some(hash.as_str()) {
-        return Err(ApiError::Conflict("idempotency key body drift".to_string()));
+        return Err(ApiError::idempotency_key_body_drift("idempotency key body drift"));
     }
     if prior.status != "completed" {
-        return Err(ApiError::Conflict(
-            "identical maintenance operation is still running".to_string(),
+        return Err(ApiError::server_draining(
+            ServerDrainingReason::Contention,
+            IN_FLIGHT_RETRY_AFTER_MS,
+            "identical maintenance operation is still running",
         ));
     }
     Ok(Err(OperationReceipt {
@@ -218,7 +221,7 @@ async fn claim(
         workspace_id: scope.workspace_id,
         object_id: scope.object_id,
         document_id: scope.document_id,
-        expected_head_seq: prior.expected_head_seq.ok_or(ApiError::Internal)?,
+        expected_head_seq: prior.expected_head_seq.ok_or_else(ApiError::internal)?,
         result: prior.result_redacted,
     }))
 }
@@ -332,7 +335,7 @@ pub async fn repair_quarantine(
     origin: CommandOrigin,
 ) -> Result<RepairQuarantineReceipt, ApiError> {
     if idempotency_key.trim().is_empty() {
-        return Err(ApiError::BadRequest("idempotency_key is required".to_string()));
+        return Err(ApiError::invalid_update("idempotency_key is required".to_string()));
     }
     if dry_run {
         let candidates = repair_candidates(db, &scope, false).await?;
@@ -388,13 +391,15 @@ pub async fn repair_quarantine(
         ))
         .one(&tx)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
         if prior.request_hash.as_deref() != Some(request_hash.as_str()) {
-            return Err(ApiError::Conflict("idempotency key body drift".to_string()));
+            return Err(ApiError::idempotency_key_body_drift("idempotency key body drift"));
         }
         if prior.status != "completed" {
-            return Err(ApiError::Conflict(
-                "identical maintenance operation is still running".to_string(),
+            return Err(ApiError::server_draining(
+                ServerDrainingReason::Contention,
+                IN_FLIGHT_RETRY_AFTER_MS,
+                "identical maintenance operation is still running",
             ));
         }
         let event_id = prior
@@ -406,7 +411,7 @@ pub async fn repair_quarantine(
             .result_redacted
             .get("affected")
             .cloned()
-            .ok_or(ApiError::Internal)?;
+            .ok_or_else(ApiError::internal)?;
         tx.commit().await?;
         return Ok(RepairQuarantineReceipt {
             operation_id: Some(prior.id),
@@ -524,12 +529,12 @@ pub async fn compact_document(
     let outcome = async {
         let boot = bootstrap::load(db, scope.document_id).await?;
         if boot.head_seq != expected_head_seq {
-            return Err(ApiError::Conflict("stale_frontier".to_string()));
+            return Err(ApiError::stale_frontier("stale_frontier", Some(boot.head_seq), None));
         }
         if dry_run {
             let stats = snapshot::read_tail_stats(db, scope.document_id)
                 .await?
-                .ok_or_else(|| ApiError::NotFound("collab document not found".to_string()))?;
+                .ok_or_else(|| ApiError::not_found("collab document not found".to_string()))?;
             return Ok(json!({
                 "head_seq": boot.head_seq,
                 "head_frontier": base64::Engine::encode(
@@ -598,7 +603,7 @@ pub async fn rebuild_projection(
                 scope,
                 dry_run,
                 expected_head_seq,
-                serde_json::to_value(result).map_err(|_| ApiError::Internal)?,
+                serde_json::to_value(result).map_err(|_| ApiError::internal())?,
             )
             .await
         }
@@ -647,7 +652,7 @@ pub async fn verify_document(
         }
         Ok(_) => {
             abandon(db, id).await;
-            Err(ApiError::Conflict("stale_frontier".to_string()))
+            Err(ApiError::stale_frontier("stale_frontier", None, None))
         }
         Err(error) => {
             abandon(db, id).await;
@@ -700,7 +705,7 @@ pub async fn workspace_health(db: &DatabaseConnection, workspace_id: Uuid) -> Re
     ))
     .one(db)
     .await?
-    .ok_or(ApiError::Internal)?;
+    .ok_or_else(ApiError::internal)?;
     let connections = super::collab::runtime::runtime()
         .registry
         .workspace_connection_count(workspace_id);
@@ -759,7 +764,7 @@ pub async fn workspace_lag(db: &DatabaseConnection, workspace_id: Uuid) -> Resul
     ))
     .one(db)
     .await?
-    .ok_or(ApiError::Internal)?;
+    .ok_or_else(ApiError::internal)?;
     Ok(json!({
         "projection": {"max": row.projection_max, "p95": row.projection_p95, "items": []},
         "search": {"max": row.search_max, "p95": row.search_p95, "items": []},
@@ -780,7 +785,7 @@ pub async fn workspace_integrity(
     limit: u64,
 ) -> Result<Value, ApiError> {
     if limit == 0 || limit > 100 {
-        return Err(ApiError::BadRequest("limit must be in 1..=100".to_string()));
+        return Err(ApiError::invalid_update("limit must be in 1..=100".to_string()));
     }
     let rows = DocumentIdRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -794,7 +799,7 @@ pub async fn workspace_integrity(
     let mut failed = 0_u64;
     for row in rows {
         match integrity::document_fingerprint(db, row.id).await {
-            Ok(fingerprint) => documents.push(serde_json::to_value(fingerprint).map_err(|_| ApiError::Internal)?),
+            Ok(fingerprint) => documents.push(serde_json::to_value(fingerprint).map_err(|_| ApiError::internal())?),
             Err(_) => failed += 1,
         }
     }
