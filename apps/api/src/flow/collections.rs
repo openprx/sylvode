@@ -5849,4 +5849,86 @@ mod database_tests {
         );
         scratch.drop_self().await;
     }
+
+    /// `secret_record_ids` fails closed (`ADR-0018` NR-7): a Record whose Collection projection,
+    /// or whose own record projection, cannot be found is treated as secret, and its single-object
+    /// read is redacted accordingly. Only a projection that positively says
+    /// `field_secrecy_enabled = false` releases the content.
+    #[tokio::test]
+    async fn a_record_without_a_collection_projection_is_treated_as_secret() {
+        let scratch = scratch_or_skip!("secret_fail_closed");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed(&state).await;
+        let mut records = Vec::new();
+        for title in ["Projection gone", "Record projection gone", "Open"] {
+            let collection_id = create_object_for(&state, workspace_id, owner_id, "collection", title).await;
+            let field = Uuid::new_v4();
+            command(
+                &state,
+                owner_id,
+                collection_id,
+                "field_create",
+                json!({"field_id": field, "label": "Name", "field_type": "text"}),
+                Uuid::new_v4().to_string(),
+            )
+            .await
+            .expect("field creates");
+            let record = command(
+                &state,
+                owner_id,
+                collection_id,
+                "record_create",
+                json!({"properties": {field.to_string(): format!("VISIBLE-{}", records.len())}}),
+                Uuid::new_v4().to_string(),
+            )
+            .await
+            .expect("record creates")
+            .object;
+            records.push((collection_id, record.id));
+        }
+        assert!(
+            super::secret_record_ids(&state.db, &records.iter().map(|(_, id)| *id).collect::<Vec<_>>())
+                .await
+                .expect("secrecy decision runs")
+                .is_empty(),
+            "no Collection has restricted fields yet"
+        );
+        exec(
+            &state.db,
+            "DELETE FROM flow_collection_projections WHERE collection_id = $1",
+            vec![records[0].0.into()],
+        )
+        .await;
+        exec(
+            &state.db,
+            "DELETE FROM flow_record_projections WHERE record_id = $1",
+            vec![records[1].1.into()],
+        )
+        .await;
+        let secret = super::secret_record_ids(&state.db, &records.iter().map(|(_, id)| *id).collect::<Vec<_>>())
+            .await
+            .expect("secrecy decision runs");
+        assert_eq!(
+            secret,
+            BTreeSet::from([records[0].1, records[1].1]),
+            "missing projections fail closed; the intact one stays open"
+        );
+        for (index, (_, record_id)) in records.iter().enumerate() {
+            let access = read_access(&state, workspace_id, owner_id, *record_id).await;
+            let view = crate::flow::query::get_object(&state, &access, None, crate::flow::query::Render::SemanticJson)
+                .await
+                .expect("record read runs")
+                .expect("authorization epoch is stable");
+            let text = serde_json::to_string(&view.semantic_content).expect("serializes");
+            if index < 2 {
+                assert_eq!(view.semantic_content, json!({}), "record {index} is redacted: {text}");
+            } else {
+                assert!(
+                    text.contains("VISIBLE-2"),
+                    "the intact record keeps its content: {text}"
+                );
+            }
+        }
+        scratch.drop_self().await;
+    }
 }
