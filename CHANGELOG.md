@@ -376,6 +376,12 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow conversions: `policy_rejected` now says why with `details.reason` — `preview_expired`
+  when the commit's preview is past its 15-minute TTL, `target_schema_changed` when the target
+  form's schema version differs from the preview or job (at commit and at retry), and
+  `permission_unconfigured` when the target form has no policy row and is therefore read-only
+  through the bridge (ADR-0019 BR-4), at preview and at commit. The existing
+  `details.permission_state` is kept where it was returned before.
 - Flow conversions can now actually end `failed` in production. A commit first persists the job
   as `started` (with `flow.conversion.started`), then runs it; any failure from then on — a
   revoked Forms or Flow permission, an archived target form, a frontier or schema change found

@@ -13104,6 +13104,130 @@ mod flow_database_tests {
         assert_eq!(jobs[0].error_code.as_deref(), rejected["error_code"].as_str());
         scratch.drop_self().await;
     }
+
+    /// FP2-B4 N4-⑥: an expired preview is refused with `policy_rejected` +
+    /// `details.reason=preview_expired`, before any job exists.
+    #[tokio::test]
+    async fn fp2_b4_expired_preview_commit_is_policy_rejected_preview_expired() {
+        let scratch = scratch_or_skip!("fp2-b4-expired");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        exec(
+            &state,
+            "UPDATE flow_conversion_previews SET expires_at=now()-interval '1 second' WHERE id=$1",
+            vec![preview_id.into()],
+        )
+        .await;
+        let rejected = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-expired").await;
+        assert_typed(&rejected, "policy_rejected", 403);
+        assert_eq!(rejected["details"]["reason"], "preview_expired", "{rejected}");
+        assert!(fp2_b4_jobs_of_preview(&state, preview_id).await.is_empty());
+        scratch.drop_self().await;
+    }
+
+    /// FP2-B4 N4-⑥: a form without any policy row is `permission_unconfigured` (ADR-0019 BR-4).
+    #[tokio::test]
+    async fn fp2_b4_unconfigured_target_form_is_policy_rejected_permission_unconfigured() {
+        let scratch = scratch_or_skip!("fp2-b4-unconfigured");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, false).await;
+        let rejected = fp2_b4_preview(
+            &state,
+            &fx,
+            json!({"target_form_id":fx.form_id,"values":{"req":"value"}}),
+        )
+        .await;
+        assert_typed(&rejected, "policy_rejected", 403);
+        assert_eq!(rejected["details"]["reason"], "permission_unconfigured", "{rejected}");
+        assert_eq!(
+            rejected["details"]["permission_state"]["configuration"], "unconfigured",
+            "{rejected}"
+        );
+        scratch.drop_self().await;
+    }
+
+    async fn fp2_b4_retry(state: &AppState, fx: &Fp2B4, job_id: &str) -> Value {
+        fp2_b4_route(
+            state,
+            fx.owner_id,
+            "POST",
+            &format!("/api/v1/flow/conversions/{job_id}/retry"),
+            Some(json!({"idempotency_key": Uuid::new_v4().to_string(), "confirm": true})),
+        )
+        .await
+    }
+
+    async fn fp2_b4_change_schema(state: &AppState, fx: &Fp2B4, expected_version: i32) {
+        let mut schema = fp2_b4_text_schema();
+        if let Some(fields) = schema["fields"].as_array_mut() {
+            fields.push(json!({
+                "field_id": format!("fld_fp2b4_extra_{expected_version}"),
+                "key": format!("extra_{expected_version}"),
+                "type": "text",
+                "required": false
+            }));
+        }
+        let updated = body_json(to_response(
+            crate::routes::form::update_form(
+                State(state.clone()),
+                claims_for(fx.owner_id),
+                None,
+                Path(fx.form_id),
+                Json(crate::routes::form::UpdateFormRequest {
+                    name: None,
+                    description: None,
+                    icon: None,
+                    color: None,
+                    title_template: None,
+                    schema: Some(schema),
+                    detail_layout: None,
+                    expected_schema_version: Some(expected_version),
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(updated["code"], 0, "{updated}");
+    }
+
+    /// FP2-B4 N4-⑥ / N5-⑤: a target schema change between preview and commit (or between a
+    /// failure and its retry) is `policy_rejected` + `details.reason=target_schema_changed`.
+    #[tokio::test]
+    async fn fp2_b4_target_schema_change_is_policy_rejected_target_schema_changed() {
+        let scratch = scratch_or_skip!("fp2-b4-schema-changed");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+
+        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        fp2_b4_change_schema(&state, &fx, 1).await;
+        let rejected = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-schema-commit").await;
+        assert_typed(&rejected, "policy_rejected", 403);
+        assert_eq!(rejected["details"]["reason"], "target_schema_changed", "{rejected}");
+        let mismatched = fp2_b4_commit(&state, &fx, preview_id, 2, "fp2-b4-schema-input").await;
+        assert_typed(&mismatched, "policy_rejected", 403);
+        assert_eq!(mismatched["details"]["reason"], "target_schema_changed", "{mismatched}");
+
+        // A failed job whose target schema moves on before the retry.
+        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let failed = fp2_b4_commit(&state, &fx, preview_id, 2, "fp2-b4-schema-retry").await;
+        assert_typed(&failed, "policy_rejected", 403);
+        let job_id = fp2_b4_jobs_of_preview(&state, preview_id)
+            .await
+            .first()
+            .map(|job| job.id)
+            .expect("the failed job exists");
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        fp2_b4_change_schema(&state, &fx, 2).await;
+        let retried = fp2_b4_retry(&state, &fx, &job_id.to_string()).await;
+        assert_typed(&retried, "policy_rejected", 403);
+        assert_eq!(retried["details"]["reason"], "target_schema_changed", "{retried}");
+        let jobs = fp2_b4_jobs_of_preview(&state, preview_id).await;
+        assert_eq!(jobs[0].status, "failed");
+        assert_eq!(jobs[0].error_code.as_deref(), Some("policy_rejected"));
+        scratch.drop_self().await;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
