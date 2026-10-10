@@ -2451,7 +2451,32 @@
       "title": "历史记录",
       "empty": "暂无历史记录",
       "loadMore": "加载更多",
-      "entry": "{actor} 于 {time}"
+      "entry": "{actor} 于 {time}",
+      "actorUnknown": "未知",
+      "diff": {
+        "show": "查看变更",
+        "hide": "收起变更",
+        "loading": "正在加载变更…",
+        "empty": "没有内容变更。",
+        "error": "无法显示变更。",
+        "arrow": "{before} → {after}",
+        "property": "{key}：{before} → {after}",
+        "op": {
+          "title": "标题",
+          "added": "新增",
+          "removed": "删除",
+          "changed": "修改",
+          "moved": "移动"
+        },
+        "kind": {
+          "block": "块",
+          "collection_field": "字段",
+          "collection_view": "视图",
+          "record_property": "属性",
+          "navigator_node": "导航项",
+          "other": "项目"
+        }
+      }
     },
     "panel": {
       "title": "页面信息",
@@ -2459,7 +2484,26 @@
       "created": "创建于",
       "updated": "更新于",
       "copyReference": "复制引用",
-      "copied": "已复制"
+      "copied": "已复制",
+      "export": {
+        "heading": "导出此页面",
+        "formatLabel": "格式",
+        "format": {
+          "json": "JSON 格式",
+          "markdown": "Markdown 文档",
+          "csv": "CSV 表格",
+          "package": "Sylvode 包"
+        },
+        "includeHistory": "包含历史",
+        "historyPackageOnly": "只有包导出可以包含历史。",
+        "start": "导出",
+        "exporting": "正在导出…",
+        "download": "下载",
+        "downloading": "正在下载…",
+        "downloaded": "已下载 {name}",
+        "failed": "导出失败。",
+        "started": "导出已开始。"
+      }
     },
     "route": {
       "disabledTitle": "Flow 未启用",

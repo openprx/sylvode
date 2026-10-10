@@ -2451,7 +2451,32 @@
       "title": "History",
       "empty": "No history yet",
       "loadMore": "Load more",
-      "entry": "{actor} at {time}"
+      "entry": "{actor} at {time}",
+      "actorUnknown": "Unknown",
+      "diff": {
+        "show": "Show changes",
+        "hide": "Hide changes",
+        "loading": "Loading changes…",
+        "empty": "No content changes.",
+        "error": "The changes could not be shown.",
+        "arrow": "{before} → {after}",
+        "property": "{key}: {before} → {after}",
+        "op": {
+          "title": "Title",
+          "added": "Added",
+          "removed": "Removed",
+          "changed": "Changed",
+          "moved": "Moved"
+        },
+        "kind": {
+          "block": "Block",
+          "collection_field": "Field",
+          "collection_view": "View",
+          "record_property": "Property",
+          "navigator_node": "Navigation item",
+          "other": "Item"
+        }
+      }
     },
     "panel": {
       "title": "Page info",
@@ -2459,7 +2484,26 @@
       "created": "Created",
       "updated": "Updated",
       "copyReference": "Copy reference",
-      "copied": "Copied"
+      "copied": "Copied",
+      "export": {
+        "heading": "Export this page",
+        "formatLabel": "Format",
+        "format": {
+          "json": "JSON",
+          "markdown": "Markdown",
+          "csv": "CSV",
+          "package": "Sylvode package"
+        },
+        "includeHistory": "Include history",
+        "historyPackageOnly": "History can only be included in a package export.",
+        "start": "Export",
+        "exporting": "Exporting…",
+        "download": "Download",
+        "downloading": "Downloading…",
+        "downloaded": "Downloaded {name}",
+        "failed": "The export failed.",
+        "started": "Export started."
+      }
     },
     "route": {
       "disabledTitle": "Flow is not enabled",

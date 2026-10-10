@@ -1,7 +1,7 @@
 {
 	"name": "frontend",
 	"private": true,
-	"version": "0.2.450",
+	"version": "0.2.451",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
@@ -35,6 +35,7 @@
 		"test:flow-conversion-job": "bun tests/flow-conversion-job.test.ts",
 		"test:flow-share-panel": "bun tests/flow-share-panel.test.ts",
 		"test:flow-relations-panel": "bun tests/flow-relations-panel.test.ts",
+		"test:flow-object-panel": "bun tests/flow-object-panel.test.ts",
 		"test:workspace-home": "bun tests/workspace-home.test.ts",
 		"test:workspace-role": "bun tests/workspace-role.test.ts",
 		"smoke:restaurant-ordering": "node scripts/smoke-restaurant-ordering.mjs",
