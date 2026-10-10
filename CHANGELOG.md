@@ -427,6 +427,10 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Browser E2E stack: `scripts/e2e-web-stack.sh up` also starts the background worker on the
+  same configuration (it is the only writer of the Flow search index), stops it on `down`, and
+  refuses to start when `worker` is missing from `E2E_BIN_DIR`. The CI Web E2E job runs every
+  `tests/e2e/web/flow-*.spec.ts` plus the workspace home spec.
 - Web UI, Flow object page: an object whose type has no registered renderer and no collaboration
   session (a Collection, for which the server refuses a collab ticket) shows its title, the
   "view isn't available yet" fallback and the object panel, instead of the "Flow is not enabled"
