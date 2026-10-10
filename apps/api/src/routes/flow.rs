@@ -12917,6 +12917,66 @@ mod flow_database_tests {
         );
         scratch.drop_self().await;
     }
+
+    #[derive(FromQueryResult)]
+    struct Fp2B4JobRow {
+        id: Uuid,
+        status: String,
+        error_code: Option<String>,
+    }
+
+    async fn fp2_b4_jobs_of_preview(state: &AppState, preview_id: Uuid) -> Vec<Fp2B4JobRow> {
+        Fp2B4JobRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id, status, error_code FROM flow_conversion_jobs WHERE preview_id=$1",
+            vec![preview_id.into()],
+        ))
+        .all(&state.db)
+        .await
+        .expect("job query")
+    }
+
+    /// FP2-B4 N4-①: a second commit of the same preview under a different idempotency key returns
+    /// the same job (200), never a 500 from the `UNIQUE (preview_id)` constraint, and writes nothing.
+    #[tokio::test]
+    async fn fp2_b4_second_commit_of_a_preview_with_another_key_returns_the_same_job() {
+        let scratch = scratch_or_skip!("fp2-b4-same-job");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+
+        let first = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-key-a").await;
+        assert_eq!(first["code"], 0, "{first}");
+        assert_eq!(first["data"]["status"], "completed", "{first}");
+        let second = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-key-b").await;
+        assert_eq!(
+            second["code"], 0,
+            "the second key must get the job, not an error: {second}"
+        );
+        assert_eq!(second["data"]["job_id"], first["data"]["job_id"], "{second}");
+        assert_eq!(
+            second["data"]["created_target_ids"], first["data"]["created_target_ids"],
+            "{second}"
+        );
+        let replay_a = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-key-a").await;
+        assert_eq!(replay_a["data"]["job_id"], first["data"]["job_id"], "{replay_a}");
+        assert_eq!(
+            fp2_b4_count(
+                &state,
+                "SELECT count(*) AS n FROM form_records WHERE form_id=$1",
+                vec![fx.form_id.into()]
+            )
+            .await,
+            1,
+            "one preview converts at most once"
+        );
+        let jobs = fp2_b4_jobs_of_preview(&state, preview_id).await;
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(first["data"]["job_id"], jobs[0].id.to_string());
+        assert_eq!(jobs[0].status, "completed");
+        assert_eq!(jobs[0].error_code, None);
+        scratch.drop_self().await;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

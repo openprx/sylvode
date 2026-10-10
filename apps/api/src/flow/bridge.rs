@@ -1306,25 +1306,36 @@ async fn execute_conversion(
         ))
         .await?;
     } else {
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "INSERT INTO flow_conversion_jobs \
+        let claimed = tx
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO flow_conversion_jobs \
              (id, workspace_id, preview_id, actor_id, actor_kind, source_object_id, source_frontier, target_type, \
-              target_schema_version, status, idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'started',$10)",
-            vec![
-                job_id.into(),
-                preview.workspace_id.into(),
-                preview.id.into(),
-                preview.actor_id.into(),
-                preview.actor_kind.clone().into(),
-                preview.source_object_id.into(),
-                preview.source_frontier.clone().into(),
-                preview.target_type.clone().into(),
-                preview.target_schema_version.into(),
-                idempotency_key.clone().into(),
-            ],
-        ))
-        .await?;
+              target_schema_version, status, idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'started',$10) \
+             ON CONFLICT DO NOTHING",
+                vec![
+                    job_id.into(),
+                    preview.workspace_id.into(),
+                    preview.id.into(),
+                    preview.actor_id.into(),
+                    preview.actor_kind.clone().into(),
+                    preview.source_object_id.into(),
+                    preview.source_frontier.clone().into(),
+                    preview.target_type.clone().into(),
+                    preview.target_schema_version.into(),
+                    idempotency_key.clone().into(),
+                ],
+            ))
+            .await?;
+        if claimed.rows_affected() == 0 {
+            // A concurrent commit of the same preview (or key) won `UNIQUE (preview_id)` /
+            // `UNIQUE (workspace_id, idempotency_key)`; answer with its job instead of a 500.
+            tx.rollback().await?;
+            return match existing_commit_job(&state.db, &preview, &idempotency_key).await? {
+                Some(existing) => load_job(&state.db, existing).await,
+                None => Err(ApiError::internal()),
+            };
+        }
     }
     let started_event = conversion_event(
         &tx,
@@ -1485,6 +1496,46 @@ async fn execute_conversion(
     load_job(&state.db, job_id).await
 }
 
+/// The job an earlier commit already created for this request, if any.
+///
+/// A commit is idempotent on its key *and* on its preview (`rest-api-v1.md` v0.7: a second commit
+/// of the same `preview_id` under another key returns the same job). A key already spent on a
+/// different preview is body drift.
+async fn existing_commit_job<C: ConnectionTrait>(
+    conn: &C,
+    preview: &PreviewRow,
+    idempotency_key: &str,
+) -> Result<Option<Uuid>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Existing {
+        id: Uuid,
+        preview_id: Uuid,
+    }
+    if let Some(existing) = Existing::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id, preview_id FROM flow_conversion_jobs WHERE workspace_id=$1 AND idempotency_key=$2",
+        vec![preview.workspace_id.into(), idempotency_key.into()],
+    ))
+    .one(conn)
+    .await?
+    {
+        if existing.preview_id != preview.id {
+            return Err(ApiError::idempotency_key_body_drift(
+                "idempotency_key was already used with a different conversion preview",
+            ));
+        }
+        return Ok(Some(existing.id));
+    }
+    Ok(Existing::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id, preview_id FROM flow_conversion_jobs WHERE preview_id=$1",
+        vec![preview.id.into()],
+    ))
+    .one(conn)
+    .await?
+    .map(|existing| existing.id))
+}
+
 pub async fn commit_conversion(
     state: &AppState,
     extensions: &Extensions,
@@ -1497,9 +1548,6 @@ pub async fn commit_conversion(
         ));
     }
     let preview = load_preview(&state.db, input.preview_id).await?;
-    if preview.expires_at <= Utc::now() {
-        return Err(ApiError::policy_rejected("conversion preview expired"));
-    }
     if input.source_frontier != preview.source_frontier {
         return Err(ApiError::stale_frontier(
             "source frontier differs from preview",
@@ -1510,25 +1558,11 @@ pub async fn commit_conversion(
     if input.target_schema_version != preview.target_schema_version {
         return Err(ApiError::policy_rejected("target schema version differs from preview"));
     }
-    #[derive(FromQueryResult)]
-    struct Existing {
-        id: Uuid,
-        preview_id: Uuid,
+    if let Some(job_id) = existing_commit_job(&state.db, &preview, &input.idempotency_key).await? {
+        return load_job(&state.db, job_id).await;
     }
-    if let Some(existing) = Existing::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT id, preview_id FROM flow_conversion_jobs WHERE workspace_id=$1 AND idempotency_key=$2",
-        vec![preview.workspace_id.into(), input.idempotency_key.clone().into()],
-    ))
-    .one(&state.db)
-    .await?
-    {
-        if existing.preview_id != preview.id {
-            return Err(ApiError::invalid_update(
-                "idempotency_key was already used with a different conversion preview".to_string(),
-            ));
-        }
-        return load_job(&state.db, existing.id).await;
+    if preview.expires_at <= Utc::now() {
+        return Err(ApiError::policy_rejected("conversion preview expired"));
     }
     execute_conversion(
         state,
