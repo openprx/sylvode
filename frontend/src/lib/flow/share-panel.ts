@@ -32,6 +32,7 @@ import type {
 	SetFlowGrantsInput,
 	SetFlowInheritanceInput
 } from '$lib/api/flow';
+import { botsApi, type Bot } from '$lib/api/bots';
 import { membersApi } from '$lib/api/members';
 import { FlowCommandService } from './command-service';
 import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
@@ -227,21 +228,60 @@ export interface ShareDirectoryEntry {
 	readonly label: string;
 }
 
-/** Workspace members a grant can name, for labels and the add picker. Fails soft to `[]`. */
-export async function listShareDirectory(workspaceId: string): Promise<ShareDirectoryEntry[]> {
-	try {
-		const result = await membersApi.list(workspaceId);
-		if (result.code !== 0 || !result.data) return [];
-		return result.data.items
-			.filter((member) => member.entity_type === undefined || member.entity_type === 'human')
-			.map((member) => ({
-				principal_kind: 'user' as const,
-				principal_id: member.user_id,
-				label: member.name || member.email || member.user_id
-			}));
-	} catch {
-		return [];
-	}
+/** Where the directory comes from: the workspace members and the workspace bots. */
+export interface ShareDirectorySources {
+	readonly members: typeof membersApi.list;
+	readonly bots: (workspaceId: string) => Promise<ApiResult<Bot[]>>;
+}
+
+const DEFAULT_DIRECTORY_SOURCES: ShareDirectorySources = {
+	members: (workspaceId) => membersApi.list(workspaceId),
+	bots: (workspaceId) => botsApi.list(workspaceId)
+};
+
+/**
+ * Who a grant can name, for labels and the add picker: the workspace's human members
+ * (`principal_kind: "user"`, the user id) and its active bots (`principal_kind: "bot"`, the
+ * `workspace_bots` id the grants store). Each source fails soft to nothing on its own, so a
+ * caller who may not list bots still gets the members.
+ */
+export async function listShareDirectory(
+	workspaceId: string,
+	sources: ShareDirectorySources = DEFAULT_DIRECTORY_SOURCES
+): Promise<ShareDirectoryEntry[]> {
+	const [members, bots] = await Promise.all([
+		sources
+			.members(workspaceId)
+			.then((result) =>
+				result.code === 0 && result.data
+					? result.data.items
+							.filter(
+								(member) => member.entity_type === undefined || member.entity_type === 'human'
+							)
+							.map((member) => ({
+								principal_kind: 'user' as const,
+								principal_id: member.user_id,
+								label: member.name || member.email || member.user_id
+							}))
+					: []
+			)
+			.catch((): ShareDirectoryEntry[] => []),
+		sources
+			.bots(workspaceId)
+			.then((result) =>
+				result.code === 0 && Array.isArray(result.data)
+					? result.data
+							.filter((bot) => bot.is_active)
+							.map((bot) => ({
+								principal_kind: 'bot' as const,
+								principal_id: bot.id,
+								label: bot.name || bot.id
+							}))
+					: []
+			)
+			.catch((): ShareDirectoryEntry[] => [])
+	]);
+	return [...members, ...bots];
 }
 
 export type ShareLoadState =

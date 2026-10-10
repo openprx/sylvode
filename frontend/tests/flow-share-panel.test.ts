@@ -26,6 +26,7 @@ import {
 	SHARE_PRINCIPAL_KIND_KEYS,
 	changeLowersPermissions,
 	isGrantDowngrade,
+	listShareDirectory,
 	type ShareDirectoryEntry
 } from '../src/lib/flow/share-panel';
 import {
@@ -633,5 +634,74 @@ await suite.checkAsync('every share i18n key exists in zh and en', async () => {
 		assertDeepEqual(missing, [], `${locale}.json missing keys`);
 	}
 });
+
+await suite.checkAsync(
+	'the add picker lists workspace bots beside members; a bot grant is sent as principal_kind bot',
+	async () => {
+		const directory = await listShareDirectory(WS, {
+			members: async () =>
+				({
+					code: 0,
+					message: 'ok',
+					data: {
+						items: [
+							{ user_id: ALICE, name: 'Alice', email: 'a@x', entity_type: 'human' },
+							{ user_id: 'bot-user', name: 'Bot member', email: '', entity_type: 'bot' }
+						],
+						total: 2,
+						page: 1,
+						per_page: 2,
+						total_pages: 1
+					}
+				}) as never,
+			bots: async () =>
+				({
+					code: 0,
+					message: 'ok',
+					data: [
+						{ id: 'bot-1', name: 'Release bot', is_active: true },
+						{ id: 'bot-2', name: 'Retired bot', is_active: false }
+					]
+				}) as never
+		});
+		assertDeepEqual(
+			directory.map((entry) => [entry.principal_kind, entry.principal_id, entry.label]),
+			[
+				['user', ALICE, 'Alice'],
+				['bot', 'bot-1', 'Release bot']
+			],
+			'human members and active bots'
+		);
+		const membersOnly = await listShareDirectory(WS, {
+			members: async () =>
+				({
+					code: 0,
+					message: 'ok',
+					data: { items: [{ user_id: ALICE, name: 'Alice', email: '' }] }
+				}) as never,
+			bots: async () => ({ code: 403, message: 'no', data: null, error_code: 'forbidden' }) as never
+		});
+		assertDeepEqual(
+			membersOnly.map((entry) => entry.principal_id),
+			[ALICE],
+			'a refused bot list leaves the members'
+		);
+
+		const h = harness({ directory });
+		await h.controller.load();
+		const added = await h.controller.propose({
+			kind: 'add',
+			principal_kind: 'bot',
+			principal_id: 'bot-1',
+			level: 'edit'
+		});
+		assertEqual(added.status, 'committed', 'adding a bot commits directly');
+		assertDeepEqual(
+			(h.puts()[0] as SetFlowGrantsInput).grants.at(-1),
+			{ principal_kind: 'bot', principal_id: 'bot-1', level: 'edit' },
+			'the bot row in the roster'
+		);
+	}
+);
 
 finish(suite.result());
