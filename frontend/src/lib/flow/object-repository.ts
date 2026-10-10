@@ -26,7 +26,9 @@ import {
 	type FlowPackageImportReport,
 	type FlowProjectionLag,
 	type FlowRelationListResponse,
-	type FlowRelationsQuery
+	type FlowRelationsQuery,
+	type FlowSearchQuery,
+	type FlowSearchResponse
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
 import { FlowCommandService } from './command-service';
@@ -345,6 +347,19 @@ export class FlowObjectRepository {
 		query: { cursor?: string; limit?: number } = {}
 	): Promise<ApiResult<FlowProjectionLag>> {
 		return flowApi.getProjectionLag(workspaceId, query);
+	}
+
+	// v0.5 Navigator / command palette full-text search (`surface-coverage-v1.md`: search is an
+	// `adapter:ObjectRepository` consumer). A read only: a hit is never opened from its snippet,
+	// the object page GETs the current object itself. Raw `ApiResult`, so `navigator-search.ts`
+	// branches on `error_code` (`require_current` -> `stale_frontier`).
+
+	search(
+		workspaceId: string,
+		query: FlowSearchQuery,
+		signal?: AbortSignal
+	): Promise<ApiResult<FlowSearchResponse>> {
+		return flowApi.searchObjects(workspaceId, query, signal);
 	}
 
 	// v0.8 package round-trip reads (export job status, the finished artifact, the import job

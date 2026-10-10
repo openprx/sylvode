@@ -19,7 +19,9 @@ import { apiClient, type ApiResult, type UploadProgress } from './client';
 
 export type { UploadProgress };
 
-export type FlowObjectType = 'page' | 'navigator';
+/** `apps/api/src/flow/command.rs::REGISTERED_OBJECT_TYPES` (`collection` from v0.6; the generic
+ * create endpoint rejects `record`). */
+export type FlowObjectType = 'page' | 'navigator' | 'collection';
 
 export interface FlowObjectView {
 	id: string;
@@ -96,6 +98,69 @@ export interface CreateFlowObjectInput {
 	title: string;
 	idempotency_key: string;
 	message?: string;
+	/** v0.6 standalone Collection only (`routes/flow.rs::CreateFlowObjectRequest`; the server
+	 * rejects both for any other `object_type`, `flow/command.rs` "initial_fields and
+	 * initial_view require object_type=collection"). */
+	initial_fields?: FlowCollectionInitialField[];
+	initial_view?: FlowCollectionInitialView;
+}
+
+/** One `initial_fields[]` entry (`flow/collections.rs::FieldCreatePayload`). The ids are minted by
+ * the client and are part of the idempotency body, so a retry must resend the same ones. */
+export interface FlowCollectionInitialField {
+	field_id: string;
+	label: string;
+	field_type: 'text' | 'number' | 'boolean' | 'date' | 'select' | 'multi_select' | 'relation';
+	config: Record<string, unknown>;
+	index: number;
+}
+
+/** `initial_view` (`flow/collections.rs::ViewCreatePayload`; `view_type` is `table|board`). */
+export interface FlowCollectionInitialView {
+	view_id: string;
+	name: string;
+	view_type: 'table' | 'board';
+	config: Record<string, unknown>;
+	index: number;
+}
+
+/** `GET /workspaces/{id}/flow/search` query (`routes/flow.rs::FlowSearchQuery`). Exactly one of
+ * `project_id` / `unprojected` / `all_visible` (`flow/search.rs::validate`); `object_type` is
+ * `page|navigator` only. */
+export interface FlowSearchQuery {
+	q: string;
+	project_id?: string;
+	unprojected?: boolean;
+	all_visible?: boolean;
+	object_type?: 'page' | 'navigator';
+	freshness?: 'allow_stale' | 'require_current';
+	cursor?: string;
+	limit?: number;
+}
+
+/** `flow/model.rs::FlowSearchHit`. `snippets` keys are `title` / `plain_text`; values are
+ * HTML-escaped text with `<mark>`/`</mark>` around matches (`flow/search.rs::fetch_search_batch`). */
+export interface FlowSearchHit {
+	object: {
+		id: string;
+		object_type: string;
+		title: string;
+		lifecycle_status: string;
+		project_id?: string;
+	};
+	matched_fields: string[];
+	snippets: Record<string, string>;
+	indexed_seq: number;
+	head_seq: number;
+	projection_lag: number;
+	stale: boolean;
+}
+
+/** `flow/model.rs::FlowSearchResponse` (no total by design). */
+export interface FlowSearchResponse {
+	items: FlowSearchHit[];
+	next_cursor?: string;
+	index_frontier: { indexed_seq: number; head_seq: number; lag: number; stale: boolean };
 }
 
 export interface ListFlowObjectsQuery {
@@ -985,6 +1050,33 @@ export const flowApi = {
 	): Promise<ApiResult<FlowPackageImportReport>> {
 		return apiClient.get<FlowPackageImportReport>(
 			`/api/v1/workspaces/${workspaceId}/flow/imports/${importId}`
+		);
+	},
+
+	/** `GET /workspaces/{id}/flow/search`. Takes an `AbortSignal` so the navigator can cancel the
+	 * previous request when the query changes. */
+	searchObjects(
+		workspaceId: string,
+		query: FlowSearchQuery,
+		signal?: AbortSignal
+	): Promise<ApiResult<FlowSearchResponse>> {
+		const qs = buildQuery({
+			q: query.q,
+			project_id: query.project_id,
+			unprojected: query.unprojected,
+			all_visible: query.all_visible,
+			object_type: query.object_type,
+			freshness: query.freshness,
+			cursor: query.cursor,
+			limit: query.limit
+		});
+		return apiClient.request<FlowSearchResponse>(
+			'GET',
+			`/api/v1/workspaces/${workspaceId}/flow/search${qs}`,
+			undefined,
+			true,
+			{},
+			signal
 		);
 	},
 

@@ -71,16 +71,23 @@ function newIdempotencyKey(): string {
 }
 
 export class FlowCommandService {
+	/**
+	 * `POST .../flow/objects`. `options.idempotencyKey` lets a caller that retries one intent (the
+	 * standalone Collection dialog) resend the same key; without it each call is a new intent.
+	 * A rejection is thrown as a `FlowError` carrying the envelope's typed `error_code` when there
+	 * is one, the coarse HTTP-status mapping only for a legacy envelope.
+	 */
 	async createObject(
 		workspaceId: string,
-		input: Omit<CreateFlowObjectInput, 'idempotency_key'>
+		input: Omit<CreateFlowObjectInput, 'idempotency_key'>,
+		options: { idempotencyKey?: string } = {}
 	): Promise<AcceptedChange> {
 		const result = await flowApi.createObject(workspaceId, {
 			...input,
-			idempotency_key: newIdempotencyKey()
+			idempotency_key: options.idempotencyKey ?? newIdempotencyKey()
 		});
 		if (result.code !== 0 || !result.data) {
-			throw mapErrorCode(result.code);
+			throw flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
 		}
 		return result.data;
 	}
