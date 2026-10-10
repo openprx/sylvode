@@ -242,6 +242,28 @@ export interface BridgePermissionState {
 	record_limited: boolean;
 }
 
+/** One `GET /flow/objects/{id}/references` item (`flow/bridge.rs::BridgeReferenceView`, tagged
+ * by `visibility`). An `unavailable` item carries nothing else: the target was archived or is no
+ * longer readable, and the server does not say which. */
+export type FlowReferenceItem =
+	| {
+			visibility: 'available';
+			reference_id: string;
+			source_object_id: string;
+			target_type: 'form' | 'form_record';
+			target_id: string;
+			title: string;
+			status: string;
+			summary: unknown;
+			display: Record<string, unknown>;
+			permission_state: BridgePermissionState;
+	  }
+	| { visibility: 'unavailable' };
+
+export interface FlowReferenceList {
+	items: FlowReferenceItem[];
+}
+
 export interface FlowReferenceReceipt {
 	reference_id: string;
 	source_object_id: string;
@@ -639,7 +661,26 @@ export type FlowCollectionCommandType =
 	| 'view_update'
 	| 'view_reorder'
 	| 'record_patch'
-	| 'record_archive';
+	| 'record_archive'
+	| 'create_collection_embed';
+
+/** `create_collection_embed` payload (`flow/collections.rs::CreateCollectionEmbedPayload`): one
+ * Page command that creates the Collection, its document and projection, the Page's embed block
+ * and the `embeds` relation in a single transaction. The field and view ids are client-minted and
+ * part of the replay body, so a retry must resend them unchanged. */
+export interface CreateCollectionEmbedPayload {
+	title: string;
+	initial_fields?: FlowCollectionInitialField[];
+	initial_view?: FlowCollectionInitialView;
+}
+
+/** `AcceptedChange.command_result` of `create_collection_embed` as the server writes it
+ * (`flow/collections.rs::create_collection_embed`, the `command_result` object). */
+export interface CollectionEmbedCommandResult {
+	collection_id: string;
+	collection_document_id: string;
+	block_id: string;
+}
 
 /** The seven first-release field types (`flow/collections.rs::validate_field_type`). */
 export type FlowCollectionFieldType =
@@ -1041,6 +1082,10 @@ export const flowApi = {
 			`/api/v1/flow/objects/${objectId}/references`,
 			input
 		);
+	},
+
+	listReferences(objectId: string): Promise<ApiResult<FlowReferenceList>> {
+		return apiClient.get<FlowReferenceList>(`/api/v1/flow/objects/${objectId}/references`);
 	},
 
 	unreferenceObject(

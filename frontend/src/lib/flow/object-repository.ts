@@ -13,7 +13,7 @@
 // `loro-crdt` is imported dynamically, same rule as `editor-adapter.ts`: this keeps the engine
 // chunk out of every route that isn't Flow.
 
-import { writable, type Readable } from 'svelte/store';
+import { readonly as readonlyStore, writable, type Readable } from 'svelte/store';
 import {
 	flowApi,
 	type FlowAdminHealth,
@@ -29,6 +29,7 @@ import {
 	type FlowObjectView,
 	type FlowPackageImportReport,
 	type FlowProjectionLag,
+	type FlowReferenceList,
 	type FlowRelationListResponse,
 	type FlowRelationsQuery,
 	type FlowSearchQuery,
@@ -160,6 +161,33 @@ export class FlowObjectRepository {
 	// (`command-service.ts`'s `TicketIssuer`); owned here since `CommandService` has no
 	// per-request state of its own and every open session shares one workspace-agnostic instance.
 	private readonly commandService = new FlowCommandService();
+	// Objects created by a surface other than the navigator itself (a Page's slash-menu
+	// Collection embed). The navigator lives in the layout and loads its list once, so this is how
+	// it learns that a new child exists without polling.
+	private readonly createdObjects_ = writable<{ objectId: string; parentId: string | null } | null>(
+		null
+	);
+	readonly createdObjects: Readable<{ objectId: string; parentId: string | null } | null> =
+		readonlyStore(this.createdObjects_);
+
+	/** Announces an object a non-navigator surface created (see `createdObjects`). */
+	notifyObjectCreated(objectId: string, parentId: string | null): void {
+		this.createdObjects_.set({ objectId, parentId });
+	}
+
+	/** Pulls the accepted snapshot+tail of an OPEN object over REST and merges it into its doc.
+	 * Used after a server-side command changed the document (e.g. `create_collection_embed`
+	 * writing the embed block), so the canvas shows the real block without waiting for the
+	 * WebSocket's own resync. Returns whether the merge happened. */
+	async resyncAccepted(objectId: string): Promise<boolean> {
+		if (!this.open_.has(objectId)) return false;
+		try {
+			await this.replaceWithAccepted(await this.bootstrap(objectId));
+			return true;
+		} catch {
+			return false;
+		}
+	}
 
 	async open(input: {
 		workspaceId: string;
@@ -478,6 +506,13 @@ export class FlowObjectRepository {
 	/** Record documents currently open (diagnostics and tests). */
 	openRecordIds(): string[] {
 		return [...this.records_.keys()];
+	}
+
+	/** v0.7 Reference cards / Embed views (`GET .../references`): the bridge's request-time
+	 * resolution of every live reference on the Page, with each target's current
+	 * `permission_state`. Raw `ApiResult`, so `slash-bridge.ts` branches on `error_code`. */
+	listReferences(objectId: string): Promise<ApiResult<FlowReferenceList>> {
+		return flowApi.listReferences(objectId);
 	}
 
 	getGrants(objectId: string): Promise<ApiResult<FlowGrantsView>> {

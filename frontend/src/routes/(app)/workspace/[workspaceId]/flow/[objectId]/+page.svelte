@@ -327,7 +327,11 @@
 	<!-- Below lg the context panel stacks under the canvas and the column scrolls (390px phones). -->
 	<div class="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
 		{#if canvasRenderer}
-			<FlowCanvas doc={entry.doc} />
+			<FlowCanvas
+				doc={entry.doc}
+				workspaceId={entry.handle.workspaceId}
+				objectId={entry.handle.objectId}
+			/>
 		{:else}
 			<div class="flex flex-1 items-center justify-center p-8 text-center">
 				<p class="text-sm text-slate-500 dark:text-slate-400">{$t('flow.canvas.unsupported')}</p>

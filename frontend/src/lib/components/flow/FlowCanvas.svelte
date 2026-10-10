@@ -12,12 +12,18 @@
 	import { t } from 'svelte-i18n';
 	import { FlowEditorAdapter, type FlowBlockType, type SlashMenuState } from '$lib/flow/editor-adapter';
 	import type { LoroDocType } from 'loro-prosemirror';
+	import { SLASH_BRIDGE_OPTIONS, type SlashBridgeOption } from '$lib/flow/slash-bridge';
+	import FlowPageBlocks from './FlowPageBlocks.svelte';
 
 	interface Props {
 		doc: LoroDocType;
+		workspaceId: string;
+		objectId: string;
 	}
 
-	let { doc }: Props = $props();
+	let { doc, workspaceId, objectId }: Props = $props();
+
+	let pageBlocks: FlowPageBlocks | undefined = $state();
 
 	let host: HTMLDivElement | undefined = $state();
 	let adapter: FlowEditorAdapter | null = null;
@@ -35,6 +41,16 @@
 
 	const filteredOptions = $derived(
 		SLASH_OPTIONS.filter((option) => option.labelKey.toLowerCase().includes(slashMenu.query.toLowerCase()) || slashMenu.query === '')
+	);
+	// Entries whose result is not a text block: a server-created Collection embed, a Forms
+	// Bridge Reference / Embed, and the conversion wizard. Each carries its ownership note.
+	const filteredBridgeOptions = $derived(
+		SLASH_BRIDGE_OPTIONS.filter(
+			(option) =>
+				slashMenu.query === '' ||
+				option.labelKey.toLowerCase().includes(slashMenu.query.toLowerCase()) ||
+				option.action.includes(slashMenu.query.toLowerCase())
+		)
 	);
 
 	onMount(() => {
@@ -56,6 +72,12 @@
 	function pick(option: (typeof SLASH_OPTIONS)[number]): void {
 		adapter?.setBlockType(option.type, option.level);
 		slashMenu = { active: false, query: '', coords: null };
+	}
+
+	function pickBridge(option: SlashBridgeOption): void {
+		adapter?.consumeSlashTrigger();
+		slashMenu = { active: false, query: '', coords: null };
+		pageBlocks?.open(option.action);
 	}
 
 	function onHostMouseMove(event: MouseEvent): void {
@@ -120,14 +142,16 @@
 		data-placeholder={$t('flow.canvas.placeholder')}
 	></div>
 
+	<FlowPageBlocks bind:this={pageBlocks} {doc} {workspaceId} {objectId} />
+
 	{#if slashMenu.active && slashMenu.coords}
 		<div
-			class="fixed z-50 w-56 rounded-md border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			class="fixed z-50 w-72 rounded-md border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
 			style={`left: ${slashMenu.coords.left}px; top: ${slashMenu.coords.top + 4}px`}
 			role="listbox"
 			aria-label={$t('flow.canvas.slashMenu.paragraph')}
 		>
-			{#if filteredOptions.length === 0}
+			{#if filteredOptions.length === 0 && filteredBridgeOptions.length === 0}
 				<p class="px-3 py-2 text-sm text-slate-400">{$t('flow.canvas.slashMenu.empty')}</p>
 			{:else}
 				{#each filteredOptions as option (option.labelKey + String(option.level ?? ''))}
@@ -141,6 +165,22 @@
 						{$t(option.labelKey)}
 					</button>
 				{/each}
+				{#if filteredBridgeOptions.length > 0}
+					<div class="my-1 border-t border-slate-200 dark:border-slate-700" role="presentation"></div>
+					{#each filteredBridgeOptions as option (option.action)}
+						<button
+							type="button"
+							class="block w-full px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+							onclick={() => pickBridge(option)}
+							role="option"
+							aria-selected="false"
+							data-testid={`flow-slash-${option.action}`}
+						>
+							<span class="block">{$t(option.labelKey)}</span>
+							<span class="block text-xs text-slate-500 dark:text-slate-400">{$t(option.noteKey)}</span>
+						</button>
+					{/each}
+				{/if}
 			{/if}
 		</div>
 	{/if}
