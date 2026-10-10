@@ -49,7 +49,9 @@ const SYNC_STATES = [
 
 /** The `flow.*` namespaces `ui-surface-v1.md`'s i18n baseline lists as in force from v0.4, with
  * the later-version ones (`flow.collection.*` v0.6, `flow.bridge.*` v0.7) deliberately excluded
- * and named here so the exclusion is visible rather than implied. */
+ * and named here so the exclusion is visible rather than implied. Every later-version namespace
+ * now has a shipped UI and is listed in `DELIVERED_LATER_NAMESPACES`, so the "still deferred"
+ * list is empty. */
 const V04_REQUIRED_NAMESPACES = [
 	'flow.nav',
 	'flow.canvas',
@@ -61,19 +63,22 @@ const V04_REQUIRED_NAMESPACES = [
 	'flow.search',
 	'flow.recovery'
 ] as const;
-const LATER_VERSION_NAMESPACES = ['flow.collection'] as const;
+const LATER_VERSION_NAMESPACES: readonly string[] = [];
 /** Later-version namespaces that now have a shipped UI and therefore must be populated in both
  * locales: `flow.bridge.*` (v0.7) is the Page -> Forms conversion wizard
  * (`flow/[objectId]/convert`); `flow.operations.*` (v0.8) is the workspace operations panel
  * (`settings/flow/operations`); `flow.panel.*` and `flow.share.*` (v0.5/v0.8) are the object
  * page's right panel (tabs, object export) and its Share panel; `flow.lag.*` (v0.5) is the
- * navigator's projection-lag badge. */
+ * navigator's projection-lag badge; `flow.collection.*` and `flow.record.*` (v0.6) are the
+ * Collection table/board/schema renderers and the record panel. */
 const DELIVERED_LATER_NAMESPACES = [
 	'flow.bridge',
 	'flow.operations',
 	'flow.panel',
 	'flow.share',
-	'flow.lag'
+	'flow.lag',
+	'flow.collection',
+	'flow.record'
 ] as const;
 
 type Json = { [key: string]: Json } | string | number | boolean | null;

@@ -268,6 +268,17 @@ OpenPR name keeps working; see **Deprecated**.
     records), drafts kept per record across view switches, a record document opened only for
     the record panel, record create with one key per intent, and every `field_*` / `view_*`
     command refused without a request unless schema mode is on.
+  - Web UI: Collections open on the object page through the renderer registry
+    (`collection:table`, `record:panel`, loaded on demand) instead of the unsupported fallback,
+    without a collaboration ticket or bootstrap. The view switcher lists the Collection's saved
+    views. The table renders only the visible rows, has resizable columns, is a `role="grid"`
+    (arrow keys, Home, End, Enter edits, Escape cancels) with typed editors per field type
+    (relations are read-only links), adds records from its footer, and turns into a card list
+    below 768px. A record opens in a side panel with its properties and its body; unsaved edits
+    survive switching views. **Design schema** (`?mode=schema`) is the only place to create,
+    rename, retype, configure (select options), archive and reorder fields and to create, rename
+    and reorder views; a refused change is shown by its `error_code`. Strings are under
+    `flow.collection.*` and `flow.record.*`, which the i18n parity gate now requires.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

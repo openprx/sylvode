@@ -3435,6 +3435,132 @@
       "synced": "已同步",
       "lagging": "同步中：最多落后 {max} 次变更（p95 {p95}）",
       "unavailable": "同步状态不可用"
+    },
+    "collection": {
+      "loadFailed": "无法加载此 Collection。",
+      "secrecyNotice": "此 Collection 有受限字段，未显示。",
+      "view": {
+        "tabs": "Collection 视图",
+        "table": "表格",
+        "board": "看板",
+        "none": "没有已保存的视图"
+      },
+      "schema": {
+        "enter": "设计结构",
+        "exit": "完成设计",
+        "title": "结构设计",
+        "required": "只有在结构设计模式下才能修改字段和视图。",
+        "fields": "字段",
+        "views": "视图",
+        "fieldLabel": "字段名",
+        "fieldType": "字段类型",
+        "newFieldLabel": "新字段名",
+        "addField": "添加字段",
+        "options": "选项",
+        "optionsPlaceholder": "用逗号分隔，例如 待办, 完成",
+        "saveOptions": "保存选项",
+        "archive": "归档",
+        "moveUp": "上移",
+        "moveDown": "下移",
+        "newViewName": "新视图名",
+        "viewName": "视图名",
+        "viewKind": "视图类型",
+        "addView": "添加视图",
+        "labelRequired": "请输入名称。",
+        "labelTooLong": "名称最多 500 个字符。",
+        "typeUnsupported": "此处不能创建该字段类型。",
+        "reorderUnavailable": "暂时无法移动此项，请刷新后重试。"
+      },
+      "fieldType": {
+        "text": "文本",
+        "number": "数字",
+        "boolean": "复选框",
+        "date": "日期",
+        "select": "单选",
+        "multi_select": "多选",
+        "relation": "关联"
+      },
+      "value": {
+        "empty": "无值",
+        "restricted": "受限",
+        "invalid": "无法读取的值",
+        "yes": "是",
+        "no": "否",
+        "none": "无",
+        "noOptions": "还没有选项",
+        "readOnly": "此处只读",
+        "invalidNumber": "请输入数字，例如 42 或 3.5。",
+        "invalidDate": "请输入有效日期。",
+        "unknownOption": "请选择该字段的一个选项。",
+        "relationLink": "对象 {id}"
+      },
+      "cell": {
+        "saving": "保存中…",
+        "conflict": "已在别处修改并已重新读取，按 Enter 再次保存。"
+      },
+      "record": {
+        "stale": "有记录在别处被修改，列表已重新读取，你未保存的编辑仍保留。",
+        "untitled": "未命名记录"
+      },
+      "table": {
+        "openColumn": "打开",
+        "openRecord": "打开记录",
+        "resize": "调整列宽：{field}",
+        "empty": "还没有记录。",
+        "loadMore": "加载更多",
+        "newRecord": "新建记录",
+        "count": "已加载 {loaded} 条记录"
+      },
+      "board": {
+        "noValue": "无值",
+        "needsSelect": "看板按单选字段分组。请在结构设计模式下添加一个单选字段后使用看板。",
+        "newInColumn": "在 {column} 中新建记录",
+        "moveLeft": "移到上一列",
+        "moveRight": "移到下一列",
+        "moveFailed": "无法移动该卡片。"
+      },
+      "query": {
+        "filterField": "筛选",
+        "noFilter": "不筛选",
+        "operator": "条件",
+        "value": "值",
+        "applyFilter": "应用",
+        "sortField": "排序依据",
+        "noSort": "不排序",
+        "direction": "方向",
+        "asc": "升序",
+        "desc": "降序",
+        "groupBy": "分组依据",
+        "draft": "视图有未保存的修改",
+        "reset": "重置",
+        "saveView": "保存视图",
+        "saved": "视图已保存。",
+        "op": {
+          "eq": "等于",
+          "ne": "不等于",
+          "lt": "小于",
+          "lte": "不大于",
+          "gt": "大于",
+          "gte": "不小于",
+          "contains": "包含"
+        }
+      }
+    },
+    "record": {
+      "title": "记录",
+      "close": "关闭记录",
+      "opening": "正在打开记录…",
+      "openFailed": "无法打开此记录。",
+      "notLoaded": "此记录不在已加载的列表中。",
+      "notFound": "在其 Collection 中找不到此记录。",
+      "properties": "属性",
+      "body": "正文",
+      "bodyPlaceholder": "为这条记录写点备注…",
+      "save": "保存",
+      "saveBody": "保存正文",
+      "discard": "放弃",
+      "unsaved": "有未保存的修改",
+      "bodySaved": "已保存"
     }
   }
 }
