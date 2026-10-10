@@ -12502,8 +12502,9 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B3 N3-④: workspace integrity pages with a cursor, lists failing documents with their
-    /// status / `checked_at` / failure class, and keeps `counts` consistent with `documents[]`.
+    /// FP2-B3 N3-④: workspace integrity pages `documents[]` with a cursor and lists failing
+    /// documents with their status / `checked_at` / failure class; `counts` are workspace-wide on
+    /// every page and every scope (ruling 3).
     #[tokio::test]
     async fn fp2_b3_integrity_pages_and_lists_failed_documents() {
         let scratch = scratch_or_skip!("fp2-b3-integrity");
@@ -12538,6 +12539,7 @@ mod flow_database_tests {
             "three pages plus the navigator root"
         );
         assert_eq!(summary["data"]["counts"]["healthy"], 3, "{summary}");
+        assert_eq!(summary["data"]["counts"]["total"], 4, "{summary}");
         assert!(summary["data"].get("next_cursor").is_none(), "{summary}");
 
         let first = integrity("scope=documents&limit=2".to_string()).await;
@@ -12558,13 +12560,12 @@ mod flow_database_tests {
         for page in [&first, &second] {
             let documents = page["data"]["documents"].as_array().expect("documents is an array");
             let page_failed = documents.iter().filter(|row| row["status"] != "ok").count();
-            assert_eq!(page["data"]["counts"]["checked"], documents.len(), "{page}");
-            assert_eq!(page["data"]["counts"]["failed"], page_failed, "{page}");
-            assert_eq!(
-                page["data"]["counts"]["healthy"],
-                documents.len() - page_failed,
-                "{page}"
-            );
+            assert_eq!(documents.len(), 2, "limit=2 pages hold two rows each: {page}");
+            assert_eq!(page["data"]["counts"]["total"], 4, "counts are workspace-wide: {page}");
+            assert_eq!(page["data"]["counts"]["checked"], 4, "{page}");
+            assert_eq!(page["data"]["counts"]["failed"], 1, "{page}");
+            assert_eq!(page["data"]["counts"]["healthy"], 3, "{page}");
+            assert_eq!(page["data"]["status"], "integrity_error", "{page}");
             failed_counted += page_failed;
             rows.extend(documents.iter().cloned());
         }
@@ -12597,7 +12598,8 @@ mod flow_database_tests {
             summary_page["code"], 0,
             "a summary accepts a cursor too: {summary_page}"
         );
-        assert_eq!(summary_page["data"]["counts"]["checked"], 2, "{summary_page}");
+        assert_eq!(summary_page["data"]["counts"]["total"], 4, "{summary_page}");
+        assert_eq!(summary_page["data"]["counts"]["failed"], 1, "{summary_page}");
         assert!(summary_page["data"]["documents"].is_null(), "{summary_page}");
         let bad_cursor = integrity("scope=documents&cursor=bm90LWEtY3Vyc29y".to_string()).await;
         assert_typed(&bad_cursor, "invalid_update", 400);
