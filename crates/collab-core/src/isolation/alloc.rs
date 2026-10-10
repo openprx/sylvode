@@ -137,7 +137,7 @@ mod tests {
     /// tests in parallel by default -- two separate tests each calling `arm()` (which resets
     /// `ACTIVE_BYTES` to zero) would race each other's assertions.
     #[test]
-    fn counting_allocator_accepts_below_ceiling_and_rejects_above_it() {
+    fn counting_allocator_accepts_below_ceiling_and_rejects_above_it_at_the_exact_byte() {
         arm();
         let allocator = CountingAllocator;
 
@@ -163,5 +163,31 @@ mod tests {
         let oversized_ptr = unsafe { allocator.alloc(oversized_layout) };
         assert!(oversized_ptr.is_null());
         assert_eq!(ACTIVE_BYTES.load(Ordering::SeqCst), 0);
+
+        // The exact boundary, decided by the counting logic alone (no worker process, no timer):
+        // a request of precisely the ceiling is forwarded to the system allocator, one byte more
+        // is refused before it ever reaches it. Kept in this same test for the reason above.
+        let Ok(exact) = usize::try_from(ISOLATED_APPLY_MEMORY_BYTES_MAX) else {
+            return;
+        };
+        let Ok(exact_layout) = Layout::from_size_align(exact, 1) else {
+            return;
+        };
+        // SAFETY: valid non-zero-sized layout; the pointer is freed below with the same layout.
+        let exact_ptr = unsafe { allocator.alloc(exact_layout) };
+        assert!(!exact_ptr.is_null(), "exactly the ceiling must be accepted");
+        assert_eq!(ACTIVE_BYTES.load(Ordering::SeqCst), ISOLATED_APPLY_MEMORY_BYTES_MAX);
+        // SAFETY: `exact_ptr` came from `alloc` above with `exact_layout`, freed exactly once.
+        unsafe { allocator.dealloc(exact_ptr, exact_layout) };
+        assert_eq!(ACTIVE_BYTES.load(Ordering::SeqCst), 0);
+
+        let Ok(one_over_layout) = Layout::from_size_align(exact + 1, 1) else {
+            return;
+        };
+        // SAFETY: expected to return null (one byte over the ceiling); nothing to free.
+        let one_over_ptr = unsafe { allocator.alloc(one_over_layout) };
+        assert!(one_over_ptr.is_null(), "one byte over the ceiling must be refused");
+        assert_eq!(ACTIVE_BYTES.load(Ordering::SeqCst), 0);
+        disarm();
     }
 }

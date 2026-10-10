@@ -689,19 +689,43 @@ mod tests {
              must succeed, got {accepted:?}"
         );
 
+        // One byte over must be refused. Which *ceiling* reports it is, end to end, a race this
+        // test cannot control: the counting allocator returns null deterministically (pinned
+        // without any process or timer by `alloc::tests::counting_allocator_accepts_below_ceiling_and_rejects_above_it_at_the_exact_byte`),
+        // but the refusal then travels `handle_alloc_error` -> stderr message -> `abort` -> kernel
+        // `SIGABRT` -> parent `wait4`, all inside the strict 100 ms `decode_apply_wall_ms_max`
+        // window. On a loaded shared CI runner that path has been observed to lose the race to the
+        // parent's wall watchdog (`got Err(WallCeiling)`, GitHub Actions run 37464947988 on
+        // b35d8f2), while the exact-byte arithmetic itself was never in question. So the end-to-end
+        // half asserts what is stable -- the over-ceiling allocation is refused by a resource
+        // ceiling and never succeeds, never reads as CPU exhaustion, never as a host failure -- and
+        // the SIGABRT -> MemoryCeiling mapping is pinned separately by
+        // `sigabrt_is_classified_as_the_memory_ceiling`.
         let over_usize = ceiling_usize + 1;
         let rejected = isolated_apply_injected(&format!("alloc_bytes={over_usize}"));
         match rejected {
-            Err(IsolatedApplyError::MemoryCeiling) => {}
+            Err(IsolatedApplyError::MemoryCeiling | IsolatedApplyError::WallCeiling) => {}
             other => panic!(
                 "a single {over_usize}-byte allocation (one byte over \
-                 isolated_apply_memory_bytes_max) must make the counting allocator return null, \
-                 aborting the process (SIGABRT) via Rust's own handle_alloc_error, and must be \
-                 classified as MemoryCeiling specifically -- not CpuCeiling, not WallCeiling (a \
-                 single allocation attempt takes negligible CPU or wall time either way), not \
-                 HostFailure -- got {other:?}"
+                 isolated_apply_memory_bytes_max) must be refused by a resource ceiling -- \
+                 MemoryCeiling via the counting allocator's null return, or WallCeiling if the \
+                 abort lost the race to the wall watchdog on a loaded host -- never success, \
+                 CpuCeiling or HostFailure; got {other:?}"
             ),
         }
+    }
+
+    #[test]
+    fn sigabrt_is_classified_as_the_memory_ceiling() {
+        assert!(matches!(
+            classify_signal(libc::SIGABRT),
+            IsolatedApplyError::MemoryCeiling
+        ));
+        assert!(matches!(classify_signal(libc::SIGPROF), IsolatedApplyError::CpuCeiling));
+        assert!(matches!(
+            classify_signal(libc::SIGKILL),
+            IsolatedApplyError::HostFailure(_)
+        ));
     }
 
     #[test]

@@ -376,6 +376,13 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Tests: two measurement assertions that only mean something under controlled conditions no
+  longer fail on shared CI runners. The depth-32 inheritance-evaluation regression ceilings are
+  enforced only with `OPENPR_FLOW_QUIET_PG_QUALIFIED=1` and otherwise recorded in the evidence
+  line as `diagnostic_only_unqualified_environment`; the isolated-apply memory-ceiling test pins
+  the exact-byte boundary on the counting allocator directly and accepts either resource ceiling
+  for the end-to-end over-ceiling refusal, whose abort can lose the race to the 100 ms wall
+  watchdog on a loaded host.
 - `GET /api/v1/workspaces/{workspace_id}/projects` honours `page` and `per_page` (default 20,
   at most 100) and reports the real `total` / `total_pages`; it used to ignore both and always
   return every project. A request with neither parameter still returns the whole list.
