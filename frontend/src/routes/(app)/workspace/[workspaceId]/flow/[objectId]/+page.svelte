@@ -17,6 +17,7 @@
 	import FlowSyncIndicator from '$lib/components/flow/FlowSyncIndicator.svelte';
 	import type { FlowError, SyncState } from '$lib/flow/types';
 	import { flowErrorI18nKey } from '$lib/flow/errors';
+	import type { FlowObjectView } from '$lib/api/flow';
 
 	const repository = getContext<FlowObjectRepository>(FLOW_REPOSITORY_CONTEXT);
 
@@ -31,6 +32,12 @@
 	// on an open document flipped the `{#if loadError}` branch and replaced `FlowCanvas` with the
 	// full-page error view.)
 	let runtimeError = $state<FlowError | null>(null);
+	// An object that exists but whose type has no registered renderer and no collaboration session
+	// (a v0.6 Collection until its `collection:*` renderers are registered; the server refuses a
+	// collab ticket for it, `flow/collab/ticket.rs::object_type_admits_collab_session`). Shown as
+	// the registry's unsupported fallback instead of the open failure ("Renderer registry":
+	// unregistered `${objectType}:${viewType}` fails to read_only/unsupported).
+	let unsupportedObject = $state<FlowObjectView | null>(null);
 	let syncState = $state<SyncState>('local');
 	let title = $state('');
 	let titleSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -60,6 +67,7 @@
 		openedObjectId = objectId;
 		loadError = null;
 		runtimeError = null;
+		unsupportedObject = null;
 
 		const controller = new AbortController();
 		try {
@@ -72,8 +80,18 @@
 				if (value) runtimeError = value;
 			});
 		} catch (error) {
-			loadError = error as FlowError;
+			const fallback = await unsupportedFallback(objectId);
+			if (openedObjectId !== objectId) return;
+			if (fallback) unsupportedObject = fallback;
+			else loadError = error as FlowError;
 		}
+	}
+
+	/** The object, when it is readable but its type has no registered canvas renderer. */
+	async function unsupportedFallback(objectId: string): Promise<FlowObjectView | null> {
+		const result = await repository.get(objectId);
+		if (result.code !== 0 || !result.data) return null;
+		return resolveRenderer(result.data.object_type, 'canvas') ? null : result.data;
 	}
 
 	onMount(() => {
@@ -167,6 +185,24 @@
 		<p class="max-w-md text-sm text-slate-500 dark:text-slate-400">
 			{$t(flowErrorI18nKey(loadError))}
 		</p>
+	</div>
+{:else if unsupportedObject}
+	<div
+		class="flex items-center justify-between border-b border-slate-200 px-6 py-3 dark:border-slate-800"
+	>
+		<h1 class="flex-1 truncate text-lg font-semibold text-slate-900 dark:text-slate-100">
+			{unsupportedObject.title || $t('flow.nav.untitled')}
+		</h1>
+	</div>
+	<div class="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+		<div
+			class="flex flex-1 items-center justify-center p-8 text-center"
+			data-testid="flow-object-unsupported"
+			data-object-type={unsupportedObject.object_type}
+		>
+			<p class="text-sm text-slate-500 dark:text-slate-400">{$t('flow.canvas.unsupported')}</p>
+		</div>
+		<FlowContextPanel object={unsupportedObject} />
 	</div>
 {:else if !entry}
 	<div class="flex flex-1 items-center justify-center p-8">
