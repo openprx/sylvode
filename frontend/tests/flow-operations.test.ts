@@ -124,6 +124,10 @@ function fakeCommands(replies: Record<string, Array<ApiResult<unknown>>>) {
 	};
 }
 
+function lagItem(objectId: string) {
+	return { object_id: objectId, head_seq: 4, projection_seq: 0, lag: 4 };
+}
+
 function health(extra: Partial<FlowAdminHealth> = {}): FlowAdminHealth {
 	return {
 		status: 'healthy',
@@ -904,6 +908,85 @@ await suite.checkAsync(
 		await pager.previous();
 		assertDeepEqual(seen, [undefined, 'c2', undefined], 'cursor sequence');
 		assertEqual(pager.pageNumber, 1, 'back on page 1');
+	}
+);
+
+await suite.checkAsync(
+	'projection-lag pager: previous from page 3 returns to page 2 with page 2 cursor',
+	async () => {
+		// Four pages keyed by cursor, so a request for the wrong cursor returns the wrong page.
+		const byCursor: Record<string, FlowProjectionLag> = {
+			'': { max_lag: 9, p95_lag: 1, items: [lagItem('p1')], next_cursor: 'c2' },
+			c2: { max_lag: 9, p95_lag: 1, items: [lagItem('p2')], next_cursor: 'c3' },
+			c3: { max_lag: 9, p95_lag: 1, items: [lagItem('p3')], next_cursor: 'c4' },
+			c4: { max_lag: 9, p95_lag: 1, items: [lagItem('p4')] }
+		};
+		const seen: Array<string | undefined> = [];
+		const pager = new ProjectionLagPager(WS, {
+			getProjectionLag: (_ws: string, query: { cursor?: string }) => {
+				seen.push(query.cursor);
+				return Promise.resolve(ok(byCursor[query.cursor ?? '']));
+			}
+		});
+		const firstItem = () => pager.current?.items[0]?.object_id;
+		await pager.load();
+		await pager.next();
+		await pager.next();
+		assertEqual(pager.pageNumber, 3, 'on page 3');
+		assertEqual(firstItem(), 'p3', 'page 3 rows');
+		await pager.previous();
+		assertEqual(pager.pageNumber, 2, 'previous from 3 is page 2, not page 1');
+		assertEqual(firstItem(), 'p2', 'page 2 rows');
+		assertEqual(seen[seen.length - 1], 'c2', 'page 2 is fetched with its own cursor');
+		assertEqual(pager.hasPrevious(), true, 'page 1 is still behind');
+		await pager.next();
+		await pager.next();
+		assertEqual(pager.pageNumber, 4, 'forward again to page 4');
+		assertEqual(pager.hasNext(), false, 'page 4 is last');
+		await pager.previous();
+		await pager.previous();
+		assertEqual(pager.pageNumber, 2, 'two steps back from 4 is 2');
+		assertEqual(firstItem(), 'p2', 'page 2 rows again');
+		await pager.previous();
+		assertEqual(pager.pageNumber, 1, 'then page 1');
+		assertEqual(firstItem(), 'p1', 'page 1 rows');
+		assertDeepEqual(
+			seen,
+			[undefined, 'c2', 'c3', 'c2', 'c3', 'c4', 'c3', 'c2', undefined],
+			'cursor sequence'
+		);
+	}
+);
+
+await suite.checkAsync(
+	'replay execute re-checks the window at execute time: a dry-run that aged out is refused locally',
+	async () => {
+		const fake = fakeCommands({
+			replay: [
+				ok({
+					replayed: 0,
+					skipped_already_delivered: 0,
+					rebuilt_delivery_ids: [],
+					window: { from: 'a', to: 'b' }
+				})
+			]
+		});
+		let clock = NOW;
+		const replay = new DeliveryReplay(
+			WS,
+			{ commands: fake.commands, newKey: keys(), now: () => clock },
+			// 29 days and 23 hours ago: inside the window at dry-run time.
+			form({ from: new Date(NOW - 30 * DAY + HOUR).toISOString() })
+		);
+		assertEqual((await replay.dryRun()).status, 'ok', 'dry-run inside the window');
+		replay.acknowledge(true);
+		assertEqual(replay.canExecute(), true, 'executable right after the dry-run');
+		// The panel stays open for two hours: the same window now starts more than 30 days ago.
+		clock = NOW + 2 * HOUR;
+		assertEqual(replay.canExecute(), false, 'window aged out -> not executable');
+		assertEqual(replay.snapshot().canExecute, false, 'snapshot agrees');
+		assertEqual((await replay.execute()).status, 'refused', 'execute refused locally');
+		assertEqual(fake.calls.length, 1, 'only the dry-run was sent; no execute request');
 	}
 );
 
