@@ -20,8 +20,9 @@ use uuid::Uuid;
 use super::collab::authz::PermissionLevel;
 use super::event_origin::CommandOrigin;
 use super::{collab::authz, policy, repository};
-use crate::error::ApiError;
+use crate::error::{ApiError, ApiErrorKind, ServerDrainingReason};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
+use crate::flow::IN_FLIGHT_RETRY_AFTER_MS;
 use crate::forms::permissions::{permission_policy_field_allows, permission_policy_record_scope};
 
 pub const BRIDGE_ACTIONS: [&str; 6] = [
@@ -1170,69 +1171,204 @@ async fn conversion_event(
     .event_id)
 }
 
-async fn record_failed_conversion(
+/// One claimed conversion run: the preview supplies the mapping and the target; the job supplies
+/// the frontier and target schema version it froze (copied from the preview at commit, read back
+/// from the job on retry).
+struct ConversionRun {
+    preview: PreviewRow,
+    job_id: Uuid,
+    idempotency_key: String,
+    origin: CommandOrigin,
+    source_frontier: String,
+    target_schema_version: i32,
+    started_event: Uuid,
+}
+
+/// Maps a failed run to the typed error answered to the caller and the stable
+/// `error-mapping-v1.md` code stored as the job's `error`. The internal classification (driver
+/// error, legacy variant, fault point) is logged here and never reaches the response.
+fn conversion_failure(job_id: Uuid, error: ApiError) -> (ApiError, &'static str) {
+    tracing::warn!(%job_id, error = ?error, "flow conversion job failed");
+    let typed = if error.is_known_transient_database_failure() {
+        ApiError::server_draining(
+            ServerDrainingReason::Contention,
+            IN_FLIGHT_RETRY_AFTER_MS,
+            "conversion hit a transient database failure",
+        )
+    } else {
+        let typed = error.into_typed();
+        if typed.kind() == ApiErrorKind::Unclassified {
+            ApiError::internal()
+        } else {
+            typed
+        }
+    };
+    let code = match typed.kind() {
+        // Not one of the 14 stable codes: a bounded-retry read that may succeed later.
+        ApiErrorKind::AuthorizationChurn => {
+            ApiErrorKind::ServerDraining(ServerDrainingReason::Contention).stable_code()
+        }
+        kind => kind.stable_code(),
+    };
+    (typed, code)
+}
+
+fn started_payload(preview: &PreviewRow, job_id: Uuid) -> Value {
+    json!({"job_id": job_id, "source_object_id": preview.source_object_id, "target_type": preview.target_type})
+}
+
+/// Persists a new `started` job for `preview` together with its `flow.conversion.started` event.
+/// `None` means another commit already owns this preview (or key) and nothing was written.
+async fn claim_commit_job(
     state: &AppState,
     preview: &PreviewRow,
     job_id: Uuid,
     idempotency_key: &str,
     origin: &CommandOrigin,
-    error_code: &str,
-) -> Result<ConversionJobResponse, ApiError> {
+) -> Result<Option<Uuid>, ApiError> {
     let tx = state.db.begin().await?;
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO flow_conversion_jobs \
-         (id, workspace_id, preview_id, actor_id, actor_kind, source_object_id, source_frontier, target_type, \
-          target_schema_version, status, error_code, idempotency_key) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'failed',$10,$11) \
-         ON CONFLICT (preview_id) DO UPDATE SET status='failed', error_code=EXCLUDED.error_code, updated_at=now()",
-        vec![
-            job_id.into(),
-            preview.workspace_id.into(),
-            preview.id.into(),
-            preview.actor_id.into(),
-            preview.actor_kind.clone().into(),
-            preview.source_object_id.into(),
-            preview.source_frontier.clone().into(),
-            preview.target_type.clone().into(),
-            preview.target_schema_version.into(),
-            error_code.into(),
-            idempotency_key.into(),
-        ],
-    ))
-    .await?;
-    conversion_event(
+    let claimed = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO flow_conversion_jobs \
+             (id, workspace_id, preview_id, actor_id, actor_kind, source_object_id, source_frontier, target_type, \
+              target_schema_version, status, idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'started',$10) \
+             ON CONFLICT DO NOTHING",
+            vec![
+                job_id.into(),
+                preview.workspace_id.into(),
+                preview.id.into(),
+                preview.actor_id.into(),
+                preview.actor_kind.clone().into(),
+                preview.source_object_id.into(),
+                preview.source_frontier.clone().into(),
+                preview.target_type.clone().into(),
+                preview.target_schema_version.into(),
+                idempotency_key.into(),
+            ],
+        ))
+        .await?;
+    if claimed.rows_affected() == 0 {
+        tx.rollback().await?;
+        return Ok(None);
+    }
+    let started_event = conversion_event(
         &tx,
         preview,
         job_id,
-        "flow.conversion.failed",
+        "flow.conversion.started",
         origin,
-        &format!("conversion-failed:{idempotency_key}"),
+        &format!("conversion-started:{idempotency_key}"),
         None,
-        json!({"job_id": job_id, "source_object_id": preview.source_object_id, "error": error_code}),
+        started_payload(preview, job_id),
     )
     .await?;
     tx.commit().await?;
-    load_job(&state.db, job_id).await
+    Ok(Some(started_event))
 }
 
-async fn execute_conversion(
+/// Moves a `failed` job back to `started` under the retry key, with its `flow.conversion.started`
+/// event. `None` means the job is no longer `failed` (a concurrent retry won) and nothing changed.
+async fn claim_retry_job(
     state: &AppState,
-    extensions: &Extensions,
-    preview: PreviewRow,
+    preview: &PreviewRow,
     job_id: Uuid,
-    idempotency_key: String,
-    origin: CommandOrigin,
-    retry: bool,
-) -> Result<ConversionJobResponse, ApiError> {
-    let (source, mut actor) = source_actor(state, extensions, preview.source_object_id, PermissionLevel::View).await?;
-    if actor.id != preview.actor_id && !matches!(actor.role.as_str(), "owner" | "admin") {
-        return Err(ApiError::not_found("conversion job not found".to_string()));
-    }
+    idempotency_key: &str,
+    origin: &CommandOrigin,
+) -> Result<Option<Uuid>, ApiError> {
     let tx = state.db.begin().await?;
-    if preview.expires_at <= Utc::now() {
-        return Err(ApiError::policy_rejected("conversion preview expired"));
+    let claimed = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, idempotency_key=$2, updated_at=now() \
+             WHERE id=$1 AND status='failed'",
+            vec![job_id.into(), idempotency_key.into()],
+        ))
+        .await?;
+    if claimed.rows_affected() == 0 {
+        tx.rollback().await?;
+        return Ok(None);
     }
+    let started_event = conversion_event(
+        &tx,
+        preview,
+        job_id,
+        "flow.conversion.started",
+        origin,
+        &format!("conversion-started:{idempotency_key}"),
+        None,
+        started_payload(preview, job_id),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Some(started_event))
+}
+
+/// Marks a `started` job `failed` with its stable error code and emits `flow.conversion.failed`
+/// (a business transition caused by the run's `started` event).
+async fn fail_conversion_job(state: &AppState, run: &ConversionRun, error_code: &str) -> Result<(), ApiError> {
+    let tx = state.db.begin().await?;
+    let failed = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE flow_conversion_jobs SET status='failed', error_code=$2, updated_at=now() \
+             WHERE id=$1 AND status='started'",
+            vec![run.job_id.into(), error_code.into()],
+        ))
+        .await?;
+    if failed.rows_affected() == 1 {
+        conversion_event(
+            &tx,
+            &run.preview,
+            run.job_id,
+            "flow.conversion.failed",
+            &run.origin,
+            &format!("conversion-failed:{}", run.idempotency_key),
+            Some(run.started_event),
+            json!({"job_id": run.job_id, "source_object_id": run.preview.source_object_id, "error": error_code}),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Runs a claimed job. Any failure after the claim leaves the job `failed` with a stable `error`
+/// (`rest-api-v1.md` v0.7, 2026-10-10) and still answers the caller with the typed error.
+async fn execute_claimed(
+    state: &AppState,
+    source: repository::ObjectViewRow,
+    actor: BridgeActor,
+    run: ConversionRun,
+) -> Result<ConversionJobResponse, ApiError> {
+    match run_conversion(state, source, actor, &run).await {
+        Ok(job) => Ok(job),
+        Err(error) => {
+            let (typed, code) = conversion_failure(run.job_id, error);
+            if let Err(record_error) = fail_conversion_job(state, &run, code).await {
+                tracing::error!(
+                    job_id = %run.job_id,
+                    error = ?record_error,
+                    "flow conversion failure could not be recorded; the job stays started"
+                );
+            }
+            Err(typed)
+        }
+    }
+}
+
+async fn run_conversion(
+    state: &AppState,
+    source: repository::ObjectViewRow,
+    mut actor: BridgeActor,
+    run: &ConversionRun,
+) -> Result<ConversionJobResponse, ApiError> {
+    let preview = &run.preview;
+    let job_id = run.job_id;
+    let idempotency_key = run.idempotency_key.as_str();
+    let origin = &run.origin;
+    let started_event = run.started_event;
+    let tx = state.db.begin().await?;
     if !bridge_enabled(&tx, preview.workspace_id).await? {
         return Err(bridge_policy_rejected(
             "forms bridge conversion is not permitted",
@@ -1240,8 +1376,11 @@ async fn execute_conversion(
         ));
     }
     lock_and_reauthorize_source(&tx, &source, &mut actor, Some(&preview.permission_snapshot)).await?;
+    let source = repository::fetch_object_view(&tx, source.id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     let frontier = current_frontier(&source);
-    if frontier != preview.source_frontier {
+    if frontier != run.source_frontier {
         return Err(ApiError::stale_frontier(
             "source frontier changed",
             Some(source.document_seq),
@@ -1278,7 +1417,7 @@ async fn execute_conversion(
         let (_, version, schema) = form_schema(&tx, preview.workspace_id, form_id)
             .await?
             .ok_or_else(|| ApiError::policy_rejected("target form changed before commit"))?;
-        if version != preview.target_schema_version {
+        if version != run.target_schema_version {
             return Err(bridge_policy_rejected(
                 "target schema version changed before commit",
                 &permission.state,
@@ -1297,68 +1436,8 @@ async fn execute_conversion(
         (None, None)
     };
 
-    if retry {
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, idempotency_key=$2, updated_at=now() \
-             WHERE id=$1 AND status='failed'",
-            vec![job_id.into(), idempotency_key.clone().into()],
-        ))
-        .await?;
-    } else {
-        let claimed = tx
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "INSERT INTO flow_conversion_jobs \
-             (id, workspace_id, preview_id, actor_id, actor_kind, source_object_id, source_frontier, target_type, \
-              target_schema_version, status, idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'started',$10) \
-             ON CONFLICT DO NOTHING",
-                vec![
-                    job_id.into(),
-                    preview.workspace_id.into(),
-                    preview.id.into(),
-                    preview.actor_id.into(),
-                    preview.actor_kind.clone().into(),
-                    preview.source_object_id.into(),
-                    preview.source_frontier.clone().into(),
-                    preview.target_type.clone().into(),
-                    preview.target_schema_version.into(),
-                    idempotency_key.clone().into(),
-                ],
-            ))
-            .await?;
-        if claimed.rows_affected() == 0 {
-            // A concurrent commit of the same preview (or key) won `UNIQUE (preview_id)` /
-            // `UNIQUE (workspace_id, idempotency_key)`; answer with its job instead of a 500.
-            tx.rollback().await?;
-            return match existing_commit_job(&state.db, &preview, &idempotency_key).await? {
-                Some(existing) => load_job(&state.db, existing).await,
-                None => Err(ApiError::internal()),
-            };
-        }
-    }
-    let started_event = conversion_event(
-        &tx,
-        &preview,
-        job_id,
-        "flow.conversion.started",
-        &origin,
-        &format!("conversion-started:{idempotency_key}"),
-        None,
-        json!({"job_id": job_id, "source_object_id": preview.source_object_id, "target_type": preview.target_type}),
-    )
-    .await?;
     if conversion_fault(preview.id, "before_target_create") {
-        tx.rollback().await?;
-        return record_failed_conversion(
-            state,
-            &preview,
-            job_id,
-            &idempotency_key,
-            &origin,
-            "injected_before_target_create",
-        )
-        .await;
+        return Err(ApiError::internal());
     }
 
     let mut native_record = None;
@@ -1402,7 +1481,7 @@ async fn execute_conversion(
         .await?;
         let target_id = creation.record_id;
         native_record = Some((form, creation));
-        (target_id, preview.target_schema_version)
+        (target_id, run.target_schema_version)
     } else {
         let target_id = Uuid::new_v4();
         let key = preview
@@ -1446,16 +1525,7 @@ async fn execute_conversion(
         (target_id, form.schema_version)
     };
     if conversion_fault(preview.id, "after_target_create_before_lineage") {
-        tx.rollback().await?;
-        return record_failed_conversion(
-            state,
-            &preview,
-            job_id,
-            &idempotency_key,
-            &origin,
-            "injected_after_target_create",
-        )
-        .await;
+        return Err(ApiError::internal());
     }
 
     let lineage_id = Uuid::new_v4();
@@ -1464,7 +1534,7 @@ async fn execute_conversion(
         "INSERT INTO flow_object_lineage \
          (id, workspace_id, source_object_id, source_frontier, target_type, target_id, target_version, relation, created_by) \
          VALUES ($1,$2,$3,$4,$5,$6,$7,'derived_from',$8)",
-        vec![lineage_id.into(), preview.workspace_id.into(), preview.source_object_id.into(), preview.source_frontier.clone().into(),
+        vec![lineage_id.into(), preview.workspace_id.into(), preview.source_object_id.into(), run.source_frontier.clone().into(),
             preview.target_type.clone().into(), target_id.into(), target_version.into(), actor.id.into()],
     )).await?;
     tx.execute(Statement::from_sql_and_values(
@@ -1476,10 +1546,10 @@ async fn execute_conversion(
     .await?;
     conversion_event(
         &tx,
-        &preview,
+        preview,
         job_id,
         "flow.conversion.completed",
-        &origin,
+        origin,
         &format!("conversion-completed:{idempotency_key}"),
         Some(started_event),
         json!({"job_id":job_id,"source_object_id":preview.source_object_id,"target_type":preview.target_type,
@@ -1494,6 +1564,45 @@ async fn execute_conversion(
         return Err(ApiError::internal());
     }
     load_job(&state.db, job_id).await
+}
+
+/// The caller of a commit or retry: it must still read the source, and be the preview's actor or
+/// a workspace owner/admin. Anyone else learns nothing about the job.
+async fn conversion_caller(
+    state: &AppState,
+    extensions: &Extensions,
+    preview: &PreviewRow,
+) -> Result<(repository::ObjectViewRow, BridgeActor), ApiError> {
+    let (source, actor) = source_actor(state, extensions, preview.source_object_id, PermissionLevel::View).await?;
+    if actor.id != preview.actor_id && !matches!(actor.role.as_str(), "owner" | "admin") {
+        return Err(ApiError::not_found("conversion job not found".to_string()));
+    }
+    Ok((source, actor))
+}
+
+/// The commit preconditions that need no lock and no job: the source has not moved past the
+/// preview and the target form's schema version is still the preview's. A form that is gone is
+/// left to the run, which records the failure on the job.
+async fn precheck_commit(
+    state: &AppState,
+    source: &repository::ObjectViewRow,
+    preview: &PreviewRow,
+) -> Result<(), ApiError> {
+    let frontier = current_frontier(source);
+    if frontier != preview.source_frontier {
+        return Err(ApiError::stale_frontier(
+            "source frontier changed",
+            Some(source.document_seq),
+            Some(&frontier),
+        ));
+    }
+    if let Some(form_id) = preview.target_form_id
+        && let Some((_, version, _)) = form_schema(&state.db, preview.workspace_id, form_id).await?
+        && version != preview.target_schema_version
+    {
+        return Err(ApiError::policy_rejected("target schema version changed before commit"));
+    }
+    Ok(())
 }
 
 /// The job an earlier commit already created for this request, if any.
@@ -1548,6 +1657,7 @@ pub async fn commit_conversion(
         ));
     }
     let preview = load_preview(&state.db, input.preview_id).await?;
+    let (source, actor) = conversion_caller(state, extensions, &preview).await?;
     if input.source_frontier != preview.source_frontier {
         return Err(ApiError::stale_frontier(
             "source frontier differs from preview",
@@ -1564,16 +1674,27 @@ pub async fn commit_conversion(
     if preview.expires_at <= Utc::now() {
         return Err(ApiError::policy_rejected("conversion preview expired"));
     }
-    execute_conversion(
-        state,
-        extensions,
+    precheck_commit(state, &source, &preview).await?;
+
+    let job_id = Uuid::new_v4();
+    let Some(started_event) = claim_commit_job(state, &preview, job_id, &input.idempotency_key, &origin).await? else {
+        // A concurrent commit of the same preview (or key) won `UNIQUE (preview_id)` /
+        // `UNIQUE (workspace_id, idempotency_key)`; answer with its job instead of a 500.
+        return match existing_commit_job(&state.db, &preview, &input.idempotency_key).await? {
+            Some(existing) => load_job(&state.db, existing).await,
+            None => Err(ApiError::internal()),
+        };
+    };
+    let run = ConversionRun {
+        source_frontier: preview.source_frontier.clone(),
+        target_schema_version: preview.target_schema_version,
         preview,
-        Uuid::new_v4(),
-        input.idempotency_key,
+        job_id,
+        idempotency_key: input.idempotency_key,
         origin,
-        false,
-    )
-    .await
+        started_event,
+    };
+    execute_claimed(state, source, actor, run).await
 }
 
 pub async fn conversion_status(
@@ -1647,23 +1768,64 @@ pub async fn retry_conversion(
         preview_id: Uuid,
         status: String,
         idempotency_key: String,
+        source_frontier: String,
+        target_schema_version: i32,
     }
     let job = Job::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT preview_id, status, idempotency_key FROM flow_conversion_jobs WHERE id=$1",
+        "SELECT preview_id, status, idempotency_key, source_frontier, target_schema_version \
+         FROM flow_conversion_jobs WHERE id=$1",
         vec![job_id.into()],
     ))
     .one(&state.db)
     .await?
     .ok_or_else(|| ApiError::not_found("conversion job not found".to_string()))?;
+    let preview = load_preview(&state.db, job.preview_id).await?;
+    let (source, actor) = conversion_caller(state, extensions, &preview).await?;
     if job.status == "completed" || job.idempotency_key == input.idempotency_key {
         return load_job(&state.db, job_id).await;
     }
     if job.status != "failed" {
         return Err(ApiError::policy_rejected("only failed conversion jobs can be retried"));
     }
-    let preview = load_preview(&state.db, job.preview_id).await?;
-    execute_conversion(state, extensions, preview, job_id, input.idempotency_key, origin, true).await
+    #[derive(FromQueryResult)]
+    struct KeyOwner {
+        id: Uuid,
+    }
+    if KeyOwner::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM flow_conversion_jobs WHERE workspace_id=$1 AND idempotency_key=$2",
+        vec![
+            preview.workspace_id.into(),
+            input.idempotency_key.clone().into(),
+            job_id.into(),
+        ],
+    ))
+    .one(&state.db)
+    .await?
+    .is_some_and(|owner| owner.id != job_id)
+    {
+        return Err(ApiError::idempotency_key_body_drift(
+            "idempotency_key was already used for another conversion job",
+        ));
+    }
+    if preview.expires_at <= Utc::now() {
+        return Err(ApiError::policy_rejected("conversion preview expired"));
+    }
+    let Some(started_event) = claim_retry_job(state, &preview, job_id, &input.idempotency_key, &origin).await? else {
+        // A concurrent retry already moved the job on.
+        return load_job(&state.db, job_id).await;
+    };
+    let run = ConversionRun {
+        preview,
+        job_id,
+        idempotency_key: input.idempotency_key,
+        origin,
+        source_frontier: job.source_frontier,
+        target_schema_version: job.target_schema_version,
+        started_event,
+    };
+    execute_claimed(state, source, actor, run).await
 }
 
 #[cfg(test)]
