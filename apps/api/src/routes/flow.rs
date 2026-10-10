@@ -921,6 +921,7 @@ pub async fn post_flow_compact_document(
                 is_bot,
             },
             &req.idempotency_key,
+            &request_origin(&extensions),
         )
         .await?,
     ))
@@ -965,6 +966,7 @@ pub async fn post_flow_rebuild_projection(
                 is_bot,
             },
             &req.idempotency_key,
+            &request_origin(&extensions),
         )
         .await?,
     ))
@@ -11968,6 +11970,177 @@ mod flow_database_tests {
         let past_end = list("?page=9&per_page=2").await;
         assert!(names(&past_end).is_empty(), "{past_end}");
         assert_eq!(past_end["data"]["total"], 5);
+        scratch.drop_self().await;
+    }
+
+    /// FP2-B3 N3-②: `OperationReceipt` carries the contract's full shape, and an execute's
+    /// `audit_event_id` is a real `business_events` row while a dry-run's is `null`.
+    #[tokio::test]
+    async fn fp2_b3_operation_receipt_full_shape_and_execute_audit_event_id() {
+        async fn audit_row(state: &AppState, event_id: &str) -> Option<(String, Value)> {
+            let id = Uuid::parse_str(event_id).expect("audit_event_id is a uuid");
+            state
+                .db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT event_type, payload FROM business_events WHERE id = $1",
+                    vec![id.into()],
+                ))
+                .await
+                .expect("audit lookup runs")
+                .map(|row| {
+                    (
+                        row.try_get::<String>("", "event_type").expect("event_type reads"),
+                        row.try_get::<Value>("", "payload").expect("payload reads"),
+                    )
+                })
+        }
+        fn assert_full_shape(receipt: &Value, mode: &str) {
+            let data = &receipt["data"];
+            assert_eq!(receipt["code"], 0, "{receipt}");
+            assert_eq!(data["mode"], mode, "{receipt}");
+            for key in [
+                "scope",
+                "changes",
+                "warnings",
+                "started_at",
+                "finished_at",
+                "audit_event_id",
+                "observed_head_seq",
+            ] {
+                assert!(data.get(key).is_some(), "receipt lacks {key}: {receipt}");
+            }
+            for key in [
+                "operation_id",
+                "operation",
+                "status",
+                "dry_run",
+                "workspace_id",
+                "object_id",
+                "document_id",
+                "expected_head_seq",
+                "result",
+            ] {
+                assert!(data.get(key).is_some(), "receipt lost legacy field {key}: {receipt}");
+            }
+            assert!(data["changes"].is_array() && data["warnings"].is_array(), "{receipt}");
+            assert!(
+                data["started_at"].is_string() && data["finished_at"].is_string(),
+                "{receipt}"
+            );
+        }
+        let scratch = scratch_or_skip!("fp2-b3-receipt");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "fp2 b3 receipt").await;
+        let document_id = document_of(&state, object_id).await;
+        let head = crate::flow::collab::bootstrap::load(&state.db, document_id)
+            .await
+            .expect("bootstrap loads")
+            .head_seq;
+
+        let compact = |dry_run: bool, key: &'static str| {
+            post_flow_compact_document(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(document_id),
+                Json(CompactDocumentRequest {
+                    dry_run,
+                    expected_head_seq: Some(head),
+                    retain_after_seq: None,
+                    confirm_document_id: (!dry_run).then_some(document_id),
+                    idempotency_key: key.to_string(),
+                }),
+            )
+        };
+
+        let dry = body_json(to_response(compact(true, "fp2-b3-compact-dry").await)).await;
+        assert_full_shape(&dry, "dry_run");
+        assert!(
+            dry["data"]["audit_event_id"].is_null(),
+            "dry-run audit_event_id must be null: {dry}"
+        );
+        assert_eq!(dry["data"]["scope"]["document_id"], document_id.to_string());
+        assert_eq!(dry["data"]["observed_head_seq"], head);
+        assert_eq!(dry["data"]["changes"][0]["kind"], "compaction", "{dry}");
+
+        let executed = body_json(to_response(compact(false, "fp2-b3-compact-exec").await)).await;
+        assert_full_shape(&executed, "execute");
+        let audit_event_id = executed["data"]["audit_event_id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("execute audit_event_id must be set: {executed}"))
+            .to_string();
+        let (event_type, payload) = audit_row(&state, &audit_event_id)
+            .await
+            .unwrap_or_else(|| panic!("audit_event_id {audit_event_id} is not a business_events row"));
+        assert_eq!(event_type, "flow.compaction.completed");
+        assert_eq!(payload["operation_id"], executed["data"]["operation_id"], "{payload}");
+        assert_eq!(payload["document_id"], document_id.to_string(), "{payload}");
+        let change = &executed["data"]["changes"][0];
+        assert_eq!(change["kind"], "compaction", "{executed}");
+        assert_eq!(change["after"]["snapshot_seq"], head, "{executed}");
+        assert_eq!(
+            change["after"]["snapshot_checksum"],
+            executed["data"]["result"]["snapshot_checksum"]
+        );
+        assert!(change["before"]["snapshot_checksum"].is_string(), "{executed}");
+
+        let replayed = body_json(to_response(compact(false, "fp2-b3-compact-exec").await)).await;
+        assert_eq!(replayed["data"]["operation_id"], executed["data"]["operation_id"]);
+        assert_eq!(
+            replayed["data"]["audit_event_id"], executed["data"]["audit_event_id"],
+            "{replayed}"
+        );
+        assert_eq!(replayed["data"]["changes"], executed["data"]["changes"]);
+        assert_eq!(replayed["data"]["started_at"], executed["data"]["started_at"]);
+        let compaction_events: i64 = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT count(*) AS n FROM business_events WHERE workspace_id = $1 AND event_type = 'flow.compaction.completed'",
+                vec![workspace_id.into()],
+            ))
+            .await
+            .expect("count runs")
+            .expect("count row")
+            .try_get("", "n")
+            .expect("count reads");
+        assert_eq!(compaction_events, 1, "a replay must not write a second audit row");
+
+        let rebuild = |dry_run: bool, key: &'static str| {
+            post_flow_rebuild_projection(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(object_id),
+                Json(RebuildProjectionRequest {
+                    dry_run,
+                    expected_head_seq: Some(head),
+                    confirm_object_id: (!dry_run).then_some(object_id),
+                    idempotency_key: key.to_string(),
+                }),
+            )
+        };
+        let rebuild_dry = body_json(to_response(rebuild(true, "fp2-b3-rebuild-dry").await)).await;
+        assert_full_shape(&rebuild_dry, "dry_run");
+        assert!(rebuild_dry["data"]["audit_event_id"].is_null(), "{rebuild_dry}");
+        let rebuild_exec = body_json(to_response(rebuild(false, "fp2-b3-rebuild-exec").await)).await;
+        assert_full_shape(&rebuild_exec, "execute");
+        let change = &rebuild_exec["data"]["changes"][0];
+        assert_eq!(change["kind"], "projection_rebuild", "{rebuild_exec}");
+        assert_eq!(change["before"]["hash"], rebuild_exec["data"]["result"]["before_hash"]);
+        assert_eq!(change["after"]["hash"], rebuild_exec["data"]["result"]["after_hash"]);
+        let rebuild_event = rebuild_exec["data"]["audit_event_id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("rebuild execute audit_event_id must be set: {rebuild_exec}"))
+            .to_string();
+        let (event_type, payload) = audit_row(&state, &rebuild_event)
+            .await
+            .unwrap_or_else(|| panic!("rebuild audit_event_id {rebuild_event} is not a business_events row"));
+        assert_eq!(event_type, "flow.repair.completed");
+        assert_eq!(payload["kind"], "rebuild_projection");
+        assert_eq!(payload["after_hash"], rebuild_exec["data"]["result"]["after_hash"]);
         scratch.drop_self().await;
     }
 }

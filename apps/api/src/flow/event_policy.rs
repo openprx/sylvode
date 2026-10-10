@@ -114,6 +114,21 @@ pub const FLOW_EVENT_PAYLOAD_POLICIES: &[(&str, EventPayloadPolicy)] = &[
             "scope_kind",
             "scope_id",
             "integrity_record_count",
+            "before_hash",
+            "after_hash",
+        ]),
+    ),
+    // `events-v1.md` `flow.compaction.completed`: "document id、old/new boundary、before/after
+    // checksum". Checksums are SHA-256 digests of snapshot bytes, never the bytes themselves.
+    (
+        "flow.compaction.completed",
+        public_payload(&[
+            "operation_id",
+            "document_id",
+            "old_boundary_seq",
+            "new_boundary_seq",
+            "before_checksum",
+            "after_checksum",
         ]),
     ),
     // `ADR-0012`'s v0.5 authorization surface (`events-v1.md`'s `flow_permission` rows). The

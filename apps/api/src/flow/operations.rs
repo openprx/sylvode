@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use chrono::{DateTime, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -28,6 +29,10 @@ pub struct Principal {
     pub is_bot: bool,
 }
 
+/// `rest-api-v1.md` "公共类型" `OperationReceipt`.
+///
+/// The pre-contract fields (`operation`, `dry_run`, `workspace_id`, `object_id`, `document_id`,
+/// `result`) stay on the wire unchanged; the contract fields are added alongside them.
 #[derive(Debug, Clone, Serialize)]
 pub struct OperationReceipt {
     pub operation_id: Uuid,
@@ -39,6 +44,204 @@ pub struct OperationReceipt {
     pub document_id: Uuid,
     pub expected_head_seq: i64,
     pub result: Value,
+    /// `"dry_run"` or `"execute"`.
+    pub mode: &'static str,
+    pub scope: OperationScope,
+    /// The head the operation actually observed (equal to `expected_head_seq` on success).
+    pub observed_head_seq: Option<i64>,
+    /// Before/after summary of what the operation changed (dry-run: would change).
+    pub changes: Vec<Value>,
+    /// Stable warning codes; never free text.
+    pub warnings: Vec<&'static str>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    /// `business_events.id` of the execute's audit row; `null` for a dry-run.
+    pub audit_event_id: Option<Uuid>,
+}
+
+/// Exact scope an operation ran against.
+#[derive(Debug, Clone, Serialize)]
+pub struct OperationScope {
+    pub kind: &'static str,
+    pub workspace_id: Uuid,
+    pub object_id: Uuid,
+    pub document_id: Uuid,
+}
+
+/// Run-ledger facts a receipt is rebuilt from, both on first completion and on idempotent replay.
+struct CompletedRun {
+    id: Uuid,
+    status: String,
+    dry_run: bool,
+    expected_head_seq: i64,
+    result: Value,
+    started_at: DateTime<Utc>,
+    finished_at: Option<DateTime<Utc>>,
+}
+
+/// Idempotency key of an operation's audit row. One run owns at most one audit row, and a replay
+/// finds it again through the `(workspace_id, idempotency_key)` unique index.
+fn audit_idempotency_key(operation_id: Uuid) -> String {
+    format!("flow_operation:{operation_id}")
+}
+
+fn scope_kind(operation: &str) -> &'static str {
+    if operation == "rebuild_projection" {
+        "object"
+    } else {
+        "document"
+    }
+}
+
+fn int_at(value: &Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(Value::as_i64)
+}
+
+fn operation_changes(operation: &str, scope: &DocumentScope, dry_run: bool, result: &Value) -> Vec<Value> {
+    match operation {
+        "compact" if dry_run => {
+            let would_compact = result.get("would_compact").and_then(Value::as_bool).unwrap_or(false);
+            let snapshot_seq = int_at(result, "snapshot_seq");
+            vec![json!({
+                "kind": "compaction",
+                "document_id": scope.document_id,
+                "changed": would_compact,
+                "before": {
+                    "snapshot_seq": snapshot_seq,
+                    "tail_updates": result.get("tail_updates"),
+                    "tail_bytes": result.get("tail_bytes"),
+                },
+                "after": {
+                    "snapshot_seq": if would_compact { int_at(result, "head_seq") } else { snapshot_seq },
+                },
+            })]
+        }
+        "compact" => {
+            let before_seq = int_at(result, "previous_snapshot_seq");
+            let deleted = result.get("deleted_updates").and_then(Value::as_u64).unwrap_or(0);
+            vec![json!({
+                "kind": "compaction",
+                "document_id": scope.document_id,
+                "changed": before_seq != int_at(result, "head_seq") || deleted > 0,
+                "before": {
+                    "snapshot_seq": before_seq,
+                    "snapshot_checksum": result.get("previous_snapshot_checksum"),
+                },
+                "after": {
+                    "snapshot_seq": int_at(result, "head_seq"),
+                    "snapshot_checksum": result.get("snapshot_checksum"),
+                },
+                "deleted_updates": deleted,
+            })]
+        }
+        "rebuild_projection" => vec![json!({
+            "kind": "projection_rebuild",
+            "object_id": scope.object_id,
+            "changed": result.get("changed").and_then(Value::as_bool).unwrap_or(false),
+            "before": {"hash": result.get("before_hash")},
+            "after": {"hash": result.get("after_hash")},
+        })],
+        _ => Vec::new(),
+    }
+}
+
+fn operation_warnings(operation: &str, dry_run: bool, result: &Value) -> Vec<&'static str> {
+    let mut warnings = Vec::new();
+    if operation == "compact" && !dry_run {
+        let lagging = result.get("lagging_clients").and_then(Value::as_u64).unwrap_or(0);
+        let forced = result.get("forced_resync_clients").and_then(Value::as_u64).unwrap_or(0);
+        if forced > 0 {
+            warnings.push("clients_forced_to_resync");
+        } else if lagging > 0 {
+            warnings.push("history_retained_for_lagging_clients");
+        }
+    }
+    warnings
+}
+
+fn observed_head_seq(result: &Value) -> Option<i64> {
+    int_at(result, "head_seq").or_else(|| {
+        result
+            .get("fingerprint")
+            .and_then(|fingerprint| int_at(fingerprint, "head_seq"))
+    })
+}
+
+fn build_receipt(
+    operation: &str,
+    scope: &DocumentScope,
+    run: CompletedRun,
+    audit_event_id: Option<Uuid>,
+) -> OperationReceipt {
+    OperationReceipt {
+        operation_id: run.id,
+        operation: operation.to_string(),
+        status: run.status,
+        dry_run: run.dry_run,
+        workspace_id: scope.workspace_id,
+        object_id: scope.object_id,
+        document_id: scope.document_id,
+        expected_head_seq: run.expected_head_seq,
+        mode: if run.dry_run { "dry_run" } else { "execute" },
+        scope: OperationScope {
+            kind: scope_kind(operation),
+            workspace_id: scope.workspace_id,
+            object_id: scope.object_id,
+            document_id: scope.document_id,
+        },
+        observed_head_seq: observed_head_seq(&run.result),
+        changes: operation_changes(operation, scope, run.dry_run, &run.result),
+        warnings: operation_warnings(operation, run.dry_run, &run.result),
+        started_at: run.started_at,
+        finished_at: run.finished_at,
+        audit_event_id: if run.dry_run { None } else { audit_event_id },
+        result: run.result,
+    }
+}
+
+#[derive(Debug, FromQueryResult)]
+struct AuditEventRow {
+    id: Uuid,
+}
+
+async fn stored_audit_event_id(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    operation_id: Uuid,
+) -> Result<Option<Uuid>, ApiError> {
+    Ok(AuditEventRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM business_events WHERE workspace_id=$1 AND idempotency_key=$2",
+        vec![workspace_id.into(), audit_idempotency_key(operation_id).into()],
+    ))
+    .one(db)
+    .await?
+    .map(|row| row.id))
+}
+
+fn operation_audit_event(
+    scope: &DocumentScope,
+    operation_id: Uuid,
+    principal: Principal,
+    origin: &CommandOrigin,
+    event_type: &str,
+    aggregate_type: &str,
+    payload: Value,
+) -> BusinessEventInput {
+    BusinessEventInput {
+        workspace_id: scope.workspace_id,
+        project_id: None,
+        event_type: event_type.to_string(),
+        aggregate_type: aggregate_type.to_string(),
+        aggregate_id: operation_id.to_string(),
+        actor_id: if principal.is_bot { None } else { Some(principal.id) },
+        source: origin.source_json(),
+        payload,
+        metadata: json!({"affected_object_ids": [scope.object_id]}),
+        correlation_id: Some(origin.correlation_id),
+        causation_id: origin.causation_id,
+        idempotency_key: Some(audit_idempotency_key(operation_id)),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -97,6 +300,14 @@ struct PriorRun {
     result_redacted: Value,
     dry_run: bool,
     expected_head_seq: Option<i64>,
+    created_at: DateTime<Utc>,
+    finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct RunTimes {
+    created_at: DateTime<Utc>,
+    finished_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -189,7 +400,7 @@ async fn claim(
     }
     let prior = PriorRun::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id,request_hash,status,result_redacted,dry_run,expected_head_seq \
+        "SELECT id,request_hash,status,result_redacted,dry_run,expected_head_seq,created_at,finished_at \
            FROM flow_operation_runs WHERE workspace_id=$1 AND operation=$2 AND principal_kind=$3 \
              AND principal_id=$4 AND idempotency_key=$5",
         vec![
@@ -213,17 +424,21 @@ async fn claim(
             "identical maintenance operation is still running",
         ));
     }
-    Ok(Err(OperationReceipt {
-        operation_id: prior.id,
-        operation: operation.to_string(),
+    let audit_event_id = if prior.dry_run {
+        None
+    } else {
+        stored_audit_event_id(db, scope.workspace_id, prior.id).await?
+    };
+    let run = CompletedRun {
+        id: prior.id,
         status: prior.status,
         dry_run: prior.dry_run,
-        workspace_id: scope.workspace_id,
-        object_id: scope.object_id,
-        document_id: scope.document_id,
         expected_head_seq: prior.expected_head_seq.ok_or_else(ApiError::internal)?,
         result: prior.result_redacted,
-    }))
+        started_at: prior.created_at,
+        finished_at: prior.finished_at,
+    };
+    Ok(Err(build_receipt(operation, scope, run, audit_event_id)))
 }
 
 async fn finish(
@@ -234,24 +449,27 @@ async fn finish(
     dry_run: bool,
     expected_head_seq: i64,
     result: Value,
+    audit_event_id: Option<Uuid>,
 ) -> Result<OperationReceipt, ApiError> {
-    db.execute(Statement::from_sql_and_values(
+    let times = RunTimes::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "UPDATE flow_operation_runs SET status='completed',result_redacted=$2,finished_at=now() WHERE id=$1",
+        "UPDATE flow_operation_runs SET status='completed',result_redacted=$2,finished_at=now() WHERE id=$1 \
+         RETURNING created_at,finished_at",
         vec![id.into(), result.clone().into()],
     ))
-    .await?;
-    Ok(OperationReceipt {
-        operation_id: id,
-        operation: operation.to_string(),
+    .one(db)
+    .await?
+    .ok_or_else(ApiError::internal)?;
+    let run = CompletedRun {
+        id,
         status: "completed".to_string(),
         dry_run,
-        workspace_id: scope.workspace_id,
-        object_id: scope.object_id,
-        document_id: scope.document_id,
         expected_head_seq,
         result,
-    })
+        started_at: times.created_at,
+        finished_at: times.finished_at,
+    };
+    Ok(build_receipt(operation, scope, run, audit_event_id))
 }
 
 async fn abandon(db: &DatabaseConnection, id: Uuid) {
@@ -379,7 +597,7 @@ pub async fn repair_quarantine(
     let Some(inserted) = inserted else {
         let prior = PriorRun::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT id,request_hash,status,result_redacted,dry_run,expected_head_seq \
+            "SELECT id,request_hash,status,result_redacted,dry_run,expected_head_seq,created_at,finished_at \
                FROM flow_operation_runs WHERE workspace_id=$1 AND operation='repair_quarantine' \
                  AND principal_kind=$2 AND principal_id=$3 AND idempotency_key=$4",
             vec![
@@ -501,6 +719,7 @@ pub async fn repair_quarantine(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn compact_document(
     db: &DatabaseConnection,
     scope: &DocumentScope,
@@ -509,6 +728,7 @@ pub async fn compact_document(
     force_resync: bool,
     principal: Principal,
     idempotency_key: &str,
+    origin: &CommandOrigin,
 ) -> Result<OperationReceipt, ApiError> {
     let extra = json!({"force_resync": force_resync});
     let id = match claim(
@@ -535,35 +755,74 @@ pub async fn compact_document(
             let stats = snapshot::read_tail_stats(db, scope.document_id)
                 .await?
                 .ok_or_else(|| ApiError::not_found("collab document not found".to_string()))?;
-            return Ok(json!({
-                "head_seq": boot.head_seq,
+            return Ok((
+                json!({
+                    "head_seq": boot.head_seq,
+                    "head_frontier": base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &boot.head_frontier,
+                    ),
+                    "snapshot_seq": stats.snapshot_seq,
+                    "tail_updates": stats.tail_updates,
+                    "tail_bytes": stats.tail_bytes,
+                    "would_compact": stats.snapshot_seq < stats.head_seq,
+                }),
+                None,
+            ));
+        }
+        let audit = |result: &compaction::CompactionResult| {
+            operation_audit_event(
+                scope,
+                id,
+                principal,
+                origin,
+                "flow.compaction.completed",
+                "flow_compaction",
+                json!({
+                    "operation_id": id,
+                    "document_id": scope.document_id,
+                    "old_boundary_seq": result.previous_snapshot_seq,
+                    "new_boundary_seq": result.head_seq,
+                    "before_checksum": result.previous_snapshot_checksum,
+                    "after_checksum": result.snapshot_checksum,
+                }),
+            )
+        };
+        let (result, audit_event_id) =
+            compaction::compact_audited(db, scope.document_id, expected_head_seq, force_resync, Some(audit)).await?;
+        Ok((
+            json!({
+                "previous_snapshot_seq": result.previous_snapshot_seq,
+                "previous_snapshot_checksum": result.previous_snapshot_checksum,
+                "head_seq": result.head_seq,
                 "head_frontier": base64::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
-                    &boot.head_frontier,
+                    &result.head_frontier,
                 ),
-                "snapshot_seq": stats.snapshot_seq,
-                "tail_updates": stats.tail_updates,
-                "tail_bytes": stats.tail_bytes,
-                "would_compact": stats.snapshot_seq < stats.head_seq,
-            }));
-        }
-        let result = compaction::compact(db, scope.document_id, expected_head_seq, force_resync).await?;
-        Ok(json!({
-            "head_seq": result.head_seq,
-            "head_frontier": base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                &result.head_frontier,
-            ),
-            "semantic_hash": result.semantic_hash,
-            "snapshot_checksum": result.snapshot_checksum,
-            "deleted_updates": result.deleted_updates,
-            "lagging_clients": result.lagging_clients,
-            "forced_resync_clients": result.forced_resync_clients,
-        }))
+                "semantic_hash": result.semantic_hash,
+                "snapshot_checksum": result.snapshot_checksum,
+                "deleted_updates": result.deleted_updates,
+                "lagging_clients": result.lagging_clients,
+                "forced_resync_clients": result.forced_resync_clients,
+            }),
+            audit_event_id,
+        ))
     }
     .await;
     match outcome {
-        Ok(result) => finish(db, id, "compact", scope, dry_run, expected_head_seq, result).await,
+        Ok((result, audit_event_id)) => {
+            finish(
+                db,
+                id,
+                "compact",
+                scope,
+                dry_run,
+                expected_head_seq,
+                result,
+                audit_event_id,
+            )
+            .await
+        }
         Err(error) => {
             abandon(db, id).await;
             Err(error)
@@ -578,6 +837,7 @@ pub async fn rebuild_projection(
     expected_head_seq: i64,
     principal: Principal,
     idempotency_key: &str,
+    origin: &CommandOrigin,
 ) -> Result<OperationReceipt, ApiError> {
     let id = match claim(
         db,
@@ -594,8 +854,32 @@ pub async fn rebuild_projection(
         Ok(id) => id,
         Err(receipt) => return Ok(receipt),
     };
-    match maintenance::rebuild_projection(db, scope.object_id, Some(expected_head_seq), !dry_run).await {
-        Ok(result) => {
+    let audit = |result: &maintenance::ProjectionRebuildResult| {
+        operation_audit_event(
+            scope,
+            id,
+            principal,
+            origin,
+            "flow.repair.completed",
+            "flow_repair",
+            json!({
+                "operation_id": id,
+                "kind": "rebuild_projection",
+                "scope_kind": "object",
+                "scope_id": scope.object_id,
+                "before_hash": result.before_hash,
+                "after_hash": result.after_hash,
+            }),
+        )
+    };
+    match maintenance::rebuild_projection_audited(db, scope.object_id, Some(expected_head_seq), !dry_run, Some(audit))
+        .await
+    {
+        Ok((result, audit_event_id)) => {
+            let Ok(result) = serde_json::to_value(result) else {
+                abandon(db, id).await;
+                return Err(ApiError::internal());
+            };
             finish(
                 db,
                 id,
@@ -603,7 +887,8 @@ pub async fn rebuild_projection(
                 scope,
                 dry_run,
                 expected_head_seq,
-                serde_json::to_value(result).map_err(|_| ApiError::internal())?,
+                result,
+                audit_event_id,
             )
             .await
         }
@@ -647,6 +932,7 @@ pub async fn verify_document(
                 true,
                 expected_head_seq,
                 json!({"deep": deep, "fingerprint": fingerprint}),
+                None,
             )
             .await
         }
