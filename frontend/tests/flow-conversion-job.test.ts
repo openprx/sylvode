@@ -26,6 +26,7 @@ import {
 	canRetry,
 	classifyJobFailure,
 	isTerminalConversionStatus,
+	isReapedJob,
 	jobErrorKey,
 	jobTargetTypeKey,
 	type ConversionJobDeps,
@@ -610,7 +611,6 @@ await suite.checkAsync(
 suite.check('every stable code a failed job can store is worded by flow.error.<code>', () => {
 	for (const code of [
 		'policy_rejected',
-		'stale_frontier',
 		'invalid_update',
 		'not_found',
 		'server_draining',
@@ -620,6 +620,11 @@ suite.check('every stable code a failed job can store is worded by flow.error.<c
 		assert(key !== null && key.startsWith('flow.error.'), `${code}: ${key}`);
 	}
 	assertEqual(jobErrorKey('server_rejected'), 'flow.error.server_rejected', 'server_rejected');
+	assertEqual(
+		jobErrorKey('stale_frontier'),
+		'flow.bridge.job.staleSource',
+		'a stored stale_frontier gets the job page wording, not the editor resync text'
+	);
 });
 
 await suite.checkAsync(
@@ -697,6 +702,44 @@ await suite.checkAsync(
 		assertEqual(snap.polling, false, 'polling stopped');
 		assertEqual(jobErrorKey(snap.job?.error ?? null), 'flow.error.server_rejected', 'wording');
 		assertEqual(snap.canRetry, false, 'server_rejected is not offered for retry');
+	}
+);
+
+await suite.checkAsync(
+	'a job the server reaped (error_reason stale_started) is "interrupted" and offers retry',
+	async () => {
+		const reaped = job({
+			status: 'failed',
+			lineage_id: null,
+			created_target_ids: [],
+			error: 'server_rejected',
+			error_reason: 'stale_started'
+		});
+		assertEqual(canRetry(reaped), true, 'reaped: retryable');
+		assertEqual(isReapedJob(reaped), true, 'reaped');
+		assertEqual(
+			jobErrorKey(reaped.error, reaped.error_reason),
+			'flow.bridge.job.error.staleStarted',
+			'worded as interrupted by the server'
+		);
+		const refused = failed('server_rejected');
+		assertEqual(canRetry(refused), false, 'a plain server_rejected stays permanent');
+		assertEqual(isReapedJob(refused), false, 'not reaped');
+		assertEqual(
+			canRetry({ ...reaped, status: 'completed' }),
+			false,
+			'error_reason alone does not make a non-failed job retryable'
+		);
+		const h = harness({
+			reads: [ok(started()), ok(reaped)],
+			retries: [ok(started())]
+		});
+		await h.controller.poll();
+		const snap = h.controller.snapshot();
+		assertEqual(snap.job?.error_reason, 'stale_started', 'the reaped job is shown');
+		assertEqual(snap.canRetry, true, 'retry offered');
+		assert(h.controller.requestRetry(), 'confirmation opens');
+		assertEqual((await h.controller.confirmRetry()).status, 'retried', 'retried');
 	}
 );
 
