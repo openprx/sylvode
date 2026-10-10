@@ -58,6 +58,7 @@ function job(overrides: Partial<FlowConversionJob> = {}): FlowConversionJob {
 		job_id: JOB,
 		status: 'completed',
 		source_object_id: OBJ,
+		target_type: 'form_record',
 		source_frontier: 'F-1',
 		target_schema_version: 3,
 		lineage_id: 'lineage-1',

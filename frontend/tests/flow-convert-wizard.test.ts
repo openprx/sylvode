@@ -24,8 +24,13 @@ import {
 	finish
 } from './support/harness';
 import {
+	CONVERSION_WARNING_KEYS,
+	CONVERSION_WARNING_UNKNOWN_KEY,
 	ConvertWizard,
 	FAILURE_KEYS,
+	POLICY_REASON_KEYS,
+	REPREVIEW_NOTICE_KEYS,
+	parseConversionWarnings,
 	FIELD_PROBLEM_KEYS,
 	PERMISSION_ACCESS_KEYS,
 	PERMISSION_ACTION_KEYS,
@@ -147,6 +152,7 @@ function job(id = 'job-1'): FlowConversionJob {
 		job_id: id,
 		status: 'completed',
 		source_object_id: OBJ,
+		target_type: 'form_record',
 		source_frontier: 'F-server',
 		target_schema_version: 7,
 		lineage_id: 'lineage-1',
@@ -776,6 +782,216 @@ await suite.checkAsync('a non-retryable commit failure blocks further commits', 
 	assertEqual(h.commits.length, 1, 'one request');
 });
 
+// ---- 7b. policy_rejected reasons, job_id hand-over, warnings (B4) -------------------------------
+
+const FAILED_JOB = '55555555-5555-4555-8555-555555555555';
+
+await suite.checkAsync(
+	'commit preview_expired: back to the preview step and a new preview under a new key',
+	async () => {
+		const h = harness({
+			previews: [
+				ok(previewResponse()),
+				ok(previewResponse({ preview_id: 'preview-2', source_frontier: 'F-server-2' }))
+			],
+			commits: [
+				err(403, {
+					error_code: 'policy_rejected',
+					details: { reason: 'preview_expired' },
+					message: 'target_schema_changed'
+				}),
+				ok(job())
+			]
+		});
+		await toCommit(h);
+		h.wizard.acknowledge(true);
+		const outcome = await h.wizard.commit();
+		assertEqual(outcome.status, 'repreviewed', 'repreviewed');
+		const snap = h.wizard.snapshot();
+		assertEqual(snap.step, 'preview', 'back on the preview step');
+		assertEqual(snap.repreviewedAfter, 'preview_expired', 'notice reason');
+		assertEqual(snap.preview?.preview_id, 'preview-2', 'the new preview is shown');
+		assertEqual(snap.commitFailure, null, 'the old commit failure is cleared');
+		assertEqual(h.previews.length, 2, 'a second preview was sent');
+		assertNotEqual(
+			h.previews[0].idempotency_key,
+			h.previews[1].idempotency_key,
+			'the new preview is a new request'
+		);
+		assertEqual(snap.acknowledged, false, 'the new preview needs a new acknowledgement');
+		assert(await h.wizard.advance(), 'preview -> commit');
+		h.wizard.acknowledge(true);
+		const committed = await h.wizard.commit();
+		assertEqual(committed.status, 'committed', 'second commit succeeds');
+		assertEqual(h.commits[1].preview_id, 'preview-2', 'commits the new preview');
+		assertEqual(h.commits[1].source_frontier, 'F-server-2', 'with its frontier');
+		assertNotEqual(h.commits[0].idempotency_key, h.commits[1].idempotency_key, 'new commit key');
+		if (outcome.status === 'repreviewed') {
+			assertEqual(
+				outcome.failure.messageKey,
+				'flow.bridge.convert.error.previewExpired',
+				'reason wording, message never read'
+			);
+		}
+	}
+);
+
+await suite.checkAsync(
+	'commit target_schema_changed: the form is read again before the new preview',
+	async () => {
+		const h = harness({
+			previews: [
+				ok(previewResponse()),
+				ok(previewResponse({ preview_id: 'preview-2', target_schema_version: 8 }))
+			],
+			commits: [
+				err(403, { error_code: 'policy_rejected', details: { reason: 'target_schema_changed' } })
+			]
+		});
+		let listed = 0;
+		const original = (h.wizard as unknown as { deps: ConvertWizardDeps }).deps;
+		(h.wizard as unknown as { deps: ConvertWizardDeps }).deps = {
+			...original,
+			listForms: (projectId: string) => {
+				listed += 1;
+				return original.listForms(projectId);
+			}
+		};
+		await toCommit(h);
+		const before = listed;
+		h.wizard.acknowledge(true);
+		const outcome = await h.wizard.commit();
+		assertEqual(outcome.status, 'repreviewed', 'repreviewed');
+		assertEqual(listed, before + 1, 'the form list was read again');
+		const snap = h.wizard.snapshot();
+		assertEqual(snap.repreviewedAfter, 'target_schema_changed', 'notice reason');
+		assertEqual(snap.step, 'preview', 'on preview');
+		assertEqual(snap.preview?.target_schema_version, 8, 'new schema version shown');
+		assertEqual(snap.inputs.owner_note, 'x', 'inputs for existing fields kept');
+		// Editing the mapping clears the notice.
+		assert(h.wizard.goTo('mapping'), 'back to mapping');
+		h.wizard.setValue('owner_note', 'y');
+		assertEqual(h.wizard.snapshot().repreviewedAfter, null, 'notice cleared by an edit');
+	}
+);
+
+await suite.checkAsync(
+	'permission_unconfigured is worded for an admin and is not re-previewed',
+	async () => {
+		const h = harness({
+			previews: [ok(previewResponse())],
+			commits: [
+				err(403, { error_code: 'policy_rejected', details: { reason: 'permission_unconfigured' } })
+			]
+		});
+		await toCommit(h);
+		h.wizard.acknowledge(true);
+		const outcome = await h.wizard.commit();
+		assertEqual(outcome.status, 'failed', 'a plain failure');
+		const failure = h.wizard.snapshot().commitFailure;
+		assertEqual(failure?.reason, 'permission_unconfigured', 'reason');
+		assertEqual(
+			failure?.messageKey,
+			'flow.bridge.convert.error.permissionUnconfigured',
+			'admin wording'
+		);
+		assertEqual(h.previews.length, 1, 'no automatic re-preview');
+		assertEqual(h.wizard.step, 'commit', 'stays on commit');
+		const unknown = classifyConvertFailure({
+			code: 403,
+			error_code: 'policy_rejected',
+			details: { reason: 'made_up' }
+		});
+		assertEqual(unknown.reason, null, 'unknown reason ignored');
+		assertEqual(unknown.messageKey, FAILURE_KEYS.policy_rejected, 'generic policy wording');
+	}
+);
+
+await suite.checkAsync(
+	'a commit that fails after its job exists hands over to the job page (details.job_id)',
+	async () => {
+		const h = harness({
+			previews: [ok(previewResponse())],
+			commits: [
+				err(403, {
+					error_code: 'policy_rejected',
+					details: { job_id: FAILED_JOB, job_status: 'failed', reason: 'preview_expired' }
+				})
+			]
+		});
+		await toCommit(h);
+		h.wizard.acknowledge(true);
+		const outcome = await h.wizard.commit();
+		assertDeepEqual(
+			outcome.status === 'job_failed' ? outcome.jobId : outcome.status,
+			FAILED_JOB,
+			'job_failed with the job id'
+		);
+		assertEqual(h.wizard.snapshot().jobId, FAILED_JOB, 'snapshot carries the job id');
+		assertEqual(h.previews.length, 1, 'the job owns recovery: no re-preview');
+		assertEqual(h.wizard.canCommit(), false, 'no further commit from the wizard');
+		const stale = classifyConvertFailure({
+			code: 409,
+			error_code: 'stale_frontier',
+			details: { job_id: FAILED_JOB, job_status: 'failed' }
+		});
+		assertEqual(stale.jobId, FAILED_JOB, 'any code may carry job_id');
+		const malformed = classifyConvertFailure({
+			code: 500,
+			error_code: 'server_rejected',
+			details: { job_id: '../../admin' }
+		});
+		assertEqual(malformed.jobId, null, 'a malformed job id is never followed');
+	}
+);
+
+await suite.checkAsync('preview warnings are parsed per entry and worded by code', async () => {
+	const h = harness({
+		previews: [
+			ok(
+				previewResponse({
+					warnings: [
+						'target_value_missing:budget',
+						'required_target_value_missing:owner_note',
+						'unknown_target_field:ghost',
+						'brand_new_code:stage'
+					]
+				})
+			)
+		]
+	});
+	await toMapping(h);
+	await h.wizard.advance();
+	assertDeepEqual(
+		h.wizard.snapshot().warnings,
+		[
+			{
+				code: 'target_value_missing',
+				field: 'budget',
+				messageKey: CONVERSION_WARNING_KEYS.target_value_missing
+			},
+			{
+				code: 'required_target_value_missing',
+				field: 'owner_note',
+				messageKey: CONVERSION_WARNING_KEYS.required_target_value_missing
+			},
+			{
+				code: 'unknown_target_field',
+				field: 'ghost',
+				messageKey: CONVERSION_WARNING_KEYS.unknown_target_field
+			},
+			{ code: null, field: 'stage', messageKey: CONVERSION_WARNING_UNKNOWN_KEY }
+		],
+		'one parsed warning per entry'
+	);
+	assertDeepEqual(
+		parseConversionWarnings([42, null]).map((w) => w.messageKey),
+		[CONVERSION_WARNING_UNKNOWN_KEY, CONVERSION_WARNING_UNKNOWN_KEY],
+		'non-strings are generic'
+	);
+	assertDeepEqual(parseConversionWarnings(undefined), [], 'missing list');
+});
+
 // ---- 8. i18n -----------------------------------------------------------------------------------
 
 suite.check('every static key exists in zh and en', () => {
@@ -801,6 +1017,10 @@ suite.check('every static key exists in zh and en', () => {
 		...Object.values(PERMISSION_ACCESS_KEYS),
 		...Object.values(PERMISSION_CONFIGURATION_KEYS),
 		...Object.values(PERMISSION_LIMIT_KEYS),
+		...Object.values(POLICY_REASON_KEYS),
+		...Object.values(REPREVIEW_NOTICE_KEYS),
+		...Object.values(CONVERSION_WARNING_KEYS),
+		CONVERSION_WARNING_UNKNOWN_KEY,
 		'pageTitle.flowConvert'
 	];
 	for (const locale of ['zh', 'en']) {

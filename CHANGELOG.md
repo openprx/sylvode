@@ -410,6 +410,12 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Web UI, Flow convert wizard: `policy_rejected` is worded by its `details.reason`. A commit
+  refused with `preview_expired` or `target_schema_changed` returns to the preview step and
+  previews again under a new key (after reading the form again for a schema change);
+  `permission_unconfigured` asks for an admin to configure the form's policy. A commit that
+  fails after its job exists (`details.job_id`) opens the conversion job page, where it can be
+  retried. Preview warnings are shown one per line, worded by their `<code>:<field_key>` code.
 - Web UI, Flow package import: the wizard now follows the preview's `conflict_details`. A
   `project_unmapped` conflict returns to the mapping step with one row per unmapped source
   project (by title) that needs an explicit target or Unprojected and a new preview; a

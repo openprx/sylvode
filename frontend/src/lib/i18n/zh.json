@@ -3174,7 +3174,10 @@
           "rejected": "服务器拒绝了此请求。请检查目标和字段值。",
           "conflict": "此请求与之前的请求冲突。请重新预览。",
           "unavailable": "服务器暂不可用，请重试。",
-          "sourceUnavailable": "无法加载该 Page。"
+          "sourceUnavailable": "无法加载该 Page。",
+          "previewExpired": "预览在提交前已过期。请重新预览后再确认。",
+          "targetSchemaChanged": "预览之后目标表单的字段已变化。请重新预览，按当前表单转换。",
+          "permissionUnconfigured": "该表单尚未配置权限策略，无法从 Flow 创建记录。请联系工作区管理员为表单配置权限。"
         },
         "value": {
           "yes": "是",
@@ -3187,6 +3190,10 @@
           "refreshing": "正在重新读取 Page",
           "committing": "正在转换",
           "committed": "转换已提交"
+        },
+        "repreviewed": {
+          "previewExpired": "上一次预览已过期，已自动重新预览。请检查后再次确认。",
+          "targetSchemaChanged": "上一次预览后目标表单已变化，已重新读取表单并重新预览。请检查后再次确认。"
         }
       },
       "job": {
@@ -3251,6 +3258,12 @@
           "retrying": "正在重试转换。",
           "notFound": "转换任务不可用。"
         }
+      },
+      "warning": {
+        "targetValueMissing": "字段「{field}」没有值，将留空。",
+        "requiredTargetValueMissing": "必填字段「{field}」没有值，Forms 将拒绝该记录。",
+        "unknownTargetField": "字段「{field}」不在表单中，将被忽略。",
+        "unknown": "服务端报告了一条本版本无法说明的映射警告。"
       }
     },
     "share": {
