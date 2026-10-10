@@ -357,6 +357,14 @@ pub struct RecordResponse {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// `GET /form-records/{record_id}`: the record plus its read-only Flow lineage.
+#[derive(Debug, Serialize)]
+pub struct RecordDetailResponse {
+    #[serde(flatten)]
+    pub record: RecordResponse,
+    pub flow_lineage: crate::flow::bridge::RecordFlowLineage,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct CreateAttachmentPackageJobRequest {
     pub view_id: Option<Uuid>,
@@ -3382,10 +3390,17 @@ pub async fn get_form_record(
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
     let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
-    Ok(ApiResponse::success(filter_record_response_values(
-        record,
-        &denied_read_fields,
-    )))
+    let mut extensions = axum::http::Extensions::new();
+    extensions.insert(claims);
+    if let Some(Extension(bot_ctx)) = bot {
+        extensions.insert(bot_ctx);
+    }
+    let flow_lineage =
+        crate::flow::bridge::record_flow_lineage(&state, &extensions, record.workspace_id, record.id).await?;
+    Ok(ApiResponse::success(RecordDetailResponse {
+        record: filter_record_response_values(record, &denied_read_fields),
+        flow_lineage,
+    }))
 }
 
 pub async fn verify_form_record_signature_audit(

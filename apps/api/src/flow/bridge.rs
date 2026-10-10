@@ -2001,6 +2001,214 @@ pub async fn retry_conversion(
     execute_claimed(state, source, actor, run).await
 }
 
+/// One Flow reference that points at a form record, as the record detail reports it.
+///
+/// When the caller cannot read the source object only `reference_id` and
+/// `source_available: false` are serialized: no object id, title, display or timestamp, so an
+/// unreadable source leaves no identifying trace (the Relations panel rule for hidden targets).
+#[derive(Debug, Serialize)]
+pub struct RecordLineageReference {
+    pub reference_id: Uuid,
+    pub source_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_object_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// One conversion job that created a form record, as the record detail reports it.
+///
+/// Same visibility rule as [`RecordLineageReference`]: an unreadable source yields only `job_id`
+/// and `source_available: false`.
+#[derive(Debug, Serialize)]
+pub struct RecordLineageConversion {
+    pub job_id: Uuid,
+    pub source_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_object_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Outer `None` withholds the key (unreadable source); `Some(None)` serializes `null`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lineage_id: Option<Option<Uuid>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// The `flow_lineage` field of the form record detail: live Flow references to the record and
+/// the conversion jobs that created it. Both lists are empty when Flow or the bridge is off.
+#[derive(Debug, Default, Serialize)]
+pub struct RecordFlowLineage {
+    pub references: Vec<RecordLineageReference>,
+    pub conversions: Vec<RecordLineageConversion>,
+}
+
+/// Lists the Flow-side lineage of one form record for the record detail response.
+///
+/// The caller has already passed the Forms `form.view` gate for the record; this only decides,
+/// per source object, whether the caller may read that object in Flow. Sources below `view`
+/// are reported without identifiers. Flow disabled or the bridge disabled yields empty lists.
+pub async fn record_flow_lineage(
+    state: &AppState,
+    extensions: &Extensions,
+    workspace_id: Uuid,
+    record_id: Uuid,
+) -> Result<RecordFlowLineage, ApiError> {
+    #[derive(FromQueryResult)]
+    struct ReferenceLineageRow {
+        id: Uuid,
+        source_object_id: Uuid,
+        display: Value,
+        created_at: DateTime<Utc>,
+    }
+    #[derive(FromQueryResult)]
+    struct ConversionLineageRow {
+        id: Uuid,
+        source_object_id: Uuid,
+        status: String,
+        lineage_id: Option<Uuid>,
+        created_at: DateTime<Utc>,
+    }
+    #[derive(FromQueryResult)]
+    struct TitleRow {
+        id: Uuid,
+        title: Option<String>,
+    }
+
+    if !bridge_enabled(&state.db, workspace_id).await? {
+        return Ok(RecordFlowLineage::default());
+    }
+    let references = ReferenceLineageRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id, source_object_id, display, created_at FROM flow_bridge_references \
+         WHERE workspace_id = $1 AND target_type = 'form_record' AND target_id = $2 AND removed_at IS NULL \
+         ORDER BY created_at, id",
+        vec![workspace_id.into(), record_id.into()],
+    ))
+    .all(&state.db)
+    .await?;
+    let conversions = ConversionLineageRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id, source_object_id, status, lineage_id, created_at FROM flow_conversion_jobs \
+         WHERE workspace_id = $1 AND target_type = 'form_record' AND $2 = ANY(created_target_ids) \
+         ORDER BY created_at, id",
+        vec![workspace_id.into(), record_id.into()],
+    ))
+    .all(&state.db)
+    .await?;
+    if references.is_empty() && conversions.is_empty() {
+        return Ok(RecordFlowLineage::default());
+    }
+
+    let source_ids: Vec<Uuid> = references
+        .iter()
+        .map(|row| row.source_object_id)
+        .chain(conversions.iter().map(|row| row.source_object_id))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let readable: BTreeSet<Uuid> = match policy::resolve_flow_principal(state, extensions, workspace_id).await {
+        Ok((actor_id, role, is_bot)) => authz::effective_permissions(
+            &state.db,
+            workspace_id,
+            &source_ids,
+            if is_bot { "bot" } else { "user" },
+            actor_id,
+            &role,
+        )
+        .await?
+        .into_iter()
+        .filter(|(_, level)| *level >= PermissionLevel::View)
+        .map(|(id, _)| id)
+        .collect(),
+        Err(error)
+            if matches!(
+                error.kind(),
+                ApiErrorKind::Unauthenticated | ApiErrorKind::Forbidden | ApiErrorKind::NotFound
+            ) =>
+        {
+            BTreeSet::new()
+        }
+        Err(error) => return Err(error),
+    };
+    let readable_ids: Vec<Uuid> = readable.iter().copied().collect();
+    let titles: BTreeMap<Uuid, Option<String>> = if readable_ids.is_empty() {
+        BTreeMap::new()
+    } else {
+        TitleRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT fo.id, p.title FROM flow_objects fo \
+             LEFT JOIN flow_object_projections p ON p.object_id = fo.id \
+             WHERE fo.workspace_id = $1 AND fo.id = ANY($2)",
+            vec![workspace_id.into(), readable_ids.into()],
+        ))
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .map(|row| (row.id, row.title))
+        .collect()
+    };
+
+    Ok(RecordFlowLineage {
+        references: references
+            .into_iter()
+            .map(|row| {
+                if readable.contains(&row.source_object_id) {
+                    RecordLineageReference {
+                        reference_id: row.id,
+                        source_available: true,
+                        source_object_id: Some(row.source_object_id),
+                        source_title: titles.get(&row.source_object_id).cloned().flatten(),
+                        display: Some(row.display),
+                        created_at: Some(row.created_at),
+                    }
+                } else {
+                    RecordLineageReference {
+                        reference_id: row.id,
+                        source_available: false,
+                        source_object_id: None,
+                        source_title: None,
+                        display: None,
+                        created_at: None,
+                    }
+                }
+            })
+            .collect(),
+        conversions: conversions
+            .into_iter()
+            .map(|row| {
+                if readable.contains(&row.source_object_id) {
+                    RecordLineageConversion {
+                        job_id: row.id,
+                        source_available: true,
+                        source_object_id: Some(row.source_object_id),
+                        source_title: titles.get(&row.source_object_id).cloned().flatten(),
+                        status: Some(row.status),
+                        lineage_id: Some(row.lineage_id),
+                        created_at: Some(row.created_at),
+                    }
+                } else {
+                    RecordLineageConversion {
+                        job_id: row.id,
+                        source_available: false,
+                        source_object_id: None,
+                        source_title: None,
+                        status: None,
+                        lineage_id: None,
+                        created_at: None,
+                    }
+                }
+            })
+            .collect(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{BridgeAccess, PolicyConfiguration, bridge_permission};

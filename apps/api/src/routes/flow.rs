@@ -13462,6 +13462,198 @@ mod flow_database_tests {
         assert_eq!(fp2_b4_reaped_events(&state, retry_job).await, (1, 1));
         scratch.drop_self().await;
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // FP2-B5: form record detail carries its Flow lineage
+    // ---------------------------------------------------------------------------------------------
+
+    async fn fp2_b5_record_detail(state: &AppState, user_id: Uuid, record_id: Uuid) -> Value {
+        let body = body_json(to_response(
+            crate::routes::form::get_form_record(State(state.clone()), claims_for(user_id), None, Path(record_id))
+                .await,
+        ))
+        .await;
+        assert_eq!(body["code"], 0, "{body}");
+        body
+    }
+
+    /// FP2-B5: `GET /form-records/{id}` reports the Flow reference to the record and the
+    /// conversion job that created it; a caller who loses Flow read access to the source Page gets
+    /// only the ids of the reference/job with `source_available:false`; a removed reference
+    /// disappears; Flow disabled yields empty lists.
+    #[tokio::test]
+    async fn fp2_b5_record_detail_reports_flow_lineage_filtered_by_source_read_access() {
+        let scratch = scratch_or_skip!("fp2-b5-lineage");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, false).await;
+        let member_id = seed_member(&state, fx.workspace_id).await;
+        let policies = body_json(to_response(
+            update_form_permissions(
+                State(state.clone()),
+                claims_for(fx.owner_id),
+                None,
+                Path(fx.form_id),
+                Json(UpdateFormPermissionsRequest {
+                    policies: vec![
+                        UpsertFormPermissionPolicy {
+                            subject_type: "role".to_string(),
+                            subject_id: "owner".to_string(),
+                            policy: json!({"actions":{"form.view":true,"record.create":true}}),
+                        },
+                        UpsertFormPermissionPolicy {
+                            subject_type: "role".to_string(),
+                            subject_id: "member".to_string(),
+                            policy: json!({"actions":{"form.view":true}}),
+                        },
+                    ],
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(policies["code"], 0, "{policies}");
+
+        // Page -> conversion -> record.
+        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        let committed = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b5-convert").await;
+        assert_eq!(committed["data"]["status"], "completed", "{committed}");
+        let job_id = committed["data"]["job_id"].as_str().expect("job id").to_string();
+        let lineage_id = committed["data"]["lineage_id"].clone();
+        assert!(lineage_id.is_string(), "{committed}");
+        let record_id =
+            Uuid::parse_str(committed["data"]["created_target_ids"][0].as_str().expect("record id")).expect("UUID");
+
+        // Page -> reference -> the same record.
+        let reference = body_json(to_response(
+            post_flow_object_reference(
+                State(state.clone()),
+                claims_for(fx.owner_id),
+                None,
+                Path(fx.source_id),
+                Json(crate::flow::bridge::CreateReferenceInput {
+                    target_type: "form_record".to_string(),
+                    target_id: record_id,
+                    display: json!({"mode":"card"}),
+                    idempotency_key: Uuid::new_v4().to_string(),
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(reference["code"], 0, "{reference}");
+        let reference_id = reference["data"]["reference_id"]
+            .as_str()
+            .expect("reference id")
+            .to_string();
+        let source = fx.source_id.to_string();
+
+        // (1) Both lineages are visible to a member who can read the Page.
+        let before = fp2_b5_record_detail(&state, member_id, record_id).await;
+        assert_eq!(before["data"]["id"], record_id.to_string(), "{before}");
+        let lineage = &before["data"]["flow_lineage"];
+        let references = lineage["references"].as_array().expect("references");
+        assert_eq!(references.len(), 1, "{before}");
+        assert_eq!(references[0]["reference_id"], reference_id.as_str());
+        assert_eq!(references[0]["source_available"], true);
+        assert_eq!(references[0]["source_object_id"], source.as_str());
+        assert_eq!(references[0]["source_title"], "fp2 b4 source");
+        assert_eq!(references[0]["display"], json!({"mode":"card"}));
+        assert!(references[0]["created_at"].is_string(), "{before}");
+        let conversions = lineage["conversions"].as_array().expect("conversions");
+        assert_eq!(conversions.len(), 1, "{before}");
+        assert_eq!(conversions[0]["job_id"], job_id.as_str());
+        assert_eq!(conversions[0]["source_available"], true);
+        assert_eq!(conversions[0]["source_object_id"], source.as_str());
+        assert_eq!(conversions[0]["source_title"], "fp2 b4 source");
+        assert_eq!(conversions[0]["status"], "completed");
+        assert_eq!(conversions[0]["lineage_id"], lineage_id);
+        assert!(conversions[0]["created_at"].is_string(), "{before}");
+
+        // (2) The owner restricts the Page to an empty roster: the member loses Flow read access.
+        let app = authorization_router(state.clone(), fx.owner_id);
+        let (status, restricted) = http_put(
+            &app,
+            &format!("/api/v1/flow/objects/{}/inheritance", fx.source_id),
+            &json!({
+                "inherit_from_parent": false,
+                "initial_grants": [],
+                "idempotency_key": Uuid::new_v4().to_string(),
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{restricted}");
+        assert_eq!(restricted["code"], 0, "{restricted}");
+        let hidden = fp2_b5_record_detail(&state, member_id, record_id).await;
+        assert_eq!(
+            hidden["data"]["flow_lineage"],
+            json!({
+                "references": [{"reference_id": reference_id, "source_available": false}],
+                "conversions": [{"job_id": job_id, "source_available": false}],
+            }),
+            "{hidden}"
+        );
+        let hidden_text = hidden["data"]["flow_lineage"].to_string();
+        assert!(!hidden_text.contains(&source), "{hidden_text}");
+        assert!(!hidden_text.contains("fp2 b4 source"), "{hidden_text}");
+        let owner_view = fp2_b5_record_detail(&state, fx.owner_id, record_id).await;
+        assert_eq!(
+            owner_view["data"]["flow_lineage"]["references"][0]["source_available"], true,
+            "{owner_view}"
+        );
+
+        // (3) Removing the reference drops it; the conversion lineage stays.
+        let removed = body_json(to_response(
+            delete_flow_object_reference(
+                State(state.clone()),
+                claims_for(fx.owner_id),
+                None,
+                Path((fx.source_id, Uuid::parse_str(&reference_id).expect("UUID"))),
+                HeaderMap::from_iter([(
+                    axum::http::header::HeaderName::from_static("idempotency-key"),
+                    axum::http::HeaderValue::from_str(&Uuid::new_v4().to_string()).expect("header"),
+                )]),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(removed["code"], 0, "{removed}");
+        let after_removal = fp2_b5_record_detail(&state, fx.owner_id, record_id).await;
+        assert_eq!(
+            after_removal["data"]["flow_lineage"]["references"],
+            json!([]),
+            "{after_removal}"
+        );
+        assert_eq!(
+            after_removal["data"]["flow_lineage"]["conversions"][0]["job_id"],
+            job_id.as_str()
+        );
+
+        // (4) Flow disabled for the workspace: both lists are empty, the detail still succeeds.
+        let disabled = body_json(to_response(
+            set_flow_feature(
+                State(state.clone()),
+                claims_for(fx.owner_id),
+                None,
+                Path(fx.workspace_id),
+                Json(SetFlowFeatureRequest {
+                    enabled: Some(false),
+                    default_member_level: None,
+                    idempotency_key: Uuid::new_v4().to_string(),
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(disabled["code"], 0, "{disabled}");
+        let off = fp2_b5_record_detail(&state, fx.owner_id, record_id).await;
+        assert_eq!(
+            off["data"]["flow_lineage"],
+            json!({"references": [], "conversions": []}),
+            "{off}"
+        );
+        scratch.drop_self().await;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
