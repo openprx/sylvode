@@ -7,7 +7,8 @@
 // `NotFound`/`Forbidden`) lands on one not-found-safe state so the page does not reveal which.
 
 import type { ApiResult } from '$lib/api/client';
-import { flowApi, type FlowPackageImportReport } from '$lib/api/flow';
+import type { FlowPackageImportReport } from '$lib/api/flow';
+import { FlowObjectRepository } from './object-repository';
 import { exportPollDelay } from './package-export';
 import { classifyPackageFailure, type FlowPackageFailure } from './package-import';
 
@@ -50,7 +51,7 @@ export type ImportReportState =
 	| { readonly status: 'failed'; readonly failure: FlowPackageFailure };
 
 export interface ImportReportDeps {
-	readonly api: Pick<typeof flowApi, 'getPackageImport'>;
+	readonly reads: Pick<FlowObjectRepository, 'getImportReport'>;
 	readonly sleep: (ms: number) => Promise<void>;
 }
 
@@ -65,7 +66,7 @@ export class ImportReportPoller {
 		deps: Partial<ImportReportDeps> = {}
 	) {
 		this.deps = {
-			api: deps.api ?? flowApi,
+			reads: deps.reads ?? new FlowObjectRepository(),
 			sleep: deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
 		};
 	}
@@ -82,7 +83,7 @@ export class ImportReportPoller {
 		for (let attempt = 0; !this.disposed; attempt += 1) {
 			if (attempt > 0) await this.deps.sleep(exportPollDelay(attempt - 1));
 			if (this.disposed) break;
-			const result: ApiResult<FlowPackageImportReport> = await this.deps.api.getPackageImport(
+			const result: ApiResult<FlowPackageImportReport> = await this.deps.reads.getImportReport(
 				this.workspaceId,
 				this.importId
 			);
