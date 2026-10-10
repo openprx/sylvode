@@ -23,8 +23,8 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  *   no fallback request;
  * - creates a Collection from the New menu (one default text field, board view): one
  *   `POST .../flow/objects` with `object_type=collection`, the server's collection read has that
- *   field and view, the navigator shows the new object, and the object page shows the renderer
- *   registry's unsupported fallback (the Collection renderer is not registered yet).
+ *   field and view, the navigator shows the new object, and the object page renders it with the
+ *   registry's Collection renderer (its board view, disabled without a select field).
  *
  * Needs the stack from `scripts/e2e-web-stack.sh up`: BASE_URL serving the built frontend with
  * `/api` proxied to the API on the same origin, and the background worker the script starts on
@@ -376,9 +376,11 @@ test('navigator: Flow search, lag badge and standalone Collection create', async
 	await expect(item).toHaveCount(1);
 	await expect(item).toHaveAttribute('aria-selected', 'true');
 	await expect(item.getByTestId('flow-nav-collection-badge')).toHaveText('Collection');
-	const fallback = page.getByTestId('flow-object-unsupported');
-	await expect(fallback).toHaveAttribute('data-object-type', 'collection');
-	await expect(fallback).toHaveText("This view isn't available yet.");
+	// The object page renders it with the registry's Collection renderer (FP2-M4): the board
+	// view, disabled until the Collection has a select field to group by.
+	await expect(page.getByTestId('flow-object-unsupported')).toHaveCount(0);
+	await expect(page.getByTestId('collection-renderer')).toBeVisible();
+	await expect(page.getByTestId('collection-board-disabled')).toBeVisible();
 	await expect(page.getByRole('heading', { level: 1, name: collectionTitle })).toBeVisible();
 
 	const collection = await unwrap<{
