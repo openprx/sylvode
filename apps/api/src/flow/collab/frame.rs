@@ -220,6 +220,12 @@ pub enum Frame {
         payload: Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         ttl_seconds: Option<u32>,
+        /// Who sent this presence, filled in by the server from the sending connection's session
+        /// on every fanned-out frame (`collab-protocol-v1.md`, 2026-10-10: "扇出 = 上报 + `actor`").
+        /// A value a client puts on its own `presence` frame is ignored; the payload's own
+        /// identity fields are never trusted as the actor.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<PresenceActor>,
     },
     Ack {
         protocol_version: u32,
@@ -242,6 +248,12 @@ pub enum Frame {
         protocol_version: u32,
         nonce: String,
     },
+}
+
+/// The server-attested identity on a fanned-out `presence` frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresenceActor {
+    pub user_id: Uuid,
 }
 
 impl Frame {

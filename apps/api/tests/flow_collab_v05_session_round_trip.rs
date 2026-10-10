@@ -884,6 +884,7 @@ impl Fixture {
                     session_id: Uuid::new_v4(),
                     payload: json!({"cursor": round, "client": index}),
                     ttl_seconds: Some(30),
+                    actor: None,
                 },
             )
             .await;
