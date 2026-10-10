@@ -2225,6 +2225,25 @@ fn field_is_restricted(field: &CollectionFieldView) -> bool {
     }
 }
 
+/// The Collection a Record belongs to (`flow_record_projections.collection_id`), or `None` when
+/// `object_id` is not a Record.
+pub async fn owning_collection_id<C: ConnectionTrait>(conn: &C, object_id: Uuid) -> Result<Option<Uuid>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        collection_id: Uuid,
+    }
+    Ok(Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT rp.collection_id FROM flow_record_projections rp \
+         JOIN flow_objects fo ON fo.id = rp.record_id AND fo.object_type = 'record' \
+         WHERE rp.record_id = $1",
+        vec![object_id.into()],
+    ))
+    .one(conn)
+    .await?
+    .map(|row| row.collection_id))
+}
+
 pub async fn describe_collection(
     state: &AppState,
     access: &policy::AuthorizedFlowObject,
