@@ -1139,11 +1139,6 @@ pub async fn get_flow_admin_integrity(
     require_exact_admin_tool(bot.as_ref(), "objects.integrity")?;
     let extensions = build_auth_extensions(claims, bot);
     policy::require_flow_workspace_admin_access(&state, &extensions, workspace_id).await?;
-    if query.cursor.is_some() {
-        return Err(ApiError::invalid_update(
-            "integrity cursor is not available on the first v0.8 page".to_string(),
-        ));
-    }
     let include_documents = match query.scope.as_deref().unwrap_or("summary") {
         "summary" => false,
         "documents" => true,
@@ -1158,7 +1153,8 @@ pub async fn get_flow_admin_integrity(
             &state.db,
             workspace_id,
             include_documents,
-            query.limit.unwrap_or(50),
+            query.cursor.as_deref(),
+            query.limit,
         )
         .await?,
     ))
@@ -12302,6 +12298,108 @@ mod flow_database_tests {
         let bad_limit = lag_page(None, Some(101), workspace_id).await;
         assert_typed(&bad_limit, "invalid_update", 400);
         let bad_cursor = lag_page(Some("not-a-cursor".to_string()), None, workspace_id).await;
+        assert_typed(&bad_cursor, "invalid_update", 400);
+        scratch.drop_self().await;
+    }
+
+    /// FP2-B3 N3-④: workspace integrity pages with a cursor, lists failing documents with their
+    /// status / `checked_at` / failure class, and keeps `counts` consistent with `documents[]`.
+    #[tokio::test]
+    async fn fp2_b3_integrity_pages_and_lists_failed_documents() {
+        let scratch = scratch_or_skip!("fp2-b3-integrity");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let mut pages = Vec::new();
+        for title in ["fp2 b3 a", "fp2 b3 b", "fp2 b3 c"] {
+            pages.push(create_page_as_owner(&state, workspace_id, owner_id, title).await);
+        }
+        let broken = document_of(&state, pages[1]).await;
+        // Corrupt one document's stored snapshot checksum so its integrity check must fail.
+        exec(
+            &state,
+            "UPDATE collab_documents SET snapshot_checksum = repeat('0', 64) WHERE id = $1",
+            vec![broken.into()],
+        )
+        .await;
+        let integrity = |query: String| {
+            fp2_b3_admin_get(
+                state.clone(),
+                owner_id,
+                format!("/api/v1/admin/workspaces/{workspace_id}/flow/integrity?{query}"),
+            )
+        };
+
+        let summary = integrity("scope=summary".to_string()).await;
+        assert_eq!(summary["code"], 0, "{summary}");
+        assert_eq!(summary["data"]["status"], "integrity_error", "{summary}");
+        assert_eq!(summary["data"]["counts"]["failed"], 1, "{summary}");
+        assert_eq!(
+            summary["data"]["counts"]["checked"], 4,
+            "three pages plus the navigator root"
+        );
+        assert_eq!(summary["data"]["counts"]["healthy"], 3, "{summary}");
+        assert!(summary["data"].get("next_cursor").is_none(), "{summary}");
+
+        let first = integrity("scope=documents&limit=2".to_string()).await;
+        assert_eq!(first["code"], 0, "{first}");
+        let cursor = first["data"]["next_cursor"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a full first page carries next_cursor: {first}"))
+            .to_string();
+        let second = integrity(format!("scope=documents&limit=2&cursor={cursor}")).await;
+        assert_eq!(second["code"], 0, "{second}");
+        assert!(
+            second["data"].get("next_cursor").is_none(),
+            "last page omits next_cursor: {second}"
+        );
+
+        let mut rows = Vec::new();
+        let mut failed_counted = 0;
+        for page in [&first, &second] {
+            let documents = page["data"]["documents"].as_array().expect("documents is an array");
+            let page_failed = documents.iter().filter(|row| row["status"] != "ok").count();
+            assert_eq!(page["data"]["counts"]["checked"], documents.len(), "{page}");
+            assert_eq!(page["data"]["counts"]["failed"], page_failed, "{page}");
+            assert_eq!(
+                page["data"]["counts"]["healthy"],
+                documents.len() - page_failed,
+                "{page}"
+            );
+            failed_counted += page_failed;
+            rows.extend(documents.iter().cloned());
+        }
+        assert_eq!(rows.len(), 4, "two pages cover every document: {rows:?}");
+        let ids: std::collections::BTreeSet<String> = rows
+            .iter()
+            .map(|row| row["document_id"].as_str().expect("document_id").to_string())
+            .collect();
+        assert_eq!(ids.len(), 4, "pages do not overlap: {rows:?}");
+        assert_eq!(failed_counted, 1);
+        let failing = rows
+            .iter()
+            .find(|row| row["document_id"] == broken.to_string())
+            .unwrap_or_else(|| panic!("the failed document must be listed: {rows:?}"));
+        assert_eq!(failing["status"], "failed", "{failing}");
+        assert_eq!(failing["failure"], "storage_inconsistent", "{failing}");
+        assert_eq!(failing["error_code"], "resync_required", "{failing}");
+        assert_eq!(failing["object_id"], pages[1].to_string(), "{failing}");
+        assert!(failing["checked_at"].is_string(), "{failing}");
+        for row in rows.iter().filter(|row| row["document_id"] != broken.to_string()) {
+            assert_eq!(row["status"], "ok", "{row}");
+            assert!(
+                row["checked_at"].is_string() && row["semantic_hash"].is_string(),
+                "{row}"
+            );
+        }
+
+        let summary_page = integrity(format!("scope=summary&limit=2&cursor={cursor}")).await;
+        assert_eq!(
+            summary_page["code"], 0,
+            "a summary accepts a cursor too: {summary_page}"
+        );
+        assert_eq!(summary_page["data"]["counts"]["checked"], 2, "{summary_page}");
+        assert!(summary_page["data"]["documents"].is_null(), "{summary_page}");
+        let bad_cursor = integrity("scope=documents&cursor=bm90LWEtY3Vyc29y".to_string()).await;
         assert_typed(&bad_cursor, "invalid_update", 400);
         scratch.drop_self().await;
     }
