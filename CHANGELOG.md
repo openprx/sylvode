@@ -377,6 +377,12 @@ OpenPR name keeps working; see **Deprecated**.
   `job_available`, true when the caller may open the job (its actor or a workspace
   owner/admin). Both lists are empty when Flow or the
   Forms bridge is disabled for the workspace.
+  The web record detail page shows this as a read-only **Flow** section: each reference with its
+  source Page (linked), display mode and time, each conversion with its source Page, job status
+  and a link to the job page when `job_available` is true. An unreadable source shows only a
+  "no access to the source Page" placeholder with no link. The section is hidden when both
+  lists are empty or the API does not send the field; references are still removed from the
+  Page card in Flow, never from the record.
 
 ### Changed
 

@@ -7,9 +7,11 @@
 		Link,
 		MessageSquare,
 		Shield,
-		TableProperties
+		TableProperties,
+		Workflow
 	} from '@lucide/svelte';
 	import { onMount } from 'svelte';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/stores';
 	import {
 		formsApi,
@@ -20,11 +22,13 @@
 		type FormPermissions,
 		type FormRecord,
 		type FormRecordComment,
+		type FormRecordDetail,
 		type FormRecordLink,
 		type UniversalForm
 	} from '$lib/api/forms';
 	import Button from '$lib/components/Button.svelte';
 	import OptionValueBadges from '$lib/components/forms/OptionValueBadges.svelte';
+	import { flowLineageView } from '$lib/forms/flow-lineage';
 	import { toast } from '$lib/stores/toast';
 	import { requireRouteParam } from '$lib/utils/route-params';
 	import { safeImageUrl, safeLinkUrl } from '$lib/utils/safe-url';
@@ -61,7 +65,8 @@
 
 	let loading = $state(true);
 	let errorMessage = $state('');
-	let record = $state<FormRecord | null>(null);
+	let record = $state<FormRecordDetail | null>(null);
+	const flowLineage = $derived(record ? flowLineageView(record.flow_lineage) : null);
 	let form = $state<UniversalForm | null>(null);
 	let permissions = $state<FormPermissions | null>(null);
 	let links = $state<FormRecordLink[]>([]);
@@ -1336,6 +1341,122 @@
 						{/if}
 						{/if}
 					{/each}
+					{#if record && flowLineage}
+						<details
+							class="rounded-md border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
+							open
+							data-testid="record-flow-lineage"
+							data-reference-count={flowLineage.references.length}
+							data-conversion-count={flowLineage.conversions.length}
+						>
+							<summary class="mb-3 flex min-h-11 cursor-pointer list-none items-start gap-2 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500">
+								<Workflow class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+								<div class="min-w-0">
+									<h2 class="text-sm font-semibold text-slate-950 dark:text-slate-100">
+										{$t('forms.flowLineage.title')}
+									</h2>
+									<p class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+										{$t('forms.flowLineage.description')}
+									</p>
+								</div>
+							</summary>
+							<div class="space-y-3">
+								<section aria-labelledby="record-flow-lineage-references">
+									<h3
+										id="record-flow-lineage-references"
+										class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+									>
+										{$t('forms.flowLineage.references')}
+									</h3>
+									<ul class="mt-2 space-y-2">
+										{#each flowLineage.references as row (row.key)}
+											<li
+												class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+												data-testid="record-flow-lineage-reference"
+												data-available={row.available}
+											>
+												{#if row.available}
+													<a
+														href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
+															workspaceId,
+															objectId: row.sourceObjectId
+														})}
+														class="inline-flex min-h-11 items-center font-medium text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300"
+														data-testid="record-flow-lineage-source"
+													>
+														{row.sourceTitle ?? $t('forms.flowLineage.untitled')}
+													</a>
+													<div class="flex flex-wrap gap-x-3 text-slate-500 dark:text-slate-400">
+														<span data-testid="record-flow-lineage-mode">{$t(`forms.flowLineage.mode.${row.mode}`)}</span>
+														<span>{$t('forms.flowLineage.addedAt', { values: { date: formatDate(row.createdAt) } })}</span>
+													</div>
+												{:else}
+													<span class="text-slate-500 dark:text-slate-400" data-testid="record-flow-lineage-unavailable">
+														{$t('forms.flowLineage.sourceUnavailable')}
+													</span>
+												{/if}
+											</li>
+										{:else}
+											<li class="text-sm text-slate-500 dark:text-slate-400">{$t('forms.flowLineage.noReferences')}</li>
+										{/each}
+									</ul>
+								</section>
+								<section aria-labelledby="record-flow-lineage-conversions">
+									<h3
+										id="record-flow-lineage-conversions"
+										class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+									>
+										{$t('forms.flowLineage.conversions')}
+									</h3>
+									<ul class="mt-2 space-y-2">
+										{#each flowLineage.conversions as row (row.key)}
+											<li
+												class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+												data-testid="record-flow-lineage-conversion"
+												data-available={row.available}
+											>
+												{#if row.available}
+													<a
+														href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
+															workspaceId,
+															objectId: row.sourceObjectId
+														})}
+														class="inline-flex min-h-11 items-center font-medium text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300"
+														data-testid="record-flow-lineage-source"
+													>
+														{row.sourceTitle ?? $t('forms.flowLineage.untitled')}
+													</a>
+													<div class="flex flex-wrap items-center gap-x-3 text-slate-500 dark:text-slate-400">
+														<span data-testid="record-flow-lineage-status">{$t(`forms.flowLineage.status.${row.status}`)}</span>
+														<span>{$t('forms.flowLineage.startedAt', { values: { date: formatDate(row.createdAt) } })}</span>
+														{#if row.linkedJobId}
+															<a
+																href={resolve('/(app)/workspace/[workspaceId]/flow/conversions/[jobId]', {
+																	workspaceId,
+																	jobId: row.linkedJobId
+																})}
+																class="inline-flex min-h-11 items-center text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300"
+																data-testid="record-flow-lineage-job"
+															>
+																{$t('forms.flowLineage.openJob')}
+															</a>
+														{/if}
+													</div>
+												{:else}
+													<span class="text-slate-500 dark:text-slate-400" data-testid="record-flow-lineage-unavailable">
+														{$t('forms.flowLineage.sourceUnavailable')}
+													</span>
+												{/if}
+											</li>
+										{:else}
+											<li class="text-sm text-slate-500 dark:text-slate-400">{$t('forms.flowLineage.noConversions')}</li>
+										{/each}
+									</ul>
+								</section>
+								<p class="text-xs leading-5 text-slate-500 dark:text-slate-400">{$t('forms.flowLineage.readOnlyNote')}</p>
+							</div>
+						</details>
+					{/if}
 				</aside>
 			</div>
 		{/if}
