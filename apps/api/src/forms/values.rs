@@ -395,7 +395,7 @@ fn normalize_amount(field: &FormField, raw: &Value) -> Result<Value, String> {
     }))
 }
 
-fn is_missing(value: Option<&Value>) -> bool {
+pub(crate) fn is_missing(value: Option<&Value>) -> bool {
     match value {
         None | Some(Value::Null) => true,
         Some(Value::String(value)) => value.trim().is_empty(),
