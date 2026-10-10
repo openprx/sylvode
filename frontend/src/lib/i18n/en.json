@@ -2485,6 +2485,13 @@
       "updated": "Updated",
       "copyReference": "Copy reference",
       "copied": "Copied",
+      "tabs": {
+        "label": "Page panel sections",
+        "info": "Info",
+        "share": "Share",
+        "relations": "Relations",
+        "history": "History"
+      },
       "export": {
         "heading": "Export this page",
         "formatLabel": "Format",
@@ -2514,7 +2521,6 @@
     "titlePlaceholder": "Untitled",
     "relations": {
       "title": "Relations",
-      "comingSoon": "Relations are not available in this version yet.",
       "direction": {
         "label": "Direction",
         "both": "All directions",

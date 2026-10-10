@@ -2485,6 +2485,13 @@
       "updated": "更新于",
       "copyReference": "复制引用",
       "copied": "已复制",
+      "tabs": {
+        "label": "页面面板分区",
+        "info": "信息",
+        "share": "共享",
+        "relations": "关联",
+        "history": "历史"
+      },
       "export": {
         "heading": "导出此页面",
         "formatLabel": "格式",
@@ -2514,7 +2521,6 @@
     "titlePlaceholder": "无标题",
     "relations": {
       "title": "关联",
-      "comingSoon": "关联功能在此版本中尚不可用。",
       "direction": {
         "label": "方向",
         "both": "全部方向",
