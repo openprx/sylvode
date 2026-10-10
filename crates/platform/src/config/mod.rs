@@ -87,6 +87,13 @@ pub const DEFAULT_OPERATION_LOG_RETENTION_DAYS: u32 = 30;
 /// freeze (`delivery_max_attempts = 10`), not invented independently.
 pub const DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS: i32 = 10;
 
+/// Seconds between two sweeps of conversion jobs left `started` unless `[flow]` overrides it
+/// (`rest-api-v1.md` v0.7: the sweep runs at API startup and then every 60 seconds).
+pub const DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS: u64 = 60;
+
+/// Upper bound accepted for `flow.conversion_reap_interval_secs` (one day).
+pub const MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS: u64 = 86_400;
+
 /// API base URL assumed by the MCP server when `[mcp]` does not name one.
 pub const DEFAULT_MCP_API_URL: &str = "http://localhost:8081";
 
@@ -481,10 +488,14 @@ impl Default for AuditConfig {
 /// must belong to, both at ticket issuance and at WebSocket upgrade. Each entry is a normalized
 /// `scheme://host[:port]` literal (no path, no wildcard); empty means no origin is allowed
 /// (fail closed, matching every other Flow gate's "absent means off" convention).
+///
+/// `conversion_reap_interval_secs` is the period of the API's sweep that fails conversion jobs
+/// left `started` past the stale threshold (`rest-api-v1.md` v0.7).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlowConfig {
     pub dispatch_max_attempts: i32,
     pub collab_allowed_origins: Vec<String>,
+    pub conversion_reap_interval_secs: u64,
 }
 
 impl Default for FlowConfig {
@@ -492,6 +503,7 @@ impl Default for FlowConfig {
         Self {
             dispatch_max_attempts: DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS,
             collab_allowed_origins: Vec::new(),
+            conversion_reap_interval_secs: DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
         }
     }
 }

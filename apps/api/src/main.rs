@@ -103,22 +103,15 @@ async fn main() -> anyhow::Result<()> {
     // background task and inline on `GET /api/v1/proposals*`, which made a read request write
     // decisions and trust scores. The worker polling pipeline is now the only writer.
     routes::webhook::spawn_stored_endpoint_audit(state.clone());
-    // Conversion jobs abandoned in `started` by a previous process are reaped once at startup;
-    // later ones are reaped by the retry that finds them (`flow::bridge::retry_conversion`).
-    let reap_state = state.clone();
-    tokio::spawn(async move {
-        match api::flow::bridge::reap_stale_conversion_jobs(
-            &reap_state,
-            api::flow::bridge::conversion_started_stale_after(),
-            None,
-        )
-        .await
-        {
-            Ok(0) => {}
-            Ok(reaped) => tracing::warn!(reaped, "reaped flow conversion jobs left started"),
-            Err(err) => tracing::warn!(error = %err, "stale flow conversion job sweep could not run"),
-        }
-    });
+    // Conversion jobs left `started` past the stale threshold are failed at startup and then
+    // every `flow.conversion_reap_interval_secs` (`rest-api-v1.md` v0.7); the loop stops when
+    // shutdown begins.
+    let (reaper_stop, reaper_stop_rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(api::flow::bridge::run_conversion_reaper(
+        state.clone(),
+        Duration::from_secs(config.flow.conversion_reap_interval_secs),
+        reaper_stop_rx,
+    ));
 
     // Uploaded object downloads are gated by `uploads_access_middleware`: it accepts either a
     // signed download URL or a normal session, and the handlers then scope the object to the
@@ -2097,7 +2090,7 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&cfg.bind_addr).await?;
     tracing::info!(bind_addr = %cfg.bind_addr, "api server started");
     axum::serve(listener, app)
-        .with_graceful_shutdown(drain_then_shutdown())
+        .with_graceful_shutdown(drain_then_shutdown(reaper_stop))
         .await?;
     Ok(())
 }
@@ -2168,8 +2161,10 @@ mod build_info_tests {
 /// business envelope carrying the same `reason`/`retry_after_ms`. It then keeps serving for
 /// [`PROCESS_DRAIN_GRACE_MS`] so those rejections and closes actually reach their clients instead
 /// of racing the process exit.
-async fn drain_then_shutdown() {
+async fn drain_then_shutdown(reaper_stop: tokio::sync::watch::Sender<bool>) {
     shutdown_signal().await;
+    // The receiver is gone only if the reaper already stopped; nothing is left to stop then.
+    let _ = reaper_stop.send(true);
     let closed = api::flow::collab::runtime::runtime().begin_process_drain(PROCESS_DRAIN_RETRY_AFTER_MS);
     tracing::info!(
         closed_sessions = closed,

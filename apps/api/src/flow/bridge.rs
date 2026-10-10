@@ -1414,16 +1414,12 @@ pub const STALE_STARTED_REASON: &str = "stale_started";
 /// Such a job's run crashed between its claim and its outcome, or its failure could not be
 /// recorded. Each becomes `failed` with
 /// `error = "server_rejected"` and one business `flow.conversion.failed` event carrying
-/// `reason = "stale_started"`, so it can be retried. `only_job` restricts the sweep to one job.
+/// `reason = "stale_started"`, so it can be retried.
 ///
 /// Idempotent: a reaped job is no longer `started`, so a second sweep finds nothing. Rows another
 /// transaction holds (a run in progress) are skipped, not waited for. Returns how many jobs it
 /// reaped.
-pub async fn reap_stale_conversion_jobs(
-    state: &AppState,
-    older_than: chrono::Duration,
-    only_job: Option<Uuid>,
-) -> Result<u64, ApiError> {
+pub async fn reap_stale_conversion_jobs(state: &AppState, older_than: chrono::Duration) -> Result<u64, ApiError> {
     #[derive(FromQueryResult)]
     struct Stale {
         id: Uuid,
@@ -1436,9 +1432,8 @@ pub async fn reap_stale_conversion_jobs(
         DbBackend::Postgres,
         "SELECT id, preview_id, idempotency_key FROM flow_conversion_jobs \
          WHERE status='started' AND updated_at < now() - make_interval(secs => $1) \
-           AND ($2::uuid IS NULL OR id = $2) \
          ORDER BY updated_at, id FOR UPDATE SKIP LOCKED",
-        vec![older_than.num_seconds().into(), only_job.into()],
+        vec![older_than.num_seconds().into()],
     ))
     .all(&tx)
     .await?;
@@ -1472,6 +1467,36 @@ pub async fn reap_stale_conversion_jobs(
     }
     tx.commit().await?;
     Ok(u64::try_from(abandoned.len()).unwrap_or(u64::MAX))
+}
+
+/// Runs [`reap_stale_conversion_jobs`] at once and then every `interval`.
+///
+/// Stops when `stop` turns `true` or its sender is dropped (`rest-api-v1.md` v0.7: the sweep runs
+/// at API startup and periodically; a retry never reaps in place). A failed sweep is logged and
+/// the loop goes on.
+pub async fn run_conversion_reaper(
+    state: AppState,
+    interval: std::time::Duration,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                match reap_stale_conversion_jobs(&state, conversion_started_stale_after()).await {
+                    Ok(0) => {}
+                    Ok(reaped) => tracing::warn!(reaped, "reaped flow conversion jobs left started"),
+                    Err(err) => tracing::warn!(error = %err, "stale flow conversion job sweep could not run"),
+                }
+            }
+            changed = stop.changed() => {
+                if changed.is_err() || *stop.borrow() {
+                    return;
+                }
+            }
+        }
+    }
 }
 
 /// The stale-`started` threshold as a duration ([`CONVERSION_STARTED_STALE_AFTER_SECS`]).
@@ -1960,13 +1985,18 @@ pub async fn retry_conversion(
     if job.status == "completed" || job.idempotency_key == input.idempotency_key {
         return load_job(&state.db, job_id).await;
     }
-    // A job abandoned in `started` is reaped here, so its retry does not wait for the next sweep.
-    if job.status == "started"
-        && reap_stale_conversion_jobs(state, conversion_started_stale_after(), Some(job_id)).await? == 0
-    {
-        return Err(ApiError::policy_rejected("only failed conversion jobs can be retried"));
+    // A `started` job is still running, or is waiting for the periodic sweep to fail it once it
+    // goes stale (`run_conversion_reaper`); either way the retry is a concurrent request on a job
+    // in flight (`error-mapping-v1.md`: `server_draining{reason:"contention"}`), and it never reaps
+    // the job itself (`rest-api-v1.md` v0.7).
+    if job.status == "started" {
+        return Err(ApiError::server_draining(
+            ServerDrainingReason::Contention,
+            IN_FLIGHT_RETRY_AFTER_MS,
+            "the conversion job is still started",
+        ));
     }
-    if !matches!(job.status.as_str(), "failed" | "started") {
+    if job.status != "failed" {
         return Err(ApiError::policy_rejected("only failed conversion jobs can be retried"));
     }
     #[derive(FromQueryResult)]
