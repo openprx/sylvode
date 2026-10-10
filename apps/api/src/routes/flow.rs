@@ -248,11 +248,14 @@ pub async fn get_flow_export(
     let receipt =
         crate::flow::export::get_package_export(&state.db, job_id, &package_export_principal(actor_id, role, is_bot))
             .await?;
+    let has_artifact = receipt.status == "completed";
     let mut data = serde_json::to_value(receipt).map_err(|_| ApiError::internal())?;
-    data.as_object_mut().ok_or_else(ApiError::internal)?.insert(
-        "download_url".to_string(),
-        json!(format!("/api/v1/flow/exports/{job_id}/artifact")),
-    );
+    if has_artifact {
+        data.as_object_mut().ok_or_else(ApiError::internal)?.insert(
+            "download_url".to_string(),
+            json!(format!("/api/v1/flow/exports/{job_id}/artifact")),
+        );
+    }
     Ok(ApiResponse::success(data))
 }
 
@@ -11245,6 +11248,69 @@ mod flow_database_tests {
             fp2_b2_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
             pages_after_import
         );
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn fp2_b2_export_that_fails_while_rendering_is_a_failed_job_with_a_stable_error() {
+        let scratch = scratch_or_skip!("fp2-b2-export-failed");
+        let state = state_for(scratch.db.clone());
+        let (export_workspace, owner_id) = seed_workspace(&state, true).await;
+        let page = create_page_as_owner(&state, export_workspace, owner_id, "corrupted export source").await;
+        // Fault injection: the stored snapshot no longer matches its checksum, which the package
+        // writer verifies before trusting canonical bytes.
+        exec(
+            &state,
+            "UPDATE collab_documents SET snapshot_checksum=repeat('0',64) WHERE object_id=$1",
+            vec![page.into()],
+        )
+        .await;
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/workspaces/{workspace_id}/flow/exports",
+                axum::routing::post(super::post_flow_workspace_export),
+            )
+            .route(
+                "/api/v1/flow/exports/{job_id}",
+                axum::routing::get(super::get_flow_export),
+            )
+            .route(
+                "/api/v1/flow/exports/{job_id}/artifact",
+                axum::routing::get(super::get_flow_export_artifact),
+            )
+            .layer(claims_for(owner_id))
+            .with_state(state.clone());
+        let request = json!({"format":"package","include_history":false,"idempotency_key":"fp2-b2-failed-export"});
+        let created = fp2_b2_send(
+            &app,
+            "POST",
+            format!("/api/v1/workspaces/{export_workspace}/flow/exports"),
+            Some(request.clone()),
+        )
+        .await;
+        assert_eq!(created["code"], 0, "{created}");
+        assert_eq!(created["data"]["status"], "failed", "{created}");
+        assert_eq!(created["data"]["error"], "checksum_mismatch", "{created}");
+        let job = created["data"]["job_id"].as_str().unwrap().to_string();
+
+        let status = fp2_b2_send(&app, "GET", format!("/api/v1/flow/exports/{job}"), None).await;
+        assert_eq!(status["code"], 0, "{status}");
+        assert_eq!(status["data"]["status"], "failed", "{status}");
+        assert_eq!(status["data"]["error"], "checksum_mismatch", "{status}");
+        assert!(status["data"].get("download_url").is_none(), "{status}");
+
+        let replay = fp2_b2_send(
+            &app,
+            "POST",
+            format!("/api/v1/workspaces/{export_workspace}/flow/exports"),
+            Some(request),
+        )
+        .await;
+        assert_eq!(replay["data"]["job_id"], json!(job), "{replay}");
+        assert_eq!(replay["data"]["error"], "checksum_mismatch", "{replay}");
+
+        let artifact = fp2_b2_send(&app, "GET", format!("/api/v1/flow/exports/{job}/artifact"), None).await;
+        assert_typed(&artifact, "not_found", 404);
         scratch.drop_self().await;
     }
 
