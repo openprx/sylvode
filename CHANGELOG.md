@@ -608,6 +608,11 @@ replacement and the earliest removal.
   command responses (`object.semantic_content` and `semantic_diff`) apply the records query's
   redaction (`semantic_content` is `{}`). They used to return every `record_property` value,
   including restricted ones, and the Record body.
+- Flow collaboration (security): every `presence` frame the server fans out, live or in the
+  snapshot a joining session receives, carries `actor: {"user_id": ...}`, the user of the
+  connection that sent it as authenticated by its collaboration ticket. The payload is still
+  relayed as sent; an `actor` a client puts on its own frame is ignored. Clients must take the
+  peer's identity from `actor`, never from the payload's self-reported `userId`/`name`.
 - Flow REST: a query string that does not parse on any `/flow` route (a non-numeric `limit`,
   `before_seq` or `at_seq`, a non-UUID `view_id` or `project_id`, ...) answers `invalid_update`
   in the business envelope instead of axum's plain-text HTTP 400.

@@ -2001,6 +2001,7 @@ mod database_tests {
                 session_id: child_owner_session,
                 payload: serde_json::json!({"cursor": "later"}),
                 ttl_seconds: Some(30),
+                actor: None,
             },
             Some(child_owner_session),
         );

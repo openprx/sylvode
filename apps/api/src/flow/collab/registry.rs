@@ -169,6 +169,14 @@ pub struct PresenceEntry {
     expires_at: Instant,
 }
 
+/// One live presence entry handed to a joining session, with the user its session belongs to.
+#[derive(Debug, Clone)]
+pub struct PresenceSnapshotEntry {
+    pub session_id: Uuid,
+    pub user_id: Uuid,
+    pub payload: Value,
+}
+
 /// One subscription's acknowledged position (`collab-protocol-v1.md`'s `ack document_id, seq,
 /// frontier`). Recorded per session, never per document: two sessions on the same document
 /// acknowledge independently, and `collab-protocol-v1.md` makes the client's `last_applied_seq`
@@ -773,14 +781,32 @@ impl SessionRegistry {
     /// document sees nobody until each peer's next refresh. Read-only — it never inserts, never
     /// refreshes an expiry, and therefore cannot be used by a joining session to keep another
     /// session's entry alive.
+    ///
+    /// Each entry names the user its session belongs to (the presence `actor`); an entry whose
+    /// session is no longer registered has no attested user and is left out.
     #[must_use]
-    pub fn presence_snapshot(&self, document_id: Uuid, exclude: Option<Uuid>) -> Vec<(Uuid, Value)> {
-        let mut presence = self.presence.lock();
-        Self::expire_presence(&mut presence);
-        presence
-            .iter()
-            .filter(|((did, sid), _)| *did == document_id && Some(*sid) != exclude)
-            .map(|((_, sid), entry)| (*sid, entry.payload.clone()))
+    pub fn presence_snapshot(&self, document_id: Uuid, exclude: Option<Uuid>) -> Vec<PresenceSnapshotEntry> {
+        let live: Vec<(Uuid, Value)> = {
+            let mut presence = self.presence.lock();
+            Self::expire_presence(&mut presence);
+            presence
+                .iter()
+                .filter(|((did, sid), _)| *did == document_id && Some(*sid) != exclude)
+                .map(|((_, sid), entry)| (*sid, entry.payload.clone()))
+                .collect()
+        };
+        let connections = self.connections.lock();
+        live.into_iter()
+            .filter_map(|(session_id, payload)| {
+                connections
+                    .by_session
+                    .get(&session_id)
+                    .map(|meta| PresenceSnapshotEntry {
+                        session_id,
+                        user_id: meta.user_id,
+                        payload,
+                    })
+            })
             .collect()
     }
 
@@ -1211,10 +1237,18 @@ mod tests {
         let joiner = Uuid::new_v4();
         let elsewhere = Uuid::new_v4();
         let expiring = Uuid::new_v4();
+        let peer_user = Uuid::new_v4();
+        let unregistered = Uuid::new_v4();
+        let _peer_registration = registry
+            .try_register(document_id, peer_user, Uuid::new_v4(), peer)
+            .expect("the peer session registers");
 
         registry
             .upsert_presence(document_id, peer, json!({"cursor": 1}), Duration::from_secs(30))
             .expect("peer presence is accepted");
+        registry
+            .upsert_presence(document_id, unregistered, json!({"cursor": 5}), Duration::from_secs(30))
+            .expect("presence of a session that is not registered is stored");
         registry
             .upsert_presence(document_id, joiner, json!({"cursor": 2}), Duration::from_secs(30))
             .expect("joiner presence is accepted");
@@ -1232,12 +1266,13 @@ mod tests {
             1,
             "only the live peer on this document may be handed to the joiner, got {snapshot:?}"
         );
-        assert_eq!(snapshot[0].0, peer);
-        assert_eq!(snapshot[0].1["cursor"], 1);
+        assert_eq!(snapshot[0].session_id, peer);
+        assert_eq!(snapshot[0].user_id, peer_user, "the entry names its session's user");
+        assert_eq!(snapshot[0].payload["cursor"], 1);
 
         // Reading the snapshot must not have refreshed anything: the expired entry is gone for
-        // good, and the joiner's own entry is still its own.
-        assert_eq!(registry.presence_count(document_id), 2);
+        // good, and the joiner's and the unregistered session's entries are still stored.
+        assert_eq!(registry.presence_count(document_id), 3);
         assert_eq!(registry.presence_count(other_document), 1);
     }
 
@@ -1507,6 +1542,7 @@ mod tests {
                 session_id: survivor_session_id,
                 payload: json!({"cursor": "later"}),
                 ttl_seconds: Some(30),
+                actor: None,
             },
             Some(survivor_session_id),
         );

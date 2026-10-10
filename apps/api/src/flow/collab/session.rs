@@ -18,7 +18,8 @@ use super::authz::{self, PermissionLevel};
 use super::bootstrap;
 use super::egress::{EgressSequencer, SeqDecision};
 use super::frame::{
-    DrainSignal, Frame, PROTOCOL_VERSION, RejectedCode, SERVER_REJECTED_REASON_DATABASE, TailUpdate, WriteState,
+    DrainSignal, Frame, PROTOCOL_VERSION, PresenceActor, RejectedCode, SERVER_REJECTED_REASON_DATABASE, TailUpdate,
+    WriteState,
 };
 use super::limits::{
     CONNECTION_LIMIT_RETRY_AFTER_MS, FRAME_BURST_MAX, FRAMES_PER_CONNECTION_PER_SECOND,
@@ -940,15 +941,16 @@ pub async fn run(mut socket: WebSocket, state: AppState, consumed: ConsumedTicke
     // so a joining session cannot keep a departed peer's cursor alive. Sent directly on the socket
     // (not through the registry) because it is addressed to this one session, and before the loop
     // below starts so it can never overtake a live `presence` broadcast for the same peer.
-    for (peer_session_id, payload) in collab.registry.presence_snapshot(document_id, Some(session_id)) {
+    for peer in collab.registry.presence_snapshot(document_id, Some(session_id)) {
         send(
             &mut socket,
             &Frame::Presence {
                 protocol_version: PROTOCOL_VERSION,
                 document_id,
-                session_id: peer_session_id,
-                payload,
+                session_id: peer.session_id,
+                payload: peer.payload,
                 ttl_seconds: None,
+                actor: Some(PresenceActor { user_id: peer.user_id }),
             },
         )
         .await;
@@ -1942,12 +1944,17 @@ async fn handle_client_frame(
             );
             match result {
                 Ok(()) => {
+                    // The actor is this connection's authenticated user; any `actor` the client put
+                    // on its frame was discarded by the `..` above.
                     let frame = Frame::Presence {
                         protocol_version: PROTOCOL_VERSION,
                         document_id,
                         session_id,
                         payload,
                         ttl_seconds: Some(ttl_seconds),
+                        actor: Some(PresenceActor {
+                            user_id: consumed.user_id,
+                        }),
                     };
                     collab.registry.broadcast(document_id, &frame, Some(session_id));
                 }
@@ -3488,6 +3495,7 @@ mod tests {
                     session_id,
                     payload: exact_payload.clone(),
                     ttl_seconds: None,
+                    actor: None,
                 },
             )
             .await;
@@ -3509,6 +3517,7 @@ mod tests {
                     session_id,
                     payload: plus_one_payload,
                     ttl_seconds: None,
+                    actor: None,
                 },
             )
             .await;
@@ -3578,6 +3587,7 @@ mod tests {
                     session_id,
                     payload: payload.clone(),
                     ttl_seconds: Some(PRESENCE_TTL_SECONDS_MAX),
+                    actor: None,
                 },
             )
             .await;
@@ -3597,6 +3607,7 @@ mod tests {
                     session_id,
                     payload,
                     ttl_seconds: Some(PRESENCE_TTL_SECONDS_MAX + 1),
+                    actor: None,
                 },
             )
             .await;
@@ -4080,6 +4091,7 @@ mod tests {
                 session_id: Uuid::new_v4(),
                 payload: serde_json::json!({"cursor": cursor}),
                 ttl_seconds,
+                actor: None,
             }
         }
 
@@ -4320,6 +4332,83 @@ mod tests {
             scratch.drop_self().await;
         }
 
+        /// The next text message on `ws` as raw JSON, so the assertion reads the wire shape
+        /// rather than whatever `Frame` deserializes.
+        async fn recv_raw_presence(ws: &mut WsStream) -> serde_json::Value {
+            loop {
+                let message = tokio::time::timeout(Duration::from_secs(5), ws.next())
+                    .await
+                    .expect("a frame arrives before the timeout")
+                    .expect("the stream is not closed")
+                    .expect("the frame is not a transport error");
+                if let TMessage::Text(text) = message {
+                    let value: serde_json::Value = serde_json::from_str(text.as_str()).expect("frame is JSON");
+                    if value["type"] == "presence" {
+                        return value;
+                    }
+                }
+            }
+        }
+
+        /// `collab-protocol-v1.md` (2026-10-10): a fanned-out `presence` frame carries
+        /// `actor:{user_id}` filled in by the server from the sending connection's session, never
+        /// from the payload. A member whose payload (and even a forged frame-level `actor`) claims to
+        /// be the owner is still reported as itself, both to live peers and in the join snapshot.
+        #[tokio::test]
+        async fn presence_fan_out_names_the_sessions_real_user_as_actor() {
+            let scratch = scratch_or_skip!("presence-actor");
+            let state = state_for(scratch.db.clone());
+            let (workspace_id, owner_id) = seed_workspace(&state).await;
+            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let member_id = fp2_b6_member(&state, workspace_id).await;
+            let addr = spawn_server(state.clone()).await;
+
+            let owner_ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "actor-owner").await;
+            let (mut owner, _, _, _) = open_session_full(addr, &owner_ticket, "actor-owner", document_id).await;
+            let member_ticket =
+                issue_ticket(addr, &jwt_for(member_id), workspace_id, document_id, "actor-member").await;
+            let (mut member, _, _, member_session) =
+                open_session_full(addr, &member_ticket, "actor-member", document_id).await;
+
+            let forged = serde_json::json!({
+                "type": "presence",
+                "protocol_version": PROTOCOL_VERSION,
+                "document_id": document_id,
+                "session_id": Uuid::new_v4(),
+                "actor": {"user_id": owner_id},
+                "payload": {"v": 1, "user": {"userId": owner_id.to_string(), "name": "Owner", "color": "#123456"}},
+            });
+            send_raw_text(&mut member, forged.to_string()).await;
+
+            let received = recv_raw_presence(&mut owner).await;
+            assert_eq!(received["session_id"], serde_json::json!(member_session), "{received}");
+            assert_eq!(
+                received["actor"],
+                serde_json::json!({"user_id": member_id}),
+                "the actor is the sending session's user, not the payload's claim: {received}"
+            );
+            assert_eq!(
+                received["payload"]["user"]["userId"],
+                owner_id.to_string(),
+                "the payload is relayed as is"
+            );
+
+            let joiner_ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "actor-joiner").await;
+            let (mut joiner, _) = handshake(addr, &joiner_ticket, "actor-joiner", document_id, None, None).await;
+            let snapshot_presence = recv_raw_presence(&mut joiner).await;
+            assert_eq!(
+                snapshot_presence["session_id"],
+                serde_json::json!(member_session),
+                "{snapshot_presence}"
+            );
+            assert_eq!(
+                snapshot_presence["actor"],
+                serde_json::json!({"user_id": member_id}),
+                "the join snapshot names the same actor: {snapshot_presence}"
+            );
+            scratch.drop_self().await;
+        }
+
         /// `limits-v1.md`: "Entry key 固定为 `(document_id,session_id)`：同 key frame 只刷新 payload/
         /// expiry，不增加计数". Reported forty times from one session, the document must still hold
         /// exactly one entry -- an append-instead-of-upsert would both inflate the count and walk
@@ -4488,6 +4577,7 @@ mod tests {
                 session_id: Uuid::new_v4(),
                 payload: serde_json::json!({"marker": "after-duplicate"}),
                 ttl_seconds: Some(30),
+                actor: None,
             };
             registry.broadcast(document_id, &marker, None);
             let after_duplicate = recv_frame(&mut ws).await;
@@ -4586,6 +4676,7 @@ mod tests {
                 session_id: Uuid::new_v4(),
                 payload: serde_json::json!({"marker": "after-resync"}),
                 ttl_seconds: Some(30),
+                actor: None,
             };
             registry.broadcast(document_id, &marker, None);
             let after = recv_frame(&mut ws).await;
