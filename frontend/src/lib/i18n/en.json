@@ -2914,7 +2914,14 @@
         "previous": "Previous page",
         "next": "Next page",
         "page": "Page {n}",
-        "loadFailed": "Lag could not be loaded."
+        "loadFailed": "Lag could not be loaded.",
+        "documentsHeading": "Per-document lag (admin)",
+        "documentId": "Document",
+        "projectionLag": "Projection lag",
+        "searchLag": "Search lag",
+        "fanoutLag": "Fan-out lag",
+        "documentsEmpty": "No documents in this workspace.",
+        "documentsMore": "Showing the first page of documents; the maxima above cover the whole workspace."
       },
       "integrity": {
         "heading": "Integrity",
@@ -2945,6 +2952,17 @@
           "documentId": "Document id",
           "objectId": "Object id",
           "invalid": "Enter a valid id."
+        },
+        "total": "Documents",
+        "rowStatus": "Result",
+        "rowOk": "OK",
+        "failure": {
+          "storage_inconsistent": "Stored snapshot and updates do not match",
+          "projection_missing": "The projection row is missing",
+          "limit_exceeded": "The document exceeds a size limit",
+          "document_missing": "The document is missing",
+          "replay_failed": "The document could not be replayed",
+          "unknown": "Failed for a reason this version cannot describe"
         }
       },
       "drawer": {
@@ -3004,7 +3022,36 @@
           "projection_seq": "Projection seq",
           "workspace_id": "Workspace",
           "object_id": "Object",
-          "document_id": "Document"
+          "document_id": "Document",
+          "projection_hash": "Projection hash"
+        },
+        "scope": {
+          "label": "Scope",
+          "document": "Document",
+          "object": "Object"
+        },
+        "observedHead": "Observed head seq",
+        "startedAt": "Started",
+        "finishedAt": "Finished",
+        "notFinished": "Not finished",
+        "auditEventId": "Audit event",
+        "changesHeading": "Changes",
+        "changesNone": "No changes are reported for this operation.",
+        "change": {
+          "compaction": "Compaction of document {id}",
+          "projectionRebuild": "Projection rebuild of object {id}",
+          "changed": "Changes the stored state",
+          "unchanged": "Nothing to change",
+          "field": "Field",
+          "before": "Before",
+          "after": "After",
+          "deletedUpdates": "Tail updates removed: {n}"
+        },
+        "warningsHeading": "Warnings",
+        "warning": {
+          "historyRetained": "Some connected clients are behind, so history they still need was kept.",
+          "clientsForcedToResync": "Some connected clients were too far behind and must download the document again.",
+          "unknown": "The server reported a warning this version cannot describe."
         }
       },
       "replay": {

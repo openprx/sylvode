@@ -9,7 +9,12 @@
 	import {
 		MAINTENANCE_TITLE_KEYS,
 		OPERATION_NAME_KEYS,
+		RECEIPT_MODE_KEYS,
+		RECEIPT_SCOPE_KEYS,
+		receiptChanges,
+		receiptMode,
 		receiptRows,
+		receiptWarningKeys,
 		type MaintenanceOperation,
 		type MaintenanceSnapshot
 	} from '$lib/flow/operations-service';
@@ -91,6 +96,11 @@
 	const headInvalid = $derived(
 		snap !== null && snap.expectedHeadText.trim() !== '' && snap.expectedHead === null
 	);
+
+	function formatTime(value: string): string {
+		const date = new Date(value);
+		return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+	}
 </script>
 
 {#snippet receiptView(receipt: FlowOperationReceipt, testid: string)}
@@ -105,19 +115,56 @@
 				: receipt.operation}
 		</dd>
 		<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.mode')}</dt>
-		<dd data-testid={`${testid}-mode`}>
-			{receipt.dry_run
-				? $t('flow.operations.receipt.modeDryRun')
-				: $t('flow.operations.receipt.modeExecute')}
+		<dd data-testid={`${testid}-mode`} data-mode={receiptMode(receipt)}>
+			{$t(RECEIPT_MODE_KEYS[receiptMode(receipt)])}
 		</dd>
+		{#if receipt.scope}
+			<dt class="text-slate-500 dark:text-slate-400">
+				{$t('flow.operations.receipt.scope.label')}
+			</dt>
+			<dd data-testid={`${testid}-scope`} data-kind={receipt.scope.kind}>
+				{RECEIPT_SCOPE_KEYS[receipt.scope.kind]
+					? $t(RECEIPT_SCOPE_KEYS[receipt.scope.kind])
+					: receipt.scope.kind}
+				<span class="block break-all font-mono text-xs"
+					>{receipt.scope.kind === 'object'
+						? receipt.scope.object_id
+						: receipt.scope.document_id}</span
+				>
+			</dd>
+		{/if}
 		<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.status')}</dt>
 		<dd class="font-mono">{receipt.status}</dd>
 		<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.expectedHead')}</dt>
 		<dd class="font-mono">{receipt.expected_head_seq}</dd>
+		{#if typeof receipt.observed_head_seq === 'number'}
+			<dt class="text-slate-500 dark:text-slate-400">
+				{$t('flow.operations.receipt.observedHead')}
+			</dt>
+			<dd class="font-mono">{receipt.observed_head_seq}</dd>
+		{/if}
 		<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.operationId')}</dt>
 		<dd class="break-all font-mono text-xs" data-testid={`${testid}-operation-id`}>
 			{receipt.operation_id}
 		</dd>
+		{#if receipt.started_at}
+			<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.startedAt')}</dt>
+			<dd class="text-xs">{formatTime(receipt.started_at)}</dd>
+			<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.finishedAt')}</dt>
+			<dd class="text-xs">
+				{receipt.finished_at
+					? formatTime(receipt.finished_at)
+					: $t('flow.operations.receipt.notFinished')}
+			</dd>
+		{/if}
+		{#if receipt.audit_event_id}
+			<dt class="text-slate-500 dark:text-slate-400">
+				{$t('flow.operations.receipt.auditEventId')}
+			</dt>
+			<dd class="break-all font-mono text-xs" data-testid={`${testid}-audit-event`}>
+				{receipt.audit_event_id}
+			</dd>
+		{/if}
 		{#each receiptRows(receipt) as row (row.field)}
 			<dt
 				class={row.labelKey
@@ -129,6 +176,76 @@
 			<dd class="break-all font-mono text-xs" data-field={row.field}>{row.value}</dd>
 		{/each}
 	</dl>
+	{@const changes = receiptChanges(receipt)}
+	{@const warningKeys = receiptWarningKeys(receipt)}
+	<section class="mt-3" data-testid={`${testid}-changes`}>
+		<h4 class="text-sm font-medium text-slate-900 dark:text-slate-100">
+			{$t('flow.operations.receipt.changesHeading')}
+		</h4>
+		{#if changes.length === 0}
+			<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+				{$t('flow.operations.receipt.changesNone')}
+			</p>
+		{/if}
+		{#each changes as change, index (index)}
+			<div
+				class="mt-2 rounded-md border border-slate-200 p-2 dark:border-slate-700"
+				data-testid={`${testid}-change`}
+				data-kind={change.kind}
+				data-changed={String(change.changed)}
+			>
+				<p class="break-all text-sm">{$t(change.labelKey, { values: { id: change.subjectId } })}</p>
+				<p class="text-xs text-slate-500 dark:text-slate-400">
+					{change.changed
+						? $t('flow.operations.receipt.change.changed')
+						: $t('flow.operations.receipt.change.unchanged')}
+				</p>
+				<table class="mt-1 w-full table-fixed text-left text-xs">
+					<thead class="text-slate-500 dark:text-slate-400">
+						<tr>
+							<th scope="col" class="py-1 pr-2">{$t('flow.operations.receipt.change.field')}</th>
+							<th scope="col" class="py-1 pr-2">{$t('flow.operations.receipt.change.before')}</th>
+							<th scope="col" class="py-1">{$t('flow.operations.receipt.change.after')}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each change.rows as row (row.field)}
+							<tr data-field={row.field}>
+								<th scope="row" class="py-1 pr-2 font-normal">
+									{row.labelKey ? $t(row.labelKey) : row.field}
+								</th>
+								<td class="break-all py-1 pr-2 font-mono" data-testid="flow-ops-change-before"
+									>{row.before}</td
+								>
+								<td class="break-all py-1 font-mono" data-testid="flow-ops-change-after"
+									>{row.after}</td
+								>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+				{#if change.deletedUpdates !== null}
+					<p class="mt-1 text-xs">
+						{$t('flow.operations.receipt.change.deletedUpdates', {
+							values: { n: change.deletedUpdates }
+						})}
+					</p>
+				{/if}
+			</div>
+		{/each}
+	</section>
+	{#if warningKeys.length > 0}
+		<section class="mt-3" data-testid={`${testid}-warnings`}>
+			<h4 class="text-sm font-medium text-amber-900 dark:text-amber-200">
+				{$t('flow.operations.receipt.warningsHeading')}
+			</h4>
+			<ul class="mt-1 list-disc space-y-1 pl-5 text-sm text-amber-900 dark:text-amber-200">
+				{#each warningKeys as key, index (index)}
+					<li>{$t(key)}</li>
+				{/each}
+			</ul>
+		</section>
+	{/if}
 {/snippet}
 
 <Modal

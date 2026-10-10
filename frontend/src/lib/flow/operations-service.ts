@@ -27,6 +27,9 @@ import type {
 	FlowAdminHealth,
 	FlowAdminIntegrity,
 	FlowAdminLag,
+	FlowDocumentFingerprint,
+	FlowIntegrityFailedDocument,
+	FlowIntegrityFailure,
 	FlowOperationReceipt,
 	FlowProjectionLag,
 	FlowReplayMode,
@@ -46,7 +49,7 @@ export const OPS_HEALTH_REFRESH_MS = 15_000;
  * value in `events/dispatcher.rs::REPLAY_MAX_WINDOW_DAYS`). The local check only saves a round
  * trip; the server still refuses anything outside the window. */
 export const REPLAY_MAX_WINDOW_DAYS = 30;
-/** `GET .../integrity` accepts `limit` 1..=100 and no cursor at this baseline. */
+/** `GET .../integrity` accepts `limit` 1..=100; this panel shows the first page only. */
 export const OPS_INTEGRITY_LIMITS = [50, 100] as const;
 export type OpsIntegrityLimit = (typeof OPS_INTEGRITY_LIMITS)[number];
 export const OPS_LAG_PAGE_SIZE = 20;
@@ -356,6 +359,239 @@ export function receiptRows(receipt: Pick<FlowOperationReceipt, 'result'>): Rece
 		}
 	}
 	return rows;
+}
+
+// ---- OperationReceipt contract fields (rest-api-v1.md v0.8, frozen 2026-10-10) ---------------
+
+export const RECEIPT_MODE_KEYS: Readonly<Record<'dry_run' | 'execute', string>> = {
+	dry_run: 'flow.operations.receipt.modeDryRun',
+	execute: 'flow.operations.receipt.modeExecute'
+};
+
+export const RECEIPT_SCOPE_KEYS: Readonly<Record<'document' | 'object', string>> = {
+	document: 'flow.operations.receipt.scope.document',
+	object: 'flow.operations.receipt.scope.object'
+};
+
+/** The receipt's mode. `mode` is the contract field; a receipt without it falls back to
+ * `dry_run`. */
+export function receiptMode(
+	receipt: Pick<FlowOperationReceipt, 'dry_run'> & Partial<Pick<FlowOperationReceipt, 'mode'>>
+): 'dry_run' | 'execute' {
+	if (receipt.mode === 'dry_run' || receipt.mode === 'execute') return receipt.mode;
+	return receipt.dry_run ? 'dry_run' : 'execute';
+}
+
+export const CHANGE_KIND_KEYS: Readonly<Record<'compaction' | 'projection_rebuild', string>> = {
+	compaction: 'flow.operations.receipt.change.compaction',
+	projection_rebuild: 'flow.operations.receipt.change.projectionRebuild'
+};
+
+/** Labels for the before/after fields of a change. `hash` is the projection hash. */
+export const CHANGE_FIELD_KEYS: Readonly<Record<string, string>> = {
+	snapshot_seq: 'flow.operations.receipt.field.snapshot_seq',
+	snapshot_checksum: 'flow.operations.receipt.field.snapshot_checksum',
+	tail_updates: 'flow.operations.receipt.field.tail_updates',
+	tail_bytes: 'flow.operations.receipt.field.tail_bytes',
+	hash: 'flow.operations.receipt.field.projection_hash'
+};
+
+export interface ChangeRow {
+	readonly field: string;
+	/** `null` for a field this build has no label for; the UI shows `field` verbatim. */
+	readonly labelKey: string | null;
+	readonly before: string;
+	readonly after: string;
+}
+
+export interface ReceiptChangeView {
+	readonly kind: 'compaction' | 'projection_rebuild';
+	readonly labelKey: string;
+	/** The document (compaction) or object (rebuild) the change is about. */
+	readonly subjectId: string;
+	readonly changed: boolean;
+	/** One row per field present in `before` or `after`, in first-seen order. */
+	readonly rows: readonly ChangeRow[];
+	/** Compaction only: tail updates removed (or, on a dry run, that would be). */
+	readonly deletedUpdates: number | null;
+}
+
+function displayValue(value: unknown): string {
+	return value === null || value === undefined ? '-' : String(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+	return value && typeof value === 'object' && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: {};
+}
+
+/** The receipt's `changes[]` as before/after rows. Entries of an unknown kind are left out (they
+ * are not guessed at); a receipt without `changes` has none. */
+export function receiptChanges(
+	receipt: Partial<Pick<FlowOperationReceipt, 'changes'>>
+): ReceiptChangeView[] {
+	const views: ReceiptChangeView[] = [];
+	for (const raw of Array.isArray(receipt.changes) ? receipt.changes : []) {
+		const change = asRecord(raw);
+		const kind = change.kind;
+		if (kind !== 'compaction' && kind !== 'projection_rebuild') continue;
+		const before = asRecord(change.before);
+		const after = asRecord(change.after);
+		const fields = [...new Set([...Object.keys(before), ...Object.keys(after)])];
+		views.push({
+			kind,
+			labelKey: CHANGE_KIND_KEYS[kind],
+			subjectId: String(
+				kind === 'compaction' ? (change.document_id ?? '') : (change.object_id ?? '')
+			),
+			changed: change.changed === true,
+			rows: fields.map((field) => ({
+				field,
+				labelKey: CHANGE_FIELD_KEYS[field] ?? null,
+				before: displayValue(before[field]),
+				after: displayValue(after[field])
+			})),
+			deletedUpdates:
+				kind === 'compaction' && typeof change.deleted_updates === 'number'
+					? change.deleted_updates
+					: null
+		});
+	}
+	return views;
+}
+
+/** `OperationReceipt.warnings[]` stable codes (compact execute with lagging clients). */
+export const RECEIPT_WARNING_KEYS: Readonly<Record<string, string>> = {
+	history_retained_for_lagging_clients: 'flow.operations.receipt.warning.historyRetained',
+	clients_forced_to_resync: 'flow.operations.receipt.warning.clientsForcedToResync'
+};
+export const RECEIPT_WARNING_UNKNOWN_KEY = 'flow.operations.receipt.warning.unknown';
+
+/** One i18n key per warning; a code this build does not know gets the generic key, never the raw
+ * code as prose. */
+export function receiptWarningKeys(
+	receipt: Partial<Pick<FlowOperationReceipt, 'warnings'>>
+): string[] {
+	return (Array.isArray(receipt.warnings) ? receipt.warnings : []).map((code) =>
+		typeof code === 'string' && Object.prototype.hasOwnProperty.call(RECEIPT_WARNING_KEYS, code)
+			? RECEIPT_WARNING_KEYS[code]
+			: RECEIPT_WARNING_UNKNOWN_KEY
+	);
+}
+
+// ---- integrity rows ---------------------------------------------------------------------------
+
+export const INTEGRITY_FAILURE_KEYS: Readonly<Record<FlowIntegrityFailure, string>> = {
+	storage_inconsistent: 'flow.operations.integrity.failure.storage_inconsistent',
+	projection_missing: 'flow.operations.integrity.failure.projection_missing',
+	limit_exceeded: 'flow.operations.integrity.failure.limit_exceeded',
+	document_missing: 'flow.operations.integrity.failure.document_missing',
+	replay_failed: 'flow.operations.integrity.failure.replay_failed'
+};
+export const INTEGRITY_FAILURE_UNKNOWN_KEY = 'flow.operations.integrity.failure.unknown';
+
+export function integrityFailureKey(failure: unknown): string {
+	return typeof failure === 'string' &&
+		Object.prototype.hasOwnProperty.call(INTEGRITY_FAILURE_KEYS, failure)
+		? INTEGRITY_FAILURE_KEYS[failure as FlowIntegrityFailure]
+		: INTEGRITY_FAILURE_UNKNOWN_KEY;
+}
+
+/** One integrity row as the table shows it. A failed document has no fingerprint, so its head,
+ * projection and hash are `null`; its failure and stable error code are worded by key. */
+export type IntegrityRow =
+	| {
+			readonly status: 'ok';
+			readonly documentId: string;
+			readonly objectId: string;
+			readonly headSeq: number;
+			readonly projectionSeq: number;
+			readonly semanticHash: string;
+	  }
+	| {
+			readonly status: 'failed';
+			readonly documentId: string;
+			readonly objectId: string;
+			readonly failureKey: string;
+			readonly errorKey: string;
+	  };
+
+export function integrityRows(
+	integrity: Pick<FlowAdminIntegrity, 'documents'> | null
+): IntegrityRow[] {
+	const rows: IntegrityRow[] = [];
+	for (const doc of integrity?.documents ?? []) {
+		if (doc.status === 'failed') {
+			const failed = doc as FlowIntegrityFailedDocument;
+			const flowError = flowErrorFromEnvelope({ code: 1, error_code: failed.error_code });
+			rows.push({
+				status: 'failed',
+				documentId: failed.document_id,
+				objectId: failed.object_id,
+				failureKey: integrityFailureKey(failed.failure),
+				errorKey: flowError ? flowErrorI18nKey(flowError) : 'flow.operations.error.rejected'
+			});
+		} else {
+			const ok = doc as FlowDocumentFingerprint;
+			rows.push({
+				status: 'ok',
+				documentId: ok.document_id,
+				objectId: ok.object_id,
+				headSeq: ok.head_seq,
+				projectionSeq: ok.projection_seq,
+				semanticHash: ok.semantic_hash
+			});
+		}
+	}
+	return rows;
+}
+
+// ---- admin lag rows ---------------------------------------------------------------------------
+
+export interface AdminLagRow {
+	readonly objectId: string;
+	readonly documentId: string;
+	readonly headSeq: number;
+	readonly projection: number | null;
+	readonly search: number | null;
+	readonly fanout: number | null;
+}
+
+/** The admin lag page's per-document rows, merged across the three groups by `document_id` (the
+ * server lists the same documents in each), in the projection group's order. */
+export function adminLagRows(lag: FlowAdminLag | null): AdminLagRow[] {
+	if (!lag) return [];
+	const rows = new Map<
+		string,
+		{
+			objectId: string;
+			headSeq: number;
+			projection: number | null;
+			search: number | null;
+			fanout: number | null;
+		}
+	>();
+	const groups = [
+		['projection', lag.projection],
+		['search', lag.search],
+		['fanout', lag.fanout]
+	] as const;
+	for (const [name, group] of groups) {
+		for (const item of Array.isArray(group?.items) ? group.items : []) {
+			if (typeof item?.document_id !== 'string') continue;
+			const row = rows.get(item.document_id) ?? {
+				objectId: item.object_id,
+				headSeq: item.head_seq,
+				projection: null,
+				search: null,
+				fanout: null
+			};
+			row[name] = typeof item.lag === 'number' ? item.lag : null;
+			rows.set(item.document_id, row);
+		}
+	}
+	return [...rows.entries()].map(([documentId, row]) => ({ documentId, ...row }));
 }
 
 /** A non-negative safe integer, or `null` for blank/invalid text. */

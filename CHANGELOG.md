@@ -410,6 +410,13 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Web UI, Flow operations panel: maintenance receipts show the `OperationReceipt` contract
+  fields — `mode`, `scope`, observed head, start and finish times, `audit_event_id`, the
+  `changes[]` before/after of a compaction or projection rebuild, and the two warning codes. The
+  integrity table shows the workspace-wide `counts.total` and lists failed documents with their
+  `failure` (`storage_inconsistent`, `projection_missing`, `limit_exceeded`,
+  `document_missing`, `replay_failed`) and error code instead of only counting them, and the lag
+  section shows the admin lag endpoint's per-document rows.
 - Web UI, Flow conversion job page: shows the job's `target_type`, words the stored `error`
   through `flow.error.<code>`, shows each warning by its code, and words a refused retry by
   cause (`stale_frontier`, `policy_rejected` with `target_schema_changed` or

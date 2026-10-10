@@ -2914,7 +2914,14 @@
         "previous": "上一页",
         "next": "下一页",
         "page": "第 {n} 页",
-        "loadFailed": "无法加载延迟数据。"
+        "loadFailed": "无法加载延迟数据。",
+        "documentsHeading": "按文档的延迟（管理员）",
+        "documentId": "文档",
+        "projectionLag": "投影延迟",
+        "searchLag": "搜索延迟",
+        "fanoutLag": "分发延迟",
+        "documentsEmpty": "本工作区没有文档。",
+        "documentsMore": "仅显示第一页文档；上方的最大值覆盖整个工作区。"
       },
       "integrity": {
         "heading": "完整性",
@@ -2945,6 +2952,17 @@
           "documentId": "文档 ID",
           "objectId": "对象 ID",
           "invalid": "请输入有效的 ID。"
+        },
+        "total": "文档总数",
+        "rowStatus": "结果",
+        "rowOk": "正常",
+        "failure": {
+          "storage_inconsistent": "已存储的快照与更新不一致",
+          "projection_missing": "缺少投影记录",
+          "limit_exceeded": "文档超出大小上限",
+          "document_missing": "文档缺失",
+          "replay_failed": "文档无法重放",
+          "unknown": "因本版本无法说明的原因失败"
         }
       },
       "drawer": {
@@ -3004,7 +3022,36 @@
           "projection_seq": "投影序号",
           "workspace_id": "工作区",
           "object_id": "对象",
-          "document_id": "文档"
+          "document_id": "文档",
+          "projection_hash": "投影哈希"
+        },
+        "scope": {
+          "label": "作用范围",
+          "document": "文档",
+          "object": "对象"
+        },
+        "observedHead": "实际 head seq",
+        "startedAt": "开始时间",
+        "finishedAt": "完成时间",
+        "notFinished": "未完成",
+        "auditEventId": "审计事件",
+        "changesHeading": "变更",
+        "changesNone": "本操作没有报告变更。",
+        "change": {
+          "compaction": "文档 {id} 的压缩",
+          "projectionRebuild": "对象 {id} 的投影重建",
+          "changed": "会改变已存储状态",
+          "unchanged": "无需改变",
+          "field": "字段",
+          "before": "之前",
+          "after": "之后",
+          "deletedUpdates": "移除的尾部更新：{n}"
+        },
+        "warningsHeading": "警告",
+        "warning": {
+          "historyRetained": "部分已连接客户端落后，其仍需的历史已保留。",
+          "clientsForcedToResync": "部分已连接客户端落后过多，必须重新下载文档。",
+          "unknown": "服务端报告了一条本版本无法说明的警告。"
         }
       },
       "replay": {
