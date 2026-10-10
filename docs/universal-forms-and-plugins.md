@@ -28,6 +28,30 @@ External systems integrate in three ways: they read business events through the 
 
 Connectors and agent invocations were removed in 0.2.21 (migration `0052`); there are no connector records, connector kinds or connector receipts any more.
 
+### Flow lineage on the record detail
+
+`GET /api/v1/form-records/{record_id}` returns the record fields plus a read-only `flow_lineage` object, so the record page can show where the record came from without calling the Flow API:
+
+```json
+"flow_lineage": {
+  "references": [
+    {"reference_id": "…", "source_available": true, "source_object_id": "…",
+     "source_title": "Weekly review", "display": {}, "created_at": "…"}
+  ],
+  "conversions": [
+    {"job_id": "…", "source_available": true, "source_object_id": "…",
+     "source_title": "Weekly review", "status": "completed", "lineage_id": "…", "created_at": "…"}
+  ]
+}
+```
+
+- `references` are the Flow references whose target is this record and that have not been removed; removing a reference in Flow removes it here and never touches the record.
+- `conversions` are the Flow conversion jobs whose created targets include this record.
+- Every entry is checked against the caller's Flow read permission on its source object. When the caller cannot read the source, the entry is only `{"reference_id": "…", "source_available": false}` or `{"job_id": "…", "source_available": false}`: no source id, title, display, status or timestamp.
+- `source_title` is omitted when the source has no projection title. `lineage_id` is `null` for a job without a lineage row.
+- Both arrays are empty when Flow or the Forms bridge is disabled for the workspace; the record detail itself still succeeds.
+- The MCP tool `form_records.get` returns the same response.
+
 ## WASM Plugins
 
 Plugins use `openpr.plugin.v1` manifests and a small core WASM ABI:

@@ -252,6 +252,13 @@ OpenPR name keeps working; see **Deprecated**.
   fails on any skipped test. The new **Image contents** job builds the `api` and `worker` images
   from `Dockerfile.prebuilt` with `scripts/verify-prebuilt-images.sh` and checks that only the
   `api` image ships `collab-isolated-apply-worker` and that `/app/api --build-info` runs in it.
+- **Form record detail shows its Flow lineage.** `GET /api/v1/form-records/{record_id}` (and the
+  MCP tool `form_records.get`, which passes the response through) carries a read-only
+  `flow_lineage` object: `references` lists the live Flow references that point at the record and
+  `conversions` lists the conversion jobs that created it. Each entry is filtered by the caller's
+  Flow read access to its source object; an unreadable source is reported only as
+  `reference_id`/`job_id` with `source_available: false`. Both lists are empty when Flow or the
+  Forms bridge is disabled for the workspace.
 
 ### Changed
 
