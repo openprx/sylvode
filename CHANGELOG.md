@@ -208,6 +208,16 @@ OpenPR name keeps working; see **Deprecated**.
     Forms record page (an id that is not a readable record is shown with a copy button). A failed
     job can be retried after an explicit confirmation, reusing one idempotency key per job; a
     permanent rejection withdraws the retry. Missing and inaccessible jobs look the same.
+  - Web UI: a Share section in the object panel. It reads the object's grants and shows the
+    caller's own level and the inheritance flag; with full access it also lists the grants
+    inherited from parents apart from the grants on the object, and adds, changes and removes
+    grants and turns inheritance off or on. Every change that can lower anyone's access
+    (removing or lowering a grant, removing everyone, stopping inheritance) is first sent as a
+    dry run and its `permission_changes` are shown; the real request is only sent on confirm,
+    under the dry run's idempotency key. Losing one's own full access needs an explicit
+    acknowledgement before `confirm_self_lockout` is sent. After a change the panel shows the
+    server's response and reads the grants again. Without full access no grant list is shown and
+    nothing can be changed.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

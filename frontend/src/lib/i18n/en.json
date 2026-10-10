@@ -3154,6 +3154,66 @@
           "notFound": "The conversion job is not available."
         }
       }
+    },
+    "share": {
+      "title": "Sharing",
+      "yourAccess": "Your access",
+      "loading": "Loading sharing…",
+      "level": {
+        "full_access": "Full access",
+        "edit": "Can edit",
+        "comment": "Can comment",
+        "view": "Can view",
+        "none": "No access",
+        "unknown": "Unknown access"
+      },
+      "principal": {
+        "user": "User",
+        "bot": "Bot"
+      },
+      "inheritance": {
+        "label": "Inherit access from parent",
+        "on": "On",
+        "off": "Off",
+        "break": "Stop inheriting",
+        "restore": "Inherit from parent again"
+      },
+      "restricted": "Only people with full access can see who else has access.",
+      "inheritedHeading": "Inherited from parent",
+      "inheritedEmpty": "Nothing is inherited.",
+      "explicitHeading": "Shared on this page",
+      "explicitEmpty": "No one has been added to this page.",
+      "levelFor": "Access for {name}",
+      "remove": "Remove",
+      "removeFor": "Remove {name}",
+      "clear": "Remove everyone",
+      "add": {
+        "heading": "Add a person",
+        "person": "Person",
+        "choose": "Choose a person",
+        "level": "Access",
+        "submit": "Add"
+      },
+      "confirm": {
+        "title": "Review the access change",
+        "intro": "This change lowers access. The server computed these consequences:",
+        "previewing": "Checking consequences…",
+        "you": "You: {before} → {after}",
+        "affected": "{name}: {before} → {after}",
+        "noneAffected": "No one else’s access changes.",
+        "unknownAffected": "Tick the box below to see how everyone else is affected.",
+        "selfLockout": "You will lose full access to this page and may not be able to undo this.",
+        "acknowledge": "I understand that I will lose full access",
+        "previewNote": "This is a preview. The final result is decided by the server when you confirm.",
+        "submit": "Confirm change"
+      },
+      "saved": "Sharing updated.",
+      "receipt": "Last change affected {count} people.",
+      "retry": "Try again",
+      "error": {
+        "rejected": "The sharing change was rejected.",
+        "unavailable": "Sharing is temporarily unavailable. Try again."
+      }
     }
   }
 }

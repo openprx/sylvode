@@ -3154,6 +3154,66 @@
           "notFound": "转换任务不可用。"
         }
       }
+    },
+    "share": {
+      "title": "共享",
+      "yourAccess": "你的权限",
+      "loading": "正在加载共享信息…",
+      "level": {
+        "full_access": "完全访问",
+        "edit": "可编辑",
+        "comment": "可评论",
+        "view": "可查看",
+        "none": "无权限",
+        "unknown": "未知权限"
+      },
+      "principal": {
+        "user": "用户",
+        "bot": "机器人"
+      },
+      "inheritance": {
+        "label": "继承上级权限",
+        "on": "开",
+        "off": "关",
+        "break": "停止继承",
+        "restore": "恢复继承上级"
+      },
+      "restricted": "只有拥有完全访问权限的人才能看到其他有权限的人。",
+      "inheritedHeading": "继承自上级",
+      "inheritedEmpty": "没有继承的权限。",
+      "explicitHeading": "本页显式授予",
+      "explicitEmpty": "还没有人被添加到此页面。",
+      "levelFor": "{name} 的权限",
+      "remove": "移除",
+      "removeFor": "移除 {name}",
+      "clear": "全部移除",
+      "add": {
+        "heading": "添加成员",
+        "person": "成员",
+        "choose": "选择成员",
+        "level": "权限",
+        "submit": "添加"
+      },
+      "confirm": {
+        "title": "确认权限变更",
+        "intro": "此变更会降低权限。服务端计算出的后果如下：",
+        "previewing": "正在计算后果…",
+        "you": "你：{before} → {after}",
+        "affected": "{name}：{before} → {after}",
+        "noneAffected": "其他人的权限不变。",
+        "unknownAffected": "勾选下方选项后可查看其他人受到的影响。",
+        "selfLockout": "你将失去此页面的完全访问权限，且可能无法撤销。",
+        "acknowledge": "我了解我将失去完全访问权限",
+        "previewNote": "这只是预演。最终结果以你确认时服务端的计算为准。",
+        "submit": "确认变更"
+      },
+      "saved": "共享设置已更新。",
+      "receipt": "上次变更影响了 {count} 人。",
+      "retry": "重试",
+      "error": {
+        "rejected": "共享变更被拒绝。",
+        "unavailable": "共享服务暂时不可用，请重试。"
+      }
     }
   }
 }
