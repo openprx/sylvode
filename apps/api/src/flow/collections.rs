@@ -5643,4 +5643,210 @@ mod database_tests {
         assert_eq!(fp2_b6_root_blocks(&state, page_id).await.len(), 4);
         scratch.drop_self().await;
     }
+
+    async fn export_bytes(
+        state: &AppState,
+        scope: crate::flow::export::ExportScope,
+        format: &str,
+        principal: &crate::flow::export::ExportPrincipal,
+    ) -> Result<Vec<u8>, ApiError> {
+        let receipt = crate::flow::export::create_package_export(
+            &state.db,
+            &crate::flow::export::CreateExportRequest {
+                scope,
+                format: format.to_string(),
+                at_seq: None,
+                include_history: false,
+                idempotency_key: Uuid::new_v4().to_string(),
+                source_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                principal: principal.clone(),
+            },
+        )
+        .await?;
+        assert_eq!(receipt.status, "completed", "{receipt:?}");
+        let (bytes, _, _) = crate::flow::export::download_package_export(&state.db, receipt.job_id, principal).await?;
+        Ok(bytes)
+    }
+
+    /// `rest-api-v1.md` v0.6 "导出与字段保密" / `ADR-0018` NR-7: an object export of a Record under
+    /// field secrecy is one more representation of it. `json` carries the records query's redacted
+    /// `semantic_content` (`{}`), `markdown`/`csv` carry no Record content, and `package` (which would
+    /// ship the Loro snapshot) is refused with `policy_rejected{reason:"field_secrecy"}`. A workspace
+    /// package skips the secret Record's document and names it in `manifest.warnings[]`. A Record of
+    /// a Collection without restricted fields still exports its content.
+    #[tokio::test]
+    async fn exports_of_a_secret_record_apply_field_secrecy_on_every_format() {
+        let scratch = scratch_or_skip!("export_field_secrecy");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed(&state).await;
+        let member_id = fp2_b6_member(&state, workspace_id).await;
+        let collection_id = create_object_for(&state, workspace_id, owner_id, "collection", "Restricted export").await;
+        let salary = Uuid::new_v4();
+        let diagnosis = Uuid::new_v4();
+        for (field_id, label, field_type) in [(salary, "Salary", "number"), (diagnosis, "Diagnosis", "text")] {
+            command(
+                &state,
+                owner_id,
+                collection_id,
+                "field_create",
+                json!({"field_id": field_id, "label": label, "field_type": field_type, "config": {"restricted": true}}),
+                Uuid::new_v4().to_string(),
+            )
+            .await
+            .expect("restricted field creates");
+        }
+        let record = command(
+            &state,
+            owner_id,
+            collection_id,
+            "record_create",
+            json!({"properties": {salary.to_string(): 731_001, diagnosis.to_string(): "SECRETDIAG"}}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("record creates")
+        .object;
+        command(
+            &state,
+            owner_id,
+            collection_id,
+            "record_patch",
+            json!({"record_id": record.id, "properties": {salary.to_string(): 731_002}}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("record patches");
+        let plain_collection = create_object_for(&state, workspace_id, owner_id, "collection", "Plain export").await;
+        let plain_field = Uuid::new_v4();
+        command(
+            &state,
+            owner_id,
+            plain_collection,
+            "field_create",
+            json!({"field_id": plain_field, "label": "Name", "field_type": "text"}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("plain field creates");
+        let plain_record = command(
+            &state,
+            owner_id,
+            plain_collection,
+            "record_create",
+            json!({"properties": {plain_field.to_string(): "PLAINEXPORT"}}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("plain record creates")
+        .object;
+
+        let member = crate::flow::export::ExportPrincipal {
+            id: member_id,
+            kind: "user".to_string(),
+            role: "member".to_string(),
+            workspace_export_capability: false,
+        };
+        let secrets = ["SECRETDIAG", "731001", "731002"];
+        let leaks = |bytes: &[u8]| -> Vec<&str> {
+            secrets
+                .iter()
+                .copied()
+                .filter(|secret| bytes.windows(secret.len()).any(|window| window == secret.as_bytes()))
+                .collect()
+        };
+        for format in ["json", "markdown", "csv"] {
+            let bytes = export_bytes(
+                &state,
+                crate::flow::export::ExportScope::Object(record.id),
+                format,
+                &member,
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{format} export of a secret record runs: {error:?}"));
+            assert!(
+                leaks(&bytes).is_empty(),
+                "{format} export leaked {:?}: {}",
+                leaks(&bytes),
+                String::from_utf8_lossy(&bytes)
+            );
+            if format == "json" {
+                let body: Value = serde_json::from_slice(&bytes).expect("json export parses");
+                assert_eq!(
+                    body["semantic_content"],
+                    json!({}),
+                    "same redaction as the records query"
+                );
+            }
+        }
+        let refused = export_bytes(
+            &state,
+            crate::flow::export::ExportScope::Object(record.id),
+            "package",
+            &member,
+        )
+        .await
+        .expect_err("a package of a secret record is refused");
+        let (kind, reason, _) = fp2_b6_reason(&refused);
+        assert_eq!(kind, ApiErrorKind::PolicyRejected, "{refused:?}");
+        assert_eq!(reason.as_deref(), Some("field_secrecy"), "{refused:?}");
+
+        // Control: the open Record keeps its content in json.
+        let plain_json = export_bytes(
+            &state,
+            crate::flow::export::ExportScope::Object(plain_record.id),
+            "json",
+            &member,
+        )
+        .await
+        .expect("plain record json export runs");
+        assert!(String::from_utf8_lossy(&plain_json).contains("PLAINEXPORT"));
+
+        // Workspace package: the secret Record's document is skipped and named in warnings[].
+        let owner = crate::flow::export::ExportPrincipal {
+            id: owner_id,
+            kind: "user".to_string(),
+            role: "owner".to_string(),
+            workspace_export_capability: false,
+        };
+        let package = export_bytes(
+            &state,
+            crate::flow::export::ExportScope::Workspace {
+                workspace_id,
+                project_id: None,
+            },
+            "package",
+            &owner,
+        )
+        .await
+        .expect("workspace package export runs");
+        assert!(
+            leaks(&package).is_empty(),
+            "workspace package leaked {:?}",
+            leaks(&package)
+        );
+        let verified = crate::flow::package::verify_package(std::io::Cursor::new(&package), None)
+            .expect("workspace package verifies");
+        assert_eq!(
+            verified.manifest.warnings,
+            vec![format!("secret_record_excluded:{}", record.id)],
+            "the excluded record is named"
+        );
+        assert!(
+            verified
+                .manifest
+                .members
+                .iter()
+                .all(|member| !member.path.contains(&record.id.to_string())),
+            "no member of the excluded record ships"
+        );
+        assert!(
+            verified
+                .manifest
+                .members
+                .iter()
+                .any(|member| member.path == format!("objects/{}/object.json", plain_record.id)),
+            "the open record ships"
+        );
+        scratch.drop_self().await;
+    }
 }

@@ -27,6 +27,10 @@ use super::package::{
 
 const EXPORT_ARTIFACT_TTL_MINUTES: i64 = 30;
 
+/// `policy_rejected.details.reason` for a package export of a Record under field secrecy
+/// (`error-mapping-v1.md`, 2026-10-10).
+const FIELD_SECRECY_REASON: &str = "field_secrecy";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportScope {
     Object(Uuid),
@@ -256,6 +260,36 @@ async fn render_export(
     }
     *authorized_workspace = Some(workspace_id);
 
+    // `rest-api-v1.md` v0.6 "导出与字段保密" / `ADR-0018` NR-7: the same secret-Record decision the
+    // records query and every other Record representation apply. A package would ship the Loro
+    // snapshot (the unredacted values), so an object package of a secret Record is refused and a
+    // workspace package skips its document and names it in `warnings[]`.
+    let record_ids: Vec<Uuid> = objects
+        .iter()
+        .filter(|row| row.object_type == "record")
+        .map(|row| row.id)
+        .collect();
+    let secret = super::collections::secret_record_ids(&tx, &record_ids).await?;
+    let mut warnings = Vec::new();
+    let objects = if secret.is_empty() {
+        objects
+    } else if request.format == "package" {
+        if matches!(request.scope, ExportScope::Object(_)) {
+            return Err(ApiError::policy_rejected_with_details(
+                "a package export cannot include a Record under field secrecy",
+                json!({ "reason": FIELD_SECRECY_REASON }),
+            ));
+        }
+        warnings = secret
+            .iter()
+            .map(|record_id| format!("secret_record_excluded:{record_id}"))
+            .collect();
+        objects.into_iter().filter(|row| !secret.contains(&row.id)).collect()
+    } else {
+        objects
+    };
+    let object_ids: Vec<Uuid> = objects.iter().map(|row| row.id).collect();
+
     let selected: HashSet<Uuid> = object_ids.iter().copied().collect();
     let mut members = Vec::new();
     let mut through_seq_by_document = BTreeMap::new();
@@ -297,22 +331,32 @@ async fn render_export(
             "archived_at": object.archived_at.map(|value| value.to_rfc3339()),
         });
         if matches!(request.scope, ExportScope::Object(_)) {
+            // A secret Record exports the records query's redacted content: `{}` for the semantic
+            // content and no plain text (decided here, not left to what the projection happens to
+            // hold).
+            let redacted = secret.contains(&object.id);
+            let semantic_content = if redacted {
+                super::collections::redacted_semantic_content()
+            } else {
+                object.projection_state.clone()
+            };
+            let plain_text = if redacted { "" } else { object.plain_text.as_str() };
             rendered_object = Some(match request.format.as_str() {
                 "json" => canonical_json(&json!({
                     "object_id": object.id,
                     "object_type": object.object_type,
                     "title": object.title,
-                    "semantic_content": object.projection_state,
+                    "semantic_content": semantic_content,
                     "seq": object.head_seq,
                     "frontier": base64::engine::general_purpose::STANDARD.encode(&object.head_frontier),
                 }))?,
-                "markdown" => format!("# {}\n\n{}\n", object.title, object.plain_text).into_bytes(),
+                "markdown" => format!("# {}\n\n{}\n", object.title, plain_text).into_bytes(),
                 "csv" => format!(
                     "object_id,object_type,title,plain_text\n{},{},{},{}\n",
                     csv_cell(&object.id.to_string()),
                     csv_cell(&object.object_type),
                     csv_cell(&object.title),
-                    csv_cell(&object.plain_text)
+                    csv_cell(plain_text)
                 )
                 .into_bytes(),
                 "package" => Vec::new(),
@@ -472,6 +516,7 @@ async fn render_export(
             permission_snapshot_at: now.to_rfc3339(),
         },
         projects,
+        warnings,
     };
     let package = build_package(manifest, members)?;
     verify_package(Cursor::new(&package.bytes), Some(&package.package_sha256))?;
