@@ -565,6 +565,13 @@ pub async fn delete_flow_object_reference(
     Ok(ApiResponse::success(receipt))
 }
 
+/// Parses a conversion or job id taken from the path. A malformed id names nothing that exists,
+/// so it gets the same typed `not_found` as an unknown well-formed one instead of axum's
+/// plain-text path rejection, which carries no envelope and no `error_code`.
+fn conversion_path_id(raw: &str, what: &str) -> Result<Uuid, ApiError> {
+    Uuid::parse_str(raw).map_err(|_| ApiError::not_found(format!("{what} not found")))
+}
+
 pub async fn post_flow_conversion_preview(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -593,8 +600,9 @@ pub async fn get_flow_conversion(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
-    Path(job_id): Path<Uuid>,
+    Path(job_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let job_id = conversion_path_id(&job_id, "conversion job")?;
     let extensions = build_auth_extensions(claims, bot);
     Ok(ApiResponse::success(
         crate::flow::bridge::conversion_status(&state, &extensions, job_id).await?,
@@ -605,8 +613,9 @@ pub async fn get_flow_conversion_owner(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
-    Path(conversion_id): Path<Uuid>,
+    Path(conversion_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let conversion_id = conversion_path_id(&conversion_id, "conversion")?;
     let extensions = build_auth_extensions(claims, bot);
     Ok(ApiResponse::success(
         crate::flow::bridge::conversion_owner(&state, &extensions, conversion_id).await?,
@@ -617,9 +626,10 @@ pub async fn post_flow_conversion_retry(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
-    Path(job_id): Path<Uuid>,
+    Path(job_id): Path<String>,
     Json(input): Json<crate::flow::bridge::ConversionRetryInput>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let job_id = conversion_path_id(&job_id, "conversion job")?;
     let extensions = build_auth_extensions(claims, bot);
     Ok(ApiResponse::success(
         crate::flow::bridge::retry_conversion(&state, &extensions, job_id, input, request_origin(&extensions)).await?,
@@ -5632,7 +5642,13 @@ mod flow_database_tests {
         );
         let job_id = Uuid::parse_str(committed["data"]["job_id"].as_str().expect("job id")).expect("UUID");
         let status = body_json(to_response(
-            get_flow_conversion(State(state.clone()), claims_for(owner_id), None, Path(job_id)).await,
+            get_flow_conversion(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(job_id.to_string()),
+            )
+            .await,
         ))
         .await;
         assert_eq!(status["code"], 0, "{status}");
@@ -5705,7 +5721,7 @@ mod flow_database_tests {
                     State(state.clone()),
                     claims_for(owner_id),
                     None,
-                    Path(failed_job_id),
+                    Path(failed_job_id.to_string()),
                     Json(crate::flow::bridge::ConversionRetryInput {
                         idempotency_key: Uuid::new_v4().to_string(),
                         confirm: true,
@@ -5762,7 +5778,7 @@ mod flow_database_tests {
                 State(state.clone()),
                 claims_for(owner_id),
                 None,
-                Path(expired_job_id),
+                Path(expired_job_id.to_string()),
                 Json(crate::flow::bridge::ConversionRetryInput {
                     idempotency_key: Uuid::new_v4().to_string(),
                     confirm: true,
@@ -11826,7 +11842,13 @@ mod flow_database_tests {
         let (_workspace_id, owner_id) = seed_workspace(&state, true).await;
         let missing = Uuid::new_v4();
         let body = body_json(to_response(
-            get_flow_conversion(State(state.clone()), claims_for(owner_id), None, Path(missing)).await,
+            get_flow_conversion(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(missing.to_string()),
+            )
+            .await,
         ))
         .await;
         assert_typed(&body, "not_found", 404);
@@ -11835,7 +11857,7 @@ mod flow_database_tests {
                 State(state.clone()),
                 claims_for(owner_id),
                 None,
-                Path(missing),
+                Path(missing.to_string()),
                 Json(crate::flow::bridge::ConversionRetryInput {
                     idempotency_key: Uuid::new_v4().to_string(),
                     confirm: true,
@@ -12603,6 +12625,68 @@ mod flow_database_tests {
         assert!(summary_page["data"]["documents"].is_null(), "{summary_page}");
         let bad_cursor = integrity("scope=documents&cursor=bm90LWEtY3Vyc29y".to_string()).await;
         assert_typed(&bad_cursor, "invalid_update", 400);
+        scratch.drop_self().await;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // FP2-B4: conversion (Forms bridge) job lifecycle
+    // ---------------------------------------------------------------------------------------------
+
+    /// Calls the conversion read/retry/owner routes through the production router and its path
+    /// extractors, so a malformed id is parsed exactly as for a real client. A non-JSON body is
+    /// returned as `{"non_json_body": <text>}` instead of panicking.
+    async fn fp2_b4_route(state: &AppState, user_id: Uuid, method: &str, uri: &str, body: Option<Value>) -> Value {
+        use tower::ServiceExt as _;
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/flow/conversions/{job_id}",
+                axum::routing::get(get_flow_conversion),
+            )
+            .route(
+                "/api/v1/flow/conversions/{conversion_id}/owner",
+                axum::routing::get(super::get_flow_conversion_owner),
+            )
+            .route(
+                "/api/v1/flow/conversions/{job_id}/retry",
+                axum::routing::post(post_flow_conversion_retry),
+            )
+            .layer(claims_for(user_id))
+            .with_state(state.clone());
+        let request = axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                body.map_or_else(Vec::new, |value| value.to_string().into_bytes()),
+            ))
+            .expect("the request builds");
+        let response = app.oneshot(request).await.expect("the router answers");
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body reads");
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| json!({"non_json_body": String::from_utf8_lossy(&bytes).to_string()}))
+    }
+
+    /// FP2-B4 N5-⑦: a malformed conversion/job id is a typed `not_found` envelope on every
+    /// conversion route, not axum's plain-text path rejection.
+    #[tokio::test]
+    async fn fp2_b4_non_uuid_conversion_ids_are_typed_not_found() {
+        let scratch = scratch_or_skip!("fp2-b4-non-uuid");
+        let state = state_for(scratch.db.clone());
+        let (_, owner_id) = seed_workspace(&state, true).await;
+        for (method, uri, body) in [
+            ("GET", "/api/v1/flow/conversions/not-a-uuid", None),
+            ("GET", "/api/v1/flow/conversions/not-a-uuid/owner", None),
+            (
+                "POST",
+                "/api/v1/flow/conversions/not-a-uuid/retry",
+                Some(json!({"idempotency_key":"k","confirm":true})),
+            ),
+        ] {
+            let response = fp2_b4_route(&state, owner_id, method, uri, body).await;
+            assert_typed(&response, "not_found", 404);
+        }
         scratch.drop_self().await;
     }
 }

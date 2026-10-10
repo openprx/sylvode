@@ -376,6 +376,10 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow conversions: a malformed id in `GET /api/v1/flow/conversions/{job_id}`,
+  `GET /api/v1/flow/conversions/{id}/owner` and `POST /api/v1/flow/conversions/{job_id}/retry`
+  now answers the typed `not_found` envelope, like an unknown id, instead of a plain-text 400
+  without `error_code`.
 - Flow admin integrity: `GET /api/v1/admin/workspaces/{id}/flow/integrity` accepts `cursor`
   (previously any cursor answered 400) and pages documents in id order with `limit` 1..=100
   (default 50); `next_cursor` is present only when another page exists. With
