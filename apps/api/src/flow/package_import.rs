@@ -136,6 +136,54 @@ pub struct ManifestSummary {
     pub engine: PackageEngine,
 }
 
+/// `invalid_update.details.reason` when a commit's frozen `project_map` leaves a package source
+/// project unmapped (`error-mapping-v1.md` approved reason table).
+pub const PROJECT_UNMAPPED_REASON: &str = "project_unmapped";
+
+/// The `project_map` literal that places a source project's objects outside any project.
+///
+/// `export-package-v1.md`: `source_project_id -> target_project_id | unprojected`. JSON `null`
+/// means the same.
+pub const UNPROJECTED_TARGET: &str = "unprojected";
+
+/// One structured preview conflict. `conflicts` keeps listing the bare subject ids for existing
+/// consumers; `conflict_details` carries the kind and the facts a caller needs to resolve it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ImportConflict {
+    /// The target workspace already holds an import of this package object
+    /// (`(package_sha256, source_object_id)` lineage); `existing_target_id` is that object.
+    LineageExists {
+        source_object_id: Uuid,
+        existing_target_id: Uuid,
+    },
+    /// A package source project with no entry in `project_map`; commit refuses it with
+    /// `invalid_update{reason:"project_unmapped"}` until it is mapped to a project or `unprojected`.
+    ProjectUnmapped {
+        source_project_id: Uuid,
+        title: Option<String>,
+    },
+}
+
+/// Accepts `project_mapping` values as a target project id, `null`, or the contract literal
+/// `"unprojected"`; the last two both freeze to "no project".
+pub fn deserialize_project_mapping<'de, D>(deserializer: D) -> Result<BTreeMap<Uuid, Option<Uuid>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = BTreeMap::<Uuid, Option<String>>::deserialize(deserializer)?;
+    raw.into_iter()
+        .map(|(source, target)| match target.as_deref() {
+            None | Some(UNPROJECTED_TARGET) => Ok((source, None)),
+            Some(value) => Uuid::parse_str(value)
+                .map(|target| (source, Some(target)))
+                .map_err(|_| {
+                    serde::de::Error::custom("project_mapping values must be a project id or \"unprojected\"")
+                }),
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportPreviewReceipt {
     pub preview_id: Uuid,
@@ -145,6 +193,7 @@ pub struct ImportPreviewReceipt {
     pub manifest_summary: ManifestSummary,
     pub mapping: FrozenImportMapping,
     pub conflicts: Vec<String>,
+    pub conflict_details: Vec<ImportConflict>,
     pub warnings: Vec<String>,
     pub estimated_changes: BTreeMap<String, u64>,
     pub expires_at: DateTime<Utc>,
@@ -368,7 +417,7 @@ pub async fn preview_package_import(
             "include_history must match the uploaded package manifest".to_string(),
         ));
     }
-    validate_projects(db, request.workspace_id, &request.project_map, &plan.objects).await?;
+    validate_project_targets(db, request.workspace_id, &request.project_map).await?;
     let request_json = json!({
         "artifact_id": request.artifact_id,
         "project_map": request.project_map,
@@ -381,14 +430,23 @@ pub async fn preview_package_import(
         return preview_receipt(existing, &plan);
     }
     let prior_targets = lineage_targets(db, request.workspace_id, &plan).await?;
-    let conflicts: Vec<String> = prior_targets
+    let lineage_conflicts: Vec<String> = prior_targets
         .keys()
         .filter(|(kind, _)| kind == "object")
-        .map(|(_, source_id)| source_id.to_string())
+        .map(|(_, source_id)| *source_id)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|source_id| source_id.to_string())
         .collect();
-    if !conflicts.is_empty() && request.conflict_policy == ConflictPolicy::RejectExisting {
+    if !lineage_conflicts.is_empty() && request.conflict_policy == ConflictPolicy::RejectExisting {
         return Err(ApiError::invalid_update("package objects already have import lineage"));
     }
+    let mut conflicts = lineage_conflicts;
+    conflicts.extend(
+        unmapped_projects(&request.project_map, &plan)
+            .into_iter()
+            .map(|id| id.to_string()),
+    );
     let mapping = freeze_mapping(request, &plan, &prior_targets)?;
     let mapping_json = serde_json::to_value(&mapping).map_err(|_| ApiError::internal())?;
     let mapping_hash = sha256_json(&mapping_json)?;
@@ -398,6 +456,7 @@ pub async fn preview_package_import(
     let estimated_changes = estimated_changes(&plan);
     let summary = manifest_summary(&plan);
     let summary_json = serde_json::to_value(&summary).map_err(|_| ApiError::internal())?;
+    let details = conflict_details(&conflicts, &mapping, &summary)?;
     let tx = db.begin().await?;
     lock_authorization_epoch(&tx, request.workspace_id).await?;
     tx.execute(Statement::from_sql_and_values(
@@ -434,6 +493,7 @@ pub async fn preview_package_import(
         manifest_summary: summary,
         mapping,
         conflicts,
+        conflict_details: details,
         warnings: Vec::new(),
         estimated_changes,
         expires_at,
@@ -507,7 +567,7 @@ pub async fn commit_package_import(
     let artifact = load_artifact_tx(&tx, request.workspace_id, preview.artifact_id, &request.principal).await?;
     let plan = parse_plan(&artifact.package_bytes, &request.package_sha256)?;
     validate_frozen_mapping(&mapping, &plan, request.workspace_id, request.conflict_policy)?;
-    validate_projects(&tx, request.workspace_id, &mapping.project_map, &plan.objects).await?;
+    validate_projects(&tx, request.workspace_id, &mapping.project_map, &plan).await?;
 
     let import_id = Uuid::new_v4();
     let started_at = Utc::now();
@@ -738,14 +798,19 @@ async fn existing_preview(
 }
 
 fn preview_receipt(row: ExistingPreviewRow, plan: &PackagePlan) -> Result<ImportPreviewReceipt, ApiError> {
+    let summary = manifest_summary(plan);
+    let conflicts: Vec<String> = serde_json::from_value(row.conflicts).map_err(|_| ApiError::internal())?;
+    let mapping: FrozenImportMapping = serde_json::from_value(row.mapping).map_err(|_| ApiError::internal())?;
+    let details = conflict_details(&conflicts, &mapping, &summary)?;
     Ok(ImportPreviewReceipt {
         preview_id: row.id,
         package_id: parse_manifest_uuid(&plan.verified.manifest)?,
         package_sha256: row.package_sha256,
         mapping_hash: row.mapping_hash,
-        manifest_summary: manifest_summary(plan),
-        mapping: serde_json::from_value(row.mapping).map_err(|_| ApiError::internal())?,
-        conflicts: serde_json::from_value(row.conflicts).map_err(|_| ApiError::internal())?,
+        manifest_summary: summary,
+        mapping,
+        conflicts,
+        conflict_details: details,
         warnings: serde_json::from_value(row.warnings).map_err(|_| ApiError::internal())?,
         estimated_changes: serde_json::from_value(row.estimated_changes).map_err(|_| ApiError::internal())?,
         expires_at: row.expires_at,
@@ -936,18 +1001,67 @@ fn validate_frozen_mapping(
     Ok(())
 }
 
+/// Package source projects that `project_map` does not cover, in id order. A preview lists them as
+/// `project_unmapped` conflicts; a commit refuses them.
+fn unmapped_projects(project_map: &BTreeMap<Uuid, Option<Uuid>>, plan: &PackagePlan) -> Vec<Uuid> {
+    source_projects(plan)
+        .into_iter()
+        .filter(|id| !project_map.contains_key(id))
+        .collect()
+}
+
+/// Rebuilds the structured conflicts from the stored subject ids, so a fresh preview and its
+/// idempotent replay answer the same `conflict_details`.
+/// A lineage conflict's existing target is the frozen `object_map` entry, which preview pins to the
+/// prior lineage target.
+fn conflict_details(
+    conflicts: &[String],
+    mapping: &FrozenImportMapping,
+    summary: &ManifestSummary,
+) -> Result<Vec<ImportConflict>, ApiError> {
+    conflicts
+        .iter()
+        .map(|subject| {
+            let id = Uuid::parse_str(subject).map_err(|_| ApiError::internal())?;
+            if let Some(existing_target_id) = mapping.object_map.get(&id) {
+                return Ok(ImportConflict::LineageExists {
+                    source_object_id: id,
+                    existing_target_id: *existing_target_id,
+                });
+            }
+            summary
+                .projects
+                .iter()
+                .find(|project| project.source_project_id == id)
+                .map(|project| ImportConflict::ProjectUnmapped {
+                    source_project_id: id,
+                    title: project.title.clone(),
+                })
+                .ok_or_else(ApiError::internal)
+        })
+        .collect()
+}
+
 async fn validate_projects<C: ConnectionTrait>(
     conn: &C,
     workspace_id: Uuid,
     project_map: &BTreeMap<Uuid, Option<Uuid>>,
-    objects: &[PackageObject],
+    plan: &PackagePlan,
 ) -> Result<(), ApiError> {
-    let source_projects: HashSet<_> = objects.iter().filter_map(|row| row.project_id).collect();
-    if source_projects.iter().any(|id| !project_map.contains_key(id)) {
-        return Err(ApiError::invalid_update(
-            "project_map must cover every source project".to_string(),
+    if !unmapped_projects(project_map, plan).is_empty() {
+        return Err(ApiError::invalid_update_with_details(
+            "project_map must cover every source project",
+            json!({ "reason": PROJECT_UNMAPPED_REASON }),
         ));
     }
+    validate_project_targets(conn, workspace_id, project_map).await
+}
+
+async fn validate_project_targets<C: ConnectionTrait>(
+    conn: &C,
+    workspace_id: Uuid,
+    project_map: &BTreeMap<Uuid, Option<Uuid>>,
+) -> Result<(), ApiError> {
     for target in project_map.values().flatten() {
         let found = conn
             .query_one(Statement::from_sql_and_values(
