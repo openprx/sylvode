@@ -513,6 +513,13 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow collaboration: an open WebSocket connection re-evaluates its authorization when the
+  workspace `authz_epoch` has moved since it opened. A write refused by the commit-time epoch
+  fence is re-sourced in place: if the actor still has `edit` on the document the connection
+  takes the new epoch and the update is retried (and accepted); only an actor whose level is now
+  below `edit` gets `policy_rejected`. A connection opened read-only that has since been granted
+  `edit` is re-sourced the same way. Before, any authorization change anywhere in the workspace
+  made the next write on every existing connection `policy_rejected`, including the owner's.
 - Flow: a request refused because it crosses a workspace boundary through a relation (a
   cross-workspace `parent_object_id` or move target, or a stored cross-workspace
   `flow_relations` row met while listing relations) answers `invalid_update` with
