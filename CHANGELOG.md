@@ -376,6 +376,10 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow conversions: when a commit or retry fails after its job exists, the typed error's
+  `details` now also carry `job_id` and `job_status` (normally `"failed"`), so a client can open
+  the job and retry it without a second request. `error_code`, `message` and the existing
+  `details` (`reason`, `permission_state`, `retry_after_ms`) are unchanged.
 - Flow conversions: `warnings` on the preview and on a completed record-conversion job are no
   longer always empty. Each entry is a stable `<code>:<field_key>` string:
   `target_value_missing` for a target field the mapping leaves empty (Forms fields have no
