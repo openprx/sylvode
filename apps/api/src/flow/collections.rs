@@ -368,6 +368,11 @@ struct EmbedIdempotencyBody {
     title: String,
     display_settings: Map<String, Value>,
     initial_schema: Value,
+    /// Part of the request identity, so a replay under the same key with another position is body
+    /// drift. Omitted when absent, so the identity stored before this field existed still matches
+    /// an append request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    after_block_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -379,6 +384,10 @@ struct CreateCollectionEmbedPayload {
     initial_fields: Vec<Value>,
     #[serde(default)]
     initial_view: Option<Value>,
+    /// `rest-api-v1.md` v0.6 `create_collection_embed`: insert the embed block right after this
+    /// block; absent means append at the end of the Page tree.
+    #[serde(default)]
+    after_block_id: Option<String>,
 }
 
 pub fn apply_initial_collection_schema(engine: &mut LoroCollabEngine, schema: &Value) -> Result<(), ApiError> {
@@ -455,6 +464,37 @@ pub fn apply_initial_collection_schema(engine: &mut LoroCollabEngine, schema: &V
         }
     }
     Ok(())
+}
+
+/// Where a new embed block goes so that it lands right after `after_block_id`: that block's
+/// parent, at the position following it among its live siblings (ordered as the semantic snapshot
+/// orders them, by `(order_key, id)`).
+fn embed_position_after(
+    boot: &bootstrap::BootstrapResult,
+    after_block_id: &str,
+) -> Result<(Option<NodeId>, u32), ApiError> {
+    let semantic = engine_at_head(boot)?
+        .semantic_snapshot()
+        .map_err(|_| ApiError::internal())?;
+    let unknown = || ApiError::invalid_update("after_block_id does not name a block of this page");
+    let anchor = semantic
+        .nodes
+        .get(after_block_id)
+        .filter(|node| !node.deleted && node.kind == NodeKind::Block)
+        .ok_or_else(unknown)?;
+    let mut siblings = semantic
+        .nodes
+        .iter()
+        .filter(|(_, node)| !node.deleted && node.parent == anchor.parent)
+        .map(|(id, node)| (node.order_key.as_str(), id.as_ref()))
+        .collect::<Vec<_>>();
+    siblings.sort_unstable();
+    let position = siblings
+        .iter()
+        .position(|(_, id)| *id == after_block_id)
+        .ok_or_else(unknown)?;
+    let index = u32::try_from(position.saturating_add(1)).map_err(|_| ApiError::internal())?;
+    Ok((anchor.parent.clone(), index))
 }
 
 fn node_id(id: Uuid) -> NodeId {
@@ -2614,6 +2654,7 @@ async fn create_collection_embed(
             "initial_fields": payload.initial_fields,
             "initial_view": payload.initial_view,
         }),
+        after_block_id: payload.after_block_id.clone(),
     };
     if let Some(replay) = replay_embed(
         state,
@@ -2628,6 +2669,11 @@ async fn create_collection_embed(
         return Ok(replay);
     }
     authz::ensure_parent_can_adopt_child(&state.db, workspace_id, input.object_id).await?;
+    let boot = bootstrap::load(&state.db, page.document_id).await?;
+    let (block_parent, block_index) = match payload.after_block_id.as_deref() {
+        Some(after_block_id) => embed_position_after(&boot, after_block_id)?,
+        None => (None, u32::MAX),
+    };
     let collection_id = Uuid::new_v4();
     let collection_document_id = Uuid::new_v4();
     let block_id = Uuid::new_v4();
@@ -2635,8 +2681,8 @@ async fn create_collection_embed(
     let operations = vec![
         Operation::CreateNode {
             id: block_node.clone(),
-            parent: None,
-            index: u32::MAX,
+            parent: block_parent,
+            index: block_index,
             kind: NodeKind::Block,
         },
         Operation::SetProperty {
@@ -2650,7 +2696,6 @@ async fn create_collection_embed(
             value: collection_id.to_string(),
         },
     ];
-    let boot = bootstrap::load(&state.db, page.document_id).await?;
     let bytes = export_operations(&boot, &operations)?;
     let expected_frontier = input
         .expected_frontier
@@ -5389,6 +5434,152 @@ mod database_tests {
         .await
         .expect_err("an initial schema with malformed options is refused");
         assert_eq!(refused_schema.kind(), ApiErrorKind::InvalidUpdate, "{refused_schema:?}");
+        scratch.drop_self().await;
+    }
+
+    async fn fp2_b6_root_blocks(state: &AppState, page_id: Uuid) -> Vec<String> {
+        let page = repository::fetch_object_view(&state.db, page_id)
+            .await
+            .expect("page reads")
+            .expect("page exists");
+        let boot = bootstrap::load(&state.db, page.document_id).await.expect("page loads");
+        let snapshot = engine_at_head(&boot)
+            .expect("page engine loads")
+            .semantic_snapshot()
+            .expect("semantic snapshot reads");
+        let mut roots = snapshot
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.parent.is_none() && !node.deleted)
+            .map(|(id, node)| (node.order_key.clone(), id.to_string()))
+            .collect::<Vec<_>>();
+        roots.sort();
+        roots.into_iter().map(|(_, id)| id).collect()
+    }
+
+    /// FP2-B6: `create_collection_embed` honours `after_block_id` (inserted right after that
+    /// block), appends without it, refuses an unknown block id with `invalid_update` and writes
+    /// nothing, and treats `after_block_id` as part of the idempotent request body.
+    #[tokio::test]
+    async fn fp2_b6_create_collection_embed_inserts_after_the_named_block() {
+        let scratch = scratch_or_skip!("fp2_b6_embed_after");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed(&state).await;
+        let page_id = create_object_for(&state, workspace_id, owner_id, "page", "Embed host").await;
+        for (index, block) in ["b1", "b2"].into_iter().enumerate() {
+            command(
+                &state,
+                owner_id,
+                page_id,
+                "insert_block",
+                json!({"block_id": block, "index": index, "text": block}),
+                Uuid::new_v4().to_string(),
+            )
+            .await
+            .expect("block inserts");
+        }
+        assert_eq!(fp2_b6_root_blocks(&state, page_id).await, ["b1", "b2"]);
+
+        let key = Uuid::new_v4().to_string();
+        let payload = json!({"title": "After b1", "after_block_id": "b1"});
+        let placed = command(
+            &state,
+            owner_id,
+            page_id,
+            "create_collection_embed",
+            payload.clone(),
+            key.clone(),
+        )
+        .await
+        .expect("embed after b1 creates");
+        let block_id = placed.command_result.as_ref().expect("command result")["block_id"]
+            .as_str()
+            .expect("block id")
+            .to_string();
+        assert_eq!(
+            fp2_b6_root_blocks(&state, page_id).await,
+            ["b1", block_id.as_str(), "b2"]
+        );
+        let replay = command(
+            &state,
+            owner_id,
+            page_id,
+            "create_collection_embed",
+            payload,
+            key.clone(),
+        )
+        .await
+        .expect("identical request replays");
+        assert_eq!(replay.command_result, placed.command_result);
+        let drift = command(
+            &state,
+            owner_id,
+            page_id,
+            "create_collection_embed",
+            json!({"title": "After b1", "after_block_id": "b2"}),
+            key,
+        )
+        .await
+        .expect_err("a different after_block_id under the same key is body drift");
+        assert_eq!(
+            fp2_b6_reason(&drift).1.as_deref(),
+            Some("idempotency_key_body_drift"),
+            "{drift:?}"
+        );
+
+        let appended = command(
+            &state,
+            owner_id,
+            page_id,
+            "create_collection_embed",
+            json!({"title": "Appended"}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("embed without after_block_id appends");
+        let appended_block = appended.command_result.as_ref().expect("command result")["block_id"]
+            .as_str()
+            .expect("block id")
+            .to_string();
+        assert_eq!(
+            fp2_b6_root_blocks(&state, page_id).await,
+            ["b1", block_id.as_str(), "b2", appended_block.as_str()]
+        );
+
+        let collections_before = CountRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM flow_objects WHERE object_type = 'collection'",
+            vec![],
+        ))
+        .one(&state.db)
+        .await
+        .expect("count runs")
+        .expect("count row");
+        let refused = command(
+            &state,
+            owner_id,
+            page_id,
+            "create_collection_embed",
+            json!({"title": "Nowhere", "after_block_id": "no-such-block"}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect_err("an unknown after_block_id is refused");
+        assert_eq!(refused.kind(), ApiErrorKind::InvalidUpdate, "{refused:?}");
+        let collections_after = CountRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM flow_objects WHERE object_type = 'collection'",
+            vec![],
+        ))
+        .one(&state.db)
+        .await
+        .expect("count runs")
+        .expect("count row");
+        assert_eq!(
+            collections_after.count, collections_before.count,
+            "a refused embed writes nothing"
+        );
+        assert_eq!(fp2_b6_root_blocks(&state, page_id).await.len(), 4);
         scratch.drop_self().await;
     }
 }

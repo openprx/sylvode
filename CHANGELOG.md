@@ -507,6 +507,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow Pages: `create_collection_embed` accepts `after_block_id` and inserts the embed block
+  right after that block (under the same parent); without it the block is still appended. An
+  `after_block_id` that names no live block of the Page is refused with `invalid_update` and
+  nothing is created. `after_block_id` is part of the idempotent request body, so replaying the
+  key with another position is body drift.
 - Flow Collections: a record value that has the right JSON type but is not a valid value of its
   field is refused as `invalid_update` with `details.reason = "invalid_field_value"` and
   `details.field_id`, on records create and `record_patch`: an unparseable date (it used to fail
