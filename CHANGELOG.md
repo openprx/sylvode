@@ -507,6 +507,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow Collections (security): under `field_secrecy_enabled`, every representation of a Record
+  now applies the records query's redaction (`semantic_content` is `{}`): the single-object read
+  `GET /flow/objects/{record_id}` in both renders, the object list, the object diff, and Record
+  command responses (`object.semantic_content` and `semantic_diff`). They used to return every
+  `record_property` value, including restricted ones, and the Record body.
 - Browser E2E stack: `scripts/e2e-web-stack.sh up` also starts the background worker on the
   same configuration (it is the only writer of the Flow search index), stops it on `down`, and
   refuses to start when `worker` is missing from `E2E_BIN_DIR`. The CI Web E2E job runs every
