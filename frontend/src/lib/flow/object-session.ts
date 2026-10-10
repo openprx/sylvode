@@ -33,12 +33,29 @@ import type {
 } from './types';
 import { DEFAULT_FLOW_LIMITS, checkUpdateBytes } from './limits';
 import {
+	SERVER_REJECTED_CLOSE_CODE,
+	SERVER_REJECTED_STREAK_LIMIT,
 	clientError,
 	drainDisposition,
 	flowErrorFromCloseCode,
 	flowErrorFromEnvelope,
-	flowErrorFromRejectedFrame
+	flowErrorFromRejectedFrame,
+	parseRetryAfterMs as retryAfterMs
 } from './errors';
+import {
+	PRESENCE_MIN_INTERVAL_MS,
+	PRESENCE_REFRESH_MS,
+	PRESENCE_TTL_SECONDS_DEFAULT,
+	PresenceThrottle,
+	RemotePresenceMap,
+	buildPresencePayload,
+	presencePayloadBytes,
+	type PresenceClock,
+	type PresenceCursor,
+	type PresenceIdentity,
+	type PresencePayload,
+	type RemotePresence
+} from './presence';
 
 export interface AcceptedNotice {
 	readonly headSeq: number;
@@ -63,9 +80,48 @@ interface SessionHooks {
 	onSnapshot(payload: SnapshotPayload): void;
 	onAccepted(notice: AcceptedNotice): void;
 	onFlowError(error: FlowError): void;
+	/** A (re)connection reached `snapshot`: the outbox may replay. */
+	onConnected?(): void;
+	/** The session was given up for good (three consecutive `server_rejected`, close 4500). */
+	onTerminal?(error: FlowError): void;
+	/** Access was revoked on a live connection (close 4403): the session is now read-only. */
+	onRevoked?(error: FlowError): void;
+}
+
+/** Test seams. Production uses the defaults. */
+export interface SessionOptions {
+	readonly clock?: PresenceClock;
+	/** How long a sent `update` may go unanswered before the connection is treated as lost. */
+	readonly answerTimeoutMs?: number;
+	/** Where `online`/`offline` come from. Defaults to `window` + `navigator.onLine`. */
+	readonly connectivity?: Connectivity | null;
+}
+
+/** The browser's network status: `isOffline()` plus `online`/`offline` events. */
+export interface Connectivity {
+	isOffline(): boolean;
+	readonly events: Pick<EventTarget, 'addEventListener' | 'removeEventListener'>;
+}
+
+function browserConnectivity(): Connectivity | null {
+	if (typeof window === 'undefined') return null;
+	return {
+		isOffline: () => typeof navigator !== 'undefined' && navigator.onLine === false,
+		events: window
+	};
+}
+
+/** Why a local presence value was not sent. */
+export interface PresenceRefusal {
+	readonly limitKind: 'presence_payload_bytes';
+	readonly limit: number;
+	readonly observed: number;
 }
 
 const PROTOCOL_VERSION = 1;
+/** `collab-protocol-v1.md` "hello: capabilities": the one capability this client uses. */
+export const CLIENT_CAPABILITIES = ['presence'] as const;
+const DEFAULT_ANSWER_TIMEOUT_MS = 20_000;
 /** How long `connect()` waits for the first `snapshot` before giving up on this attempt. */
 const CONNECT_TIMEOUT_MS = 15_000;
 const BACKOFF_STEPS_MS = [250, 500, 1000, 2000, 5000];
@@ -92,7 +148,11 @@ function wsBaseUrl(): string {
 	return window.location.origin.replace(/^http/, 'ws');
 }
 
-type PendingResolve = { resolve: () => void; reject: (error: FlowError) => void };
+type PendingResolve = {
+	resolve: () => void;
+	reject: (error: FlowError) => void;
+	timer: ReturnType<typeof setTimeout> | null;
+};
 
 /** The subset of `CommandService` `ObjectSession` needs for ticket issuance -- kept narrow so
  * this module depends on an interface, not the concrete class, matching `types.ts`'s existing
@@ -139,21 +199,128 @@ export class LoroObjectSession implements ObjectSessionContract {
 	 * not by inspection -- see the delivery report. */
 	private firstSync: { resolve: () => void; reject: (error: FlowError) => void } | null = null;
 
-	constructor(hooks: SessionHooks, commandService: TicketIssuer) {
+	// ---- v0.5 ----
+	private readonly clock: PresenceClock;
+	private readonly answerTimeoutMs: number;
+	/** True between this connection's `snapshot` and its close. */
+	private connected = false;
+	/** Given up for good: never reconnects again (`server_rejected` streak, close 4500). */
+	private terminal = false;
+	/** `view`/`comment` on this object, or a 4403 revocation: no local write is sent. */
+	private permissionReadOnly = false;
+	/** `collab-protocol-v1.md` "连续 3 次": consecutive `update` frames this connection saw
+	 * answered `server_rejected`. Any other answer to an update resets it; frames that are not
+	 * answers to an update (`presence`, `ping`, a `rejected` with no `update_id`) do not touch it. */
+	private serverRejectedStreak = 0;
+	/** Highest accepted seq applied to the doc on this connection. */
+	private lastAppliedSeq = 0;
+	/** A peer's `update` bytes, held until its paired `accepted` (same `update_id`) arrives. */
+	private readonly remoteUpdates = new Map<string, Uint8Array>();
+	private readonly remotePresence: RemotePresenceMap;
+	private readonly presenceThrottle: PresenceThrottle<PresencePayload>;
+	private presenceIdentity: PresenceIdentity | null = null;
+	private localPresence: PresencePayload | null = null;
+	private presenceRefreshTimer: ReturnType<typeof setInterval> | null = null;
+	private presenceSweepTimer: ReturnType<typeof setInterval> | null = null;
+	private lastPresenceRefusal: PresenceRefusal | null = null;
+	private presenceFramesSent = 0;
+	/** Sockets this class closed itself; their `close` events are not connection losses. */
+	private readonly intentionallyClosed = new WeakSet<WebSocket>();
+	/** Access was revoked on a live connection (4403): never reconnect automatically. */
+	private revoked = false;
+	private readonly onWindowOnline = () => this.handleOnline();
+	private readonly onWindowOffline = () => this.handleOffline();
+	private readonly connectivity: Connectivity | null;
+
+	constructor(hooks: SessionHooks, commandService: TicketIssuer, options: SessionOptions = {}) {
 		this.hooks = hooks;
 		this.commandService = commandService;
 		this.clientId =
 			typeof crypto !== 'undefined' && 'randomUUID' in crypto
 				? crypto.randomUUID()
 				: `client-${Math.random().toString(36).slice(2)}`;
+		this.clock = options.clock ?? { now: () => Date.now() };
+		this.answerTimeoutMs = options.answerTimeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS;
+		this.remotePresence = new RemotePresenceMap(this.clock);
+		this.presenceThrottle = new PresenceThrottle<PresencePayload>(
+			(payload) => this.sendPresence(payload),
+			PRESENCE_MIN_INTERVAL_MS,
+			this.clock
+		);
+		this.connectivity =
+			options.connectivity === undefined ? browserConnectivity() : options.connectivity;
+		this.connectivity?.events.addEventListener('online', this.onWindowOnline);
+		this.connectivity?.events.addEventListener('offline', this.onWindowOffline);
 	}
 
 	get state(): Readable<SyncState> {
 		return { subscribe: this.stateStore.subscribe };
 	}
 
+	/** Remote peers on this document (ephemeral; never part of the engine doc). */
+	get presence(): Readable<ReadonlyArray<RemotePresence>> {
+		return this.remotePresence.peers;
+	}
+
+	/** Current unexpired peers (tests, diagnostics). */
+	remotePresenceList(): ReadonlyArray<RemotePresence> {
+		return this.remotePresence.list();
+	}
+
+	/** The last local presence value refused by the payload pre-check, if any. */
+	get presenceRefusal(): PresenceRefusal | null {
+		return this.lastPresenceRefusal;
+	}
+
+	/** How many `presence` frames this session has put on the wire. */
+	get presenceFrameCount(): number {
+		return this.presenceFramesSent;
+	}
+
+	private isOffline(): boolean {
+		return this.connectivity?.isOffline() ?? false;
+	}
+
+	get isConnected(): boolean {
+		return this.connected && !!this.socket && this.socket.readyState === WebSocket.OPEN;
+	}
+
+	get isTerminal(): boolean {
+		return this.terminal;
+	}
+
+	get consecutiveServerRejections(): number {
+		return this.serverRejectedStreak;
+	}
+
+	/**
+	 * The one place the sync indicator changes. While the session is read-only (permission, or an
+	 * unknown limits version) the "everything is fine" states read as `read_only`: a `view` user
+	 * who receives a peer's snapshot must not see `local`/`saved` next to a canvas they cannot
+	 * edit.
+	 */
 	private setState(next: SyncState): void {
+		const readOnly = this.permissionReadOnly || this.unknownLimitsVersion !== null;
+		if (
+			readOnly &&
+			(next === 'local' || next === 'saved' || next === 'saving' || next === 'resyncing')
+		) {
+			this.stateStore.set('read_only');
+			return;
+		}
 		this.stateStore.set(next);
+	}
+
+	/** Puts the session in (or takes it out of) permission read-only: the object's effective
+	 * level for this user is `view`/`comment` (`ADR-0012`: "`edit` 起可写、`view` 只读"). */
+	setPermissionReadOnly(readOnly: boolean): void {
+		this.permissionReadOnly = readOnly;
+		if (readOnly) this.setState('read_only');
+		else if (this.connected) this.setState('local');
+	}
+
+	get isPermissionReadOnly(): boolean {
+		return this.permissionReadOnly;
 	}
 
 	/** Adopts (or refuses) a live `Bootstrap.limits` payload for this session.
@@ -180,7 +347,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 
 	/** Whether local writes are blocked because `Bootstrap.limits` failed version negotiation. */
 	get isReadOnly(): boolean {
-		return this.unknownLimitsVersion !== null;
+		return this.unknownLimitsVersion !== null || this.permissionReadOnly;
 	}
 
 	async connect(handle: ObjectHandle): Promise<void> {
@@ -213,7 +380,13 @@ export class LoroObjectSession implements ObjectSessionContract {
 	}
 
 	private async openSocket(): Promise<void> {
-		if (this.disposed || !this.handle) return;
+		if (this.disposed || !this.handle || this.terminal || this.revoked) return;
+		if (this.isOffline()) {
+			// No network at all: wait for the `online` event instead of burning backoff steps on
+			// tickets that cannot be issued.
+			this.setState('offline');
+			return;
+		}
 		this.setState('reconnecting');
 
 		const clientToken = apiClient.getToken();
@@ -285,7 +458,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 			this.sendFrame({
 				type: 'hello',
 				protocol_version: PROTOCOL_VERSION,
-				capabilities: [],
+				capabilities: [...CLIENT_CAPABILITIES],
 				client_id: this.clientId,
 				session_id: this.clientId
 			});
@@ -316,8 +489,28 @@ export class LoroObjectSession implements ObjectSessionContract {
 		});
 
 		socket.addEventListener('close', (event) => {
-			this.socket = null;
-			if (this.manualClose || this.disposed) return;
+			const wasCurrent = this.socket === socket;
+			if (wasCurrent) this.socket = null;
+			// A socket this class closed on purpose already ran its own cleanup, and a stale
+			// socket's late close must not touch the connection that replaced it (a real
+			// browser delivers `close` asynchronously, after the replacement may be open).
+			if (this.intentionallyClosed.has(socket) || !wasCurrent) return;
+			this.onConnectionLost();
+			if (this.manualClose || this.disposed || this.terminal) return;
+			if (event.code === SERVER_REJECTED_CLOSE_CODE) {
+				this.terminate(
+					flowErrorFromCloseCode(event.code, event.reason ?? '') ?? clientError('server_rejected')
+				);
+				return;
+			}
+			if (event.code === 4403) {
+				this.revoke(flowErrorFromCloseCode(event.code, '') ?? clientError('forbidden'));
+				return;
+			}
+			if (this.isOffline()) {
+				this.setState('offline');
+				return;
+			}
 			// The frozen WS close codes (`error-mapping-v1.md`'s "WS close/control" column) are
 			// machine-readable discriminators in their own right, including 4410's drain payload.
 			const closed = flowErrorFromCloseCode(event.code, event.reason ?? '');
@@ -349,6 +542,10 @@ export class LoroObjectSession implements ObjectSessionContract {
 					headFrontier: frame.head_frontier as string
 				});
 				this.reconnectAttempt = 0;
+				this.lastAppliedSeq = frame.head_seq as number;
+				this.connected = true;
+				this.remoteUpdates.clear();
+				this.serverRejectedStreak = 0;
 				// `snapshot` establishes the baseline document state, not a save confirmation.
 				// `contracts/ui-surface-v1.md` "连接、refresh 与恢复状态机": "只有带 matching
 				// update id 和 events-v1.md event id 的 accepted frame 可进入 saved" -- entering
@@ -358,21 +555,71 @@ export class LoroObjectSession implements ObjectSessionContract {
 				// confirmed local edit" without making that false claim.
 				this.setState('local');
 				this.firstSync?.resolve();
+				this.startPresenceTimers();
+				// Re-announce this user's own presence on the new connection: the server dropped
+				// the old entry when the old connection closed.
+				if (this.localPresence) this.presenceThrottle.push(this.localPresence);
+				this.hooks.onConnected?.();
+				break;
+			}
+			case 'update': {
+				// A peer's committed update. Its paired `accepted` (same `update_id`) follows
+				// (`apps/api/src/flow/collab/write.rs::broadcast_committed_update`); the bytes are
+				// applied only then, and only in seq order.
+				if (typeof frame.update_id === 'string' && typeof frame.bytes === 'string') {
+					try {
+						this.remoteUpdates.set(frame.update_id, fromBase64(frame.bytes));
+					} catch {
+						// Undecodable bytes: the paired `accepted` falls back to a resync.
+					}
+				}
+				break;
+			}
+			case 'presence': {
+				if (typeof frame.session_id === 'string') {
+					this.remotePresence.receive(
+						frame.session_id,
+						frame.payload,
+						typeof frame.ttl_seconds === 'number' ? frame.ttl_seconds : PRESENCE_TTL_SECONDS_DEFAULT
+					);
+				}
 				break;
 			}
 			case 'accepted': {
 				const updateId = frame.update_id as string;
 				const waiter = this.pending.get(updateId);
+				const headSeq = frame.head_seq as number;
 				if (waiter) {
-					this.pending.delete(updateId);
+					this.settle(updateId);
+					// An answer to an update that is not `server_rejected`: the streak ends.
+					this.serverRejectedStreak = 0;
+					this.lastAppliedSeq = Math.max(this.lastAppliedSeq, headSeq);
 					waiter.resolve();
 					this.hooks.onAccepted({
-						headSeq: frame.head_seq as number,
+						headSeq,
 						headFrontier: frame.head_frontier as string,
 						projectionSeq: frame.projection_seq as number,
 						eventId: frame.event_id as string
 					});
 					this.setState('saved');
+				} else if (this.remoteUpdates.has(updateId)) {
+					const bytes = this.remoteUpdates.get(updateId) as Uint8Array;
+					this.remoteUpdates.delete(updateId);
+					if (headSeq <= this.lastAppliedSeq) break; // idempotent duplicate
+					if (headSeq !== this.lastAppliedSeq + 1) {
+						// `collab-protocol-v1.md`: a gap is never buffered or guessed across.
+						this.setState('resyncing');
+						void this.reconnect('stale_frontier');
+						break;
+					}
+					this.lastAppliedSeq = headSeq;
+					this.hooks.onAccepted({
+						headSeq,
+						headFrontier: frame.head_frontier as string,
+						projectionSeq: frame.projection_seq as number,
+						eventId: frame.event_id as string,
+						remoteBytes: bytes
+					});
 				} else {
 					// This `accepted` is for an update THIS connection did not submit -- i.e. another
 					// session committed a change. `apps/api/src/flow/collab/session.rs` broadcasts
@@ -389,15 +636,35 @@ export class LoroObjectSession implements ObjectSessionContract {
 				break;
 			}
 			case 'rejected': {
-				const error = flowErrorFromRejectedFrame(frame);
-				if (!error) break;
-				const updateId = frame.update_id as string | undefined;
+				// `error-mapping-v1.md`: a consumer that does not recognise a `RejectedCode` treats
+				// it as non-retryable. Before this, an unknown code returned `null` here and the
+				// update's waiter was never settled -- the write hung forever.
+				const error: FlowError = flowErrorFromRejectedFrame(frame) ?? {
+					code: 'invalid_update',
+					recoverable: false,
+					origin: 'server'
+				};
+				const updateId = this.answeredUpdateId(frame, error);
 				if (updateId) {
+					// Only an answer to an `update` drives the streak (`collab-protocol-v1.md`
+					// "「被答复的」这个限定词是承重的").
+					this.serverRejectedStreak =
+						frame.code === 'server_rejected' ? this.serverRejectedStreak + 1 : 0;
 					const waiter = this.pending.get(updateId);
 					if (waiter) {
-						this.pending.delete(updateId);
+						this.settle(updateId);
 						waiter.reject(error);
 					}
+				}
+				if (this.serverRejectedStreak >= SERVER_REJECTED_STREAK_LIMIT) {
+					this.hooks.onFlowError(error);
+					this.terminate(error);
+					break;
+				}
+				if (error.code === 'limit_exceeded' && retryAfterMs(error.details) !== null) {
+					// A rate refusal: the outbox resends the same update after `retry_after_ms`.
+					// Not a sync error and not a banner.
+					break;
 				}
 				this.applyFlowError(error);
 				break;
@@ -440,7 +707,9 @@ export class LoroObjectSession implements ObjectSessionContract {
 			if (disposition.reconnects) this.scheduleReconnect(disposition.retryAfterMs);
 			return;
 		}
-		if (error.code === 'resync_required') {
+		if (error.code === 'resync_required' || error.code === 'stale_frontier') {
+			// Both mean "this connection's frontier is behind": a fresh connection brings the
+			// accepted snapshot, and the outbox replays from `onConnected`.
 			this.setState('resyncing');
 			void this.reconnect('stale_frontier');
 			return;
@@ -461,13 +730,16 @@ export class LoroObjectSession implements ObjectSessionContract {
 	 * schedules a plain jittered backoff, and because `scheduleReconnect` is a no-op while a timer
 	 * is already pending, it would win the race against the drain's own `retry_after_ms` floor and
 	 * silently reconnect ~60 ms into a 1.5 s drain. Found by the UI state test, not by reading. */
-	private closeCurrentSocket(): void {
+	private closeCurrentSocket(code?: number, reason?: string): void {
 		const socket = this.socket;
 		this.socket = null;
 		if (!socket) return;
+		this.intentionallyClosed.add(socket);
 		this.manualClose = true;
-		socket.close();
+		if (code === undefined) socket.close();
+		else socket.close(code, reason);
 		this.manualClose = false;
+		this.onConnectionLost();
 	}
 
 	private sendFrame(frame: Record<string, unknown>): void {
@@ -475,7 +747,14 @@ export class LoroObjectSession implements ObjectSessionContract {
 		this.socket.send(JSON.stringify(frame));
 	}
 
-	async submit(update: EngineUpdate, _intent: SemanticIntent): Promise<void> {
+	async submit(
+		update: EngineUpdate,
+		_intent: SemanticIntent,
+		options: { updateId?: string } = {}
+	): Promise<void> {
+		if (this.terminal) {
+			throw { code: 'server_rejected', recoverable: false, origin: 'client' } satisfies FlowError;
+		}
 		if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.handle) {
 			// No socket is a local condition, not a server rejection -- see `clientError`.
 			throw clientError('resync_required');
@@ -483,6 +762,14 @@ export class LoroObjectSession implements ObjectSessionContract {
 		// `Bootstrap.limits` failed version negotiation: this client cannot know the real
 		// ceilings, and `limits-v1.md` forbids writing under its own cached/compiled-in ones
 		// ("Client 不得自行放宽或缓存跨 `version` limits"). Refuse locally instead of sending.
+		if (this.permissionReadOnly) {
+			throw {
+				code: 'policy_rejected',
+				recoverable: false,
+				origin: 'client',
+				details: { reason: 'read_only' }
+			} satisfies FlowError;
+		}
 		const unknownVersion = this.unknownLimitsVersion;
 		if (unknownVersion) {
 			throw {
@@ -511,14 +798,27 @@ export class LoroObjectSession implements ObjectSessionContract {
 				}
 			} satisfies FlowError;
 		}
+		// A replay passes the outbox entry's id so the retry is the SAME update to the server
+		// (`collab-protocol-v1.md` `write_state:"unknown"`: "必须复用同一 `update_id` 重试").
 		const updateId =
-			typeof crypto !== 'undefined' && 'randomUUID' in crypto
+			options.updateId ??
+			(typeof crypto !== 'undefined' && 'randomUUID' in crypto
 				? crypto.randomUUID()
-				: `${Date.now()}-${Math.random()}`;
+				: `${Date.now()}-${Math.random()}`);
 
 		this.setState('saving');
 		return new Promise<void>((resolve, reject) => {
-			this.pending.set(updateId, { resolve, reject });
+			// An update nobody ever answers would block the ordered outbox for good; after the
+			// timeout the connection is treated as lost and the update is replayed under the same
+			// id on the next one.
+			const timer = setTimeout(() => {
+				const waiter = this.pending.get(updateId);
+				if (!waiter) return;
+				this.settle(updateId);
+				waiter.reject(clientError('resync_required'));
+				void this.reconnect('network');
+			}, this.answerTimeoutMs);
+			this.pending.set(updateId, { resolve, reject, timer });
 			this.sendFrame({
 				type: 'update',
 				protocol_version: PROTOCOL_VERSION,
@@ -533,14 +833,146 @@ export class LoroObjectSession implements ObjectSessionContract {
 		});
 	}
 
-	setPresence(): void {
-		// Presence is v0.5 scope (`ui-surface-v1.md`); intentionally not implemented in v0.4.
+	/** Who this user is, for the presence payload (id, display name, colour). */
+	setPresenceIdentity(identity: PresenceIdentity): void {
+		this.presenceIdentity = identity;
+	}
+
+	/**
+	 * Reports this user's cursor/selection (`null`: no caret in this document). Throttled to at
+	 * most one frame per `PRESENCE_MIN_INTERVAL_MS`; a payload over `presence_payload_bytes_max` is
+	 * refused locally and never sent. Presence never blocks or delays an edit.
+	 */
+	setPresence(cursor: PresenceCursor | null): void {
+		if (!this.presenceIdentity) return;
+		const payload = buildPresencePayload(this.presenceIdentity, cursor);
+		const observed = presencePayloadBytes(payload);
+		const limit = this.limits.presencePayloadBytesMax;
+		if (observed > limit) {
+			this.lastPresenceRefusal = { limitKind: 'presence_payload_bytes', limit, observed };
+			return;
+		}
+		this.lastPresenceRefusal = null;
+		this.localPresence = payload;
+		this.presenceThrottle.push(payload);
+	}
+
+	private sendPresence(payload: PresencePayload): void {
+		if (!this.isConnected || !this.handle) return;
+		this.presenceFramesSent += 1;
+		this.sendFrame({
+			type: 'presence',
+			protocol_version: PROTOCOL_VERSION,
+			document_id: this.handle.documentId,
+			// Required by the frame's wire shape; the server keys the entry by its own id for
+			// this connection and ignores this value.
+			session_id: this.clientId,
+			payload,
+			ttl_seconds: PRESENCE_TTL_SECONDS_DEFAULT
+		});
+	}
+
+	private startPresenceTimers(): void {
+		if (!this.presenceRefreshTimer) {
+			this.presenceRefreshTimer = setInterval(() => {
+				if (this.localPresence) this.presenceThrottle.push(this.localPresence);
+			}, PRESENCE_REFRESH_MS);
+		}
+		if (!this.presenceSweepTimer) {
+			this.presenceSweepTimer = setInterval(() => this.remotePresence.sweep(), 1000);
+		}
+	}
+
+	private stopPresenceTimers(): void {
+		if (this.presenceRefreshTimer) clearInterval(this.presenceRefreshTimer);
+		if (this.presenceSweepTimer) clearInterval(this.presenceSweepTimer);
+		this.presenceRefreshTimer = null;
+		this.presenceSweepTimer = null;
+	}
+
+	/** The update a `rejected` frame answers: its `update_id`, or -- for the server's rate
+	 * refusal, which is sent without one (`session.rs::limit_exceeded_frame` sets `update_id:
+	 * None`) -- the single update in flight, when there is exactly one. */
+	private answeredUpdateId(frame: Record<string, unknown>, error: FlowError): string | null {
+		if (typeof frame.update_id === 'string') return frame.update_id;
+		if (error.code !== 'limit_exceeded' || this.pending.size !== 1) return null;
+		const details = error.details as { limit_kind?: unknown } | undefined;
+		if (details?.limit_kind !== 'update_rate') return null;
+		return [...this.pending.keys()][0] ?? null;
+	}
+
+	private settle(updateId: string): void {
+		const waiter = this.pending.get(updateId);
+		if (waiter?.timer) clearTimeout(waiter.timer);
+		this.pending.delete(updateId);
+	}
+
+	/** The connection is gone (closed by either side, or by going offline). Every update still in
+	 * flight has an unknown `write_state`; its waiter is rejected as a local transport error so
+	 * the outbox replays it under the same id on the next connection. */
+	private onConnectionLost(): void {
+		this.connected = false;
+		this.remoteUpdates.clear();
+		this.remotePresence.clear();
+		this.stopPresenceTimers();
+		for (const [updateId, waiter] of [...this.pending]) {
+			this.settle(updateId);
+			waiter.reject(clientError('resync_required'));
+		}
+	}
+
+	/** Three consecutive permanent refusals: close 4500 and never reconnect. */
+	private terminate(error: FlowError): void {
+		if (this.terminal) return;
+		this.terminal = true;
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+		this.closeCurrentSocket(SERVER_REJECTED_CLOSE_CODE, 'server_rejected');
+		this.stateStore.set('error');
+		this.firstSync?.reject(error);
+		this.hooks.onTerminal?.(error);
+	}
+
+	/** Access revoked on a live connection (4403): read-only, no automatic reconnect. */
+	private revoke(error: FlowError): void {
+		this.revoked = true;
+		this.permissionReadOnly = true;
+		this.stateStore.set('read_only');
+		this.hooks.onFlowError(error);
+		this.firstSync?.reject(error);
+		this.hooks.onRevoked?.(error);
+	}
+
+	private handleOffline(): void {
+		if (this.disposed || this.terminal) return;
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+		this.closeCurrentSocket();
+		this.setState('offline');
+	}
+
+	private handleOnline(): void {
+		if (this.disposed || this.terminal || this.revoked || this.socket || !this.handle) return;
+		// `ui-surface-v1.md` step 6: "online event 可提前触发一次".
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+		this.reconnectAttempt = 0;
+		void this.openSocket();
 	}
 
 	async reconnect(_reason: DisconnectReason): Promise<void> {
-		this.manualClose = false;
-		this.socket?.close();
-		this.socket = null;
+		if (this.terminal || this.disposed || this.revoked) return;
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+		this.closeCurrentSocket();
 		await this.openSocket();
 	}
 
@@ -571,6 +1003,10 @@ export class LoroObjectSession implements ObjectSessionContract {
 	async dispose(): Promise<void> {
 		this.disposed = true;
 		this.manualClose = true;
+		this.presenceThrottle.cancel();
+		this.stopPresenceTimers();
+		this.connectivity?.events.removeEventListener('online', this.onWindowOnline);
+		this.connectivity?.events.removeEventListener('offline', this.onWindowOffline);
 		if (this.reconnectTimer) {
 			clearTimeout(this.reconnectTimer);
 			this.reconnectTimer = null;
@@ -579,12 +1015,11 @@ export class LoroObjectSession implements ObjectSessionContract {
 			clearTimeout(this.connectTimeout);
 			this.connectTimeout = null;
 		}
-		for (const waiter of this.pending.values()) {
+		for (const [updateId, waiter] of [...this.pending]) {
 			// Teardown, not a server drain: the caller navigated away or the route was destroyed.
+			this.settle(updateId);
 			waiter.reject(clientError('resync_required'));
 		}
-		this.pending.clear();
-		this.socket?.close();
-		this.socket = null;
+		this.closeCurrentSocket();
 	}
 }

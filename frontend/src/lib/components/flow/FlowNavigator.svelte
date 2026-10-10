@@ -45,6 +45,8 @@
 		type OrderedSibling
 	} from '$lib/flow/navigator-reorder';
 	import { FLOW_REPOSITORY_CONTEXT } from '$lib/flow/context-keys';
+	import { flowErrorDetailKey } from '$lib/flow/errors';
+	import type { FlowError } from '$lib/flow/types';
 	import { resolveRenderer } from '$lib/flow/renderer-registry';
 	import {
 		FlowNavigatorSearch,
@@ -603,6 +605,11 @@
 			placeCreatedObject(created);
 			if (parentId) expanded = new Set(expanded).add(parentId);
 			select(created.object.id);
+		} catch (error) {
+			// Typed rejection: the key comes from the stable code and its named reason
+			// (`child_project_must_match_parent` tells the user to use the parent's project),
+			// never from the message.
+			announce(flowErrorDetailKey(error as FlowError));
 		} finally {
 			creatingParentId = undefined;
 		}

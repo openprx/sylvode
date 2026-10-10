@@ -302,6 +302,28 @@ OpenPR name keeps working; see **Deprecated**.
     reference asks for confirmation and only calls `DELETE .../references/{id}`. Convert opens
     the conversion wizard. Strings are under `flow.canvas.slashMenu.*`, `flow.canvas.embed.*`
     and `flow.bridge.card.*`.
+  - Web UI: collaboration on a Page. Other people's carets and selections are shown with their
+    name and colour and a marker on the block they are in (`presence` frames, at most four per
+    second, payload checked against the 8 KiB ceiling, expired locally after the 30 second TTL;
+    presence is never written to the document and never locks a block). A peer's committed edit is
+    applied in place from its `update`/`accepted` pair instead of reconnecting. Edits made while
+    offline go to an IndexedDB outbox (update bytes, base frontier, idempotency key, intent); the
+    sync indicator shows **Offline** with the pending count. On reconnect the Page fetches the
+    accepted bootstrap, merges it, re-checks the user's permission and replays the queued edits in
+    order under their original keys; an edit the accepted snapshot already contains is not sent
+    again. An edit the server refuses (`policy_rejected`, `invalid_update`, `server_rejected`, a
+    size limit) and every later edit that depends on it go to a **recovery draft** (download as
+    JSON or copy as text, each entry with its reason), and the Page is rebuilt from the accepted
+    state. A user whose level is `view` or `comment` gets a read-only canvas (no typing, slash menu
+    or block handle); a revocation on a live connection (close 4403) or a refused write whose
+    re-check finds no write access switches to read-only and keeps pending edits in the recovery
+    draft. Three consecutive `server_rejected` answers close the connection with 4500 and stop
+    reconnecting. `invalid_update` reasons are acted on: `subtree_spans_multiple_projects` points
+    to the workspace operations page, `child_project_must_match_parent` asks for the parent's
+    project, and `idempotency_key_body_drift` is resent once under a new key. The recovery draft
+    download is a JSON file (`sylvode.flow.recovery-draft.v1`); it used to be the raw engine
+    snapshot. Strings are under `flow.presence.*`, `flow.sync.pending`, `flow.recovery.*` and
+    `flow.error.invalid_update_reason.*`.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

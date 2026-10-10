@@ -4,9 +4,11 @@
 
 	interface Props {
 		state: SyncState;
+		/** Local updates waiting for the server (offline edits, or an in-flight save). */
+		pending?: number;
 	}
 
-	let { state }: Props = $props();
+	let { state, pending = 0 }: Props = $props();
 
 	// `motion-reduce:animate-none` (`contracts/ui-surface-v1.md` a11y baseline, task brief item 10):
 	// `prefers-reduced-motion: reduce` must stop the pulsing dot -- the sync state is still
@@ -25,13 +27,22 @@
 
 	const dotClass = $derived(DOT_CLASS[state]);
 	const label = $derived($t(`flow.sync.${state}`));
+	const pendingLabel = $derived(
+		pending > 0 ? $t('flow.sync.pending', { values: { count: pending } }) : ''
+	);
 </script>
 
 <div
 	class="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
 	role="status"
 	aria-live="polite"
+	data-testid="flow-sync-indicator"
+	data-state={state}
+	data-pending={pending}
 >
 	<span class={`h-2 w-2 rounded-full ${dotClass}`} aria-hidden="true"></span>
 	<span>{label}</span>
+	{#if pendingLabel}
+		<span data-testid="flow-sync-pending">{pendingLabel}</span>
+	{/if}
 </div>

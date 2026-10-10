@@ -63,13 +63,31 @@ import {
 	type VerifyDocumentInput
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
-import { flowErrorFromEnvelope } from './errors';
+import { flowErrorFromEnvelope, invalidUpdateDisposition } from './errors';
 import type { FlowError } from './types';
 
 function newIdempotencyKey(): string {
 	return typeof crypto !== 'undefined' && 'randomUUID' in crypto
 		? crypto.randomUUID()
 		: `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * Sends one write under `key`; if the server answers `invalid_update` with
+ * `details.reason = "idempotency_key_body_drift"` (`error-mapping-v1.md`: the same key was first
+ * used with a different body -- "为新意图换新 key"), the body is a NEW intent, so it is sent once more
+ * under a fresh key. Any other answer is returned as is; a second drift is not retried again.
+ */
+export async function sendWithDriftRekey<T>(
+	send: (idempotencyKey: string) => Promise<ApiResult<T>>,
+	idempotencyKey: string,
+	mintKey: () => string = newIdempotencyKey
+): Promise<ApiResult<T>> {
+	const first = await send(idempotencyKey);
+	if (first.code === 0) return first;
+	const error = flowErrorFromEnvelope(first);
+	if (!error || invalidUpdateDisposition(error)?.action !== 'rekey_and_resend') return first;
+	return send(mintKey());
 }
 
 export class FlowCommandService {
@@ -84,10 +102,10 @@ export class FlowCommandService {
 		input: Omit<CreateFlowObjectInput, 'idempotency_key'>,
 		options: { idempotencyKey?: string } = {}
 	): Promise<AcceptedChange> {
-		const result = await flowApi.createObject(workspaceId, {
-			...input,
-			idempotency_key: options.idempotencyKey ?? newIdempotencyKey()
-		});
+		const result = await sendWithDriftRekey(
+			(key) => flowApi.createObject(workspaceId, { ...input, idempotency_key: key }),
+			options.idempotencyKey ?? newIdempotencyKey()
+		);
 		if (result.code !== 0 || !result.data) {
 			throw flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
 		}
@@ -105,12 +123,16 @@ export class FlowCommandService {
 		command: ExecuteFlowCommandInput['command'],
 		options: { idempotencyKey?: string; expectedFrontier?: string; message?: string } = {}
 	): Promise<AcceptedChange> {
-		const result = await flowApi.executeCommand(objectId, {
-			command,
-			expected_frontier: options.expectedFrontier,
-			idempotency_key: options.idempotencyKey ?? newIdempotencyKey(),
-			message: options.message
-		});
+		const result = await sendWithDriftRekey(
+			(key) =>
+				flowApi.executeCommand(objectId, {
+					command,
+					expected_frontier: options.expectedFrontier,
+					idempotency_key: key,
+					message: options.message
+				}),
+			options.idempotencyKey ?? newIdempotencyKey()
+		);
 		if (result.code !== 0 || !result.data) {
 			throw flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
 		}
@@ -128,10 +150,10 @@ export class FlowCommandService {
 		input: Omit<CreateCollectionRecordInput, 'idempotency_key'>,
 		options: { idempotencyKey?: string } = {}
 	): Promise<AcceptedChange> {
-		const result = await flowApi.createCollectionRecord(collectionId, {
-			...input,
-			idempotency_key: options.idempotencyKey ?? newIdempotencyKey()
-		});
+		const result = await sendWithDriftRekey(
+			(key) => flowApi.createCollectionRecord(collectionId, { ...input, idempotency_key: key }),
+			options.idempotencyKey ?? newIdempotencyKey()
+		);
 		if (result.code !== 0 || !result.data) {
 			throw flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
 		}

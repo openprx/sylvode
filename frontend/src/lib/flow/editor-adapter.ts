@@ -17,6 +17,7 @@
 
 import type { EditorAdapterContract, EngineDiff, RelativeSelection } from './types';
 import { isRegisteredBlockType } from './renderer-registry';
+import { presenceInitials, type PresenceCursor, type RemotePresence } from './presence';
 // Type-only import: erased at compile time, so this does not pull `loro-prosemirror` into the
 // module graph -- only its exported *type* `LoroDocType` (the specific `{doc, data}` container
 // shape it expects) is used here, to type the doc reference the caller constructs at runtime via
@@ -43,6 +44,8 @@ export interface SlashMenuState {
 export interface EditorAdapterHooks {
 	onSlashMenu?(state: SlashMenuState): void;
 	onSelectionChange?(): void;
+	/** The local caret/selection as a presence cursor (`null` when it is not inside a block). */
+	onPresenceCursor?(cursor: PresenceCursor | null): void;
 }
 
 let modulesPromise: Promise<{
@@ -130,10 +133,169 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 	private view: import('prosemirror-view').EditorView | null = null;
 	private schema: InstanceType<PmModule['Schema']> | null = null;
 	private mods: Awaited<ReturnType<typeof loadEngineModules>> | null = null;
+	private editable = true;
+	private remotePeers: ReadonlyArray<RemotePresence> = [];
+	private presenceKey: import('prosemirror-state').PluginKey | null = null;
+	private lastCursorKey = '';
 
 	constructor(doc: LoroDocType, hooks: EditorAdapterHooks = {}) {
 		this.doc = doc;
 		this.hooks = hooks;
+	}
+
+	/**
+	 * Read-only mode (`view`/`comment` on the object, or write access revoked): the ProseMirror
+	 * view stops accepting input, so no local transaction -- and therefore no engine update -- can
+	 * be produced. Remote changes still render.
+	 */
+	setEditable(editable: boolean): void {
+		this.editable = editable;
+		this.view?.setProps({ editable: () => this.editable });
+	}
+
+	/**
+	 * Renders remote peers' carets/selections and a block-level avatar. Decorations only: nothing
+	 * here touches the document, so presence never enters the engine doc or the history, and it is
+	 * never a lock -- the block stays editable for everyone.
+	 */
+	setRemotePresence(peers: ReadonlyArray<RemotePresence>): void {
+		this.remotePeers = peers;
+		if (!this.view || !this.presenceKey) return;
+		this.view.dispatch(this.view.state.tr.setMeta(this.presenceKey, { peers }));
+	}
+
+	/** The position of the block whose Loro container id is `blockId`, or `null`. */
+	private blockPosById(
+		state: import('prosemirror-state').EditorState,
+		blockId: string
+	): { pos: number; size: number } | null {
+		if (!this.mods) return null;
+		const mapping = this.mods.loroPm.loroSyncPluginKey.getState(state)?.mapping;
+		const node = mapping?.get(blockId as import('loro-crdt').ContainerID);
+		if (!node || Array.isArray(node)) return null;
+		let found: { pos: number; size: number } | null = null;
+		state.doc.forEach((child, offset) => {
+			if (!found && child === node) found = { pos: offset, size: child.content.size };
+		});
+		return found;
+	}
+
+	/** The local selection as a presence cursor: the block's Loro container id and in-block
+	 * offsets. `null` when the selection spans blocks or the block is not mapped yet. */
+	private presenceCursor(state: import('prosemirror-state').EditorState): PresenceCursor | null {
+		if (!this.mods) return null;
+		const { $anchor, $head } = state.selection;
+		if ($anchor.depth < 1 || $head.depth < 1) return null;
+		const block = $head.node(1);
+		if ($anchor.node(1) !== block) {
+			return this.cursorFor(state, block, $head.parentOffset, $head.parentOffset);
+		}
+		return this.cursorFor(state, block, $anchor.parentOffset, $head.parentOffset);
+	}
+
+	private cursorFor(
+		state: import('prosemirror-state').EditorState,
+		block: import('prosemirror-model').Node,
+		anchor: number,
+		head: number
+	): PresenceCursor | null {
+		const mapping = this.mods?.loroPm.loroSyncPluginKey.getState(state)?.mapping;
+		if (!mapping) return null;
+		for (const [id, mapped] of mapping) {
+			if (mapped === block) return { blockId: id, anchor, head };
+		}
+		return null;
+	}
+
+	private reportPresence(state: import('prosemirror-state').EditorState): void {
+		if (!this.hooks.onPresenceCursor || !this.view) return;
+		const cursor = this.view.hasFocus() ? this.presenceCursor(state) : null;
+		const key = cursor ? `${cursor.blockId}:${cursor.anchor}:${cursor.head}` : '';
+		if (key === this.lastCursorKey) return;
+		this.lastCursorKey = key;
+		this.hooks.onPresenceCursor(cursor);
+	}
+
+	private buildPresencePlugin(
+		pmState: PmStateModule,
+		pmView: PmViewModule
+	): import('prosemirror-state').Plugin {
+		const key = new pmState.PluginKey('flowPresence');
+		this.presenceKey = key;
+		const decorate = (
+			state: import('prosemirror-state').EditorState,
+			peers: ReadonlyArray<RemotePresence>
+		) => {
+			const decorations: import('prosemirror-view').Decoration[] = [];
+			for (const peer of peers) {
+				if (!peer.cursor) continue;
+				const block = this.blockPosById(state, peer.cursor.blockId);
+				if (!block) continue;
+				const start = block.pos + 1;
+				const clamp = (offset: number) => start + Math.min(offset, block.size);
+				const anchor = clamp(peer.cursor.anchor);
+				const head = clamp(peer.cursor.head);
+				if (anchor !== head) {
+					decorations.push(
+						pmView.Decoration.inline(Math.min(anchor, head), Math.max(anchor, head), {
+							class: 'flow-presence-selection',
+							style: `background-color: ${peer.user.color}33`,
+							'data-presence-user': peer.user.userId
+						})
+					);
+				}
+				decorations.push(
+					pmView.Decoration.widget(
+						head,
+						() => {
+							const caret = document.createElement('span');
+							caret.className = 'flow-presence-caret';
+							caret.setAttribute('data-testid', 'flow-presence-caret');
+							caret.setAttribute('data-presence-user', peer.user.userId);
+							// The name is rendered by CSS from this attribute, so it never becomes
+							// part of the document's text (copy, find, text assertions). The peer
+							// list next to the canvas carries the same names for screen readers.
+							caret.setAttribute('data-presence-name', peer.user.name);
+							caret.setAttribute('aria-hidden', 'true');
+							caret.style.borderColor = peer.user.color;
+							caret.style.setProperty('--flow-presence-color', peer.user.color);
+							return caret;
+						},
+						{ key: `caret-${peer.sessionId}-${head}-${peer.user.name}`, side: 1 }
+					),
+					pmView.Decoration.widget(
+						start,
+						() => {
+							const avatar = document.createElement('span');
+							avatar.className = 'flow-presence-avatar';
+							avatar.setAttribute('data-testid', 'flow-presence-avatar');
+							avatar.setAttribute('aria-hidden', 'true');
+							avatar.style.backgroundColor = peer.user.color;
+							avatar.title = peer.user.name;
+							avatar.setAttribute('data-initials', presenceInitials(peer.user.name));
+							return avatar;
+						},
+						{ key: `avatar-${peer.sessionId}-${block.pos}`, side: -1 }
+					)
+				);
+			}
+			return pmView.DecorationSet.create(state.doc, decorations);
+		};
+		return new pmState.Plugin({
+			key,
+			state: {
+				init: (_config, state) => decorate(state, this.remotePeers),
+				apply: (tr, previous, _old, newState) => {
+					const meta = tr.getMeta(key) as { peers: ReadonlyArray<RemotePresence> } | undefined;
+					if (meta) return decorate(newState, meta.peers);
+					// Remote/local content changes move blocks: recompute from the same peers.
+					return tr.docChanged ? decorate(newState, this.remotePeers) : previous.map(tr.mapping, tr.doc);
+				}
+			},
+			props: {
+				decorations: (state) => key.getState(state)
+			}
+		});
 	}
 
 	async mount(host: HTMLElement, _blockId: string): Promise<void> {
@@ -170,6 +332,7 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 			plugins: [
 				loroPm.LoroSyncPlugin({ doc: this.doc }),
 				loroPm.LoroUndoPlugin({ doc: this.doc }),
+				this.buildPresencePlugin(pmState, pmView),
 				customKeymap,
 				baseKeymapPlugin
 			]
@@ -177,6 +340,7 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 
 		this.view = new pmView.EditorView(host, {
 			state,
+			editable: () => this.editable,
 			dispatchTransaction: (tr) => {
 				if (!this.view) return;
 				// Focus fallback (`contracts/ui-surface-v1.md` a11y baseline: "focus 不因 remote
@@ -196,12 +360,21 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 				}
 				this.detectSlashMenu(newState);
 				this.hooks.onSelectionChange?.();
+				this.reportPresence(newState);
 			}
+		});
+		host.addEventListener('focusout', () => {
+			if (this.view) this.reportPresence(this.view.state);
 		});
 	}
 
 	private detectSlashMenu(state: import('prosemirror-state').EditorState): void {
 		if (!this.hooks.onSlashMenu || !this.view) return;
+		// Read-only: no slash menu, nothing can be inserted.
+		if (!this.editable) {
+			this.hooks.onSlashMenu({ active: false, query: '', coords: null });
+			return;
+		}
 		// IME guard (`contracts/ui-surface-v1.md` a11y/interaction baseline, task brief item 8):
 		// while an IME composition is in progress (e.g. typing Chinese/Japanese pinyin/kana before
 		// it resolves to committed characters), the intermediate, not-yet-committed text must never

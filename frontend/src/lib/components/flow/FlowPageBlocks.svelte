@@ -39,9 +39,11 @@
 		doc: LoroDocType;
 		workspaceId: string;
 		objectId: string;
+		/** Read-only canvas: no slash-bridge dialog and no reference removal. */
+		readOnly?: boolean;
 	}
 
-	let { doc, workspaceId, objectId }: Props = $props();
+	let { doc, workspaceId, objectId, readOnly = false }: Props = $props();
 
 	const repository = getContext<FlowObjectRepository>(FLOW_REPOSITORY_CONTEXT);
 	const commands = new FlowCommandService();
@@ -108,6 +110,7 @@
 
 	/** Entry point for the slash menu. */
 	export function open(action: SlashBridgeAction): void {
+		if (readOnly) return;
 		if (action === 'collection') {
 			collectionTitle = get(t)('flow.canvas.slashMenu.collectionDefaultTitle');
 			collectionInvalid = null;
@@ -190,6 +193,7 @@
 	}
 
 	function askRemove(referenceId: string): void {
+		if (readOnly) return;
 		removingId = referenceId;
 		removeFailure = null;
 	}

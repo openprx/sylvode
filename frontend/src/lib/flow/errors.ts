@@ -59,6 +59,73 @@ export type ServerDrainingReason = (typeof SERVER_DRAINING_REASONS)[number];
  * code at all -- that is the whole point of the distinction. */
 export const DRAIN_CLOSE_CODE = 4410;
 
+/** `error-mapping-v1.md`'s `server_rejected` row: "保持连接；**连续 3 次**关闭 4500". The server
+ * closes with it (`apps/api/src/flow/collab/session.rs::SERVER_REJECTED_CLOSE_CODE`) and this client
+ * closes with it too when its own count of consecutive refusals reaches the same threshold. */
+export const SERVER_REJECTED_CLOSE_CODE = 4500;
+
+/** The frozen "连续 3 次" threshold shared by the client and the server. */
+export const SERVER_REJECTED_STREAK_LIMIT = 3;
+
+/** `invalid_update.details.reason` values this client branches on (`error-mapping-v1.md`'s
+ * approved table). Any other value -- or none -- is the plain `invalid_update`. */
+export const INVALID_UPDATE_REASONS = [
+	'subtree_spans_multiple_projects',
+	'child_project_must_match_parent',
+	'project_unmapped',
+	'idempotency_key_body_drift',
+	'invalid_field_value'
+] as const;
+export type InvalidUpdateReason = (typeof INVALID_UPDATE_REASONS)[number];
+
+/** What the caller must do for one named `invalid_update` reason (the table's "调用方该做什么"
+ * column). `integrity_repair` is the defensive reason: stop ordinary writes and hand over to the
+ * workspace administrator's integrity tools. */
+export type InvalidUpdateAction =
+	| 'integrity_repair'
+	| 'change_project'
+	| 'remap_project'
+	| 'rekey_and_resend'
+	| 'fix_field_value';
+
+export interface InvalidUpdateDisposition {
+	readonly reason: InvalidUpdateReason;
+	readonly action: InvalidUpdateAction;
+	readonly i18nKey: string;
+}
+
+const INVALID_UPDATE_ACTIONS: Readonly<Record<InvalidUpdateReason, InvalidUpdateAction>> = {
+	subtree_spans_multiple_projects: 'integrity_repair',
+	child_project_must_match_parent: 'change_project',
+	project_unmapped: 'remap_project',
+	idempotency_key_body_drift: 'rekey_and_resend',
+	invalid_field_value: 'fix_field_value'
+};
+
+/**
+ * The disposition for an `invalid_update` that carries one of the approved `details.reason`
+ * values, or `null` for any other error, an absent reason, or a reason this client does not know.
+ *
+ * `error-mapping-v1.md`: "consumer 不得因为不认识某个 `reason` 就改变错误分类——未知 reason 一律按
+ * 无 reason 的 `invalid_update` 处理（`recoverable=false`），**不得用 message 补判**". So `null` means
+ * "the unified fallback", never a guess.
+ */
+export function invalidUpdateDisposition(
+	error: Pick<FlowError, 'code' | 'details'>
+): InvalidUpdateDisposition | null {
+	if (error.code !== 'invalid_update') return null;
+	if (typeof error.details !== 'object' || error.details === null) return null;
+	const reason = (error.details as { reason?: unknown }).reason;
+	if (typeof reason !== 'string') return null;
+	if (!(INVALID_UPDATE_REASONS as readonly string[]).includes(reason)) return null;
+	const known = reason as InvalidUpdateReason;
+	return {
+		reason: known,
+		action: INVALID_UPDATE_ACTIONS[known],
+		i18nKey: `flow.error.invalid_update_reason.${known}`
+	};
+}
+
 function isFlowErrorCode(value: unknown): value is FlowErrorCode {
 	return typeof value === 'string' && (FLOW_ERROR_CODES as readonly string[]).includes(value);
 }
@@ -169,6 +236,15 @@ export function flowErrorI18nKey(error: Pick<FlowError, 'code' | 'details'>): st
 	return `flow.error.${error.code}`;
 }
 
+/**
+ * `flowErrorI18nKey`, refined by a named `invalid_update.details.reason` where the surface acts on
+ * it (the object page banner, the navigator's create, the recovery draft). An unknown or absent
+ * reason falls back to the stable code's key -- the unified fallback, never a message-based guess.
+ */
+export function flowErrorDetailKey(error: Pick<FlowError, 'code' | 'details'>): string {
+	return invalidUpdateDisposition(error)?.i18nKey ?? flowErrorI18nKey(error);
+}
+
 /** The REST envelope's error-carrying fields (`apps/api/src/error.rs`: `ApiResponse` gains
  * `error_code` + `details` for `ApiError::Typed`; transport status stays HTTP 200 and the
  * envelope `code` is the business code). */
@@ -225,6 +301,10 @@ export function flowErrorFromCloseCode(closeCode: number, closeReason: string): 
 			return { code: 'feature_disabled', recoverable: false, origin: 'server' };
 		case 4406:
 			return { code: 'unsupported_protocol', recoverable: false, origin: 'server' };
+		case SERVER_REJECTED_CLOSE_CODE:
+			// Three consecutive permanent refusals: the session is given up for good, so this is
+			// `server_rejected` (recoverable=false), never a reconnect trigger.
+			return { code: 'server_rejected', recoverable: false, origin: 'server' };
 		case DRAIN_CLOSE_CODE:
 			return {
 				code: 'server_draining',

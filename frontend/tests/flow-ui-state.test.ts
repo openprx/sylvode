@@ -741,7 +741,10 @@ await suite.checkAsync(
 await suite.checkAsync('frozen close codes map onto their frozen states', async () => {
 	const cases: Array<[number, SyncState, string]> = [
 		[4401, 'auth_required', 'unauthenticated'],
-		[4403, 'error', 'forbidden'],
+		// `error-mapping-v1.md` `forbidden` UI column: "转只读/返回安全页". A 4403 on a live
+		// connection is a revocation: read-only, the recovery draft keeps pending edits, and no
+		// automatic reconnect (FP2-M6; this row expected `error` before read-only mode existed).
+		[4403, 'read_only', 'forbidden'],
 		[4404, 'error', 'feature_disabled'],
 		[4406, 'error', 'unsupported_protocol']
 	];
@@ -754,7 +757,7 @@ await suite.checkAsync('frozen close codes map onto their frozen states', async 
 				`close ${code} -> ${expectedState}`
 			);
 			assertEqual(harness.states.at(-1), expectedState, `close ${code} state`);
-			if (expectedState === 'error') {
+			if (expectedState === 'error' || expectedState === 'read_only') {
 				assertEqual(harness.errors.at(-1)?.code, expectedCode, `close ${code} code`);
 			}
 			assertEqual(

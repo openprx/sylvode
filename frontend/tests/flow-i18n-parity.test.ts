@@ -22,9 +22,11 @@ import { join, relative } from 'node:path';
 import { Suite, assert, assertNotEqual, finish } from './support/harness';
 import {
 	FLOW_ERROR_CODES,
+	INVALID_UPDATE_REASONS,
 	PACKAGE_ROUND_TRIP_ERROR_CODES,
 	SERVER_DRAINING_REASONS
 } from '../src/lib/flow/errors';
+import { RECOVERY_SOURCE_KEYS } from '../src/lib/flow/recovery-draft';
 import type { SyncState } from '../src/lib/flow/types';
 
 const ROOT = new URL('..', import.meta.url).pathname;
@@ -70,7 +72,8 @@ const LATER_VERSION_NAMESPACES: readonly string[] = [];
  * (`settings/flow/operations`); `flow.panel.*` and `flow.share.*` (v0.5/v0.8) are the object
  * page's right panel (tabs, object export) and its Share panel; `flow.lag.*` (v0.5) is the
  * navigator's projection-lag badge; `flow.collection.*` and `flow.record.*` (v0.6) are the
- * Collection table/board/schema renderers and the record panel. */
+ * Collection table/board/schema renderers and the record panel; `flow.presence.*` (v0.5) is the
+ * canvas's remote-peer list. */
 const DELIVERED_LATER_NAMESPACES = [
 	'flow.bridge',
 	'flow.operations',
@@ -78,7 +81,8 @@ const DELIVERED_LATER_NAMESPACES = [
 	'flow.share',
 	'flow.lag',
 	'flow.collection',
-	'flow.record'
+	'flow.record',
+	'flow.presence'
 ] as const;
 
 type Json = { [key: string]: Json } | string | number | boolean | null;
@@ -285,6 +289,33 @@ suite.check('the two server_draining reasons read differently in each locale', (
 			contention,
 			`${locale}.json gives both server_draining reasons identical copy`
 		);
+	}
+});
+
+suite.check('every named invalid_update reason the client consumes has a zh and en key', () => {
+	// `error-mapping-v1.md`'s approved `invalid_update.details.reason` table; `errors.ts`
+	// `invalidUpdateDisposition` selects `flow.error.invalid_update_reason.<reason>`.
+	for (const reason of INVALID_UPDATE_REASONS) {
+		for (const locale of LOCALES) {
+			assert(
+				value(locale, `flow.error.invalid_update_reason.${reason}`) !== undefined,
+				`${locale}.json is missing flow.error.invalid_update_reason.${reason}`
+			);
+		}
+	}
+});
+
+suite.check('every recovery draft reason source and intent kind has a zh and en key', () => {
+	const keys = [
+		...Object.values(RECOVERY_SOURCE_KEYS),
+		'flow.recovery.intent.content_edit',
+		'flow.recovery.intent.navigator_reorder',
+		'flow.sync.pending'
+	];
+	for (const key of keys) {
+		for (const locale of LOCALES) {
+			assert(value(locale, key) !== undefined, `${locale}.json is missing ${key}`);
+		}
 	}
 });
 
