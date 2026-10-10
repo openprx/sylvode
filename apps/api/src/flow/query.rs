@@ -306,7 +306,10 @@ pub async fn get_object(
     }
 
     let mut view = object_view_from_row(row);
-    if render == Render::Markdown {
+    // `rest-api-v1.md` v0.6 / `ADR-0018` NR-7: the same redaction the records query applies, for
+    // both renders (the Markdown rendering is derived from the same semantic content).
+    super::collections::redact_secret_record_views(&state.db, std::slice::from_mut(&mut view)).await?;
+    if render == Render::Markdown && view.semantic_content != super::collections::redacted_semantic_content() {
         let snapshot: SemanticSnapshot =
             serde_json::from_value(view.semantic_content.clone()).map_err(|_| ApiError::internal())?;
         view.semantic_content = json!({ "rendered": projection::render_markdown(&view.title, &snapshot) });
@@ -471,10 +474,9 @@ pub async fn list_objects(
         None
     };
 
-    Ok(Some(FlowObjectListResponse {
-        items: rows.into_iter().map(object_view_from_row).collect(),
-        next_cursor,
-    }))
+    let mut items = rows.into_iter().map(object_view_from_row).collect::<Vec<_>>();
+    super::collections::redact_secret_record_views(&state.db, &mut items).await?;
+    Ok(Some(FlowObjectListResponse { items, next_cursor }))
 }
 
 fn navigator_positions(state: serde_json::Value) -> Result<std::collections::HashMap<Uuid, String>, ApiError> {
@@ -743,18 +745,29 @@ pub async fn get_object_diff(
     let to_title = result.to_title;
     let to_snapshot = result.to_snapshot;
 
-    let rendered = (render == Render::Markdown).then(|| projection::render_markdown(&to_title, &to_snapshot));
-    let title_diff = (from_title != to_title).then(|| json!({ "before": from_title, "after": to_title }));
+    // A secret Record's diff carries its semantic content too: redacted the same way as every
+    // other representation of it (`rest-api-v1.md` v0.6, `ADR-0018` NR-7).
+    let redacted = !super::collections::secret_record_ids(&state.db, &[object_id])
+        .await?
+        .is_empty();
+    let rendered =
+        (render == Render::Markdown && !redacted).then(|| projection::render_markdown(&to_title, &to_snapshot));
+    let semantic_diff = if redacted {
+        super::collections::redacted_semantic_content()
+    } else {
+        let title_diff = (from_title != to_title).then(|| json!({ "before": from_title, "after": to_title }));
+        json!({
+            "title": title_diff,
+            "nodes": result.semantic_diff,
+        })
+    };
     let response = ObjectDiffResponse {
         object_id,
         from_seq,
         to_seq,
         from_frontier: base64::engine::general_purpose::STANDARD.encode(from_frontier.as_bytes()),
         to_frontier: base64::engine::general_purpose::STANDARD.encode(to_frontier.as_bytes()),
-        semantic_diff: json!({
-            "title": title_diff,
-            "nodes": result.semantic_diff,
-        }),
+        semantic_diff,
         rendered,
     };
     if !policy::ensure_epoch_current(state, access.context()).await? {

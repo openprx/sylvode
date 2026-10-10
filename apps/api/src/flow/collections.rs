@@ -1992,6 +1992,79 @@ async fn collection_views<C: ConnectionTrait>(
     .await?)
 }
 
+/// The Records among `record_ids` whose semantic representation must be redacted.
+///
+/// Those are Records whose owning Collection has `field_secrecy_enabled`; a Record whose
+/// Collection projection cannot be found is treated as secret (fail closed). Ids that are not
+/// Records are never returned.
+///
+/// `rest-api-v1.md` v0.6 (Record 读取的脱敏是同口径的) and `ADR-0018` NR-7: every
+/// representation of one Record read applies the same `restricted` decision, and the records query
+/// replaces `semantic_content` with `{}` under field secrecy. This is the single decision every
+/// other representation (single-object read, object list, diff, write responses) reuses.
+pub async fn secret_record_ids<C: ConnectionTrait>(conn: &C, record_ids: &[Uuid]) -> Result<BTreeSet<Uuid>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        id: Uuid,
+    }
+    if record_ids.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT fo.id FROM flow_objects fo \
+         LEFT JOIN flow_record_projections rp ON rp.record_id = fo.id \
+         LEFT JOIN flow_collection_projections cp ON cp.collection_id = rp.collection_id \
+         WHERE fo.id = ANY($1) AND fo.object_type = 'record' AND cp.field_secrecy_enabled IS NOT FALSE",
+        vec![record_ids.to_vec().into()],
+    ))
+    .all(conn)
+    .await?;
+    Ok(rows.into_iter().map(|row| row.id).collect())
+}
+
+/// The redacted form of a secret Record's `semantic_content`, identical to the records query's.
+#[must_use]
+pub fn redacted_semantic_content() -> Value {
+    json!({})
+}
+
+/// Applies [`secret_record_ids`] to object views in place.
+pub async fn redact_secret_record_views<C: ConnectionTrait>(
+    conn: &C,
+    views: &mut [super::model::FlowObjectView],
+) -> Result<(), ApiError> {
+    let record_ids = views
+        .iter()
+        .filter(|view| view.object_type == "record")
+        .map(|view| view.id)
+        .collect::<Vec<_>>();
+    let secret = secret_record_ids(conn, &record_ids).await?;
+    for view in views.iter_mut().filter(|view| secret.contains(&view.id)) {
+        view.semantic_content = redacted_semantic_content();
+    }
+    Ok(())
+}
+
+/// Applies [`secret_record_ids`] to a command response: both the object view and the
+/// `semantic_diff` (which carries the same semantic content).
+async fn redact_secret_record_change<C: ConnectionTrait>(
+    conn: &C,
+    change: &mut AcceptedChange,
+) -> Result<(), ApiError> {
+    if change.object.object_type != "record" {
+        return Ok(());
+    }
+    if secret_record_ids(conn, &[change.object.id])
+        .await?
+        .contains(&change.object.id)
+    {
+        change.object.semantic_content = redacted_semantic_content();
+        change.semantic_diff = redacted_semantic_content();
+    }
+    Ok(())
+}
+
 fn field_is_restricted(field: &CollectionFieldView) -> bool {
     match field.config.get("restricted") {
         None | Some(Value::Bool(false)) => false,
@@ -2280,7 +2353,7 @@ async fn query_collection_records_inner(
         projection_seq = projection_seq.max(candidate.document_seq);
         let mut record = query::object_view_from_row(object_row);
         if collection.field_secrecy_enabled {
-            record.semantic_content = json!({});
+            record.semantic_content = redacted_semantic_content();
         }
         items.push(RecordQueryItem {
             record,
@@ -2743,6 +2816,19 @@ async fn replay_existing_command(
 }
 
 pub async fn execute(
+    state: &AppState,
+    input: &ExecuteCommandInput,
+    workspace_id: Uuid,
+    checked_epoch: i64,
+    kind: CollectionCommandType,
+    target: &repository::ObjectViewRow,
+) -> Result<AcceptedChange, ApiError> {
+    let mut change = execute_unredacted(state, input, workspace_id, checked_epoch, kind, target).await?;
+    redact_secret_record_change(&state.db, &mut change).await?;
+    Ok(change)
+}
+
+async fn execute_unredacted(
     state: &AppState,
     input: &ExecuteCommandInput,
     workspace_id: Uuid,
@@ -4763,6 +4849,206 @@ mod database_tests {
             BTreeSet::from([(view_a, "Grid renamed"), (view_b, "Board")])
         );
         assert_eq!(described.schema_seq, 8);
+        scratch.drop_self().await;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // FP2-B6
+    // ---------------------------------------------------------------------------------------------
+
+    async fn fp2_b6_member(state: &AppState, workspace_id: Uuid) -> Uuid {
+        let member_id = Uuid::new_v4();
+        exec(
+            &state.db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active) \
+             VALUES ($1, $2, '!', 'member', 'user', true)",
+            vec![member_id.into(), format!("{member_id}@collection.test").into()],
+        )
+        .await;
+        exec(
+            &state.db,
+            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'member')",
+            vec![workspace_id.into(), member_id.into()],
+        )
+        .await;
+        member_id
+    }
+
+    /// FP2-B6 (P0, `ADR-0018` NR-7): under `field_secrecy_enabled` the single-object read of a
+    /// Record (`GET /flow/objects/{record_id}`, both renders) and its diff must apply the same
+    /// redaction the records query applies to `semantic_content`, for every reader. A Record of a
+    /// Collection without restricted fields keeps its full semantic content.
+    #[tokio::test]
+    async fn fp2_b6_single_record_read_redacts_semantic_content_like_the_records_query() {
+        let scratch = scratch_or_skip!("fp2_b6_record_redaction");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed(&state).await;
+        let member_id = fp2_b6_member(&state, workspace_id).await;
+        let collection_id = create_object_for(&state, workspace_id, owner_id, "collection", "Restricted reads").await;
+        let secret_field = Uuid::new_v4();
+        let open_field = Uuid::new_v4();
+        for (field_id, label, field_type, config) in [
+            (secret_field, "Salary", "number", json!({"restricted": true})),
+            (open_field, "Name", "text", json!({})),
+        ] {
+            command(
+                &state,
+                owner_id,
+                collection_id,
+                "field_create",
+                json!({"field_id": field_id, "label": label, "field_type": field_type, "config": config}),
+                Uuid::new_v4().to_string(),
+            )
+            .await
+            .expect("field creates");
+        }
+        let record = command(
+            &state,
+            owner_id,
+            collection_id,
+            "record_create",
+            json!({
+                "properties": {secret_field.to_string(): 731_001, open_field.to_string(): "OPEN-NAME-731"},
+                "body": "PRIVATE-BODY-731"
+            }),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("record creates")
+        .object;
+        let patched = command(
+            &state,
+            owner_id,
+            collection_id,
+            "record_patch",
+            json!({"record_id": record.id, "properties": {secret_field.to_string(): 731_002}}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("record patches");
+        let patched_text = serde_json::to_string(&patched).expect("write response serializes");
+        for secret in ["731001", "731002", "PRIVATE-BODY-731"] {
+            assert!(
+                !patched_text.contains(secret),
+                "the record_patch response leaked {secret} under field secrecy: {patched_text}"
+            );
+        }
+        let claims = JwtClaims {
+            sub: member_id.to_string(),
+            email: format!("{member_id}@collection.test"),
+            token_type: TokenType::Access,
+            iat: 0,
+            exp: usize::MAX,
+        };
+        let mut extensions = axum::http::Extensions::new();
+        extensions.insert(claims);
+        let list_access = policy::begin_flow_read(&state, &extensions, workspace_id)
+            .await
+            .expect("list authorization runs");
+        let listed = crate::flow::query::list_objects(
+            &state,
+            &list_access,
+            crate::flow::query::ListObjectsParams {
+                workspace_id,
+                project_id: None,
+                unprojected: false,
+                object_type: Some("record".to_string()),
+                parent_id: None,
+                q: None,
+                cursor: None,
+                limit: None,
+                include_archived: false,
+            },
+        )
+        .await
+        .expect("object list runs")
+        .expect("authorization epoch is stable");
+        assert!(
+            listed.items.iter().any(|item| item.id == record.id),
+            "the record is listed"
+        );
+        let listed_text = serde_json::to_string(&listed).expect("list serializes");
+        for secret in ["731001", "731002", "PRIVATE-BODY-731", "OPEN-NAME-731"] {
+            assert!(
+                !listed_text.contains(secret),
+                "the object list leaked {secret}: {listed_text}"
+            );
+        }
+        let head = repository::fetch_object_view(&state.db, record.id)
+            .await
+            .expect("record reads")
+            .expect("record exists")
+            .document_seq;
+        assert!(head >= 1, "the patch must have advanced the record document");
+        for reader in [owner_id, member_id] {
+            let access = read_access(&state, workspace_id, reader, record.id).await;
+            for render in [
+                crate::flow::query::Render::SemanticJson,
+                crate::flow::query::Render::Markdown,
+            ] {
+                let view = crate::flow::query::get_object(&state, &access, None, render)
+                    .await
+                    .expect("record object read runs")
+                    .expect("authorization epoch is stable");
+                let text = serde_json::to_string(&view).expect("object view serializes");
+                for secret in ["731001", "731002", "PRIVATE-BODY-731", "OPEN-NAME-731"] {
+                    assert!(
+                        !text.contains(secret),
+                        "single-record read leaked {secret} under field secrecy ({render:?}): {text}"
+                    );
+                }
+                assert_eq!(
+                    view.semantic_content,
+                    json!({}),
+                    "same redaction as the records query ({render:?})"
+                );
+            }
+            let diff =
+                crate::flow::query::get_object_diff(&state, &access, 0, head, crate::flow::query::Render::Markdown)
+                    .await
+                    .expect("record diff runs")
+                    .expect("authorization epoch is stable");
+            let text = serde_json::to_string(&diff).expect("diff serializes");
+            for secret in ["731001", "731002", "PRIVATE-BODY-731", "OPEN-NAME-731"] {
+                assert!(
+                    !text.contains(secret),
+                    "record diff leaked {secret} under field secrecy: {text}"
+                );
+            }
+        }
+
+        // Control: a Collection with no restricted field keeps the full semantic content.
+        let plain_collection = create_object_for(&state, workspace_id, owner_id, "collection", "Plain reads").await;
+        let plain_field = Uuid::new_v4();
+        command(
+            &state,
+            owner_id,
+            plain_collection,
+            "field_create",
+            json!({"field_id": plain_field, "label": "Name", "field_type": "text"}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("plain field creates");
+        let plain_record = command(
+            &state,
+            owner_id,
+            plain_collection,
+            "record_create",
+            json!({"properties": {plain_field.to_string(): "PLAIN-VALUE-731"}, "body": "PLAIN-BODY-731"}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("plain record creates")
+        .object;
+        let plain_access = read_access(&state, workspace_id, member_id, plain_record.id).await;
+        let plain_view =
+            crate::flow::query::get_object(&state, &plain_access, None, crate::flow::query::Render::SemanticJson)
+                .await
+                .expect("plain record read runs")
+                .expect("authorization epoch is stable");
+        let plain_text = serde_json::to_string(&plain_view.semantic_content).expect("serializes");
+        assert!(plain_text.contains("PLAIN-VALUE-731") && plain_text.contains("PLAIN-BODY-731"));
         scratch.drop_self().await;
     }
 }
