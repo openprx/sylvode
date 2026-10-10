@@ -2470,7 +2470,30 @@
     "titlePlaceholder": "Untitled",
     "relations": {
       "title": "Relations",
-      "comingSoon": "Relations are not available in this version yet."
+      "comingSoon": "Relations are not available in this version yet.",
+      "direction": {
+        "label": "Direction",
+        "both": "All directions",
+        "outgoing": "Outgoing",
+        "incoming": "Incoming"
+      },
+      "type": {
+        "label": "Type",
+        "all": "All types"
+      },
+      "loading": "Loading relations…",
+      "empty": "No relations.",
+      "loadMore": "Load more",
+      "unavailable": "A related item you cannot access",
+      "row": {
+        "outgoing": "Links to",
+        "incoming": "Linked from"
+      },
+      "retry": "Try again",
+      "error": {
+        "integrity": "Relations could not be verified, so none are shown.",
+        "unavailable": "Relations could not be loaded."
+      }
     },
     "search": {
       "title": "Search",
