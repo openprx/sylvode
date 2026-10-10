@@ -118,6 +118,32 @@ pub const FLOW_EVENT_PAYLOAD_POLICIES: &[(&str, EventPayloadPolicy)] = &[
             "after_hash",
         ]),
     ),
+    // `events-v1.md` `flow.compaction.previewed` / `flow.repair.previewed`: audit-only dry-run
+    // summaries (never dispatched; declared so the producer scan and delivery redactor agree).
+    (
+        "flow.compaction.previewed",
+        public_payload(&[
+            "operation_id",
+            "document_id",
+            "head_seq",
+            "boundary_seq",
+            "estimated_bytes",
+            "would_compact",
+        ]),
+    ),
+    (
+        "flow.repair.previewed",
+        public_payload(&[
+            "operation_id",
+            "kind",
+            "scope_kind",
+            "scope_id",
+            "head_seq",
+            "before_hash",
+            "after_hash",
+            "semantic_hash",
+        ]),
+    ),
     // `events-v1.md` `flow.compaction.completed`: "document id、old/new boundary、before/after
     // checksum". Checksums are SHA-256 digests of snapshot bytes, never the bytes themselves.
     (

@@ -1082,6 +1082,7 @@ pub async fn post_flow_verify_document(
                 is_bot,
             },
             &req.idempotency_key,
+            &request_origin(&extensions),
         )
         .await?,
     ))
@@ -11984,7 +11985,7 @@ mod flow_database_tests {
     }
 
     /// FP2-B3 N3-②: `OperationReceipt` carries the contract's full shape, and an execute's
-    /// `audit_event_id` is a real `business_events` row while a dry-run's is `null`.
+    /// `audit_event_id` is a real `business_events` row.
     #[tokio::test]
     async fn fp2_b3_operation_receipt_full_shape_and_execute_audit_event_id() {
         async fn audit_row(state: &AppState, event_id: &str) -> Option<(String, Value)> {
@@ -12068,8 +12069,8 @@ mod flow_database_tests {
         let dry = body_json(to_response(compact(true, "fp2-b3-compact-dry").await)).await;
         assert_full_shape(&dry, "dry_run");
         assert!(
-            dry["data"]["audit_event_id"].is_null(),
-            "dry-run audit_event_id must be null: {dry}"
+            dry["data"]["audit_event_id"].is_string(),
+            "dry-run audit_event_id is its preview event: {dry}"
         );
         assert_eq!(dry["data"]["scope"]["document_id"], document_id.to_string());
         assert_eq!(dry["data"]["observed_head_seq"], head);
@@ -12134,7 +12135,7 @@ mod flow_database_tests {
         };
         let rebuild_dry = body_json(to_response(rebuild(true, "fp2-b3-rebuild-dry").await)).await;
         assert_full_shape(&rebuild_dry, "dry_run");
-        assert!(rebuild_dry["data"]["audit_event_id"].is_null(), "{rebuild_dry}");
+        assert!(rebuild_dry["data"]["audit_event_id"].is_string(), "{rebuild_dry}");
         let rebuild_exec = body_json(to_response(rebuild(false, "fp2-b3-rebuild-exec").await)).await;
         assert_full_shape(&rebuild_exec, "execute");
         let change = &rebuild_exec["data"]["changes"][0];
@@ -12151,6 +12152,205 @@ mod flow_database_tests {
         assert_eq!(event_type, "flow.repair.completed");
         assert_eq!(payload["kind"], "rebuild_projection");
         assert_eq!(payload["after_hash"], rebuild_exec["data"]["result"]["after_hash"]);
+        scratch.drop_self().await;
+    }
+
+    /// FP2-B3 ruling 1 (`events-v1.md`): every dry-run writes one `delivery_class=audit_only`
+    /// preview event (no `event_dispatch` row) whose id is the receipt's `audit_event_id`; an
+    /// execute writes exactly one business `completed` event plus one dispatch row; a same-key
+    /// replay writes nothing.
+    #[tokio::test]
+    async fn fp2_b3_dry_runs_write_audit_only_events_and_executes_dispatch_once() {
+        async fn count(state: &AppState, sql: &str, workspace_id: Uuid) -> i64 {
+            state
+                .db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    sql,
+                    vec![workspace_id.into()],
+                ))
+                .await
+                .expect("count runs")
+                .expect("count row")
+                .try_get("", "n")
+                .expect("count reads")
+        }
+        async fn totals(state: &AppState, workspace_id: Uuid) -> (i64, i64) {
+            (
+                count(
+                    state,
+                    "SELECT count(*) AS n FROM business_events WHERE workspace_id = $1",
+                    workspace_id,
+                )
+                .await,
+                count(
+                    state,
+                    "SELECT count(*) AS n FROM event_dispatch WHERE workspace_id = $1",
+                    workspace_id,
+                )
+                .await,
+            )
+        }
+        async fn event_of(state: &AppState, receipt: &Value) -> (String, Value, i64) {
+            let id = Uuid::parse_str(
+                receipt["data"]["audit_event_id"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("audit_event_id must be set: {receipt}")),
+            )
+            .expect("audit_event_id is a uuid");
+            let row = state
+                .db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT be.event_type, be.payload, \
+                            (SELECT count(*) FROM event_dispatch ed WHERE ed.event_id = be.id) AS n \
+                       FROM business_events be WHERE be.id = $1",
+                    vec![id.into()],
+                ))
+                .await
+                .expect("event lookup runs")
+                .unwrap_or_else(|| panic!("audit_event_id {id} is not a business_events row"));
+            (
+                row.try_get("", "event_type").expect("event_type reads"),
+                row.try_get("", "payload").expect("payload reads"),
+                row.try_get("", "n").expect("dispatch count reads"),
+            )
+        }
+
+        let scratch = scratch_or_skip!("fp2-b3-audit-classes");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "fp2 b3 audit").await;
+        let document_id = document_of(&state, object_id).await;
+        let head = crate::flow::collab::bootstrap::load(&state.db, document_id)
+            .await
+            .expect("bootstrap loads")
+            .head_seq;
+        let compact = |dry_run: bool, key: &'static str| {
+            post_flow_compact_document(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(document_id),
+                Json(CompactDocumentRequest {
+                    dry_run,
+                    expected_head_seq: Some(head),
+                    retain_after_seq: None,
+                    confirm_document_id: (!dry_run).then_some(document_id),
+                    idempotency_key: key.to_string(),
+                }),
+            )
+        };
+        let rebuild = |dry_run: bool, key: &'static str| {
+            post_flow_rebuild_projection(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(object_id),
+                Json(RebuildProjectionRequest {
+                    dry_run,
+                    expected_head_seq: Some(head),
+                    confirm_object_id: (!dry_run).then_some(object_id),
+                    idempotency_key: key.to_string(),
+                }),
+            )
+        };
+
+        // compact dry-run: one audit-only previewed row, no dispatch.
+        let (events, dispatch) = totals(&state, workspace_id).await;
+        let dry = body_json(to_response(compact(true, "fp2-b3-ac-compact-dry").await)).await;
+        assert_eq!(dry["code"], 0, "{dry}");
+        let (event_type, payload, own_dispatch) = event_of(&state, &dry).await;
+        assert_eq!(event_type, "flow.compaction.previewed");
+        assert_eq!(own_dispatch, 0, "a preview is audit_only");
+        assert_eq!(payload["operation_id"], dry["data"]["operation_id"], "{payload}");
+        assert_eq!(payload["head_seq"], head, "{payload}");
+        assert_eq!(
+            totals(&state, workspace_id).await,
+            (events + 1, dispatch),
+            "dry-run: +1 event, +0 dispatch"
+        );
+        let dry_replay = body_json(to_response(compact(true, "fp2-b3-ac-compact-dry").await)).await;
+        assert_eq!(dry_replay["data"]["audit_event_id"], dry["data"]["audit_event_id"]);
+        assert_eq!(
+            totals(&state, workspace_id).await,
+            (events + 1, dispatch),
+            "dry-run replay adds nothing"
+        );
+
+        // compact execute: one business completed row with exactly one dispatch row.
+        let executed = body_json(to_response(compact(false, "fp2-b3-ac-compact-exec").await)).await;
+        assert_eq!(executed["code"], 0, "{executed}");
+        let (event_type, _, own_dispatch) = event_of(&state, &executed).await;
+        assert_eq!(event_type, "flow.compaction.completed");
+        assert_eq!(own_dispatch, 1, "an execute is business: exactly one dispatch row");
+        assert_eq!(
+            totals(&state, workspace_id).await,
+            (events + 2, dispatch + 1),
+            "execute: +1 event, +1 dispatch"
+        );
+        let completed_rows = count(
+            &state,
+            "SELECT count(*) AS n FROM business_events WHERE workspace_id = $1 AND event_type = 'flow.compaction.completed'",
+            workspace_id,
+        )
+        .await;
+        assert_eq!(completed_rows, 1, "one execute, one completed event");
+        let exec_replay = body_json(to_response(compact(false, "fp2-b3-ac-compact-exec").await)).await;
+        assert_eq!(
+            exec_replay["data"]["audit_event_id"],
+            executed["data"]["audit_event_id"]
+        );
+        assert_eq!(
+            totals(&state, workspace_id).await,
+            (events + 2, dispatch + 1),
+            "execute replay adds nothing"
+        );
+
+        // rebuild dry-run and verify: audit-only repair previews.
+        let rebuild_dry = body_json(to_response(rebuild(true, "fp2-b3-ac-rebuild-dry").await)).await;
+        let (event_type, payload, own_dispatch) = event_of(&state, &rebuild_dry).await;
+        assert_eq!(event_type, "flow.repair.previewed");
+        assert_eq!(payload["kind"], "rebuild_projection", "{payload}");
+        assert_eq!(
+            payload["after_hash"], rebuild_dry["data"]["result"]["after_hash"],
+            "{payload}"
+        );
+        assert_eq!(own_dispatch, 0);
+        let verify = body_json(to_response(
+            post_flow_verify_document(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(document_id),
+                Json(VerifyDocumentRequest {
+                    dry_run: true,
+                    deep: false,
+                    expected_head_seq: Some(head),
+                    idempotency_key: "fp2-b3-ac-verify".to_string(),
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(verify["code"], 0, "{verify}");
+        let (event_type, payload, own_dispatch) = event_of(&state, &verify).await;
+        assert_eq!(event_type, "flow.repair.previewed");
+        assert_eq!(payload["kind"], "verify_document", "{payload}");
+        assert!(payload["semantic_hash"].is_string(), "{payload}");
+        assert_eq!(own_dispatch, 0);
+        assert_eq!(
+            totals(&state, workspace_id).await,
+            (events + 4, dispatch + 1),
+            "two more previews, still no extra dispatch"
+        );
+
+        // rebuild execute: business completed with one dispatch row.
+        let rebuild_exec = body_json(to_response(rebuild(false, "fp2-b3-ac-rebuild-exec").await)).await;
+        let (event_type, _, own_dispatch) = event_of(&state, &rebuild_exec).await;
+        assert_eq!(event_type, "flow.repair.completed");
+        assert_eq!(own_dispatch, 1);
+        assert_eq!(totals(&state, workspace_id).await, (events + 5, dispatch + 2));
         scratch.drop_self().await;
     }
 
