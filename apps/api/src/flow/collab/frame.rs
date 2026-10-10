@@ -65,7 +65,7 @@ pub enum RejectedCode {
     ServerDraining,
 }
 
-/// The one `server_rejected.details.reason` value this package produces: the database refused the
+/// The `server_rejected.details.reason` value for a database refusal: the database refused the
 /// write with a `SQLSTATE` that classifies as deterministic (`error::classify_sqlstate`) -- a
 /// constraint violation, a data exception, or a schema error.
 ///
@@ -75,6 +75,14 @@ pub enum RejectedCode {
 /// the constraint name, or the driver's message. The field name reuses the `reason` spelling
 /// `server_draining` already froze (contract: "不为同一个概念造第二种拼写").
 pub const SERVER_REJECTED_REASON_DATABASE: &str = "deterministic_database_refusal";
+
+/// The `server_rejected.details.reason` value for a build without the `ADR-0014` isolated-apply
+/// boundary (every target except Linux): `collab_core::isolation` returned
+/// `IsolatedApplyError::UnsupportedPlatform`, nothing was decoded or applied, and the same request
+/// will be refused identically for the life of this process. Like
+/// [`SERVER_REJECTED_REASON_DATABASE`] it is a coarse classification only -- it names neither the
+/// platform nor anything about the update.
+pub const SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM: &str = "isolated_apply_unsupported_platform";
 
 /// `rejected.write_state` — the required "did the server change anything?" discriminant
 /// (`collab-protocol-v1.md`, 2026-08-30: "`recoverable` 只回答「能不能重试」，不回答「服务端状态改了

@@ -8,6 +8,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 use chrono::{DateTime, Utc};
+use collab_core::isolation::IsolatedApplyError;
 use collab_core::{Frontier, NodeKind, SemanticSnapshot};
 use platform::app::AppState;
 use serde_json::json;
@@ -16,7 +17,7 @@ use uuid::Uuid;
 use crate::error::ApiError;
 
 use super::collab::bootstrap;
-use super::collab::frame::TailUpdate;
+use super::collab::frame::{SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM, TailUpdate};
 use super::collab::{limits, runtime};
 use super::model::{
     Bootstrap, FlowFeatureView, FlowObjectListResponse, FlowObjectView, HistoryItem, HistoryResponse,
@@ -736,42 +737,7 @@ pub async fn get_object_diff(
         })?;
     let result = match isolated {
         Ok(result) => result,
-        Err(collab_core::isolation::IsolatedApplyError::CpuCeiling) => {
-            return Err(ApiError::limit_exceeded(
-                "diff replay exceeded the isolated CPU budget",
-                "decode_apply_cpu_ms",
-                Some(json!(collab_core::isolation::DECODE_APPLY_CPU_MS_MAX)),
-                Some(json!(collab_core::isolation::DECODE_APPLY_CPU_MS_MAX.saturating_add(1))),
-                None,
-            ));
-        }
-        Err(collab_core::isolation::IsolatedApplyError::WallCeiling) => {
-            return Err(ApiError::limit_exceeded(
-                "diff replay exceeded the isolated wall-clock budget",
-                "decode_apply_wall_ms",
-                Some(json!(collab_core::isolation::DECODE_APPLY_WALL_MS_MAX)),
-                Some(json!(
-                    collab_core::isolation::DECODE_APPLY_WALL_MS_MAX.saturating_add(1)
-                )),
-                None,
-            ));
-        }
-        Err(collab_core::isolation::IsolatedApplyError::MemoryCeiling) => {
-            return Err(ApiError::limit_exceeded(
-                "diff replay exceeded the isolated memory budget",
-                "isolated_apply_memory_bytes",
-                Some(json!(collab_core::isolation::ISOLATED_APPLY_MEMORY_BYTES_MAX)),
-                Some(json!(
-                    collab_core::isolation::ISOLATED_APPLY_MEMORY_BYTES_MAX.saturating_add(1)
-                )),
-                None,
-            ));
-        }
-        Err(collab_core::isolation::IsolatedApplyError::Collab(_)) => return Err(history_invalid()),
-        Err(collab_core::isolation::IsolatedApplyError::HostFailure(error)) => {
-            tracing::error!(%error, %object_id, "diff replay isolation host failed");
-            return Err(ApiError::Internal);
-        }
+        Err(error) => return Err(isolated_diff_error(error, object_id, history_invalid)),
     };
     let from_title = result.from_title;
     let to_title = result.to_title;
@@ -795,6 +761,60 @@ pub async fn get_object_diff(
         return Ok(None);
     }
     Ok(Some(response))
+}
+
+/// Maps an [`isolated_diff`](collab_core::isolation::isolated_diff) refusal to the REST error the
+/// object diff endpoint returns. The three resource ceilings are `limit_exceeded` with their frozen
+/// `limit_kind`; a corrupt retained history is `resync_required` (via `history_invalid`); a broken
+/// isolation host is `Internal`. `UnsupportedPlatform` (a non-Linux build, `ADR-0014`'s platform
+/// matrix) is `server_rejected` carrying only the safe classification
+/// [`SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM`]: it is deterministic and permanent for this
+/// process, so it must not read as retryable.
+fn isolated_diff_error(
+    error: IsolatedApplyError,
+    object_id: Uuid,
+    history_invalid: impl FnOnce() -> ApiError,
+) -> ApiError {
+    match error {
+        IsolatedApplyError::CpuCeiling => ApiError::limit_exceeded(
+            "diff replay exceeded the isolated CPU budget",
+            "decode_apply_cpu_ms",
+            Some(json!(collab_core::isolation::DECODE_APPLY_CPU_MS_MAX)),
+            Some(json!(collab_core::isolation::DECODE_APPLY_CPU_MS_MAX.saturating_add(1))),
+            None,
+        ),
+        IsolatedApplyError::WallCeiling => ApiError::limit_exceeded(
+            "diff replay exceeded the isolated wall-clock budget",
+            "decode_apply_wall_ms",
+            Some(json!(collab_core::isolation::DECODE_APPLY_WALL_MS_MAX)),
+            Some(json!(
+                collab_core::isolation::DECODE_APPLY_WALL_MS_MAX.saturating_add(1)
+            )),
+            None,
+        ),
+        IsolatedApplyError::MemoryCeiling => ApiError::limit_exceeded(
+            "diff replay exceeded the isolated memory budget",
+            "isolated_apply_memory_bytes",
+            Some(json!(collab_core::isolation::ISOLATED_APPLY_MEMORY_BYTES_MAX)),
+            Some(json!(
+                collab_core::isolation::ISOLATED_APPLY_MEMORY_BYTES_MAX.saturating_add(1)
+            )),
+            None,
+        ),
+        IsolatedApplyError::Collab(_) => history_invalid(),
+        IsolatedApplyError::HostFailure(error) => {
+            tracing::error!(%error, %object_id, "diff replay isolation host failed");
+            ApiError::Internal
+        }
+        IsolatedApplyError::UnsupportedPlatform { os } => {
+            tracing::error!(
+                os,
+                %object_id,
+                "diff replay refused: the isolated-apply boundary requires Linux (ADR-0014)"
+            );
+            ApiError::server_rejected(SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM)
+        }
+    }
 }
 
 pub struct ProjectionLagParams {
@@ -940,6 +960,26 @@ fn decode_cursor(raw: &str) -> Result<(DateTime<Utc>, Uuid), ApiError> {
 mod tests {
     use super::*;
     use crate::error::ApiErrorKind;
+
+    /// The object diff's `UnsupportedPlatform` mapping (constructed directly, so it runs on
+    /// Linux): `server_rejected` carrying only the safe classification, never `Internal` and never
+    /// the history-invalid `resync_required` a client would retry through.
+    #[test]
+    fn isolated_diff_unsupported_platform_maps_to_server_rejected_with_its_reason() {
+        let mapped = isolated_diff_error(
+            IsolatedApplyError::UnsupportedPlatform { os: "macos" },
+            Uuid::new_v4(),
+            || ApiError::resync_required("requested history cannot be reconstructed", None),
+        );
+        assert_eq!(mapped.kind(), ApiErrorKind::ServerRejected);
+        let ApiError::Typed { details, .. } = mapped else {
+            panic!("server_rejected must be a typed error");
+        };
+        let details = details.expect("server_rejected carries details");
+        let object = details.as_object().expect("details is an object");
+        assert_eq!(object.keys().collect::<Vec<_>>(), vec!["reason"]);
+        assert_eq!(object["reason"], "isolated_apply_unsupported_platform");
+    }
 
     /// `limits-v1.md`'s `authorized_scan_rows_max` (1,000) exact boundary: a scan that examines
     /// exactly the ceiling's worth of candidate rows is still within budget — the ceiling is a

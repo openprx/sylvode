@@ -70,7 +70,10 @@ use super::authz::fence_epoch_for_share;
 use super::bootstrap::{self, content_hash};
 use super::cache::WarmCache;
 use super::coordinator::DocumentCoordinator;
-use super::frame::{Frame, PROTOCOL_VERSION, RejectedCode, SERVER_REJECTED_REASON_DATABASE, WriteState, encode_bytes};
+use super::frame::{
+    Frame, PROTOCOL_VERSION, RejectedCode, SERVER_REJECTED_REASON_DATABASE,
+    SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM, WriteState, encode_bytes,
+};
 use super::limits::{DOCUMENT_LOCK_HOLD_MS_MAX, MAX_REBASE_ATTEMPTS};
 use super::registry::SessionRegistry;
 use super::snapshot::{self, SnapshotAdvancer, Trigger};
@@ -477,6 +480,66 @@ pub(crate) struct Prepared {
     pub(crate) decoded_bytes_hint: u64,
 }
 
+/// Maps an [`isolated_apply`](collab_core::isolation::isolated_apply) refusal to the rejection
+/// `hydrate_and_apply` reports, or to `Err` when the isolation host itself broke.
+///
+/// - `Collab` -- the worker's in-band rejection, built exactly as a direct in-process call's.
+/// - The three resource ceilings -- `limit_exceeded` with their frozen `limit_kind`
+///   (`contracts/limits-v1.md`'s "Isolated decode/apply" table).
+/// - `HostFailure` -- `ApiError::Internal`; not a business rejection.
+/// - `UnsupportedPlatform` -- this build has no isolation boundary (`ADR-0014`'s platform matrix
+///   is Linux). `server_rejected` with `write_state: not_applied` (nothing was decoded, so nothing
+///   can have been written) and the safe classification
+///   [`SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM`]: every retry would be refused identically.
+fn isolated_apply_rejection(
+    update_id: Uuid,
+    document_id: Uuid,
+    err: collab_core::isolation::IsolatedApplyError,
+) -> Result<AcceptOutcome, ApiError> {
+    use collab_core::isolation::{
+        DECODE_APPLY_CPU_MS_MAX, DECODE_APPLY_WALL_MS_MAX, ISOLATED_APPLY_MEMORY_BYTES_MAX, IsolatedApplyError,
+    };
+
+    let ceiling = |limit_kind: &'static str, limit: u64| {
+        reject_from_collab_error(
+            Some(update_id),
+            &CollabError::LimitExceeded {
+                limit_kind,
+                limit,
+                observed: limit + 1,
+            },
+        )
+    };
+    match err {
+        IsolatedApplyError::Collab(err) => Ok(reject_from_collab_error(Some(update_id), &err)),
+        IsolatedApplyError::CpuCeiling => Ok(ceiling("decode_apply_cpu_ms", DECODE_APPLY_CPU_MS_MAX)),
+        IsolatedApplyError::WallCeiling => Ok(ceiling("decode_apply_wall_ms", DECODE_APPLY_WALL_MS_MAX)),
+        IsolatedApplyError::MemoryCeiling => {
+            Ok(ceiling("isolated_apply_memory_bytes", ISOLATED_APPLY_MEMORY_BYTES_MAX))
+        }
+        IsolatedApplyError::HostFailure(reason) => {
+            tracing::error!(
+                reason,
+                document_id = %document_id,
+                "collab write: isolated apply host failure"
+            );
+            Err(ApiError::Internal)
+        }
+        IsolatedApplyError::UnsupportedPlatform { os } => {
+            tracing::error!(
+                os,
+                document_id = %document_id,
+                "collab write: refused, the isolated-apply boundary requires Linux (ADR-0014)"
+            );
+            Ok(server_rejected(
+                Some(update_id),
+                SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM,
+                WriteState::NotApplied,
+            ))
+        }
+    }
+}
+
 pub(crate) enum HydrateOutcome {
     Prepared(Box<Prepared>),
     Rejected(AcceptOutcome),
@@ -601,53 +664,7 @@ pub(crate) async fn hydrate_and_apply(
 
     let candidate_snapshot = match isolated_result {
         Ok(success) => success.snapshot,
-        Err(collab_core::isolation::IsolatedApplyError::Collab(err)) => {
-            return Ok(HydrateOutcome::Rejected(reject_from_collab_error(
-                Some(update_id),
-                &err,
-            )));
-        }
-        Err(collab_core::isolation::IsolatedApplyError::CpuCeiling) => {
-            let err = CollabError::LimitExceeded {
-                limit_kind: "decode_apply_cpu_ms",
-                limit: collab_core::isolation::DECODE_APPLY_CPU_MS_MAX,
-                observed: collab_core::isolation::DECODE_APPLY_CPU_MS_MAX + 1,
-            };
-            return Ok(HydrateOutcome::Rejected(reject_from_collab_error(
-                Some(update_id),
-                &err,
-            )));
-        }
-        Err(collab_core::isolation::IsolatedApplyError::WallCeiling) => {
-            let err = CollabError::LimitExceeded {
-                limit_kind: "decode_apply_wall_ms",
-                limit: collab_core::isolation::DECODE_APPLY_WALL_MS_MAX,
-                observed: collab_core::isolation::DECODE_APPLY_WALL_MS_MAX + 1,
-            };
-            return Ok(HydrateOutcome::Rejected(reject_from_collab_error(
-                Some(update_id),
-                &err,
-            )));
-        }
-        Err(collab_core::isolation::IsolatedApplyError::MemoryCeiling) => {
-            let err = CollabError::LimitExceeded {
-                limit_kind: "isolated_apply_memory_bytes",
-                limit: collab_core::isolation::ISOLATED_APPLY_MEMORY_BYTES_MAX,
-                observed: collab_core::isolation::ISOLATED_APPLY_MEMORY_BYTES_MAX + 1,
-            };
-            return Ok(HydrateOutcome::Rejected(reject_from_collab_error(
-                Some(update_id),
-                &err,
-            )));
-        }
-        Err(collab_core::isolation::IsolatedApplyError::HostFailure(reason)) => {
-            tracing::error!(
-                reason,
-                document_id = %document_id,
-                "collab write: isolated apply host failure"
-            );
-            return Err(ApiError::Internal);
-        }
+        Err(err) => return isolated_apply_rejection(update_id, document_id, err).map(HydrateOutcome::Rejected),
     };
 
     // Reconstructing `LoroCollabEngine` from the isolated worker's already-shape-validated result
@@ -1558,8 +1575,9 @@ mod isolation_rejection_tests {
     use collab_core::CollabError;
     use uuid::Uuid;
 
-    use super::{AcceptOutcome, reject_from_collab_error};
-    use crate::flow::collab::frame::RejectedCode;
+    use super::{AcceptOutcome, isolated_apply_rejection, reject_from_collab_error};
+    use crate::error::{ApiError, ApiErrorKind};
+    use crate::flow::collab::frame::{RejectedCode, SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM, WriteState};
 
     /// `limits-v1.md`'s `limit_exceeded` details rule (`details={limit_kind,limit,observed?,
     /// retry_after_ms?}`) applied to the three "Isolated decode/apply" ceilings.
@@ -1608,6 +1626,44 @@ mod isolation_rejection_tests {
             );
             assert_eq!(details["observed"], limit + 1);
         }
+    }
+
+    /// `UnsupportedPlatform` (a non-Linux build, `ADR-0014`'s platform matrix) is constructed
+    /// directly here, so this runs on Linux: what is pinned is the mapping, not the platform.
+    /// `error-mapping-v1.md`'s `server_rejected` row: recoverable=false, `write_state` required
+    /// (`not_applied`: nothing was decoded), details carry only the safe classification -- and the
+    /// REST/MCP/CLI mapping carries that reason through unchanged as `server_rejected`.
+    #[test]
+    fn unsupported_platform_rejects_as_permanent_server_rejected_with_not_applied_and_its_reason() {
+        let update_id = Uuid::new_v4();
+        let outcome = isolated_apply_rejection(
+            update_id,
+            Uuid::new_v4(),
+            collab_core::isolation::IsolatedApplyError::UnsupportedPlatform { os: "windows" },
+        )
+        .expect("an unsupported platform is a rejection, not an internal error");
+        let AcceptOutcome::Rejected(rejected) = outcome else {
+            panic!("an unsupported platform must reject, not accept");
+        };
+        assert_eq!(rejected.code, RejectedCode::ServerRejected);
+        assert!(!rejected.recoverable, "server_rejected must never be retryable");
+        assert_eq!(rejected.write_state, WriteState::NotApplied);
+        assert_eq!(rejected.update_id, Some(update_id));
+        let details = rejected.details.clone().expect("server_rejected carries details");
+        let object = details.as_object().expect("details is an object");
+        assert_eq!(object.keys().collect::<Vec<_>>(), vec!["reason"]);
+        assert_eq!(object["reason"], "isolated_apply_unsupported_platform");
+        assert_eq!(object["reason"], SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM);
+
+        let mapped = crate::flow::command::map_write_rejection(&rejected);
+        assert_eq!(mapped.kind(), ApiErrorKind::ServerRejected);
+        let ApiError::Typed { details, .. } = mapped else {
+            panic!("server_rejected must stay typed over REST");
+        };
+        assert_eq!(
+            details.expect("REST carries the reason")["reason"],
+            SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM
+        );
     }
 }
 
