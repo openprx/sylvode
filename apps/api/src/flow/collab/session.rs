@@ -561,6 +561,58 @@ struct DocumentContext {
     permission_level: PermissionLevel,
 }
 
+/// What an open connection currently believes about its own authorization: the epoch its
+/// permission was evaluated at and whether that permission writes. Both are re-sourced in place by
+/// [`resource_connection_authorization`] once the workspace epoch moves.
+struct ConnectionAuthorization {
+    checked_epoch: i64,
+    may_write: bool,
+}
+
+/// How many times one `update` may be re-sourced and retried after its commit-time epoch fence
+/// refused it. Each retry is caused by a further authorization change committing while the update
+/// was being applied, so this only bounds sustained authorization churn.
+const EPOCH_RESOURCE_ATTEMPTS: usize = 3;
+
+/// Re-evaluates this connection's authorization when the workspace `authz_epoch` no longer
+/// matches the one it recorded (`domain-model-v1.md`: a WebSocket connection is a permission
+/// cache, and an epoch mismatch means "回源", not "拒绝"). Reads the epoch before the permission,
+/// exactly as [`reverify_open`] does, so the commit-time fence still closes the race with a
+/// concurrent revocation.
+///
+/// Returns `true` when `authorization` was refreshed. A refused re-verification (no longer a
+/// member, permission below `view`, Flow disabled) refreshes it to "may not write". A database
+/// failure leaves it untouched and returns `false`, so the update is answered as before.
+async fn resource_connection_authorization(
+    state: &AppState,
+    consumed: &ConsumedTicket,
+    authorization: &mut ConnectionAuthorization,
+) -> bool {
+    let current = match authz::read_epoch(&state.db, consumed.workspace_id).await {
+        Ok(epoch) => epoch,
+        Err(err) => {
+            tracing::warn!(workspace_id = %consumed.workspace_id, %err, "collab epoch re-source read failed");
+            return false;
+        }
+    };
+    if current == authorization.checked_epoch {
+        return false;
+    }
+    match reverify_open(state, consumed).await {
+        Ok(context) => {
+            authorization.checked_epoch = context.checked_epoch;
+            authorization.may_write = context.permission_level >= MINIMUM_COLLAB_WRITE_LEVEL;
+            true
+        }
+        Err(OpenReverifyFailure::Rejected { .. }) => {
+            authorization.checked_epoch = current;
+            authorization.may_write = false;
+            true
+        }
+        Err(OpenReverifyFailure::Draining(_) | OpenReverifyFailure::Indeterminate(_)) => false,
+    }
+}
+
 enum OpenReverifyFailure {
     Rejected { code: RejectedCode, reason: &'static str },
     Draining(DrainSignal),
@@ -873,8 +925,10 @@ pub async fn run(mut socket: WebSocket, state: AppState, consumed: ConsumedTicke
         .await;
     }
 
-    let checked_epoch = ctx.checked_epoch;
-    let may_write_document = ctx.permission_level >= MINIMUM_COLLAB_WRITE_LEVEL;
+    let mut authorization = ConnectionAuthorization {
+        checked_epoch: ctx.checked_epoch,
+        may_write: ctx.permission_level >= MINIMUM_COLLAB_WRITE_LEVEL,
+    };
     let mut frame_limiter = RateLimiter::new(FRAMES_PER_CONNECTION_PER_SECOND, FRAME_BURST_MAX);
     let mut update_limiter = RateLimiter::new(UPDATES_PER_CONNECTION_PER_SECOND, UPDATE_BURST_MAX);
     // `collab-protocol-v1.md` "accepted 出站顺序": "snapshot.head_seq=H 后第一条 accepted 只能是
@@ -1042,8 +1096,8 @@ pub async fn run(mut socket: WebSocket, state: AppState, consumed: ConsumedTicke
                             session_id,
                             consumed.user_id,
                             &consumed.client_id,
-                            checked_epoch,
-                            may_write_document,
+                            &consumed,
+                            &mut authorization,
                             frame,
                             &mut socket,
                             &mut sequencer,
@@ -1525,8 +1579,8 @@ async fn handle_client_frame(
     session_id: Uuid,
     actor_id: Uuid,
     origin_client_id: &str,
-    checked_epoch: i64,
-    may_write_document: bool,
+    consumed: &ConsumedTicket,
+    authorization: &mut ConnectionAuthorization,
     frame: Frame,
     socket: &mut WebSocket,
     sequencer: &mut EgressSequencer,
@@ -1578,7 +1632,12 @@ async fn handle_client_frame(
             message,
             ..
         } => {
-            if !may_write_document {
+            // A connection admitted read-only may since have been granted `edit`: its open-time
+            // permission is a cache too, re-sourced when the epoch has moved.
+            if !authorization.may_write {
+                resource_connection_authorization(state, consumed, authorization).await;
+            }
+            if !authorization.may_write {
                 send(
                     socket,
                     &rejected_frame(document_id, RejectedCode::PolicyRejected, false, Some(update_id)),
@@ -1594,65 +1653,85 @@ async fn handle_client_frame(
                 .await;
                 return;
             }
-            let Ok(raw_bytes) = BASE64.decode(bytes) else {
-                send(
-                    socket,
-                    &rejected_frame(document_id, RejectedCode::InvalidUpdate, false, Some(update_id)),
+            let mut resourcing_attempts = 0usize;
+            let outcome = loop {
+                // Decoded per attempt rather than cloned: a retry (below) is rare, and this keeps
+                // the common single-attempt path free of a copy of the update bytes.
+                let Ok(raw_bytes) = BASE64.decode(&bytes) else {
+                    send(
+                        socket,
+                        &rejected_frame(document_id, RejectedCode::InvalidUpdate, false, Some(update_id)),
+                    )
+                    .await;
+                    return;
+                };
+                let outcome = write::accept_update(
+                    &state.db,
+                    &collab.cache,
+                    &collab.coordinator,
+                    &collab.registry,
+                    &collab.snapshot,
+                    crate::config::runtime().flow.dispatch_max_attempts,
+                    Some(session_id),
+                    UpdateRequest {
+                        document_id,
+                        update_id,
+                        bytes: raw_bytes,
+                        idempotency_key: idempotency_key.clone(),
+                        // Not the client's frame key: see `write::UpdateRequest::event_idempotency_key`
+                        // for why the WebSocket surface must not record a free-form, per-document key
+                        // in the workspace-scoped `business_events` index. This surface's replay key is
+                        // `update_id`, which the protocol already requires a retrying client to reuse.
+                        event_idempotency_key: None,
+                        origin_client_id: Some(origin_client_id.to_string()),
+                        message: message.clone(),
+                        actor_id,
+                        // A WebSocket session is authenticated by an `ADR-0007` ticket, which is issued
+                        // to a JWT user; there is no bot path onto this socket.
+                        actor_is_bot: false,
+                        workspace_id: if let Some(id) = fetch_object_workspace_id(state, object_id).await {
+                            id
+                        } else {
+                            send(
+                                socket,
+                                &rejected_frame(document_id, RejectedCode::NotFound, false, Some(update_id)),
+                            )
+                            .await;
+                            return;
+                        },
+                        checked_epoch: authorization.checked_epoch,
+                        expected_frontier: None,
+                        // The WebSocket collab surface declaring itself, the same way
+                        // `routes::flow::request_origin` resolves the HTTP surfaces — `events-v1.md`'s
+                        // "`source` 由服务端按 Web/REST/MCP/CLI/worker 覆盖". `session` is this
+                        // connection's server-generated session id and `client_id` is the
+                        // `ADR-0007` ticket handshake's client id; `tool`/`request`/`service` do not
+                        // apply to a WebSocket frame and are omitted. Each accepted `update` frame is
+                        // its own first request, so it roots its own correlation and has no causation.
+                        origin: CommandOrigin::first_request(
+                            EventSource::new(EventSurface::Web)
+                                .with_session(session_id.to_string())
+                                .with_client_id(origin_client_id),
+                        ),
+                    },
                 )
                 .await;
-                return;
+                // `domain-model-v1.md` (`authz_epoch`, 2026-10-10): the epoch this connection
+                // recorded is a cache. The write path's only `policy_rejected` is its commit-time
+                // epoch fence, so that answer means "the epoch moved", not "this actor may not
+                // write": re-evaluate the actor's level at the current epoch and retry while it
+                // still writes; only a level below `edit` is answered `policy_rejected`.
+                if let Ok(AcceptOutcome::Rejected(rejected)) = &outcome
+                    && rejected.code == RejectedCode::PolicyRejected
+                    && resourcing_attempts < EPOCH_RESOURCE_ATTEMPTS
+                    && resource_connection_authorization(state, consumed, authorization).await
+                    && authorization.may_write
+                {
+                    resourcing_attempts += 1;
+                    continue;
+                }
+                break outcome;
             };
-            let outcome = write::accept_update(
-                &state.db,
-                &collab.cache,
-                &collab.coordinator,
-                &collab.registry,
-                &collab.snapshot,
-                crate::config::runtime().flow.dispatch_max_attempts,
-                Some(session_id),
-                UpdateRequest {
-                    document_id,
-                    update_id,
-                    bytes: raw_bytes,
-                    idempotency_key,
-                    // Not the client's frame key: see `write::UpdateRequest::event_idempotency_key`
-                    // for why the WebSocket surface must not record a free-form, per-document key
-                    // in the workspace-scoped `business_events` index. This surface's replay key is
-                    // `update_id`, which the protocol already requires a retrying client to reuse.
-                    event_idempotency_key: None,
-                    origin_client_id: Some(origin_client_id.to_string()),
-                    message,
-                    actor_id,
-                    // A WebSocket session is authenticated by an `ADR-0007` ticket, which is issued
-                    // to a JWT user; there is no bot path onto this socket.
-                    actor_is_bot: false,
-                    workspace_id: if let Some(id) = fetch_object_workspace_id(state, object_id).await {
-                        id
-                    } else {
-                        send(
-                            socket,
-                            &rejected_frame(document_id, RejectedCode::NotFound, false, Some(update_id)),
-                        )
-                        .await;
-                        return;
-                    },
-                    checked_epoch,
-                    expected_frontier: None,
-                    // The WebSocket collab surface declaring itself, the same way
-                    // `routes::flow::request_origin` resolves the HTTP surfaces — `events-v1.md`'s
-                    // "`source` 由服务端按 Web/REST/MCP/CLI/worker 覆盖". `session` is this
-                    // connection's server-generated session id and `client_id` is the
-                    // `ADR-0007` ticket handshake's client id; `tool`/`request`/`service` do not
-                    // apply to a WebSocket frame and are omitted. Each accepted `update` frame is
-                    // its own first request, so it roots its own correlation and has no causation.
-                    origin: CommandOrigin::first_request(
-                        EventSource::new(EventSurface::Web)
-                            .with_session(session_id.to_string())
-                            .with_client_id(origin_client_id),
-                    ),
-                },
-            )
-            .await;
 
             match outcome {
                 Ok(AcceptOutcome::Accepted(accepted)) => {
@@ -5734,6 +5813,164 @@ mod tests {
             };
             assert_eq!(head_seq, head_seq_before + 1);
 
+            scratch.drop_self().await;
+        }
+
+        // -------------------------------------------------------------------------------------
+        // FP2-B6: epoch re-sourcing, replay answers, update_id on refusals, causal completeness
+        // -------------------------------------------------------------------------------------
+
+        /// The next `accepted`/`rejected` addressed to `update_id`, skipping fan-out and every
+        /// frame about another update. `None` when nothing answers within the timeout or the
+        /// socket closes -- the "no answer" this package exists to remove.
+        async fn fp2_b6_answer(ws: &mut WsStream, update_id: Uuid) -> Option<Frame> {
+            loop {
+                let next = tokio::time::timeout(Duration::from_secs(3), ws.next()).await.ok()??;
+                let TMessage::Text(text) = next.ok()? else {
+                    continue;
+                };
+                let frame: Frame = serde_json::from_str(text.as_str()).ok()?;
+                match &frame {
+                    Frame::Accepted { update_id: id, .. }
+                    | Frame::Rejected {
+                        update_id: Some(id), ..
+                    } if *id == update_id => {
+                        return Some(frame);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        fn fp2_b6_update_id(frame: &Frame) -> Uuid {
+            let Frame::Update { update_id, .. } = frame else {
+                panic!("expected an update frame, got {frame:?}");
+            };
+            *update_id
+        }
+
+        async fn fp2_b6_member(state: &AppState, workspace_id: Uuid) -> Uuid {
+            let member_id = Uuid::new_v4();
+            exec(
+                state,
+                "INSERT INTO users (id, email, password_hash, name, role, is_active) \
+                 VALUES ($1, $2, '!', 'member', 'user', true)",
+                vec![member_id.into(), format!("{member_id}@session-live-ws.test").into()],
+            )
+            .await;
+            exec(
+                state,
+                "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'member')",
+                vec![workspace_id.into(), member_id.into()],
+            )
+            .await;
+            member_id
+        }
+
+        async fn fp2_b6_set_grant(
+            state: &AppState,
+            workspace_id: Uuid,
+            owner_id: Uuid,
+            object_id: Uuid,
+            member_id: Uuid,
+            level: &str,
+        ) {
+            crate::flow::grants::set_grants(
+                state,
+                workspace_id,
+                crate::flow::grants::SetGrantsInput {
+                    object_id,
+                    caller: crate::flow::grants::Caller {
+                        actor_id: owner_id,
+                        principal_kind: "user".to_string(),
+                        role: "owner".to_string(),
+                        origin: crate::flow::event_origin::CommandOrigin::first_request_from(
+                            crate::flow::event_origin::EventSurface::Rest,
+                        ),
+                    },
+                    grants: vec![crate::flow::grants::GrantRequest {
+                        principal_kind: "user".to_string(),
+                        principal_id: member_id,
+                        level: level.to_string(),
+                    }],
+                    confirm_self_lockout: false,
+                    dry_run: false,
+                    idempotency_key: Uuid::new_v4().to_string(),
+                },
+            )
+            .await
+            .expect("the grant change commits");
+        }
+
+        /// FP2-B6 (P1, `domain-model-v1.md` `authz_epoch`, 2026-10-10): a connection's open-time
+        /// epoch is a cache. After the owner changes B's grant (the workspace epoch advances), the
+        /// owner's next write on its existing connection is re-evaluated in place and accepted
+        /// (twice, so the refreshed epoch sticks), while B -- now `view` -- is `policy_rejected`.
+        #[tokio::test]
+        async fn fp2_b6_epoch_change_is_resourced_in_place_for_existing_connections() {
+            let scratch = scratch_or_skip!("fp2-b6-epoch-resource");
+            let state = state_for(scratch.db.clone());
+            let (workspace_id, owner_id) = seed_workspace(&state).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let member_id = fp2_b6_member(&state, workspace_id).await;
+            exec(
+                &state,
+                "UPDATE flow_workspace_settings SET default_member_level = 'view' WHERE workspace_id = $1",
+                vec![workspace_id.into()],
+            )
+            .await;
+            fp2_b6_set_grant(&state, workspace_id, owner_id, object_id, member_id, "edit").await;
+
+            let addr = spawn_server(state.clone()).await;
+            let owner_ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-owner").await;
+            let (mut owner, _, _, _) = open_session_full(addr, &owner_ticket, "b6-owner", document_id).await;
+            let member_ticket = issue_ticket(addr, &jwt_for(member_id), workspace_id, document_id, "b6-member").await;
+            let (mut member, _, _, _) = open_session_full(addr, &member_ticket, "b6-member", document_id).await;
+
+            let first = next_update_frame(&state, document_id).await;
+            send_frame(&mut member, &first).await;
+            let answer = fp2_b6_answer(&mut member, fp2_b6_update_id(&first)).await;
+            assert!(
+                matches!(answer, Some(Frame::Accepted { .. })),
+                "B can write while edit: {answer:?}"
+            );
+
+            let epoch_before = crate::flow::collab::authz::read_epoch(&state.db, workspace_id)
+                .await
+                .expect("epoch reads");
+            fp2_b6_set_grant(&state, workspace_id, owner_id, object_id, member_id, "view").await;
+            let epoch_after = crate::flow::collab::authz::read_epoch(&state.db, workspace_id)
+                .await
+                .expect("epoch reads");
+            assert!(epoch_after > epoch_before, "the grant change must advance the epoch");
+
+            for round in 0..2 {
+                let owner_update = next_update_frame(&state, document_id).await;
+                send_frame(&mut owner, &owner_update).await;
+                let answer = fp2_b6_answer(&mut owner, fp2_b6_update_id(&owner_update)).await;
+                assert!(
+                    matches!(answer, Some(Frame::Accepted { .. })),
+                    "round {round}: the owner's permission did not change, its write must be accepted: {answer:?}"
+                );
+            }
+
+            let updates_before = count_collab_updates(&state, document_id).await;
+            let member_update = next_update_frame(&state, document_id).await;
+            let member_update_id = fp2_b6_update_id(&member_update);
+            send_frame(&mut member, &member_update).await;
+            let answer = fp2_b6_answer(&mut member, member_update_id).await;
+            assert!(
+                matches!(
+                    answer,
+                    Some(Frame::Rejected {
+                        code: RejectedCode::PolicyRejected,
+                        write_state: WriteState::NotApplied,
+                        ..
+                    })
+                ),
+                "B was downgraded to view: its write must be policy_rejected: {answer:?}"
+            );
+            assert_eq!(count_collab_updates(&state, document_id).await, updates_before);
             scratch.drop_self().await;
         }
     }
