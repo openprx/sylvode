@@ -581,9 +581,10 @@ impl ApiErrorKind {
 /// (`error-mapping-v1.md`'s approved reason table).
 pub const IDEMPOTENCY_KEY_BODY_DRIFT_REASON: &str = "idempotency_key_body_drift";
 
-/// `invalid_update.details.reason` for a request refused because it crosses a workspace boundary
-/// through a relation (a parent, a move target, a stored `flow_relations` row); the refusal is
-/// also recorded as a `cross_workspace_relation` integrity record.
+/// `invalid_update.details.reason` for a *stored* relation found crossing a workspace boundary on a
+/// read path (`GET relations`); also recorded as a `cross_workspace_relation` integrity record.
+/// Write paths (create `project_id`/`parent_object_id`, `move_object` target) never use it: a
+/// cross-workspace id there answers the same `not_found` a missing id does (`error-mapping-v1.md`).
 pub const CROSS_WORKSPACE_RELATION_REASON: &str = "cross_workspace_relation";
 
 /// `invalid_update.details.reason` for a collaboration update whose causal dependencies are not in

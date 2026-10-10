@@ -7972,20 +7972,83 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// `create_object`'s cross-workspace `parent_object_id`/`project_id` check
-    /// (`rest-api-v1.md` "`RelationView`"; `ADR-0013` §4): the request fails closed as
-    /// `invalid_update` *and* a real `flow_integrity_records` row is written for it — proving the
-    /// producer this package was missing, not just the rejection it already had.
+    /// `create_object`'s cross-workspace `parent_object_id`/`project_id` check and `move_object`'s
+    /// cross-workspace target (`error-mapping-v1.md`: `not_found` "cross-workspace 也归此类";
+    /// `cross_workspace_relation` is only for *stored* relations found on read/move paths): each
+    /// answers the byte-identical `not_found` envelope a nonexistent id answers, so the response
+    /// cannot tell "exists in another workspace" from "does not exist", *and* a real
+    /// `flow_integrity_records` row is written for each cross-workspace attempt.
     #[tokio::test]
     #[allow(clippy::items_after_statements)]
-    async fn cross_workspace_parent_is_rejected_and_recorded_as_an_integrity_alert() {
+    async fn cross_workspace_write_targets_answer_not_found_like_missing_ones_and_are_recorded() {
         let scratch = scratch_or_skip!("cross-workspace-integrity");
         let state = state_for(scratch.db.clone());
         let (workspace_a, owner_a) = seed_workspace(&state, true).await;
         let (workspace_b, owner_b) = seed_workspace(&state, true).await;
-        let claims_b = claims_for(owner_b);
 
-        // A real, existing page in workspace A.
+        async fn create_raw(
+            state: &AppState,
+            caller: Uuid,
+            workspace_id: Uuid,
+            project_id: Option<Uuid>,
+            parent_object_id: Option<Uuid>,
+        ) -> Vec<u8> {
+            let response = to_response(
+                create_flow_object(
+                    State(state.clone()),
+                    claims_for(caller),
+                    None,
+                    Path(workspace_id),
+                    Json(CreateFlowObjectRequest {
+                        object_type: "page".to_string(),
+                        project_id,
+                        parent_object_id,
+                        title: "Cross-Workspace Attempt".to_string(),
+                        idempotency_key: Uuid::new_v4().to_string(),
+                        message: None,
+                        initial_fields: Vec::new(),
+                        initial_view: None,
+                    }),
+                )
+                .await,
+            );
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("response body reads")
+                .to_vec()
+        }
+        async fn move_raw(state: &AppState, caller: Uuid, object_id: Uuid, target_object_id: Uuid) -> Vec<u8> {
+            let response = to_response(
+                post_flow_object_command(
+                    State(state.clone()),
+                    claims_for(caller),
+                    None,
+                    Path(object_id),
+                    Json(ExecuteFlowCommandRequest {
+                        command: FlowCommandEnvelope {
+                            command_type: "move_object".to_string(),
+                            payload: json!({ "target_object_id": target_object_id }),
+                        },
+                        expected_frontier: None,
+                        idempotency_key: Uuid::new_v4().to_string(),
+                        message: None,
+                    }),
+                )
+                .await,
+            );
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("response body reads")
+                .to_vec()
+        }
+        let assert_not_found = |bytes: &[u8], what: &str| {
+            let body: Value = serde_json::from_slice(bytes).expect("response body is JSON");
+            assert_eq!(body["code"], 404, "{what}: {body}");
+            assert_eq!(body["error_code"], "not_found", "{what}: {body}");
+            assert!(body.get("details").is_none_or(Value::is_null), "{what}: {body}");
+        };
+
+        // A real, existing page and project in workspace A.
         let page_in_a = body_json(to_response(
             create_flow_object(
                 State(state.clone()),
@@ -8012,19 +8075,49 @@ mod flow_database_tests {
                 .expect("object id is a string"),
         )
         .expect("object id is a uuid");
+        let project_in_a = Uuid::new_v4();
+        exec(
+            &state,
+            "INSERT INTO projects (id, workspace_id, key, name, created_by) \
+             VALUES ($1, $2, 'PRA', 'Project in A', $3)",
+            vec![project_in_a.into(), workspace_a.into(), owner_a.into()],
+        )
+        .await;
 
-        // A workspace-B member tries to create a page parented under that workspace-A object.
-        let response = to_response(
+        // A workspace-B member names the workspace-A parent, then an id that exists nowhere.
+        let foreign_parent = create_raw(&state, owner_b, workspace_b, None, Some(parent_id_in_a)).await;
+        let missing_parent = create_raw(&state, owner_b, workspace_b, None, Some(Uuid::new_v4())).await;
+        assert_not_found(&foreign_parent, "cross-workspace parent");
+        assert_eq!(
+            foreign_parent,
+            missing_parent,
+            "a cross-workspace parent must be indistinguishable from a missing one: {} vs {}",
+            String::from_utf8_lossy(&foreign_parent),
+            String::from_utf8_lossy(&missing_parent)
+        );
+        let foreign_project = create_raw(&state, owner_b, workspace_b, Some(project_in_a), None).await;
+        let missing_project = create_raw(&state, owner_b, workspace_b, Some(Uuid::new_v4()), None).await;
+        assert_not_found(&foreign_project, "cross-workspace project");
+        assert_eq!(
+            foreign_project,
+            missing_project,
+            "a cross-workspace project must be indistinguishable from a missing one: {} vs {}",
+            String::from_utf8_lossy(&foreign_project),
+            String::from_utf8_lossy(&missing_project)
+        );
+
+        // move_object to a workspace-A target vs. to a target that exists nowhere.
+        let page_in_b = body_json(to_response(
             create_flow_object(
                 State(state.clone()),
-                claims_b,
+                claims_for(owner_b),
                 None,
                 Path(workspace_b),
                 Json(CreateFlowObjectRequest {
                     object_type: "page".to_string(),
                     project_id: None,
-                    parent_object_id: Some(parent_id_in_a),
-                    title: "Cross-Workspace Attempt".to_string(),
+                    parent_object_id: None,
+                    title: "Page In Workspace B".to_string(),
                     idempotency_key: Uuid::new_v4().to_string(),
                     message: None,
                     initial_fields: Vec::new(),
@@ -8032,12 +8125,24 @@ mod flow_database_tests {
                 }),
             )
             .await,
+        ))
+        .await;
+        let page_id_in_b = Uuid::parse_str(
+            page_in_b["data"]["object"]["id"]
+                .as_str()
+                .expect("object id is a string"),
+        )
+        .expect("object id is a uuid");
+        let foreign_target = move_raw(&state, owner_b, page_id_in_b, parent_id_in_a).await;
+        let missing_target = move_raw(&state, owner_b, page_id_in_b, Uuid::new_v4()).await;
+        assert_not_found(&foreign_target, "cross-workspace move target");
+        assert_eq!(
+            foreign_target,
+            missing_target,
+            "a cross-workspace move target must be indistinguishable from a missing one: {} vs {}",
+            String::from_utf8_lossy(&foreign_target),
+            String::from_utf8_lossy(&missing_target)
         );
-        let body = body_json(response).await;
-        assert_eq!(body["code"], 400, "{body}");
-        assert_eq!(body["message"], "invalid_update", "{body}");
-        assert_eq!(body["error_code"], "invalid_update", "{body}");
-        assert_eq!(body["details"]["reason"], "cross_workspace_relation", "{body}");
 
         use sea_orm::FromQueryResult as _;
 
@@ -8053,25 +8158,47 @@ mod flow_database_tests {
         let rows = IntegrityRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT workspace_id, kind, subject_kind, subject_id, detected_by, status \
-             FROM flow_integrity_records WHERE workspace_id = $1",
+             FROM flow_integrity_records WHERE workspace_id = $1 ORDER BY subject_kind, detected_by",
             vec![workspace_b.into()],
         ))
         .all(&state.db)
         .await
         .expect("integrity record query runs");
 
+        let observed: Vec<(String, String, String)> = rows
+            .iter()
+            .map(|row| {
+                assert_eq!(row.workspace_id, workspace_b);
+                assert_eq!(row.kind, "cross_workspace_relation");
+                assert_eq!(row.status, "open");
+                (
+                    row.subject_kind.clone(),
+                    row.subject_id.clone(),
+                    row.detected_by.clone(),
+                )
+            })
+            .collect();
         assert_eq!(
-            rows.len(),
-            1,
-            "exactly one integrity record must be written for the one fail-closed attempt"
+            observed,
+            vec![
+                (
+                    "flow_object".to_string(),
+                    parent_id_in_a.to_string(),
+                    "flow.command.create_object".to_string()
+                ),
+                (
+                    "flow_object".to_string(),
+                    parent_id_in_a.to_string(),
+                    "flow.command.move_object".to_string()
+                ),
+                (
+                    "project".to_string(),
+                    project_in_a.to_string(),
+                    "flow.command.create_object".to_string()
+                ),
+            ],
+            "exactly one integrity record per cross-workspace attempt, none for missing ids"
         );
-        let row = &rows[0];
-        assert_eq!(row.workspace_id, workspace_b);
-        assert_eq!(row.kind, "cross_workspace_relation");
-        assert_eq!(row.subject_kind, "flow_object");
-        assert_eq!(row.subject_id, parent_id_in_a.to_string());
-        assert_eq!(row.detected_by, "flow.command.create_object");
-        assert_eq!(row.status, "open");
 
         scratch.drop_self().await;
     }

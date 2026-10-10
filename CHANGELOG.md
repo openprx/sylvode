@@ -566,11 +566,15 @@ replacement and the earliest removal.
   below `edit` gets `policy_rejected`. A connection opened read-only that has since been granted
   `edit` is re-sourced the same way. Before, any authorization change anywhere in the workspace
   made the next write on every existing connection `policy_rejected`, including the owner's.
-- Flow: a request refused because it crosses a workspace boundary through a relation (a
-  cross-workspace `parent_object_id` or move target, or a stored cross-workspace
-  `flow_relations` row met while listing relations) answers `invalid_update` with
-  `details.reason = "cross_workspace_relation"`, so a client can show it as an integrity
-  failure without reading `message`. The integrity record is written as before.
+- Flow: a stored cross-workspace `flow_relations` row met while listing relations answers
+  `invalid_update` with `details.reason = "cross_workspace_relation"`, so a client can show it as
+  an integrity failure without reading `message`. The integrity record is written as before.
+- Flow (security): a create whose `project_id` or `parent_object_id`, or a `move_object` whose
+  target, names an object in another workspace answers the same `not_found` envelope, byte for
+  byte, as an id that does not exist; a missing `project_id`, `parent_object_id` or move target
+  now answers `not_found` instead of `invalid_update`. A cross-workspace id is still recorded as
+  a `cross_workspace_relation` integrity record. The write path no longer reveals that an id
+  exists in another workspace.
 - Flow: `GET /flow/objects/{id}/bootstrap` needs `view`, the level the WebSocket `open` and
   `snapshot` (which use the same loader) already need; it used to require `edit`, so a read-only
   member could watch a document live but not download its bootstrap.

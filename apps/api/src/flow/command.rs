@@ -275,15 +275,14 @@ fn validate(input: &CreateObjectInput) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// A caller-supplied `project_id`/`parent_object_id` that resolves to a *real* row, but one that
-/// lives in a different workspace than the request's own `workspace_id`. `rest-api-v1.md`
-/// ("RelationView"): "数据库约束外出现跨 workspace relation 时整次请求 fail closed 为
-/// `invalid_update`、记录 integrity alert" — `v0.4-flow-alpha.md` names this exact check as the
-/// v0.4-scoped instance of that rule (no `flow_relations` table exists before v0.5; a create's
-/// `project_id`/`parent_object_id` are v0.4's only cross-object references). Records the drift in
-/// `flow_integrity_records` (`ADR-0013` §4) before failing closed — the id existing at all but in
-/// the wrong workspace is never a plain "not found" typo, so it gets a paper trail a genuine
-/// missing-row `BadRequest` does not.
+/// A caller-supplied write target (`project_id`/`parent_object_id` on create, `target_object_id`
+/// on `move_object`) that resolves to a *real* row, but one that lives in a different workspace
+/// than the request's own `workspace_id`. Records the drift in `flow_integrity_records`
+/// (`ADR-0013` §4) — the id existing at all but in the wrong workspace is never a plain typo, so
+/// it gets a paper trail a genuinely missing id does not — and then answers exactly what a missing
+/// id answers: `not_found` with the caller's `not_found_message`, the same one the missing-row
+/// branch uses (`error-mapping-v1.md`: `not_found` "cross-workspace 也归此类"; the write path does
+/// not use `cross_workspace_relation`, which would let a caller probe another workspace for ids).
 pub(super) async fn record_cross_workspace_relation_and_fail_closed(
     state: &AppState,
     requesting_workspace_id: Uuid,
@@ -291,6 +290,7 @@ pub(super) async fn record_cross_workspace_relation_and_fail_closed(
     referenced_id: Uuid,
     referenced_workspace_id: Uuid,
     detected_by: &str,
+    not_found_message: &'static str,
 ) -> ApiError {
     if let Err(err) = repository::insert_integrity_record(
         &state.db,
@@ -310,11 +310,13 @@ pub(super) async fn record_cross_workspace_relation_and_fail_closed(
     {
         tracing::error!(error = %err, "failed to record integrity alert for a cross-workspace relation");
     }
-    ApiError::invalid_update_with_details(
-        "invalid_update",
-        json!({ "reason": crate::error::CROSS_WORKSPACE_RELATION_REASON }),
-    )
+    ApiError::not_found(not_found_message)
 }
+
+/// The one message a missing and a cross-workspace `project_id` both answer with.
+const PROJECT_NOT_FOUND: &str = "project not found";
+/// The one message a missing and a cross-workspace `parent_object_id` both answer with.
+const PARENT_NOT_FOUND: &str = "parent_object_id not found";
 
 /// Resolves an already-committed `flow.object.created` event for `idempotency_key` into the
 /// [`AcceptedChange`] a replay of that creation must return — the *canonical* object named by
@@ -418,7 +420,7 @@ async fn create_object_inner(
     if let Some(project_id) = input.project_id {
         let project_workspace = repository::fetch_project_workspace(&state.db, project_id)
             .await?
-            .ok_or_else(|| ApiError::invalid_update("project not found".to_string()))?;
+            .ok_or_else(|| ApiError::not_found(PROJECT_NOT_FOUND))?;
         if project_workspace != input.workspace_id {
             return Err(record_cross_workspace_relation_and_fail_closed(
                 state,
@@ -427,6 +429,7 @@ async fn create_object_inner(
                 project_id,
                 project_workspace,
                 "flow.command.create_object", // detected_by: an ADR-0013 §4 integrity-record producer, not an events-v1 type
+                PROJECT_NOT_FOUND,
             )
             .await);
         }
@@ -457,7 +460,7 @@ async fn create_object_inner(
     if let Some(parent_id) = effective_parent_id {
         let parent = repository::fetch_parent_object(&state.db, parent_id)
             .await?
-            .ok_or_else(|| ApiError::invalid_update("parent_object_id not found".to_string()))?;
+            .ok_or_else(|| ApiError::not_found(PARENT_NOT_FOUND))?;
         if parent.workspace_id != input.workspace_id {
             return Err(record_cross_workspace_relation_and_fail_closed(
                 state,
@@ -466,6 +469,7 @@ async fn create_object_inner(
                 parent_id,
                 parent.workspace_id,
                 "flow.command.create_object", // detected_by: an ADR-0013 §4 integrity-record producer, not an events-v1 type
+                PARENT_NOT_FOUND,
             )
             .await);
         }
