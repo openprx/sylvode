@@ -438,9 +438,6 @@ pub async fn preview_package_import(
         .into_iter()
         .map(|source_id| source_id.to_string())
         .collect();
-    if !lineage_conflicts.is_empty() && request.conflict_policy == ConflictPolicy::RejectExisting {
-        return Err(ApiError::invalid_update("package objects already have import lineage"));
-    }
     let mut conflicts = lineage_conflicts;
     conflicts.extend(
         unmapped_projects(&request.project_map, &plan)
@@ -567,6 +564,18 @@ pub async fn commit_package_import(
     let artifact = load_artifact_tx(&tx, request.workspace_id, preview.artifact_id, &request.principal).await?;
     let plan = parse_plan(&artifact.package_bytes, &request.package_sha256)?;
     validate_frozen_mapping(&mapping, &plan, request.workspace_id, request.conflict_policy)?;
+    // Re-read lineage inside the promotion transaction: preview only reports conflicts, and an
+    // import committed after the preview must not be silently skipped or duplicated either.
+    if request.conflict_policy == ConflictPolicy::RejectExisting
+        && lineage_targets(&tx, request.workspace_id, &plan)
+            .await?
+            .keys()
+            .any(|(kind, _)| kind == "object")
+    {
+        return Err(ApiError::policy_rejected(
+            "conflict_policy reject_existing refuses package objects that already have import lineage",
+        ));
+    }
     validate_projects(&tx, request.workspace_id, &mapping.project_map, &plan).await?;
 
     let import_id = Uuid::new_v4();

@@ -376,6 +376,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow package import: previewing a package whose objects already have import lineage in the
+  target workspace under `conflict_policy = "reject_existing"` succeeds and lists the hits as
+  `lineage_exists` conflicts instead of failing; committing that preview (or any
+  `reject_existing` commit whose objects gained lineage after the preview) is refused with
+  `policy_rejected` and writes nothing.
 - Flow package import: a preview whose `project_mapping` leaves a package source project
   unmapped (including an empty mapping) now succeeds and lists each such project in `conflicts`
   and in the new `conflict_details[]` as `{kind:"project_unmapped",source_project_id,title}`;

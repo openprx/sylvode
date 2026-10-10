@@ -11169,6 +11169,86 @@ mod flow_database_tests {
     }
 
     #[tokio::test]
+    async fn fp2_b2_package_roundtrip_reports_unmapped_projects_and_lineage_conflicts_in_preview() {
+        let scratch = scratch_or_skip!("fp2-b2-roundtrip");
+        let state = state_for(scratch.db.clone());
+        let fixture = fp2_b2_exported_project_package(&state).await;
+        let source = fixture.source_project;
+        let mapped = json!({ source.to_string(): fixture.target_project });
+
+        // (1) An empty mapping previews and names the one source project as unmapped.
+        let empty = fp2_b2_preview(&fixture, json!({}), "reject_existing", "fp2-b2-rt-empty").await;
+        assert_eq!(empty["code"], 0, "{empty}");
+        assert_eq!(
+            empty["data"]["manifest_summary"]["projects"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(
+            empty["data"]["conflict_details"],
+            json!([{"kind":"project_unmapped","source_project_id":source,"title":"Source roadmap"}]),
+            "{empty}"
+        );
+
+        // (2) Mapped onto B's project, the commit creates both pages.
+        let first = fp2_b2_preview(&fixture, mapped.clone(), "reject_existing", "fp2-b2-rt-first").await;
+        assert_eq!(first["code"], 0, "{first}");
+        assert_eq!(first["data"]["conflicts"], json!([]), "{first}");
+        let committed = fp2_b2_commit(&fixture, &first, "reject_existing", "fp2-b2-rt-first-commit").await;
+        assert_eq!(committed["code"], 0, "{committed}");
+        let report = fp2_b2_report(&fixture, &committed).await;
+        assert_eq!(report["data"]["counts"]["created"], 2, "{report}");
+        let object_mapping = report["data"]["object_mapping"].as_object().unwrap().clone();
+        assert_eq!(object_mapping.len(), 2);
+        let pages_after_import =
+            fp2_b2_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await;
+        assert_eq!(pages_after_import, 2);
+
+        // (3) The same package again under reject_existing: preview succeeds and lists both
+        // lineage hits; the commit is refused as policy_rejected with zero canonical writes.
+        let again = fp2_b2_preview(&fixture, mapped.clone(), "reject_existing", "fp2-b2-rt-again").await;
+        assert_eq!(
+            again["code"], 0,
+            "a lineage hit is a preview conflict, not an error: {again}"
+        );
+        let mut expected_conflicts: Vec<Value> = object_mapping
+            .iter()
+            .map(|(source_object, target)| {
+                json!({"kind":"lineage_exists","source_object_id":source_object,"existing_target_id":target})
+            })
+            .collect();
+        expected_conflicts.sort_by_key(|entry| entry["source_object_id"].as_str().unwrap().to_string());
+        assert_eq!(
+            again["data"]["conflict_details"],
+            Value::Array(expected_conflicts),
+            "{again}"
+        );
+        let mut expected_ids: Vec<&String> = object_mapping.keys().collect();
+        expected_ids.sort();
+        assert_eq!(again["data"]["conflicts"], json!(expected_ids), "{again}");
+        let refused = fp2_b2_commit(&fixture, &again, "reject_existing", "fp2-b2-rt-again-commit").await;
+        assert_typed(&refused, "policy_rejected", 403);
+        assert_eq!(
+            fp2_b2_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
+            pages_after_import
+        );
+
+        // (4) reuse_import_lineage resolves the same conflicts to the existing targets.
+        let reuse = fp2_b2_preview(&fixture, mapped, "reuse_import_lineage", "fp2-b2-rt-reuse").await;
+        assert_eq!(reuse["code"], 0, "{reuse}");
+        assert_eq!(reuse["data"]["conflict_details"], again["data"]["conflict_details"]);
+        let reuse_commit = fp2_b2_commit(&fixture, &reuse, "reuse_import_lineage", "fp2-b2-rt-reuse-commit").await;
+        assert_eq!(reuse_commit["code"], 0, "{reuse_commit}");
+        let reuse_report = fp2_b2_report(&fixture, &reuse_commit).await;
+        assert_eq!(reuse_report["data"]["counts"]["reused"], 2, "{reuse_report}");
+        assert_eq!(reuse_report["data"]["counts"]["created"], 0, "{reuse_report}");
+        assert_eq!(
+            fp2_b2_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
+            pages_after_import
+        );
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
     async fn flow_package_import_wire_limits_accept_exact_boundary_and_reject_plus_one_with_zero_writes() {
         use tower::ServiceExt as _;
 
