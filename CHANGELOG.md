@@ -376,6 +376,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow admin lag: `GET /api/v1/admin/workspaces/{id}/flow/lag` now honours `cursor` and `limit`
+  (1..=100, default 50) and lists one row per document in `projection.items`, `search.items` and
+  `fanout.items` (`object_id`, `document_id`, `head_seq`, the consumer's seq, `lag`), paged in
+  document-id order. `next_cursor` is present only when another page exists. The workspace-wide
+  `max`/`p95` aggregates are unchanged. An invalid cursor or limit answers `invalid_update`.
 - Flow maintenance operations: the `OperationReceipt` returned by document compact, projection
   rebuild and document verify now carries the contract's full shape — `mode`
   (`dry_run`/`execute`), `scope`, `observed_head_seq`, `changes[]` (before/after boundary and
