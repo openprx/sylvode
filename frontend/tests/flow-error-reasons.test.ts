@@ -49,7 +49,9 @@ suite.check('each named reason maps to its action and key, on REST and WS alike'
 		child_project_must_match_parent: 'change_project',
 		project_unmapped: 'remap_project',
 		idempotency_key_body_drift: 'rekey_and_resend',
-		invalid_field_value: 'fix_field_value'
+		invalid_field_value: 'fix_field_value',
+		causal_dependency_missing: 'keep_in_recovery_draft',
+		cross_workspace_relation: 'integrity_repair'
 	};
 	for (const reason of INVALID_UPDATE_REASONS) {
 		const rest = flowErrorFromEnvelope(envelope(reason));

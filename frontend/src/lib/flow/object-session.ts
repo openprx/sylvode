@@ -644,7 +644,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 					recoverable: false,
 					origin: 'server'
 				};
-				const updateId = this.answeredUpdateId(frame, error);
+				const updateId = this.answeredUpdateId(frame);
 				if (updateId) {
 					// Only an answer to an `update` drives the streak (`collab-protocol-v1.md`
 					// "「被答复的」这个限定词是承重的").
@@ -808,9 +808,12 @@ export class LoroObjectSession implements ObjectSessionContract {
 
 		this.setState('saving');
 		return new Promise<void>((resolve, reject) => {
-			// An update nobody ever answers would block the ordered outbox for good; after the
-			// timeout the connection is treated as lost and the update is replayed under the same
-			// id on the next one.
+			// Transport liveness, not an attribution rule: the server answers every update
+			// (including a replay, with its original receipt), but an answer lost with a dying
+			// connection -- or a frame refused on length alone, which `limits-v1.md` allows to go
+			// without an `update_id` -- would otherwise block the ordered outbox for good. After
+			// the timeout the connection is treated as lost and the update is replayed under the
+			// same id on the next one, where the server answers it.
 			const timer = setTimeout(() => {
 				const waiter = this.pending.get(updateId);
 				if (!waiter) return;
@@ -890,15 +893,12 @@ export class LoroObjectSession implements ObjectSessionContract {
 		this.presenceSweepTimer = null;
 	}
 
-	/** The update a `rejected` frame answers: its `update_id`, or -- for the server's rate
-	 * refusal, which is sent without one (`session.rs::limit_exceeded_frame` sets `update_id:
-	 * None`) -- the single update in flight, when there is exactly one. */
-	private answeredUpdateId(frame: Record<string, unknown>, error: FlowError): string | null {
-		if (typeof frame.update_id === 'string') return frame.update_id;
-		if (error.code !== 'limit_exceeded' || this.pending.size !== 1) return null;
-		const details = error.details as { limit_kind?: unknown } | undefined;
-		if (details?.limit_kind !== 'update_rate') return null;
-		return [...this.pending.keys()][0] ?? null;
+	/** The update a `rejected` frame answers: its `update_id`. Every `rejected` that answers an
+	 * update carries it, the rate refusal included (`collab-protocol-v1.md`: "答复 `update` 的
+	 * `rejected` 帧必须带 `update_id`"); a frame without one answers no update and is never
+	 * attributed to whatever happens to be in flight. */
+	private answeredUpdateId(frame: Record<string, unknown>): string | null {
+		return typeof frame.update_id === 'string' ? frame.update_id : null;
 	}
 
 	private settle(updateId: string): void {

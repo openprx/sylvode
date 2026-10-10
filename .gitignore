@@ -75,4 +75,3 @@ deploy/flow-deployed-websocket.json
 
 # Local release-gate evidence; authoritative contracts live in the separate read-only checkout.
 /.flow-gate/
-/frontend/.flow-gate/

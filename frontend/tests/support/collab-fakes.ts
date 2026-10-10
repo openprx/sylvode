@@ -4,17 +4,19 @@
  * a server that holds a real `loro-crdt` document and speaks the wire shapes of
  * `apps/api/src/flow/collab/frame.rs` in the handshake order of `session.rs::run`.
  *
- * Two behaviours are transcribed from the real server on purpose, because the client must cope
- * with them:
- * - a replayed `update` whose `update_id` already committed before this connection's snapshot is
- *   NOT answered (`write.rs::accept_update` returns the prior receipt and `session.rs` routes it
- *   through the egress sequencer, which drops it as a duplicate of a seq <= the snapshot head);
- * - the rate refusal is a `rejected` with no `update_id` (`session.rs::limit_exceeded_frame`).
+ * It answers by the contract as the server does since FP2-B6 (`collab-protocol-v1.md` 2026-10-10
+ * registration):
+ * - a replayed `update` whose `update_id` already committed is answered with the ORIGINAL receipt
+ *   (same `head_seq`/`head_frontier`/`event_id`), on any connection, and is never applied twice;
+ * - every `rejected` that answers an update carries its `update_id` (the rate refusal included);
+ * - an update whose operations depend on ones the document does not have (Loro import leaves them
+ *   pending) is refused as `invalid_update` with `details.reason="causal_dependency_missing"` and
+ *   gets no seq;
+ * - the REST bootstrap admits `view`, like the WebSocket session.
  *
  * Every frame the server receives is recorded, so a suite can assert what reached the wire and in
- * which order, and every update the server accepts is checked against Loro's import status: an
- * update that only produced pending (causally incomplete) operations is counted in
- * `pendingAccepted`, which the suites require to stay zero.
+ * which order. `pendingAccepted` counts accepted updates whose import still produced pending
+ * operations; with the causal check it stays zero, and the suites assert that.
  */
 
 import { LoroDoc } from 'loro-crdt';
@@ -60,7 +62,8 @@ export interface RejectSpec {
 	readonly recoverable?: boolean;
 	readonly writeState?: 'not_applied' | 'unknown';
 	readonly details?: unknown;
-	/** Omit `update_id` from the frame (the real rate refusal does). */
+	/** Omit `update_id` from the frame. The contract allows that only for a refusal that answers
+	 * no update; a suite uses it to prove such a frame is never attributed to one. */
 	readonly withoutUpdateId?: boolean;
 }
 
@@ -186,7 +189,6 @@ export class FakeConnectivity implements Connectivity {
 interface Connection {
 	readonly socket: MockWebSocket;
 	readonly sessionId: string;
-	snapshotHead: number;
 }
 
 export class FakeCollabServer {
@@ -203,8 +205,10 @@ export class FakeCollabServer {
 	readonly hellos: Array<Record<string, unknown>> = [];
 	/** Accepted updates whose import produced only pending (causally incomplete) operations. */
 	pendingAccepted = 0;
-	/** Duplicates the server dropped without an answer (see the header). */
-	unansweredDuplicates = 0;
+	/** Replays of an already committed `update_id`, answered with the original receipt. */
+	replaysAnswered = 0;
+	/** Updates refused as `causal_dependency_missing`. */
+	causalRefusals = 0;
 	readonly connections = new Map<MockWebSocket, Connection>();
 	private connectionCounter = 0;
 	private readonly byUpdateId = new Map<string, number>();
@@ -217,8 +221,7 @@ export class FakeCollabServer {
 		this.connectionCounter += 1;
 		this.connections.set(socket, {
 			socket,
-			sessionId: `00000000-0000-4000-8000-${String(this.connectionCounter).padStart(12, '0')}`,
-			snapshotHead: 0
+			sessionId: `00000000-0000-4000-8000-${String(this.connectionCounter).padStart(12, '0')}`
 		});
 	}
 
@@ -260,7 +263,6 @@ export class FakeCollabServer {
 				});
 				return;
 			case 'open':
-				connection.snapshotHead = this.headSeq;
 				socket.deliver({
 					type: 'snapshot',
 					protocol_version: 1,
@@ -308,10 +310,7 @@ export class FakeCollabServer {
 		this.updatesSeen.push(seen);
 		const prior = this.byUpdateId.get(updateId);
 		if (prior !== undefined) {
-			if (prior <= connection.snapshotHead) {
-				this.unansweredDuplicates += 1;
-				return;
-			}
+			this.replaysAnswered += 1;
 			connection.socket.deliver(this.acceptedFrame(updateId, prior));
 			return;
 		}
@@ -328,6 +327,24 @@ export class FakeCollabServer {
 				recoverable: spec.recoverable ?? false,
 				write_state: spec.writeState ?? 'not_applied',
 				...(spec.details === undefined ? {} : { details: spec.details })
+			});
+			return;
+		}
+		// Probed on a fork, so a refused update leaves nothing pending in the real document.
+		const probe = this.doc.fork();
+		const status = probe.import(seen.bytes);
+		probe.free();
+		if (status.pending && status.pending.size > 0) {
+			this.causalRefusals += 1;
+			connection.socket.deliver({
+				type: 'rejected',
+				protocol_version: 1,
+				document_id: DOCUMENT_ID,
+				update_id: updateId,
+				code: 'invalid_update',
+				recoverable: false,
+				write_state: 'not_applied',
+				details: { reason: 'causal_dependency_missing' }
 			});
 			return;
 		}
@@ -403,9 +420,9 @@ export class FakeCollabServer {
 			});
 		}
 		if (method === 'GET' && path === `/api/v1/flow/objects/${OBJECT_ID}/bootstrap`) {
-			// Transcribed: the real REST bootstrap requires `edit` (`routes/flow.rs`
-			// `get_flow_object_bootstrap`), while a WebSocket session admits `view`.
-			if (this.effectiveLevel !== 'edit' && this.effectiveLevel !== 'full_access') {
+			// The REST bootstrap admits `view` (`routes/flow.rs::get_flow_object_bootstrap`),
+			// like the WebSocket session.
+			if (this.effectiveLevel === 'none') {
 				return new Response(
 					JSON.stringify({
 						code: 404,

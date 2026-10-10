@@ -511,8 +511,8 @@ export class FlowObjectRepository {
 		return true;
 	}
 
-	/** The REST bootstrap for the outbox, or `null` when this user may not read it there (the
-	 * server requires `edit` for it, `routes/flow.rs::get_flow_object_bootstrap`). */
+	/** The REST bootstrap for the outbox, or `null` when this user may not read it there
+	 * (`forbidden`/`not_found`; the server admits `view`, same as the WebSocket session). */
 	private async acceptedBootstrap(objectId: string): Promise<FlowBootstrap | null> {
 		try {
 			return await this.bootstrap(objectId);

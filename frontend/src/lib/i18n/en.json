@@ -2535,7 +2535,9 @@
         "child_project_must_match_parent": "A child must be in the same project as its parent. Use the parent's project, or leave the project empty.",
         "project_unmapped": "A project in the package has no mapping. Map it to a target project and preview again.",
         "idempotency_key_body_drift": "This request reused an idempotency key that belongs to a different change; it has to be sent as a new change with a new key.",
-        "invalid_field_value": "A field value does not fit the field's type. Correct it and try again."
+        "invalid_field_value": "A field value does not fit the field's type. Correct it and try again.",
+        "causal_dependency_missing": "This change depends on an earlier change that was refused, so it cannot be committed on its own. It is kept in the recovery draft with the changes after it.",
+        "cross_workspace_relation": "The relation target is in another workspace. The write was refused and recorded as an integrity issue; a workspace administrator has to review it on the operations page."
       },
       "integrityRepairLink": "Open workspace operations"
     },

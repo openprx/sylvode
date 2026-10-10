@@ -513,6 +513,14 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow Web collaboration consumes the collaboration contract directly now that the server
+  answers it: a replayed `update_id` is resent and acknowledged from the server's original
+  receipt (no longer guessed from the snapshot), a `rejected` frame is matched only by its own
+  `update_id` (a refusal that names no update is no longer pinned on the update in flight), and
+  `policy_rejected` keeps the intent in the recovery draft and turns the page read-only without
+  reconnecting to retry it. `invalid_update` reasons `causal_dependency_missing` and
+  `cross_workspace_relation` have their own wording, and the offline-recovery evidence is written
+  under the repository's `.flow-gate/cache/frontend/` (or `SYLVODE_SCRATCH_ROOT`).
 - Flow: `GET /flow/objects/{id}?render=markdown` renders an object whose projection state is
   empty again (the secret-Record redaction had skipped rendering for any empty
   `semantic_content`, not only for redacted Records).
