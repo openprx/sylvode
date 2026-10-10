@@ -2370,6 +2370,8 @@
   "flow": {
     "nav": {
       "title": "Navigator",
+      "showNavigator": "Show navigator",
+      "hideNavigator": "Hide navigator",
       "newPage": "New Page",
       "empty": "No pages yet",
       "createFirst": "Create your first page",

@@ -80,7 +80,7 @@
 </script>
 
 <div
-	class="relative flex-1 overflow-y-auto bg-white px-16 py-10 dark:bg-slate-950"
+	class="relative min-h-[50vh] flex-1 overflow-y-auto bg-white px-16 py-10 lg:min-h-0 dark:bg-slate-950"
 	role="presentation"
 	onmousemove={onHostMouseMove}
 	onmouseleave={onHostMouseLeave}
