@@ -44,6 +44,7 @@ export type FlowErrorCode =
 	| 'resync_required'
 	| 'authorization_churn'
 	| 'server_draining'
+	| 'server_rejected'
 	| 'checksum_mismatch'
 	| 'unsupported_format';
 

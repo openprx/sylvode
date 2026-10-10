@@ -357,6 +357,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Web UI: `server_rejected` is now one of the client's registered stable Flow error codes, so
+  the zh/en parity gate covers its keys, and a `rejected` frame carrying it on a live editing
+  session fails the pending write as a permanent error instead of being ignored and leaving the
+  write pending. The operations panel and the conversion job page classify it through the same
+  registry; it is still shown as a permanent failure with no retry.
 - Web UI: the sidebar's workspace-admin links (Members, Webhook, Operation Records, Workspace
   Settings, Flow settings) follow the viewer's member role in the workspace on screen. The role
   was read once when the app first loaded and an instance admin counted as a workspace admin, so

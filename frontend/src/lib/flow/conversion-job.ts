@@ -137,13 +137,12 @@ function failure(kind: JobFailureKind, messageKey: string, retryable: boolean): 
 export function classifyJobFailure(
 	result: Pick<ApiResult<unknown>, 'code' | 'error_code' | 'details'>
 ): JobFailure {
-	if (result.error_code === 'server_rejected') {
-		// Not (yet) in the shared `FLOW_ERROR_CODES` registry (see `operations-service.ts`).
-		return failure('server_rejected', JOB_FAILURE_KEYS.server_rejected, false);
-	}
 	const flowError = flowErrorFromEnvelope(result);
 	if (flowError) {
 		switch (flowError.code) {
+			case 'server_rejected':
+				// Permanent (`error-mapping-v1.md`: "不得提示重试").
+				return failure('server_rejected', JOB_FAILURE_KEYS.server_rejected, false);
 			case 'forbidden':
 			case 'not_found':
 				return failure('not_found', JOB_FAILURE_KEYS.not_found, false);
