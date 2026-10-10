@@ -12,7 +12,13 @@
 	import { projectOptionsStore } from '$lib/stores/project-options';
 	import { workspacesApi } from '$lib/api/workspaces';
 	import { flowFeatureStore } from '$lib/stores/flow-feature';
-	import { isWorkspaceHomePath, workspaceHomeNames, workspaceHomeTitle } from '$lib/workspace/home';
+	import {
+		isWorkspaceHomePath,
+		workspaceHomeNames,
+		workspaceHomeTitle,
+		type WorkspaceRole
+	} from '$lib/workspace/home';
+	import { WorkspaceRoleTracker, showWorkspaceAdminLinks } from '$lib/workspace/role';
 
 	let { children } = $props();
 
@@ -27,10 +33,13 @@
 	let unreadCount = $state(0);
 	let loadingProfile = $state(true);
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
-	let workspaceRole = $state<string | null>(null);
+	let workspaceRole = $state<WorkspaceRole | null>(null);
 
 	const isAdmin = $derived(isAdminUser($authStore.user));
-	const isWorkspaceAdmin = $derived(workspaceRole === 'owner' || workspaceRole === 'admin' || isAdmin);
+	// Member role only, as on the server; the instance-admin flag does not grant these links.
+	const isWorkspaceAdmin = $derived(
+		showWorkspaceAdminLinks({ workspaceRole, instanceAdmin: isAdmin })
+	);
 
 	const appPageTitle = $derived.by(() => {
 		const pathname = $page.url.pathname;
@@ -133,6 +142,18 @@
 		if (workspaceId) void flowFeatureStore.refresh(workspaceId);
 	});
 
+	// Re-read the member role whenever the workspace (or user) changes; null until it lands.
+	const roleTracker = new WorkspaceRoleTracker(
+		(workspaceId) => workspacesApi.getMembers(workspaceId),
+		(role) => {
+			workspaceRole = role;
+		}
+	);
+	const currentUserId = $derived($authStore.user?.id ?? null);
+	$effect(() => {
+		void roleTracker.select(currentWorkspaceId, currentUserId);
+	});
+
 	onMount(() => {
 		void (async () => {
 			const meResponse = await authApi.me();
@@ -148,19 +169,6 @@
 			}
 
 			await Promise.all([fetchUnreadCount(), projectOptionsStore.ensureLoaded()]);
-
-			// Fetch workspace role for current user
-			if (currentWorkspaceId && meResponse.data?.user) {
-				try {
-					const membersRes = await workspacesApi.getMembers(currentWorkspaceId);
-					if (membersRes.code === 0 && membersRes.data?.items) {
-						const me = membersRes.data.items.find((m) => m.user_id === meResponse.data!.user.id);
-						workspaceRole = me?.role ?? null;
-					}
-				} catch {
-					workspaceRole = null;
-				}
-			}
 
 			loadingProfile = false;
 		})();
