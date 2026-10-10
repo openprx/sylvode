@@ -23,11 +23,15 @@ export type { UploadProgress };
  * create endpoint rejects `record`). */
 export type FlowObjectType = 'page' | 'navigator' | 'collection';
 
+/** Every `object_type` a read can return: the creatable types plus `record`, which only the
+ * collection-scoped records endpoint creates (`flow/collections.rs::create_record`). */
+export type FlowReadableObjectType = FlowObjectType | 'record';
+
 export interface FlowObjectView {
 	id: string;
 	workspace_id: string;
 	project_id: string | null;
-	object_type: FlowObjectType;
+	object_type: FlowReadableObjectType;
 	lifecycle_status: string;
 	governance_metadata: Record<string, unknown>;
 	title: string;
@@ -612,7 +616,10 @@ export interface FlowProjectionLag {
 	next_cursor?: string;
 }
 
-/** v0.4 command types (`rest-api-v1.md`'s `POST .../commands` row). */
+/** v0.4 command types (`rest-api-v1.md`'s `POST .../commands` row) plus the v0.6 Collection
+ * commands (`flow/collections.rs::CollectionCommandType::parse`; `record_create` and
+ * `record_query` are not sent here: records are created through the records endpoint and the
+ * command form of a query is refused). */
 export type FlowCommandType =
 	| 'set_title'
 	| 'insert_block'
@@ -620,7 +627,123 @@ export type FlowCommandType =
 	| 'delete_block'
 	| 'move_block'
 	| 'archive'
-	| 'restore';
+	| 'restore'
+	| FlowCollectionCommandType;
+
+export type FlowCollectionCommandType =
+	| 'field_create'
+	| 'field_update'
+	| 'field_archive'
+	| 'field_reorder'
+	| 'view_create'
+	| 'view_update'
+	| 'view_reorder'
+	| 'record_patch'
+	| 'record_archive';
+
+/** The seven first-release field types (`flow/collections.rs::validate_field_type`). */
+export type FlowCollectionFieldType =
+	| 'text'
+	| 'number'
+	| 'boolean'
+	| 'date'
+	| 'select'
+	| 'multi_select'
+	| 'relation';
+
+/** `flow/collections.rs::CollectionFieldView` (the type is serialized as `type`). `config` is a
+ * free-form object; the server only reads `config.restricted` (`validate_field_config`). */
+export interface FlowCollectionFieldView {
+	field_id: string;
+	label: string;
+	type: string;
+	config: Record<string, unknown>;
+	position: number;
+	archived: boolean;
+	document_seq: number;
+}
+
+/** `flow/collections.rs::CollectionViewView` (`type` is `table|board`). */
+export interface FlowCollectionViewView {
+	view_id: string;
+	name: string;
+	type: string;
+	config: Record<string, unknown>;
+	position: number;
+	document_seq: number;
+}
+
+/** `GET /flow/collections/{id}` and `GET /flow/objects/{id}/schema` for a Collection
+ * (`flow/collections.rs::CollectionDescription`). Restricted fields are already removed when
+ * `field_secrecy_enabled` (`describe_collection`). */
+export interface FlowCollectionDescription {
+	object: FlowObjectView;
+	fields: FlowCollectionFieldView[];
+	views: FlowCollectionViewView[];
+	record_count: number;
+	schema_seq: number;
+	projection_seq: number;
+	client_crdt_enabled: boolean;
+	field_secrecy_enabled: boolean;
+}
+
+/** `flow/collections.rs::RecordFilter`: one condition. `op` is `eq|ne|lt|lte|gt|gte` for scalar
+ * types and `eq|ne|contains` for `multi_select`/`relation`; `value` must be the field's wire type. */
+export interface FlowRecordFilter {
+	field_id: string;
+	op: string;
+	value: unknown;
+}
+
+/** `flow/collections.rs::RecordSort` (`direction` defaults to `asc`). */
+export interface FlowRecordSort {
+	field_id: string;
+	direction: 'asc' | 'desc';
+}
+
+/** `GET /flow/collections/{id}/records` query (`routes/flow.rs::GetCollectionRecordsQuery`):
+ * `filter`/`sort` are JSON-encoded, `field_ids` comma-separated, `limit` 1..=100 (default 50).
+ * The handler has no `view_id` parameter, so the view's filter/sort are sent explicitly. */
+export interface FlowCollectionRecordsQuery {
+	filter?: FlowRecordFilter;
+	sort?: FlowRecordSort;
+	group?: string;
+	cursor?: string;
+	limit?: number;
+	field_ids?: string[];
+}
+
+/** `POST /flow/collections/{id}/query` body (`flow/collections.rs::RecordQueryPayload`). */
+export interface FlowCollectionQueryInput {
+	filter?: FlowRecordFilter | null;
+	sort?: FlowRecordSort | null;
+	group?: string | null;
+	cursor?: string | null;
+	limit?: number;
+	field_ids?: string[];
+}
+
+export interface FlowRecordItem {
+	record: FlowObjectView;
+	values_by_field_id: Record<string, unknown>;
+}
+
+/** `flow/collections.rs::RecordQueryResponse`. */
+export interface FlowCollectionRecordsResponse {
+	fields: FlowCollectionFieldView[];
+	items: FlowRecordItem[];
+	next_cursor?: string;
+	projection_seq: number;
+	schema_seq: number;
+}
+
+/** `POST /flow/collections/{id}/records` (`routes/flow.rs::CreateCollectionRecordRequest`). */
+export interface CreateCollectionRecordInput {
+	values_by_field_id: Record<string, unknown>;
+	body?: string;
+	idempotency_key: string;
+	message?: string;
+}
 
 export interface FlowCommandInput {
 	type: FlowCommandType;
@@ -1202,6 +1325,56 @@ export const flowApi = {
 		});
 		return apiClient.get<FlowRelationListResponse>(
 			`/api/v1/flow/objects/${objectId}/relations${qs}`
+		);
+	},
+
+	// v0.6 Collections (`rest-api-v1.md` v0.6 table; routes in `apps/api/src/main.rs`).
+
+	/** `GET /flow/objects/{id}/schema`. Served by the same handler as `getCollection`
+	 * (`main.rs` routes both to `get_flow_collection`), so a non-Collection id is `not_found`. */
+	getObjectSchema(objectId: string): Promise<ApiResult<FlowCollectionDescription>> {
+		return apiClient.get<FlowCollectionDescription>(`/api/v1/flow/objects/${objectId}/schema`);
+	},
+
+	getCollection(collectionId: string): Promise<ApiResult<FlowCollectionDescription>> {
+		return apiClient.get<FlowCollectionDescription>(`/api/v1/flow/collections/${collectionId}`);
+	},
+
+	listCollectionRecords(
+		collectionId: string,
+		query: FlowCollectionRecordsQuery = {}
+	): Promise<ApiResult<FlowCollectionRecordsResponse>> {
+		const qs = buildQuery({
+			filter: query.filter ? JSON.stringify(query.filter) : undefined,
+			sort: query.sort ? JSON.stringify(query.sort) : undefined,
+			group: query.group,
+			cursor: query.cursor,
+			limit: query.limit,
+			field_ids:
+				query.field_ids && query.field_ids.length > 0 ? query.field_ids.join(',') : undefined
+		});
+		return apiClient.get<FlowCollectionRecordsResponse>(
+			`/api/v1/flow/collections/${collectionId}/records${qs}`
+		);
+	},
+
+	queryCollectionRecords(
+		collectionId: string,
+		input: FlowCollectionQueryInput
+	): Promise<ApiResult<FlowCollectionRecordsResponse>> {
+		return apiClient.post<FlowCollectionRecordsResponse>(
+			`/api/v1/flow/collections/${collectionId}/query`,
+			input
+		);
+	},
+
+	createCollectionRecord(
+		collectionId: string,
+		input: CreateCollectionRecordInput
+	): Promise<ApiResult<AcceptedChange>> {
+		return apiClient.post<AcceptedChange>(
+			`/api/v1/flow/collections/${collectionId}/records`,
+			input
 		);
 	}
 };

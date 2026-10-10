@@ -4,7 +4,7 @@
 // only ever from inside a dynamic `import()` so the engine chunk stays out of every non-Flow
 // route bundle (`contracts/ui-surface-v1.md` "engine chunk 只从 `(app)/flow` 动态 import").
 
-import type { FlowBootstrap, FlowObjectType, FlowObjectView } from '$lib/api/flow';
+import type { FlowBootstrap, FlowObjectView, FlowReadableObjectType } from '$lib/api/flow';
 import type { Readable } from 'svelte/store';
 
 /** One raw CRDT update, produced locally by an `EditorAdapter` or a navigator reorder. */
@@ -182,7 +182,7 @@ export interface SelectionProjection {
 
 export interface ObjectProjection {
 	readonly objectId: string;
-	readonly objectType: FlowObjectType;
+	readonly objectType: FlowReadableObjectType;
 	readonly title: string;
 	readonly documentSeq: number;
 	readonly frontier: string;
@@ -199,7 +199,7 @@ export interface NavigatorEntry {
 export interface ObjectHandle {
 	readonly workspaceId: string;
 	readonly objectId: string;
-	readonly objectType: FlowObjectType;
+	readonly objectType: FlowReadableObjectType;
 	readonly documentId: string;
 	readonly object: FlowObjectView;
 }

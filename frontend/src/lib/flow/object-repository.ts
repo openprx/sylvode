@@ -20,6 +20,10 @@ import {
 	type FlowAdminIntegrity,
 	type FlowAdminLag,
 	type FlowBootstrap,
+	type FlowCollectionDescription,
+	type FlowCollectionQueryInput,
+	type FlowCollectionRecordsQuery,
+	type FlowCollectionRecordsResponse,
 	type FlowExportJob,
 	type FlowGrantsView,
 	type FlowObjectView,
@@ -35,6 +39,7 @@ import { FlowCommandService } from './command-service';
 import { LoroObjectSession, type AcceptedNotice, type SnapshotPayload } from './object-session';
 import { LiveProjectionStore } from './projection-store';
 import { negotiateFlowLimitsVersion } from './limits';
+import { flowErrorFromEnvelope } from './errors';
 import type { EngineDiff, FlowError, ObjectHandle, ObjectProjection, SyncState } from './types';
 // `LoroDocType` (from `loro-prosemirror`, type-only) is the specific `{doc, data}` container
 // shape `LoroSyncPlugin`/`LoroUndoPlugin` require; `loro-crdt`'s own `LoroDoc` generic defaults
@@ -121,6 +126,11 @@ interface OpenEntry extends OpenFlowObjectResult {
 	refCount: number;
 }
 
+interface OpenRecordEntry {
+	refCount: number;
+	view: Promise<FlowObjectView>;
+}
+
 async function loadLoro(): Promise<typeof import('loro-crdt')> {
 	return import('loro-crdt');
 }
@@ -141,26 +151,43 @@ function fromBase64(value: string): Uint8Array {
 // TypeScript's structural typing would reject `open`'s covariant return.
 export class FlowObjectRepository {
 	private readonly open_ = new Map<string, OpenEntry>();
+	// Record documents opened by a record panel (`openRecord`). A Record is server-only
+	// (`flow/collab/ticket.rs::object_type_admits_collab_session` refuses a collab session and
+	// `query.rs::get_bootstrap` refuses its bootstrap), so "opening" its document is the one REST
+	// read of the record object, ref-counted here like `open_`; it never builds an engine doc.
+	private readonly records_ = new Map<string, OpenRecordEntry>();
 	// Ticket issuance is the only thing `ObjectSession` needs from `CommandService`
 	// (`command-service.ts`'s `TicketIssuer`); owned here since `CommandService` has no
 	// per-request state of its own and every open session shares one workspace-agnostic instance.
 	private readonly commandService = new FlowCommandService();
 
-	async open(input: { workspaceId: string; objectId: string; signal: AbortSignal }): Promise<OpenFlowObjectResult> {
+	async open(input: {
+		workspaceId: string;
+		objectId: string;
+		signal: AbortSignal;
+		/** The object as the caller already read it (`get`), so the route page that dispatches on
+		 * `object_type` first does not read it twice. */
+		object?: FlowObjectView;
+	}): Promise<OpenFlowObjectResult> {
 		const existing = this.open_.get(input.objectId);
 		if (existing) {
 			existing.refCount += 1;
 			return existing;
 		}
 
-		const objectResult = await flowApi.getObject(input.objectId);
-		if (objectResult.code !== 0 || !objectResult.data) {
-			throw {
-				code: objectResult.code === 404 ? 'not_found' : 'forbidden',
-				recoverable: false
-			} satisfies FlowError;
+		let object: FlowObjectView;
+		if (input.object && input.object.id === input.objectId) {
+			object = input.object;
+		} else {
+			const objectResult = await flowApi.getObject(input.objectId);
+			if (objectResult.code !== 0 || !objectResult.data) {
+				throw {
+					code: objectResult.code === 404 ? 'not_found' : 'forbidden',
+					recoverable: false
+				} satisfies FlowError;
+			}
+			object = objectResult.data;
 		}
-		const object: FlowObjectView = objectResult.data;
 		if (input.signal.aborted) {
 			throw { code: 'not_found', recoverable: false } satisfies FlowError;
 		}
@@ -385,6 +412,73 @@ export class FlowObjectRepository {
 	// v0.5 object panel reads (`ui-surface-v1.md` "职责边界": the Share panel reads through
 	// `ObjectRepository`, the Relations panel is a lazy-loaded repository read). Raw `ApiResult`s,
 	// so the panel controllers (`share-panel.ts`, `relations-panel.ts`) branch on `error_code`.
+
+	// v0.6 Collections (`rest-api-v1.md` v0.6 table). Schema, collection and record-list reads are
+	// typed projections; none of them opens an engine doc. Raw `ApiResult`s, so the collection
+	// view controller (`collection-view.ts`) branches on `error_code`.
+
+	getSchema(objectId: string): Promise<ApiResult<FlowCollectionDescription>> {
+		return flowApi.getObjectSchema(objectId);
+	}
+
+	getCollection(collectionId: string): Promise<ApiResult<FlowCollectionDescription>> {
+		return flowApi.getCollection(collectionId);
+	}
+
+	listRecords(
+		collectionId: string,
+		query: FlowCollectionRecordsQuery = {}
+	): Promise<ApiResult<FlowCollectionRecordsResponse>> {
+		return flowApi.listCollectionRecords(collectionId, query);
+	}
+
+	queryRecords(
+		collectionId: string,
+		input: FlowCollectionQueryInput
+	): Promise<ApiResult<FlowCollectionRecordsResponse>> {
+		return flowApi.queryCollectionRecords(collectionId, input);
+	}
+
+	/**
+	 * Opens one Record's document for a record panel (`versions/v0.6-collections.md`: "大集合只
+	 * 打开 viewport/正在编辑的 record documents"). Ref-counted: a second open of the same record
+	 * shares the first read. Rejects with a typed `FlowError`. Every open must be paired with
+	 * `closeRecord`.
+	 */
+	async openRecord(recordId: string): Promise<FlowObjectView> {
+		const existing = this.records_.get(recordId);
+		if (existing) {
+			existing.refCount += 1;
+			return existing.view;
+		}
+		const view = flowApi.getObject(recordId).then((result) => {
+			if (result.code !== 0 || !result.data) {
+				this.records_.delete(recordId);
+				throw (
+					flowErrorFromEnvelope(result) ??
+					({
+						code: result.code === 404 ? 'not_found' : 'forbidden',
+						recoverable: false
+					} satisfies FlowError)
+				);
+			}
+			return result.data;
+		});
+		this.records_.set(recordId, { refCount: 1, view });
+		return view;
+	}
+
+	closeRecord(recordId: string): void {
+		const entry = this.records_.get(recordId);
+		if (!entry) return;
+		entry.refCount -= 1;
+		if (entry.refCount <= 0) this.records_.delete(recordId);
+	}
+
+	/** Record documents currently open (diagnostics and tests). */
+	openRecordIds(): string[] {
+		return [...this.records_.keys()];
+	}
 
 	getGrants(objectId: string): Promise<ApiResult<FlowGrantsView>> {
 		return flowApi.getGrants(objectId);
