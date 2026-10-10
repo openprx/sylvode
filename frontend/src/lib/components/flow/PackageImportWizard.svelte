@@ -17,8 +17,10 @@
 		STEP_KEYS,
 		UPLOAD_STATE_KEYS,
 		IMPORT_ARCHIVE_BYTES_MAX,
+		PREVIEW_HOLD_KEYS,
 		PackageImportWizard,
 		WIZARD_STEPS,
+		previewConflicts,
 		type ProjectMappingRow,
 		type WizardSnapshot,
 		type WizardStep
@@ -114,6 +116,25 @@
 		announce('flow.import.live.cancelled');
 	}
 
+	/** The mapping select's value: a project id, `unprojected`, or `''` while the user has not
+	 * chosen a target for a row the preview added. */
+	function targetValue(row: ProjectMappingRow): string {
+		if (row.unresolved) return '';
+		return row.targetProjectId ?? 'unprojected';
+	}
+
+	function chooseTarget(index: number, value: string) {
+		if (value === '') return;
+		updateRow(index, {
+			targetProjectId: value === 'unprojected' ? null : value,
+			unresolved: false
+		});
+	}
+
+	function projectLabel(sourceProjectId: string, title: string | null | undefined): string {
+		return title && title.trim() !== '' ? title : sourceProjectId;
+	}
+
 	function updateRow(index: number, patch: Partial<ProjectMappingRow>) {
 		if (!snap) return;
 		const rows = snap.options.projectMapping.map((row, i) =>
@@ -139,14 +160,28 @@
 		});
 	}
 
+	function announceUnmapped() {
+		const current = wizard.snapshot();
+		if (current.step === 'options' && current.unmappedProjects.length > 0) {
+			announce('flow.import.live.unmapped', { n: String(current.unmappedProjects.length) });
+		}
+	}
+
 	async function next() {
 		if (snap?.step === 'options') announce('flow.import.live.previewing');
 		await wizard.advance();
+		announceUnmapped();
 	}
 
 	async function rePreview() {
 		announce('flow.import.live.previewing');
 		await wizard.runPreview();
+		announceUnmapped();
+	}
+
+	async function previewWithReuse() {
+		announce('flow.import.live.previewing');
+		await wizard.previewWithReuse();
 	}
 
 	async function copyHash(hash: string) {
@@ -392,22 +427,56 @@
 							<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
 								{$t('flow.import.options.mappingHint')}
 							</p>
+							{#if snap.unmappedProjects.length > 0}
+								<div
+									class="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+									role="alert"
+									data-testid="flow-import-unmapped"
+								>
+									<p>{$t('flow.import.options.unmappedNotice')}</p>
+									<ul class="mt-1 list-disc pl-5">
+										{#each snap.unmappedProjects as project (project.source_project_id)}
+											<li data-testid="flow-import-unmapped-project">
+												{projectLabel(project.source_project_id, project.title)}
+											</li>
+										{/each}
+									</ul>
+								</div>
+							{/if}
 							{#each snap.options.projectMapping as row, index (index)}
-								<div class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_auto] md:items-end">
+								<div
+									class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_auto] md:items-end"
+									data-testid="flow-import-mapping-row"
+								>
 									<div>
-										<label
-											for={`flow-import-source-${index}`}
-											class="block text-xs text-slate-600 dark:text-slate-300"
-										>
-											{$t('flow.import.options.sourceProject')}
-										</label>
-										<input
-											id={`flow-import-source-${index}`}
-											class={fieldClass}
-											value={row.sourceProjectId}
-											oninput={(event) =>
-												updateRow(index, { sourceProjectId: event.currentTarget.value })}
-										/>
+										{#if row.title !== undefined}
+											<p class="block text-xs text-slate-600 dark:text-slate-300">
+												{$t('flow.import.options.sourceProject')}
+											</p>
+											<p
+												class="mt-1 flex min-h-11 flex-col justify-center text-sm text-slate-900 dark:text-slate-100"
+												data-testid="flow-import-mapping-source"
+											>
+												<span>{projectLabel(row.sourceProjectId, row.title)}</span>
+												<span class="break-all font-mono text-xs text-slate-500 dark:text-slate-400"
+													>{row.sourceProjectId}</span
+												>
+											</p>
+										{:else}
+											<label
+												for={`flow-import-source-${index}`}
+												class="block text-xs text-slate-600 dark:text-slate-300"
+											>
+												{$t('flow.import.options.sourceProject')}
+											</label>
+											<input
+												id={`flow-import-source-${index}`}
+												class={fieldClass}
+												value={row.sourceProjectId}
+												oninput={(event) =>
+													updateRow(index, { sourceProjectId: event.currentTarget.value })}
+											/>
+										{/if}
 									</div>
 									<div>
 										<label
@@ -419,13 +488,16 @@
 										<select
 											id={`flow-import-target-${index}`}
 											class={fieldClass}
-											value={row.targetProjectId ?? ''}
-											onchange={(event) =>
-												updateRow(index, {
-													targetProjectId: event.currentTarget.value || null
-												})}
+											aria-label={$t('flow.import.options.targetFor', {
+												values: { project: projectLabel(row.sourceProjectId, row.title) }
+											})}
+											value={targetValue(row)}
+											onchange={(event) => chooseTarget(index, event.currentTarget.value)}
 										>
-											<option value="">{$t('flow.import.options.unprojected')}</option>
+											{#if row.unresolved}
+												<option value="" disabled>{$t('flow.import.options.chooseTarget')}</option>
+											{/if}
+											<option value="unprojected">{$t('flow.import.options.unprojected')}</option>
 											{#each projects as project (project.id)}
 												<option value={project.id}>{project.label}</option>
 											{/each}
@@ -455,6 +527,113 @@
 						{/if}
 						{#if snap.preview}
 							{@const preview = snap.preview}
+							{@const conflicts = previewConflicts(preview)}
+							{@const summary = preview.manifest_summary}
+							{#if snap.previewHold}
+								<div
+									class="space-y-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+									role="alert"
+									data-testid="flow-import-hold"
+									data-hold={snap.previewHold}
+								>
+									<p>{$t(PREVIEW_HOLD_KEYS[snap.previewHold])}</p>
+									{#if snap.previewHold === 'lineage_exists'}
+										<button
+											type="button"
+											class={buttonSecondary}
+											disabled={snap.previewState === 'running'}
+											onclick={previewWithReuse}
+											data-testid="flow-import-reuse"
+										>
+											{$t('flow.import.preview.reuseAction')}
+										</button>
+									{/if}
+								</div>
+							{/if}
+							{#if summary}
+								<section
+									aria-labelledby="flow-import-manifest-heading"
+									class="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700"
+									data-testid="flow-import-manifest"
+								>
+									<h4
+										id="flow-import-manifest-heading"
+										class="font-medium text-slate-900 dark:text-slate-100"
+									>
+										{$t('flow.import.preview.manifest.heading')}
+									</h4>
+									<dl class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+										<div>
+											<dt class="text-slate-500 dark:text-slate-400">
+												{$t('flow.import.preview.manifest.objects')}
+											</dt>
+											<dd
+												class="text-slate-900 dark:text-slate-100"
+												data-testid="flow-import-manifest-objects"
+											>
+												{summary.object_count}
+											</dd>
+										</div>
+										<div>
+											<dt class="text-slate-500 dark:text-slate-400">
+												{$t('flow.import.preview.manifest.documents')}
+											</dt>
+											<dd
+												class="text-slate-900 dark:text-slate-100"
+												data-testid="flow-import-manifest-documents"
+											>
+												{summary.document_count}
+											</dd>
+										</div>
+										<div>
+											<dt class="text-slate-500 dark:text-slate-400">
+												{$t('flow.import.preview.manifest.schema')}
+											</dt>
+											<dd
+												class="text-slate-900 dark:text-slate-100"
+												data-testid="flow-import-manifest-schema"
+											>
+												{summary.package_schema}
+											</dd>
+										</div>
+										<div>
+											<dt class="text-slate-500 dark:text-slate-400">
+												{$t('flow.import.preview.manifest.engine')}
+											</dt>
+											<dd
+												class="break-all text-slate-900 dark:text-slate-100"
+												data-testid="flow-import-manifest-engine"
+											>
+												{$t('flow.import.preview.manifest.engineValue', {
+													values: {
+														name: summary.engine.name,
+														version: summary.engine.crate_version,
+														wire: String(summary.engine.wire_format_version)
+													}
+												})}
+											</dd>
+										</div>
+										<div class="md:col-span-2">
+											<dt class="text-slate-500 dark:text-slate-400">
+												{$t('flow.import.preview.manifest.projects')}
+											</dt>
+											<dd class="text-slate-900 dark:text-slate-100">
+												{#if summary.projects.length === 0}
+													{$t('flow.import.preview.manifest.noProjects')}
+												{:else}
+													<ul>
+														{#each summary.projects as project (project.source_project_id)}
+															<li data-testid="flow-import-manifest-project">
+																{projectLabel(project.source_project_id, project.title)}
+															</li>
+														{/each}
+													</ul>
+												{/if}
+											</dd>
+										</div>
+									</dl>
+								</section>
+							{/if}
 							<dl class="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
 								<div class="md:col-span-2">
 									<dt class="text-slate-500 dark:text-slate-400">
@@ -528,11 +707,35 @@
 										class="text-slate-900 dark:text-slate-100"
 										data-testid="flow-import-conflicts"
 									>
-										{#if preview.conflicts.length === 0}
-											{$t('flow.import.preview.none')}
+										{#if conflicts.lineage.length === 0 && conflicts.unmapped.length === 0}
+											{#if preview.conflicts.length === 0}
+												{$t('flow.import.preview.none')}
+											{:else}
+												<ul class="break-all font-mono text-xs">
+													{#each preview.conflicts as conflict (conflict)}<li>{conflict}</li>{/each}
+												</ul>
+											{/if}
 										{:else}
-											<ul class="break-all font-mono text-xs">
-												{#each preview.conflicts as conflict (conflict)}<li>{conflict}</li>{/each}
+											<ul class="space-y-1">
+												{#each conflicts.lineage as conflict (conflict.source_object_id)}
+													<li class="break-all text-xs" data-testid="flow-import-conflict-lineage">
+														{$t('flow.import.preview.conflict.lineage', {
+															values: {
+																source: conflict.source_object_id,
+																target: conflict.existing_target_id
+															}
+														})}
+													</li>
+												{/each}
+												{#each conflicts.unmapped as conflict (conflict.source_project_id)}
+													<li class="break-all text-xs" data-testid="flow-import-conflict-unmapped">
+														{$t('flow.import.preview.conflict.unmapped', {
+															values: {
+																project: projectLabel(conflict.source_project_id, conflict.title)
+															}
+														})}
+													</li>
+												{/each}
 											</ul>
 										{/if}
 									</dd>

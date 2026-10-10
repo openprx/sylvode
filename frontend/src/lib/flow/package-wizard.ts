@@ -15,10 +15,16 @@
 //   key as long as the exact option set (and is dropped once that preview succeeded, so an
 //   explicit re-preview after expiry is a new request), the commit key as long as the preview;
 // - the package bytes are handed to the upload and then dropped -- nothing is parsed locally and
-//   nothing is written to ObjectRepository or IndexedDB.
+//   nothing is written to ObjectRepository or IndexedDB;
+// - a successful preview can still refuse confirm (`rest-api-v1.md` v0.8 `conflict_details`,
+//   2026-10-10): `project_unmapped` sends the wizard back to the mapping step with one row per
+//   unmapped source project (its title), each needing an explicit target or "unprojected" and a
+//   new preview; `lineage_exists` under `reject_existing` lists the already-imported objects and
+//   keeps confirm closed until the user previews again with `reuse_import_lineage`.
 
 import type {
 	FlowPackageArtifactReceipt,
+	FlowPackageConflictDetail,
 	FlowPackageConflictPolicy,
 	FlowPackageExternalReferencePolicy,
 	FlowPackageImportPreview,
@@ -32,7 +38,38 @@ import {
 	type FlowPackageFailure
 } from './package-import';
 
-export type { FlowPackageImportPreview, FlowPackageFailure };
+export type { FlowPackageConflictDetail, FlowPackageImportPreview, FlowPackageFailure };
+
+export type ProjectUnmappedConflict = Extract<
+	FlowPackageConflictDetail,
+	{ kind: 'project_unmapped' }
+>;
+export type LineageExistsConflict = Extract<FlowPackageConflictDetail, { kind: 'lineage_exists' }>;
+
+/** The preview's structured conflicts split by kind. A preview without `conflict_details` (an
+ * older server) has none; unknown kinds are ignored rather than guessed at. */
+export function previewConflicts(
+	preview: Pick<FlowPackageImportPreview, 'conflict_details'> | null
+): {
+	readonly unmapped: readonly ProjectUnmappedConflict[];
+	readonly lineage: readonly LineageExistsConflict[];
+} {
+	const unmapped: ProjectUnmappedConflict[] = [];
+	const lineage: LineageExistsConflict[] = [];
+	for (const detail of preview?.conflict_details ?? []) {
+		if (detail.kind === 'project_unmapped') unmapped.push(detail);
+		else if (detail.kind === 'lineage_exists') lineage.push(detail);
+	}
+	return { unmapped, lineage };
+}
+
+/** Why a successful preview still cannot be confirmed, or `null` when it can. */
+export type PreviewHold = 'project_unmapped' | 'lineage_exists';
+
+export const PREVIEW_HOLD_KEYS: Readonly<Record<PreviewHold, string>> = {
+	project_unmapped: 'flow.import.preview.hold.projectUnmapped',
+	lineage_exists: 'flow.import.preview.hold.lineageExists'
+};
 
 export const PACKAGE_FILE_EXTENSION = '.sylvode-flow.zip';
 
@@ -91,6 +128,11 @@ export interface ProjectMappingRow {
 	readonly sourceProjectId: string;
 	/** `null` maps the source project to "unprojected". */
 	readonly targetProjectId: string | null;
+	/** The source project's title from the preview (`conflict_details[].title`), when known. */
+	readonly title?: string | null;
+	/** A row the wizard added for a `project_unmapped` conflict: the user has not chosen a target
+	 * yet, so the mapping is not valid (the server must never guess the target). */
+	readonly unresolved?: boolean;
 }
 
 export interface ImportOptions {
@@ -124,6 +166,10 @@ export interface WizardSnapshot {
 	readonly hashAcknowledged: boolean;
 	readonly committing: boolean;
 	readonly expired: boolean;
+	/** Source projects the last preview reported as unmapped; shown on the mapping step. */
+	readonly unmappedProjects: readonly ProjectUnmappedConflict[];
+	/** Why the current preview cannot be confirmed, or `null`. */
+	readonly previewHold: PreviewHold | null;
 	/** `canAdvance(step)` for the current step, captured with the rest of the snapshot so a
 	 * component reading only the snapshot re-renders when it changes. */
 	readonly canAdvance: boolean;
@@ -147,6 +193,7 @@ export function validatePackageFile(name: string, size: number): FileRejection |
 export function mappingRowsValid(rows: readonly ProjectMappingRow[]): boolean {
 	const seen = new Set<string>();
 	for (const row of rows) {
+		if (row.unresolved) return false;
 		const source = row.sourceProjectId.trim().toLowerCase();
 		if (!UUID.test(source) || seen.has(source)) return false;
 		if (row.targetProjectId !== null && !UUID.test(row.targetProjectId)) return false;
@@ -203,6 +250,7 @@ export class PackageImportWizard {
 	private hashAcknowledged = false;
 	private commitIntent: { key: string; previewId: string } | null = null;
 	private committing = false;
+	private unmappedProjects: readonly ProjectUnmappedConflict[] = [];
 
 	constructor(
 		workspaceId: string,
@@ -238,6 +286,8 @@ export class PackageImportWizard {
 			hashAcknowledged: this.hashAcknowledged,
 			committing: this.committing,
 			expired: this.isExpired(),
+			unmappedProjects: this.unmappedProjects,
+			previewHold: this.previewHold(),
 			canAdvance: this.canAdvance(),
 			canCommit: this.canCommit()
 		};
@@ -254,7 +304,12 @@ export class PackageImportWizard {
 			case 'options':
 				return this.artifact !== null && mappingRowsValid(this.options.projectMapping);
 			case 'preview':
-				return this.preview !== null && this.blockingFailure === null && !this.isExpired();
+				return (
+					this.preview !== null &&
+					this.blockingFailure === null &&
+					!this.isExpired() &&
+					this.previewHold() === null
+				);
 			case 'confirm':
 				return false;
 		}
@@ -275,6 +330,11 @@ export class PackageImportWizard {
 		if (index >= WIZARD_STEPS.length - 1 || !this.canAdvance()) return false;
 		if (this.currentStep === 'options') {
 			await this.runPreview();
+			// An unmapped source project keeps the wizard on the mapping step.
+			if (this.currentStep === 'options' && this.unmappedProjects.length > 0) {
+				this.emit();
+				return false;
+			}
 		}
 		this.currentStep = WIZARD_STEPS[index + 1];
 		this.emit();
@@ -418,6 +478,9 @@ export class PackageImportWizard {
 			this.previewSignature = signature;
 			this.previewState = 'ready';
 			this.blockingFailure = null;
+			const { unmapped } = previewConflicts(preview);
+			this.unmappedProjects = unmapped;
+			if (unmapped.length > 0) this.returnToMapping(unmapped);
 			this.emit();
 			return true;
 		} catch (error) {
@@ -430,6 +493,29 @@ export class PackageImportWizard {
 			this.emit();
 			return false;
 		}
+	}
+
+	/** Why the current preview cannot be confirmed although it succeeded. */
+	previewHold(): PreviewHold | null {
+		const preview = this.preview;
+		if (!preview) return null;
+		const { unmapped, lineage } = previewConflicts(preview);
+		if (unmapped.length > 0) return 'project_unmapped';
+		if (lineage.length > 0 && this.previewConflictPolicy(preview) === 'reject_existing') {
+			return 'lineage_exists';
+		}
+		return null;
+	}
+
+	/**
+	 * `lineage_exists` under `reject_existing`: switch the conflict policy to
+	 * `reuse_import_lineage` and preview again (a new request with a new key). Refused unless the
+	 * current preview is held for exactly that reason.
+	 */
+	async previewWithReuse(): Promise<boolean> {
+		if (this.previewHold() !== 'lineage_exists' || this.committing) return false;
+		this.setOptions({ conflictPolicy: 'reuse_import_lineage' });
+		return this.runPreview();
 	}
 
 	acknowledgeHash(value: boolean): void {
@@ -489,9 +575,46 @@ export class PackageImportWizard {
 			if (!failure.retryable) this.commitIntent = null;
 			this.failure = failure;
 			if (failure.blocking) this.blockingFailure = failure;
+			if (failure.cause === 'project_unmapped') {
+				// The frozen mapping is incomplete: the preview is useless, the mapping needs work.
+				this.dropPreview();
+				this.currentStep = 'options';
+			}
 			this.emit();
 			return { status: 'failed', failure };
 		}
+	}
+
+	/** The conflict policy the preview was computed for (its frozen mapping), falling back to the
+	 * options it was requested with. */
+	private previewConflictPolicy(preview: FlowPackageImportPreview): FlowPackageConflictPolicy {
+		const frozen = (preview.mapping as { conflict_policy?: unknown }).conflict_policy;
+		return frozen === 'reject_existing' || frozen === 'reuse_import_lineage'
+			? frozen
+			: this.options.conflictPolicy;
+	}
+
+	/** Adds one unresolved row per unmapped source project (without a target: the user must pick
+	 * one or "unprojected") and moves back to the mapping step. The preview is dropped because its
+	 * options are no longer the current ones. */
+	private returnToMapping(unmapped: readonly ProjectUnmappedConflict[]): void {
+		const known = new Set(
+			this.options.projectMapping.map((row) => row.sourceProjectId.trim().toLowerCase())
+		);
+		const added: ProjectMappingRow[] = unmapped
+			.filter((conflict) => !known.has(conflict.source_project_id.toLowerCase()))
+			.map((conflict) => ({
+				sourceProjectId: conflict.source_project_id,
+				targetProjectId: null,
+				title: conflict.title,
+				unresolved: true
+			}));
+		this.options = {
+			...this.options,
+			projectMapping: [...this.options.projectMapping, ...added]
+		};
+		this.dropPreview();
+		this.currentStep = 'options';
 	}
 
 	private markCancelled(): void {
@@ -523,6 +646,12 @@ export class PackageImportWizard {
 		this.previewIntent = null;
 		this.failure = null;
 		this.blockingFailure = null;
+		this.unmappedProjects = [];
+		// Rows added for another package's unmapped projects do not describe the new file.
+		this.options = {
+			...this.options,
+			projectMapping: this.options.projectMapping.filter((row) => !row.unresolved)
+		};
 		this.dropPreview();
 	}
 

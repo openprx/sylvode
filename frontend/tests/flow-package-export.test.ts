@@ -28,6 +28,7 @@ import {
 	downloadExport,
 	exportDownloadUrl,
 	exportFileName,
+	exportJobFailure,
 	readRecentExports,
 	recentExportsKey,
 	rememberExport,
@@ -474,5 +475,59 @@ await suite.checkAsync('every export i18n key exists in zh and en', async () => 
 		assertDeepEqual(missing, [], `${locale}.json missing keys`);
 	}
 });
+
+await suite.checkAsync(
+	'a success envelope with status "failed" is a failure worded by its stable error code',
+	async () => {
+		const failedJob = job('failed', { checksum: '', size: 0, error: 'checksum_mismatch' });
+		const h = harness([ok(failedJob)], [ok(failedJob)]);
+		const outcome = await h.controller.submit({ includeHistory: false, projectId: null });
+		assertEqual(outcome.status, 'failed', 'submit reports the failure');
+		if (outcome.status === 'failed') {
+			assertEqual(
+				outcome.failure.messageKey,
+				'flow.error.checksum_mismatch',
+				'worded by the job error code'
+			);
+			assertEqual(outcome.failure.retryable, false, 'a failed job is not retried in place');
+		}
+		await settle();
+		assertDeepEqual(h.gets, [], 'a terminal failed job is not polled');
+		const view = h.controller.snapshot[0];
+		assertEqual(view?.jobId, 'job-1', 'the failed job is still tracked');
+		assertEqual(view?.polling, false, 'not polling');
+		assertEqual(view?.failure?.messageKey, 'flow.error.checksum_mismatch', 'row failure');
+		assertEqual(exportDownloadUrl(view?.job ?? null), null, 'no download for a failed job');
+		assertDeepEqual(readRecentExports(WS, h.store), ['job-1'], 'remembered for a reload');
+
+		// Re-attaching after a reload reads the same failure from GET.
+		const again = harness([], [ok(failedJob)], h.store);
+		again.controller.resume();
+		await settle();
+		assertEqual(
+			again.controller.snapshot[0]?.failure?.messageKey,
+			'flow.error.checksum_mismatch',
+			'GET failed job: same failure'
+		);
+
+		assertEqual(exportJobFailure(job('completed')), null, 'completed: no failure');
+		assertEqual(exportJobFailure(job('running')), null, 'running: no failure');
+		assertEqual(
+			exportJobFailure(job('failed', { error: 'server_rejected' }))?.messageKey,
+			'flow.error.server_rejected',
+			'server_rejected wording'
+		);
+		assertEqual(
+			exportJobFailure(job('failed', { error: 'made_up_code' }))?.messageKey,
+			'flow.package.error.rejected',
+			'unknown code: generic permanent wording'
+		);
+		assertEqual(
+			exportJobFailure(job('failed', { error: null }))?.messageKey,
+			'flow.package.error.rejected',
+			'failed without a code is still a failure'
+		);
+	}
+);
 
 finish(suite.result());

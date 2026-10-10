@@ -28,6 +28,7 @@ import {
 	EXTERNAL_POLICY_KEYS,
 	FILE_REJECTION_KEYS,
 	IMPORT_ARCHIVE_BYTES_MAX,
+	PREVIEW_HOLD_KEYS,
 	PackageImportWizard,
 	STEP_KEYS,
 	UPLOAD_STATE_KEYS,
@@ -97,7 +98,19 @@ const okUpload: Reply = {
 	}
 };
 
-function okPreview(expiresAt = '2099-01-01T00:00:00Z', previewId = 'preview-1'): Reply {
+const MANIFEST = {
+	projects: [],
+	object_count: 2,
+	document_count: 2,
+	package_schema: 'sylvode.flow.export-package.v1',
+	engine: { name: 'yrs', crate_version: '0.21.0', wire_format_version: 1 }
+};
+
+function okPreview(
+	expiresAt = '2099-01-01T00:00:00Z',
+	previewId = 'preview-1',
+	extra: { conflict_details?: unknown[]; conflict_policy?: string } = {}
+): Reply {
 	return {
 		code: 0,
 		data: {
@@ -105,8 +118,14 @@ function okPreview(expiresAt = '2099-01-01T00:00:00Z', previewId = 'preview-1'):
 			package_id: 'package-1',
 			package_sha256: PREVIEW_HASH,
 			mapping_hash: MAPPING_HASH,
-			mapping: { object_map: { s1: 't1', s2: 't2' }, project_map: {} },
+			manifest_summary: MANIFEST,
+			mapping: {
+				object_map: { s1: 't1', s2: 't2' },
+				project_map: {},
+				conflict_policy: extra.conflict_policy ?? 'reject_existing'
+			},
 			conflicts: [],
+			conflict_details: extra.conflict_details ?? [],
 			warnings: [],
 			estimated_changes: { objects: 2, documents: 2, relations: 0 },
 			expires_at: expiresAt
@@ -299,6 +318,252 @@ await suite.checkAsync(
 		assertNotEqual(PREVIEW_HASH, UPLOAD_HASH, 'fixture: preview and upload hashes differ');
 	}
 );
+
+const UNMAPPED_PROJECT = '33333333-3333-4333-8333-333333333333';
+const LINEAGE = [
+	{ kind: 'lineage_exists', source_object_id: 's1', existing_target_id: 't-old-1' },
+	{ kind: 'lineage_exists', source_object_id: 's2', existing_target_id: 't-old-2' }
+];
+
+await suite.checkAsync(
+	'project_unmapped: back to mapping with one titled, unresolved row per project; re-preview after choosing',
+	async () => {
+		reset();
+		reply('upload', okUpload);
+		reply(
+			'preview',
+			okPreview('2099-01-01T00:00:00Z', 'preview-1', {
+				conflict_details: [
+					{ kind: 'project_unmapped', source_project_id: UNMAPPED_PROJECT, title: 'Roadmap' }
+				]
+			}),
+			okPreview('2099-01-01T00:00:00Z', 'preview-2')
+		);
+		reply('commit', okCommit);
+		const { wizard } = newWizard();
+		const file = packageFile();
+		wizard.selectFile(file.blob, file.name);
+		assert(await wizard.advance(), 'file -> upload');
+		assert(await wizard.startUpload(), 'upload');
+		assert(await wizard.advance(), 'upload -> options');
+		assertEqual(await wizard.advance(), false, 'the preview found an unmapped project: no move');
+		assertEqual(wizard.step, 'options', 'back on the mapping step');
+		const snap = wizard.snapshot();
+		assertDeepEqual(
+			snap.unmappedProjects,
+			[{ kind: 'project_unmapped', source_project_id: UNMAPPED_PROJECT, title: 'Roadmap' }],
+			'the unmapped projects are listed'
+		);
+		assertDeepEqual(
+			snap.options.projectMapping,
+			[
+				{
+					sourceProjectId: UNMAPPED_PROJECT,
+					targetProjectId: null,
+					title: 'Roadmap',
+					unresolved: true
+				}
+			],
+			'one row per unmapped project, title kept, target not chosen'
+		);
+		assertEqual(snap.preview, null, 'the preview no longer matches the options and is dropped');
+		assertEqual(snap.optionsValid, false, 'an unresolved row is not a valid mapping');
+		assertEqual(wizard.canAdvance('options'), false, 'cannot preview before choosing');
+		assertEqual(wizard.reachable('confirm'), false, 'confirm unreachable');
+		const before = calls.length;
+		assertEqual(await wizard.advance(), false, 'refused while unresolved');
+		assertEqual(calls.length, before, 'nothing sent while a target is missing');
+
+		// The user picks "unprojected" (null) explicitly.
+		wizard.setOptions({
+			projectMapping: [
+				{
+					sourceProjectId: UNMAPPED_PROJECT,
+					targetProjectId: null,
+					title: 'Roadmap',
+					unresolved: false
+				}
+			]
+		});
+		assert(wizard.canAdvance('options'), 'chosen: can preview again');
+		assert(await wizard.advance(), 'options -> preview');
+		assertEqual(wizard.step, 'preview', 'on preview');
+		const previews = calls.filter((call) => call.path.endsWith('/imports/preview'));
+		assertEqual(previews.length, 2, 'two previews');
+		assertDeepEqual(
+			(previews[1].body as { project_mapping: unknown }).project_mapping,
+			{ [UNMAPPED_PROJECT]: null },
+			'the re-preview maps the project explicitly'
+		);
+		assertNotEqual(
+			(previews[0].body as { idempotency_key: string }).idempotency_key,
+			(previews[1].body as { idempotency_key: string }).idempotency_key,
+			'a new preview key'
+		);
+		assertEqual(wizard.snapshot().unmappedProjects.length, 0, 'nothing unmapped any more');
+		assertEqual(wizard.snapshot().previewHold, null, 'no hold');
+		assert(wizard.canAdvance('preview'), 'the second preview can be confirmed');
+	}
+);
+
+await suite.checkAsync(
+	'lineage_exists under reject_existing: preview succeeds but confirm stays closed until a reuse re-preview',
+	async () => {
+		reset();
+		reply('upload', okUpload);
+		reply(
+			'preview',
+			okPreview('2099-01-01T00:00:00Z', 'preview-1', { conflict_details: LINEAGE }),
+			okPreview('2099-01-01T00:00:00Z', 'preview-2', {
+				conflict_details: LINEAGE,
+				conflict_policy: 'reuse_import_lineage'
+			})
+		);
+		reply('commit', okCommit);
+		const { wizard } = newWizard();
+		await toPreview(wizard);
+		const held = wizard.snapshot();
+		assertEqual(held.previewState, 'ready', 'the preview itself succeeded');
+		assertEqual(held.failure, null, 'no error is shown for a successful preview');
+		assertEqual(held.previewHold, 'lineage_exists', 'held for the existing lineage');
+		assertEqual(held.canAdvance, false, 'snapshot: cannot advance');
+		assertEqual(wizard.canAdvance('preview'), false, 'cannot advance to confirm');
+		assertEqual(await wizard.advance(), false, 'advance refused');
+		assertEqual(wizard.goTo('confirm'), false, 'no jump to confirm');
+		assertEqual(wizard.reachable('confirm'), false, 'confirm unreachable');
+		assertDeepEqual(await wizard.commit(), { status: 'refused' }, 'commit refused');
+		assertEqual(
+			calls.filter((call) => call.path.endsWith('/commit')).length,
+			0,
+			'no commit sent while held'
+		);
+
+		assert(await wizard.previewWithReuse(), 'previewed again with reuse');
+		const previews = calls.filter((call) => call.path.endsWith('/imports/preview'));
+		assertEqual(previews.length, 2, 'a second preview');
+		assertEqual(
+			(previews[1].body as { conflict_policy: string }).conflict_policy,
+			'reuse_import_lineage',
+			'the re-preview asks for reuse'
+		);
+		assertNotEqual(
+			(previews[0].body as { idempotency_key: string }).idempotency_key,
+			(previews[1].body as { idempotency_key: string }).idempotency_key,
+			'new key for the new intent'
+		);
+		assertEqual(wizard.snapshot().previewHold, null, 'reuse: the lineage no longer holds');
+		assertEqual(wizard.step, 'preview', 'still on preview');
+		assert(await wizard.advance(), 'preview -> confirm');
+		wizard.acknowledgeHash(true);
+		const outcome = await wizard.commit();
+		assertEqual(outcome.status, 'committed', 'committed');
+		assertEqual(
+			(calls.at(-1)?.body as { conflict_policy: string }).conflict_policy,
+			'reuse_import_lineage',
+			'the commit carries the reuse policy'
+		);
+		assertEqual(await new PackageImportWizard(WS).previewWithReuse(), false, 'no preview: refused');
+	}
+);
+
+await suite.checkAsync(
+	'lineage_exists under reuse_import_lineage does not hold the preview',
+	async () => {
+		reset();
+		reply('upload', okUpload);
+		reply(
+			'preview',
+			okPreview('2099-01-01T00:00:00Z', 'preview-1', {
+				conflict_details: LINEAGE,
+				conflict_policy: 'reuse_import_lineage'
+			})
+		);
+		const { wizard } = newWizard();
+		const file = packageFile();
+		wizard.selectFile(file.blob, file.name);
+		await wizard.advance();
+		await wizard.startUpload();
+		await wizard.advance();
+		wizard.setOptions({ conflictPolicy: 'reuse_import_lineage' });
+		assert(await wizard.advance(), 'options -> preview');
+		assertEqual(wizard.snapshot().previewHold, null, 'no hold under reuse');
+		assert(wizard.canAdvance('preview'), 'can confirm');
+		assertEqual(await wizard.previewWithReuse(), false, 'nothing to switch');
+	}
+);
+
+await suite.checkAsync(
+	'commit rejections: project_unmapped returns to mapping, policy_rejected is the lineage refusal; message never read',
+	async () => {
+		reset();
+		reply('upload', okUpload);
+		reply('preview', okPreview());
+		reply('commit', {
+			code: 400,
+			error_code: 'invalid_update',
+			details: { reason: 'project_unmapped' },
+			message: 'policy_rejected'
+		});
+		const first = newWizard().wizard;
+		await toPreview(first);
+		assert(await first.advance(), 'preview -> confirm');
+		first.acknowledgeHash(true);
+		const unmapped = await first.commit();
+		assertEqual(unmapped.status, 'failed', 'failed');
+		assertEqual(
+			first.snapshot().failure?.messageKey,
+			'flow.import.error.projectUnmapped',
+			'project_unmapped wording'
+		);
+		assertEqual(first.step, 'options', 'back on the mapping step');
+		assertEqual(first.snapshot().preview, null, 'the preview is dropped');
+
+		reset();
+		reply('upload', okUpload);
+		reply('preview', okPreview());
+		reply('commit', { code: 403, error_code: 'policy_rejected', message: 'project_unmapped' });
+		const second = newWizard().wizard;
+		await toPreview(second);
+		assert(await second.advance(), 'preview -> confirm');
+		second.acknowledgeHash(true);
+		await second.commit();
+		const snap = second.snapshot();
+		assertEqual(snap.failure?.messageKey, 'flow.import.error.lineageRejected', 'lineage wording');
+		assertEqual(
+			snap.blockingFailure?.messageKey,
+			'flow.import.error.lineageRejected',
+			'blocks until a new preview'
+		);
+		assertEqual(snap.canCommit, false, 'cannot commit again');
+		assertEqual(second.step, 'confirm', 'stays on confirm');
+
+		// An invalid_update with another reason keeps the generic stable-code wording.
+		reset();
+		reply('upload', okUpload);
+		reply('preview', okPreview());
+		reply('commit', {
+			code: 400,
+			error_code: 'invalid_update',
+			details: { reason: 'idempotency_key_body_drift' }
+		});
+		const third = newWizard().wizard;
+		await toPreview(third);
+		assert(await third.advance(), 'preview -> confirm');
+		third.acknowledgeHash(true);
+		await third.commit();
+		assertEqual(third.snapshot().failure?.messageKey, 'flow.error.invalid_update', 'generic');
+		assertEqual(third.step, 'confirm', 'no mapping detour');
+	}
+);
+
+await suite.checkAsync('the preview exposes manifest_summary as the server sent it', async () => {
+	reset();
+	reply('upload', okUpload);
+	reply('preview', okPreview());
+	const { wizard } = newWizard();
+	await toPreview(wizard);
+	assertDeepEqual(wizard.snapshot().preview?.manifest_summary, MANIFEST, 'summary passed through');
+});
 
 await suite.checkAsync(
 	'checksum_mismatch at preview blocks confirm; message is never read',
@@ -795,6 +1060,16 @@ await suite.checkAsync('every wizard/report i18n key exists in zh and en', async
 		...Object.values(IMPORT_COUNT_LABEL_KEYS),
 		...Object.values(IMPORT_STATUS_KEYS),
 		...FLOW_PACKAGE_ERROR_KEYS,
+		...Object.values(PREVIEW_HOLD_KEYS),
+		'flow.import.preview.reuseAction',
+		'flow.import.preview.manifest.heading',
+		'flow.import.preview.manifest.engineValue',
+		'flow.import.preview.conflict.lineage',
+		'flow.import.preview.conflict.unmapped',
+		'flow.import.options.unmappedNotice',
+		'flow.import.options.chooseTarget',
+		'flow.import.options.targetFor',
+		'flow.import.live.unmapped',
 		'flow.error.checksum_mismatch',
 		'flow.error.unsupported_format'
 	];

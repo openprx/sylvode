@@ -59,6 +59,10 @@ export interface FlowPackageFailure {
 	readonly blocking: boolean;
 	readonly retryable: boolean;
 	readonly forbidden: boolean;
+	/** Set when the rejection names a cause the wizard resolves itself: `project_unmapped`
+	 * (`invalid_update.details.reason`, back to the mapping step) or `lineage_rejected` (a commit
+	 * `policy_rejected` under `reject_existing`: the objects were already imported). */
+	readonly cause?: 'project_unmapped' | 'lineage_rejected';
 }
 
 const BLOCKING_CODES: ReadonlySet<string> = new Set([
@@ -77,8 +81,20 @@ export const FLOW_PACKAGE_ERROR_KEYS = [
 	'flow.import.error.previewRejected',
 	'flow.import.error.conflict',
 	'flow.import.error.commitConflict',
-	'flow.import.error.pending'
+	'flow.import.error.pending',
+	'flow.import.error.projectUnmapped',
+	'flow.import.error.lineageRejected'
 ] as const;
+
+/** `invalid_update.details.reason` for a commit whose frozen `project_map` misses a package source
+ * project (`error-mapping-v1.md` approved reason table). */
+export const PROJECT_UNMAPPED_REASON = 'project_unmapped';
+
+function detailsReason(details: unknown): string | null {
+	if (!details || typeof details !== 'object') return null;
+	const reason = (details as { reason?: unknown }).reason;
+	return typeof reason === 'string' ? reason : null;
+}
 
 function legacyFailure(
 	messageKey: string,
@@ -105,6 +121,34 @@ export function classifyPackageFailure(
 	operation: FlowPackageOperation
 ): FlowPackageFailure {
 	const flowError = flowErrorFromEnvelope(envelope);
+	if (
+		flowError?.code === 'invalid_update' &&
+		detailsReason(envelope.details) === PROJECT_UNMAPPED_REASON
+	) {
+		// Not blocking: the package is fine, the mapping is incomplete. The wizard goes back to the
+		// mapping step and needs a new preview before it can commit.
+		return {
+			messageKey: 'flow.import.error.projectUnmapped',
+			values: {},
+			blocking: false,
+			retryable: false,
+			forbidden: false,
+			cause: 'project_unmapped'
+		};
+	}
+	if (flowError?.code === 'policy_rejected' && operation === 'commit') {
+		// B2: under `reject_existing` the commit re-reads the import lineage inside its transaction
+		// and refuses objects that are already imported; there is no approved reason, the only
+		// recovery is a new preview with `reuse_import_lineage`.
+		return {
+			messageKey: 'flow.import.error.lineageRejected',
+			values: {},
+			blocking: true,
+			retryable: false,
+			forbidden: false,
+			cause: 'lineage_rejected'
+		};
+	}
 	if (flowError) {
 		const values: Record<string, string> = {};
 		if (flowError.code === 'limit_exceeded' && typeof envelope.details === 'object') {

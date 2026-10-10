@@ -230,7 +230,7 @@
 									{/if}
 								</dd>
 							</div>
-							{#if job}
+							{#if job && job.status !== 'failed'}
 								<div class="md:col-span-2">
 									<dt class="text-slate-500 dark:text-slate-400">{$t('flow.export.checksum')}</dt>
 									<dd
@@ -251,7 +251,11 @@
 							{/if}
 						</dl>
 						{#if view.failure}
-							<p class="mt-2 text-sm text-red-700 dark:text-red-300" role="alert">
+							<p
+								class="mt-2 text-sm text-red-700 dark:text-red-300"
+								role="alert"
+								data-testid="flow-export-job-error"
+							>
 								{$t(view.failure.messageKey, { values: view.failure.values })}
 							</p>
 						{/if}

@@ -410,6 +410,14 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Web UI, Flow package import: the wizard now follows the preview's `conflict_details`. A
+  `project_unmapped` conflict returns to the mapping step with one row per unmapped source
+  project (by title) that needs an explicit target or Unprojected and a new preview; a
+  `lineage_exists` conflict under "Reject the import" lists the already-imported objects, keeps
+  Confirm closed and offers a re-preview with "Reuse the earlier import". The preview shows the
+  package's `manifest_summary`, and a commit refused with `invalid_update` /
+  `reason = "project_unmapped"` or `policy_rejected` has its own wording. A workspace export
+  whose POST answers `status: "failed"` is shown as failed with its `error` code's text.
 - Flow conversions: a job left `started` for more than 15 minutes (its run crashed after the
   job was created, or recording its failure failed) is now reaped to `failed` with
   `error = "server_rejected"` and one business `flow.conversion.failed` event whose payload
