@@ -308,8 +308,13 @@ pub async fn get_object(
     let mut view = object_view_from_row(row);
     // `rest-api-v1.md` v0.6 / `ADR-0018` NR-7: the same redaction the records query applies, for
     // both renders (the Markdown rendering is derived from the same semantic content).
-    super::collections::redact_secret_record_views(&state.db, std::slice::from_mut(&mut view)).await?;
-    if render == Render::Markdown && view.semantic_content != super::collections::redacted_semantic_content() {
+    let redacted = view.object_type == "record"
+        && !super::collections::secret_record_ids(&state.db, &[view.id])
+            .await?
+            .is_empty();
+    if redacted {
+        view.semantic_content = super::collections::redacted_semantic_content();
+    } else if render == Render::Markdown {
         let snapshot: SemanticSnapshot =
             serde_json::from_value(view.semantic_content.clone()).map_err(|_| ApiError::internal())?;
         view.semantic_content = json!({ "rendered": projection::render_markdown(&view.title, &snapshot) });

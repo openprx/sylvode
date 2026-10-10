@@ -513,6 +513,9 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow: `GET /flow/objects/{id}?render=markdown` renders an object whose projection state is
+  empty again (the secret-Record redaction had skipped rendering for any empty
+  `semantic_content`, not only for redacted Records).
 - Flow collaboration: an `update` whose causal dependencies are not in the document (the engine
   could only buffer it as pending) is refused with `invalid_update` and
   `details.reason = "causal_dependency_missing"`; it gets no seq and nothing is stored. It used to
