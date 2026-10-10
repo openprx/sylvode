@@ -507,6 +507,15 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow Collections: a record value that has the right JSON type but is not a valid value of its
+  field is refused as `invalid_update` with `details.reason = "invalid_field_value"` and
+  `details.field_id`, on records create and `record_patch`: an unparseable date (it used to fail
+  in the typed index cast and answer an untyped HTTP 500), a `select`/`multi_select` value that
+  is not in the field's `config.options`, and a relation element that is not a UUID or names an
+  object outside the Collection's workspace. A query filter with an unparseable date is a typed
+  `invalid_update` instead of a 500. A `select`/`multi_select` field's `config.options` must be
+  an array of distinct, non-empty strings on `field_create`, `field_update` and an initial
+  schema; fields without `options` stay unconstrained.
 - Flow Collections (security): under `field_secrecy_enabled`, every representation of a Record
   now applies the records query's redaction (`semantic_content` is `{}`): the single-object read
   `GET /flow/objects/{record_id}` in both renders, the object list, the object diff, and Record
