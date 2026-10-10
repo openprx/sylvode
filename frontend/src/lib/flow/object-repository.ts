@@ -687,13 +687,16 @@ export class FlowObjectRepository {
 		return flowApi.getAdminHealth(workspaceId);
 	}
 
-	getAdminLag(workspaceId: string): Promise<ApiResult<FlowAdminLag>> {
-		return flowApi.getAdminLag(workspaceId);
+	getAdminLag(
+		workspaceId: string,
+		query: { cursor?: string; limit?: number } = {}
+	): Promise<ApiResult<FlowAdminLag>> {
+		return flowApi.getAdminLag(workspaceId, query);
 	}
 
 	getAdminIntegrity(
 		workspaceId: string,
-		query: { scope: 'summary' | 'documents'; limit?: number }
+		query: { scope: 'summary' | 'documents'; cursor?: string; limit?: number }
 	): Promise<ApiResult<FlowAdminIntegrity>> {
 		return flowApi.getAdminIntegrity(workspaceId, query);
 	}

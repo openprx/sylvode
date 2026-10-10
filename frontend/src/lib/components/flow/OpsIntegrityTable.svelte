@@ -1,8 +1,8 @@
 <script lang="ts">
 	// Workspace integrity (`GET /admin/workspaces/{id}/flow/integrity?scope=documents`) with a
 	// per-row entry into the verify / compact / rebuild drawer, plus manual id entry. `counts` are
-	// workspace-wide (`total` included); `documents[]` is the first page (the panel offers a
-	// limit), with failed documents listed and worded by their `failure` code.
+	// workspace-wide (`total` included); `documents[]` is paged by cursor (the panel offers a page
+	// size of at most 100), with failed documents listed and worded by their `failure` code.
 	import { t } from 'svelte-i18n';
 	import type { FlowAdminIntegrity } from '$lib/api/flow';
 	import {
@@ -20,11 +20,28 @@
 		errorKey: string;
 		limit: OpsIntegrityLimit;
 		busy: boolean;
+		page: number;
+		hasPrevious: boolean;
+		hasNext: boolean;
+		onprevious: () => void;
+		onnext: () => void;
 		onlimit: (limit: OpsIntegrityLimit) => void;
 		onoperate: (kind: MaintenanceKind, targetId: string, expectedHead: number | null) => void;
 	}
 
-	let { integrity, errorKey, limit, busy, onlimit, onoperate }: Props = $props();
+	let {
+		integrity,
+		errorKey,
+		limit,
+		busy,
+		page,
+		hasPrevious,
+		hasNext,
+		onprevious,
+		onnext,
+		onlimit,
+		onoperate
+	}: Props = $props();
 
 	let manualDocument = $state('');
 	let manualObject = $state('');
@@ -127,7 +144,7 @@
 			{$t('flow.operations.integrity.checkedAt', {
 				values: { time: new Date(integrity.checked_at).toLocaleString() }
 			})}
-			{$t('flow.operations.integrity.limitNote', { values: { n: limit } })}
+			{$t('flow.operations.integrity.pageNote', { values: { n: limit } })}
 		</p>
 
 		{#if rows.length === 0}
@@ -269,6 +286,35 @@
 					</li>
 				{/each}
 			</ul>
+		{/if}
+		{#if hasPrevious || hasNext}
+			<nav
+				class="mt-3 flex items-center gap-2"
+				aria-label={$t('flow.operations.integrity.heading')}
+				data-testid="flow-ops-integrity-pager"
+			>
+				<button
+					type="button"
+					class="min-h-11 rounded-md border border-slate-300 px-4 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-slate-600"
+					disabled={busy || !hasPrevious}
+					data-testid="flow-ops-integrity-pager-previous"
+					onclick={onprevious}
+				>
+					{$t('flow.operations.lag.previous')}
+				</button>
+				<span class="text-sm text-slate-600 dark:text-slate-300" aria-live="polite">
+					{$t('flow.operations.lag.page', { values: { n: page } })}
+				</span>
+				<button
+					type="button"
+					class="min-h-11 rounded-md border border-slate-300 px-4 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-slate-600"
+					disabled={busy || !hasNext}
+					data-testid="flow-ops-integrity-pager-next"
+					onclick={onnext}
+				>
+					{$t('flow.operations.lag.next')}
+				</button>
+			</nav>
 		{/if}
 	{/if}
 

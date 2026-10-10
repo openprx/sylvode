@@ -3099,7 +3099,8 @@
           "document_missing": "文档缺失",
           "replay_failed": "文档无法重放",
           "unknown": "因本版本无法说明的原因失败"
-        }
+        },
+        "pageNote": "每页最多 {n} 个文档，可翻页查看全部（含检查失败的文档）；上方计数覆盖整个工作区。"
       },
       "drawer": {
         "title": {

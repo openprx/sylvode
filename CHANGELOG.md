@@ -519,6 +519,9 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow operations page: the per-document lag rows and the integrity document list page through
+  every document with the server's cursors (at most 100 per page) instead of stopping at the
+  first page.
 - Flow conversion job page: a job the server reclaimed after it stayed `started` too long
   (`error_reason = "stale_started"`) is shown as interrupted and can be retried, while any other
   `server_rejected` job stays permanent; a stored `stale_frontier` is worded for the job page.

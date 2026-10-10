@@ -114,12 +114,23 @@
 			busy={panel.lagBusy}
 			onprevious={() => void session.loadProjection('previous')}
 			onnext={() => void session.loadProjection('next')}
+			documentsPage={panel.lagDocumentsPage}
+			documentsHasPrevious={panel.lagDocumentsHasPrevious}
+			documentsHasNext={panel.lagDocumentsHasNext}
+			documentsBusy={panel.lagDocumentsBusy}
+			ondocumentsprevious={() => void session.loadLag('previous')}
+			ondocumentsnext={() => void session.loadLag('next')}
 		/>
 		<OpsIntegrityTable
 			integrity={panel.integrity}
 			errorKey={panel.integrityErrorKey}
 			limit={panel.integrityLimit}
 			busy={panel.integrityBusy}
+			page={panel.integrityPage}
+			hasPrevious={panel.integrityHasPrevious}
+			hasNext={panel.integrityHasNext}
+			onprevious={() => void session.pageIntegrity('previous')}
+			onnext={() => void session.pageIntegrity('next')}
 			onlimit={changeLimit}
 			onoperate={openOperation}
 		/>
