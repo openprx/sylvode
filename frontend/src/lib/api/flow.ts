@@ -350,16 +350,29 @@ export interface FlowAdminHealth {
 	delivery_cancelled: number;
 }
 
-export interface FlowAdminLagGroup {
-	max: number;
-	p95: number;
-	/** Always `[]` at this baseline (`operations.rs::workspace_lag`); the per-object rows come
-	 * from `GET .../flow/projection-lag` instead. */
-	items: unknown[];
+/** One per-document row of an admin lag group (`rest-api-v1.md` v0.8, frozen 2026-10-10):
+ * `{object_id,document_id,head_seq,<projection_seq|indexed_seq|fanout_seq>,lag}`. */
+export interface FlowAdminLagItem {
+	object_id: string;
+	document_id: string;
+	head_seq: number;
+	projection_seq?: number;
+	indexed_seq?: number;
+	fanout_seq?: number;
+	lag: number;
 }
 
-/** `GET /admin/workspaces/{workspace_id}/flow/lag`. The server takes no `cursor`/`limit` at this
- * baseline and always returns `next_cursor: null`. */
+export interface FlowAdminLagGroup {
+	/** Workspace-wide aggregates. */
+	max: number;
+	p95: number;
+	/** The current page of documents (same documents in all three groups). */
+	items: FlowAdminLagItem[];
+}
+
+/** `GET /admin/workspaces/{workspace_id}/flow/lag`. The server pages the per-document items
+ * (`cursor?`, `limit<=100`, default 50; the last page omits `next_cursor`); the operations panel
+ * shows the first page and says when more documents exist. */
 export interface FlowAdminLag {
 	projection: FlowAdminLagGroup;
 	search: FlowAdminLagGroup;
@@ -367,29 +380,72 @@ export interface FlowAdminLag {
 	next_cursor?: string | null;
 }
 
-/** One `documents[]` row of `GET .../flow/integrity?scope=documents`
- * (`apps/api/src/flow/collab/integrity.rs::DocumentFingerprint`). Documents whose fingerprint
- * fails are only counted in `counts.failed`; they are not listed. */
+/** A healthy `documents[]` row of `GET .../flow/integrity?scope=documents`
+ * (`apps/api/src/flow/collab/integrity.rs::DocumentFingerprint` plus `status:"ok"`,
+ * `checked_at`). */
 export interface FlowDocumentFingerprint {
 	workspace_id: string;
 	object_id: string;
 	document_id: string;
+	status?: 'ok';
+	checked_at?: string;
 	head_seq: number;
 	head_frontier: string;
 	semantic_hash: string;
 	projection_seq: number;
 }
 
+/** `integrity.failure` (`rest-api-v1.md` v0.8, frozen 2026-10-10). */
+export type FlowIntegrityFailure =
+	| 'storage_inconsistent'
+	| 'projection_missing'
+	| 'limit_exceeded'
+	| 'document_missing'
+	| 'replay_failed';
+
+/** A failed `documents[]` row: the document is listed with why it failed. */
+export interface FlowIntegrityFailedDocument {
+	workspace_id: string;
+	object_id: string;
+	document_id: string;
+	status: 'failed';
+	checked_at: string;
+	failure: FlowIntegrityFailure | string;
+	error_code: string;
+}
+
 export interface FlowAdminIntegrity {
 	status: string;
 	checked_at: string;
-	counts: { checked: number; healthy: number; failed: number };
-	documents?: FlowDocumentFingerprint[] | null;
+	/** Always the whole workspace; only `documents[]` is paged. */
+	counts: { total: number; checked: number; healthy: number; failed: number };
+	documents?: Array<FlowDocumentFingerprint | FlowIntegrityFailedDocument> | null;
+	next_cursor?: string | null;
 }
 
-/** `OperationReceipt` as the server emits it (`apps/api/src/flow/operations.rs::OperationReceipt`).
- * This differs from `rest-api-v1.md`'s public-type sketch (`mode`/`scope`/`changes`/`warnings`/
- * `started_at`/`audit_event_id`): the wire carries `dry_run` and an operation-specific `result`. */
+/** One `OperationReceipt.changes[]` entry (`rest-api-v1.md` v0.8 `OperationReceipt`, frozen
+ * 2026-10-10). Compact: before is `{snapshot_seq,snapshot_checksum}`, or on a dry run
+ * `{snapshot_seq,tail_updates,tail_bytes}`; rebuild: before/after `{hash}`. */
+export type FlowOperationChange =
+	| {
+			kind: 'compaction';
+			document_id: string;
+			changed: boolean;
+			before: Record<string, unknown>;
+			after: Record<string, unknown>;
+			deleted_updates: number;
+	  }
+	| {
+			kind: 'projection_rebuild';
+			object_id: string;
+			changed: boolean;
+			before: { hash: string | null };
+			after: { hash: string | null };
+	  };
+
+/** `OperationReceipt` (`apps/api/src/flow/operations.rs::OperationReceipt`). The contract fields
+ * (`mode`, `scope`, `changes`, `warnings`, `started_at`, `finished_at`, `audit_event_id`) sit next
+ * to the earlier `operation` / `dry_run` / `result` fields, which the server keeps. */
 export interface FlowOperationReceipt {
 	operation_id: string;
 	operation: string;
@@ -400,6 +456,22 @@ export interface FlowOperationReceipt {
 	document_id: string;
 	expected_head_seq: number;
 	result: Record<string, unknown>;
+	mode: 'dry_run' | 'execute';
+	scope: {
+		kind: 'document' | 'object';
+		workspace_id: string;
+		object_id: string;
+		document_id: string;
+	};
+	observed_head_seq?: number | null;
+	changes: FlowOperationChange[];
+	/** Stable codes, never free text. */
+	warnings: string[];
+	started_at: string;
+	finished_at?: string | null;
+	/** Never empty (`rest-api-v1.md`): execute points at the business event, a dry run or verify at
+	 * its audit-only previewed event. */
+	audit_event_id?: string | null;
 }
 
 export interface VerifyDocumentInput {
@@ -938,7 +1010,7 @@ export const flowApi = {
 		return apiClient.get<FlowAdminLag>(`/api/v1/admin/workspaces/${workspaceId}/flow/lag`);
 	},
 
-	/** `cursor` is rejected server-side at this baseline (400), so none is sent. */
+	/** The first page of `documents[]` only; `counts` are workspace-wide regardless. */
 	getAdminIntegrity(
 		workspaceId: string,
 		query: { scope: 'summary' | 'documents'; limit?: number }

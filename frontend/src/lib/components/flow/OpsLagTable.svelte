@@ -1,11 +1,11 @@
 <script lang="ts">
 	// Workspace lag: the admin aggregate (`GET /admin/workspaces/{id}/flow/lag`) for
-	// projection/search/fan-out max+p95, and the policy-filtered `GET .../flow/projection-lag`
-	// for the lag badge and the per-object rows (the admin endpoint returns no rows at this
-	// baseline). Paging state lives in `ProjectionLagPager`.
+	// projection/search/fan-out max+p95 plus its first page of per-document rows (the three groups
+	// merged by document), and the policy-filtered `GET .../flow/projection-lag` for the lag badge
+	// and the paged per-object rows. Paging state lives in `ProjectionLagPager`.
 	import { t } from 'svelte-i18n';
 	import type { FlowAdminLag, FlowProjectionLag } from '$lib/api/flow';
-	import { PROJECTION_UNAVAILABLE_KEY } from '$lib/flow/operations-service';
+	import { PROJECTION_UNAVAILABLE_KEY, adminLagRows } from '$lib/flow/operations-service';
 
 	interface Props {
 		lag: FlowAdminLag | null;
@@ -35,6 +35,9 @@
 		onprevious,
 		onnext
 	}: Props = $props();
+
+	const documentRows = $derived(adminLagRows(lag));
+	const lagCell = (value: number | null) => (value === null ? '-' : String(value));
 
 	const groups = $derived(
 		lag
@@ -91,6 +94,71 @@
 				</div>
 			{/each}
 		</dl>
+
+		<h3 class="mt-6 text-sm font-semibold text-slate-900 dark:text-slate-100">
+			{$t('flow.operations.lag.documentsHeading')}
+		</h3>
+		{#if documentRows.length === 0}
+			<p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
+				{$t('flow.operations.lag.documentsEmpty')}
+			</p>
+		{:else}
+			<table
+				class="mt-2 hidden w-full text-left text-sm md:table"
+				data-testid="flow-ops-lag-documents"
+			>
+				<thead class="text-xs uppercase text-slate-500 dark:text-slate-400">
+					<tr>
+						<th scope="col" class="py-2 pr-4">{$t('flow.operations.lag.documentId')}</th>
+						<th scope="col" class="py-2 pr-4">{$t('flow.operations.lag.headSeq')}</th>
+						<th scope="col" class="py-2 pr-4">{$t('flow.operations.lag.projectionLag')}</th>
+						<th scope="col" class="py-2 pr-4">{$t('flow.operations.lag.searchLag')}</th>
+						<th scope="col" class="py-2">{$t('flow.operations.lag.fanoutLag')}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each documentRows as row (row.documentId)}
+						<tr
+							class="border-t border-slate-100 dark:border-slate-800"
+							data-document-id={row.documentId}
+						>
+							<td class="py-2 pr-4">
+								<p class="break-all font-mono text-xs">{row.documentId}</p>
+								<p class="mt-1 break-all font-mono text-xs text-slate-500 dark:text-slate-400">
+									{$t('flow.operations.lag.objectId')}: {row.objectId}
+								</p>
+							</td>
+							<td class="py-2 pr-4 font-mono">{row.headSeq}</td>
+							<td class="py-2 pr-4 font-mono" data-testid="flow-ops-lag-doc-projection"
+								>{lagCell(row.projection)}</td
+							>
+							<td class="py-2 pr-4 font-mono">{lagCell(row.search)}</td>
+							<td class="py-2 font-mono">{lagCell(row.fanout)}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+			<ul class="mt-2 space-y-2 md:hidden">
+				{#each documentRows as row (row.documentId)}
+					<li class="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700">
+						<p class="break-all font-mono text-xs">{row.documentId}</p>
+						<p class="mt-1">
+							{$t('flow.operations.lag.projectionLag')}:
+							<span class="font-mono">{lagCell(row.projection)}</span> ·
+							{$t('flow.operations.lag.searchLag')}:
+							<span class="font-mono">{lagCell(row.search)}</span> ·
+							{$t('flow.operations.lag.fanoutLag')}:
+							<span class="font-mono">{lagCell(row.fanout)}</span>
+						</p>
+					</li>
+				{/each}
+			</ul>
+			{#if lag.next_cursor}
+				<p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+					{$t('flow.operations.lag.documentsMore')}
+				</p>
+			{/if}
+		{/if}
 	{/if}
 
 	<h3 class="mt-6 text-sm font-semibold text-slate-900 dark:text-slate-100">

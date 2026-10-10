@@ -1,13 +1,14 @@
 <script lang="ts">
 	// Workspace integrity (`GET /admin/workspaces/{id}/flow/integrity?scope=documents`) with a
-	// per-row entry into the verify / compact / rebuild drawer, plus manual id entry. The server
-	// takes `limit` (1..=100) and rejects `cursor` at this baseline, so the panel offers a limit
-	// instead of pages.
+	// per-row entry into the verify / compact / rebuild drawer, plus manual id entry. `counts` are
+	// workspace-wide (`total` included); `documents[]` is the first page (the panel offers a
+	// limit), with failed documents listed and worded by their `failure` code.
 	import { t } from 'svelte-i18n';
 	import type { FlowAdminIntegrity } from '$lib/api/flow';
 	import {
 		INTEGRITY_STATUS_KEYS,
 		OPS_INTEGRITY_LIMITS,
+		integrityRows,
 		isUuid,
 		statusKey,
 		type MaintenanceKind,
@@ -29,7 +30,7 @@
 	let manualObject = $state('');
 	const documentValid = $derived(isUuid(manualDocument));
 	const objectValid = $derived(isUuid(manualObject));
-	const documents = $derived(integrity?.documents ?? []);
+	const rows = $derived(integrityRows(integrity));
 
 	function changeLimit(event: Event) {
 		const value = Number((event.currentTarget as HTMLSelectElement).value);
@@ -86,7 +87,18 @@
 	{/if}
 
 	{#if integrity}
-		<dl class="mt-4 grid grid-cols-3 gap-4 text-sm" data-testid="flow-ops-integrity-counts">
+		<dl
+			class="mt-4 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4"
+			data-testid="flow-ops-integrity-counts"
+		>
+			<div>
+				<dt class="text-slate-500 dark:text-slate-400">
+					{$t('flow.operations.integrity.total')}
+				</dt>
+				<dd class="mt-1 font-mono" data-testid="flow-ops-integrity-total">
+					{integrity.counts.total}
+				</dd>
+			</div>
 			<div>
 				<dt class="text-slate-500 dark:text-slate-400">
 					{$t('flow.operations.integrity.checked')}
@@ -105,6 +117,7 @@
 				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.integrity.failed')}</dt>
 				<dd
 					class={`mt-1 font-mono ${integrity.counts.failed > 0 ? 'text-red-700 dark:text-red-300' : ''}`}
+					data-testid="flow-ops-integrity-failed"
 				>
 					{integrity.counts.failed}
 				</dd>
@@ -117,7 +130,7 @@
 			{$t('flow.operations.integrity.limitNote', { values: { n: limit } })}
 		</p>
 
-		{#if documents.length === 0}
+		{#if rows.length === 0}
 			<p class="mt-4 text-sm text-slate-500 dark:text-slate-400">
 				{$t('flow.operations.integrity.empty')}
 			</p>
@@ -129,6 +142,7 @@
 				<thead class="text-xs uppercase text-slate-500 dark:text-slate-400">
 					<tr>
 						<th scope="col" class="py-2 pr-3">{$t('flow.operations.integrity.documentId')}</th>
+						<th scope="col" class="py-2 pr-3">{$t('flow.operations.integrity.rowStatus')}</th>
 						<th scope="col" class="py-2 pr-3">{$t('flow.operations.integrity.headSeq')}</th>
 						<th scope="col" class="py-2 pr-3">{$t('flow.operations.integrity.projectionSeq')}</th>
 						<th scope="col" class="py-2 pr-3">{$t('flow.operations.integrity.semanticHash')}</th>
@@ -136,30 +150,48 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each documents as doc (doc.document_id)}
+					{#each rows as row (row.documentId)}
+						{@const head = row.status === 'ok' ? row.headSeq : null}
 						<tr
 							class="border-t border-slate-100 align-top dark:border-slate-800"
-							data-document-id={doc.document_id}
+							data-document-id={row.documentId}
+							data-status={row.status}
 						>
 							<td class="py-2 pr-3">
-								<p class="break-all font-mono text-xs">{doc.document_id}</p>
+								<p class="break-all font-mono text-xs">{row.documentId}</p>
 								<p class="mt-1 break-all font-mono text-xs text-slate-500 dark:text-slate-400">
-									{$t('flow.operations.integrity.objectId')}: {doc.object_id}
+									{$t('flow.operations.integrity.objectId')}: {row.objectId}
 								</p>
 							</td>
-							<td class="py-2 pr-3 font-mono">{doc.head_seq}</td>
-							<td class="py-2 pr-3 font-mono">{doc.projection_seq}</td>
-							<td
-								class="max-w-[10rem] truncate py-2 pr-3 font-mono text-xs"
-								title={doc.semantic_hash}>{doc.semantic_hash}</td
-							>
+							<td class="py-2 pr-3" data-testid="flow-ops-integrity-row-status">
+								{#if row.status === 'ok'}
+									<span class="text-emerald-700 dark:text-emerald-300"
+										>{$t('flow.operations.integrity.rowOk')}</span
+									>
+								{:else}
+									<p class="text-red-700 dark:text-red-300">{$t(row.failureKey)}</p>
+									<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{$t(row.errorKey)}</p>
+								{/if}
+							</td>
+							{#if row.status === 'ok'}
+								<td class="py-2 pr-3 font-mono">{row.headSeq}</td>
+								<td class="py-2 pr-3 font-mono">{row.projectionSeq}</td>
+								<td
+									class="max-w-[10rem] truncate py-2 pr-3 font-mono text-xs"
+									title={row.semanticHash}>{row.semanticHash}</td
+								>
+							{:else}
+								<td class="py-2 pr-3 font-mono">-</td>
+								<td class="py-2 pr-3 font-mono">-</td>
+								<td class="py-2 pr-3 font-mono">-</td>
+							{/if}
 							<td class="py-2">
 								<div class="flex flex-wrap gap-2">
 									<button
 										type="button"
 										class={`${actionClass} border-slate-300 dark:border-slate-600`}
 										disabled={busy}
-										onclick={() => onoperate('verify', doc.document_id, doc.head_seq)}
+										onclick={() => onoperate('verify', row.documentId, head)}
 									>
 										{$t('flow.operations.integrity.verify')}
 									</button>
@@ -167,7 +199,7 @@
 										type="button"
 										class={`${actionClass} border-amber-400 text-amber-900 dark:border-amber-700 dark:text-amber-200`}
 										disabled={busy}
-										onclick={() => onoperate('compact', doc.document_id, doc.head_seq)}
+										onclick={() => onoperate('compact', row.documentId, head)}
 									>
 										{$t('flow.operations.integrity.compact')}
 									</button>
@@ -175,7 +207,7 @@
 										type="button"
 										class={`${actionClass} border-amber-400 text-amber-900 dark:border-amber-700 dark:text-amber-200`}
 										disabled={busy}
-										onclick={() => onoperate('rebuild', doc.object_id, doc.head_seq)}
+										onclick={() => onoperate('rebuild', row.objectId, head)}
 									>
 										{$t('flow.operations.integrity.rebuild')}
 									</button>
@@ -186,25 +218,34 @@
 				</tbody>
 			</table>
 			<ul class="mt-4 space-y-3 md:hidden">
-				{#each documents as doc (doc.document_id)}
-					<li class="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700">
-						<p class="break-all font-mono text-xs">{doc.document_id}</p>
+				{#each rows as row (row.documentId)}
+					{@const head = row.status === 'ok' ? row.headSeq : null}
+					<li
+						class="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700"
+						data-status={row.status}
+					>
+						<p class="break-all font-mono text-xs">{row.documentId}</p>
 						<p class="mt-1 break-all font-mono text-xs text-slate-500 dark:text-slate-400">
-							{$t('flow.operations.integrity.objectId')}: {doc.object_id}
+							{$t('flow.operations.integrity.objectId')}: {row.objectId}
 						</p>
-						<p class="mt-1">
-							{$t('flow.operations.integrity.headSeq')}:
-							<span class="font-mono">{doc.head_seq}</span>
-							·
-							{$t('flow.operations.integrity.projectionSeq')}:
-							<span class="font-mono">{doc.projection_seq}</span>
-						</p>
+						{#if row.status === 'ok'}
+							<p class="mt-1">
+								{$t('flow.operations.integrity.headSeq')}:
+								<span class="font-mono">{row.headSeq}</span>
+								·
+								{$t('flow.operations.integrity.projectionSeq')}:
+								<span class="font-mono">{row.projectionSeq}</span>
+							</p>
+						{:else}
+							<p class="mt-1 text-red-700 dark:text-red-300">{$t(row.failureKey)}</p>
+							<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{$t(row.errorKey)}</p>
+						{/if}
 						<div class="mt-2 flex flex-wrap gap-2">
 							<button
 								type="button"
 								class={`${actionClass} border-slate-300 dark:border-slate-600`}
 								disabled={busy}
-								onclick={() => onoperate('verify', doc.document_id, doc.head_seq)}
+								onclick={() => onoperate('verify', row.documentId, head)}
 							>
 								{$t('flow.operations.integrity.verify')}
 							</button>
@@ -212,7 +253,7 @@
 								type="button"
 								class={`${actionClass} border-amber-400 text-amber-900 dark:border-amber-700 dark:text-amber-200`}
 								disabled={busy}
-								onclick={() => onoperate('compact', doc.document_id, doc.head_seq)}
+								onclick={() => onoperate('compact', row.documentId, head)}
 							>
 								{$t('flow.operations.integrity.compact')}
 							</button>
@@ -220,7 +261,7 @@
 								type="button"
 								class={`${actionClass} border-amber-400 text-amber-900 dark:border-amber-700 dark:text-amber-200`}
 								disabled={busy}
-								onclick={() => onoperate('rebuild', doc.object_id, doc.head_seq)}
+								onclick={() => onoperate('rebuild', row.objectId, head)}
 							>
 								{$t('flow.operations.integrity.rebuild')}
 							</button>

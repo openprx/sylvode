@@ -22,8 +22,22 @@ import {
 	finish
 } from './support/harness';
 import {
+	CHANGE_FIELD_KEYS,
+	CHANGE_KIND_KEYS,
 	DeliveryReplay,
 	FlowOperationsService,
+	INTEGRITY_FAILURE_KEYS,
+	INTEGRITY_FAILURE_UNKNOWN_KEY,
+	RECEIPT_MODE_KEYS,
+	RECEIPT_SCOPE_KEYS,
+	RECEIPT_WARNING_KEYS,
+	RECEIPT_WARNING_UNKNOWN_KEY,
+	adminLagRows,
+	integrityFailureKey,
+	integrityRows,
+	receiptChanges,
+	receiptMode,
+	receiptWarningKeys,
 	HEALTH_STATUS_KEYS,
 	HealthMonitor,
 	INTEGRITY_STATUS_KEYS,
@@ -89,7 +103,20 @@ function receipt(
 		object_id: OBJ,
 		document_id: DOC,
 		expected_head_seq: head,
-		result
+		result,
+		mode: dryRun ? 'dry_run' : 'execute',
+		scope: {
+			kind: operation === 'rebuild_projection' ? 'object' : 'document',
+			workspace_id: WS,
+			object_id: OBJ,
+			document_id: DOC
+		},
+		observed_head_seq: head,
+		changes: [],
+		warnings: [],
+		started_at: '2026-10-09T12:00:00Z',
+		finished_at: '2026-10-09T12:00:01Z',
+		audit_event_id: `audit-${id}`
 	};
 }
 
@@ -1006,7 +1033,7 @@ const ADMIN_LAG: FlowAdminLag = {
 const ADMIN_INTEGRITY: FlowAdminIntegrity = {
 	status: 'healthy',
 	checked_at: '2026-10-09T12:00:00Z',
-	counts: { checked: 2, healthy: 2, failed: 0 },
+	counts: { total: 2, checked: 2, healthy: 2, failed: 0 },
 	documents: []
 };
 
@@ -1168,6 +1195,291 @@ await suite.checkAsync(
 	}
 );
 
+// ---- OperationReceipt contract fields, integrity failures, admin lag rows (B3) ---------------
+
+suite.check('receipt changes: compaction and projection_rebuild render before/after rows', () => {
+	const executed = receipt('compact', false, 9);
+	const compactExecute = receiptChanges({
+		...executed,
+		changes: [
+			{
+				kind: 'compaction',
+				document_id: DOC,
+				changed: true,
+				before: { snapshot_seq: 2, snapshot_checksum: 'aa' },
+				after: { snapshot_seq: 9, snapshot_checksum: 'bb' },
+				deleted_updates: 7
+			}
+		]
+	});
+	assertDeepEqual(
+		compactExecute,
+		[
+			{
+				kind: 'compaction',
+				labelKey: CHANGE_KIND_KEYS.compaction,
+				subjectId: DOC,
+				changed: true,
+				rows: [
+					{
+						field: 'snapshot_seq',
+						labelKey: CHANGE_FIELD_KEYS.snapshot_seq,
+						before: '2',
+						after: '9'
+					},
+					{
+						field: 'snapshot_checksum',
+						labelKey: CHANGE_FIELD_KEYS.snapshot_checksum,
+						before: 'aa',
+						after: 'bb'
+					}
+				],
+				deletedUpdates: 7
+			}
+		],
+		'compact execute'
+	);
+	const dryRun = receiptChanges({
+		changes: [
+			{
+				kind: 'compaction',
+				document_id: DOC,
+				changed: true,
+				before: { snapshot_seq: 2, tail_updates: 7, tail_bytes: 140 },
+				after: { snapshot_seq: 9, snapshot_checksum: null },
+				deleted_updates: 7
+			}
+		] as never
+	});
+	assertDeepEqual(
+		dryRun[0]?.rows.map((row) => [row.field, row.before, row.after]),
+		[
+			['snapshot_seq', '2', '9'],
+			['tail_updates', '7', '-'],
+			['tail_bytes', '140', '-'],
+			['snapshot_checksum', '-', '-']
+		],
+		'compact dry run: the union of before and after fields'
+	);
+	const rebuild = receiptChanges({
+		changes: [
+			{
+				kind: 'projection_rebuild',
+				object_id: OBJ,
+				changed: false,
+				before: { hash: 'h1' },
+				after: { hash: 'h1' }
+			},
+			{ kind: 'mystery', anything: 1 } as never
+		]
+	});
+	assertEqual(rebuild.length, 1, 'unknown kind left out');
+	assertEqual(rebuild[0]?.subjectId, OBJ, 'rebuild subject is the object');
+	assertEqual(rebuild[0]?.changed, false, 'unchanged');
+	assertEqual(rebuild[0]?.deletedUpdates, null, 'no deleted updates for a rebuild');
+	assertDeepEqual(
+		rebuild[0]?.rows,
+		[{ field: 'hash', labelKey: CHANGE_FIELD_KEYS.hash, before: 'h1', after: 'h1' }],
+		'hash row'
+	);
+	assertDeepEqual(receiptChanges({}), [], 'no changes field');
+});
+
+suite.check('receipt warnings, mode and scope come from the contract fields', () => {
+	assertDeepEqual(
+		receiptWarningKeys({
+			warnings: ['history_retained_for_lagging_clients', 'clients_forced_to_resync', 'new_code']
+		}),
+		[
+			RECEIPT_WARNING_KEYS.history_retained_for_lagging_clients,
+			RECEIPT_WARNING_KEYS.clients_forced_to_resync,
+			RECEIPT_WARNING_UNKNOWN_KEY
+		],
+		'two known codes and a generic one'
+	);
+	assertDeepEqual(receiptWarningKeys({}), [], 'no warnings');
+	assertEqual(receiptMode(receipt('compact', true, 1)), 'dry_run', 'mode dry_run');
+	assertEqual(
+		receiptMode({ dry_run: true, mode: 'execute' }),
+		'execute',
+		'the contract `mode` wins over `dry_run`'
+	);
+	assertEqual(receiptMode({ dry_run: false }), 'execute', 'fallback without mode');
+	const rebuild = receipt('rebuild_projection', true, 1);
+	assertEqual(rebuild.scope.kind, 'object', 'fixture: rebuild scope is the object');
+	assertEqual(
+		RECEIPT_SCOPE_KEYS[rebuild.scope.kind],
+		'flow.operations.receipt.scope.object',
+		'key'
+	);
+});
+
+await suite.checkAsync(
+	'a receipt read through the real adapter keeps mode, scope, changes, warnings, times and audit id',
+	async () => {
+		const original = globalThis.fetch;
+		const wire = {
+			...receipt('compact', false, 9),
+			changes: [
+				{
+					kind: 'compaction',
+					document_id: DOC,
+					changed: true,
+					before: { snapshot_seq: 2, snapshot_checksum: 'aa' },
+					after: { snapshot_seq: 9, snapshot_checksum: 'bb' },
+					deleted_updates: 7
+				}
+			],
+			warnings: ['clients_forced_to_resync']
+		};
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify({ code: 0, message: 'ok', data: wire }), {
+				headers: { 'Content-Type': 'application/json' }
+			})) as typeof fetch;
+		try {
+			const result = await new FlowCommandService().compactDocument(DOC, {
+				dry_run: false,
+				expected_head_seq: 9,
+				confirm_document_id: DOC,
+				idempotency_key: 'k'
+			});
+			assertEqual(result.code, 0, 'ok');
+			const data = result.data as FlowOperationReceipt;
+			assertEqual(data.mode, 'execute', 'mode');
+			assertDeepEqual(data.scope, wire.scope, 'scope');
+			assertEqual(data.audit_event_id, wire.audit_event_id, 'audit event id');
+			assertEqual(data.started_at, wire.started_at, 'started_at');
+			assertEqual(data.finished_at, wire.finished_at, 'finished_at');
+			assertEqual(receiptChanges(data)[0]?.rows[0]?.after, '9', 'changes parsed');
+			assertDeepEqual(
+				receiptWarningKeys(data),
+				[RECEIPT_WARNING_KEYS.clients_forced_to_resync],
+				'warnings parsed'
+			);
+		} finally {
+			globalThis.fetch = original;
+		}
+	}
+);
+
+suite.check('integrity rows: failed documents are listed with their failure wording', () => {
+	const rows = integrityRows({
+		documents: [
+			{
+				workspace_id: WS,
+				object_id: OBJ,
+				document_id: DOC,
+				status: 'ok',
+				checked_at: '2026-10-09T12:00:00Z',
+				head_seq: 4,
+				head_frontier: 'F',
+				semantic_hash: 'sh',
+				projection_seq: 4
+			},
+			{
+				workspace_id: WS,
+				object_id: 'obj-2',
+				document_id: 'doc-2',
+				status: 'failed',
+				checked_at: '2026-10-09T12:00:00Z',
+				failure: 'storage_inconsistent',
+				error_code: 'resync_required'
+			},
+			{
+				workspace_id: WS,
+				object_id: 'obj-3',
+				document_id: 'doc-3',
+				status: 'failed',
+				checked_at: '2026-10-09T12:00:00Z',
+				failure: 'cosmic_rays',
+				error_code: 'not_a_code'
+			}
+		]
+	});
+	assertDeepEqual(
+		rows,
+		[
+			{
+				status: 'ok',
+				documentId: DOC,
+				objectId: OBJ,
+				headSeq: 4,
+				projectionSeq: 4,
+				semanticHash: 'sh'
+			},
+			{
+				status: 'failed',
+				documentId: 'doc-2',
+				objectId: 'obj-2',
+				failureKey: INTEGRITY_FAILURE_KEYS.storage_inconsistent,
+				errorKey: 'flow.error.resync_required'
+			},
+			{
+				status: 'failed',
+				documentId: 'doc-3',
+				objectId: 'obj-3',
+				failureKey: INTEGRITY_FAILURE_UNKNOWN_KEY,
+				errorKey: 'flow.operations.error.rejected'
+			}
+		],
+		'rows'
+	);
+	for (const failure of [
+		'storage_inconsistent',
+		'projection_missing',
+		'limit_exceeded',
+		'document_missing',
+		'replay_failed'
+	] as const) {
+		assertEqual(integrityFailureKey(failure), INTEGRITY_FAILURE_KEYS[failure], failure);
+	}
+	assertEqual(integrityFailureKey('toString'), INTEGRITY_FAILURE_UNKNOWN_KEY, 'no prototype keys');
+	assertDeepEqual(integrityRows(null), [], 'no integrity');
+});
+
+suite.check('admin lag rows merge the three groups by document', () => {
+	const rows = adminLagRows({
+		projection: {
+			max: 7,
+			p95: 7,
+			items: [
+				{ object_id: OBJ, document_id: DOC, head_seq: 9, projection_seq: 2, lag: 7 },
+				{ object_id: 'obj-2', document_id: 'doc-2', head_seq: 3, projection_seq: 3, lag: 0 }
+			]
+		},
+		search: {
+			max: 1,
+			p95: 1,
+			items: [{ object_id: OBJ, document_id: DOC, head_seq: 9, indexed_seq: 8, lag: 1 }]
+		},
+		fanout: {
+			max: 0,
+			p95: 0,
+			items: [
+				{ object_id: 'obj-2', document_id: 'doc-2', head_seq: 3, fanout_seq: 3, lag: 0 },
+				{ object_id: OBJ, document_id: DOC, head_seq: 9, fanout_seq: 9, lag: 0 }
+			]
+		},
+		next_cursor: 'c2'
+	});
+	assertDeepEqual(
+		rows,
+		[
+			{ documentId: DOC, objectId: OBJ, headSeq: 9, projection: 7, search: 1, fanout: 0 },
+			{
+				documentId: 'doc-2',
+				objectId: 'obj-2',
+				headSeq: 3,
+				projection: 0,
+				search: null,
+				fanout: 0
+			}
+		],
+		'merged rows; a group without the document shows no value'
+	);
+	assertDeepEqual(adminLagRows(null), [], 'no lag');
+});
+
 await suite.checkAsync('every static i18n key used by the panel exists in zh and en', async () => {
 	const root = new URL('..', import.meta.url).pathname;
 	const required = [
@@ -1177,6 +1489,14 @@ await suite.checkAsync('every static i18n key used by the panel exists in zh and
 		...Object.values(OPERATION_NAME_KEYS),
 		...Object.values(RECEIPT_FIELD_KEYS),
 		...Object.values(REPLAY_MODE_KEYS),
+		...Object.values(RECEIPT_MODE_KEYS),
+		...Object.values(RECEIPT_SCOPE_KEYS),
+		...Object.values(CHANGE_KIND_KEYS),
+		...Object.values(CHANGE_FIELD_KEYS),
+		...Object.values(RECEIPT_WARNING_KEYS),
+		RECEIPT_WARNING_UNKNOWN_KEY,
+		...Object.values(INTEGRITY_FAILURE_KEYS),
+		INTEGRITY_FAILURE_UNKNOWN_KEY,
 		'flow.operations.status.unknown',
 		PROJECTION_UNAVAILABLE_KEY,
 		'flow.operations.lag.projection',
