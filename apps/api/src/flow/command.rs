@@ -310,7 +310,10 @@ pub(super) async fn record_cross_workspace_relation_and_fail_closed(
     {
         tracing::error!(error = %err, "failed to record integrity alert for a cross-workspace relation");
     }
-    ApiError::invalid_update("invalid_update".to_string())
+    ApiError::invalid_update_with_details(
+        "invalid_update",
+        json!({ "reason": crate::error::CROSS_WORKSPACE_RELATION_REASON }),
+    )
 }
 
 /// Resolves an already-committed `flow.object.created` event for `idempotency_key` into the
