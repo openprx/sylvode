@@ -49,6 +49,7 @@ import {
 	type FlowPackageArtifactReceipt,
 	type FlowPackageImportJobReceipt,
 	type FlowPackageImportPreview,
+	type FlowReferenceReceipt,
 	type FlowReplayResponse,
 	type FlowSetGrantsResponse,
 	type FlowSetInheritanceResponse,
@@ -241,6 +242,31 @@ export class FlowCommandService {
 
 	async convertCommit(input: FlowConversionCommitInput): Promise<ApiResult<FlowConversionJob>> {
 		return flowApi.commitConversion(input);
+	}
+
+	// v0.7 Forms Bridge Reference / Embed (`rest-api-v1.md` v0.7: `POST .../references`,
+	// `DELETE .../references/{id}`). Both are writes on the Page, so they go through this service.
+	// The key comes from the caller's intent (`lib/flow/slash-bridge.ts`), and the raw `ApiResult`
+	// is returned so the caller can branch on `error_code`.
+
+	async createReference(
+		objectId: string,
+		input: {
+			target_type: 'form' | 'form_record';
+			target_id: string;
+			display: { mode: 'reference' | 'embed' };
+			idempotency_key: string;
+		}
+	): Promise<ApiResult<FlowReferenceReceipt>> {
+		return flowApi.referenceObject(objectId, input);
+	}
+
+	async removeReference(
+		objectId: string,
+		referenceId: string,
+		idempotencyKey: string
+	): Promise<ApiResult<{ removed: boolean; event_id: string }>> {
+		return flowApi.unreferenceObject(objectId, referenceId, idempotencyKey);
 	}
 
 	// Convert status / Convert retry (`surface-coverage-v1.md`: both `adapter:CommandService`).

@@ -265,10 +265,24 @@
 			}
 		})();
 		lagBadge.start();
+		// A Page's slash-menu Collection embed creates a child of that Page outside this
+		// component; re-read the list so it shows up under its (expanded) parent.
+		const unsubscribeCreated = repository.createdObjects.subscribe((created) => {
+			if (!created) return;
+			void (async () => {
+				await loadObjects();
+				await ensureOrderEntries();
+				if (created.parentId) {
+					// eslint-disable-next-line svelte/prefer-svelte-reactivity -- replaced whole, like every other `expanded` write here
+					expanded = new Set(expanded).add(created.parentId);
+				}
+			})();
+		});
 		return () => {
 			controller.abort();
 			lagBadge.stop();
 			search.dispose();
+			unsubscribeCreated();
 		};
 	});
 

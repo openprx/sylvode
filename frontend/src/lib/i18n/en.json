@@ -2435,9 +2435,37 @@
         "heading3": "Heading 3",
         "bullet": "Bulleted list",
         "code": "Code block",
-        "empty": "No matching block type"
+        "empty": "No matching block type",
+        "collection": "Collection",
+        "referenceForms": "Reference a Form",
+        "embedForms": "Embed a Form",
+        "convertForms": "Convert to Forms…",
+        "collectionNote": "Creates a new Collection that belongs to this Page; it is created in one step together with its block.",
+        "referenceNote": "Reference: links to the Form or record without changing who owns it; nothing is copied into this Page.",
+        "embedNote": "Embed: shows the Form or record inside this Page, subject to the target's own permissions.",
+        "convertNote": "Convert: creates a new Forms record from this Page; the record belongs to Forms.",
+        "collectionDefaultTitle": "Untitled collection",
+        "collectionFieldLabel": "Name",
+        "collectionPending": "Creating the Collection…",
+        "collectionCreated": "Collection created and embedded.",
+        "collectionFailed": "The Collection could not be created. Nothing was added to the Page.",
+        "collectionFailedTitle": "Could not create \"{title}\".",
+        "collectionTitleRequired": "Enter a title.",
+        "collectionTitleTooLong": "The title is too long (at most 500 characters).",
+        "collectionDialogTitle": "New embedded Collection",
+        "collectionTitleLabel": "Title",
+        "collectionSubmit": "Create",
+        "retry": "Retry",
+        "referenceDialogTitle": "Reference a Form or record",
+        "embedDialogTitle": "Embed a Form or record",
+        "referenceSubmit": "Add reference",
+        "embedSubmit": "Embed"
       },
-      "unsupported": "This view isn't available yet."
+      "unsupported": "This view isn't available yet.",
+      "embed": {
+        "collectionLabel": "Embedded Collection {title}",
+        "open": "Open"
+      }
     },
     "block": {
       "handleLabel": "Drag handle",
@@ -3368,6 +3396,49 @@
         "requiredTargetValueMissing": "Required field \"{field}\" has no value; Forms will refuse the record.",
         "unknownTargetField": "Field \"{field}\" is not in the form and will be ignored.",
         "unknown": "The server reported a mapping warning this version cannot describe."
+      },
+      "card": {
+        "createFailed": "The reference could not be added. Try again.",
+        "removeFailed": "The reference could not be removed. Try again.",
+        "loadFailed": "References on this Page could not be loaded.",
+        "mode": {
+          "reference": "Reference",
+          "embed": "Embed"
+        },
+        "targetType": {
+          "form": "Form",
+          "form_record": "Form record"
+        },
+        "untitled": "Untitled",
+        "permission": {
+          "controlled": "You can view and edit",
+          "read_only": "View only",
+          "unconfigured": "View only (permissions not configured)",
+          "no_access": "No access"
+        },
+        "restricted": "You do not have access to this content. Only the reference is shown.",
+        "contentFailed": "The content could not be loaded.",
+        "emptyRecord": "This record has no values yet.",
+        "noDescription": "No description.",
+        "fieldCount": "{count} fields",
+        "openSource": "Open in Forms",
+        "remove": "Remove reference",
+        "unavailable": "This referenced item is no longer available.",
+        "created": "Reference added.",
+        "removed": "Reference removed. The Forms item was not changed.",
+        "removeTitle": "Remove this reference?",
+        "removeBody": "Only the reference on this Page is removed. The Form or record itself is not deleted or changed.",
+        "removeConfirm": "Remove reference",
+        "picker": {
+          "project": "Project",
+          "chooseProject": "Choose a project",
+          "noProjects": "There are no projects in this workspace.",
+          "form": "Form",
+          "chooseForm": "Choose a form",
+          "record": "Record",
+          "wholeForm": "The whole form (no single record)",
+          "loadFailed": "The list could not be loaded."
+        }
       }
     },
     "share": {

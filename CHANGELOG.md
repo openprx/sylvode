@@ -286,6 +286,22 @@ OpenPR name keeps working; see **Deprecated**.
     how to add one. A filter, sort and board grouping bar narrows the records with an unsaved
     draft query (sent as query parameters, never written to the document); in schema mode
     **Save view** stores the draft and the column widths in the view with `view_update`.
+  - Web UI: the Page slash menu adds **Collection**, **Reference a Form**, **Embed a Form** and
+    **Convert to Forms…**, each with one line on who owns the result. Collection asks for a title
+    (default "Untitled collection") and sends one `create_collection_embed` command (never an
+    object create followed by a block insert); while it runs a single provisional block is shown
+    that is never written to the Page document, a failure removes it and offers Retry with the
+    same idempotency key and body, and a permanent failure offers no retry. The new Collection is
+    rendered in the Page as an embedded `collection:table` with an Open link, and the navigator
+    lists it under its Page. Reference and Embed pick a project, a form and optionally a record
+    and call `POST .../references` with `display.mode` `reference` or `embed`; the Page keeps only
+    a placeholder block pointing at the `reference_id`. Reference cards show the title, type, a
+    permission badge and a link to Forms; Embed cards also show the target's content when the
+    request-time permission allows viewing and otherwise a placeholder without requesting any
+    Forms data; a reference the bridge no longer returns is shown as unavailable. Removing a
+    reference asks for confirmation and only calls `DELETE .../references/{id}`. Convert opens
+    the conversion wizard. Strings are under `flow.canvas.slashMenu.*`, `flow.canvas.embed.*`
+    and `flow.bridge.card.*`.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

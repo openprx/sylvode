@@ -2435,9 +2435,37 @@
         "heading3": "标题 3",
         "bullet": "项目符号列表",
         "code": "代码块",
-        "empty": "没有匹配的区块类型"
+        "empty": "没有匹配的区块类型",
+        "collection": "数据集",
+        "referenceForms": "引用表单",
+        "embedForms": "嵌入表单",
+        "convertForms": "转换为表单…",
+        "collectionNote": "新建一个归属本页面的数据集，数据集与它的块一步创建。",
+        "referenceNote": "引用：链接到表单或记录，不改变其所有权，也不会把内容复制到本页面。",
+        "embedNote": "嵌入：在本页面内显示表单或记录，是否可见取决于目标自身的权限。",
+        "convertNote": "转换：由本页面生成一条新的表单记录，该记录归表单所有。",
+        "collectionDefaultTitle": "未命名数据集",
+        "collectionFieldLabel": "名称",
+        "collectionPending": "正在创建数据集…",
+        "collectionCreated": "数据集已创建并嵌入。",
+        "collectionFailed": "数据集创建失败，页面没有任何改动。",
+        "collectionFailedTitle": "无法创建「{title}」。",
+        "collectionTitleRequired": "请输入标题。",
+        "collectionTitleTooLong": "标题过长（最多 500 个字符）。",
+        "collectionDialogTitle": "新建嵌入数据集",
+        "collectionTitleLabel": "标题",
+        "collectionSubmit": "创建",
+        "retry": "重试",
+        "referenceDialogTitle": "引用表单或记录",
+        "embedDialogTitle": "嵌入表单或记录",
+        "referenceSubmit": "添加引用",
+        "embedSubmit": "嵌入"
       },
-      "unsupported": "该视图暂不可用。"
+      "unsupported": "该视图暂不可用。",
+      "embed": {
+        "collectionLabel": "嵌入的数据集 {title}",
+        "open": "打开"
+      }
     },
     "block": {
       "handleLabel": "拖动手柄",
@@ -3368,6 +3396,49 @@
         "requiredTargetValueMissing": "必填字段「{field}」没有值，Forms 将拒绝该记录。",
         "unknownTargetField": "字段「{field}」不在表单中，将被忽略。",
         "unknown": "服务端报告了一条本版本无法说明的映射警告。"
+      },
+      "card": {
+        "createFailed": "引用添加失败，请重试。",
+        "removeFailed": "引用移除失败，请重试。",
+        "loadFailed": "无法加载本页面的引用。",
+        "mode": {
+          "reference": "引用",
+          "embed": "嵌入"
+        },
+        "targetType": {
+          "form": "表单",
+          "form_record": "表单记录"
+        },
+        "untitled": "未命名",
+        "permission": {
+          "controlled": "可查看和编辑",
+          "read_only": "仅可查看",
+          "unconfigured": "仅可查看（未配置权限）",
+          "no_access": "无权访问"
+        },
+        "restricted": "你没有权限查看该内容，这里只显示引用。",
+        "contentFailed": "内容加载失败。",
+        "emptyRecord": "这条记录还没有填写内容。",
+        "noDescription": "无描述。",
+        "fieldCount": "{count} 个字段",
+        "openSource": "在表单中打开",
+        "remove": "移除引用",
+        "unavailable": "被引用的内容已不可用。",
+        "created": "引用已添加。",
+        "removed": "引用已移除，表单内容未受影响。",
+        "removeTitle": "移除这个引用？",
+        "removeBody": "只会移除本页面上的引用，表单或记录本身不会被删除或修改。",
+        "removeConfirm": "移除引用",
+        "picker": {
+          "project": "项目",
+          "chooseProject": "选择项目",
+          "noProjects": "该工作区还没有项目。",
+          "form": "表单",
+          "chooseForm": "选择表单",
+          "record": "记录",
+          "wholeForm": "整个表单（不指定记录）",
+          "loadFailed": "列表加载失败。"
+        }
       }
     },
     "share": {

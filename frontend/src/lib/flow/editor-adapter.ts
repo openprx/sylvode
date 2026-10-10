@@ -247,6 +247,21 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 		this.view.focus();
 	}
 
+	/** Removes the trailing "/query" that opened the slash menu without changing the block type.
+	 * Used when the picked entry is not a text block (Collection, Forms reference/embed, convert),
+	 * whose result is created by the server or the bridge rather than by this editor. */
+	consumeSlashTrigger(): void {
+		if (!this.view) return;
+		const { state, dispatch } = this.view;
+		const { $from } = state.selection;
+		const parentEnd = $from.after($from.depth) - 1;
+		const parentStart = $from.before($from.depth) + 1;
+		const text = state.doc.textBetween(parentStart, parentEnd, undefined, '￼');
+		const slashIndex = text.lastIndexOf('/');
+		if (slashIndex < 0) return;
+		dispatch(state.tr.delete(parentStart + slashIndex, parentEnd));
+	}
+
 	/** Backs the canvas's per-block hover handle nest/outdent buttons (task brief item 1's "block
 	 * hover handle"), which act on whatever block the pointer is over rather than the current
 	 * selection. Shares the same clamp-to-`MAX_INDENT` rule as the Tab/Shift-Tab keymap. */
