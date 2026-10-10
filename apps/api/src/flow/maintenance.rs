@@ -9,6 +9,7 @@ use uuid::Uuid;
 use super::collab::bootstrap;
 use super::projection;
 use crate::error::{ApiError, ApiErrorKind};
+use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProjectionRebuildResult {
@@ -108,6 +109,33 @@ pub async fn rebuild_projection(
     expected_head_seq: Option<i64>,
     execute: bool,
 ) -> Result<ProjectionRebuildResult, ApiError> {
+    rebuild_projection_audited(
+        db,
+        object_id,
+        expected_head_seq,
+        execute,
+        None::<fn(&ProjectionRebuildResult) -> BusinessEventInput>,
+    )
+    .await
+    .map(|(result, _)| result)
+}
+
+/// [`rebuild_projection`] that also writes the operation's audit `business_events` row.
+///
+/// When `audit` is supplied and `execute` is true, the row is written inside the same transaction
+/// that replaces the projection row (or on its own when the projection was already current and
+/// nothing else is written), and its id is returned alongside the result. A dry-run never writes
+/// an audit row.
+pub async fn rebuild_projection_audited<F>(
+    db: &DatabaseConnection,
+    object_id: Uuid,
+    expected_head_seq: Option<i64>,
+    execute: bool,
+    audit: Option<F>,
+) -> Result<(ProjectionRebuildResult, Option<Uuid>), ApiError>
+where
+    F: FnOnce(&ProjectionRebuildResult) -> BusinessEventInput,
+{
     let identity = DocumentIdentity::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT fo.workspace_id AS workspace, fo.id AS object, cd.id AS document \
@@ -152,7 +180,24 @@ pub async fn rebuild_projection(
     let before_hash = before.as_ref().map(projection_hash).transpose()?;
     let after_hash = projection_hash(&desired)?;
     let changed = before_hash.as_deref() != Some(after_hash.as_str());
+    let result = ProjectionRebuildResult {
+        workspace_id: identity.workspace,
+        object_id: identity.object,
+        document_id: identity.document,
+        head_seq: boot.head_seq,
+        before_hash,
+        after_hash,
+        changed,
+        executed: execute,
+    };
+    let audit = if execute { audit } else { None };
+    let dispatch = || FlowDispatchSpec {
+        max_attempts: crate::config::runtime().flow.dispatch_max_attempts,
+        document_id: None,
+        accepted_seq: None,
+    };
 
+    let mut audit_event_id = None;
     if execute && changed {
         let tx = db.begin().await?;
         super::collab::write::set_locked_phase_statement_budgets(&tx, 1).await?;
@@ -191,26 +236,26 @@ pub async fn rebuild_projection(
             ],
         ))
         .await?;
+        if let Some(build) = audit {
+            audit_event_id = Some(insert_flow_event(&tx, build(&result), Some(dispatch())).await?.event_id);
+        }
         tx.commit().await?;
         let persisted = projection_row(db, object_id).await?.ok_or_else(ApiError::internal)?;
-        if projection_hash(&persisted)? != after_hash {
+        if projection_hash(&persisted)? != result.after_hash {
             return Err(ApiError::typed(
                 ApiErrorKind::ServerRejected,
                 "projection checksum mismatch after rebuild",
             ));
         }
+    } else if let Some(build) = audit {
+        // Execute on an already-current projection: nothing canonical changes, but the executed
+        // operation still owns exactly one audit row.
+        let tx = db.begin().await?;
+        audit_event_id = Some(insert_flow_event(&tx, build(&result), Some(dispatch())).await?.event_id);
+        tx.commit().await?;
     }
 
-    Ok(ProjectionRebuildResult {
-        workspace_id: identity.workspace,
-        object_id: identity.object,
-        document_id: identity.document,
-        head_seq: boot.head_seq,
-        before_hash,
-        after_hash,
-        changed,
-        executed: execute,
-    })
+    Ok((result, audit_event_id))
 }
 
 /// Plans or executes a search-index rebuild from the accepted projection for one object.

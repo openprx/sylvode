@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use super::{bootstrap, snapshot};
 use crate::error::ApiError;
+use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
 
 /// Ack rows older than this are not active compaction blockers. Reconnecting clients still fail
 /// closed to a full snapshot because resume refuses any `known_seq < snapshot_seq`.
@@ -54,6 +55,9 @@ pub const fn history_disposition(lagging_clients: u64, force_resync: bool) -> Hi
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactionResult {
     pub document_id: Uuid,
+    /// Snapshot boundary and checksum the compaction replaced (the receipt's `changes[].before`).
+    pub previous_snapshot_seq: i64,
+    pub previous_snapshot_checksum: String,
     pub head_seq: i64,
     pub head_frontier: Vec<u8>,
     pub semantic_hash: String,
@@ -146,10 +150,41 @@ pub async fn compact(
     expected_head_seq: i64,
     force_resync: bool,
 ) -> Result<CompactionResult, ApiError> {
+    compact_audited(
+        db,
+        document_id,
+        expected_head_seq,
+        force_resync,
+        None::<fn(&CompactionResult) -> BusinessEventInput>,
+    )
+    .await
+    .map(|(result, _)| result)
+}
+
+/// [`compact`] that also writes the operation's audit `business_events` row.
+///
+/// The row is inserted inside the same domain transaction that advances the snapshot boundary
+/// (`events-v1.md`: the state-changing business event *is* the audit truth,
+/// `delivery_class=business`). If the audit insert fails the whole compaction rolls back, so an
+/// executed compaction can never lack its audit row.
+///
+/// Returns the compaction result and, when `audit` was supplied, the inserted event id.
+pub async fn compact_audited<F>(
+    db: &DatabaseConnection,
+    document_id: Uuid,
+    expected_head_seq: i64,
+    force_resync: bool,
+    audit: Option<F>,
+) -> Result<(CompactionResult, Option<Uuid>), ApiError>
+where
+    F: FnOnce(&CompactionResult) -> BusinessEventInput,
+{
     let boot = bootstrap::load(db, document_id).await?;
     if boot.head_seq != expected_head_seq {
         return Err(ApiError::stale_frontier("stale_frontier", Some(boot.head_seq), None));
     }
+    let previous_snapshot_seq = boot.snapshot_seq;
+    let previous_snapshot_checksum = bootstrap::content_hash(&boot.snapshot);
 
     let candidate = if boot.snapshot_seq < boot.head_seq {
         snapshot::build_candidate(db, document_id)
@@ -261,10 +296,10 @@ pub async fn compact(
         .await?
         .rows_affected()
     };
-    tx.commit().await?;
-
-    Ok(CompactionResult {
+    let result = CompactionResult {
         document_id,
+        previous_snapshot_seq,
+        previous_snapshot_checksum,
         head_seq: candidate.head_seq,
         head_frontier: candidate.head_frontier,
         semantic_hash: candidate.semantic_hash,
@@ -273,7 +308,26 @@ pub async fn compact(
         lagging_clients,
         forced_resync_clients,
         disposition,
-    })
+    };
+    let audit_event_id = match audit {
+        Some(build) => Some(
+            insert_flow_event(
+                &tx,
+                build(&result),
+                Some(FlowDispatchSpec {
+                    max_attempts: crate::config::runtime().flow.dispatch_max_attempts,
+                    document_id: None,
+                    accepted_seq: None,
+                }),
+            )
+            .await?
+            .event_id,
+        ),
+        None => None,
+    };
+    tx.commit().await?;
+
+    Ok((result, audit_event_id))
 }
 
 #[cfg(test)]
