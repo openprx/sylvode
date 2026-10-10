@@ -365,6 +365,14 @@ replacement and the earliest removal.
   reload and `POST /flow/objects/{id}/commands` returned 500 (api log: `worker binary
   'collab-isolated-apply-worker' not found next to '/app/api'`). `scripts/start.sh --no-build`
   now also requires it in `target/release`, and the release job refuses an archive without it.
+- Release: the macOS and Windows targets build again. `api` and `collab-isolated-apply-worker`
+  used the Linux-only isolated-apply module (ADR-0014) unconditionally, so every non-Linux release
+  target failed to compile. The module's types, wire codec and limits are now platform-neutral;
+  off Linux the isolated-apply entry points refuse every Flow collaborative write and object diff
+  with `server_rejected` (`details.reason = "isolated_apply_unsupported_platform"`,
+  `write_state: not_applied`) instead of applying anything outside the boundary, `api` logs one
+  startup `warn`, and `collab-isolated-apply-worker` is a stub that exits with status 2. See the
+  [platform matrix](docs/sylvode-v1.0-compatibility.md#platform-matrix).
 - Flow collaboration: publishing the cross-instance fanout notice after a committed update no
   longer reports a failure on every write. The statement filtered on `pg_notify(..) IS NULL`,
   which is never true (`pg_notify` returns `void`), so it returned no row and the API logged

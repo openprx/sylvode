@@ -73,6 +73,11 @@ every Flow collaborative write and looks for it in its own directory, so without
 fails. `--no-build` therefore expects `api`, `collab-isolated-apply-worker`, `worker` and
 `mcp-server` in `target/release`. Release archives carry it beside `api`; keep the two in the
 same directory when installing them (or point `COLLAB_ISOLATED_APPLY_WORKER_PATH` at it).
+Flow collaborative writes and object diffs require a Linux API server (the isolated-apply
+boundary of ADR-0014 is Linux-only); on macOS and Windows they are refused with `server_rejected`
+(`isolated_apply_unsupported_platform`). Projects, Forms, MCP, the CLI and Flow reads work on
+every release platform; see the
+[platform matrix](docs/sylvode-v1.0-compatibility.md#platform-matrix).
 The generated `[flow] collab_allowed_origins` lists the addresses the frontend
 is published at (for the default bind, `http://localhost:3000` and
 `http://127.0.0.1:3000`), so live editing works on first start; replace it with
