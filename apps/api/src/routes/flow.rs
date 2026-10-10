@@ -13305,6 +13305,29 @@ mod flow_database_tests {
         assert_eq!(jobs[0].error_code.as_deref(), Some("stale_frontier"));
         scratch.drop_self().await;
     }
+
+    /// FP2-B4 N4-④: preview and job report the unmapped target field and the mapped value with no
+    /// target field.
+    #[tokio::test]
+    async fn fp2_b4_preview_and_job_report_mapping_warnings() {
+        let scratch = scratch_or_skip!("fp2-b4-warnings");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        let preview = fp2_b4_preview(
+            &state,
+            &fx,
+            json!({"target_form_id":fx.form_id,"values":{"req":"value","ghost":"dropped"}}),
+        )
+        .await;
+        assert_eq!(preview["code"], 0, "{preview}");
+        let expected = json!(["target_value_missing:opt", "unknown_target_field:ghost"]);
+        assert_eq!(preview["data"]["warnings"], expected, "{preview}");
+        let preview_id = Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
+        let committed = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-warnings").await;
+        assert_eq!(committed["data"]["status"], "completed", "{committed}");
+        assert_eq!(committed["data"]["warnings"], expected, "{committed}");
+        scratch.drop_self().await;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

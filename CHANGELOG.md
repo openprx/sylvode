@@ -376,6 +376,13 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow conversions: `warnings` on the preview and on a completed record-conversion job are no
+  longer always empty. Each entry is a stable `<code>:<field_key>` string:
+  `target_value_missing` for a target field the mapping leaves empty (Forms fields have no
+  default), `required_target_value_missing` when that field is required (the commit will be
+  refused by Forms validation), and `unknown_target_field` for a mapped value that names no field
+  of the target schema (it is dropped, as before, not rejected). `autonumber` and `child_table`
+  fields are not reported. Form-creating conversions keep `warnings: []`.
 - Flow conversions: retrying a `failed` job no longer depends on the preview's 15-minute TTL,
   so a job can be retried after its preview expired (previously that retry always answered
   `policy_rejected`). The retry re-authorizes every side and re-runs against the

@@ -960,6 +960,41 @@ async fn form_schema<C: ConnectionTrait>(
     .map(|row| (row.project_id, row.schema_version, row.schema)))
 }
 
+/// Warnings for a record conversion's `mapping.values` against the target form schema, as stable
+/// `<code>:<field_key>` strings: `required_target_value_missing` (the commit will be refused by
+/// Forms validation), `target_value_missing` (the field is left empty: Forms fields have no
+/// default) and `unknown_target_field` (the value names no field of the schema and is dropped).
+/// Server-assigned `autonumber` and row-based `child_table` fields are never the mapping's job.
+fn conversion_warnings(schema: &Value, mapping: &Value) -> Vec<String> {
+    let Ok(fields) = crate::forms::schema::parse_fields(schema) else {
+        return Vec::new();
+    };
+    let values = mapping.get("values").and_then(Value::as_object);
+    let mut warnings = Vec::new();
+    for field in &fields {
+        if matches!(field.field_type.as_str(), "autonumber" | "child_table")
+            || !crate::forms::values::is_missing(values.and_then(|values| values.get(&field.key)))
+        {
+            continue;
+        }
+        let code = if field.required {
+            "required_target_value_missing"
+        } else {
+            "target_value_missing"
+        };
+        warnings.push(format!("{code}:{}", field.key));
+    }
+    if let Some(values) = values {
+        let mut unknown = values
+            .keys()
+            .filter(|key| !fields.iter().any(|field| &field.key == *key))
+            .collect::<Vec<_>>();
+        unknown.sort();
+        warnings.extend(unknown.into_iter().map(|key| format!("unknown_target_field:{key}")));
+    }
+    warnings
+}
+
 pub async fn preview_conversion(
     state: &AppState,
     extensions: &Extensions,
@@ -986,52 +1021,55 @@ pub async fn preview_conversion(
         ));
     }
 
-    let (target_project_id, target_form_id, target_schema_version, permission) = match input.target_type.as_str() {
-        "form" => {
-            let project_id = mapping_uuid(&input.mapping, "target_project_id")?;
-            if !matches!(actor.role.as_str(), "owner" | "admin")
-                || !project_exists(&state.db, source.workspace_id, project_id).await?
-            {
-                return Err(ApiError::policy_rejected("target form creation is not permitted"));
-            }
-            (
-                project_id,
-                None,
-                0,
-                BridgePermissionState {
-                    access: BridgeAccess::Controlled,
-                    configuration: PolicyConfiguration::Explicit,
-                    actions: vec!["form.view".to_string(), "record.create".to_string()],
-                    field_read_limited: false,
-                    field_write_limited: false,
-                    record_limited: false,
-                },
-            )
-        }
-        "form_record" => {
-            let form_id = mapping_uuid(&input.mapping, "target_form_id")?;
-            let target = target_view(&state.db, source.workspace_id, "form", form_id)
-                .await?
-                .ok_or_else(|| ApiError::not_found("bridge target not found".to_string()))?;
-            let permission = target_permission(&state.db, &actor, &target).await?;
-            let permission = match permission {
-                Some(decision) if decision.allows("record.create") => decision,
-                Some(decision) => return Err(record_create_rejected(&decision.state)),
-                None => {
-                    return Err(ApiError::not_found("bridge target not found".to_string()));
+    let (target_project_id, target_form_id, target_schema_version, permission, warnings) =
+        match input.target_type.as_str() {
+            "form" => {
+                let project_id = mapping_uuid(&input.mapping, "target_project_id")?;
+                if !matches!(actor.role.as_str(), "owner" | "admin")
+                    || !project_exists(&state.db, source.workspace_id, project_id).await?
+                {
+                    return Err(ApiError::policy_rejected("target form creation is not permitted"));
                 }
-            };
-            let (project_id, schema_version, _) = form_schema(&state.db, source.workspace_id, form_id)
-                .await?
-                .ok_or_else(|| ApiError::not_found("bridge target not found".to_string()))?;
-            (project_id, Some(form_id), schema_version, permission.state)
-        }
-        _ => {
-            return Err(ApiError::invalid_update(
-                "target_type must be form or form_record".to_string(),
-            ));
-        }
-    };
+                (
+                    project_id,
+                    None,
+                    0,
+                    BridgePermissionState {
+                        access: BridgeAccess::Controlled,
+                        configuration: PolicyConfiguration::Explicit,
+                        actions: vec!["form.view".to_string(), "record.create".to_string()],
+                        field_read_limited: false,
+                        field_write_limited: false,
+                        record_limited: false,
+                    },
+                    Vec::new(),
+                )
+            }
+            "form_record" => {
+                let form_id = mapping_uuid(&input.mapping, "target_form_id")?;
+                let target = target_view(&state.db, source.workspace_id, "form", form_id)
+                    .await?
+                    .ok_or_else(|| ApiError::not_found("bridge target not found".to_string()))?;
+                let permission = target_permission(&state.db, &actor, &target).await?;
+                let permission = match permission {
+                    Some(decision) if decision.allows("record.create") => decision,
+                    Some(decision) => return Err(record_create_rejected(&decision.state)),
+                    None => {
+                        return Err(ApiError::not_found("bridge target not found".to_string()));
+                    }
+                };
+                let (project_id, schema_version, schema) = form_schema(&state.db, source.workspace_id, form_id)
+                    .await?
+                    .ok_or_else(|| ApiError::not_found("bridge target not found".to_string()))?;
+                let warnings = conversion_warnings(&schema, &input.mapping);
+                (project_id, Some(form_id), schema_version, permission.state, warnings)
+            }
+            _ => {
+                return Err(ApiError::invalid_update(
+                    "target_type must be form or form_record".to_string(),
+                ));
+            }
+        };
 
     if let Some(existing) = PreviewRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -1064,7 +1102,7 @@ pub async fn preview_conversion(
             source_frontier: existing.source_frontier,
             target_schema_version: existing.target_schema_version,
             mapping: existing.mapping,
-            warnings: Vec::new(),
+            warnings,
             permission_decision,
             estimated_objects: 1,
         });
@@ -1105,7 +1143,7 @@ pub async fn preview_conversion(
         source_frontier: frontier,
         target_schema_version,
         mapping: input.mapping,
-        warnings: Vec::new(),
+        warnings,
         permission_decision: permission,
         estimated_objects: 1,
     })
@@ -1415,7 +1453,7 @@ async fn run_conversion(
         ));
     }
 
-    let (_schema, permission) = if let Some(form_id) = preview.target_form_id {
+    let (schema, permission) = if let Some(form_id) = preview.target_form_id {
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 19019))",
@@ -1459,6 +1497,10 @@ async fn run_conversion(
         (None, None)
     };
 
+    let warnings = schema
+        .as_ref()
+        .map(|schema| conversion_warnings(schema, &preview.mapping))
+        .unwrap_or_default();
     if conversion_fault(preview.id, "before_target_create") {
         return Err(ApiError::internal());
     }
@@ -1563,8 +1605,13 @@ async fn run_conversion(
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE flow_conversion_jobs SET status='completed', lineage_id=$2, created_target_ids=ARRAY[$3]::uuid[], \
-         error_code=NULL, updated_at=now() WHERE id=$1",
-        vec![job_id.into(), lineage_id.into(), target_id.into()],
+         warnings=$4, error_code=NULL, updated_at=now() WHERE id=$1",
+        vec![
+            job_id.into(),
+            lineage_id.into(),
+            target_id.into(),
+            json!(warnings).into(),
+        ],
     ))
     .await?;
     conversion_event(
