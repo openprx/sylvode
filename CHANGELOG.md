@@ -513,6 +513,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow collaboration: re-sending an `update` whose `update_id` is already committed is answered
+  with the original `accepted` receipt (same `head_seq`, `head_frontier` and `event_id`), on the
+  connection that committed it and after a reconnect. The receipt used to be dropped as a
+  duplicate seq, so a client retrying an update in `write_state: "unknown"` with the same
+  `update_id` never got an answer.
 - Flow collaboration: an open WebSocket connection re-evaluates its authorization when the
   workspace `authz_epoch` has moved since it opened. A write refused by the commit-time epoch
   fence is re-sourced in place: if the actor still has `edit` on the document the connection
