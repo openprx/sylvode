@@ -21,9 +21,12 @@ import {
 	type FlowAdminLag,
 	type FlowBootstrap,
 	type FlowExportJob,
+	type FlowGrantsView,
 	type FlowObjectView,
 	type FlowPackageImportReport,
-	type FlowProjectionLag
+	type FlowProjectionLag,
+	type FlowRelationListResponse,
+	type FlowRelationsQuery
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
 import { FlowCommandService } from './command-service';
@@ -362,6 +365,21 @@ export class FlowObjectRepository {
 		importJobId: string
 	): Promise<ApiResult<FlowPackageImportReport>> {
 		return flowApi.getPackageImport(workspaceId, importJobId);
+	}
+
+	// v0.5 object panel reads (`ui-surface-v1.md` "职责边界": the Share panel reads through
+	// `ObjectRepository`, the Relations panel is a lazy-loaded repository read). Raw `ApiResult`s,
+	// so the panel controllers (`share-panel.ts`, `relations-panel.ts`) branch on `error_code`.
+
+	getGrants(objectId: string): Promise<ApiResult<FlowGrantsView>> {
+		return flowApi.getGrants(objectId);
+	}
+
+	getRelations(
+		objectId: string,
+		query: FlowRelationsQuery = {}
+	): Promise<ApiResult<FlowRelationListResponse>> {
+		return flowApi.getRelations(objectId, query);
 	}
 }
 

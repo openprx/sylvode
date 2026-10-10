@@ -12,10 +12,8 @@
 // server-governed lifecycle actions (`set_title|insert_block|update_block|delete_block|
 // move_block|archive|restore`) `CommandService.execute` needs, and `getBootstrap` backs recovery
 // (`ObjectRepository.bootstrap`/`replaceWithAccepted`). `GET /flow/objects/{object_id}/diff` is
-// still in the frozen contract table but is NOT wired into the server router at this baseline --
-// `getDiff` below is a typed-but-unrouted method (same documented-gap pattern this file already
-// uses elsewhere): it compiles against the frozen contract and will 404 until the server routes
-// it, which is a normal `ApiResult` error a caller can already handle, not a silent wrong result.
+// routed too (`routes/flow.rs::get_flow_object_diff`); `getDiff` backs the history panel's
+// semantic diff.
 
 import { apiClient, type ApiResult, type UploadProgress } from './client';
 
@@ -498,8 +496,8 @@ export interface FlowBootstrap {
 	websocket_path: string;
 }
 
-/** `GET .../diff` response (`rest-api-v1.md`row 148) -- typed, but NOT routed server-side at this
- * baseline; see this file's header comment. */
+/** `GET .../diff` response (`apps/api/src/flow/model.rs::ObjectDiffResponse`). `semantic_diff` is
+ * `{title:{before,after}|null,nodes:{added,removed,changed}}` (`flow/query.rs::get_object_diff`). */
 export interface FlowDiffResponse {
 	object_id: string;
 	from_seq: number;
@@ -508,6 +506,130 @@ export interface FlowDiffResponse {
 	to_frontier: string;
 	semantic_diff: unknown;
 	rendered?: string;
+}
+
+/** `ADR-0012` grant levels (`flow_object_grants.level`). `none` only ever appears as an
+ * effective/before/after level in a summary, never as a stored grant. */
+export type FlowGrantLevel = 'full_access' | 'edit' | 'comment' | 'view';
+export type FlowEffectiveLevel = FlowGrantLevel | 'none';
+/** `flow_object_grants.principal_kind`'s registered values (`apps/api/src/flow/grants.rs`
+ * `PRINCIPAL_KINDS`). */
+export type FlowPrincipalKind = 'user' | 'bot';
+
+export interface FlowGrantInput {
+	principal_kind: FlowPrincipalKind;
+	principal_id: string;
+	level: FlowGrantLevel;
+}
+
+/** One explicit grant on the object (`grants.rs::GrantItem`). */
+export interface FlowGrantItem extends FlowGrantInput {
+	granted_by: string | null;
+	created_at: string;
+}
+
+/** One grant contributed by an ancestor (`grants.rs::InheritedGrantItem`). */
+export interface FlowInheritedGrantItem extends FlowGrantInput {
+	object_id: string;
+}
+
+/** `GET /flow/objects/{object_id}/grants` (`grants.rs::GrantsView`). `items`/`inherited` are
+ * always empty arrays unless the caller holds `full_access` on the object. */
+export interface FlowGrantsView {
+	items: FlowGrantItem[];
+	inherit_from_parent: boolean;
+	inherited: FlowInheritedGrantItem[];
+	effective_level: FlowEffectiveLevel;
+}
+
+/** `grants.rs::PermissionChanges`, identical for a dry run and a real request. */
+export interface FlowPermissionChanges {
+	caller: {
+		before_level: FlowEffectiveLevel;
+		after_level: FlowEffectiveLevel;
+		loses_full_access: boolean;
+	};
+	affected: Array<{
+		principal_kind: FlowPrincipalKind;
+		principal_id: string;
+		before_level: FlowEffectiveLevel;
+		after_level: FlowEffectiveLevel;
+	}>;
+}
+
+/** `PUT /flow/objects/{object_id}/grants` body. `grants` is the complete replacement roster. */
+export interface SetFlowGrantsInput {
+	grants: FlowGrantInput[];
+	confirm_self_lockout: boolean;
+	dry_run: boolean;
+	idempotency_key: string;
+}
+
+/** `PUT .../grants` response (`grants.rs::SetGrantsView`). `event_id` is `null` on a dry run. */
+export interface FlowSetGrantsResponse {
+	applied: boolean;
+	event_id: string | null;
+	permission_changes: FlowPermissionChanges;
+}
+
+/** `PUT /flow/objects/{object_id}/inheritance` body. `initial_grants` absent leaves the explicit
+ * grants untouched; `[]` clears them (`routes/flow.rs::SetInheritanceRequest`). */
+export interface SetFlowInheritanceInput {
+	inherit_from_parent: boolean;
+	confirm_self_lockout: boolean;
+	dry_run: boolean;
+	initial_grants?: FlowGrantInput[];
+	idempotency_key: string;
+}
+
+/** `PUT .../inheritance` response (`grants.rs::SetInheritanceView`). */
+export interface FlowSetInheritanceResponse extends FlowSetGrantsResponse {
+	inherit_from_parent: boolean;
+}
+
+export type FlowRelationDirection = 'outgoing' | 'incoming' | 'both';
+
+/** `RelationView` (`apps/api/src/flow/model.rs`): a tagged union on `visibility`. The
+ * `unavailable` variant carries no other field at all. */
+export type FlowRelationView =
+	| {
+			visibility: 'visible';
+			relation_id: string;
+			relation_type: string;
+			direction: 'outgoing' | 'incoming';
+			position_key?: string;
+			properties: unknown;
+			created_at: string;
+			other_object: {
+				id: string;
+				object_type: string;
+				title: string;
+				lifecycle_status: string;
+				project_id?: string;
+			};
+	  }
+	| { visibility: 'unavailable' };
+
+export interface FlowRelationListResponse {
+	items: FlowRelationView[];
+	next_cursor?: string;
+}
+
+export interface FlowRelationsQuery {
+	direction?: FlowRelationDirection;
+	relation_type?: string;
+	cursor?: string;
+	limit?: number;
+}
+
+export type FlowObjectExportFormat = 'json' | 'markdown' | 'csv' | 'package';
+
+/** `POST /flow/objects/{object_id}/exports` body (`routes/flow.rs::PackageExportRequest`).
+ * `include_history` is only accepted for `package` (`flow/export.rs::validate_request`). */
+export interface CreateObjectExportInput {
+	format: FlowObjectExportFormat;
+	include_history: boolean;
+	idempotency_key: string;
 }
 
 function buildQuery(params: Record<string, string | number | boolean | undefined>): string {
@@ -690,6 +812,13 @@ export const flowApi = {
 		return apiClient.post<FlowExportJob>(`/api/v1/workspaces/${workspaceId}/flow/exports`, input);
 	},
 
+	startObjectExport(
+		objectId: string,
+		input: CreateObjectExportInput
+	): Promise<ApiResult<FlowExportJob>> {
+		return apiClient.post<FlowExportJob>(`/api/v1/flow/objects/${objectId}/exports`, input);
+	},
+
 	getExportJob(jobId: string): Promise<ApiResult<FlowExportJob>> {
 		return apiClient.get<FlowExportJob>(`/api/v1/flow/exports/${jobId}`);
 	},
@@ -839,12 +968,47 @@ export const flowApi = {
 		return apiClient.get<FlowBootstrap>(`/api/v1/flow/objects/${objectId}/bootstrap${qs}`);
 	},
 
-	/** Typed but unrouted server-side at this baseline -- see this file's header comment. */
 	getDiff(
 		objectId: string,
 		query: { from_seq: number; to_seq: number; render?: 'semantic_json' | 'markdown' }
 	): Promise<ApiResult<FlowDiffResponse>> {
 		const qs = buildQuery({ from_seq: query.from_seq, to_seq: query.to_seq, render: query.render });
 		return apiClient.get<FlowDiffResponse>(`/api/v1/flow/objects/${objectId}/diff${qs}`);
+	},
+
+	getGrants(objectId: string): Promise<ApiResult<FlowGrantsView>> {
+		return apiClient.get<FlowGrantsView>(`/api/v1/flow/objects/${objectId}/grants`);
+	},
+
+	setGrants(
+		objectId: string,
+		input: SetFlowGrantsInput
+	): Promise<ApiResult<FlowSetGrantsResponse>> {
+		return apiClient.put<FlowSetGrantsResponse>(`/api/v1/flow/objects/${objectId}/grants`, input);
+	},
+
+	setInheritance(
+		objectId: string,
+		input: SetFlowInheritanceInput
+	): Promise<ApiResult<FlowSetInheritanceResponse>> {
+		return apiClient.put<FlowSetInheritanceResponse>(
+			`/api/v1/flow/objects/${objectId}/inheritance`,
+			input
+		);
+	},
+
+	getRelations(
+		objectId: string,
+		query: FlowRelationsQuery = {}
+	): Promise<ApiResult<FlowRelationListResponse>> {
+		const qs = buildQuery({
+			direction: query.direction,
+			relation_type: query.relation_type,
+			cursor: query.cursor,
+			limit: query.limit
+		});
+		return apiClient.get<FlowRelationListResponse>(
+			`/api/v1/flow/objects/${objectId}/relations${qs}`
+		);
 	}
 };

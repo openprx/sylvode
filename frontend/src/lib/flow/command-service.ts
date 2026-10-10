@@ -11,10 +11,8 @@
 // - `createObject`, `createTicket`, `execute` are fully wired against routes this repo's baseline
 //   actually serves (`apps/api/src/routes/flow.rs::post_flow_object_command`,
 //   `routes::collab::create_ticket`).
-// - `diff` calls `flowApi.getDiff`, which is typed against the frozen contract but NOT routed
-//   server-side at this baseline (`GET .../diff` -- see `api/flow.ts`'s header comment); calling
-//   it returns a normal non-success `ApiResult`/thrown `FlowError`, not a compile-time absence,
-//   since the contract requires this member to exist on the interface.
+// - `diff` calls `flowApi.getDiff` (`GET .../diff`, routed server-side); a rejection is thrown as
+//   a `FlowError` carrying the envelope's typed `error_code`.
 // - Error mapping below is coarse (HTTP-status-shaped) on purpose: `apps/api/src/error.rs`'s
 //   `ApiError` only has 5 status-shaped variants (400/401/403/404/409) with a free-text message,
 //   no machine-readable discriminator field. That collapses several distinct `FlowErrorCode`s onto
@@ -32,6 +30,7 @@ import {
 	type CompactDocumentInput,
 	type CreateFlowObjectInput,
 	type CreateTicketInput,
+	type CreateObjectExportInput,
 	type CreateWorkspaceExportInput,
 	type ExecuteFlowCommandInput,
 	type FlowConversionCommitInput,
@@ -50,14 +49,19 @@ import {
 	type FlowPackageImportJobReceipt,
 	type FlowPackageImportPreview,
 	type FlowReplayResponse,
+	type FlowSetGrantsResponse,
+	type FlowSetInheritanceResponse,
 	type ListFlowObjectsQuery,
 	type RebuildProjectionInput,
 	type ReplayDeliveriesInput,
 	type SetFlowFeatureInput,
+	type SetFlowGrantsInput,
+	type SetFlowInheritanceInput,
 	type UploadProgress,
 	type VerifyDocumentInput
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
+import { flowErrorFromEnvelope } from './errors';
 import type { FlowError } from './types';
 
 function newIdempotencyKey(): string {
@@ -104,13 +108,13 @@ export class FlowCommandService {
 		return result.data;
 	}
 
-	/** Typed against the frozen contract; NOT routed server-side at this baseline -- see this
-	 * file's header comment. Throws the same way `execute`/`createObject` do on a non-success
-	 * result, rather than returning a partial/undefined diff. */
+	/** `GET .../diff` (`routes/flow.rs::get_flow_object_diff`). Throws a `FlowError` on a
+	 * non-success result rather than returning a partial/undefined diff: the typed `error_code`
+	 * when the envelope carries one, the coarse HTTP-status mapping only for a legacy envelope. */
 	async diff(objectId: string, fromSeq: number, toSeq: number): Promise<FlowDiffResponse> {
 		const result = await flowApi.getDiff(objectId, { from_seq: fromSeq, to_seq: toSeq });
 		if (result.code !== 0 || !result.data) {
-			throw mapErrorCode(result.code);
+			throw flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
 		}
 		return result.data;
 	}
@@ -266,6 +270,32 @@ export class FlowCommandService {
 		input: CommitImportInput
 	): Promise<ApiResult<FlowPackageImportJobReceipt>> {
 		return flowApi.commitPackageImport(workspaceId, previewId, input);
+	}
+
+	// v0.5 Share panel writes (`ui-surface-v1.md` "职责边界": `grants_set`/`inheritance_set` go
+	// through `CommandService`) and the v0.8 object export. Keys come from the caller's intent
+	// (`share-panel.ts`, `object-export.ts`), and the raw `ApiResult` is returned so the caller can
+	// branch on `error_code` (including the self-lockout `policy_rejected`).
+
+	async setGrants(
+		objectId: string,
+		input: SetFlowGrantsInput
+	): Promise<ApiResult<FlowSetGrantsResponse>> {
+		return flowApi.setGrants(objectId, input);
+	}
+
+	async setInheritance(
+		objectId: string,
+		input: SetFlowInheritanceInput
+	): Promise<ApiResult<FlowSetInheritanceResponse>> {
+		return flowApi.setInheritance(objectId, input);
+	}
+
+	async startObjectExport(
+		objectId: string,
+		input: CreateObjectExportInput
+	): Promise<ApiResult<FlowExportJob>> {
+		return flowApi.startObjectExport(objectId, input);
 	}
 }
 
