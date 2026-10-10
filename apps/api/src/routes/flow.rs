@@ -13048,6 +13048,8 @@ mod flow_database_tests {
         assert_eq!(jobs.len(), 1, "the job row must survive the failure");
         assert_eq!(jobs[0].status, "failed");
         assert_eq!(jobs[0].error_code.as_deref(), Some("policy_rejected"));
+        assert_eq!(rejected["details"]["job_id"], jobs[0].id.to_string(), "{rejected}");
+        assert_eq!(rejected["details"]["job_status"], "failed", "{rejected}");
         let read = fp2_b4_route(
             &state,
             fx.owner_id,
@@ -13104,6 +13106,8 @@ mod flow_database_tests {
         assert_eq!(jobs.len(), 1, "the job row must survive the failure");
         assert_eq!(jobs[0].status, "failed");
         assert_eq!(jobs[0].error_code.as_deref(), rejected["error_code"].as_str());
+        assert_eq!(rejected["details"]["job_id"], jobs[0].id.to_string(), "{rejected}");
+        assert_eq!(rejected["details"]["job_status"], "failed", "{rejected}");
         scratch.drop_self().await;
     }
 

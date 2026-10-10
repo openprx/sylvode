@@ -1370,8 +1370,9 @@ async fn claim_retry_job(
 }
 
 /// Marks a `started` job `failed` with its stable error code and emits `flow.conversion.failed`
-/// (a business transition caused by the run's `started` event).
-async fn fail_conversion_job(state: &AppState, run: &ConversionRun, error_code: &str) -> Result<(), ApiError> {
+/// (a business transition caused by the run's `started` event). `false` means the job was no
+/// longer `started` (the failure came after the run committed) and nothing was written.
+async fn fail_conversion_job(state: &AppState, run: &ConversionRun, error_code: &str) -> Result<bool, ApiError> {
     let tx = state.db.begin().await?;
     let failed = tx
         .execute(Statement::from_sql_and_values(
@@ -1395,11 +1396,12 @@ async fn fail_conversion_job(state: &AppState, run: &ConversionRun, error_code: 
         .await?;
     }
     tx.commit().await?;
-    Ok(())
+    Ok(failed.rows_affected() == 1)
 }
 
 /// Runs a claimed job. Any failure after the claim leaves the job `failed` with a stable `error`
-/// (`rest-api-v1.md` v0.7, 2026-10-10) and still answers the caller with the typed error.
+/// (`rest-api-v1.md` v0.7, 2026-10-10) and still answers the caller with the typed error, whose
+/// `details` add `job_id` and the job's actual `job_status` so the caller can open and retry it.
 async fn execute_claimed(
     state: &AppState,
     source: repository::ObjectViewRow,
@@ -1410,14 +1412,24 @@ async fn execute_claimed(
         Ok(job) => Ok(job),
         Err(error) => {
             let (typed, code) = conversion_failure(run.job_id, error);
-            if let Err(record_error) = fail_conversion_job(state, &run, code).await {
-                tracing::error!(
-                    job_id = %run.job_id,
-                    error = ?record_error,
-                    "flow conversion failure could not be recorded; the job stays started"
-                );
-            }
-            Err(typed)
+            let job_status = match fail_conversion_job(state, &run, code).await {
+                Ok(true) => Some("failed".to_string()),
+                // The run had already committed: report the status the job really has.
+                Ok(false) => load_job(&state.db, run.job_id).await.ok().map(|job| job.status),
+                Err(record_error) => {
+                    tracing::error!(
+                        job_id = %run.job_id,
+                        error = ?record_error,
+                        "flow conversion failure could not be recorded; the job stays started"
+                    );
+                    None
+                }
+            };
+            let typed = typed.with_detail("job_id", json!(run.job_id));
+            Err(match job_status {
+                Some(status) => typed.with_detail("job_status", json!(status)),
+                None => typed,
+            })
         }
     }
 }

@@ -700,6 +700,29 @@ impl ApiError {
         }
     }
 
+    /// Adds one `details` entry to a [`Self::Typed`] error, keeping its kind, message and every
+    /// existing detail (an existing entry under `key` is replaced). Legacy variants carry no
+    /// `details` on the wire and are returned unchanged; callers convert them with
+    /// [`Self::into_typed`] first. Only safe classification may be added (`error-mapping-v1.md`).
+    #[must_use]
+    pub fn with_detail(self, key: &str, value: Value) -> Self {
+        match self {
+            Self::Typed { kind, message, details } => {
+                let mut map = match details {
+                    Some(Value::Object(map)) => map,
+                    _ => Map::new(),
+                };
+                map.insert(key.to_string(), value);
+                Self::Typed {
+                    kind,
+                    message,
+                    details: Some(Value::Object(map)),
+                }
+            }
+            other => other,
+        }
+    }
+
     /// Whether this error is a database failure (deterministic or transient). Lets typed call
     /// sites branch on "came from the driver" without naming the legacy variant.
     #[must_use]
