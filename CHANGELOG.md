@@ -224,6 +224,12 @@ OpenPR name keeps working; see **Deprecated**.
     is shown as a placeholder with no link and no copy action. A relation that is not provably
     in the object's workspace, a malformed row, or a rejected read hides every relation and
     shows an integrity error instead.
+  - Web UI: history entries in the object panel expand into their semantic diff (title change,
+    added, removed, changed and moved nodes with their text and property changes; no node ids,
+    peer ids or bytes), with errors worded by `error_code`. The Info section exports the object
+    as JSON, Markdown, CSV (Collections only) or a package (optionally with history), polls the
+    job and downloads the file after checking its locally computed SHA-256 against the job
+    checksum.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which
