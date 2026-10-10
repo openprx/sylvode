@@ -2394,6 +2394,35 @@
         "moveAfter": "移动到后一个之后",
         "moveInside": "移动到内部（此版本不可用）",
         "moveOutside": "移动到外部（此版本不可用）"
+      },
+      "newMenu": "新建",
+      "collectionBadge": "集合",
+      "createCollection": {
+        "menuItem": "新建集合",
+        "title": "新建集合",
+        "nameLabel": "名称",
+        "fieldsLabel": "初始字段",
+        "fieldsHint": "集合创建时带有的文本字段，可以留空。",
+        "noFields": "没有初始字段。",
+        "fieldLabel": "第 {position} 个字段名称",
+        "fieldTypeText": "文本",
+        "remove": "移除",
+        "removeField": "移除第 {position} 个字段",
+        "addField": "添加文本字段",
+        "defaultFieldLabel": "名称",
+        "viewLabel": "初始视图",
+        "viewName": {
+          "table": "表格",
+          "board": "看板"
+        },
+        "submit": "创建",
+        "creating": "创建中…",
+        "titleRequired": "请输入集合名称。",
+        "tooLong": "名称最多 500 个字符。",
+        "fieldLabelRequired": "每个字段都需要名称，或移除空字段。",
+        "notRetryable": "请修改表单后再试。",
+        "busy": "正在创建，请稍候。",
+        "failed": "无法创建集合。"
       }
     },
     "canvas": {
@@ -2547,7 +2576,27 @@
     },
     "search": {
       "title": "搜索",
-      "comingSoon": "Flow 搜索在此版本中尚不可用。"
+      "label": "搜索 Flow 对象",
+      "placeholder": "搜索页面…",
+      "requireCurrent": "仅显示来自最新索引的结果",
+      "searching": "搜索中…",
+      "empty": "没有匹配的对象。",
+      "resultsLabel": "搜索结果",
+      "resultCount": "{count} 条结果",
+      "stale": "非最新",
+      "staleHint": "索引落后此对象 {lag} 次变更，打开后可查看当前内容。",
+      "frontierStale": "搜索索引落后 {lag} 次变更，较新的内容可能未包含。",
+      "type": {
+        "page": "页面",
+        "collection": "集合",
+        "navigator": "导航"
+      },
+      "error": {
+        "staleFrontier": "搜索索引尚未更新到最新。请关闭“仅显示来自最新索引的结果”，或稍后再试。",
+        "tooBroad": "搜索范围过大，请输入更多关键词。",
+        "tooLong": "搜索内容最多 256 个字符。",
+        "generic": "搜索失败，请重试。"
+      }
     },
     "recovery": {
       "download": "下载恢复草稿",
@@ -3380,6 +3429,12 @@
         "rejected": "共享变更被拒绝。",
         "unavailable": "共享服务暂时不可用，请重试。"
       }
+    },
+    "lag": {
+      "loading": "正在检查同步状态…",
+      "synced": "已同步",
+      "lagging": "同步中：最多落后 {max} 次变更（p95 {p95}）",
+      "unavailable": "同步状态不可用"
     }
   }
 }

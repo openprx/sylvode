@@ -66,12 +66,14 @@ const LATER_VERSION_NAMESPACES = ['flow.collection'] as const;
  * locales: `flow.bridge.*` (v0.7) is the Page -> Forms conversion wizard
  * (`flow/[objectId]/convert`); `flow.operations.*` (v0.8) is the workspace operations panel
  * (`settings/flow/operations`); `flow.panel.*` and `flow.share.*` (v0.5/v0.8) are the object
- * page's right panel (tabs, object export) and its Share panel. */
+ * page's right panel (tabs, object export) and its Share panel; `flow.lag.*` (v0.5) is the
+ * navigator's projection-lag badge. */
 const DELIVERED_LATER_NAMESPACES = [
 	'flow.bridge',
 	'flow.operations',
 	'flow.panel',
-	'flow.share'
+	'flow.share',
+	'flow.lag'
 ] as const;
 
 type Json = { [key: string]: Json } | string | number | boolean | null;
