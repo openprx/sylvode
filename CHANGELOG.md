@@ -233,6 +233,16 @@ OpenPR name keeps working; see **Deprecated**.
   `/workspace` now opens this page instead of the project list. The page title is
   `Sylvode - <workspace name>`, and the Operation Records, Flow, Workflows and Forms record pages
   now carry the same `Sylvode - ` title prefix as every other page.
+- **Browser E2E and image contents in CI.** `scripts/e2e-web-stack.sh up|down` starts the stack
+  the browser specs run against (release API on a scratch database, a generated configuration
+  with a random `jwt_secret` and `[flow] collab_allowed_origins` set to the UI origin, the built
+  frontend behind a same-origin proxy that also forwards WebSockets, and an instance admin); `up`
+  refuses to start when `collab-isolated-apply-worker` is not next to the API binary. The new
+  **Web E2E** CI job uses it to run the `flow-settings`, `flow-package-roundtrip`,
+  `flow-operations`, `flow-convert` and `workspace-home` specs with `E2E_REQUIRE_DATABASE=1` and
+  fails on any skipped test. The new **Image contents** job builds the `api` and `worker` images
+  from `Dockerfile.prebuilt` with `scripts/verify-prebuilt-images.sh` and checks that only the
+  `api` image ships `collab-isolated-apply-worker` and that `/app/api --build-info` runs in it.
 
 ### Changed
 
