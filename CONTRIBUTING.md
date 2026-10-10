@@ -94,6 +94,7 @@ bash scripts/test-start-config.sh
 bash scripts/test-bootstrap-demo-env.sh
 bash scripts/test-no-machine-paths.sh
 bash scripts/test-no-instance-literals.sh
+bash scripts/test-e2e-web-stack.sh
 
 bun install --cwd frontend
 bun run --cwd frontend check
@@ -143,6 +144,56 @@ proves little about anything that touches the database. CI always sets it.
 `bash scripts/ci-universal-forms-gates.sh` reproduces the CI "Universal Forms Gates" job: static
 audits of the source tree followed by the forms regression tests. It requires
 `OPENPR_TEST_DATABASE_URL`.
+
+### Browser E2E specs
+
+The Playwright specs in `tests/e2e/web` run against a real stack: the release API, PostgreSQL and
+the built frontend served on one origin. `scripts/e2e-web-stack.sh` starts and stops it; the CI
+"Web E2E" job runs the same script.
+
+```bash
+cargo build --workspace --release                 # api and collab-isolated-apply-worker
+(cd frontend && bun install && bun run build)
+npm ci && npx playwright install chromium         # or set CHROMIUM_BIN to an installed Chromium
+export OPENPR_TEST_DATABASE_URL=postgres://sylvode_test:sylvode_test@127.0.0.1:55432/postgres
+
+bash scripts/e2e-web-stack.sh up                  # prints the env file to source
+source "${TMPDIR:-/tmp}/sylvode-e2e-web-18081/env"
+E2E_REQUIRE_DATABASE=1 npx playwright test \
+  tests/e2e/web/flow-settings.spec.ts tests/e2e/web/flow-package-roundtrip.spec.ts \
+  tests/e2e/web/flow-operations.spec.ts tests/e2e/web/flow-convert.spec.ts \
+  tests/e2e/web/workspace-home.spec.ts --reporter=list
+bash scripts/e2e-web-stack.sh down
+```
+
+- `up` needs `OPENPR_TEST_DATABASE_URL` (the same maintenance connection as the database-backed
+  tests). It creates a scratch database next to it, writes a configuration with a random
+  `jwt_secret`, `[flow] collab_allowed_origins` set to the UI origin and uploads in its state
+  directory, starts `target/release/api`, serves `frontend/build` through a Bun proxy that
+  forwards `/api/*` including WebSocket upgrades, and registers an instance admin with a random
+  password. The env file exports `BASE_URL`, `E2E_DATABASE_URL`, `ADMIN_EMAIL` and
+  `ADMIN_PASSWORD`. `down` stops both processes, drops the scratch database and removes the state
+  directory.
+- Ports default to 18081 (API) and 18080 (UI); override them with `E2E_API_PORT` and
+  `E2E_WEB_PORT`. `E2E_BIN_DIR`, `E2E_BUILD_DIR` and `E2E_STACK_DIR` move the binaries, the build
+  output and the state directory. The API and proxy logs are in the state directory.
+- `up` exits non-zero, naming the file, when `collab-isolated-apply-worker` is not next to the API
+  binary: the API spawns it for every Flow collaborative write. `bash scripts/test-e2e-web-stack.sh`
+  checks this without a database.
+- `E2E_REQUIRE_DATABASE=1` makes the `flow-convert` retry test fail instead of skipping when
+  `E2E_DATABASE_URL` is missing; it writes its fixture with `psql`, which must be on `PATH`.
+
+CI runs exactly those five specs. They register their own users, so they need nothing but an empty
+database. The `universal-forms-*` specs are not in CI: they sign in with the demo seed accounts
+and use fixed record UUIDs from it, so they need a stack bootstrapped with the demo data
+(`scripts/bootstrap-restaurant-demo.sh`).
+
+`bash scripts/verify-prebuilt-images.sh` reproduces the CI "Image contents" job: it builds the
+`api` and `worker` images from `Dockerfile.prebuilt` with the binaries in `target/release` and
+checks that the `api` image ships an executable `/app/collab-isolated-apply-worker`, that the
+`worker` image does not, and that `/app/api --build-info` runs in the `api` image. The base image
+defaults to `debian:<codename>-slim` on a Debian host and `debian:trixie-slim` elsewhere; set
+`RUNTIME_BASE` to override it. Its glibc must be at least as new as the build host's.
 
 ### Brand residue gate
 
