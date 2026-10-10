@@ -357,6 +357,14 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Packaging: the `api` container image and every release archive now ship
+  `collab-isolated-apply-worker` beside `api`. The API spawns that process for every Flow
+  collaborative write and looks for it next to its own executable; the image built by
+  `scripts/start.sh` (`Dockerfile.prebuilt`), the source `Dockerfile` and the release archives
+  shipped `api` alone, so the first edit of a Page showed "Sync error", the text was lost on
+  reload and `POST /flow/objects/{id}/commands` returned 500 (api log: `worker binary
+  'collab-isolated-apply-worker' not found next to '/app/api'`). `scripts/start.sh --no-build`
+  now also requires it in `target/release`, and the release job refuses an archive without it.
 - Flow collaboration: publishing the cross-instance fanout notice after a committed update no
   longer reports a failure on every write. The statement filtered on `pg_notify(..) IS NULL`,
   which is never true (`pg_notify` returns `void`), so it returned no row and the API logged

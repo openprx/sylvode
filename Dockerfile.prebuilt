@@ -5,6 +5,21 @@
 # at least as new as the host's. scripts/start.sh derives RUNTIME_BASE from the
 # host release; override SYLVODE_RUNTIME_BASE (legacy OPENPR_RUNTIME_BASE) to pin it manually.
 ARG RUNTIME_BASE=debian:bookworm-slim
+
+# Selects the files this image ships. The api image also ships collab-isolated-apply-worker,
+# which the API spawns for every Flow collaborative write and looks for next to its own
+# executable; without it every edit is refused. The worker and mcp-server images do not need it.
+# COPY cannot be conditional, so the selection happens in this throwaway stage.
+FROM ${RUNTIME_BASE} AS binaries
+ARG APP_BIN
+COPY target/release/${APP_BIN} target/release/collab-isolated-apply-worker /stage/in/
+RUN set -eu; \
+    mkdir -p /stage/out; \
+    install -m 0755 "/stage/in/${APP_BIN}" /stage/out/; \
+    if [ "${APP_BIN}" = "api" ]; then \
+        install -m 0755 /stage/in/collab-isolated-apply-worker /stage/out/; \
+    fi
+
 FROM ${RUNTIME_BASE}
 ARG APP_BIN
 WORKDIR /app
@@ -16,8 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy prebuilt binary from local target directory
-COPY target/release/${APP_BIN} /app/${APP_BIN}
+# Copy the selected prebuilt binaries (for api: api and collab-isolated-apply-worker, side by side)
+COPY --from=binaries /stage/out/ /app/
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && \

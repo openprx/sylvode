@@ -1,5 +1,5 @@
 # Build context of Dockerfile and Dockerfile.prebuilt (compose builds with context "."). Only what
-# the two Dockerfiles copy is sent; everything else, including target/ apart from the four release
+# the two Dockerfiles copy is sent; everything else, including target/ apart from the five release
 # binaries, .flow-gate/, uploads, generated configuration with secrets and .env, stays out.
 **
 !Cargo.toml
@@ -15,5 +15,6 @@
 !target/release/worker
 !target/release/mcp-server
 !target/release/sylvode
+!target/release/collab-isolated-apply-worker
 **/node_modules
 **/target/debug

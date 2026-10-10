@@ -4,9 +4,9 @@ This runbook is the executable checklist for a staged Flow rollout. The named pe
 
 ## Release preparation and staged rollout
 
-1. Freeze the source commit, migration version, release binary SHA-256 values, dashboard snapshot, and database restore point.
+1. Freeze the source commit, migration version, release binary SHA-256 values (`api`, `collab-isolated-apply-worker`, `worker`, `mcp-server`, `sylvode`), dashboard snapshot, and database restore point.
 2. Rehearse migration, backup restore, and rollback against a production copy. Compare document fingerprints, head sequence/frontier, projections, relations, lineage, and audit events.
-3. Deploy API, worker, and MCP before Web. Confirm protocol capability negotiation and the old-client window.
+3. Deploy API, worker, and MCP before Web. `collab-isolated-apply-worker` is deployed with the API, in the same directory as the `api` executable; confirm one Flow edit is saved before expanding. Confirm protocol capability negotiation and the old-client window.
 4. Enable the Flow feature flag for one internal workspace, then expand by workspace. Never enable all workspaces in one step.
 5. Stop rollout on any data-integrity alarm, error-budget exhaustion, unexplained rejected-update increase, or projection/search lag budget breach.
 
