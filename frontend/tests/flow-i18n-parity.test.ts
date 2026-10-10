@@ -65,8 +65,14 @@ const LATER_VERSION_NAMESPACES = ['flow.collection'] as const;
 /** Later-version namespaces that now have a shipped UI and therefore must be populated in both
  * locales: `flow.bridge.*` (v0.7) is the Page -> Forms conversion wizard
  * (`flow/[objectId]/convert`); `flow.operations.*` (v0.8) is the workspace operations panel
- * (`settings/flow/operations`). */
-const DELIVERED_LATER_NAMESPACES = ['flow.bridge', 'flow.operations'] as const;
+ * (`settings/flow/operations`); `flow.panel.*` and `flow.share.*` (v0.5/v0.8) are the object
+ * page's right panel (tabs, object export) and its Share panel. */
+const DELIVERED_LATER_NAMESPACES = [
+	'flow.bridge',
+	'flow.operations',
+	'flow.panel',
+	'flow.share'
+] as const;
 
 type Json = { [key: string]: Json } | string | number | boolean | null;
 

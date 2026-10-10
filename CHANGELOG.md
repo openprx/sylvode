@@ -230,6 +230,9 @@ OpenPR name keeps working; see **Deprecated**.
     as JSON, Markdown, CSV (Collections only) or a package (optionally with history), polls the
     job and downloads the file after checking its locally computed SHA-256 against the job
     checksum.
+  - Web UI: the object panel is split into Info, Share, Relations and History tabs
+    (`role="tablist"`, arrow keys, Home and End); Share and Relations load when their tab is
+    first opened.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which
