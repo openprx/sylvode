@@ -278,4 +278,22 @@ test('admin reads health/lag/integrity and runs verify, compact, rebuild and rep
 		'The window must start less than 30 days ago.'
 	);
 	expect(writes.filter((write) => write.path.endsWith('/flow/deliveries/replay'))).toHaveLength(2);
+
+	// ---- Flow disabled: the panel stays usable (admin endpoints work; projection-lag is refused) ----
+	await unwrap(
+		await request.put(`/api/v1/workspaces/${workspace.id}/features/flow`, {
+			headers: auth,
+			data: { enabled: false, idempotency_key: crypto.randomUUID() }
+		})
+	);
+	await page.goto(`/workspace/${workspace.id}/settings/flow/operations`);
+	await expect(page.getByTestId('flow-ops-health-status')).toHaveText('Healthy');
+	await expect(page.getByTestId('flow-ops-health-connections')).toHaveText(/^\d+$/);
+	await expect(page.getByTestId('flow-ops-health-storage')).toHaveText(/\d/);
+	await expect(page.getByTestId('flow-operations-forbidden')).toHaveCount(0);
+	await expect(page.getByTestId('flow-ops-lag-projection-max')).toHaveText(/^\d+$/);
+	await expect(page.getByTestId('flow-ops-projection-unavailable')).toHaveText(
+		'Flow is off for this workspace, so there is no per-object lag to show.'
+	);
+	await expect(page.getByTestId('flow-ops-integrity-status')).toHaveText('Healthy');
 });

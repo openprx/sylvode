@@ -1081,3 +1081,201 @@ export class FlowOperationsService {
 		});
 	}
 }
+
+// ---- page session -----------------------------------------------------------------------------
+
+export type OpsPanelView = 'loading' | 'ready' | 'forbidden';
+
+/** Shown in the lag section when the admin endpoints answered but the per-object
+ * `GET .../flow/projection-lag` was refused. That endpoint is gated on Flow being enabled (the
+ * three `/admin/.../flow/*` endpoints are not), so with Flow off it is refused while the panel
+ * itself is fully usable. */
+export const PROJECTION_UNAVAILABLE_KEY = 'flow.operations.lag.projectionUnavailable';
+
+export interface ProjectionBlock {
+	/** The page of per-object rows on screen; kept across a failed page turn. */
+	readonly data: FlowProjectionLag | null;
+	/** A failure to show as an error (retry by paging or reloading); `''` when none. */
+	readonly errorKey: string;
+	/** The endpoint refused this viewer/workspace (Flow off): show `PROJECTION_UNAVAILABLE_KEY`
+	 * as a notice, not an error, and no rows. */
+	readonly unavailable: boolean;
+}
+
+/**
+ * The lag section's own reading of a projection-lag result. It never decides the page view: the
+ * page is forbidden only when the admin check or one of the three admin endpoints says so. A
+ * refusal (legacy 403/404 or typed forbidden/not_found/feature_disabled) is the "Flow is off, no
+ * per-object lag" notice; any other failure keeps the rows already shown and its own key.
+ * `message` is never read.
+ */
+export function projectionBlockFromRead(
+	read: OpsRead<FlowProjectionLag>,
+	previous: FlowProjectionLag | null = null
+): ProjectionBlock {
+	if (read.status === 'ready') return { data: read.data, errorKey: '', unavailable: false };
+	if (read.status === 'forbidden' || read.failure.messageKey === 'flow.error.feature_disabled') {
+		return { data: null, errorKey: '', unavailable: true };
+	}
+	return { data: previous, errorKey: read.failure.messageKey, unavailable: false };
+}
+
+export interface OpsPanelState {
+	readonly view: OpsPanelView;
+	readonly health: HealthSnapshot | null;
+	readonly lag: FlowAdminLag | null;
+	readonly lagErrorKey: string;
+	readonly projection: ProjectionBlock;
+	readonly lagPage: number;
+	readonly lagHasPrevious: boolean;
+	readonly lagHasNext: boolean;
+	readonly lagBusy: boolean;
+	readonly integrity: FlowAdminIntegrity | null;
+	readonly integrityErrorKey: string;
+	readonly integrityLimit: OpsIntegrityLimit;
+	readonly integrityBusy: boolean;
+}
+
+/**
+ * Everything the operations page loads, owned outside the component so the mount/unmount race
+ * and the view decision are unit-testable.
+ *
+ * - `open()` checks admin, reads health once, and only then starts the 15 s health poll and the
+ *   section loads. If `dispose()` ran during any of those awaits (the user left the page), it
+ *   stops there: no poll is started, nothing is emitted, and a monitor created in the meantime is
+ *   disposed.
+ * - The page view is `forbidden` only from the admin check or the three admin endpoints (health,
+ *   lag, integrity). The projection-lag section reports its own failure (`ProjectionBlock`).
+ */
+export class OperationsPanelSession {
+	private state: OpsPanelState = {
+		view: 'loading',
+		health: null,
+		lag: null,
+		lagErrorKey: '',
+		projection: { data: null, errorKey: '', unavailable: false },
+		lagPage: 1,
+		lagHasPrevious: false,
+		lagHasNext: false,
+		lagBusy: false,
+		integrity: null,
+		integrityErrorKey: '',
+		integrityLimit: OPS_INTEGRITY_LIMITS[0],
+		integrityBusy: false
+	};
+	private monitor: HealthMonitor | null = null;
+	private pager: ProjectionLagPager | null = null;
+	private disposed = false;
+
+	constructor(
+		private readonly service: FlowOperationsService,
+		private readonly onChange: (state: OpsPanelState) => void
+	) {}
+
+	get snapshot(): OpsPanelState {
+		return this.state;
+	}
+
+	get isDisposed(): boolean {
+		return this.disposed;
+	}
+
+	async open(): Promise<OpsPanelState> {
+		const admin = await this.service.isWorkspaceAdmin();
+		if (this.disposed) return this.state;
+		if (!admin) {
+			this.set({ view: 'forbidden' });
+			return this.state;
+		}
+		const monitor = this.service.healthMonitor((health) => {
+			if (this.disposed) return;
+			this.set(health.forbidden ? { health, view: 'forbidden' } : { health });
+		});
+		this.monitor = monitor;
+		const first = await monitor.refresh();
+		if (this.disposed) {
+			monitor.dispose();
+			return this.state;
+		}
+		if (first.forbidden) return this.state;
+		this.set({ view: 'ready' });
+		monitor.start();
+		this.pager = this.service.projectionLagPager();
+		await Promise.all([this.loadLag(), this.loadProjection('load'), this.loadIntegrity()]);
+		return this.state;
+	}
+
+	dispose(): void {
+		this.disposed = true;
+		this.monitor?.dispose();
+		this.monitor = null;
+	}
+
+	pauseHealth(): void {
+		this.monitor?.pause();
+	}
+
+	resumeHealth(): void {
+		if (!this.disposed) this.monitor?.resume();
+	}
+
+	refreshHealth(): void {
+		if (!this.disposed) void this.monitor?.refresh();
+	}
+
+	async loadLag(): Promise<void> {
+		const read = await this.service.loadLag();
+		if (this.disposed) return;
+		if (read.status === 'ready') this.set({ lag: read.data, lagErrorKey: '' });
+		else if (read.status === 'forbidden') this.set({ view: 'forbidden' });
+		else this.set({ lagErrorKey: read.failure.messageKey });
+	}
+
+	async loadProjection(step: 'load' | 'previous' | 'next'): Promise<void> {
+		const pager = this.pager;
+		if (!pager || this.disposed) return;
+		this.set({ lagBusy: true });
+		const read =
+			step === 'load'
+				? await pager.load()
+				: step === 'previous'
+					? await pager.previous()
+					: await pager.next();
+		if (this.disposed) return;
+		this.set({
+			lagBusy: false,
+			...(read ? { projection: projectionBlockFromRead(read, this.state.projection.data) } : {}),
+			lagPage: pager.pageNumber,
+			lagHasPrevious: pager.hasPrevious(),
+			lagHasNext: pager.hasNext()
+		});
+	}
+
+	async loadIntegrity(limit: OpsIntegrityLimit = this.state.integrityLimit): Promise<void> {
+		if (this.disposed) return;
+		this.set({ integrityLimit: limit, integrityBusy: true });
+		const read = await this.service.loadIntegrity(limit);
+		if (this.disposed) return;
+		if (read.status === 'ready') {
+			this.set({ integrity: read.data, integrityErrorKey: '', integrityBusy: false });
+		} else if (read.status === 'forbidden') {
+			this.set({ view: 'forbidden', integrityBusy: false });
+		} else {
+			this.set({ integrityErrorKey: read.failure.messageKey, integrityBusy: false });
+		}
+	}
+
+	/** After a maintenance execute: reload every section and the health sample. */
+	reloadAll(): void {
+		if (this.disposed) return;
+		void this.loadIntegrity();
+		void this.loadLag();
+		void this.loadProjection('load');
+		void this.monitor?.refresh();
+	}
+
+	private set(patch: Partial<OpsPanelState>): void {
+		this.state = { ...this.state, ...patch };
+		this.onChange(this.state);
+	}
+}

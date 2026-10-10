@@ -2808,6 +2808,7 @@
         "objectId": "Object",
         "headSeq": "Head seq",
         "projectionSeq": "Projection seq",
+        "projectionUnavailable": "Flow is off for this workspace, so there is no per-object lag to show.",
         "lagValue": "Lag",
         "empty": "No objects to show.",
         "previous": "Previous page",

@@ -2808,6 +2808,7 @@
         "objectId": "对象",
         "headSeq": "Head 序号",
         "projectionSeq": "投影序号",
+        "projectionUnavailable": "此工作区的 Flow 已关闭，没有逐对象滞后数据。",
         "lagValue": "延迟",
         "empty": "没有可显示的对象。",
         "previous": "上一页",

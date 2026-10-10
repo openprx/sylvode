@@ -30,6 +30,8 @@ import {
 	MAINTENANCE_TITLE_KEYS,
 	MaintenanceOperation,
 	OPERATION_NAME_KEYS,
+	OperationsPanelSession,
+	PROJECTION_UNAVAILABLE_KEY,
 	ProjectionLagPager,
 	RECEIPT_FIELD_KEYS,
 	REPLAY_MAX_WINDOW_DAYS,
@@ -41,6 +43,7 @@ import {
 	receiptRows,
 	validateReplayForm,
 	type HealthSnapshot,
+	type OpsPanelState,
 	type ReplayForm
 } from '../src/lib/flow/operations-service';
 import { FlowCommandService } from '../src/lib/flow/command-service';
@@ -48,6 +51,8 @@ import { FlowObjectRepository } from '../src/lib/flow/object-repository';
 import type { ApiResult } from '../src/lib/api/client';
 import type {
 	FlowAdminHealth,
+	FlowAdminIntegrity,
+	FlowAdminLag,
 	FlowOperationReceipt,
 	FlowProjectionLag,
 	FlowReplayResponse
@@ -990,6 +995,179 @@ await suite.checkAsync(
 	}
 );
 
+// ---- page session: unmount race (R8) and the view decision with Flow off (R9) ----------------
+
+const ADMIN_LAG: FlowAdminLag = {
+	projection: { max: 3, p95: 1, items: [] },
+	search: { max: 0, p95: 0, items: [] },
+	fanout: { max: 0, p95: 0, items: [] },
+	next_cursor: null
+};
+const ADMIN_INTEGRITY: FlowAdminIntegrity = {
+	status: 'healthy',
+	checked_at: '2026-10-09T12:00:00Z',
+	counts: { checked: 2, healthy: 2, failed: 0 },
+	documents: []
+};
+
+async function settle(): Promise<void> {
+	for (let i = 0; i < 5; i += 1) await Promise.resolve();
+}
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((r) => (resolve = r));
+	return { promise, resolve };
+}
+
+function panelHarness(options: {
+	admin?: () => Promise<boolean>;
+	health?: () => Promise<ApiResult<FlowAdminHealth>>;
+	lag?: ApiResult<FlowAdminLag>;
+	integrity?: ApiResult<FlowAdminIntegrity>;
+	projection?: ApiResult<FlowProjectionLag>;
+}) {
+	const calls: string[] = [];
+	const scheduled: number[] = [];
+	let cancelled = 0;
+	const service = new FlowOperationsService(WS, {
+		reads: {
+			getAdminHealth: () => {
+				calls.push('health');
+				return options.health ? options.health() : Promise.resolve(ok(health()));
+			},
+			getAdminLag: () => {
+				calls.push('lag');
+				return Promise.resolve(options.lag ?? ok(ADMIN_LAG));
+			},
+			getAdminIntegrity: () => {
+				calls.push('integrity');
+				return Promise.resolve(options.integrity ?? ok(ADMIN_INTEGRITY));
+			},
+			getProjectionLag: () => {
+				calls.push('projection-lag');
+				return Promise.resolve(
+					options.projection ?? ok({ max_lag: 0, p95_lag: 0, items: [] } as FlowProjectionLag)
+				);
+			}
+		},
+		commands: fakeCommands({}).commands,
+		isWorkspaceAdmin: options.admin ?? (() => Promise.resolve(true)),
+		newKey: keys(),
+		now: () => NOW,
+		schedule: (_run, ms) => {
+			scheduled.push(ms);
+			return () => {
+				cancelled += 1;
+			};
+		}
+	});
+	const states: OpsPanelState[] = [];
+	const session = new OperationsPanelSession(service, (state) => states.push(state));
+	return { session, calls, scheduled, states, cancelled: () => cancelled };
+}
+
+await suite.checkAsync(
+	'leaving the page during the admin check never starts the health poll',
+	async () => {
+		const admin = deferred<boolean>();
+		const h = panelHarness({ admin: () => admin.promise });
+		const opening = h.session.open();
+		h.session.dispose();
+		admin.resolve(true);
+		await opening;
+		assertDeepEqual(h.scheduled, [], 'no 15 s poll scheduled after dispose');
+		assertDeepEqual(h.calls, [], 'no admin endpoint read after dispose');
+		assertEqual(h.states.length, 0, 'nothing emitted after dispose');
+	}
+);
+
+await suite.checkAsync(
+	'leaving the page during the first health read never starts the health poll',
+	async () => {
+		const first = deferred<ApiResult<FlowAdminHealth>>();
+		const h = panelHarness({ health: () => first.promise });
+		const opening = h.session.open();
+		await settle();
+		assertDeepEqual(h.calls, ['health'], 'first health read in flight');
+		h.session.dispose();
+		first.resolve(ok(health()));
+		await opening;
+		assertDeepEqual(h.scheduled, [], 'no poll scheduled after dispose');
+		assertDeepEqual(h.calls, ['health'], 'no section loads after dispose');
+		assertEqual(h.session.snapshot.view, 'loading', 'view never turned ready');
+	}
+);
+
+await suite.checkAsync('a page that stays open polls every 15 s and stops on dispose', async () => {
+	const h = panelHarness({});
+	await h.session.open();
+	assertDeepEqual(h.scheduled, [15_000], 'one 15 s poll');
+	assertEqual(h.session.snapshot.view, 'ready', 'ready');
+	h.session.dispose();
+	assertEqual(h.cancelled(), 1, 'poll cancelled on dispose');
+});
+
+await suite.checkAsync(
+	'Flow off: admin health/lag/integrity succeed, projection-lag 403 -> page usable, lag section notice',
+	async () => {
+		// The real backend answer with Flow disabled (T2-D2): legacy envelope, no error_code.
+		const h = panelHarness({
+			projection: err(403, { message: 'flow is not enabled for this workspace' })
+		});
+		await h.session.open();
+		const state = h.session.snapshot;
+		assertEqual(state.view, 'ready', 'page is usable, not forbidden');
+		assertEqual(state.health?.health?.connections, 2, 'health numbers shown');
+		assertDeepEqual(state.lag, ADMIN_LAG, 'admin lag shown');
+		assertDeepEqual(state.integrity, ADMIN_INTEGRITY, 'integrity shown');
+		assertDeepEqual(
+			state.projection,
+			{ data: null, errorKey: '', unavailable: true },
+			'lag section shows the Flow-off notice'
+		);
+		assertEqual(PROJECTION_UNAVAILABLE_KEY, 'flow.operations.lag.projectionUnavailable', 'key');
+		assertDeepEqual(h.scheduled, [15_000], 'health keeps polling');
+	}
+);
+
+await suite.checkAsync(
+	'projection-lag failures stay in the lag section; only admin endpoints make the page forbidden',
+	async () => {
+		const typed = panelHarness({ projection: err(403, { error_code: 'feature_disabled' }) });
+		await typed.session.open();
+		assertEqual(typed.session.snapshot.view, 'ready', 'typed feature_disabled: page usable');
+		assertEqual(typed.session.snapshot.projection.unavailable, true, 'typed: notice');
+
+		const down = panelHarness({ projection: err(503) });
+		await down.session.open();
+		assertEqual(down.session.snapshot.view, 'ready', '503: page usable');
+		assertEqual(
+			down.session.snapshot.projection.unavailable,
+			false,
+			'503 is not the Flow-off notice'
+		);
+		assertEqual(
+			down.session.snapshot.projection.errorKey,
+			'flow.operations.error.unavailable',
+			'503 keeps its own error key'
+		);
+
+		const adminRefused = panelHarness({ integrity: err(403) });
+		await adminRefused.session.open();
+		assertEqual(
+			adminRefused.session.snapshot.view,
+			'forbidden',
+			'admin integrity 403 -> forbidden'
+		);
+
+		const notAdmin = panelHarness({ admin: () => Promise.resolve(false) });
+		await notAdmin.session.open();
+		assertEqual(notAdmin.session.snapshot.view, 'forbidden', 'non-admin -> forbidden');
+		assertDeepEqual(notAdmin.calls, [], 'non-admin: no admin endpoint called');
+	}
+);
+
 await suite.checkAsync('every static i18n key used by the panel exists in zh and en', async () => {
 	const root = new URL('..', import.meta.url).pathname;
 	const required = [
@@ -1000,6 +1178,7 @@ await suite.checkAsync('every static i18n key used by the panel exists in zh and
 		...Object.values(RECEIPT_FIELD_KEYS),
 		...Object.values(REPLAY_MODE_KEYS),
 		'flow.operations.status.unknown',
+		PROJECTION_UNAVAILABLE_KEY,
 		'flow.operations.lag.projection',
 		'flow.operations.lag.search',
 		'flow.operations.lag.fanout',
