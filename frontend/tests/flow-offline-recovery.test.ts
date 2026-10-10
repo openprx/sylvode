@@ -13,13 +13,15 @@
  *     keys, edit 3 must be in the draft with the server's reason, edits 4-5 must be in the draft as
  *     its dependents without ever reaching the wire, and the client doc must equal the server doc.
  *  B. an edit commits on the server but the connection drops before `accepted` (write_state
- *     unknown); the server never answers the replay (real behaviour, see collab-fakes.ts). The
- *     recovery pass must recognise the edit as already accepted instead of hanging.
+ *     unknown). The recovery pass replays it under the SAME update_id and the server answers the
+ *     replay with the original receipt (`collab-protocol-v1.md` "同 `update_id` 重放必须被答复");
+ *     it is committed exactly once and acknowledged from that answer.
  *  C. edits offline, then the user is lowered to `view`; on reconnect the policy re-check refuses
  *     the replay: all edits go to the draft, the session is read-only, nothing is sent.
  *
- * The result is written to `frontend/.flow-gate/cache/frontend/offline-recovery-result.json`
- * (git-ignored), shaped for the vF artifact `evidence/vF/offline-recovery-result.json`.
+ * The result is written to `<SYLVODE_SCRATCH_ROOT>/frontend/offline-recovery-result.json`, by
+ * default the repository root's `.flow-gate/cache/frontend/` (git-ignored; the same scratch root
+ * as the v0.4 producer and `scripts/*.sh`'s `SYLVODE_SCRATCH`), shaped for the vF artifact `evidence/vF/offline-recovery-result.json`.
  *
  * Run standalone: `bun tests/flow-offline-recovery.test.ts`
  */
@@ -46,11 +48,11 @@ import { IndexedDbOutboxStore } from '../src/lib/flow/outbox';
 import type { FlowObjectView } from '../src/lib/api/flow';
 
 const suite = new Suite('offline_accepted_zero_loss_and_recovery_draft');
-const OUT = join(
-	dirname(new URL(import.meta.url).pathname),
-	'..',
-	'.flow-gate/cache/frontend/offline-recovery-result.json'
-);
+// `scripts/*.sh`: `SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-<checkout>/.flow-gate/cache}"`.
+const SCRATCH_ROOT =
+	process.env.SYLVODE_SCRATCH_ROOT ??
+	join(dirname(new URL(import.meta.url).pathname), '..', '..', '.flow-gate/cache');
+const OUT = join(SCRATCH_ROOT, 'frontend', 'offline-recovery-result.json');
 
 interface ScenarioResult {
 	name: string;
@@ -289,7 +291,7 @@ await suite.checkAsync(
 // ---- B ------------------------------------------------------------------------------------------
 
 await suite.checkAsync(
-	'B: an edit committed before the drop is recognised as accepted, not re-sent forever',
+	'B: an edit committed before the drop is replayed under its id and answered with the original receipt',
 	async () => {
 		const server = new FakeCollabServer();
 		const ctx = await setup(server);
@@ -307,8 +309,10 @@ await suite.checkAsync(
 			await waitFor(() => ctx.pending() === 0, 'outbox drained after the reconnect', 8000);
 			await ctx.entry.offline.idle();
 			assertEqual(server.accepted.length, 1, 'committed exactly once');
-			assertEqual(server.updatesSeen.length, 1, 'recognised from the snapshot, not re-sent');
-			assertEqual(server.unansweredDuplicates, 0, 'no replay the server would leave unanswered');
+			assertEqual(server.updatesSeen.length, 2, 'replayed once after the drop');
+			assertEqual(server.updatesSeen[1].updateId, id, 'the replay reuses the committed update_id');
+			assertEqual(server.updatesSeen[1].idempotencyKey, id, 'and its idempotency key');
+			assertEqual(server.replaysAnswered, 1, 'the server answered the replay');
 			assertEqual(ctx.entry.offline.draftEntries.length, 0, 'nothing drafted');
 			const clientJson = canonical(ctx.entry.doc.toJSON());
 			const serverJson = canonical(server.doc.toJSON());

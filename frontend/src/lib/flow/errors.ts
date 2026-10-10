@@ -74,7 +74,9 @@ export const INVALID_UPDATE_REASONS = [
 	'child_project_must_match_parent',
 	'project_unmapped',
 	'idempotency_key_body_drift',
-	'invalid_field_value'
+	'invalid_field_value',
+	'causal_dependency_missing',
+	'cross_workspace_relation'
 ] as const;
 export type InvalidUpdateReason = (typeof INVALID_UPDATE_REASONS)[number];
 
@@ -86,7 +88,8 @@ export type InvalidUpdateAction =
 	| 'change_project'
 	| 'remap_project'
 	| 'rekey_and_resend'
-	| 'fix_field_value';
+	| 'fix_field_value'
+	| 'keep_in_recovery_draft';
 
 export interface InvalidUpdateDisposition {
 	readonly reason: InvalidUpdateReason;
@@ -99,7 +102,11 @@ const INVALID_UPDATE_ACTIONS: Readonly<Record<InvalidUpdateReason, InvalidUpdate
 	child_project_must_match_parent: 'change_project',
 	project_unmapped: 'remap_project',
 	idempotency_key_body_drift: 'rekey_and_resend',
-	invalid_field_value: 'fix_field_value'
+	invalid_field_value: 'fix_field_value',
+	// "不重试该 update；它依赖的前序 update 已被拒，整段进入 recovery draft".
+	causal_dependency_missing: 'keep_in_recovery_draft',
+	// "按 integrity 失败显示，指向运维页；不重试".
+	cross_workspace_relation: 'integrity_repair'
 };
 
 /**

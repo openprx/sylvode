@@ -15,12 +15,16 @@
 //    operations the server cannot apply yet.
 // 4. After a reconnect (or any rejection that ends the straight-line path): bootstrap ->
 //    `replaceWithAccepted` -> re-check policy -> replay what is still allowed, in order, under the
-//    same keys. An entry the accepted snapshot already contains is acknowledged without being
-//    re-sent (its first send committed before the connection dropped).
+//    same keys. An entry whose first send committed before the connection dropped is replayed
+//    too: the server answers a replayed `update_id` with the original receipt
+//    (`collab-protocol-v1.md` "同 `update_id` 重放必须被答复"), so the client never has to guess
+//    from the snapshot whether it was already accepted.
 // 5. `policy_rejected` / `invalid_update` / `server_rejected` / an unreplayable limit do not change
 //    the accepted head. The refused intent, and every later intent that causally depends on it,
 //    goes to the recovery draft; the live document is then rebuilt from the accepted snapshot so
-//    it equals what the server accepted.
+//    it equals what the server accepted. `policy_rejected` is final for the connection's writer
+//    (`error-mapping-v1.md`: "保留 intent，不自动重放"): the server re-sources a stale authorization
+//    epoch in place, so a refusal means the level really is below `edit`.
 
 import { writable, type Readable } from 'svelte/store';
 import type { FlowBootstrap } from '$lib/api/flow';
@@ -29,7 +33,9 @@ import type { EngineUpdate, FlowError, SemanticIntent } from './types';
 
 /** What a scratch replica says about one update relative to the accepted state it was built
  * from: `new` (would add operations), `known` (already contained), `pending` (depends on
- * operations the accepted state does not have). */
+ * operations the accepted state does not have). Only `pending` changes what is sent: such an
+ * update can never be accepted (`causal_dependency_missing`), so it is drafted without reaching
+ * the wire. `known` is sent like `new`; the server answers the replay with its original receipt. */
 export type ScratchVerdict = 'new' | 'known' | 'pending';
 
 export interface ScratchReplica {
@@ -48,7 +54,6 @@ export interface OfflineSyncTransport {
 		intent: SemanticIntent,
 		options: { updateId: string }
 	): Promise<void>;
-	reconnect(reason: 'manual' | 'network' | 'stale_frontier' | 'auth_expired'): Promise<void>;
 }
 
 /** What `ObjectRepository` provides around the doc and the REST reads. */
@@ -61,9 +66,8 @@ export interface OfflineSyncHost {
 	/** A fresh policy re-check: may this user still write this object? */
 	canWrite(): Promise<boolean>;
 	/**
-	 * The accepted snapshot+tail over REST, or `null` when this user may not read it there. The
-	 * server's REST bootstrap requires `edit` while a WebSocket session (and its `snapshot`, the
-	 * same loader) only requires `view`, so a user lowered to `view` gets `null` here.
+	 * The accepted snapshot+tail over REST, or `null` when this user may not read it there (the
+	 * REST bootstrap admits `view`, like the WebSocket session, so `null` means access is gone).
 	 */
 	bootstrap(): Promise<FlowBootstrap | null>;
 	replaceWithAccepted(bootstrap: FlowBootstrap): Promise<void>;
@@ -152,9 +156,6 @@ export class FlowOfflineSync {
 	private chain: Promise<void> = Promise.resolve();
 	private pumpQueued = false;
 	private recoveryQueued = false;
-	/** Entries already given one fresh-connection retry after a `policy_rejected` whose re-check
-	 * still allowed writing (the server's per-connection authorization epoch was stale). */
-	private readonly policyRetried = new Set<string>();
 	private readOnly = false;
 	private disposed = false;
 	/** Set whenever an intent moves to the draft: the live doc still holds its operations, so it
@@ -377,7 +378,8 @@ export class FlowOfflineSync {
 					// `onConnected` once it is back.
 					return 'stop';
 				case 'policy':
-					return (await this.handlePolicyRejection(entry, error)) ? 'stop' : 'recover';
+					await this.handlePolicyRejection(error);
+					return 'recover';
 				case 'permanent':
 					this.host.reportError(error);
 					await this.toDraft(entry, { code: error.code, source: 'server', details: error.details });
@@ -389,35 +391,21 @@ export class FlowOfflineSync {
 	}
 
 	/**
-	 * `policy_rejected` on a sent update. The server fences every write against the authorization
-	 * epoch the connection was opened under, so after ANY grant change in the workspace it refuses
-	 * writes on every older connection with this code even when the writer's own permission did
-	 * not change. The re-check decides which case this is: still writable -> reconnect once (a new
-	 * connection carries the current epoch) and replay under the same key; no longer writable ->
-	 * read-only, and every pending intent to the recovery draft.
-	 *
-	 * Returns `true` when the entry stays queued for a replay.
+	 * `policy_rejected` on a sent update (`error-mapping-v1.md`: "保留 intent，不自动重放"). The server
+	 * re-evaluates a connection whose authorization epoch moved before refusing
+	 * (`collab-protocol-v1.md`), so this refusal means this user may no longer write here: the
+	 * session goes read-only and the refused intent, with every later one, is kept in the recovery
+	 * draft. Nothing is reconnected or replayed.
 	 */
-	private async handlePolicyRejection(entry: OutboxEntry, error: FlowError): Promise<boolean> {
-		const writable = await this.host.canWrite().catch(() => false);
-		if (writable && !this.policyRetried.has(entry.updateId)) {
-			this.policyRetried.add(entry.updateId);
-			void this.transport.reconnect('stale_frontier');
-			return true;
-		}
+	private async handlePolicyRejection(error: FlowError): Promise<void> {
 		this.host.reportError(error);
-		if (!writable) {
-			this.readOnly = true;
-			this.host.enterReadOnly();
-			await this.draftRemaining({
-				code: 'policy_rejected',
-				source: 'server',
-				details: error.details
-			});
-			return false;
-		}
-		await this.toDraft(entry, { code: error.code, source: 'server', details: error.details });
-		return false;
+		this.readOnly = true;
+		this.host.enterReadOnly();
+		await this.draftRemaining({
+			code: 'policy_rejected',
+			source: 'server',
+			details: error.details
+		});
 	}
 
 	// ---- recovery ---------------------------------------------------------------------------
@@ -478,12 +466,9 @@ export class FlowOfflineSync {
 					root = { updateId: entry.updateId, code: violation.code };
 					continue;
 				}
+				// A `known` entry (committed before the connection dropped) is sent like any other:
+				// the server answers the replayed `update_id` with the original receipt.
 				const verdict = scratch.classify(entry.bytes);
-				if (verdict === 'known') {
-					// Committed before the connection dropped: acknowledged, not re-sent.
-					await this.acknowledge(entry);
-					continue;
-				}
 				if (verdict === 'pending') {
 					await this.toDraft(entry, { code: 'invalid_update', source: 'dependency' });
 					continue;
@@ -523,7 +508,6 @@ export class FlowOfflineSync {
 	private async acknowledge(entry: OutboxEntry): Promise<void> {
 		await this.store.delete(entry.updateId);
 		this.queue = this.queue.filter((e) => e.updateId !== entry.updateId);
-		this.policyRetried.delete(entry.updateId);
 		this.publish();
 	}
 
@@ -546,7 +530,6 @@ export class FlowOfflineSync {
 		// The live doc still holds this intent's operations; the next recovery pass rebuilds it
 		// from the accepted state.
 		this.needsRebuild = true;
-		this.policyRetried.delete(entry.updateId);
 		this.publish();
 	}
 

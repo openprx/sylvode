@@ -10,7 +10,9 @@
  * - a refused intent lands in the recovery draft (IndexedDB too), never silently dropped;
  * - an update over `update_bytes_max` is not enqueued and is reported as `limit_exceeded`;
  * - entries persisted by an earlier page load are replayed by the next one;
- * - a rate refusal (no `update_id` on the wire) is retried under the same key.
+ * - a rate refusal (answered by its `update_id`) is retried under the same key;
+ * - a `rejected` without `update_id` answers no update and is never attributed to the one in flight;
+ * - a server `causal_dependency_missing` refusal keeps the intent in the draft with its reason.
  *
  * Run standalone: `bun tests/flow-outbox.test.ts`
  */
@@ -262,7 +264,41 @@ await suite.checkAsync(
 );
 
 await suite.checkAsync(
-	'a rate refusal without update_id is retried under the same key',
+	'a rate refusal answered by its update_id is retried under the same key',
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		try {
+			let refusals = 0;
+			server.policy = () => {
+				if (refusals > 0) return { kind: 'accept' };
+				refusals += 1;
+				return {
+					kind: 'reject',
+					reject: {
+						code: 'limit_exceeded',
+						recoverable: true,
+						details: { limit_kind: 'update_rate', limit: 10, retry_after_ms: 100 }
+					}
+				};
+			};
+			edit(ctx.entry.doc, 'rate');
+			await waitFor(
+				() => server.accepted.length === 1 && ctx.pending() === 0,
+				'accepted after retry',
+				5000
+			);
+			assertEqual(server.updatesSeen.length, 2, 'sent twice');
+			assertEqual(server.updatesSeen[0].updateId, server.updatesSeen[1].updateId, 'same update id');
+			assertEqual(ctx.entry.offline.draftEntries.length, 0, 'not drafted');
+		} finally {
+			await ctx.close();
+		}
+	}
+);
+
+await suite.checkAsync(
+	'a rejected frame without update_id is not attributed to the update in flight',
 	async () => {
 		const server = new FakeCollabServer();
 		const ctx = await open(server);
@@ -277,19 +313,72 @@ await suite.checkAsync(
 						code: 'limit_exceeded',
 						recoverable: true,
 						withoutUpdateId: true,
-						details: { limit_kind: 'update_rate', limit: 10, retry_after_ms: 100 }
+						details: { limit_kind: 'update_rate', limit: 10, retry_after_ms: 50 }
 					}
 				};
 			};
-			edit(ctx.entry.doc, 'rate');
+			edit(ctx.entry.doc, 'unattributed');
+			await waitFor(() => server.updatesSeen.length === 1, 'sent once');
+			await new Promise((r) => setTimeout(r, 400));
+			assertEqual(
+				server.updatesSeen.length,
+				1,
+				'not resent on the strength of a refusal that named no update'
+			);
+			assertEqual(ctx.pending(), 1, 'still waiting for its own answer');
+			// The answer never comes on this connection; the liveness timeout replays the same id
+			// on the next one, where the server answers it.
 			await waitFor(
 				() => server.accepted.length === 1 && ctx.pending() === 0,
-				'accepted after retry',
-				5000
+				'accepted after the liveness replay',
+				6000
 			);
-			assertEqual(server.updatesSeen.length, 2, 'sent twice');
 			assertEqual(server.updatesSeen[0].updateId, server.updatesSeen[1].updateId, 'same update id');
 			assertEqual(ctx.entry.offline.draftEntries.length, 0, 'not drafted');
+		} finally {
+			await ctx.close();
+		}
+	}
+);
+
+await suite.checkAsync(
+	'a causal_dependency_missing refusal keeps the intent in the draft with its reason',
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		try {
+			// Operations the server never received enter the client doc (an import is not a local
+			// update, so the outbox does not send them); the next local edit depends on them.
+			const { LoroDoc } = await import('loro-crdt');
+			const stranger = new LoroDoc();
+			stranger.getText('body').insert(0, 'unseen.');
+			stranger.commit();
+			(ctx.entry.doc as unknown as InstanceType<typeof LoroDoc>).import(
+				stranger.export({ mode: 'update' })
+			);
+			edit(ctx.entry.doc, 'depends.');
+			await waitFor(() => ctx.entry.offline.draftEntries.length === 1, 'drafted');
+			await ctx.entry.offline.idle();
+			assertEqual(server.causalRefusals, 1, 'the server refused it as causally incomplete');
+			assertEqual(server.accepted.length, 0, 'nothing got a seq');
+			assertEqual(server.pendingAccepted, 0, 'nothing pending was stored');
+			const [draft] = ctx.entry.offline.draftEntries;
+			assertEqual(draft.reason.code, 'invalid_update', 'draft code');
+			assertEqual(draft.reason.source, 'server', 'server refusal');
+			assertDeepEqual(
+				draft.reason.details,
+				{ reason: 'causal_dependency_missing' },
+				'the named reason is kept'
+			);
+			const { flowErrorDetailKey } = await import('../src/lib/flow/errors');
+			const error = ctx.lastError() as FlowError | null;
+			assert(error, 'reported');
+			assertEqual(
+				flowErrorDetailKey(error as FlowError),
+				'flow.error.invalid_update_reason.causal_dependency_missing',
+				'reported with the causal reason key'
+			);
+			assertEqual(server.updatesSeen.length, 1, 'not retried');
 		} finally {
 			await ctx.close();
 		}
