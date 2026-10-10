@@ -131,6 +131,9 @@ pub const MOVE_SUBTREE_NODES_LIMIT_KIND: &str = "move_subtree_nodes";
 /// `authz::ensure_parent_can_adopt_child` uses.
 const TREE_DEPTH_MAX: usize = 32;
 
+/// The one message a missing and a cross-workspace `target_object_id` both answer with.
+const TARGET_NOT_FOUND: &str = "target_object_id not found";
+
 /// The v0.5 governance command family: server-owned structural/metadata writes rather than
 /// caller-authored CRDT content. `MoveObject` is implemented in this module; `Link`/`Unlink` are
 /// PostgreSQL-only relation writes implemented by `flow::relations`.
@@ -1545,10 +1548,10 @@ pub async fn execute_on(
 
     let target = repository::fetch_movable_object(&state.db, payload.target_object_id)
         .await?
-        .ok_or_else(|| ApiError::invalid_update("target_object_id not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found(TARGET_NOT_FOUND))?;
     if target.workspace_id != workspace_id {
-        // Cross-workspace: fail closed and leave an integrity record, exactly as `create_object`
-        // does for a cross-workspace parent (`rest-api-v1.md`'s "RelationView" rule).
+        // Cross-workspace: answer exactly what a missing target answers and leave an integrity
+        // record, as `create_object` does for a cross-workspace parent.
         return Err(super::command::record_cross_workspace_relation_and_fail_closed(
             state,
             workspace_id,
@@ -1556,6 +1559,7 @@ pub async fn execute_on(
             payload.target_object_id,
             target.workspace_id,
             "flow.command.move_object", // detected_by: an ADR-0013 §4 integrity-record producer, not an events-v1 type
+            TARGET_NOT_FOUND,
         )
         .await);
     }
