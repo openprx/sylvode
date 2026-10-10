@@ -945,6 +945,44 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 	);
 	expect(stillSchema.status).toBe('failed');
 	expect(stillSchema.created_target_ids).toEqual([]);
+
+	// ---- 4. a job the server reclaimed (`error_reason = "stale_started"`) is an interrupted run:
+	// worded as such and retryable, while a plain `server_rejected` job stays permanent ----
+	const reaped = await failedJobOverRest(request, setup);
+	sql(
+		"UPDATE flow_conversion_jobs SET error_code = 'server_rejected', error_reason = 'stale_started' WHERE id = :'id';",
+		reaped.jobId
+	);
+	const reapedJob = await unwrap<Job & { error_reason?: string }>(
+		await request.get(`/api/v1/flow/conversions/${reaped.jobId}`, { headers: setup.auth })
+	);
+	expect(reapedJob.error_reason).toBe('stale_started');
+	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${reaped.jobId}`);
+	await expect(status).toHaveAttribute('data-status', 'failed');
+	await expect(storedError).toHaveAttribute('data-code', 'server_rejected');
+	await expect(storedError).toHaveAttribute('data-reason', 'stale_started');
+	await expect(storedError).toHaveText(
+		'Interrupted (reclaimed by the server): the conversion ran too long and the server reclaimed it. Nothing was created by the interrupted run; you can retry it.'
+	);
+	await expect(retry).toBeEnabled();
+	const reapedRetry = page.waitForResponse(
+		(res) => new URL(res.url()).pathname === `/api/v1/flow/conversions/${reaped.jobId}/retry`
+	);
+	await retry.click();
+	await page.getByTestId('flow-conversion-retry-confirm').click();
+	const reapedRetried = ((await (await reapedRetry).json()) as Envelope<Job>).data;
+	expect(reapedRetried.status).toBe('completed');
+	await expect(status).toHaveAttribute('data-status', 'completed');
+
+	const refusedForGood = await failedJobOverRest(request, setup);
+	sql(
+		"UPDATE flow_conversion_jobs SET error_code = 'server_rejected' WHERE id = :'id';",
+		refusedForGood.jobId
+	);
+	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${refusedForGood.jobId}`);
+	await expect(status).toHaveAttribute('data-status', 'failed');
+	await expect(storedError).toHaveAttribute('data-code', 'server_rejected');
+	await expect(retry).toHaveCount(0);
 });
 
 test('390x844: the navigator is a closed drawer and the object, convert and job pages use the full width', async ({

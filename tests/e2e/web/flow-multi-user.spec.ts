@@ -21,9 +21,10 @@ import {
  *    grant + inheritance off). When B comes back, the replay is refused by the policy re-check: B's
  *    canvas turns read-only, both edits are in the recovery draft (downloadable JSON listing each
  *    refused intent and its reason), and A never receives them.
- * 4. A, still the owner, keeps editing after the grant change (the server refuses writes on a
- *    connection opened before any authorization change; the client reconnects once and replays
- *    under the same key), and B -- now read-only -- still receives A's edits live.
+ * 4. A, still the owner, keeps editing after the grant change on the connection it already has:
+ *    the server re-sources the moved authorization epoch in place and accepts, so A opens no new
+ *    WebSocket (the client no longer reconnects to second-guess a `policy_rejected`); B -- now
+ *    read-only -- still receives A's edits live.
  *
  * Needs BASE_URL serving the built frontend with `/api` (WebSocket included) proxied to the API on
  * the same origin (`scripts/e2e-web-stack.sh up`). Registration after the first account needs an
@@ -186,6 +187,10 @@ test("multi-user: presence, offline outbox replay, and a view downgrade into the
   try {
     const pageA = await signedInPage(contextA, ownerLogin);
     const pageB = await signedInPage(contextB, memberLogin);
+    let socketsA = 0;
+    pageA.on("websocket", () => {
+      socketsA += 1;
+    });
     await pageA.goto(url);
     await pageB.goto(url);
     const editorA = pageA.locator(".flow-canvas .ProseMirror");
@@ -320,6 +325,7 @@ test("multi-user: presence, offline outbox replay, and a view downgrade into the
     await expect(editorB).not.toContainText("nope");
 
     // 4. A keeps editing after the grant change; read-only B still receives it live.
+    const socketsBeforeAfterEdit = socketsA;
     await typeAtEnd(pageA, " after");
     await expect(editorB).toContainText("Hello from A b1 b2 b3 after", {
       timeout: 20_000,
@@ -329,6 +335,7 @@ test("multi-user: presence, offline outbox replay, and a view downgrade into the
       "0",
     );
     await expect(pageA.getByTestId("flow-recovery-draft")).toHaveCount(0);
+    expect(socketsA).toBe(socketsBeforeAfterEdit);
 
     // The server's accepted state, as a fresh load sees it: everything accepted, nothing drafted.
     const fresh = await contextA.newPage();
