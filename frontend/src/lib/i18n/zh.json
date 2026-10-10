@@ -2370,6 +2370,8 @@
   "flow": {
     "nav": {
       "title": "导航",
+      "showNavigator": "显示导航",
+      "hideNavigator": "隐藏导航",
       "newPage": "新建 Page",
       "empty": "还没有页面",
       "createFirst": "创建第一个页面",

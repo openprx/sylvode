@@ -223,7 +223,8 @@
 		</div>
 	{/if}
 
-	<div class="flex flex-1 overflow-hidden">
+	<!-- Below lg the context panel stacks under the canvas and the column scrolls (390px phones). -->
+	<div class="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
 		{#if canvasRenderer}
 			<FlowCanvas doc={entry.doc} />
 		{:else}

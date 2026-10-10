@@ -784,3 +784,84 @@ test('a failed job is retried only after confirmation, with one key per job; a p
 	);
 	expect(stillFailed.status).toBe('failed');
 });
+
+test('390x844: the navigator is a closed drawer and the object, convert and job pages use the full width', async ({
+	page,
+	request
+}, testInfo) => {
+	const setup = await conversionSetup(request, 'narrow');
+	const { job } = await convertOverRest(request, setup);
+	await page.setViewportSize({ width: 390, height: 844 });
+	await signInAs(page, setup.ownerLogin);
+
+	const toggle = page.getByTestId('flow-nav-toggle');
+	const drawer = page.getByTestId('flow-nav-drawer');
+	const content = page.getByTestId('flow-content');
+
+	async function expectTarget(locator: ReturnType<Page['locator']>, label: string): Promise<void> {
+		const box = await locator.boundingBox();
+		expect(box, `${label} has a box`).not.toBeNull();
+		expect(box!.width, `${label} width`).toBeGreaterThanOrEqual(44);
+		expect(box!.height, `${label} height`).toBeGreaterThanOrEqual(44);
+	}
+
+	async function expectFullWidthLayout(name: string): Promise<void> {
+		await expect(toggle).toBeVisible();
+		await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+		await expect(drawer).toBeHidden();
+		await expectTarget(toggle, `${name}: navigator toggle`);
+		const box = await content.boundingBox();
+		expect(box, `${name}: content box`).not.toBeNull();
+		expect(box!.width, `${name}: content width`).toBeGreaterThanOrEqual(300);
+		expect(box!.x + box!.width, `${name}: content right edge inside the viewport`).toBeLessThanOrEqual(390);
+		const overflow = await page.evaluate(
+			() => document.documentElement.scrollWidth - document.documentElement.clientWidth
+		);
+		expect(overflow, `${name}: no horizontal page scroll`).toBeLessThanOrEqual(0);
+		await page.screenshot({ path: testInfo.outputPath(`${name}-390x844.png`), fullPage: true });
+	}
+
+	// ---- object page ----
+	await page.goto(`/workspace/${setup.workspaceId}/flow/${setup.objectId}`);
+	await expect(page.getByRole('link', { name: /Convert to Forms/ })).toBeVisible();
+	await expectFullWidthLayout('object');
+	// The context panel stacks under the canvas instead of being clipped at the right edge.
+	const convertLink = page.getByRole('link', { name: /Convert to Forms/ });
+	await convertLink.scrollIntoViewIfNeeded();
+	const linkBox = await convertLink.boundingBox();
+	expect(linkBox, 'object: convert link box').not.toBeNull();
+	expect(linkBox!.x, 'object: convert link left edge').toBeGreaterThanOrEqual(0);
+	expect(linkBox!.x + linkBox!.width, 'object: convert link right edge').toBeLessThanOrEqual(390);
+	await expectTarget(convertLink, 'object: convert link');
+	const panelBox = await content.locator('aside').boundingBox();
+	expect(panelBox, 'object: context panel box').not.toBeNull();
+	expect(panelBox!.width, 'object: context panel width').toBeGreaterThanOrEqual(300);
+	expect(panelBox!.x + panelBox!.width, 'object: context panel right edge').toBeLessThanOrEqual(390);
+	// The drawer opens from the toggle, shows the navigator over the content, and Escape closes it.
+	await toggle.click();
+	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+	await expect(drawer).toBeVisible();
+	await expect(drawer.getByRole('navigation')).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+	await expect(drawer).toBeHidden();
+
+	// ---- convert wizard ----
+	await page.goto(`/workspace/${setup.workspaceId}/flow/${setup.objectId}/convert`);
+	const next = page.getByTestId('flow-convert-next');
+	await expect(next).toBeVisible();
+	await expectFullWidthLayout('convert');
+	await expectTarget(next, 'convert: Next');
+	await expectTarget(page.getByRole('button', { name: 'Back', exact: true }), 'convert: Back');
+	for (const [index, step] of (await content.getByRole('listitem').getByRole('button').all()).entries()) {
+		await expectTarget(step, `convert: step ${index + 1}`);
+	}
+
+	// ---- conversion job page ----
+	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${job.job_id}`);
+	await expect(page.getByTestId('flow-conversion-status')).toHaveAttribute('data-status', 'completed');
+	await expectFullWidthLayout('job');
+	for (const [index, button] of (await content.getByRole('button').all()).entries()) {
+		if (await button.isVisible()) await expectTarget(button, `job: button ${index + 1}`);
+	}
+});

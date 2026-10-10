@@ -357,6 +357,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Web UI: on screens narrower than 1024px the Flow navigator is a drawer, closed by default and
+  opened from a 44px "Show navigator" button (`aria-expanded`, Escape closes it), so the object,
+  convert and conversion job pages use the full width. At 390px the navigator used to sit beside
+  the content and leave it about 70px wide. The object page stacks its context panel under the
+  canvas there, and the convert and job pages' buttons are at least 44x44px.
 - Web UI: the Flow operations panel is usable while Flow is disabled. It showed the "Workspace
   admins only" state because the per-object `GET .../flow/projection-lag`, which is refused while
   Flow is off, was allowed to decide the whole page. Only the admin check and the three

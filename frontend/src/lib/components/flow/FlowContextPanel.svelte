@@ -68,7 +68,7 @@
 </script>
 
 <aside
-	class="flex h-full w-80 shrink-0 flex-col gap-6 overflow-y-auto border-l border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
+	class="flex w-full shrink-0 flex-col gap-6 border-t border-slate-200 bg-white p-4 lg:h-full lg:w-80 lg:overflow-y-auto lg:border-l lg:border-t-0 dark:border-slate-800 dark:bg-slate-900"
 	aria-label={$t('flow.panel.title')}
 >
 	<section>
