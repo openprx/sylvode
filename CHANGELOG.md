@@ -376,6 +376,15 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow admin integrity: `GET /api/v1/admin/workspaces/{id}/flow/integrity` accepts `cursor`
+  (previously any cursor answered 400) and pages documents in id order with `limit` 1..=100
+  (default 50); `next_cursor` is present only when another page exists. With
+  `scope=documents`, `documents[]` now lists every checked document: healthy rows carry
+  `status: "ok"` and `checked_at` next to their fingerprint, and failing rows (previously only
+  counted) carry `status: "failed"`, `checked_at`, a stable `failure` class
+  (`storage_inconsistent`, `projection_missing`, `limit_exceeded`, `document_missing`,
+  `replay_failed`) and `error_code`. `counts` describe exactly the returned page. A database
+  error while checking now fails the request instead of being counted as a failed document.
 - Flow admin lag: `GET /api/v1/admin/workspaces/{id}/flow/lag` now honours `cursor` and `limit`
   (1..=100, default 50) and lists one row per document in `projection.items`, `search.items` and
   `fanout.items` (`object_id`, `document_id`, `head_seq`, the consumer's seq, `lag`), paged in

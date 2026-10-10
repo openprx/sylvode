@@ -12,7 +12,7 @@ use uuid::Uuid;
 use super::collab::{bootstrap, compaction, integrity, snapshot};
 use super::event_origin::CommandOrigin;
 use super::maintenance;
-use crate::error::{ApiError, ServerDrainingReason};
+use crate::error::{ApiError, ApiErrorKind, ServerDrainingReason};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
 use crate::flow::IN_FLIGHT_RETRY_AFTER_MS;
 
@@ -1175,40 +1175,104 @@ pub async fn workspace_lag(
 }
 
 #[derive(Debug, FromQueryResult)]
-struct DocumentIdRow {
-    id: Uuid,
+struct IntegrityCandidate {
+    document_id: Uuid,
+    object_id: Uuid,
+    has_projection: bool,
 }
 
+/// Stable classification of a document whose integrity check failed. Never carries content,
+/// bytes or the driver's error text.
+const fn integrity_failure_class(error: &ApiError) -> &'static str {
+    match error.kind() {
+        ApiErrorKind::ResyncRequired => "storage_inconsistent",
+        ApiErrorKind::LimitExceeded => "limit_exceeded",
+        ApiErrorKind::NotFound => "document_missing",
+        _ => "replay_failed",
+    }
+}
+
+/// One page of the workspace integrity check, in document-id order.
+///
+/// Every document on the page is checked; `counts` describe exactly that page and, with
+/// `include_documents`, `documents[]` lists every one of them — healthy rows with
+/// `status:"ok"` and their fingerprint, failing rows with `status:"failed"`, a stable `failure`
+/// class and the `error_code` of the check. A database failure is not a document integrity
+/// verdict and fails the request instead of being counted.
 pub async fn workspace_integrity(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     include_documents: bool,
-    limit: u64,
+    cursor: Option<&str>,
+    limit: Option<u64>,
 ) -> Result<Value, ApiError> {
-    if limit == 0 || limit > 100 {
-        return Err(ApiError::invalid_update("limit must be in 1..=100".to_string()));
-    }
-    let rows = DocumentIdRow::find_by_statement(Statement::from_sql_and_values(
+    let limit = admin_page_limit(limit)?;
+    let after = cursor.map(|raw| decode_document_cursor("integrity", raw)).transpose()?;
+    let mut rows = IntegrityCandidate::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT cd.id FROM collab_documents cd JOIN flow_objects fo ON fo.id=cd.object_id \
-          WHERE fo.workspace_id=$1 ORDER BY cd.id LIMIT $2",
-        vec![workspace_id.into(), i64::try_from(limit).unwrap_or(100).into()],
+        "SELECT cd.id AS document_id, cd.object_id, (fp.object_id IS NOT NULL) AS has_projection \
+           FROM collab_documents cd JOIN flow_objects fo ON fo.id=cd.object_id \
+           LEFT JOIN flow_object_projections fp ON fp.object_id=cd.object_id \
+          WHERE fo.workspace_id=$1 AND ($2::uuid IS NULL OR cd.id > $2::uuid) \
+          ORDER BY cd.id LIMIT $3",
+        vec![workspace_id.into(), after.into(), limit.saturating_add(1).into()],
     ))
     .all(db)
     .await?;
+    let page_len = usize::try_from(limit).unwrap_or(usize::MAX);
+    let next_cursor = if rows.len() > page_len {
+        rows.truncate(page_len);
+        rows.last()
+            .map(|row| encode_document_cursor("integrity", row.document_id))
+    } else {
+        None
+    };
     let mut documents = Vec::with_capacity(rows.len());
     let mut failed = 0_u64;
     for row in rows {
-        match integrity::document_fingerprint(db, row.id).await {
-            Ok(fingerprint) => documents.push(serde_json::to_value(fingerprint).map_err(|_| ApiError::internal())?),
-            Err(_) => failed += 1,
+        let outcome = if row.has_projection {
+            integrity::document_fingerprint(db, row.document_id).await
+        } else {
+            Err(ApiError::internal())
+        };
+        let checked_at = chrono::Utc::now();
+        match outcome {
+            Ok(fingerprint) => {
+                let mut entry = serde_json::to_value(fingerprint).map_err(|_| ApiError::internal())?;
+                if let Some(object) = entry.as_object_mut() {
+                    object.insert("status".to_string(), json!("ok"));
+                    object.insert("checked_at".to_string(), json!(checked_at));
+                }
+                documents.push(entry);
+            }
+            Err(error) if error.is_database_failure() => return Err(error),
+            Err(error) => {
+                failed += 1;
+                let failure = if row.has_projection {
+                    integrity_failure_class(&error)
+                } else {
+                    "projection_missing"
+                };
+                documents.push(json!({
+                    "workspace_id": workspace_id,
+                    "object_id": row.object_id,
+                    "document_id": row.document_id,
+                    "status": "failed",
+                    "checked_at": checked_at,
+                    "failure": failure,
+                    "error_code": error.kind().stable_code(),
+                }));
+            }
         }
     }
-    let checked = documents.len() as u64 + failed;
-    Ok(json!({
-        "status": if failed == 0 { "healthy" } else { "integrity_error" },
-        "checked_at": chrono::Utc::now(),
-        "counts": {"checked": checked, "healthy": documents.len(), "failed": failed},
-        "documents": if include_documents { Value::Array(documents) } else { Value::Null },
-    }))
+    let checked = documents.len() as u64;
+    Ok(with_next_cursor(
+        json!({
+            "status": if failed == 0 { "healthy" } else { "integrity_error" },
+            "checked_at": chrono::Utc::now(),
+            "counts": {"checked": checked, "healthy": checked - failed, "failed": failed},
+            "documents": if include_documents { Value::Array(documents) } else { Value::Null },
+        }),
+        next_cursor,
+    ))
 }
