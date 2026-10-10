@@ -2306,7 +2306,32 @@
     "childTableRequiredAfterSave": "{field} 为必填子表，请先保存记录再添加子记录",
     "fieldMustBeJson": "{field} 必须是 JSON",
     "yes": "是",
-    "no": "否"
+    "no": "否",
+    "flowLineage": {
+      "title": "Flow",
+      "description": "引用此记录、或通过转换创建此记录的 Flow 页面。",
+      "references": "引用",
+      "conversions": "转换",
+      "noReferences": "没有 Flow 页面引用此记录。",
+      "noConversions": "此记录不是由 Flow 转换创建的。",
+      "sourceUnavailable": "你无权查看来源页面",
+      "untitled": "未命名页面",
+      "addedAt": "添加于 {date}",
+      "startedAt": "开始于 {date}",
+      "openJob": "查看转换任务",
+      "readOnlyNote": "引用需在 Flow 页面上移除；移除引用不会删除此记录。",
+      "mode": {
+        "reference": "引用",
+        "embed": "嵌入",
+        "unknown": "其他展示方式"
+      },
+      "status": {
+        "started": "进行中",
+        "completed": "已完成",
+        "failed": "失败",
+        "unknown": "未知状态"
+      }
+    }
   },
   "pageTitle": {
     "appDefault": "Sylvode",

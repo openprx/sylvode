@@ -152,6 +152,49 @@ export interface FormRecord {
 	updated_at: string;
 }
 
+/** One live Flow reference to a record (`apps/api/src/flow/bridge.rs::RecordLineageReference`).
+ * When the caller cannot read the source object only `reference_id` and
+ * `source_available: false` are sent. */
+export type FormRecordLineageReference =
+	| {
+			reference_id: string;
+			source_available: true;
+			source_object_id: string;
+			source_title?: string;
+			display: Record<string, unknown>;
+			created_at: string;
+	  }
+	| { reference_id: string; source_available: false };
+
+/** One conversion job that created a record (`bridge.rs::RecordLineageConversion`).
+ * `job_available` says whether the caller may open the job (its actor or a workspace
+ * owner/admin); like every other detail it is withheld when the source is unreadable. */
+export type FormRecordLineageConversion =
+	| {
+			job_id: string;
+			source_available: true;
+			source_object_id: string;
+			source_title?: string;
+			job_available: boolean;
+			status: string;
+			lineage_id: string | null;
+			created_at: string;
+	  }
+	| { job_id: string; source_available: false };
+
+/** `flow_lineage` on `GET /form-records/{record_id}` (`bridge.rs::RecordFlowLineage`); both lists
+ * are empty when Flow or the bridge is off. */
+export interface FormRecordFlowLineage {
+	references: FormRecordLineageReference[];
+	conversions: FormRecordLineageConversion[];
+}
+
+/** The record detail: the record plus its read-only Flow lineage. Optional so an older API that
+ * does not send the field still type-checks and simply shows no Flow section. */
+export interface FormRecordDetail extends FormRecord {
+	flow_lineage?: FormRecordFlowLineage;
+}
+
 export interface FormView {
 	id: string;
 	workspace_id: string;
@@ -833,8 +876,8 @@ export const formsApi = {
 		);
 	},
 
-	getRecord(recordId: string): Promise<ApiResult<FormRecord>> {
-		return apiClient.get<FormRecord>(`/api/v1/form-records/${recordId}`);
+	getRecord(recordId: string): Promise<ApiResult<FormRecordDetail>> {
+		return apiClient.get<FormRecordDetail>(`/api/v1/form-records/${recordId}`);
 	},
 
 	updateRecord(

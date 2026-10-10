@@ -16,8 +16,9 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  *    new Collection under the Page, the API reports it as the Page's child, and a reload still
  *    shows the embed (it is a server-written block in the Page document).
  * 2. `/` -> Reference a Form: project -> form -> record, the request carries
- *    `display.mode=reference`, a card with the record title and a permission badge appears;
- *    removing it needs a confirmation, sends only `DELETE .../references/{id}`, and the record
+ *    `display.mode=reference`, a card with the record title and a permission badge appears; the
+ *    card's link opens the record detail, whose Flow section lists the reference and links back
+ *    to the Page; removing it needs a confirmation, sends only `DELETE .../references/{id}`, and the record
  *    itself is still there afterwards.
  * 3. `/` -> Embed a Form: the card shows the record's field values. A second Embed (the whole
  *    second form) then loses its viewing right through a Forms policy change; after a reload the
@@ -349,6 +350,31 @@ test('slash Reference and Embed: cards from the bridge, confirmed removal leaves
 
 	// The placeholder block is in the Page document: the card survives a reload.
 	await page.reload();
+	await expect(page.locator('[data-testid="flow-bridge-card"][data-mode="reference"]')).toHaveCount(
+		1
+	);
+
+	// Lineage from the Forms end: the record detail's Flow section lists this Page's reference
+	// and links back to the Page.
+	await page
+		.locator('[data-testid="flow-bridge-card"][data-mode="reference"]')
+		.getByTestId('flow-bridge-card-source')
+		.click();
+	await expect(page).toHaveURL(
+		new RegExp(`/workspace/${f.workspaceId}/projects/${f.projectId}/forms/records/${f.recordId}$`)
+	);
+	const lineage = page.getByTestId('record-flow-lineage');
+	await expect(lineage).toBeVisible();
+	const lineageReference = lineage.getByTestId('record-flow-lineage-reference');
+	await expect(lineageReference).toHaveCount(1);
+	await expect(lineageReference).toHaveAttribute('data-available', 'true');
+	await expect(lineageReference.getByTestId('record-flow-lineage-mode')).toHaveText('Reference');
+	await expect(lineage.getByTestId('record-flow-lineage-conversion')).toHaveCount(0);
+	const backToPage = lineageReference.getByTestId('record-flow-lineage-source');
+	await expect(backToPage).toHaveText(`Reference host ${runId}`);
+	await expect(backToPage).toHaveAttribute('href', `/workspace/${f.workspaceId}/flow/${objectId}`);
+	await backToPage.click();
+	await expect(page).toHaveURL(new RegExp(`/workspace/${f.workspaceId}/flow/${objectId}$`));
 	await expect(page.locator('[data-testid="flow-bridge-card"][data-mode="reference"]')).toHaveCount(
 		1
 	);

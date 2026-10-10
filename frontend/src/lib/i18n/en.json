@@ -2306,7 +2306,32 @@
     "childTableRequiredAfterSave": "{field} is a required child table: save the record first, then add child rows",
     "fieldMustBeJson": "{field} must be JSON",
     "yes": "Yes",
-    "no": "No"
+    "no": "No",
+    "flowLineage": {
+      "title": "Flow",
+      "description": "Flow Pages that reference this record or created it by conversion.",
+      "references": "References",
+      "conversions": "Conversions",
+      "noReferences": "No Flow Page references this record.",
+      "noConversions": "This record was not created by a Flow conversion.",
+      "sourceUnavailable": "You do not have access to the source Page",
+      "untitled": "Untitled Page",
+      "addedAt": "Added {date}",
+      "startedAt": "Started {date}",
+      "openJob": "View conversion job",
+      "readOnlyNote": "References are removed from the Page in Flow. Removing one never deletes this record.",
+      "mode": {
+        "reference": "Reference",
+        "embed": "Embed",
+        "unknown": "Other display"
+      },
+      "status": {
+        "started": "In progress",
+        "completed": "Completed",
+        "failed": "Failed",
+        "unknown": "Unknown status"
+      }
+    }
   },
   "pageTitle": {
     "appDefault": "Sylvode",
