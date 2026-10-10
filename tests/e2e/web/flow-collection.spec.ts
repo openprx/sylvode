@@ -22,7 +22,12 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  *   unsaved Notes value, switches views and back (the draft is still there), saves the body;
  *   the server's record body is the typed text;
  * - at 390px the table is a card list and the page has no horizontal overflow (screenshot
- *   attached).
+ *   attached);
+ * - every records read names the active view by `view_id` (no draft query is used here);
+ * - after a restricted field turns field secrecy on, the record panel says the body cannot be
+ *   read under field secrecy and offers no body editor;
+ * - archiving a record from its panel needs an in-place confirmation, sends one `record_archive`,
+ *   and the record leaves the list (server too).
  *
  * Needs the stack from `scripts/e2e-web-stack.sh up` (BASE_URL, ADMIN_EMAIL / ADMIN_PASSWORD).
  */
@@ -144,6 +149,8 @@ test('collection: schema mode, table edit, board drag, record panel body, narrow
 	const commands: Array<{ body: CommandBody; url: string; schemaMode: boolean }> = [];
 	const recordPosts: Array<Record<string, unknown>> = [];
 	const objectReads: string[] = [];
+	// `view_id` of every records list read the page makes.
+	const recordReads: Array<string | null> = [];
 	// Ticket document ids and bootstrap object ids (the navigator legitimately opens its own
 	// document; the Collection and its records must never appear here).
 	const collabRequests: string[] = [];
@@ -164,6 +171,12 @@ test('collection: schema mode, table edit, board drag, record panel body, narrow
 			/\/api\/v1\/flow\/collections\/[^/]+\/records$/.test(url.pathname)
 		) {
 			recordPosts.push(JSON.parse(req.postData() ?? '{}') as Record<string, unknown>);
+		}
+		if (
+			req.method() === 'GET' &&
+			/^\/api\/v1\/flow\/collections\/[^/]+\/records$/.test(url.pathname)
+		) {
+			recordReads.push(url.searchParams.get('view_id'));
 		}
 		if (req.method() === 'GET' && /^\/api\/v1\/flow\/objects\/[^/]+$/.test(url.pathname)) {
 			objectReads.push(url.pathname.split('/').pop() ?? '');
@@ -490,6 +503,83 @@ test('collection: schema mode, table edit, board drag, record panel body, narrow
 	const screenshot = testInfo.outputPath('flow-collection-390.png');
 	await page.screenshot({ path: screenshot, fullPage: true });
 	await testInfo.attach('flow-collection-390', { path: screenshot, contentType: 'image/png' });
+
+	// ---- records are read by the saved view's id ----------------------------------------------
+	const viewIds = new Set(schema.views.map((view) => view.view_id));
+	expect(recordReads.length).toBeGreaterThan(0);
+	expect(recordReads.every((viewId) => viewId !== null && viewIds.has(viewId))).toBe(true);
+
+	// ---- field secrecy: the body is withheld, not shown as empty ------------------------------
+	await page.setViewportSize({ width: 1920, height: 1080 });
+	const beforeSecret = await unwrap<CollectionData>(
+		await request.get(`/api/v1/flow/collections/${collectionId}`, { headers: auth })
+	);
+	await unwrap(
+		await request.post(`/api/v1/flow/objects/${collectionId}/commands`, {
+			headers: auth,
+			data: {
+				command: {
+					type: 'field_create',
+					payload: {
+						field_id: crypto.randomUUID(),
+						label: 'Salary',
+						field_type: 'number',
+						config: { restricted: true },
+						index: 10
+					}
+				},
+				expected_frontier: beforeSecret.object.frontier,
+				idempotency_key: crypto.randomUUID()
+			}
+		})
+	);
+	await page.reload();
+	await page
+		.locator(`[data-testid="collection-row"][data-record-id="${rowIds[0]}"]`)
+		.getByTestId('collection-open-record')
+		.click();
+	const secretPanel = page.getByTestId('record-panel');
+	await expect(secretPanel).toHaveAttribute('data-record-id', rowIds[0]);
+	await expect(secretPanel.getByTestId('record-panel-body-withheld')).toBeVisible();
+	await expect(secretPanel.getByTestId('record-panel-body')).toHaveCount(0);
+	await expect(secretPanel.getByTestId('record-panel-body-save')).toHaveCount(0);
+	const withheld = await unwrap<{ semantic_content: unknown }>(
+		await request.get(`/api/v1/flow/objects/${rowIds[0]}`, { headers: auth })
+	);
+	expect(withheld.semantic_content).toEqual({});
+
+	// ---- archive a record from its panel, after confirmation ----------------------------------
+	await secretPanel.getByTestId('record-panel-close').click();
+	await page
+		.locator(`[data-testid="collection-row"][data-record-id="${rowIds[1]}"]`)
+		.getByTestId('collection-open-record')
+		.click();
+	const archivePanel = page.getByTestId('record-panel');
+	await expect(archivePanel).toHaveAttribute('data-record-id', rowIds[1]);
+	const commandsBeforeArchive = commands.length;
+	await archivePanel.getByTestId('record-panel-archive').click();
+	// The first click only asks; nothing is sent until the user confirms.
+	await expect(archivePanel.getByTestId('record-panel-archive-confirm')).toBeVisible();
+	expect(commands.length).toBe(commandsBeforeArchive);
+	const archived = page.waitForResponse(
+		(res) =>
+			new URL(res.url()).pathname === `/api/v1/flow/objects/${collectionId}/commands` &&
+			res.request().method() === 'POST'
+	);
+	await archivePanel.getByTestId('record-panel-archive-confirm').click();
+	expect(((await (await archived).json()) as Envelope<unknown>).code).toBe(0);
+	expect(commands.slice(commandsBeforeArchive).map((c) => c.body.command)).toEqual([
+		{ type: 'record_archive', payload: { record_id: rowIds[1] } }
+	]);
+	await expect(page.getByTestId('record-panel')).toHaveCount(0);
+	await expect(rows).toHaveCount(1);
+	await expect(
+		page.locator(`[data-testid="collection-row"][data-record-id="${rowIds[1]}"]`)
+	).toHaveCount(0);
+	const afterArchive = await unwrap<RecordsData>(
+		await request.get(`/api/v1/flow/collections/${collectionId}/records`, { headers: auth })
+	);
+	expect(afterArchive.items.map((item) => item.record.id)).toEqual([rowIds[0]]);
 
 	await context.close();
 });

@@ -173,6 +173,15 @@ test('object panel: share with dry-run consequences, relations, history diff and
 		})
 	);
 
+	// A workspace bot the owner can name in a grant (FP2-M9: the add picker lists bots too).
+	const botName = `Panel bot ${runId}`;
+	const bot = await unwrap<{ id: string }>(
+		await request.post(`/api/v1/workspaces/${workspace.id}/bots`, {
+			headers: auth,
+			data: { name: botName, transport_surface: 'rest' }
+		})
+	);
+
 	// ---- owner ---------------------------------------------------------------------------------
 	const ownerContext = await browser.newContext({ acceptDownloads: true });
 	const page = await ownerContext.newPage();
@@ -198,7 +207,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	await expect(share.getByTestId('flow-share-effective')).toHaveText('Full access');
 	await expect(share.getByTestId('flow-share-inheritance')).toHaveText('On');
 	await share
-		.getByRole('combobox', { name: 'Person', exact: true })
+		.getByRole('combobox', { name: 'Person or bot', exact: true })
 		.selectOption({ label: MEMBER_NAME });
 	await share
 		.getByRole('combobox', { name: 'Access', exact: true })
@@ -261,6 +270,37 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	expect(after.items.map((item) => [item.principal_id, item.level])).toEqual([
 		[memberLogin.user.id, 'view']
 	]);
+
+	// The bot is offered under "Bots" and a grant to it is sent as a bot principal.
+	const subject = share.getByRole('combobox', { name: 'Person or bot', exact: true });
+	await expect(subject.locator('optgroup[label="Bots"] option')).toHaveText([botName]);
+	await subject.selectOption({ label: botName });
+	await share
+		.getByRole('combobox', { name: 'Access', exact: true })
+		.selectOption({ label: 'Can edit' });
+	await share.getByRole('button', { name: 'Add', exact: true }).click();
+	await expect(share.getByTestId('flow-share-grant')).toHaveCount(2);
+	expect(puts).toHaveLength(4);
+	expect(puts[3].body).toMatchObject({
+		grants: [
+			{ principal_kind: 'user', principal_id: memberLogin.user.id, level: 'view' },
+			{ principal_kind: 'bot', principal_id: bot.id, level: 'edit' }
+		],
+		dry_run: false
+	});
+	const withBot = await unwrap<{
+		items: Array<{ principal_kind: string; principal_id: string; level: string }>;
+	}>(await request.get(`/api/v1/flow/objects/${objectId}/grants`, { headers: auth }));
+	expect(
+		withBot.items
+			.map((item) => [item.principal_kind, item.principal_id, item.level])
+			.sort((x, y) => x.join().localeCompare(y.join()))
+	).toEqual(
+		[
+			['user', memberLogin.user.id, 'view'],
+			['bot', bot.id, 'edit']
+		].sort((x, y) => x.join().localeCompare(y.join()))
+	);
 
 	// Relations: lazy-loaded on first open, the link's target is shown and navigable.
 	await tabs.getByRole('tab', { name: 'Relations' }).click();

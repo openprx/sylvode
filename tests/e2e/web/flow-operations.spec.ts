@@ -370,6 +370,64 @@ test('admin reads health/lag/integrity and runs verify, compact, rebuild and rep
 	);
 	expect(writes.filter((write) => write.path.endsWith('/flow/deliveries/replay'))).toHaveLength(2);
 
+	// ---- paging: more documents than one page; every one is reachable by cursor ----
+	for (let i = 0; i < 50; i += 1) {
+		await unwrap(
+			await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+				headers: auth,
+				data: {
+					object_type: 'page',
+					title: `Ops paging ${runId} ${i}`,
+					idempotency_key: crypto.randomUUID()
+				}
+			})
+		);
+	}
+	const paged = await unwrap<{ counts: { total: number } }>(
+		await request.get(`/api/v1/admin/workspaces/${workspace.id}/flow/integrity?scope=summary`, {
+			headers: auth
+		})
+	);
+	expect(paged.counts.total).toBeGreaterThan(50);
+	const pageReads: string[] = [];
+	page.on('request', (req: Request) => {
+		const path = new URL(req.url()).pathname;
+		if (req.method() === 'GET' && /\/flow\/(lag|integrity)$/.test(path)) {
+			pageReads.push(new URL(req.url()).search);
+		}
+	});
+	await page.goto(`/workspace/${workspace.id}/settings/flow/operations`);
+	const docIds = (locator: ReturnType<Page['locator']>) =>
+		locator.evaluateAll((elements) =>
+			elements.map((element) => element.getAttribute('data-document-id') ?? '')
+		);
+	const integrityRows = page
+		.getByTestId('flow-ops-integrity-table')
+		.locator('tbody tr[data-document-id]');
+	await expect(integrityRows).toHaveCount(50);
+	const integrityFirst = await docIds(integrityRows);
+	await page.getByTestId('flow-ops-integrity-pager-next').click();
+	await expect(integrityRows).toHaveCount(paged.counts.total - 50);
+	const integritySecond = await docIds(integrityRows);
+	expect(new Set([...integrityFirst, ...integritySecond]).size).toBe(paged.counts.total);
+	await expect(page.getByTestId('flow-ops-integrity-pager-next')).toBeDisabled();
+	await page.getByTestId('flow-ops-integrity-pager-previous').click();
+	await expect(integrityRows).toHaveCount(50);
+
+	const lagRows = page.getByTestId('flow-ops-lag-documents').locator('tr[data-document-id]');
+	await expect(lagRows).toHaveCount(50);
+	const lagFirst = await docIds(lagRows);
+	await page.getByTestId('flow-ops-lag-documents-pager-next').click();
+	await expect(lagRows).toHaveCount(paged.counts.total - 50);
+	const lagSecond = await docIds(lagRows);
+	expect(new Set([...lagFirst, ...lagSecond]).size).toBe(paged.counts.total);
+	expect(pageReads.every((search) => /[?&]limit=(\d+)/.test(search))).toBe(true);
+	expect(
+		pageReads.every((search) => Number(/[?&]limit=(\d+)/.exec(search)?.[1] ?? '0') <= 100)
+	).toBe(true);
+	// Integrity "next" and lag "next" carry the server's cursor; "previous" back to page 1 does not.
+	expect(pageReads.filter((search) => search.includes('cursor='))).toHaveLength(2);
+
 	// ---- Flow disabled: the panel stays usable (admin endpoints work; projection-lag is refused) ----
 	await unwrap(
 		await request.put(`/api/v1/workspaces/${workspace.id}/features/flow`, {
