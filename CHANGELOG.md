@@ -357,6 +357,12 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Web UI: the Flow operations panel is usable while Flow is disabled. It showed the "Workspace
+  admins only" state because the per-object `GET .../flow/projection-lag`, which is refused while
+  Flow is off, was allowed to decide the whole page. Only the admin check and the three
+  `/admin/.../flow/{health,lag,integrity}` endpoints decide it now; the lag section shows its own
+  notice that there is no per-object lag while Flow is off. Leaving the panel before its first
+  load finished no longer starts the 15-second health poll after the page is gone.
 - Web UI: `server_rejected` is now one of the client's registered stable Flow error codes, so
   the zh/en parity gate covers its keys, and a `rejected` frame carrying it on a live editing
   session fails the pending write as a permanent error instead of being ignored and leaving the

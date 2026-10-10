@@ -5,12 +5,15 @@
 	// baseline). Paging state lives in `ProjectionLagPager`.
 	import { t } from 'svelte-i18n';
 	import type { FlowAdminLag, FlowProjectionLag } from '$lib/api/flow';
+	import { PROJECTION_UNAVAILABLE_KEY } from '$lib/flow/operations-service';
 
 	interface Props {
 		lag: FlowAdminLag | null;
 		lagErrorKey: string;
 		projection: FlowProjectionLag | null;
 		projectionErrorKey: string;
+		/** projection-lag was refused (Flow off): a notice, not an error. */
+		projectionUnavailable: boolean;
 		pageNumber: number;
 		hasPrevious: boolean;
 		hasNext: boolean;
@@ -24,6 +27,7 @@
 		lagErrorKey,
 		projection,
 		projectionErrorKey,
+		projectionUnavailable,
 		pageNumber,
 		hasPrevious,
 		hasNext,
@@ -92,6 +96,15 @@
 	<h3 class="mt-6 text-sm font-semibold text-slate-900 dark:text-slate-100">
 		{$t('flow.operations.lag.itemsHeading')}
 	</h3>
+	{#if projectionUnavailable}
+		<p
+			class="mt-2 text-sm text-slate-600 dark:text-slate-300"
+			role="status"
+			data-testid="flow-ops-projection-unavailable"
+		>
+			{$t(PROJECTION_UNAVAILABLE_KEY)}
+		</p>
+	{/if}
 	{#if projectionErrorKey}
 		<p class="mt-2 text-sm text-red-700 dark:text-red-300" role="alert">{$t(projectionErrorKey)}</p>
 	{/if}

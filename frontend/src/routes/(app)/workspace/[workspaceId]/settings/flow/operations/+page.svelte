@@ -14,16 +14,13 @@
 	import OpsIntegrityTable from '$lib/components/flow/OpsIntegrityTable.svelte';
 	import OpsOperationDrawer from '$lib/components/flow/OpsOperationDrawer.svelte';
 	import OpsReplayForm from '$lib/components/flow/OpsReplayForm.svelte';
-	import type { FlowAdminIntegrity, FlowAdminLag, FlowProjectionLag } from '$lib/api/flow';
 	import {
 		FlowOperationsService,
-		type HealthMonitor,
-		type HealthSnapshot,
+		OperationsPanelSession,
 		type MaintenanceKind,
 		type MaintenanceOperation,
 		type OpsIntegrityLimit,
-		type OpsRead,
-		type ProjectionLagPager
+		type OpsPanelState
 	} from '$lib/flow/operations-service';
 	import { requireRouteParam } from '$lib/utils/route-params';
 
@@ -31,95 +28,24 @@
 	const service = new FlowOperationsService(workspaceId);
 	const replay = service.replay();
 
-	let view = $state<'loading' | 'ready' | 'forbidden'>('loading');
-	let healthSnap = $state.raw<HealthSnapshot | null>(null);
-	let monitor: HealthMonitor | null = null;
-
-	let lag = $state.raw<FlowAdminLag | null>(null);
-	let lagErrorKey = $state('');
-	let pager: ProjectionLagPager | null = null;
-	let projection = $state.raw<FlowProjectionLag | null>(null);
-	let projectionErrorKey = $state('');
-	let lagPage = $state(1);
-	let lagHasPrevious = $state(false);
-	let lagHasNext = $state(false);
-	let lagBusy = $state(false);
-
-	let integrity = $state.raw<FlowAdminIntegrity | null>(null);
-	let integrityErrorKey = $state('');
-	let integrityLimit = $state<OpsIntegrityLimit>(50);
-	let integrityBusy = $state(false);
+	// Load order, the view decision and the unmount race live in `OperationsPanelSession`.
+	let panel = $state.raw<OpsPanelState | null>(null);
+	const session = new OperationsPanelSession(service, (next) => {
+		panel = next;
+	});
+	panel = session.snapshot;
 
 	let drawerOpen = $state(false);
 	let operation = $state.raw<MaintenanceOperation | null>(null);
 
-	onMount(async () => {
-		if (!(await service.isWorkspaceAdmin())) {
-			view = 'forbidden';
-			return;
-		}
-		monitor = service.healthMonitor((snapshot) => {
-			healthSnap = snapshot;
-			if (snapshot.forbidden) view = 'forbidden';
-		});
-		const first = await monitor.refresh();
-		if (first.forbidden) return;
-		view = 'ready';
-		monitor.start();
-		pager = service.projectionLagPager();
-		await Promise.all([loadLag(), loadProjection(() => pager?.load() ?? null), loadIntegrity()]);
+	onMount(() => {
+		void session.open();
 	});
 
-	onDestroy(() => monitor?.dispose());
-
-	async function loadLag() {
-		const read = await service.loadLag();
-		if (read.status === 'ready') {
-			lag = read.data;
-			lagErrorKey = '';
-		} else if (read.status === 'forbidden') {
-			view = 'forbidden';
-		} else {
-			lagErrorKey = read.failure.messageKey;
-		}
-	}
-
-	async function loadProjection(step: () => Promise<OpsRead<FlowProjectionLag> | null> | null) {
-		if (!pager) return;
-		lagBusy = true;
-		const read = await step();
-		lagBusy = false;
-		if (!read) return;
-		if (read.status === 'ready') {
-			projection = read.data;
-			projectionErrorKey = '';
-		} else if (read.status === 'forbidden') {
-			view = 'forbidden';
-		} else {
-			projectionErrorKey = read.failure.messageKey;
-		}
-		lagPage = pager.pageNumber;
-		lagHasPrevious = pager.hasPrevious();
-		lagHasNext = pager.hasNext();
-	}
-
-	async function loadIntegrity() {
-		integrityBusy = true;
-		const read = await service.loadIntegrity(integrityLimit);
-		integrityBusy = false;
-		if (read.status === 'ready') {
-			integrity = read.data;
-			integrityErrorKey = '';
-		} else if (read.status === 'forbidden') {
-			view = 'forbidden';
-		} else {
-			integrityErrorKey = read.failure.messageKey;
-		}
-	}
+	onDestroy(() => session.dispose());
 
 	function changeLimit(limit: OpsIntegrityLimit) {
-		integrityLimit = limit;
-		void loadIntegrity();
+		void session.loadIntegrity(limit);
 	}
 
 	function openOperation(kind: MaintenanceKind, targetId: string, expectedHead: number | null) {
@@ -133,10 +59,7 @@
 	}
 
 	function afterExecute() {
-		void loadIntegrity();
-		void loadLag();
-		void loadProjection(() => pager?.load() ?? null);
-		void monitor?.refresh();
+		session.reloadAll();
 	}
 </script>
 
@@ -154,7 +77,7 @@
 		<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('flow.operations.subtitle')}</p>
 	</div>
 
-	{#if view === 'loading'}
+	{#if !panel || panel.view === 'loading'}
 		<div
 			class="rounded-lg border border-slate-200 bg-white p-6 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
 			role="status"
@@ -162,7 +85,7 @@
 		>
 			{$t('flow.operations.loading')}
 		</div>
-	{:else if view === 'forbidden'}
+	{:else if panel.view === 'forbidden'}
 		<div data-testid="flow-operations-forbidden" role="status" aria-live="polite">
 			<EmptyState
 				icon="office"
@@ -171,31 +94,32 @@
 			/>
 		</div>
 	{:else}
-		{#if healthSnap}
+		{#if panel.health}
 			<OpsHealthCard
-				snapshot={healthSnap}
-				onpause={() => monitor?.pause()}
-				onresume={() => monitor?.resume()}
-				onrefresh={() => void monitor?.refresh()}
+				snapshot={panel.health}
+				onpause={() => session.pauseHealth()}
+				onresume={() => session.resumeHealth()}
+				onrefresh={() => session.refreshHealth()}
 			/>
 		{/if}
 		<OpsLagTable
-			{lag}
-			{lagErrorKey}
-			{projection}
-			{projectionErrorKey}
-			pageNumber={lagPage}
-			hasPrevious={lagHasPrevious}
-			hasNext={lagHasNext}
-			busy={lagBusy}
-			onprevious={() => void loadProjection(() => pager?.previous() ?? null)}
-			onnext={() => void loadProjection(() => pager?.next() ?? null)}
+			lag={panel.lag}
+			lagErrorKey={panel.lagErrorKey}
+			projection={panel.projection.data}
+			projectionErrorKey={panel.projection.errorKey}
+			projectionUnavailable={panel.projection.unavailable}
+			pageNumber={panel.lagPage}
+			hasPrevious={panel.lagHasPrevious}
+			hasNext={panel.lagHasNext}
+			busy={panel.lagBusy}
+			onprevious={() => void session.loadProjection('previous')}
+			onnext={() => void session.loadProjection('next')}
 		/>
 		<OpsIntegrityTable
-			{integrity}
-			errorKey={integrityErrorKey}
-			limit={integrityLimit}
-			busy={integrityBusy}
+			integrity={panel.integrity}
+			errorKey={panel.integrityErrorKey}
+			limit={panel.integrityLimit}
+			busy={panel.integrityBusy}
 			onlimit={changeLimit}
 			onoperate={openOperation}
 		/>
