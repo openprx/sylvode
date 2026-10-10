@@ -383,7 +383,8 @@ replacement and the earliest removal.
   `status: "ok"` and `checked_at` next to their fingerprint, and failing rows (previously only
   counted) carry `status: "failed"`, `checked_at`, a stable `failure` class
   (`storage_inconsistent`, `projection_missing`, `limit_exceeded`, `document_missing`,
-  `replay_failed`) and `error_code`. `counts` describe exactly the returned page. A database
+  `replay_failed`) and `error_code`. `counts` (`total`, `checked`, `healthy`, `failed`) always
+  cover every document in the workspace, whatever the `scope`, `cursor` or `limit`. A database
   error while checking now fails the request instead of being counted as a failed document.
 - Flow admin lag: `GET /api/v1/admin/workspaces/{id}/flow/lag` now honours `cursor` and `limit`
   (1..=100, default 50) and lists one row per document in `projection.items`, `search.items` and
