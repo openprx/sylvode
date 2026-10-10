@@ -31,6 +31,8 @@ import {
 	readRecentExports,
 	recentExportsKey,
 	rememberExport,
+	sha256Fallback,
+	sha256HexOfBlob,
 	type FlowExportJob,
 	type KeyValueStore
 } from '../src/lib/flow/package-export';
@@ -40,6 +42,8 @@ import type { ApiResult } from '../src/lib/api/client';
 
 const WS = 'ws-1';
 const CHECKSUM = 'd'.repeat(64);
+/** SHA-256 of the three ASCII bytes `zip`. */
+const ZIP_SHA256 = '4a70fe9aa6436e02c2dea340fbd1e352e4ef2d8ce6ca52ad25d4b95471fc8bf2';
 
 function job(status: string, extra: Partial<FlowExportJob> = {}): FlowExportJob {
 	return {
@@ -364,20 +368,66 @@ await suite.checkAsync(
 );
 
 await suite.checkAsync(
-	'download checks the server hash header against the job checksum',
+	'download hashes the downloaded bytes locally and compares them with the job checksum',
 	async () => {
 		const url = '/api/v1/flow/exports/job-1/artifact';
-		const done = job('completed', { download_url: url });
 		const blob = new Blob(['zip']);
+		const realHash = await sha256HexOfBlob(blob);
+		assertEqual(realHash, ZIP_SHA256, 'local hash of "zip" is the known SHA-256');
+		const done = job('completed', { download_url: url, checksum: realHash });
 		const good = await downloadExport(done, 'f.sylvode-flow.zip', {
-			downloadExportArtifact: async () => ok({ blob, sha256: CHECKSUM })
+			downloadExportArtifact: async () => ok({ blob, sha256: realHash })
 		});
-		assert(good.status === 'ready' && good.blob === blob, 'matching hash: ready');
-		const bad = await downloadExport(done, 'f.sylvode-flow.zip', {
+		assert(
+			good.status === 'ready' && good.blob === blob,
+			'bytes, header and checksum agree: ready'
+		);
+		const uppercase = await downloadExport(
+			job('completed', { download_url: url, checksum: realHash.toUpperCase() }),
+			'f',
+			{ downloadExportArtifact: async () => ok({ blob, sha256: null }) }
+		);
+		assertEqual(uppercase.status, 'ready', 'hex case does not matter');
+
+		// No header: the bytes alone decide, both ways.
+		const noHeaderGood = await downloadExport(done, 'f', {
+			downloadExportArtifact: async () => ok({ blob, sha256: null })
+		});
+		assertEqual(noHeaderGood.status, 'ready', 'no header, matching bytes: ready');
+		const tampered = new Blob(['zip!']);
+		const noHeaderBad = await downloadExport(done, 'f', {
+			downloadExportArtifact: async () => ok({ blob: tampered, sha256: null })
+		});
+		assert(noHeaderBad.status === 'failed', 'no header, tampered bytes: refused');
+		assertEqual(noHeaderBad.failure.messageKey, 'flow.error.checksum_mismatch', 'mismatch key');
+		assert(!('blob' in noHeaderBad), 'a refused download hands out no blob');
+
+		// The header is not proof: a header equal to the checksum does not rescue tampered bytes.
+		const headerLies = await downloadExport(done, 'f', {
+			downloadExportArtifact: async () => ok({ blob: tampered, sha256: realHash })
+		});
+		assertEqual(headerLies.status, 'failed', 'header == checksum but bytes differ: refused');
+
+		// A header that disagrees with the checksum is still a mismatch.
+		const headerDiffers = await downloadExport(done, 'f', {
 			downloadExportArtifact: async () => ok({ blob, sha256: 'e'.repeat(64) })
 		});
-		assert(bad.status === 'failed', 'mismatch fails');
-		assertEqual(bad.failure.messageKey, 'flow.error.checksum_mismatch', 'mismatch key');
+		assertEqual(headerDiffers.status, 'failed', 'header disagrees with checksum: refused');
+
+		// A job without a checksum cannot be verified, so nothing is handed out.
+		const noChecksum = await downloadExport(
+			job('completed', { download_url: url, checksum: '' }),
+			'f',
+			{ downloadExportArtifact: async () => ok({ blob, sha256: null }) }
+		);
+		assertEqual(noChecksum.status, 'failed', 'missing checksum: refused');
+		const nullChecksum = await downloadExport(
+			{ ...done, checksum: null as unknown as string },
+			'f',
+			{ downloadExportArtifact: async () => ok({ blob, sha256: null }) }
+		);
+		assertEqual(nullChecksum.status, 'failed', 'null checksum: refused');
+
 		let called = false;
 		const notDone = await downloadExport(job('running', { download_url: url }), 'f', {
 			downloadExportArtifact: async () => {
@@ -394,6 +444,17 @@ await suite.checkAsync(
 		);
 	}
 );
+
+await suite.checkAsync('the non-secure-origin SHA-256 fallback matches Web Crypto', async () => {
+	const hex = (bytes: Uint8Array) =>
+		Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+	for (const length of [0, 1, 3, 55, 56, 63, 64, 65, 119, 1000, 70_000]) {
+		const input = new Uint8Array(length);
+		for (let i = 0; i < length; i += 1) input[i] = (i * 31 + 7) & 0xff;
+		const expected = hex(new Uint8Array(await crypto.subtle.digest('SHA-256', input)));
+		assertEqual(hex(sha256Fallback(input)), expected, `fallback == subtle for ${length} bytes`);
+	}
+});
 
 await suite.checkAsync('every export i18n key exists in zh and en', async () => {
 	const root = new URL('..', import.meta.url).pathname;

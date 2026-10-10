@@ -172,7 +172,8 @@ OpenPR name keeps working; see **Deprecated**.
     explicit confirmation; the sidebar shows the Flow entry only while Flow is enabled.
   - Web UI: a workspace package export and import page under
     `/workspace/{workspaceId}/settings/flow/package` for workspace owners and admins. Export
-    polls the job and downloads the `.sylvode-flow.zip` after checking its SHA-256; import is a
+    polls the job and downloads the `.sylvode-flow.zip`, hashing the downloaded bytes locally
+    (SHA-256) and refusing the file unless the hash equals the job checksum; import is a
     five-step wizard (choose file, upload with progress and cancel, mapping and policies, server
     preview, exact-hash confirmation) that keeps checksum, format and policy errors on screen and
     out of confirm, and opens a report page that resumes polling after a reload.
