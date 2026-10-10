@@ -46,7 +46,10 @@ export type FlowErrorCode =
 	| 'server_draining'
 	| 'server_rejected'
 	| 'checksum_mismatch'
-	| 'unsupported_format';
+	| 'unsupported_format'
+	/** Web-local (`error-mapping-v1.md` "Web 本地错误码"): no response, or a 5xx without an
+	 * `error_code`. Never produced by a server; `recoverable=true`, retried under the same key. */
+	| 'network_error';
 
 export interface FlowDrainDetails {
 	readonly reason: 'drain' | 'contention';

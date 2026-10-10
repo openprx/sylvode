@@ -274,6 +274,7 @@
 				role="alert"
 				data-testid="flow-embed-failed"
 				data-error-code={embedSnap.failure.code}
+				data-failure-kind={embedSnap.failure.kind}
 			>
 				<span class="flex-1">
 					{$t('flow.canvas.slashMenu.collectionFailedTitle', {
@@ -440,7 +441,12 @@
 			{/if}
 		{/if}
 		{#if formsFailure}
-			<p class="text-sm text-red-600" role="alert" data-error-code={formsFailure.code}>
+			<p
+				class="text-sm text-red-600"
+				role="alert"
+				data-error-code={formsFailure.code}
+				data-failure-kind={formsFailure.kind}
+			>
 				{$t(formsFailure.key)}
 			</p>
 		{/if}

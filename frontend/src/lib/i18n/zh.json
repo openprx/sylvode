@@ -2539,7 +2539,8 @@
         "causal_dependency_missing": "这项修改依赖一项已被拒绝的修改，无法单独提交。它已和后续修改一起保存在恢复草稿中。",
         "cross_workspace_relation": "关联目标位于另一个工作区，已拒绝并记录为完整性问题。请工作区管理员在运维页处理。"
       },
-      "integrityRepairLink": "打开工作区运维页"
+      "integrityRepairLink": "打开工作区运维页",
+      "network_error": "无法连接到服务器（网络中断或网关错误）。修改尚未提交，可以安全重试。"
     },
     "history": {
       "title": "历史记录",
