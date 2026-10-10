@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Hosts one Collection on the object route: the view switcher (from the Collection's
-	// `views[]`), the schema-mode switch (button + `?mode=schema`), the active view's
+	// `views[]`), the schema-mode switch (button + `?mode=schema`), the query bar, the active view's
 	// renderer and the record panel. The view and panel components come from the renderer
 	// registry (`collection:table`, `collection:board`, `record:panel`) through their `load()`
 	// dynamic imports. For a Record object (`recordId`) it shows that record's panel standalone.
@@ -13,6 +13,7 @@
 	import { FlowCommandService } from '$lib/flow/command-service';
 	import { CollectionViewController, activeViewIn } from '$lib/flow/collection-view';
 	import { resolveRenderer } from '$lib/flow/renderer-registry';
+	import CollectionQueryBar from './CollectionQueryBar.svelte';
 	import CollectionSchemaEditor from './CollectionSchemaEditor.svelte';
 
 	interface Props {
@@ -209,6 +210,8 @@
 			{#if $viewState.mode === 'schema'}
 				<CollectionSchemaEditor {controller} snapshot={$viewState} />
 			{/if}
+
+			<CollectionQueryBar {controller} snapshot={$viewState} />
 
 			{#if viewComponent}
 				{@const View = viewComponent}

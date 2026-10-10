@@ -3,10 +3,10 @@
 // four block-level renderers this alpha ships. An unregistered `${objectType}:${viewType}` fails
 // to `read_only`/`unsupported` -- it must never let an arbitrary component path reach the CRDT.
 
-// v0.6 registers `collection:table` and `record:panel` (`collection:board` follows). Their
-// components are loaded through `load()` (a dynamic import), so their code is a separate chunk
-// that only the Flow object route ever requests; `page:canvas` / `navigator:tree` are mounted
-// statically by their routes and carry no loader.
+// v0.6 registers `collection:table`, `collection:board` and `record:panel`. Their components are
+// loaded through `load()` (a dynamic import), so their code is a separate chunk that only the
+// Flow object route ever requests; `page:canvas` / `navigator:tree` are mounted statically by
+// their routes and carry no loader.
 
 import type { Component } from 'svelte';
 
@@ -37,6 +37,13 @@ const REGISTRY: Partial<Record<RendererKey, ViewRendererRegistration>> = {
 		fallback: 'unsupported',
 		load: async () =>
 			(await import('$lib/components/flow/collection/CollectionTable.svelte')).default
+	},
+	'collection:board': {
+		key: 'collection:board',
+		capabilities: ['edit', 'view'],
+		fallback: 'unsupported',
+		load: async () =>
+			(await import('$lib/components/flow/collection/CollectionBoard.svelte')).default
 	},
 	'record:panel': {
 		key: 'record:panel',
