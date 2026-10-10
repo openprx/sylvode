@@ -518,6 +518,38 @@ impl LoroCollabEngine {
     }
 }
 
+impl LoroCollabEngine {
+    /// [`CollabEngine::import_update`] for an update offered for acceptance: additionally refuses
+    /// an update whose causal dependencies are not in this document with
+    /// [`CollabError::CausalDependencyMissing`], instead of reporting it as an applied (empty)
+    /// change.
+    ///
+    /// The plain `import_update` stays lenient on purpose: it replays history that was already
+    /// accepted, where refusing now would make a stored document unreadable.
+    ///
+    /// # Errors
+    /// Everything `import_update` reports, plus `CausalDependencyMissing`. After that error the
+    /// engine still buffers the pending changes internally (the visible state and frontier are
+    /// unchanged), so the caller must discard it -- as the isolated-apply worker, whose engine
+    /// lives for one request, does.
+    pub fn import_update_causally_complete(&mut self, update: &[u8]) -> Result<Diff, CollabError> {
+        InputLimits::default().validate_update(update)?;
+        let before = self.doc.state_vv();
+        let status = self.doc.import(update).map_err(|e| CollabError::DecodeFailed {
+            input: "update",
+            reason: e.to_string(),
+        })?;
+        if status.pending.is_some() {
+            return Err(CollabError::CausalDependencyMissing);
+        }
+        let after = self.doc.state_vv();
+        self.rebuild_id_cache()?;
+        Ok(Diff {
+            changed: before != after,
+        })
+    }
+}
+
 impl CollabEngine for LoroCollabEngine {
     type Error = CollabError;
 
@@ -704,5 +736,41 @@ mod tests {
         // The original must be untouched -- this is the whole point of `fork` over `Clone`.
         assert_eq!(engine.title().expect("title reads"), "before fork");
         assert_ne!(engine.frontier(), forked.frontier());
+    }
+
+    /// FP2-B6: an update whose causal dependencies are not in the document leaves Loro's import
+    /// pending; it must be refused rather than reported as an (empty) success, and must leave the
+    /// document unchanged. The same bytes import once their dependency is present.
+    #[test]
+    fn import_of_an_update_with_missing_causal_dependencies_is_refused() {
+        let mut author = LoroCollabEngine::new_empty(1);
+        author.set_title("first").expect("first edit");
+        let first_only = author.export_from(&Frontier::default()).expect("first export");
+        let after_first = author.frontier();
+        author.set_title("second").expect("second edit");
+        let dependent = author.export_from(&after_first).expect("dependent export");
+
+        let mut receiver = LoroCollabEngine::new_empty(2);
+        let before = receiver.frontier();
+        let refused = receiver.import_update_causally_complete(&dependent);
+        assert!(
+            matches!(refused, Err(CollabError::CausalDependencyMissing)),
+            "a causally incomplete update must be refused, got {refused:?}"
+        );
+        assert_eq!(
+            receiver.frontier(),
+            before,
+            "a refused update leaves the document unchanged"
+        );
+        assert_eq!(receiver.title().expect("title reads"), "");
+
+        let mut complete = LoroCollabEngine::new_empty(2);
+        complete
+            .import_update_causally_complete(&first_only)
+            .expect("the dependency imports");
+        complete
+            .import_update_causally_complete(&dependent)
+            .expect("the dependent update now imports");
+        assert_eq!(complete.title().expect("title reads"), "second");
     }
 }

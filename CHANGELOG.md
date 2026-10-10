@@ -513,6 +513,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow collaboration: an `update` whose causal dependencies are not in the document (the engine
+  could only buffer it as pending) is refused with `invalid_update` and
+  `details.reason = "causal_dependency_missing"`; it gets no seq and nothing is stored. It used to
+  be accepted with a seq while its content stayed invisible. Replaying already-stored history is
+  unchanged.
 - Flow collaboration: a `rejected` frame answering an `update` carries that update's
   `update_id` when the update is refused by the `update_rate` or `frame_rate` limiter or is not
   a well-formed frame. Only the `type` and `update_id` members of a frame refused before

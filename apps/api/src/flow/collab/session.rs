@@ -6180,6 +6180,82 @@ mod tests {
             );
             scratch.drop_self().await;
         }
+
+        /// FP2-B6 (`collab-protocol-v1.md` / `error-mapping-v1.md`): an update whose causal
+        /// dependencies are not in the document is `invalid_update` with
+        /// `details.reason="causal_dependency_missing"`, gets no seq and writes nothing.
+        #[tokio::test]
+        async fn fp2_b6_causally_incomplete_update_is_refused_without_a_seq() {
+            use collab_core::{CollabEngine, LoroCollabEngine};
+            let scratch = scratch_or_skip!("fp2-b6-causal");
+            let state = state_for(scratch.db.clone());
+            let (workspace_id, owner_id) = seed_workspace(&state).await;
+            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            #[derive(sea_orm::FromQueryResult)]
+            struct SnapshotRow {
+                snapshot: Vec<u8>,
+            }
+            let row = SnapshotRow::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT snapshot FROM collab_documents WHERE id = $1",
+                vec![document_id.into()],
+            ))
+            .one(&state.db)
+            .await
+            .expect("snapshot query runs")
+            .expect("document row exists");
+            let mut engine = LoroCollabEngine::load(&row.snapshot).expect("snapshot loads");
+            engine.set_title("first, never sent").expect("first edit");
+            let after_first = engine.frontier();
+            engine.set_title("second, depends on the first").expect("second edit");
+            let dependent = engine.export_from(&after_first).expect("dependent update exports");
+
+            let addr = spawn_server(state.clone()).await;
+            let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-causal").await;
+            let (mut ws, head_before) = open_session(addr, &ticket, "b6-causal", document_id).await;
+            let updates_before = count_collab_updates(&state, document_id).await;
+            let update_id = Uuid::new_v4();
+            send_frame(
+                &mut ws,
+                &Frame::Update {
+                    protocol_version: PROTOCOL_VERSION,
+                    document_id,
+                    update_id,
+                    base_frontier: crate::flow::projection::encode_frontier(&after_first),
+                    bytes: encode_b64(&dependent),
+                    idempotency_key: None,
+                    origin: "b6-causal".to_string(),
+                    message: None,
+                },
+            )
+            .await;
+            let answer = fp2_b6_answer(&mut ws, update_id).await;
+            let Some(Frame::Rejected {
+                code: RejectedCode::InvalidUpdate,
+                write_state: WriteState::NotApplied,
+                details,
+                ..
+            }) = &answer
+            else {
+                panic!("a causally incomplete update must be refused as invalid_update: {answer:?}");
+            };
+            assert_eq!(
+                details.as_ref().and_then(|d| d["reason"].as_str()),
+                Some("causal_dependency_missing"),
+                "{answer:?}"
+            );
+            assert_eq!(
+                read_head_seq(&state, document_id).await,
+                head_before,
+                "no seq is assigned"
+            );
+            assert_eq!(
+                count_collab_updates(&state, document_id).await,
+                updates_before,
+                "nothing is stored"
+            );
+            scratch.drop_self().await;
+        }
     }
 }
 

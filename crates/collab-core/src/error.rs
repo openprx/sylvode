@@ -35,6 +35,10 @@ pub enum CollabError {
         limit: u64,
         observed: u64,
     },
+    /// An update depends on operations the document does not contain: the engine could not apply
+    /// it and only buffered it as pending (`collab-protocol-v1.md`, 2026-10-10: such an update must
+    /// be refused, never accepted as an empty change).
+    CausalDependencyMissing,
 }
 
 impl Display for CollabError {
@@ -66,6 +70,9 @@ impl Display for CollabError {
                 formatter,
                 "limit_exceeded({limit_kind}): observed {observed}, limit {limit}"
             ),
+            Self::CausalDependencyMissing => {
+                write!(formatter, "update depends on operations the document does not contain")
+            }
         }
     }
 }

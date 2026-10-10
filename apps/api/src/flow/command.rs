@@ -1607,6 +1607,10 @@ pub(super) fn map_collab_error(err: &CollabError) -> ApiError {
             ApiError::invalid_update("invalid_update")
         }
         CollabError::OperationFailed { reason } => ApiError::invalid_update(format!("invalid_update: {reason}")),
+        CollabError::CausalDependencyMissing => ApiError::invalid_update_with_details(
+            "invalid_update",
+            json!({ "reason": crate::error::CAUSAL_DEPENDENCY_MISSING_REASON }),
+        ),
         CollabError::LimitExceeded {
             limit_kind,
             limit,

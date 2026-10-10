@@ -242,7 +242,7 @@ fn metered_workload(engine: LoroCollabEngine, update: &[u8]) -> Result<LoroColla
 /// is not).
 #[cfg(target_os = "linux")]
 fn decode_apply_and_check(mut engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngine, wire::Outcome> {
-    if let Err(err) = engine.import_update(update) {
+    if let Err(err) = engine.import_update_causally_complete(update) {
         return Err(wire::Outcome::Rejected(err));
     }
 
