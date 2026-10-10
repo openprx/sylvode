@@ -19,7 +19,16 @@
 //   `preview_id`, reused by every retry against that preview;
 // - an expired preview cannot be committed; `stale_frontier` offers "re-read the source and
 //   preview again", which reads the object again and previews with a new key;
-// - errors branch on `error_code` first and the numeric code second, never on `message`.
+// - errors branch on `error_code` first and the numeric code second, never on `message`;
+// - `policy_rejected.details.reason` (`error-mapping-v1.md`, 2026-10-10) is worded per value:
+//   `preview_expired` and `target_schema_changed` on commit send the wizard back to the preview
+//   step and preview again under a new key (`target_schema_changed` re-reads the form first);
+//   `permission_unconfigured` tells the user an admin must configure the form's policy;
+// - a commit that fails after its job exists carries `details.job_id` (`rest-api-v1.md` v0.7,
+//   B4): the job is `failed` and can be retried, so the wizard hands over to the job page instead
+//   of staying here;
+// - preview and job `warnings[]` are `<code>:<field_key>` strings; each is shown on its own line,
+//   worded by its code (an unknown code gets a generic line, never the raw string as prose).
 
 import type { ApiResult, PaginatedData } from '$lib/api/client';
 import type {
@@ -107,6 +116,34 @@ export type ConvertFailureKind =
 	| 'unavailable'
 	| 'flow_error';
 
+/** `policy_rejected.details.reason` values approved for conversions (`error-mapping-v1.md`). */
+export const POLICY_REJECTED_REASONS = [
+	'preview_expired',
+	'target_schema_changed',
+	'permission_unconfigured'
+] as const;
+export type PolicyRejectedReason = (typeof POLICY_REJECTED_REASONS)[number];
+
+/** The reasons after which a commit is answered by previewing again automatically. */
+export const REPREVIEW_REASONS: ReadonlySet<PolicyRejectedReason> = new Set([
+	'preview_expired',
+	'target_schema_changed'
+]);
+
+export const POLICY_REASON_KEYS: Readonly<Record<PolicyRejectedReason, string>> = {
+	preview_expired: 'flow.bridge.convert.error.previewExpired',
+	target_schema_changed: 'flow.bridge.convert.error.targetSchemaChanged',
+	permission_unconfigured: 'flow.bridge.convert.error.permissionUnconfigured'
+};
+
+/** The notice shown on the preview step after an automatic re-preview. */
+export const REPREVIEW_NOTICE_KEYS: Readonly<
+	Record<'preview_expired' | 'target_schema_changed', string>
+> = {
+	preview_expired: 'flow.bridge.convert.repreviewed.previewExpired',
+	target_schema_changed: 'flow.bridge.convert.repreviewed.targetSchemaChanged'
+};
+
 export interface ConvertFailure {
 	readonly kind: ConvertFailureKind;
 	readonly messageKey: string;
@@ -114,6 +151,51 @@ export interface ConvertFailure {
 	readonly retryable: boolean;
 	/** `policy_rejected.details.permission_state`, when the server attached one (ADR-0019). */
 	readonly permissionState: BridgePermissionState | null;
+	/** `policy_rejected.details.reason` when it is an approved value; an unknown reason is `null`
+	 * and keeps the generic `policy_rejected` wording. */
+	readonly reason: PolicyRejectedReason | null;
+	/** `details.job_id`: the commit created a job before failing, and that job is now `failed`. */
+	readonly jobId: string | null;
+}
+
+// ---- warnings -----------------------------------------------------------------------------------
+
+/** Mapping warning codes (`rest-api-v1.md` v0.7, 2026-10-10). */
+export const CONVERSION_WARNING_KEYS: Readonly<Record<string, string>> = {
+	target_value_missing: 'flow.bridge.warning.targetValueMissing',
+	required_target_value_missing: 'flow.bridge.warning.requiredTargetValueMissing',
+	unknown_target_field: 'flow.bridge.warning.unknownTargetField'
+};
+export const CONVERSION_WARNING_UNKNOWN_KEY = 'flow.bridge.warning.unknown';
+
+export interface ConversionWarning {
+	/** The stable code, or `null` when this client does not know it. */
+	readonly code: string | null;
+	/** The form field key the warning is about (`''` when the entry has none). */
+	readonly field: string;
+	readonly messageKey: string;
+}
+
+/** Parses one `<code>:<field_key>` entry. Anything that is not such a string, or whose code is
+ * not one of the three frozen codes, is a generic warning: it is never rendered as prose. */
+export function parseConversionWarning(entry: unknown): ConversionWarning {
+	if (typeof entry === 'string') {
+		const at = entry.indexOf(':');
+		const code = at < 0 ? entry : entry.slice(0, at);
+		const field = at < 0 ? '' : entry.slice(at + 1);
+		const key = Object.prototype.hasOwnProperty.call(CONVERSION_WARNING_KEYS, code)
+			? CONVERSION_WARNING_KEYS[code]
+			: undefined;
+		if (key) return { code, field, messageKey: key };
+		return { code: null, field, messageKey: CONVERSION_WARNING_UNKNOWN_KEY };
+	}
+	return { code: null, field: '', messageKey: CONVERSION_WARNING_UNKNOWN_KEY };
+}
+
+export function parseConversionWarnings(
+	entries: readonly unknown[] | null | undefined
+): ConversionWarning[] {
+	return Array.isArray(entries) ? entries.map(parseConversionWarning) : [];
 }
 
 // i18n keys, spelled out statically so the unit tests can check every one exists in zh and en.
@@ -360,9 +442,41 @@ function failure(
 	kind: ConvertFailureKind,
 	messageKey: string,
 	retryable: boolean,
-	permissionState: BridgePermissionState | null = null
+	extra: {
+		permissionState?: BridgePermissionState | null;
+		reason?: PolicyRejectedReason | null;
+		jobId?: string | null;
+	} = {}
 ): ConvertFailure {
-	return { kind, messageKey, retryable, permissionState };
+	return {
+		kind,
+		messageKey,
+		retryable,
+		permissionState: extra.permissionState ?? null,
+		reason: extra.reason ?? null,
+		jobId: extra.jobId ?? null
+	};
+}
+
+const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function detailString(details: unknown, key: string): string | null {
+	if (!details || typeof details !== 'object') return null;
+	const value = (details as Record<string, unknown>)[key];
+	return typeof value === 'string' ? value : null;
+}
+
+function readPolicyReason(details: unknown): PolicyRejectedReason | null {
+	const reason = detailString(details, 'reason');
+	return reason !== null && (POLICY_REJECTED_REASONS as readonly string[]).includes(reason)
+		? (reason as PolicyRejectedReason)
+		: null;
+}
+
+/** `details.job_id` when it is a job id (a malformed value is ignored, never followed). */
+function readJobId(details: unknown): string | null {
+	const jobId = detailString(details, 'job_id');
+	return jobId !== null && JOB_ID.test(jobId) ? jobId : null;
 }
 
 /**
@@ -374,24 +488,29 @@ export function classifyConvertFailure(
 ): ConvertFailure {
 	const flowError = flowErrorFromEnvelope(result);
 	if (flowError) {
+		const jobId = readJobId(result.details);
 		switch (flowError.code) {
 			case 'stale_frontier':
-				return failure('stale_frontier', FAILURE_KEYS.stale_frontier, false);
-			case 'policy_rejected':
+				return failure('stale_frontier', FAILURE_KEYS.stale_frontier, false, { jobId });
+			case 'policy_rejected': {
+				const reason = readPolicyReason(result.details);
 				return failure(
 					'policy_rejected',
-					FAILURE_KEYS.policy_rejected,
+					reason ? POLICY_REASON_KEYS[reason] : FAILURE_KEYS.policy_rejected,
 					false,
-					readPermissionState(result.details)
+					{ permissionState: readPermissionState(result.details), reason, jobId }
 				);
+			}
 			case 'forbidden':
-				return failure('forbidden', FAILURE_KEYS.forbidden, false);
+				return failure('forbidden', FAILURE_KEYS.forbidden, false, { jobId });
 			case 'not_found':
-				return failure('not_found', FAILURE_KEYS.not_found, false);
+				return failure('not_found', FAILURE_KEYS.not_found, false, { jobId });
 			case 'unauthenticated':
-				return failure('unauthenticated', FAILURE_KEYS.unauthenticated, false);
+				return failure('unauthenticated', FAILURE_KEYS.unauthenticated, false, { jobId });
 			default:
-				return failure('flow_error', flowErrorI18nKey(flowError), flowError.recoverable);
+				return failure('flow_error', flowErrorI18nKey(flowError), flowError.recoverable, {
+					jobId
+				});
 		}
 	}
 	if (typeof result.error_code === 'string' && result.error_code !== '') {
@@ -440,6 +559,11 @@ export interface ConvertSnapshot {
 	readonly committing: boolean;
 	readonly commitFailure: ConvertFailure | null;
 	readonly jobId: string | null;
+	/** Set after a commit was refused with `preview_expired` / `target_schema_changed` and the
+	 * wizard previewed again by itself; cleared by the next commit or mapping edit. */
+	readonly repreviewedAfter: 'preview_expired' | 'target_schema_changed' | null;
+	/** The preview's warnings, one parsed entry per `<code>:<field_key>` string. */
+	readonly warnings: readonly ConversionWarning[];
 	/** `canAdvance()` and `canCommit()` captured with the rest of the snapshot, so a component
 	 * reading only the snapshot re-renders when they change. */
 	readonly canAdvance: boolean;
@@ -449,6 +573,15 @@ export interface ConvertSnapshot {
 export type ConvertCommitOutcome =
 	| { readonly status: 'committed'; readonly jobId: string; readonly job: FlowConversionJob }
 	| { readonly status: 'refused' }
+	/** The commit created a job that failed: open the job page (its retry surface). */
+	| { readonly status: 'job_failed'; readonly jobId: string; readonly failure: ConvertFailure }
+	/** The preview expired or the target schema changed: the wizard is back on the preview step
+	 * with a fresh preview (or its failure). */
+	| {
+			readonly status: 'repreviewed';
+			readonly reason: 'preview_expired' | 'target_schema_changed';
+			readonly failure: ConvertFailure;
+	  }
 	| { readonly status: 'failed'; readonly failure: ConvertFailure };
 
 export interface ConvertWizardDeps {
@@ -488,6 +621,7 @@ export class ConvertWizard {
 	private committing = false;
 	private commitFailure: ConvertFailure | null = null;
 	private jobId: string | null = null;
+	private repreviewedAfter: 'preview_expired' | 'target_schema_changed' | null = null;
 	private formsRequest = 0;
 
 	constructor(
@@ -533,6 +667,8 @@ export class ConvertWizard {
 			committing: this.committing,
 			commitFailure: this.commitFailure,
 			jobId: this.jobId,
+			repreviewedAfter: this.repreviewedAfter,
+			warnings: parseConversionWarnings(this.preview?.warnings),
 			canAdvance: this.canAdvance(),
 			canCommit: this.canCommit()
 		};
@@ -805,6 +941,7 @@ export class ConvertWizard {
 		const key = this.commitIntent.key;
 		this.committing = true;
 		this.commitFailure = null;
+		this.repreviewedAfter = null;
 		this.emit();
 		let result: ApiResult<FlowConversionJob>;
 		try {
@@ -829,8 +966,52 @@ export class ConvertWizard {
 		}
 		const failure = classifyConvertFailure(result);
 		this.commitFailure = failure;
+		if (failure.jobId !== null) {
+			// The job exists and is `failed`; its page owns the retry. Nothing more to do here.
+			this.jobId = failure.jobId;
+			this.emit();
+			return { status: 'job_failed', jobId: failure.jobId, failure };
+		}
+		if (failure.reason === 'preview_expired' || failure.reason === 'target_schema_changed') {
+			const reason = failure.reason;
+			await this.repreview(reason);
+			return { status: 'repreviewed', reason, failure };
+		}
 		this.emit();
 		return { status: 'failed', failure };
+	}
+
+	/** Back to the preview step with a new preview request (new key). After a schema change the
+	 * form is read again first, so the mapping step and the preview describe the current schema;
+	 * inputs for fields that still exist are kept. */
+	private async repreview(reason: 'preview_expired' | 'target_schema_changed'): Promise<void> {
+		if (reason === 'target_schema_changed') await this.reloadForm();
+		this.invalidatePreview();
+		this.previewIntent = null;
+		this.commitIntent = null;
+		this.currentStep = 'preview';
+		await this.runPreview();
+		this.repreviewedAfter = reason;
+		this.emit();
+	}
+
+	private async reloadForm(): Promise<void> {
+		const projectId = this.projectId;
+		const formId = this.formId;
+		if (projectId === null || formId === null) return;
+		let result: ApiResult<PaginatedData<UniversalForm>>;
+		try {
+			result = await this.deps.listForms(projectId);
+		} catch {
+			return;
+		}
+		if (result.code !== 0 || !result.data) return;
+		const form = result.data.items.find((item) => item.id === formId && !item.archived_at);
+		if (!form) return;
+		this.forms = result.data.items.filter((item) => !item.archived_at);
+		this.fields = describeFormFields(form);
+		const keep = new Set(this.fields.map((field) => field.key));
+		this.inputs = Object.fromEntries(Object.entries(this.inputs).filter(([key]) => keep.has(key)));
 	}
 
 	private editable(): boolean {
@@ -857,6 +1038,7 @@ export class ConvertWizard {
 	private invalidatePreview(): void {
 		this.clearPreviewResult();
 		this.previewState = 'idle';
+		this.repreviewedAfter = null;
 	}
 
 	private emit(): void {

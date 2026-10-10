@@ -13,6 +13,7 @@
 		CONVERT_STEPS,
 		ConvertWizard,
 		FIELD_PROBLEM_KEYS,
+		REPREVIEW_NOTICE_KEYS,
 		STEP_KEYS,
 		permissionExplanation,
 		type ConvertSnapshot,
@@ -155,14 +156,21 @@
 	async function commit() {
 		announce('flow.bridge.convert.live.committing');
 		const outcome = await wizard.commit();
-		if (outcome.status === 'committed') {
-			announce('flow.bridge.convert.live.committed');
+		if (outcome.status === 'committed' || outcome.status === 'job_failed') {
+			// A failed job is retried from its own page, so both outcomes leave the wizard.
+			announce(
+				outcome.status === 'committed'
+					? 'flow.bridge.convert.live.committed'
+					: outcome.failure.messageKey
+			);
 			await goto(
 				resolve('/(app)/workspace/[workspaceId]/flow/conversions/[jobId]', {
 					workspaceId,
 					jobId: outcome.jobId
 				})
 			);
+		} else if (outcome.status === 'repreviewed') {
+			announce(REPREVIEW_NOTICE_KEYS[outcome.reason]);
 		} else if (outcome.status === 'failed') {
 			announce(outcome.failure.messageKey);
 		}
@@ -509,12 +517,24 @@
 								</p>
 							{/if}
 
+							{#if snap.repreviewedAfter}
+								<p
+									class="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+									role="status"
+									data-testid="flow-convert-repreviewed"
+									data-reason={snap.repreviewedAfter}
+								>
+									{$t(REPREVIEW_NOTICE_KEYS[snap.repreviewedAfter])}
+								</p>
+							{/if}
+
 							{#if snap.previewFailure}
 								<div
 									class="space-y-3 rounded-md border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40"
 									role="alert"
 									data-testid="flow-convert-preview-error"
 									data-kind={snap.previewFailure.kind}
+									data-reason={snap.previewFailure.reason ?? undefined}
 								>
 									<p class="text-sm text-red-800 dark:text-red-200">
 										{$t(snap.previewFailure.messageKey)}
@@ -635,16 +655,22 @@
 									<h4 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
 										{$t('flow.bridge.convert.preview.warnings')}
 									</h4>
-									{#if snap.preview.warnings.length === 0}
+									{#if snap.warnings.length === 0}
 										<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
 											{$t('flow.bridge.convert.preview.noWarnings')}
 										</p>
 									{:else}
 										<ul
 											class="mt-1 list-disc space-y-1 pl-5 text-sm text-amber-800 dark:text-amber-200"
+											data-testid="flow-convert-warnings"
 										>
-											{#each snap.preview.warnings as warning, index (index)}
-												<li>{warning}</li>
+											{#each snap.warnings as warning, index (index)}
+												<li
+													data-testid="flow-convert-warning"
+													data-code={warning.code ?? 'unknown'}
+												>
+													{$t(warning.messageKey, { values: { field: fieldLabel(warning.field) } })}
+												</li>
 											{/each}
 										</ul>
 									{/if}
@@ -727,6 +753,7 @@
 									role="alert"
 									data-testid="flow-convert-commit-error"
 									data-kind={snap.commitFailure.kind}
+									data-reason={snap.commitFailure.reason ?? undefined}
 								>
 									<p class="text-sm text-red-800 dark:text-red-200">
 										{$t(snap.commitFailure.messageKey)}

@@ -219,6 +219,8 @@ export interface FlowConversionJob {
 	job_id: string;
 	status: 'started' | 'completed' | 'failed';
 	source_object_id: string;
+	/** What the conversion creates (`rest-api-v1.md` v0.7 job row; B4). */
+	target_type: 'form' | 'form_record';
 	source_frontier: string;
 	target_schema_version: number;
 	lineage_id: string | null;
