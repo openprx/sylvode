@@ -26,8 +26,17 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  *
  * The production API never stores a `failed` job (its only producer, the conversion fault hook in
  * `apps/api/src/flow/bridge.rs`, is compiled for tests only), so the retry path is driven against
- * a completed job that the spec marks `failed` directly in PostgreSQL. That needs
- * E2E_DATABASE_URL (the API's database); without it the retry test is skipped and says so.
+ * a completed job that the spec marks `failed` directly in PostgreSQL. That needs:
+ *
+ *   E2E_DATABASE_URL      libpq URL of the database the API under test uses, e.g.
+ *                         `postgres://user:pass@127.0.0.1:5432/sylvode`; `psql` must be on PATH.
+ *   E2E_REQUIRE_DATABASE  set to `1` where the retry test must run (a release gate, CI): a missing
+ *                         E2E_DATABASE_URL then FAILS the test instead of skipping it.
+ *
+ * Without E2E_DATABASE_URL (and without E2E_REQUIRE_DATABASE=1) the retry test is skipped through
+ * `test.skip(condition, reason)`: the reason is printed to the run output and recorded as the
+ * test's `skip` annotation, and the summary counts it as skipped -- "2 passed, 1 skipped" is not
+ * a pass of the retry path.
  *
  * Needs BASE_URL to serve the built frontend with `/api` proxied to the API on the same origin
  * (as `frontend/nginx.conf` does). Registration after the first account needs an instance admin:
@@ -653,10 +662,17 @@ test('a failed job is retried only after confirmation, with one key per job; a p
 	page,
 	request
 }) => {
-	test.skip(
-		!process.env.E2E_DATABASE_URL,
-		'E2E_DATABASE_URL is not set: the production API never stores a failed job, so the fixture is written in SQL'
-	);
+	const missingDatabase = !process.env.E2E_DATABASE_URL;
+	const skipReason =
+		'E2E_DATABASE_URL is not set: the production API never stores a failed job, so the retry fixture is written in SQL';
+	if (missingDatabase) {
+		expect(
+			process.env.E2E_REQUIRE_DATABASE,
+			`${skipReason}; E2E_REQUIRE_DATABASE=1 forbids skipping the retry test`
+		).not.toBe('1');
+		console.warn(`[flow-convert] SKIPPED retry test: ${skipReason}`);
+	}
+	test.skip(missingDatabase, skipReason);
 	const setup = await conversionSetup(request, 'retry');
 	const first = await convertOverRest(request, setup);
 	markJobFailed(first.job.job_id);
