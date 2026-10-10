@@ -92,11 +92,13 @@ function harness(
 	let n = 0;
 	const next = <T>(queue: T[]): T => (queue.length > 1 ? (queue.shift() as T) : queue[0]);
 	const controller = new PackageExportController(WS, () => {}, {
-		api: {
-			exportWorkspace: async (workspaceId, body) => {
+		commands: {
+			startWorkspaceExport: async (workspaceId, body) => {
 				posts.push({ workspaceId, body });
 				return next(postReplies);
-			},
+			}
+		},
+		reads: {
 			getExportJob: async (jobId) => {
 				gets.push(jobId);
 				// Runaway guard: a poller that ignores terminal statuses ends here as a visible failure

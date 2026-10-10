@@ -32,23 +32,29 @@ import {
 	type CompactDocumentInput,
 	type CreateFlowObjectInput,
 	type CreateTicketInput,
+	type CreateWorkspaceExportInput,
 	type ExecuteFlowCommandInput,
 	type FlowConversionCommitInput,
 	type FlowConversionJob,
 	type FlowConversionPreview,
 	type FlowConversionPreviewInput,
 	type FlowDiffResponse,
+	type FlowExportJob,
 	type FlowFeatureFlags,
 	type FlowFeatureUpdate,
 	type FlowHistoryResponse,
 	type FlowNavigatorResponse,
 	type FlowObjectListResponse,
 	type FlowOperationReceipt,
+	type FlowPackageArtifactReceipt,
+	type FlowPackageImportJobReceipt,
+	type FlowPackageImportPreview,
 	type FlowReplayResponse,
 	type ListFlowObjectsQuery,
 	type RebuildProjectionInput,
 	type ReplayDeliveriesInput,
 	type SetFlowFeatureInput,
+	type UploadProgress,
 	type VerifyDocumentInput
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
@@ -215,7 +221,56 @@ export class FlowCommandService {
 	async convertRetry(jobId: string, idempotencyKey: string): Promise<ApiResult<FlowConversionJob>> {
 		return flowApi.retryConversion(jobId, idempotencyKey);
 	}
+
+	// v0.8 workspace package round trip (`surface-coverage-v1.md`: export / upload / preview /
+	// commit are `adapter:CommandService` consumers; `ui-surface-v1.md`'s frozen interface names
+	// `startWorkspaceExport`, `uploadImportPackage`, `previewImport`, `commitImport`). Keys come
+	// from the caller's intent (`package-export.ts`, `package-wizard.ts`); raw `ApiResult`s are
+	// returned so callers branch on `error_code`.
+
+	async startWorkspaceExport(
+		workspaceId: string,
+		input: CreateWorkspaceExportInput
+	): Promise<ApiResult<FlowExportJob>> {
+		return flowApi.exportWorkspace(workspaceId, input);
+	}
+
+	async uploadImportPackage(
+		workspaceId: string,
+		file: Blob,
+		filename: string,
+		idempotencyKey: string,
+		signal?: AbortSignal,
+		onProgress?: (progress: UploadProgress) => void
+	): Promise<ApiResult<FlowPackageArtifactReceipt>> {
+		return flowApi.uploadPackageArtifact(
+			workspaceId,
+			file,
+			filename,
+			idempotencyKey,
+			signal,
+			onProgress
+		);
+	}
+
+	async previewImport(
+		workspaceId: string,
+		input: PreviewImportInput
+	): Promise<ApiResult<FlowPackageImportPreview>> {
+		return flowApi.previewPackageImport(workspaceId, input);
+	}
+
+	async commitImport(
+		workspaceId: string,
+		previewId: string,
+		input: CommitImportInput
+	): Promise<ApiResult<FlowPackageImportJobReceipt>> {
+		return flowApi.commitPackageImport(workspaceId, previewId, input);
+	}
 }
+
+export type PreviewImportInput = Parameters<typeof flowApi.previewPackageImport>[1];
+export type CommitImportInput = Parameters<typeof flowApi.commitPackageImport>[2];
 
 function mapErrorCode(code: number): FlowError {
 	switch (code) {

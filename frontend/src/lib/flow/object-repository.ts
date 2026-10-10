@@ -20,7 +20,9 @@ import {
 	type FlowAdminIntegrity,
 	type FlowAdminLag,
 	type FlowBootstrap,
+	type FlowExportJob,
 	type FlowObjectView,
+	type FlowPackageImportReport,
 	type FlowProjectionLag
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
@@ -340,6 +342,26 @@ export class FlowObjectRepository {
 		query: { cursor?: string; limit?: number } = {}
 	): Promise<ApiResult<FlowProjectionLag>> {
 		return flowApi.getProjectionLag(workspaceId, query);
+	}
+
+	// v0.8 package round-trip reads (export job status, the finished artifact, the import job
+	// report). Typed reads only: no engine doc, no authorization decision.
+
+	getExportJob(jobId: string): Promise<ApiResult<FlowExportJob>> {
+		return flowApi.getExportJob(jobId);
+	}
+
+	downloadExportArtifact(
+		downloadUrl: string
+	): Promise<ApiResult<{ blob: Blob; sha256: string | null }>> {
+		return flowApi.downloadExportArtifact(downloadUrl);
+	}
+
+	getImportReport(
+		workspaceId: string,
+		importJobId: string
+	): Promise<ApiResult<FlowPackageImportReport>> {
+		return flowApi.getPackageImport(workspaceId, importJobId);
 	}
 }
 

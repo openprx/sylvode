@@ -9,12 +9,16 @@
 //   1s, 2s, 4s and 5s thereafter (exponential, capped at 5s) -- and polling stops at a terminal
 //   status, on a permanent error, or when the tracker is disposed;
 // - `download_url` is surfaced only for a successful terminal status;
+// - the export write goes through `CommandService.startWorkspaceExport`, the job read and the
+//   artifact download through `ObjectRepository` (`ui-surface-v1.md` five adapters);
 // - recent job ids are a per-user, per-workspace convenience in `localStorage` (at most 10; every
 //   read and write is guarded). The server is the source of truth.
 
 import type { ApiResult } from '$lib/api/client';
-import { flowApi, type CreateWorkspaceExportInput, type FlowExportJob } from '$lib/api/flow';
+import type { CreateWorkspaceExportInput, FlowExportJob } from '$lib/api/flow';
 import { projectsApi } from '$lib/api/projects';
+import { FlowCommandService } from './command-service';
+import { FlowObjectRepository } from './object-repository';
 import { classifyPackageFailure, type FlowPackageFailure } from './package-import';
 
 export type { FlowExportJob };
@@ -142,7 +146,8 @@ export interface ExportJobView {
 }
 
 export interface PackageExportDeps {
-	readonly api: Pick<typeof flowApi, 'exportWorkspace' | 'getExportJob'>;
+	readonly commands: Pick<FlowCommandService, 'startWorkspaceExport'>;
+	readonly reads: Pick<FlowObjectRepository, 'getExportJob'>;
 	readonly sleep: (ms: number) => Promise<void>;
 	readonly newKey: () => string;
 	readonly store: KeyValueStore | null;
@@ -183,7 +188,8 @@ export class PackageExportController {
 		deps: Partial<PackageExportDeps> = {}
 	) {
 		this.deps = {
-			api: deps.api ?? flowApi,
+			commands: deps.commands ?? new FlowCommandService(),
+			reads: deps.reads ?? new FlowObjectRepository(),
 			sleep: deps.sleep ?? defaultSleep,
 			newKey: deps.newKey ?? newIdempotencyKey,
 			store: deps.store === undefined ? browserStore() : deps.store
@@ -206,7 +212,7 @@ export class PackageExportController {
 
 	async submit(options: ExportOptions): Promise<ExportSubmitOutcome> {
 		const key = this.keyFor(options);
-		const result = await this.deps.api.exportWorkspace(
+		const result = await this.deps.commands.startWorkspaceExport(
 			this.workspaceId,
 			buildWorkspaceExportRequest(options, key)
 		);
@@ -245,7 +251,7 @@ export class PackageExportController {
 			for (let attempt = 0; !this.disposed; attempt += 1) {
 				if (attempt > 0) await this.deps.sleep(exportPollDelay(attempt - 1));
 				if (this.disposed) break;
-				const result: ApiResult<FlowExportJob> = await this.deps.api.getExportJob(jobId);
+				const result: ApiResult<FlowExportJob> = await this.deps.reads.getExportJob(jobId);
 				if (this.disposed) break;
 				if (result.code === 0 && result.data) {
 					const terminal = isTerminalExportStatus(result.data.status);
@@ -373,13 +379,13 @@ export async function sha256HexOfBlob(blob: Blob): Promise<string> {
 export async function downloadExport(
 	job: FlowExportJob,
 	fileName: string,
-	api: Pick<typeof flowApi, 'downloadExportArtifact'> = flowApi
+	reads: Pick<FlowObjectRepository, 'downloadExportArtifact'> = new FlowObjectRepository()
 ): Promise<ExportDownloadOutcome> {
 	const url = exportDownloadUrl(job);
 	if (!url) {
 		return { status: 'failed', failure: classifyPackageFailure({ code: 404 }, 'report') };
 	}
-	const result = await api.downloadExportArtifact(url);
+	const result = await reads.downloadExportArtifact(url);
 	if (result.code !== 0 || !result.data) {
 		return { status: 'failed', failure: classifyPackageFailure(result, 'report') };
 	}

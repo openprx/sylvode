@@ -663,8 +663,8 @@ await suite.checkAsync(
 		let gets = 0;
 		const states: ImportReportState[] = [];
 		const poller = new ImportReportPoller(WS, 'import-1', (state) => states.push(state), {
-			api: {
-				getPackageImport: async () => {
+			reads: {
+				getImportReport: async () => {
 					gets += 1;
 					return (queue.shift() ?? { code: 0, message: 'ok', data: report }) as never;
 				}
@@ -684,8 +684,8 @@ await suite.checkAsync(
 
 		for (const envelope of [{ code: 404 }, { code: 403 }, { code: 404, error_code: 'not_found' }]) {
 			const notFound = new ImportReportPoller(WS, 'x', () => {}, {
-				api: {
-					getPackageImport: async () => ({ message: 'ok', data: null, ...envelope }) as never
+				reads: {
+					getImportReport: async () => ({ message: 'ok', data: null, ...envelope }) as never
 				},
 				sleep: async () => {}
 			});
@@ -694,6 +694,79 @@ await suite.checkAsync(
 				'not_found',
 				`${JSON.stringify(envelope)} -> not_found`
 			);
+		}
+	}
+);
+
+await suite.checkAsync(
+	'package calls go through the adapters: writes via CommandService, reads via ObjectRepository',
+	async () => {
+		const calls: string[] = [];
+		const session = new FlowPackageImportSession(WS, {
+			uploadImportPackage: async (workspaceId, _file, filename, key) => {
+				calls.push(`upload ${workspaceId} ${filename} ${key}`);
+				return {
+					code: 0,
+					message: 'ok',
+					data: { artifact_id: 'artifact-1' } as never
+				};
+			},
+			previewImport: async (workspaceId, input) => {
+				calls.push(`preview ${workspaceId} ${input.artifact_id} ${input.idempotency_key}`);
+				return { message: 'ok', ...okPreview() } as never;
+			},
+			commitImport: async (workspaceId, previewId, input) => {
+				calls.push(
+					`commit ${workspaceId} ${previewId} ${input.package_sha256} ${input.idempotency_key}`
+				);
+				return { message: 'ok', ...okCommit } as never;
+			}
+		});
+		await session.upload(new Blob(['pkg']), 'a.sylvode-flow.zip', 'k-up');
+		await session.preview({
+			externalReferencePolicy: 'detach',
+			conflictPolicy: 'reject_existing',
+			includeHistory: false,
+			idempotencyKey: 'k-pre'
+		});
+		await session.commit({ exactPackageSha256: PREVIEW_HASH, idempotencyKey: 'k-com' });
+		assertDeepEqual(
+			calls,
+			[
+				`upload ${WS} a.sylvode-flow.zip k-up`,
+				`preview ${WS} artifact-1 k-pre`,
+				`commit ${WS} preview-1 ${PREVIEW_HASH} k-com`
+			],
+			'the injected CommandService carried all three writes'
+		);
+
+		// No package module talks to `flowApi` at run time; each goes through an adapter.
+		const root = new URL('..', import.meta.url).pathname;
+		for (const file of [
+			'package-import.ts',
+			'package-export.ts',
+			'import-report.ts',
+			'package-wizard.ts'
+		]) {
+			const source = readFileSync(join(root, 'src/lib/flow', file), 'utf8');
+			assert(!/\bflowApi\s*\./.test(source), `${file} calls flowApi directly`);
+			assert(
+				!/import\s*\{[^}]*\bflowApi\b[^}]*\}\s*from\s*'\$lib\/api\/flow'/.test(source),
+				`${file} imports the flowApi value`
+			);
+		}
+		const commands = readFileSync(join(root, 'src/lib/flow/command-service.ts'), 'utf8');
+		for (const method of [
+			'startWorkspaceExport',
+			'uploadImportPackage',
+			'previewImport',
+			'commitImport'
+		]) {
+			assert(new RegExp(`async ${method}\\(`).test(commands), `CommandService.${method}`);
+		}
+		const repository = readFileSync(join(root, 'src/lib/flow/object-repository.ts'), 'utf8');
+		for (const method of ['getExportJob', 'downloadExportArtifact', 'getImportReport']) {
+			assert(new RegExp(`\\n\\t${method}\\(`).test(repository), `ObjectRepository.${method}`);
 		}
 	}
 );

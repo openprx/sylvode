@@ -1,15 +1,17 @@
 // State boundary for the v0.8 package-import wizard. Package bytes are handed directly to the
 // HTTP adapter and are never copied into ObjectRepository, IndexedDB, or this session object.
+// The session is a state container: its upload / preview / commit calls go through the injected
+// `CommandService` (`ui-surface-v1.md` five adapters), never `flowApi` directly.
 
-import {
-	flowApi,
-	type FlowPackageArtifactReceipt,
-	type FlowPackageConflictPolicy,
-	type FlowPackageExternalReferencePolicy,
-	type FlowPackageImportJobReceipt,
-	type FlowPackageImportPreview,
-	type UploadProgress
+import type {
+	FlowPackageArtifactReceipt,
+	FlowPackageConflictPolicy,
+	FlowPackageExternalReferencePolicy,
+	FlowPackageImportJobReceipt,
+	FlowPackageImportPreview,
+	UploadProgress
 } from '$lib/api/flow';
+import { FlowCommandService } from './command-service';
 import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
 
 /** The machine-readable part of a rejected envelope. `message` is deliberately not carried as a
@@ -163,7 +165,13 @@ export class FlowPackageImportSession {
 	private previewReceipt: FlowPackageImportPreview | null = null;
 	private previewConflictPolicy: FlowPackageConflictPolicy | null = null;
 
-	constructor(private readonly workspaceId: string) {}
+	constructor(
+		private readonly workspaceId: string,
+		private readonly commands: Pick<
+			FlowCommandService,
+			'uploadImportPackage' | 'previewImport' | 'commitImport'
+		> = new FlowCommandService()
+	) {}
 
 	async upload(
 		file: Blob,
@@ -173,7 +181,7 @@ export class FlowPackageImportSession {
 		onProgress?: (progress: UploadProgress) => void
 	): Promise<FlowPackageArtifactReceipt> {
 		this.reset();
-		const result = await flowApi.uploadPackageArtifact(
+		const result = await this.commands.uploadImportPackage(
 			this.workspaceId,
 			file,
 			filename,
@@ -214,7 +222,7 @@ export class FlowPackageImportSession {
 		this.previewReceipt = null;
 		this.previewConflictPolicy = null;
 		this.previewReceipt = requireData(
-			await flowApi.previewPackageImport(this.workspaceId, {
+			await this.commands.previewImport(this.workspaceId, {
 				artifact_id: this.artifact.artifact_id,
 				project_mapping: input.projectMapping ?? {},
 				external_reference_policy: input.externalReferencePolicy,
@@ -239,7 +247,7 @@ export class FlowPackageImportSession {
 			throw new Error('The confirmed package hash does not match the server preview');
 		}
 		return requireData(
-			await flowApi.commitPackageImport(this.workspaceId, preview.preview_id, {
+			await this.commands.commitImport(this.workspaceId, preview.preview_id, {
 				package_sha256: preview.package_sha256,
 				mapping_hash: preview.mapping_hash,
 				conflict_policy: conflictPolicy,
