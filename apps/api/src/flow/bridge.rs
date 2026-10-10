@@ -2032,6 +2032,10 @@ pub struct RecordLineageConversion {
     pub source_object_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_title: Option<String>,
+    /// Whether the caller may open the job itself (`GET /flow/conversions/{job_id}`): the job's
+    /// actor or a workspace owner/admin. Withheld when the source is unreadable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_available: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// Outer `None` withholds the key (unreadable source); `Some(None)` serializes `null`.
@@ -2071,6 +2075,7 @@ pub async fn record_flow_lineage(
     struct ConversionLineageRow {
         id: Uuid,
         source_object_id: Uuid,
+        actor_id: Uuid,
         status: String,
         lineage_id: Option<Uuid>,
         created_at: DateTime<Utc>,
@@ -2095,7 +2100,7 @@ pub async fn record_flow_lineage(
     .await?;
     let conversions = ConversionLineageRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id, source_object_id, status, lineage_id, created_at FROM flow_conversion_jobs \
+        "SELECT id, source_object_id, actor_id, status, lineage_id, created_at FROM flow_conversion_jobs \
          WHERE workspace_id = $1 AND target_type = 'form_record' AND $2 = ANY(created_target_ids) \
          ORDER BY created_at, id",
         vec![workspace_id.into(), record_id.into()],
@@ -2113,20 +2118,25 @@ pub async fn record_flow_lineage(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    let mut caller: Option<(Uuid, bool)> = None;
     let readable: BTreeSet<Uuid> = match policy::resolve_flow_principal(state, extensions, workspace_id).await {
-        Ok((actor_id, role, is_bot)) => authz::effective_permissions(
-            &state.db,
-            workspace_id,
-            &source_ids,
-            if is_bot { "bot" } else { "user" },
-            actor_id,
-            &role,
-        )
-        .await?
-        .into_iter()
-        .filter(|(_, level)| *level >= PermissionLevel::View)
-        .map(|(id, _)| id)
-        .collect(),
+        Ok((actor_id, role, is_bot)) => {
+            // Same rule as `conversion_status`: the job's actor, or a workspace owner/admin.
+            caller = Some((actor_id, matches!(role.as_str(), "owner" | "admin")));
+            authz::effective_permissions(
+                &state.db,
+                workspace_id,
+                &source_ids,
+                if is_bot { "bot" } else { "user" },
+                actor_id,
+                &role,
+            )
+            .await?
+            .into_iter()
+            .filter(|(_, level)| *level >= PermissionLevel::View)
+            .map(|(id, _)| id)
+            .collect()
+        }
         Err(error)
             if matches!(
                 error.kind(),
@@ -2189,6 +2199,9 @@ pub async fn record_flow_lineage(
                         source_available: true,
                         source_object_id: Some(row.source_object_id),
                         source_title: titles.get(&row.source_object_id).cloned().flatten(),
+                        job_available: Some(
+                            caller.is_some_and(|(caller_id, is_admin)| is_admin || caller_id == row.actor_id),
+                        ),
                         status: Some(row.status),
                         lineage_id: Some(row.lineage_id),
                         created_at: Some(row.created_at),
@@ -2199,6 +2212,7 @@ pub async fn record_flow_lineage(
                         source_available: false,
                         source_object_id: None,
                         source_title: None,
+                        job_available: None,
                         status: None,
                         lineage_id: None,
                         created_at: None,

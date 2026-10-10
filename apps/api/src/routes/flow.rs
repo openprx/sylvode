@@ -13568,6 +13568,32 @@ mod flow_database_tests {
         assert_eq!(conversions[0]["status"], "completed");
         assert_eq!(conversions[0]["lineage_id"], lineage_id);
         assert!(conversions[0]["created_at"].is_string(), "{before}");
+        // The member reads the source but neither started the job nor administers the workspace,
+        // so `GET /flow/conversions/{job_id}` is closed to them; the owner who started it is not.
+        assert_eq!(conversions[0]["job_available"], false, "{before}");
+        let member_job = fp2_b4_route(
+            &state,
+            member_id,
+            "GET",
+            &format!("/api/v1/flow/conversions/{job_id}"),
+            None,
+        )
+        .await;
+        assert_typed(&member_job, "not_found", 404);
+        let owner_before = fp2_b5_record_detail(&state, fx.owner_id, record_id).await;
+        assert_eq!(
+            owner_before["data"]["flow_lineage"]["conversions"][0]["job_available"], true,
+            "{owner_before}"
+        );
+        let owner_job = fp2_b4_route(
+            &state,
+            fx.owner_id,
+            "GET",
+            &format!("/api/v1/flow/conversions/{job_id}"),
+            None,
+        )
+        .await;
+        assert_eq!(owner_job["code"], 0, "{owner_job}");
 
         // (2) The owner restricts the Page to an empty roster: the member loses Flow read access.
         let app = authorization_router(state.clone(), fx.owner_id);

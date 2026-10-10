@@ -257,7 +257,9 @@ OpenPR name keeps working; see **Deprecated**.
   `flow_lineage` object: `references` lists the live Flow references that point at the record and
   `conversions` lists the conversion jobs that created it. Each entry is filtered by the caller's
   Flow read access to its source object; an unreadable source is reported only as
-  `reference_id`/`job_id` with `source_available: false`. Both lists are empty when Flow or the
+  `reference_id`/`job_id` with `source_available: false`. A readable conversion entry carries
+  `job_available`, true when the caller may open the job (its actor or a workspace
+  owner/admin). Both lists are empty when Flow or the
   Forms bridge is disabled for the workspace.
 
 ### Changed
