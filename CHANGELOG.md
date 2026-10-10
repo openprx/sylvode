@@ -233,6 +233,13 @@ OpenPR name keeps working; see **Deprecated**.
   - Web UI: the object panel is split into Info, Share, Relations and History tabs
     (`role="tablist"`, arrow keys, Home and End); Share and Relations load when their tab is
     first opened.
+  - Web UI adapters for the navigator: `flowApi.searchObjects` (`GET .../flow/search`, cancellable
+    with an `AbortSignal`) behind `ObjectRepository.search`, a search controller (200ms debounce,
+    the previous request aborted and its late answer dropped, stale hits marked, clamped keyboard
+    index, `require_current` failures not retried as `allow_stale`), a projection-lag badge
+    controller refreshed every 30 seconds, and a standalone Collection create session that keeps
+    one idempotency key and one set of field and view ids per intent. `CommandService.createObject`
+    accepts the caller's idempotency key and throws the typed `error_code`.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

@@ -3,7 +3,10 @@
 // four block-level renderers this alpha ships. An unregistered `${objectType}:${viewType}` fails
 // to `read_only`/`unsupported` -- it must never let an arbitrary component path reach the CRDT.
 
-export type ObjectType = 'page' | 'navigator';
+// `collection` is a real object type from v0.6 (`FlowObjectType`); until its `collection:table` /
+// `collection:board` renderers are registered every lookup for it returns `null`, i.e. the
+// read_only/unsupported fallback.
+export type ObjectType = 'page' | 'navigator' | 'collection';
 export type ViewType = 'canvas' | 'tree';
 export type RendererKey = `${ObjectType}:${ViewType}`;
 export type Capability = 'edit' | 'view';
