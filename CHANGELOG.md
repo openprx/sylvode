@@ -279,6 +279,13 @@ OpenPR name keeps working; see **Deprecated**.
     rename, retype, configure (select options), archive and reorder fields and to create, rename
     and reorder views; a refused change is shown by its `error_code`. Strings are under
     `flow.collection.*` and `flow.record.*`, which the i18n parity gate now requires.
+  - Web UI: the Collection board (`collection:board`) groups records by a select field, one
+    column per option plus "No value" (`role="list"`); dragging a card to another column, or its
+    44px "move to previous / next column" buttons, writes that field with one `record_patch`, and
+    each column adds a record with its option preset. Without a select field the board explains
+    how to add one. A filter, sort and board grouping bar narrows the records with an unsaved
+    draft query (sent as query parameters, never written to the document); in schema mode
+    **Save view** stores the draft and the column widths in the view with `view_update`.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which
