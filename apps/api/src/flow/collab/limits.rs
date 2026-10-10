@@ -334,6 +334,13 @@ pub const fn effective_limits() -> FlowLimitsV1 {
     }
 }
 
+/// Age after which a conversion job still `started` is treated as abandoned (its run crashed, or
+/// recording its failure failed) and reaped to `failed` by
+/// `flow::bridge::reap_stale_conversion_jobs`. **Not a `limits-v1.md` contract value**: it is an
+/// implementation recovery threshold, kept here beside the other server-side ceilings so it has
+/// one home. It is far above any real run, which is one database transaction.
+pub const CONVERSION_STARTED_STALE_AFTER_SECS: i64 = 900;
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {

@@ -13332,6 +13332,136 @@ mod flow_database_tests {
         assert_eq!(committed["data"]["warnings"], expected, "{committed}");
         scratch.drop_self().await;
     }
+
+    /// Leaves one job of `preview` failed through the production path (record.create revoked
+    /// between preview and commit), then restores the policy. Returns the job id.
+    async fn fp2_b4_failed_job(state: &AppState, fx: &Fp2B4, key: &str) -> Uuid {
+        let (preview_id, _) = fp2_b4_record_preview(state, fx).await;
+        fp2_b4_set_record_create(state, fx.owner_id, fx.form_id, false).await;
+        let failed = fp2_b4_commit(state, fx, preview_id, 1, key).await;
+        assert_typed(&failed, "policy_rejected", 403);
+        fp2_b4_set_record_create(state, fx.owner_id, fx.form_id, true).await;
+        fp2_b4_jobs_of_preview(state, preview_id)
+            .await
+            .first()
+            .map(|job| job.id)
+            .expect("the failed job exists")
+    }
+
+    async fn fp2_b4_job_status(state: &AppState, job_id: Uuid) -> (String, Option<String>) {
+        let row = Fp2B4JobRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id, status, error_code FROM flow_conversion_jobs WHERE id=$1",
+            vec![job_id.into()],
+        ))
+        .one(&state.db)
+        .await
+        .expect("job query")
+        .expect("job row");
+        assert_eq!(row.id, job_id);
+        (row.status, row.error_code)
+    }
+
+    async fn fp2_b4_reaped_events(state: &AppState, job_id: Uuid) -> (i64, i64) {
+        let events = fp2_b4_count(
+            state,
+            "SELECT count(*) AS n FROM business_events WHERE aggregate_id=$1 \
+             AND event_type='flow.conversion.failed' AND payload->>'reason'='stale_started' \
+             AND payload->>'error'='server_rejected'",
+            vec![job_id.to_string().into()],
+        )
+        .await;
+        let dispatch = fp2_b4_count(
+            state,
+            "SELECT count(*) AS n FROM event_dispatch d JOIN business_events e ON e.id = d.event_id \
+             WHERE e.aggregate_id=$1 AND e.event_type='flow.conversion.failed' \
+             AND e.payload->>'reason'='stale_started'",
+            vec![job_id.to_string().into()],
+        )
+        .await;
+        (events, dispatch)
+    }
+
+    /// FP2-B4 ruling 2: a job left `started` past the threshold (its run crashed) is reaped to
+    /// `failed`/`server_rejected` with one business `flow.conversion.failed` (`reason=stale_started`);
+    /// a fresh `started` job is left alone; a second sweep writes nothing; and a retry that finds
+    /// a stale `started` job reaps it in place and proceeds.
+    #[tokio::test]
+    async fn fp2_b4_stale_started_conversion_jobs_are_reaped_once_and_become_retryable() {
+        let scratch = scratch_or_skip!("fp2-b4-reap");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        let stale_job = fp2_b4_failed_job(&state, &fx, "fp2-b4-reap-stale").await;
+        let fresh_job = fp2_b4_failed_job(&state, &fx, "fp2-b4-reap-fresh").await;
+        let retry_job = fp2_b4_failed_job(&state, &fx, "fp2-b4-reap-retry").await;
+        // Simulate runs that crashed after their claim: the job row is still `started`.
+        for (job_id, age) in [
+            (stale_job, "16 minutes"),
+            (fresh_job, "1 minute"),
+            (retry_job, "1 minute"),
+        ] {
+            exec(
+                &state,
+                &format!(
+                    "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
+                     updated_at=now()-interval '{age}' WHERE id=$1"
+                ),
+                vec![job_id.into()],
+            )
+            .await;
+        }
+
+        let threshold = crate::flow::bridge::conversion_started_stale_after();
+        let reaped = crate::flow::bridge::reap_stale_conversion_jobs(&state, threshold, None)
+            .await
+            .expect("the sweep runs");
+        assert_eq!(reaped, 1, "only the job older than the threshold is reaped");
+        assert_eq!(
+            fp2_b4_job_status(&state, stale_job).await,
+            ("failed".to_string(), Some("server_rejected".to_string()))
+        );
+        assert_eq!(
+            fp2_b4_reaped_events(&state, stale_job).await,
+            (1, 1),
+            "one business event"
+        );
+        assert_eq!(
+            fp2_b4_job_status(&state, fresh_job).await,
+            ("started".to_string(), None),
+            "a fresh started job is not reaped"
+        );
+        assert_eq!(fp2_b4_reaped_events(&state, fresh_job).await, (0, 0));
+
+        let again = crate::flow::bridge::reap_stale_conversion_jobs(&state, threshold, None)
+            .await
+            .expect("the second sweep runs");
+        assert_eq!(again, 0, "the sweep is idempotent");
+        assert_eq!(fp2_b4_reaped_events(&state, stale_job).await, (1, 1));
+
+        // The sweep made the stale job retryable.
+        let retried = fp2_b4_retry(&state, &fx, &stale_job.to_string()).await;
+        assert_eq!(retried["code"], 0, "{retried}");
+        assert_eq!(retried["data"]["status"], "completed", "{retried}");
+
+        // A retry that finds a fresh `started` job is still refused; ...
+        let refused = fp2_b4_retry(&state, &fx, &fresh_job.to_string()).await;
+        assert_typed(&refused, "policy_rejected", 403);
+        assert_eq!(fp2_b4_job_status(&state, fresh_job).await.0, "started");
+        // ... one that finds a stale one (it went stale after the startup sweep) reaps it in place
+        // and proceeds.
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
+             updated_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![retry_job.into()],
+        )
+        .await;
+        let reaped_in_place = fp2_b4_retry(&state, &fx, &retry_job.to_string()).await;
+        assert_eq!(reaped_in_place["code"], 0, "{reaped_in_place}");
+        assert_eq!(reaped_in_place["data"]["status"], "completed", "{reaped_in_place}");
+        assert_eq!(fp2_b4_reaped_events(&state, retry_job).await, (1, 1));
+        scratch.drop_self().await;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
