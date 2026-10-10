@@ -777,7 +777,10 @@ async fn record_relation_integrity(state: &AppState, workspace_id: Uuid, relatio
     if let Err(err) = result {
         tracing::error!(%err, %relation_id, "failed to record relation integrity alert");
     }
-    ApiError::invalid_update("cross-workspace relation integrity violation")
+    ApiError::invalid_update_with_details(
+        "cross-workspace relation integrity violation",
+        json!({ "reason": crate::error::CROSS_WORKSPACE_RELATION_REASON }),
+    )
 }
 
 /// Lists relations for an already-authorized root object.
@@ -999,7 +1002,7 @@ mod database_tests {
     use uuid::Uuid;
 
     use super::{BASE64_URL, CURSOR_VERSION, ListRelationsParams, RelationDirection, decode_cursor, list_relations};
-    use crate::error::ApiErrorKind;
+    use crate::error::{ApiError, ApiErrorKind};
     use crate::flow::collab::authz::PermissionLevel;
     use crate::flow::command::{CreateObjectInput, ExecuteCommandInput, create_object, execute_command};
     use crate::flow::event_origin::{CommandOrigin, EventSurface};
@@ -1984,6 +1987,16 @@ mod database_tests {
         .await
         .expect_err("corruption must fail the whole page");
         assert_eq!(err.kind(), ApiErrorKind::InvalidUpdate);
+        // FP2-B6: the refusal names its cause so a client can branch without reading `message`.
+        let reason = match &err {
+            ApiError::Typed { details, .. } => details
+                .as_ref()
+                .and_then(|details| details.get("reason"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            _ => None,
+        };
+        assert_eq!(reason.as_deref(), Some("cross_workspace_relation"), "{err:?}");
         let alerts = CountRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT count(*) AS count FROM flow_integrity_records WHERE workspace_id=$1 AND kind='cross_workspace_relation' \

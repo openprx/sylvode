@@ -513,6 +513,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow: a request refused because it crosses a workspace boundary through a relation (a
+  cross-workspace `parent_object_id` or move target, or a stored cross-workspace
+  `flow_relations` row met while listing relations) answers `invalid_update` with
+  `details.reason = "cross_workspace_relation"`, so a client can show it as an integrity
+  failure without reading `message`. The integrity record is written as before.
 - Flow: `GET /flow/objects/{id}/bootstrap` needs `view`, the level the WebSocket `open` and
   `snapshot` (which use the same loader) already need; it used to require `edit`, so a read-only
   member could watch a document live but not download its bootstrap.

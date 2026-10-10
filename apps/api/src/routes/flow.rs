@@ -8036,6 +8036,8 @@ mod flow_database_tests {
         let body = body_json(response).await;
         assert_eq!(body["code"], 400, "{body}");
         assert_eq!(body["message"], "invalid_update", "{body}");
+        assert_eq!(body["error_code"], "invalid_update", "{body}");
+        assert_eq!(body["details"]["reason"], "cross_workspace_relation", "{body}");
 
         use sea_orm::FromQueryResult as _;
 

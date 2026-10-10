@@ -581,6 +581,11 @@ impl ApiErrorKind {
 /// (`error-mapping-v1.md`'s approved reason table).
 pub const IDEMPOTENCY_KEY_BODY_DRIFT_REASON: &str = "idempotency_key_body_drift";
 
+/// `invalid_update.details.reason` for a request refused because it crosses a workspace boundary
+/// through a relation (a parent, a move target, a stored `flow_relations` row); the refusal is
+/// also recorded as a `cross_workspace_relation` integrity record.
+pub const CROSS_WORKSPACE_RELATION_REASON: &str = "cross_workspace_relation";
+
 #[derive(Debug, Error)]
 pub enum ApiError {
     #[error("{0}")]
