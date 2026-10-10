@@ -80,6 +80,7 @@ async function signInAs(page: Page, login: LoginData): Promise<void> {
 }
 
 const ADMIN_LINKS = ['Members', 'Webhook', 'Operation Records', 'Workspace Settings'];
+const SIDEBAR_ADMIN_LINKS = [...ADMIN_LINKS, 'Flow settings'];
 
 test('workspace home: entry from the list, cards by role and Flow flag, titles', async ({ browser, request }) => {
 	const admin = await instanceAdmin(request);
@@ -130,6 +131,11 @@ test('workspace home: entry from the list, cards by role and Flow flag, titles',
 	await expect(page.getByTestId('workspace-home-name')).toHaveText(workspaceName);
 	await expect(page.getByTestId('workspace-home-slug')).toHaveText(`home-${runId}`);
 	await expect(page.getByTestId('workspace-home-role')).toContainText('Owner');
+	// Entered from the list with no reload: the sidebar reads the role for this workspace now.
+	const sidebar = page.locator('aside');
+	for (const label of SIDEBAR_ADMIN_LINKS) {
+		await expect(sidebar.getByRole('link', { name: label, exact: true })).toBeVisible();
+	}
 
 	await expect(page.getByTestId('workspace-home-project-total')).toHaveText('Total: 6');
 	const recent = page.getByTestId('workspace-home-recent').getByRole('link');
@@ -158,6 +164,43 @@ test('workspace home: entry from the list, cards by role and Flow flag, titles',
 	await page.getByTestId('workspace-home-admin').getByRole('link', { name: 'Operation Records' }).click();
 	await expect(page).toHaveURL(new RegExp(`${homeUrl}/connections$`));
 	await expect(page).toHaveTitle('Sylvode - Operation Records');
+
+	// ---- the owner moves client-side to a workspace where it is only a member ----
+	const memberAuth = { Authorization: `Bearer ${memberLogin.tokens.access_token}` };
+	const foreign = await unwrap<{ id: string }>(
+		await request.post('/api/v1/workspaces', {
+			headers: memberAuth,
+			data: { slug: `home-foreign-${runId}`, name: `Foreign ${runId}` }
+		})
+	);
+	await unwrap(
+		await request.post(`/api/v1/workspaces/${foreign.id}/members`, {
+			headers: memberAuth,
+			data: { user_id: ownerLogin.user.id, role: 'member' }
+		})
+	);
+	await page.goto(homeUrl);
+	await expect(page.locator('aside').getByRole('link', { name: 'Members', exact: true })).toBeVisible();
+	// Client-side only (no reload): sidebar link to the list, then the foreign workspace.
+	await page.locator('aside a[href="/workspace"]').click();
+	await expect(page).toHaveURL(/\/workspace$/);
+	await page.getByRole('button', { name: new RegExp(`Foreign ${runId}`) }).first().click();
+	await expect(page).toHaveURL(new RegExp(`/workspace/${foreign.id}$`));
+	await expect(page.getByTestId('workspace-home-role')).toContainText('Member');
+	for (const label of SIDEBAR_ADMIN_LINKS) {
+		await expect(page.locator('aside').getByRole('link', { name: label, exact: true })).toHaveCount(0);
+	}
+
+	// ---- an instance admin that is not a member gets no workspace-admin links ----
+	const adminContext = await browser.newContext();
+	const adminPage = await adminContext.newPage();
+	await signInAs(adminPage, admin);
+	await adminPage.goto(homeUrl);
+	await expect(adminPage.locator('aside').getByRole('link', { name: 'Projects', exact: true })).toBeVisible();
+	for (const label of SIDEBAR_ADMIN_LINKS) {
+		await expect(adminPage.locator('aside').getByRole('link', { name: label, exact: true })).toHaveCount(0);
+	}
+	await adminContext.close();
 
 	// ---- member, Flow off ----
 	const memberContext = await browser.newContext();

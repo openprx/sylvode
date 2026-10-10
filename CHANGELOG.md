@@ -357,6 +357,12 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Web UI: the sidebar's workspace-admin links (Members, Webhook, Operation Records, Workspace
+  Settings, Flow settings) follow the viewer's member role in the workspace on screen. The role
+  was read once when the app first loaded and an instance admin counted as a workspace admin, so
+  a member could see another workspace's admin links and an owner who opened a workspace from the
+  workspace list saw none until a reload. The role is now re-read on every workspace change, the
+  links stay hidden until it arrives, and only `owner`/`admin` members see them, as on the server.
 - `mcp-server serve` had no SIGTERM or SIGINT handler: it died of the signal (exit 143) and
   dropped the call it was serving, and as PID 1 of the compose `mcp-server` container it ignored
   the signal and was killed by the runtime after 10 s. On SIGTERM or SIGINT it now stops accepting
