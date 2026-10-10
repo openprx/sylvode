@@ -842,6 +842,8 @@ pub struct ConversionJobResponse {
     pub job_id: Uuid,
     pub status: String,
     pub source_object_id: Uuid,
+    /// `form` (the conversion creates a form) or `form_record` (it creates a record in one).
+    pub target_type: String,
     pub source_frontier: String,
     pub target_schema_version: i32,
     pub lineage_id: Option<Uuid>,
@@ -1097,8 +1099,8 @@ async fn load_preview<C: ConnectionTrait>(conn: &C, preview_id: Uuid) -> Result<
 async fn load_job<C: ConnectionTrait>(conn: &C, job_id: Uuid) -> Result<ConversionJobResponse, ApiError> {
     ConversionJobResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id AS job_id, status, source_object_id, source_frontier, target_schema_version, lineage_id, \
-         created_target_ids, warnings, error_code AS error FROM flow_conversion_jobs WHERE id = $1",
+        "SELECT id AS job_id, status, source_object_id, target_type, source_frontier, target_schema_version, \
+         lineage_id, created_target_ids, warnings, error_code AS error FROM flow_conversion_jobs WHERE id = $1",
         vec![job_id.into()],
     ))
     .one(conn)
