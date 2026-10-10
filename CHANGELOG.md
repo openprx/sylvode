@@ -376,6 +376,14 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow package import: a preview whose `project_mapping` leaves a package source project
+  unmapped (including an empty mapping) now succeeds and lists each such project in `conflicts`
+  and in the new `conflict_details[]` as `{kind:"project_unmapped",source_project_id,title}`;
+  it used to fail with a bare 400 that did not say which projects exist. Committing such a
+  preview answers `invalid_update` with `details.reason = "project_unmapped"`. A mapping value
+  may be the contract literal `"unprojected"` (same as `null`). `conflict_details[]` also
+  describes import-lineage hits as `{kind:"lineage_exists",source_object_id,existing_target_id}`;
+  `conflicts` keeps its string-array shape.
 - Flow package import: `POST .../flow/imports/preview` returns the contract's `manifest_summary`
   (`projects:[{source_project_id,title}]`, `object_count`, `document_count`, `package_schema`,
   `engine`), so a caller can see which source projects to map before committing. Workspace

@@ -85,7 +85,10 @@ pub struct PackageArtifactRequest {
 #[derive(Debug, Deserialize)]
 pub struct PackageImportPreviewRequest {
     pub artifact_id: Uuid,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::flow::package_import::deserialize_project_mapping"
+    )]
     pub project_mapping: std::collections::BTreeMap<Uuid, Option<Uuid>>,
     pub external_reference_policy: crate::flow::package_import::ExternalReferencePolicy,
     pub conflict_policy: crate::flow::package_import::ConflictPolicy,
@@ -11089,6 +11092,79 @@ mod flow_database_tests {
             .try_get("", "n")
             .unwrap();
         assert_eq!(in_target_project, 2, "both pages land in the mapped target project");
+        scratch.drop_self().await;
+    }
+
+    async fn fp2_b2_page_count(state: &AppState, workspace_id: Uuid, project_id: Option<Uuid>) -> i64 {
+        state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT count(*) AS n FROM flow_objects WHERE workspace_id=$1 AND object_type='page' \
+                 AND project_id IS NOT DISTINCT FROM $2",
+                vec![workspace_id.into(), project_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "n")
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn fp2_b2_empty_project_mapping_previews_unmapped_projects_and_commit_is_project_unmapped() {
+        let scratch = scratch_or_skip!("fp2-b2-unmapped");
+        let state = state_for(scratch.db.clone());
+        let fixture = fp2_b2_exported_project_package(&state).await;
+        let source = fixture.source_project;
+
+        let preview = fp2_b2_preview(&fixture, json!({}), "reject_existing", "fp2-b2-unmapped").await;
+        assert_eq!(
+            preview["code"], 0,
+            "an empty mapping previews instead of failing: {preview}"
+        );
+        assert_eq!(
+            preview["data"]["manifest_summary"]["projects"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(preview["data"]["conflicts"], json!([source]), "{preview}");
+        assert_eq!(
+            preview["data"]["conflict_details"],
+            json!([{"kind":"project_unmapped","source_project_id":source,"title":"Source roadmap"}]),
+            "{preview}"
+        );
+        let committed = fp2_b2_commit(&fixture, &preview, "reject_existing", "fp2-b2-unmapped-commit").await;
+        assert_typed(&committed, "invalid_update", 400);
+        assert_eq!(committed["details"]["reason"], "project_unmapped", "{committed}");
+        assert_eq!(fp2_b2_page_count(&state, fixture.target_workspace, None).await, 0);
+        assert_eq!(
+            fp2_b2_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
+            0
+        );
+
+        let unprojected = fp2_b2_preview(
+            &fixture,
+            json!({ source.to_string(): "unprojected" }),
+            "reject_existing",
+            "fp2-b2-unprojected",
+        )
+        .await;
+        assert_eq!(unprojected["code"], 0, "{unprojected}");
+        assert_eq!(unprojected["data"]["conflicts"], json!([]), "{unprojected}");
+        assert_eq!(unprojected["data"]["conflict_details"], json!([]), "{unprojected}");
+        assert_eq!(
+            unprojected["data"]["mapping"]["project_map"],
+            json!({ source.to_string(): null }),
+            "the literal freezes to the same mapping as null"
+        );
+        let committed = fp2_b2_commit(&fixture, &unprojected, "reject_existing", "fp2-b2-unprojected-commit").await;
+        assert_eq!(committed["code"], 0, "{committed}");
+        let report = fp2_b2_report(&fixture, &committed).await;
+        assert_eq!(report["data"]["counts"]["created"], 2, "{report}");
+        assert_eq!(fp2_b2_page_count(&state, fixture.target_workspace, None).await, 2);
         scratch.drop_self().await;
     }
 
