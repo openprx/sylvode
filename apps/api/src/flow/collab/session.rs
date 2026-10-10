@@ -387,6 +387,35 @@ fn limit_exceeded_frame(
     }
 }
 
+/// `frame` (a `rejected`) addressed to the `update` it answers (`collab-protocol-v1.md`,
+/// 2026-10-10: a `rejected` answering an `update` carries its `update_id`, rate refusals included).
+const fn answering_update(mut frame: Frame, refused_update_id: Option<Uuid>) -> Frame {
+    if let Frame::Rejected { update_id, .. } = &mut frame {
+        *update_id = refused_update_id;
+    }
+    frame
+}
+
+/// The `update_id` of a text frame that is an `update`, for answering it when the frame itself is
+/// refused before (`frame_rate`) or instead of (malformed) being decoded as a [`Frame`]. Reads only
+/// the `type` and `update_id` members: every other member, the base64 payload included, is
+/// skipped without being allocated. Callers bound `text` by `websocket_frame_bytes` first; an
+/// oversized frame is refused on its length alone and is never scanned.
+fn peek_update_id(text: &str) -> Option<Uuid> {
+    #[derive(serde::Deserialize)]
+    struct Peek<'a> {
+        #[serde(rename = "type", borrow)]
+        kind: Option<std::borrow::Cow<'a, str>>,
+        update_id: Option<Uuid>,
+    }
+    let peek: Peek<'_> = serde_json::from_str(text).ok()?;
+    if peek.kind.as_deref() == Some("update") {
+        peek.update_id
+    } else {
+        None
+    }
+}
+
 /// The `limit_exceeded` frame a [`SessionRegistry::try_register`] refusal becomes on the wire.
 ///
 /// No `observed`: `limits-v1.md`'s `limit_exceeded` details rule says "`observed` 只允许安全数值,
@@ -1040,7 +1069,7 @@ pub async fn run(mut socket: WebSocket, state: AppState, consumed: ConsumedTicke
                         // 限流" -- checked before the frame is even parsed.
                         let frame_outcome = frame_limiter.take();
                         if !frame_outcome.admitted {
-                            send(&mut socket, &limit_exceeded_frame(document_id, "frame_rate", FRAMES_PER_CONNECTION_PER_SECOND, None, Some(RATE_LIMIT_RETRY_AFTER_MS))).await;
+                            send(&mut socket, &answering_update(limit_exceeded_frame(document_id, "frame_rate", FRAMES_PER_CONNECTION_PER_SECOND, None, Some(RATE_LIMIT_RETRY_AFTER_MS)), peek_update_id(text.as_str()))).await;
                         }
                         if frame_outcome.force_close {
                             close(&mut socket, LIMIT_EXCEEDED_CLOSE_CODE, "sustained frame rate exceeded").await;
@@ -1050,7 +1079,7 @@ pub async fn run(mut socket: WebSocket, state: AppState, consumed: ConsumedTicke
                             break 'answered;
                         }
                         let Ok(frame) = serde_json::from_str::<Frame>(text.as_str()) else {
-                            send(&mut socket, &rejected_frame(document_id, RejectedCode::InvalidUpdate, false, None)).await;
+                            send(&mut socket, &rejected_frame(document_id, RejectedCode::InvalidUpdate, false, peek_update_id(text.as_str()))).await;
                             break 'answered;
                         };
                         if !matches!(frame, Frame::Update { .. }) {
@@ -1073,7 +1102,11 @@ pub async fn run(mut socket: WebSocket, state: AppState, consumed: ConsumedTicke
                             }
                             let update_outcome = update_limiter.take();
                             if !update_outcome.admitted {
-                                send(&mut socket, &limit_exceeded_frame(document_id, "update_rate", UPDATES_PER_CONNECTION_PER_SECOND, None, Some(RATE_LIMIT_RETRY_AFTER_MS))).await;
+                                let refused_update_id = match &frame {
+                                    Frame::Update { update_id, .. } => Some(*update_id),
+                                    _ => None,
+                                };
+                                send(&mut socket, &answering_update(limit_exceeded_frame(document_id, "update_rate", UPDATES_PER_CONNECTION_PER_SECOND, None, Some(RATE_LIMIT_RETRY_AFTER_MS)), refused_update_id)).await;
                             }
                             if update_outcome.force_close {
                                 close(&mut socket, LIMIT_EXCEEDED_CLOSE_CODE, "sustained update rate exceeded").await;
@@ -6037,6 +6070,113 @@ mod tests {
                 count_collab_updates(&state, document_id).await,
                 updates_after_commit,
                 "a replay writes nothing"
+            );
+            scratch.drop_self().await;
+        }
+
+        /// FP2-B6: a `rejected` answering an `update` names its `update_id`, including the
+        /// `update_rate` and the pre-decode `frame_rate` limiter refusals.
+        #[tokio::test]
+        async fn fp2_b6_rate_limit_rejections_carry_the_update_id() {
+            let scratch = scratch_or_skip!("fp2-b6-rate-update-id");
+            let state = state_for(scratch.db.clone());
+            let (workspace_id, owner_id) = seed_workspace(&state).await;
+            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let addr = spawn_server(state.clone()).await;
+
+            // update_rate: flood updates (wrong document id, so an admitted one is an ordinary
+            // invalid_update) until one is refused by the limiter.
+            let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-update-rate").await;
+            let (mut ws, _) = open_session(addr, &ticket, "b6-update-rate", document_id).await;
+            let mut limited = None;
+            for n in 0..55u64 {
+                let update_id = Uuid::new_v4();
+                send_frame(
+                    &mut ws,
+                    &Frame::Update {
+                        protocol_version: PROTOCOL_VERSION,
+                        document_id: Uuid::new_v4(),
+                        update_id,
+                        base_frontier: String::new(),
+                        bytes: String::new(),
+                        idempotency_key: None,
+                        origin: format!("b6-update-flood-{n}"),
+                        message: None,
+                    },
+                )
+                .await;
+                let reply = recv_frame(&mut ws).await;
+                if let Frame::Rejected {
+                    code: RejectedCode::LimitExceeded,
+                    update_id: answered,
+                    ..
+                } = reply
+                {
+                    limited = Some((update_id, answered));
+                    break;
+                }
+            }
+            let (sent, answered) = limited.expect("the update flood reaches the update_rate limiter");
+            assert_eq!(answered, Some(sent), "the update_rate refusal names the refused update");
+            drop(ws);
+
+            // frame_rate: exhaust the frame budget with pings sent back to back, then send
+            // updates; whatever answers them must carry their update_id.
+            let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-frame-rate").await;
+            let (mut ws, _) = open_session(addr, &ticket, "b6-frame-rate", document_id).await;
+            let mut texts = Vec::new();
+            for n in 0..90 {
+                texts.push(
+                    serde_json::to_string(&Frame::Ping {
+                        protocol_version: PROTOCOL_VERSION,
+                        nonce: format!("b6-{n}"),
+                    })
+                    .expect("ping serializes"),
+                );
+            }
+            let update_ids = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+            for update_id in update_ids {
+                texts.push(
+                    serde_json::to_string(&Frame::Update {
+                        protocol_version: PROTOCOL_VERSION,
+                        document_id: Uuid::new_v4(),
+                        update_id,
+                        base_frontier: String::new(),
+                        bytes: String::new(),
+                        idempotency_key: None,
+                        origin: "b6-frame-flood".to_string(),
+                        message: None,
+                    })
+                    .expect("update serializes"),
+                );
+            }
+            for text in texts {
+                send_raw_text(&mut ws, text).await;
+            }
+            let mut answers = Vec::new();
+            let mut frame_rate_refusals_of_updates = 0;
+            for _ in 0..93 {
+                let reply = recv_frame(&mut ws).await;
+                if let Frame::Rejected {
+                    update_id: Some(id),
+                    details,
+                    ..
+                } = &reply
+                    && update_ids.contains(id)
+                {
+                    answers.push(*id);
+                    frame_rate_refusals_of_updates +=
+                        usize::from(details.as_ref().is_some_and(|d| d["limit_kind"] == "frame_rate"));
+                }
+            }
+            assert_eq!(
+                answers.len(),
+                3,
+                "every flooded update is answered by its update_id: {answers:?}"
+            );
+            assert!(
+                frame_rate_refusals_of_updates >= 1,
+                "at least one update must have been refused by frame_rate itself"
             );
             scratch.drop_self().await;
         }

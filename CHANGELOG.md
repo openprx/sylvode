@@ -513,6 +513,10 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow collaboration: a `rejected` frame answering an `update` carries that update's
+  `update_id` when the update is refused by the `update_rate` or `frame_rate` limiter or is not
+  a well-formed frame. Only the `type` and `update_id` members of a frame refused before
+  decoding are read; a frame over `websocket_frame_bytes` is still refused on its length alone.
 - Flow collaboration: re-sending an `update` whose `update_id` is already committed is answered
   with the original `accepted` receipt (same `head_seq`, `head_frontier` and `event_id`), on the
   connection that committed it and after a reconnect. The receipt used to be dropped as a
