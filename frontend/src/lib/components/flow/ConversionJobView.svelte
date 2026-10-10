@@ -165,7 +165,7 @@
 				</p>
 			{:else if snap.job}
 				{@const job = snap.job}
-				{@const errorKey = jobErrorKey(job.error)}
+				{@const errorKey = jobErrorKey(job.error, job.error_reason)}
 				<div class="mt-6 flex flex-wrap items-center gap-3">
 					<span class="text-sm text-slate-500 dark:text-slate-400"
 						>{$t('flow.bridge.job.statusLabel')}</span
@@ -282,6 +282,7 @@
 							class="text-sm text-red-700 dark:text-red-300"
 							data-testid="flow-conversion-error"
 							data-code={job.error}
+							data-reason={job.error_reason ?? undefined}
 						>
 							{$t(errorKey)}
 						</dd>

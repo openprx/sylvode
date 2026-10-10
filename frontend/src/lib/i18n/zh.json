@@ -3436,7 +3436,8 @@
           "unavailable": "服务器暂不可用，请重试。",
           "jobFailed": "转换失败，失败的尝试没有创建任何内容。",
           "targetSchemaChanged": "自本任务预览以来目标表单的字段已变化，因此无法重试。请从页面重新发起转换。",
-          "permissionUnconfigured": "目标表单没有权限策略，因此无法重试。请联系工作区管理员为表单配置权限。"
+          "permissionUnconfigured": "目标表单没有权限策略，因此无法重试。请联系工作区管理员为表单配置权限。",
+          "staleStarted": "执行中断（服务端回收）：转换运行时间过长，已被服务端回收。本次中断没有创建任何内容，可以重试。"
         },
         "live": {
           "completed": "转换已完成。",
@@ -3448,7 +3449,8 @@
           "form": "一个 Forms 表单",
           "formRecord": "一条 Forms 记录",
           "unknown": "未知目标类型"
-        }
+        },
+        "staleSource": "源页面在本任务预览之后已被修改，因此本任务不能按原记录完成。请从页面重新发起转换。"
       },
       "warning": {
         "targetValueMissing": "字段「{field}」没有值，将留空。",

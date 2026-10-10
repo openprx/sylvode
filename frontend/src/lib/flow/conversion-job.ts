@@ -17,8 +17,13 @@
 // - `error` is the job's stored stable error code (one of the 14 in `error-mapping-v1.md`),
 //   worded through `flow.error.<code>`, never driver text;
 // - a job left `started` past the server's threshold is reaped to `failed` /
-//   `error = "server_rejected"` server-side (at API start and by a retry); this page keeps
-//   polling a `started` job, so the reaped status appears without a reload.
+//   `error = "server_rejected"` server-side (at API start and by a retry) and marked
+//   `error_reason = "stale_started"` (`rest-api-v1.md` v0.7, 2026-10-10); only that reaped job is
+//   an interrupted run rather than a permanent refusal, so it is worded "interrupted (reclaimed
+//   by the server)" and offers retry. This page keeps polling a `started` job, so the reaped
+//   status appears without a reload;
+// - a stored `stale_frontier` is worded for this page (the source Page moved on since the job's
+//   preview), not with the editor's generic "reload and replay" text.
 //
 // Rules this module owns, so they are unit-testable without a component:
 // - the job is polled immediately, then after 1s, 2s, 4s and every 5s (`exportPollDelay`) until a
@@ -70,10 +75,22 @@ export function isTerminalConversionStatus(status: string): boolean {
 	return TERMINAL_STATUSES.has(status) || !isKnownConversionStatus(status);
 }
 
+/** Whether this failed job was reaped by the server (`error_reason = "stale_started"`): its run
+ * was interrupted, not refused. */
+export function isReapedJob(
+	job: Pick<FlowConversionJob, 'status' | 'error_reason'> | null
+): boolean {
+	return job !== null && job.status === 'failed' && job.error_reason === 'stale_started';
+}
+
 /** Whether the server would accept a retry of this job: a `failed` job whose stored error is not
- * the permanent `server_rejected` (`error-mapping-v1.md`: "不得提示重试"). */
-export function canRetry(job: Pick<FlowConversionJob, 'status' | 'error'> | null): boolean {
-	return job !== null && RETRYABLE_STATUSES.has(job.status) && job.error !== 'server_rejected';
+ * the permanent `server_rejected` (`error-mapping-v1.md`: "不得提示重试") -- unless the server
+ * reaped it (`stale_started`), which is an interrupted run and retryable. */
+export function canRetry(
+	job: Pick<FlowConversionJob, 'status' | 'error' | 'error_reason'> | null
+): boolean {
+	if (job === null || !RETRYABLE_STATUSES.has(job.status)) return false;
+	return job.error !== 'server_rejected' || isReapedJob(job);
 }
 
 // i18n keys, spelled out statically so the unit tests can check every one exists in zh and en.
@@ -114,14 +131,23 @@ export const JOB_FAILURE_KEYS = {
 	rejected: 'flow.bridge.job.error.rejected',
 	conflict: 'flow.bridge.job.error.conflict',
 	unavailable: 'flow.bridge.job.error.unavailable',
-	jobFailed: 'flow.bridge.job.error.jobFailed'
+	jobFailed: 'flow.bridge.job.error.jobFailed',
+	staleStarted: 'flow.bridge.job.error.staleStarted',
+	staleSource: 'flow.bridge.job.staleSource'
 } as const;
 
-/** The text for a job's stored `error` code. Known Flow codes use their shared key; anything
- * else gets one generic sentence, so no stored code is ever shown as prose. */
-export function jobErrorKey(error: string | null): string | null {
+/** The text for a job's stored error. A reaped job (`error_reason = "stale_started"`) is
+ * "interrupted (reclaimed by the server)"; a stored `stale_frontier` gets this page's own wording;
+ * other known Flow codes use their shared key; anything else gets one generic sentence, so no
+ * stored code is ever shown as prose. */
+export function jobErrorKey(
+	error: string | null,
+	errorReason: string | null | undefined = null
+): string | null {
 	if (error === null || error === '') return null;
+	if (errorReason === 'stale_started') return JOB_FAILURE_KEYS.staleStarted;
 	if (error === 'server_rejected') return JOB_FAILURE_KEYS.server_rejected;
+	if (error === 'stale_frontier') return JOB_FAILURE_KEYS.staleSource;
 	if ((FLOW_ERROR_CODES as readonly string[]).includes(error)) {
 		return flowErrorI18nKey({ code: error as FlowErrorCode, details: undefined });
 	}

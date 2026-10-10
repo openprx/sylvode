@@ -519,6 +519,9 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow conversion job page: a job the server reclaimed after it stayed `started` too long
+  (`error_reason = "stale_started"`) is shown as interrupted and can be retried, while any other
+  `server_rejected` job stays permanent; a stored `stale_frontier` is worded for the job page.
 - Flow Web commands report the Web-local `network_error` (`recoverable`, retried under the same
   idempotency key) when the API gives no answer or a 5xx without an `error_code`, instead of a
   permanent `invalid_update`; an unknown 4xx is still `invalid_update`. The Page slash menu shows

@@ -318,6 +318,9 @@ export interface FlowConversionJob {
 	created_target_ids: string[];
 	warnings: unknown[];
 	error: string | null;
+	/** `"stale_started"` only on a `failed` job the server reaped after it stayed `started` past
+	 * the threshold; absent otherwise (`rest-api-v1.md` v0.7, 2026-10-10). */
+	error_reason?: 'stale_started' | null;
 }
 
 export type FlowPackageConflictPolicy = 'reject_existing' | 'reuse_import_lineage';
