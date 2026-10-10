@@ -258,6 +258,16 @@ OpenPR name keeps working; see **Deprecated**.
     the caller already read. `CommandService.execute` now throws the envelope's typed
     `error_code` (with `details`) and falls back to the HTTP-status mapping only for a legacy
     envelope.
+  - Web UI Collection view controller (`lib/flow/collection-view.ts`) and typed value codec
+    (`lib/flow/collection-values.ts`): schema parsing (live fields and views by position, unknown
+    types read-only, `config.restricted`, select options in `config.options`), editor/wire
+    conversion for the seven field types (a number is sent as a JSON number, a date only as a
+    real `YYYY-MM-DD`), placeholders for restricted, missing and malformed values that never
+    fall back to another representation, one `record_patch` per edited cell with the record's
+    frontier as `expected_frontier` (a `stale_frontier` keeps the draft and re-reads the
+    records), drafts kept per record across view switches, a record document opened only for
+    the record panel, record create with one key per intent, and every `field_*` / `view_*`
+    command refused without a request unless schema mode is on.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which
