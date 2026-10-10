@@ -195,7 +195,7 @@ pub const FLOW_EVENT_PAYLOAD_POLICIES: &[(&str, EventPayloadPolicy)] = &[
     ),
     (
         "flow.conversion.failed",
-        public_payload(&["job_id", "source_object_id", "error"]),
+        public_payload(&["job_id", "source_object_id", "error", "reason"]),
     ),
 ];
 

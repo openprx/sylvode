@@ -18,7 +18,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::collab::authz::PermissionLevel;
-use super::event_origin::CommandOrigin;
+use super::collab::limits::CONVERSION_STARTED_STALE_AFTER_SECS;
+use super::event_origin::{CommandOrigin, EventSurface};
 use super::{collab::authz, policy, repository};
 use crate::error::{ApiError, ApiErrorKind, ServerDrainingReason};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
@@ -1399,6 +1400,79 @@ async fn fail_conversion_job(state: &AppState, run: &ConversionRun, error_code: 
     Ok(failed.rows_affected() == 1)
 }
 
+/// `flow.conversion.failed` payload `reason` for a job reaped by [`reap_stale_conversion_jobs`].
+pub const STALE_STARTED_REASON: &str = "stale_started";
+
+/// Reaps conversion jobs left `started` for longer than `older_than`.
+///
+/// Such a job's run crashed between its claim and its outcome, or its failure could not be
+/// recorded. Each becomes `failed` with
+/// `error = "server_rejected"` and one business `flow.conversion.failed` event carrying
+/// `reason = "stale_started"`, so it can be retried. `only_job` restricts the sweep to one job.
+///
+/// Idempotent: a reaped job is no longer `started`, so a second sweep finds nothing. Rows another
+/// transaction holds (a run in progress) are skipped, not waited for. Returns how many jobs it
+/// reaped.
+pub async fn reap_stale_conversion_jobs(
+    state: &AppState,
+    older_than: chrono::Duration,
+    only_job: Option<Uuid>,
+) -> Result<u64, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Stale {
+        id: Uuid,
+        preview_id: Uuid,
+        idempotency_key: String,
+    }
+    let error_code = ApiErrorKind::ServerRejected.stable_code();
+    let tx = state.db.begin().await?;
+    let abandoned = Stale::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id, preview_id, idempotency_key FROM flow_conversion_jobs \
+         WHERE status='started' AND updated_at < now() - make_interval(secs => $1) \
+           AND ($2::uuid IS NULL OR id = $2) \
+         ORDER BY updated_at, id FOR UPDATE SKIP LOCKED",
+        vec![older_than.num_seconds().into(), only_job.into()],
+    ))
+    .all(&tx)
+    .await?;
+    let origin = CommandOrigin::first_request_from(EventSurface::System);
+    for job in &abandoned {
+        let preview = load_preview(&tx, job.preview_id).await?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE flow_conversion_jobs SET status='failed', error_code=$2, updated_at=now() WHERE id=$1",
+            vec![job.id.into(), error_code.into()],
+        ))
+        .await?;
+        conversion_event(
+            &tx,
+            &preview,
+            job.id,
+            "flow.conversion.failed",
+            &origin,
+            &format!("conversion-reaped:{}:{}", job.id, job.idempotency_key),
+            None,
+            json!({
+                "job_id": job.id,
+                "source_object_id": preview.source_object_id,
+                "error": error_code,
+                "reason": STALE_STARTED_REASON,
+            }),
+        )
+        .await?;
+        tracing::warn!(job_id = %job.id, "reaped a flow conversion job left started");
+    }
+    tx.commit().await?;
+    Ok(u64::try_from(abandoned.len()).unwrap_or(u64::MAX))
+}
+
+/// The stale-`started` threshold as a duration ([`CONVERSION_STARTED_STALE_AFTER_SECS`]).
+#[must_use]
+pub const fn conversion_started_stale_after() -> chrono::Duration {
+    chrono::Duration::seconds(CONVERSION_STARTED_STALE_AFTER_SECS)
+}
+
 /// Runs a claimed job. Any failure after the claim leaves the job `failed` with a stable `error`
 /// (`rest-api-v1.md` v0.7, 2026-10-10) and still answers the caller with the typed error, whose
 /// `details` add `job_id` and the job's actual `job_status` so the caller can open and retry it.
@@ -1879,7 +1953,13 @@ pub async fn retry_conversion(
     if job.status == "completed" || job.idempotency_key == input.idempotency_key {
         return load_job(&state.db, job_id).await;
     }
-    if job.status != "failed" {
+    // A job abandoned in `started` is reaped here, so its retry does not wait for the next sweep.
+    if job.status == "started"
+        && reap_stale_conversion_jobs(state, conversion_started_stale_after(), Some(job_id)).await? == 0
+    {
+        return Err(ApiError::policy_rejected("only failed conversion jobs can be retried"));
+    }
+    if !matches!(job.status.as_str(), "failed" | "started") {
         return Err(ApiError::policy_rejected("only failed conversion jobs can be retried"));
     }
     #[derive(FromQueryResult)]

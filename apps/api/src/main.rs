@@ -103,6 +103,22 @@ async fn main() -> anyhow::Result<()> {
     // background task and inline on `GET /api/v1/proposals*`, which made a read request write
     // decisions and trust scores. The worker polling pipeline is now the only writer.
     routes::webhook::spawn_stored_endpoint_audit(state.clone());
+    // Conversion jobs abandoned in `started` by a previous process are reaped once at startup;
+    // later ones are reaped by the retry that finds them (`flow::bridge::retry_conversion`).
+    let reap_state = state.clone();
+    tokio::spawn(async move {
+        match api::flow::bridge::reap_stale_conversion_jobs(
+            &reap_state,
+            api::flow::bridge::conversion_started_stale_after(),
+            None,
+        )
+        .await
+        {
+            Ok(0) => {}
+            Ok(reaped) => tracing::warn!(reaped, "reaped flow conversion jobs left started"),
+            Err(err) => tracing::warn!(error = %err, "stale flow conversion job sweep could not run"),
+        }
+    });
 
     // Uploaded object downloads are gated by `uploads_access_middleware`: it accepts either a
     // signed download URL or a normal session, and the handlers then scope the object to the
