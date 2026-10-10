@@ -427,6 +427,10 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Web UI, Flow object page: an object whose type has no registered renderer and no collaboration
+  session (a Collection, for which the server refuses a collab ticket) shows its title, the
+  "view isn't available yet" fallback and the object panel, instead of the "Flow is not enabled"
+  / permission error the failed session open produced.
 - Web UI, Flow operations panel: maintenance receipts show the `OperationReceipt` contract
   fields — `mode`, `scope`, observed head, start and finish times, `audit_event_id`, the
   `changes[]` before/after of a compaction or projection rebuild, and the two warning codes. The
