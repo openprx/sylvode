@@ -5713,8 +5713,28 @@ mod flow_database_tests {
             ))
             .await;
             crate::flow::bridge::set_conversion_fault_for_test(None, 0);
+            // The caller gets the typed failure; the job row records it with a stable code.
+            assert_eq!(failed["error_code"], "server_rejected", "fault {fault}: {failed}");
+            assert!(failed["data"].is_null(), "fault {fault}: {failed}");
+            let failed = body_json(to_response(
+                post_flow_conversion(
+                    State(state.clone()),
+                    claims_for(owner_id),
+                    None,
+                    Json(crate::flow::bridge::ConversionCommitInput {
+                        preview_id: fault_preview_id,
+                        source_frontier: frontier.clone(),
+                        target_schema_version: 1,
+                        idempotency_key: Uuid::new_v4().to_string(),
+                        confirm: true,
+                    }),
+                )
+                .await,
+            ))
+            .await;
             assert_eq!(failed["code"], 0, "fault {fault}: {failed}");
             assert_eq!(failed["data"]["status"], "failed", "fault {fault}: {failed}");
+            assert_eq!(failed["data"]["error"], "server_rejected", "fault {fault}: {failed}");
             let failed_job_id = Uuid::parse_str(failed["data"]["job_id"].as_str().expect("job id")).expect("UUID");
             let retried = body_json(to_response(
                 post_flow_conversion_retry(
@@ -5765,8 +5785,19 @@ mod flow_database_tests {
         ))
         .await;
         crate::flow::bridge::set_conversion_fault_for_test(None, 0);
-        let expired_job_id =
-            Uuid::parse_str(expired_failed["data"]["job_id"].as_str().expect("failed job id")).expect("UUID");
+        assert_eq!(expired_failed["error_code"], "server_rejected", "{expired_failed}");
+        let expired_job_id = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM flow_conversion_jobs WHERE preview_id=$1 AND status='failed'",
+                vec![expiring_preview_id.into()],
+            ))
+            .await
+            .expect("failed job query")
+            .expect("the failed job row exists")
+            .try_get::<Uuid>("", "id")
+            .expect("job id");
         exec(
             &state,
             "UPDATE flow_conversion_previews SET expires_at=now()-interval '1 second' WHERE id=$1",
@@ -12975,6 +13006,102 @@ mod flow_database_tests {
         assert_eq!(first["data"]["job_id"], jobs[0].id.to_string());
         assert_eq!(jobs[0].status, "completed");
         assert_eq!(jobs[0].error_code, None);
+        scratch.drop_self().await;
+    }
+
+    /// The 14 stable codes of `error-mapping-v1.md`; a conversion job's `error` must be one of them.
+    const FP2_B4_STABLE_CODES: [&str; 14] = [
+        "unauthenticated",
+        "forbidden",
+        "feature_disabled",
+        "not_found",
+        "unsupported_protocol",
+        "stale_frontier",
+        "invalid_update",
+        "policy_rejected",
+        "limit_exceeded",
+        "resync_required",
+        "server_rejected",
+        "server_draining",
+        "checksum_mismatch",
+        "unsupported_format",
+    ];
+
+    /// FP2-B4 N5-①/N5-④: a failure after the job row exists -- here the production-reachable
+    /// Forms policy revocation and form archive between preview and commit -- leaves the job
+    /// `failed` with a stable `error` code, emits `flow.conversion.failed`, and still answers the
+    /// caller with a typed error.
+    #[tokio::test]
+    async fn fp2_b4_execution_failure_persists_a_failed_job_with_a_stable_error() {
+        let scratch = scratch_or_skip!("fp2-b4-failed-job");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+
+        // (a) record.create revoked after the preview.
+        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let rejected = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-revoked").await;
+        assert_typed(&rejected, "policy_rejected", 403);
+        let jobs = fp2_b4_jobs_of_preview(&state, preview_id).await;
+        assert_eq!(jobs.len(), 1, "the job row must survive the failure");
+        assert_eq!(jobs[0].status, "failed");
+        assert_eq!(jobs[0].error_code.as_deref(), Some("policy_rejected"));
+        let read = fp2_b4_route(
+            &state,
+            fx.owner_id,
+            "GET",
+            &format!("/api/v1/flow/conversions/{}", jobs[0].id),
+            None,
+        )
+        .await;
+        assert_eq!(read["code"], 0, "{read}");
+        assert_eq!(read["data"]["status"], "failed", "{read}");
+        let error = read["data"]["error"].as_str().expect("a failed job carries error");
+        assert!(
+            FP2_B4_STABLE_CODES.contains(&error),
+            "unstable job error {error}: {read}"
+        );
+        assert_eq!(
+            fp2_b4_count(
+                &state,
+                "SELECT count(*) AS n FROM business_events WHERE aggregate_id=$1 \
+                 AND event_type='flow.conversion.failed' AND payload->>'error'='policy_rejected'",
+                vec![jobs[0].id.to_string().into()]
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            fp2_b4_count(
+                &state,
+                "SELECT count(*) AS n FROM form_records WHERE form_id=$1",
+                vec![fx.form_id.into()]
+            )
+            .await,
+            0,
+            "a failed conversion writes no target"
+        );
+
+        // (b) the target form is archived through the Forms route after the preview.
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        let (archived_preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        let archived = body_json(to_response(
+            delete_form(State(state.clone()), claims_for(fx.owner_id), None, Path(fx.form_id)).await,
+        ))
+        .await;
+        assert_eq!(archived["code"], 0, "{archived}");
+        let rejected = fp2_b4_commit(&state, &fx, archived_preview_id, 1, "fp2-b4-archived").await;
+        assert!(
+            rejected["error_code"]
+                .as_str()
+                .is_some_and(|code| FP2_B4_STABLE_CODES.contains(&code)),
+            "{rejected}"
+        );
+        assert!(rejected["data"].is_null(), "{rejected}");
+        let jobs = fp2_b4_jobs_of_preview(&state, archived_preview_id).await;
+        assert_eq!(jobs.len(), 1, "the job row must survive the failure");
+        assert_eq!(jobs[0].status, "failed");
+        assert_eq!(jobs[0].error_code.as_deref(), rejected["error_code"].as_str());
         scratch.drop_self().await;
     }
 }

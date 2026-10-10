@@ -376,6 +376,17 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow conversions can now actually end `failed` in production. A commit first persists the job
+  as `started` (with `flow.conversion.started`), then runs it; any failure from then on — a
+  revoked Forms or Flow permission, an archived target form, a frontier or schema change found
+  under the lock, a Forms validation error, a database error — marks the job `failed`, records
+  `flow.conversion.failed`, and answers the caller with the typed error. Previously every such
+  failure rolled the job row back, so `failed` (and therefore retry) was reachable only through
+  a test-only fault hook. The job's `error` is now always one of the 14 stable error codes
+  (`policy_rejected`, `stale_frontier`, `invalid_update`, `server_rejected`, ...) instead of an
+  internal name such as `injected_before_target_create`; the internal cause is logged
+  server-side only. A commit refused before the job exists (expired preview, a frontier or
+  schema version that already differs, a caller who cannot see the source) still creates no job.
 - Flow conversions: committing a preview that already has a job, under a different idempotency
   key, now returns that same job instead of a 500 from the one-job-per-preview constraint; two
   concurrent commits of one preview both get the single job. A replay of a commit (same key or
