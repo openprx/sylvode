@@ -8,7 +8,7 @@
 
 use axum::{
     Extension, Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::IntoResponse,
 };
 use platform::{app::AppState, auth::JwtClaims};
@@ -1909,12 +1909,38 @@ pub async fn install_project_scenario_template(
     })))
 }
 
+/// `page` / `per_page` for [`list_projects`]. Both optional: a request carrying neither keeps the
+/// historical "every project in one page" response, so callers that never paginated see no change.
+#[derive(Debug, Default, Deserialize)]
+pub struct ListProjectsQuery {
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
+const LIST_PROJECTS_DEFAULT_PER_PAGE: i64 = 20;
+const LIST_PROJECTS_MAX_PER_PAGE: i64 = 100;
+
+/// The `(page, per_page)` window a [`ListProjectsQuery`] asks for, or `None` for the unpaginated
+/// listing. Out-of-range values are clamped the same way `routes::my` clamps its lists.
+fn list_projects_window(query: &ListProjectsQuery) -> Option<(i64, i64)> {
+    if query.page.is_none() && query.per_page.is_none() {
+        return None;
+    }
+    let page = query.page.unwrap_or(1).max(1);
+    let per_page = query
+        .per_page
+        .unwrap_or(LIST_PROJECTS_DEFAULT_PER_PAGE)
+        .clamp(1, LIST_PROJECTS_MAX_PER_PAGE);
+    Some((page, per_page))
+}
+
 /// GET /`api/v1/workspaces/:workspace_id/projects` - List projects in workspace
 pub async fn list_projects(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(workspace_id): Path<Uuid>,
+    Query(query): Query<ListProjectsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let mut extensions = axum::http::Extensions::new();
     extensions.insert(claims);
@@ -1938,13 +1964,31 @@ pub async fn list_projects(
         updated_at: chrono::DateTime<chrono::Utc>,
     }
 
-    let projects = ProjectRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT id, workspace_id, key, name, description, type_key, type_settings, created_at, updated_at FROM projects WHERE workspace_id = $1 ORDER BY created_at DESC",
-        vec![workspace_id.into()],
-    ))
-    .all(&state.db)
-    .await?;
+    let window = list_projects_window(&query);
+    let projects = match window {
+        None => {
+            ProjectRow::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id, workspace_id, key, name, description, type_key, type_settings, created_at, updated_at FROM projects WHERE workspace_id = $1 ORDER BY created_at DESC",
+                vec![workspace_id.into()],
+            ))
+            .all(&state.db)
+            .await?
+        }
+        Some((page, per_page)) => {
+            ProjectRow::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id, workspace_id, key, name, description, type_key, type_settings, created_at, updated_at FROM projects WHERE workspace_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3",
+                vec![
+                    workspace_id.into(),
+                    per_page.into(),
+                    page.saturating_sub(1).saturating_mul(per_page).into(),
+                ],
+            ))
+            .all(&state.db)
+            .await?
+        }
+    };
 
     #[derive(Debug, FromQueryResult)]
     struct IssueCountRow {
@@ -1988,7 +2032,32 @@ pub async fn list_projects(
         })
         .collect();
 
-    Ok(ApiResponse::success(PaginatedData::from_items(response)))
+    let Some((page, per_page)) = window else {
+        return Ok(ApiResponse::success(PaginatedData::from_items(response)));
+    };
+    #[derive(Debug, FromQueryResult)]
+    struct CountRow {
+        total: i64,
+    }
+    let total = CountRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT COUNT(*)::bigint AS total FROM projects WHERE workspace_id = $1",
+        vec![workspace_id.into()],
+    ))
+    .one(&state.db)
+    .await?
+    .map_or(0, |row| row.total);
+    Ok(ApiResponse::success(PaginatedData {
+        items: response,
+        total,
+        page,
+        per_page,
+        total_pages: if total == 0 {
+            1
+        } else {
+            total / per_page + i64::from(total % per_page != 0)
+        },
+    }))
 }
 
 /// GET /api/v1/projects/:id - Get project details

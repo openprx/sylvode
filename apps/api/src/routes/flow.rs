@@ -11390,6 +11390,89 @@ mod flow_database_tests {
         assert_typed(&upload, "unsupported_format", 400);
         scratch.drop_self().await;
     }
+
+    /// N6-5: `GET /workspaces/{id}/projects` honours `page` / `per_page`, and a request with
+    /// neither keeps the historical single-page listing.
+    #[allow(clippy::literal_string_with_formatting_args)]
+    #[tokio::test]
+    async fn fp2_b1_list_projects_honours_page_and_per_page() {
+        let scratch = scratch_or_skip!("fp2-b1-projects-pagination");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        for index in 0..5 {
+            exec(
+                &state,
+                "INSERT INTO projects (id, workspace_id, key, name, created_by, created_at) \
+                 VALUES ($1, $2, $3, $4, $5, now() - make_interval(secs => $6))",
+                vec![
+                    Uuid::new_v4().into(),
+                    workspace_id.into(),
+                    format!("P{index}").into(),
+                    format!("project {index}").into(),
+                    owner_id.into(),
+                    f64::from(index).into(),
+                ],
+            )
+            .await;
+        }
+        // Through the real router so the query string is parsed by the production extractor.
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/workspaces/{workspace_id}/projects",
+                axum::routing::get(crate::routes::project::list_projects),
+            )
+            .layer(claims_for(owner_id))
+            .with_state(state.clone());
+        let list = |query: &'static str| {
+            use tower::ServiceExt as _;
+            let app = app.clone();
+            let uri = format!("/api/v1/workspaces/{workspace_id}/projects{query}");
+            async move {
+                let response = app
+                    .oneshot(
+                        axum::http::Request::builder()
+                            .method(axum::http::Method::GET)
+                            .uri(uri)
+                            .body(axum::body::Body::empty())
+                            .expect("the request builds"),
+                    )
+                    .await
+                    .expect("the router responds");
+                body_json(response).await
+            }
+        };
+        let names = |body: &Value| -> Vec<String> {
+            body["data"]["items"]
+                .as_array()
+                .expect("items is an array")
+                .iter()
+                .map(|item| item["name"].as_str().expect("name").to_string())
+                .collect()
+        };
+
+        let all = list("").await;
+        assert_eq!(all["code"], 0, "{all}");
+        assert_eq!(names(&all).len(), 5, "{all}");
+        assert_eq!(all["data"]["total"], 5);
+        assert_eq!(all["data"]["page"], 1);
+        assert_eq!(all["data"]["per_page"], 5);
+
+        let first = list("?page=1&per_page=2").await;
+        assert_eq!(names(&first), vec!["project 0", "project 1"], "{first}");
+        assert_eq!(first["data"]["total"], 5);
+        assert_eq!(first["data"]["page"], 1);
+        assert_eq!(first["data"]["per_page"], 2);
+        assert_eq!(first["data"]["total_pages"], 3);
+
+        let final_page = list("?page=3&per_page=2").await;
+        assert_eq!(names(&final_page), vec!["project 4"], "{final_page}");
+        assert_eq!(final_page["data"]["page"], 3);
+
+        let past_end = list("?page=9&per_page=2").await;
+        assert!(names(&past_end).is_empty(), "{past_end}");
+        assert_eq!(past_end["data"]["total"], 5);
+        scratch.drop_self().await;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
