@@ -376,6 +376,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow conversions: committing a preview that already has a job, under a different idempotency
+  key, now returns that same job instead of a 500 from the one-job-per-preview constraint; two
+  concurrent commits of one preview both get the single job. A replay of a commit (same key or
+  same preview) returns its job even after the preview's 15-minute TTL. A key already used for
+  another preview answers `invalid_update` with `details.reason = "idempotency_key_body_drift"`.
 - Flow conversions: the job returned by commit, `GET /api/v1/flow/conversions/{job_id}` and
   retry now carries `target_type` (`form` or `form_record`), as the contract's job shape requires.
 - Flow conversions: a malformed id in `GET /api/v1/flow/conversions/{job_id}`,
