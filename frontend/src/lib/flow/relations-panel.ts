@@ -10,8 +10,9 @@
 //   another workspace, a malformed row, an unknown `visibility`) and any rejected read is an
 //   integrity failure for the whole panel: every row already shown is dropped and only the error
 //   is rendered ("跨 workspace relation 作为 integrity failure 整次 fail closed"). The server
-//   reports a cross-workspace relation as `invalid_update` (`flow/relations.rs::
-//   record_relation_integrity`), which is mapped to the integrity copy here;
+//   reports a cross-workspace relation as `invalid_update` with `details.reason=
+//   "cross_workspace_relation"` (`flow/relations.rs::record_relation_integrity`), which gets its
+//   own integrity copy here; any other `invalid_update` keeps the generic integrity copy;
 // - errors are classified by `error_code` only.
 
 import type { ApiResult } from '$lib/api/client';
@@ -20,7 +21,7 @@ import type {
 	FlowRelationListResponse,
 	FlowRelationsQuery
 } from '$lib/api/flow';
-import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
+import { flowErrorFromEnvelope, flowErrorI18nKey, invalidUpdateDisposition } from './errors';
 import { FlowObjectRepository } from './object-repository';
 
 export const RELATION_PAGE_SIZE = 50;
@@ -37,6 +38,7 @@ export const RELATION_DIRECTION_KEYS: Readonly<Record<FlowRelationDirection, str
 };
 
 export const RELATION_INTEGRITY_KEY = 'flow.relations.error.integrity';
+export const RELATION_CROSS_WORKSPACE_KEY = 'flow.relations.error.crossWorkspace';
 
 export type RelationRow =
 	| {
@@ -126,9 +128,10 @@ export function parseRelationRow(raw: unknown, workspaceId: string): RelationRow
 function failureKeyOf(result: ApiResult<unknown>): string {
 	const flowError = flowErrorFromEnvelope(result);
 	if (flowError) {
-		return flowError.code === 'invalid_update'
-			? RELATION_INTEGRITY_KEY
-			: flowErrorI18nKey(flowError);
+		if (flowError.code !== 'invalid_update') return flowErrorI18nKey(flowError);
+		return invalidUpdateDisposition(flowError)?.reason === 'cross_workspace_relation'
+			? RELATION_CROSS_WORKSPACE_KEY
+			: RELATION_INTEGRITY_KEY;
 	}
 	switch (result.code) {
 		case 401:
