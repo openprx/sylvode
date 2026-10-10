@@ -126,9 +126,10 @@
       "repo": "sylvode",
       "paths": [
         "apps/api/src/flow/collab/authz.rs",
-        "apps/api/src/flow/collab/fanout.rs"
+        "apps/api/src/flow/collab/fanout.rs",
+        "apps/api/src/flow/collab/write.rs"
       ],
-      "pattern": "'openpr_flow_(?:fanout|authz)'",
+      "pattern": "['\"]openpr_flow_(?:fanout|authz)['\"]",
       "explanation": "PostgreSQL LISTEN/NOTIFY channel names shared by every API process of a deployment; a rename would split a rolling upgrade, so they are database-level identifiers kept under D3."
     },
     {
