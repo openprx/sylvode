@@ -33,6 +33,22 @@ The compatibility contract is intentionally fail-closed where two operator input
 avoids a deployment changing ports or configuration merely because a new alias was added.
 Explicit `--config` remains available when both files must be kept temporarily.
 
+## Platform matrix
+
+| Capability | Linux server | macOS / Windows server |
+| --- | --- | --- |
+| Projects, Forms, MCP server, `sylvode` CLI, worker | Supported | Supported |
+| Flow reads (objects, navigator, history, bootstrap) | Supported | Supported |
+| Flow collaborative writes (REST commands and live editing) and object diffs | Supported | Refused with `server_rejected`, `details.reason = "isolated_apply_unsupported_platform"` |
+
+Flow collaborative writes and object diffs decode untrusted CRDT updates only inside the
+isolated-apply boundary of ADR-0014, which relies on Linux-only primitives (`ITIMER_PROF`,
+`/proc/self/task`, signal-based exit classification). Builds for other targets compile and ship
+the same files, including `collab-isolated-apply-worker` (there a stub that exits with status 2),
+but never apply an update outside that boundary: every such write is refused permanently with
+`write_state: not_applied`, and `api` logs one `warn` line at startup naming the limitation.
+Run the API on Linux to use Flow editing.
+
 ## Deprecation warnings
 
 Every warning names the legacy name in use, its replacement and the earliest release that may
