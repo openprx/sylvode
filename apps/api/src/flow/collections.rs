@@ -2324,6 +2324,48 @@ fn query_field(fields: &[CollectionFieldView], field_id: Uuid) -> Result<&Collec
         .ok_or_else(|| ApiError::invalid_update("query references an unknown, archived, or restricted field"))
 }
 
+/// `rest-api-v1.md` v0.6 records GET `view_id?`: the query a saved view describes, with every
+/// part `explicit` sets (`filter`, `sort`, `group`) taking precedence over the view's saved one.
+///
+/// The view config keys are the ones the Web client saves (`config.filter`, `config.sort`,
+/// `config.group_field_id`); a saved part that does not parse is treated as absent, as the Web
+/// client treats it. A `view_id` that is not a view of this Collection is `invalid_update`.
+pub async fn apply_saved_view<'a, C: ConnectionTrait>(
+    conn: &C,
+    collection_id: Uuid,
+    view_id: Option<Uuid>,
+    explicit: &'a RecordQueryPayload,
+) -> Result<std::borrow::Cow<'a, RecordQueryPayload>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        config: Value,
+    }
+    let Some(view_id) = view_id else {
+        return Ok(std::borrow::Cow::Borrowed(explicit));
+    };
+    let config = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT config FROM flow_view_projections WHERE collection_id = $1 AND view_id = $2",
+        vec![collection_id.into(), view_id.into()],
+    ))
+    .one(conn)
+    .await?
+    .ok_or_else(|| ApiError::invalid_update("view_id does not name a view of this collection"))?
+    .config;
+    let saved = |key: &str| config.get(key).cloned().filter(|value| !value.is_null());
+    let mut merged = explicit.clone();
+    if merged.filter.is_none() {
+        merged.filter = saved("filter").and_then(|raw| serde_json::from_value(raw).ok());
+    }
+    if merged.sort.is_none() {
+        merged.sort = saved("sort").and_then(|raw| serde_json::from_value(raw).ok());
+    }
+    if merged.group.is_none() {
+        merged.group = saved("group_field_id").and_then(|raw| serde_json::from_value(raw).ok());
+    }
+    Ok(std::borrow::Cow::Owned(merged))
+}
+
 pub async fn query_collection_records(
     state: &AppState,
     access: &policy::AuthorizedFlowObject,

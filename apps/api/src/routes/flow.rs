@@ -1371,6 +1371,9 @@ pub async fn get_flow_object_schema(
 
 #[derive(Debug, Deserialize)]
 pub struct GetCollectionRecordsQuery {
+    /// Query with this view's saved `filter`/`sort`/`group_field_id`; an explicit `filter`,
+    /// `sort` or `group` parameter overrides the saved value for that part only.
+    pub view_id: Option<Uuid>,
     pub filter: Option<String>,
     pub sort: Option<String>,
     pub group: Option<Uuid>,
@@ -1415,7 +1418,7 @@ pub async fn get_flow_collection_records(
         limit: params.limit.unwrap_or(50),
         field_ids: parse_field_ids(params.field_ids)?,
     };
-    query_flow_collection(&state, claims, bot, collection_id, &request).await
+    query_flow_collection(&state, claims, bot, collection_id, &request, params.view_id).await
 }
 
 async fn query_flow_collection(
@@ -1424,13 +1427,15 @@ async fn query_flow_collection(
     bot: Option<Extension<BotAuthContext>>,
     collection_id: Uuid,
     request: &RecordQueryPayload,
+    view_id: Option<Uuid>,
 ) -> Result<axum::response::Response, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
         let Some(access) = collection_read_access(state, &extensions, collection_id).await? else {
             continue;
         };
-        let Some(response) = collections::query_collection_records(state, &access, request).await? else {
+        let request = collections::apply_saved_view(&state.db, access.object_id(), view_id, request).await?;
+        let Some(response) = collections::query_collection_records(state, &access, &request).await? else {
             continue;
         };
         return Ok(ApiResponse::success(response).into_response());
@@ -1446,7 +1451,7 @@ pub async fn post_flow_collection_query(
     Path(collection_id): Path<Uuid>,
     Json(request): Json<RecordQueryPayload>,
 ) -> Result<impl IntoResponse, ApiError> {
-    query_flow_collection(&state, claims, bot, collection_id, &request).await
+    query_flow_collection(&state, claims, bot, collection_id, &request, None).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -13836,6 +13841,161 @@ mod flow_database_tests {
         .await;
         assert_eq!(body["code"], 0, "{body}");
         Uuid::parse_str(body["data"]["object"]["id"].as_str().expect("record id")).expect("uuid")
+    }
+
+    /// Percent-encodes everything outside RFC 3986's unreserved set, for a JSON query value.
+    fn fp2_b6_query_escape(raw: &str) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::with_capacity(raw.len() * 3);
+        for byte in raw.bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+                out.push(char::from(byte));
+            } else {
+                let _ = write!(out, "%{byte:02X}");
+            }
+        }
+        out
+    }
+
+    fn fp2_b6_numbers(body: &Value, field_id: Uuid) -> Vec<i64> {
+        body["data"]["items"]
+            .as_array()
+            .unwrap_or_else(|| panic!("records response has items: {body}"))
+            .iter()
+            .map(|item| {
+                item["values_by_field_id"][field_id.to_string()]
+                    .as_i64()
+                    .unwrap_or_else(|| panic!("record has a number value: {item}"))
+            })
+            .collect()
+    }
+
+    /// FP2-B6 (`rest-api-v1.md` v0.6 records GET `view_id?`): records are queried with the
+    /// filter/sort/group the view saved in its config; an explicit query parameter overrides the
+    /// view's value for that part only; an unknown `view_id` is a typed `invalid_update`.
+    #[tokio::test]
+    async fn fp2_b6_records_get_applies_the_saved_view_query() {
+        let scratch = scratch_or_skip!("fp2-b6-view-id");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let collection_id = fp2_b6_collection(&state, workspace_id, owner_id, "Ranked").await;
+        let rank = Uuid::new_v4();
+        let status = Uuid::new_v4();
+        fp2_b6_command(
+            &state,
+            owner_id,
+            collection_id,
+            "field_create",
+            json!({"field_id": rank, "label": "Rank", "field_type": "number"}),
+        )
+        .await;
+        fp2_b6_command(
+            &state,
+            owner_id,
+            collection_id,
+            "field_create",
+            json!({"field_id": status, "label": "Status", "field_type": "select", "config": {"options": ["a", "b"]}}),
+        )
+        .await;
+        for (value, group) in [(1, "b"), (2, "a"), (3, "b"), (4, "a")] {
+            fp2_b6_record(
+                &state,
+                owner_id,
+                collection_id,
+                json!({rank.to_string(): value, status.to_string(): group}),
+            )
+            .await;
+        }
+        let table_view = Uuid::new_v4();
+        fp2_b6_command(
+            &state,
+            owner_id,
+            collection_id,
+            "view_create",
+            json!({
+                "view_id": table_view, "name": "Top", "view_type": "table",
+                "config": {
+                    "filter": {"field_id": rank, "op": "gt", "value": 1},
+                    "sort": {"field_id": rank, "direction": "desc"},
+                    "column_widths": {}
+                }
+            }),
+        )
+        .await;
+        let board_view = Uuid::new_v4();
+        fp2_b6_command(
+            &state,
+            owner_id,
+            collection_id,
+            "view_create",
+            json!({
+                "view_id": board_view, "name": "Board", "view_type": "board",
+                "config": {"group_field_id": status, "sort": {"field_id": rank, "direction": "asc"}}
+            }),
+        )
+        .await;
+        let records = format!("/api/v1/flow/collections/{collection_id}/records");
+
+        let (_, plain) = fp2_b6_route(&state, owner_id, "GET", &records, None).await;
+        assert_eq!(plain["code"], 0, "{plain}");
+        assert_eq!(fp2_b6_numbers(&plain, rank).len(), 4, "no view: every record");
+
+        let (_, saved) = fp2_b6_route(
+            &state,
+            owner_id,
+            "GET",
+            &format!("{records}?view_id={table_view}"),
+            None,
+        )
+        .await;
+        assert_eq!(saved["code"], 0, "{saved}");
+        assert_eq!(
+            fp2_b6_numbers(&saved, rank),
+            [4, 3, 2],
+            "the view's filter and sort apply: {saved}"
+        );
+
+        let explicit_sort = fp2_b6_query_escape(&json!({"field_id": rank, "direction": "asc"}).to_string());
+        let (_, overridden) = fp2_b6_route(
+            &state,
+            owner_id,
+            "GET",
+            &format!("{records}?view_id={table_view}&sort={explicit_sort}"),
+            None,
+        )
+        .await;
+        assert_eq!(overridden["code"], 0, "{overridden}");
+        assert_eq!(
+            fp2_b6_numbers(&overridden, rank),
+            [2, 3, 4],
+            "an explicit sort wins, the view's filter still applies: {overridden}"
+        );
+
+        let (_, grouped) = fp2_b6_route(
+            &state,
+            owner_id,
+            "GET",
+            &format!("{records}?view_id={board_view}"),
+            None,
+        )
+        .await;
+        assert_eq!(grouped["code"], 0, "{grouped}");
+        assert_eq!(
+            fp2_b6_numbers(&grouped, rank),
+            [2, 4, 1, 3],
+            "the board view groups by its saved group field, then sorts: {grouped}"
+        );
+
+        let (_, unknown) = fp2_b6_route(
+            &state,
+            owner_id,
+            "GET",
+            &format!("{records}?view_id={}", Uuid::new_v4()),
+            None,
+        )
+        .await;
+        assert_typed(&unknown, "invalid_update", 400);
+        scratch.drop_self().await;
     }
 
     /// FP2-B6 (`rest-api-v1.md` v0.6 schema row): `GET /flow/objects/{record_id}/schema` returns
