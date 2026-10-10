@@ -5818,7 +5818,9 @@ mod flow_database_tests {
             .await,
         ))
         .await;
-        assert_eq!(expired_retry["code"], 403, "{expired_retry}");
+        // Retry does not depend on the preview TTL (rest-api-v1.md v0.7, 2026-10-10).
+        assert_eq!(expired_retry["code"], 0, "{expired_retry}");
+        assert_eq!(expired_retry["data"]["status"], "completed", "{expired_retry}");
 
         let preview = body_json(to_response(
             post_flow_conversion_preview(
@@ -5866,8 +5868,8 @@ mod flow_database_tests {
             .await
             .expect("conversion totals query")
             .expect("conversion totals");
-        assert_eq!(totals.try_get::<i64>("", "records").expect("records"), 4);
-        assert_eq!(totals.try_get::<i64>("", "lineage").expect("lineage"), 4);
+        assert_eq!(totals.try_get::<i64>("", "records").expect("records"), 5);
+        assert_eq!(totals.try_get::<i64>("", "lineage").expect("lineage"), 5);
 
         let events = state
             .db
@@ -5885,16 +5887,16 @@ mod flow_database_tests {
             .await
             .expect("event totals query")
             .expect("event totals");
-        assert_eq!(events.try_get::<i64>("", "native_events").expect("native events"), 4);
+        assert_eq!(events.try_get::<i64>("", "native_events").expect("native events"), 5);
         assert_eq!(
             events
                 .try_get::<i64>("", "native_business_events")
                 .expect("native business events"),
-            4
+            5
         );
         assert_eq!(
             events.try_get::<i64>("", "completed_events").expect("completed events"),
-            4
+            5
         );
 
         scratch.drop_self().await;
@@ -13226,6 +13228,81 @@ mod flow_database_tests {
         let jobs = fp2_b4_jobs_of_preview(&state, preview_id).await;
         assert_eq!(jobs[0].status, "failed");
         assert_eq!(jobs[0].error_code.as_deref(), Some("policy_rejected"));
+        scratch.drop_self().await;
+    }
+
+    /// FP2-B4 N5-⑤: retry does not depend on the preview TTL. A job that failed is retried 20
+    /// minutes after its preview expired, against the job's own frozen frontier/schema version;
+    /// a source that moved on in the meantime is `stale_frontier`.
+    #[tokio::test]
+    async fn fp2_b4_failed_job_retries_twenty_minutes_after_its_preview_expired() {
+        let scratch = scratch_or_skip!("fp2-b4-retry-ttl");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let failed = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-ttl-commit").await;
+        assert_typed(&failed, "policy_rejected", 403);
+        let job_id = fp2_b4_jobs_of_preview(&state, preview_id)
+            .await
+            .first()
+            .map(|job| job.id)
+            .expect("the failed job exists");
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        exec(
+            &state,
+            "UPDATE flow_conversion_previews SET created_at=now()-interval '35 minutes', \
+             expires_at=now()-interval '20 minutes' WHERE id=$1",
+            vec![preview_id.into()],
+        )
+        .await;
+        let retried = fp2_b4_retry(&state, &fx, &job_id.to_string()).await;
+        assert_eq!(retried["code"], 0, "{retried}");
+        assert_eq!(retried["data"]["job_id"], job_id.to_string(), "{retried}");
+        assert_eq!(retried["data"]["status"], "completed", "{retried}");
+        assert_eq!(
+            retried["data"]["created_target_ids"].as_array().map(Vec::len),
+            Some(1),
+            "{retried}"
+        );
+        assert!(retried["data"]["error"].is_null(), "{retried}");
+
+        // Source advanced after the failure: retry is stale_frontier and the job stays failed.
+        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let failed = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-ttl-stale").await;
+        assert_typed(&failed, "policy_rejected", 403);
+        let job_id = fp2_b4_jobs_of_preview(&state, preview_id)
+            .await
+            .first()
+            .map(|job| job.id)
+            .expect("the failed job exists");
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        let advanced = body_json(to_response(
+            post_flow_object_command(
+                State(state.clone()),
+                claims_for(fx.owner_id),
+                None,
+                Path(fx.source_id),
+                Json(ExecuteFlowCommandRequest {
+                    command: FlowCommandEnvelope {
+                        command_type: "set_title".to_string(),
+                        payload: json!({"title": "advanced source"}),
+                    },
+                    expected_frontier: None,
+                    idempotency_key: Uuid::new_v4().to_string(),
+                    message: None,
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(advanced["code"], 0, "{advanced}");
+        let stale_retry = fp2_b4_retry(&state, &fx, &job_id.to_string()).await;
+        assert_typed(&stale_retry, "stale_frontier", 409);
+        let jobs = fp2_b4_jobs_of_preview(&state, preview_id).await;
+        assert_eq!(jobs[0].status, "failed");
+        assert_eq!(jobs[0].error_code.as_deref(), Some("stale_frontier"));
         scratch.drop_self().await;
     }
 }

@@ -376,6 +376,15 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow conversions: retrying a `failed` job no longer depends on the preview's 15-minute TTL,
+  so a job can be retried after its preview expired (previously that retry always answered
+  `policy_rejected`). The retry re-authorizes every side and re-runs against the
+  `source_frontier` and `target_schema_version` recorded on the job: a source that has moved on
+  answers `stale_frontier` and a changed target schema `policy_rejected` with
+  `details.reason = "target_schema_changed"`, and either one leaves the job `failed` with that
+  code. Retry now also checks that the caller can read the source before answering, and a retry
+  key already used by another job answers `invalid_update` with
+  `details.reason = "idempotency_key_body_drift"`.
 - Flow conversions: `policy_rejected` now says why with `details.reason` — `preview_expired`
   when the commit's preview is past its 15-minute TTL, `target_schema_changed` when the target
   form's schema version differs from the preview or job (at commit and at retry), and
