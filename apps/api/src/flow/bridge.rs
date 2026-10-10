@@ -1844,9 +1844,8 @@ pub async fn retry_conversion(
             "idempotency_key was already used for another conversion job",
         ));
     }
-    if preview.expires_at <= Utc::now() {
-        return Err(ApiError::policy_rejected("conversion preview expired"));
-    }
+    // No preview TTL check: the job holds the frontier and target schema version it froze, and
+    // the run rechecks both, plus every permission, against them (`rest-api-v1.md` v0.7 retry).
     let Some(started_event) = claim_retry_job(state, &preview, job_id, &input.idempotency_key, &origin).await? else {
         // A concurrent retry already moved the job on.
         return load_job(&state.db, job_id).await;
