@@ -14123,6 +14123,68 @@ mod flow_database_tests {
         assert_ne!(outsider["code"], 0, "a non-member still cannot bootstrap: {outsider}");
         scratch.drop_self().await;
     }
+
+    /// FP2-B6: a job the stale-`started` sweep failed reports `error_reason:"stale_started"`; any
+    /// other `failed` job (and a reaped job that later fails again for another reason) has no
+    /// `error_reason` key.
+    #[tokio::test]
+    async fn fp2_b6_reaped_conversion_job_reports_error_reason_stale_started() {
+        let scratch = scratch_or_skip!("fp2-b6-error-reason");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        let reaped_job = fp2_b4_failed_job(&state, &fx, "fp2-b6-reason-stale").await;
+        let plain_failed = fp2_b4_failed_job(&state, &fx, "fp2-b6-reason-plain").await;
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
+             updated_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![reaped_job.into()],
+        )
+        .await;
+        let reaped = crate::flow::bridge::reap_stale_conversion_jobs(
+            &state,
+            crate::flow::bridge::conversion_started_stale_after(),
+            None,
+        )
+        .await
+        .expect("the sweep runs");
+        assert_eq!(reaped, 1);
+        let job = |job_id: Uuid| {
+            let state = state.clone();
+            let owner_id = fx.owner_id;
+            async move {
+                fp2_b4_route(
+                    &state,
+                    owner_id,
+                    "GET",
+                    &format!("/api/v1/flow/conversions/{job_id}"),
+                    None,
+                )
+                .await
+            }
+        };
+        let reaped_view = job(reaped_job).await;
+        assert_eq!(reaped_view["data"]["status"], "failed", "{reaped_view}");
+        assert_eq!(reaped_view["data"]["error"], "server_rejected", "{reaped_view}");
+        assert_eq!(reaped_view["data"]["error_reason"], "stale_started", "{reaped_view}");
+
+        let plain_view = job(plain_failed).await;
+        assert_eq!(plain_view["data"]["status"], "failed", "{plain_view}");
+        assert!(
+            plain_view["data"].get("error_reason").is_none(),
+            "an ordinary failure carries no error_reason: {plain_view}"
+        );
+
+        // The reaped job is retried, fails again for an ordinary reason: the reason is gone.
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let refused = fp2_b4_retry(&state, &fx, &reaped_job.to_string()).await;
+        assert_typed(&refused, "policy_rejected", 403);
+        let refailed = job(reaped_job).await;
+        assert_eq!(refailed["data"]["status"], "failed", "{refailed}");
+        assert!(refailed["data"].get("error_reason").is_none(), "{refailed}");
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        scratch.drop_self().await;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

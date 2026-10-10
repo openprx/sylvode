@@ -884,6 +884,11 @@ pub struct ConversionJobResponse {
     pub created_target_ids: Vec<Uuid>,
     pub warnings: Value,
     pub error: Option<String>,
+    /// Present only on a `failed` job the stale-`started` sweep failed: `"stale_started"`
+    /// ([`STALE_STARTED_REASON`]). It tells a reaped job (`error = "server_rejected"`, retryable)
+    /// apart from a permanent refusal carrying the same code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1167,7 +1172,7 @@ async fn load_job<C: ConnectionTrait>(conn: &C, job_id: Uuid) -> Result<Conversi
     ConversionJobResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT id AS job_id, status, source_object_id, target_type, source_frontier, target_schema_version, \
-         lineage_id, created_target_ids, warnings, error_code AS error FROM flow_conversion_jobs WHERE id = $1",
+         lineage_id, created_target_ids, warnings, error_code AS error, error_reason FROM flow_conversion_jobs WHERE id = $1",
         vec![job_id.into()],
     ))
     .one(conn)
@@ -1346,7 +1351,8 @@ async fn claim_retry_job(
     let claimed = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, idempotency_key=$2, updated_at=now() \
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, error_reason=NULL, idempotency_key=$2, \
+             updated_at=now() \
              WHERE id=$1 AND status='failed'",
             vec![job_id.into(), idempotency_key.into()],
         ))
@@ -1378,7 +1384,7 @@ async fn fail_conversion_job(state: &AppState, run: &ConversionRun, error_code: 
     let failed = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "UPDATE flow_conversion_jobs SET status='failed', error_code=$2, updated_at=now() \
+            "UPDATE flow_conversion_jobs SET status='failed', error_code=$2, error_reason=NULL, updated_at=now() \
              WHERE id=$1 AND status='started'",
             vec![run.job_id.into(), error_code.into()],
         ))
@@ -1441,8 +1447,9 @@ pub async fn reap_stale_conversion_jobs(
         let preview = load_preview(&tx, job.preview_id).await?;
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "UPDATE flow_conversion_jobs SET status='failed', error_code=$2, updated_at=now() WHERE id=$1",
-            vec![job.id.into(), error_code.into()],
+            "UPDATE flow_conversion_jobs SET status='failed', error_code=$2, error_reason=$3, updated_at=now() \
+             WHERE id=$1",
+            vec![job.id.into(), error_code.into(), STALE_STARTED_REASON.into()],
         ))
         .await?;
         conversion_event(
@@ -1691,7 +1698,7 @@ async fn run_conversion(
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE flow_conversion_jobs SET status='completed', lineage_id=$2, created_target_ids=ARRAY[$3]::uuid[], \
-         warnings=$4, error_code=NULL, updated_at=now() WHERE id=$1",
+         warnings=$4, error_code=NULL, error_reason=NULL, updated_at=now() WHERE id=$1",
         vec![
             job_id.into(),
             lineage_id.into(),

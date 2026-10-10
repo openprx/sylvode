@@ -157,6 +157,12 @@ OpenPR name keeps working; see **Deprecated**.
 
 ### Added
 
+- Flow conversion jobs: a job the stale-`started` sweep failed carries
+  `error_reason: "stale_started"` next to `error: "server_rejected"` in every job response
+  (`GET /flow/conversions/{job_id}`, commit and retry), so a client can offer a retry for an
+  interrupted run instead of treating it as a permanent refusal. Other failures, retry claims
+  and completions have no `error_reason`. Migration `0071_flow_conversion_job_error_reason.sql`
+  adds the column.
 - **Sylvode Flow**: collaborative pages, objects, Collections and records inside a workspace.
   Flow is off by default and is enabled per workspace through
   `PUT /api/v1/workspaces/{id}/features/flow`, the MCP tool `flow.feature_set` or
