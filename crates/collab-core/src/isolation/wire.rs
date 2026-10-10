@@ -156,6 +156,7 @@ const TAG_DUPLICATE_NODE: u8 = 5;
 const TAG_CYCLE_REJECTED: u8 = 6;
 const TAG_OPERATION_FAILED: u8 = 7;
 const TAG_LIMIT_EXCEEDED: u8 = 8;
+const TAG_CAUSAL_DEPENDENCY_MISSING: u8 = 9;
 
 /// `CollabError::EmptyInput`/`InputTooLarge`/`DecodeFailed`'s `input` field, and
 /// `LimitExceeded`'s `limit_kind` field, are `&'static str` -- not `String` -- because every
@@ -237,6 +238,7 @@ pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
             write_u64(&mut buf, *limit)?;
             write_u64(&mut buf, *observed)?;
         }
+        Outcome::Rejected(CollabError::CausalDependencyMissing) => buf.push(TAG_CAUSAL_DEPENDENCY_MISSING),
     }
     Ok(buf)
 }
@@ -310,6 +312,7 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
                 observed,
             }))
         }
+        TAG_CAUSAL_DEPENDENCY_MISSING => Ok(Outcome::Rejected(CollabError::CausalDependencyMissing)),
         _ => Err(io::Error::new(io::ErrorKind::InvalidData, "unrecognized outcome tag")),
     }
 }
@@ -360,6 +363,14 @@ mod tests {
         let outcome = Outcome::Success {
             snapshot: b"exported snapshot bytes".to_vec(),
         };
+        let payload = encode_outcome(&outcome).expect("encode succeeds");
+        let decoded = decode_outcome(&payload).expect("decode succeeds");
+        assert_eq!(decoded, outcome);
+    }
+
+    #[test]
+    fn causal_dependency_missing_outcome_round_trips() {
+        let outcome = Outcome::Rejected(CollabError::CausalDependencyMissing);
         let payload = encode_outcome(&outcome).expect("encode succeeds");
         let decoded = decode_outcome(&payload).expect("decode succeeds");
         assert_eq!(decoded, outcome);

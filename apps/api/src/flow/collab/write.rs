@@ -317,6 +317,18 @@ fn reject_from_collab_error(update_id: Option<Uuid>, err: &CollabError) -> Accep
         } => Some(serde_json::json!({"limit_kind": "update_bytes", "limit": max_bytes, "observed": actual_bytes})),
         _ => None,
     };
+    if matches!(err, CollabError::CausalDependencyMissing) {
+        return AcceptOutcome::Rejected(Rejected {
+            update_id,
+            code: RejectedCode::InvalidUpdate,
+            recoverable: false,
+            // Refused inside `hydrate_and_apply`, before any transaction is opened: no seq.
+            write_state: WriteState::NotApplied,
+            details: Some(serde_json::json!({"reason": crate::error::CAUSAL_DEPENDENCY_MISSING_REASON})),
+            current_seq: None,
+            current_frontier: None,
+        });
+    }
     if let Some(details) = details {
         return AcceptOutcome::Rejected(Rejected {
             update_id,

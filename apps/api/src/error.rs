@@ -586,6 +586,10 @@ pub const IDEMPOTENCY_KEY_BODY_DRIFT_REASON: &str = "idempotency_key_body_drift"
 /// also recorded as a `cross_workspace_relation` integrity record.
 pub const CROSS_WORKSPACE_RELATION_REASON: &str = "cross_workspace_relation";
 
+/// `invalid_update.details.reason` for a collaboration update whose causal dependencies are not in
+/// the document (`error-mapping-v1.md`'s approved reason table).
+pub const CAUSAL_DEPENDENCY_MISSING_REASON: &str = "causal_dependency_missing";
+
 #[derive(Debug, Error)]
 pub enum ApiError {
     #[error("{0}")]
