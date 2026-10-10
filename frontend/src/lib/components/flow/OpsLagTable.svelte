@@ -1,8 +1,8 @@
 <script lang="ts">
 	// Workspace lag: the admin aggregate (`GET /admin/workspaces/{id}/flow/lag`) for
-	// projection/search/fan-out max+p95 plus its first page of per-document rows (the three groups
-	// merged by document), and the policy-filtered `GET .../flow/projection-lag` for the lag badge
-	// and the paged per-object rows. Paging state lives in `ProjectionLagPager`.
+	// projection/search/fan-out max+p95 plus its per-document rows (the three groups merged by
+	// document, paged by cursor), and the policy-filtered `GET .../flow/projection-lag` for the lag
+	// badge and the paged per-object rows. Paging state lives in `CursorPager`s.
 	import { t } from 'svelte-i18n';
 	import type { FlowAdminLag, FlowProjectionLag } from '$lib/api/flow';
 	import { PROJECTION_UNAVAILABLE_KEY, adminLagRows } from '$lib/flow/operations-service';
@@ -20,6 +20,12 @@
 		busy: boolean;
 		onprevious: () => void;
 		onnext: () => void;
+		documentsPage: number;
+		documentsHasPrevious: boolean;
+		documentsHasNext: boolean;
+		documentsBusy: boolean;
+		ondocumentsprevious: () => void;
+		ondocumentsnext: () => void;
 	}
 
 	let {
@@ -33,7 +39,13 @@
 		hasNext,
 		busy,
 		onprevious,
-		onnext
+		onnext,
+		documentsPage,
+		documentsHasPrevious,
+		documentsHasNext,
+		documentsBusy,
+		ondocumentsprevious,
+		ondocumentsnext
 	}: Props = $props();
 
 	const documentRows = $derived(adminLagRows(lag));
@@ -153,11 +165,35 @@
 					</li>
 				{/each}
 			</ul>
-			{#if lag.next_cursor}
-				<p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
-					{$t('flow.operations.lag.documentsMore')}
-				</p>
-			{/if}
+		{/if}
+		{#if documentsHasPrevious || documentsHasNext}
+			<nav
+				class="mt-3 flex items-center gap-2"
+				aria-label={$t('flow.operations.lag.documentsHeading')}
+				data-testid="flow-ops-lag-documents-pager"
+			>
+				<button
+					type="button"
+					class="min-h-11 rounded-md border border-slate-300 px-4 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-slate-600"
+					disabled={documentsBusy || !documentsHasPrevious}
+					data-testid="flow-ops-lag-documents-pager-previous"
+					onclick={ondocumentsprevious}
+				>
+					{$t('flow.operations.lag.previous')}
+				</button>
+				<span class="text-sm text-slate-600 dark:text-slate-300" aria-live="polite">
+					{$t('flow.operations.lag.page', { values: { n: documentsPage } })}
+				</span>
+				<button
+					type="button"
+					class="min-h-11 rounded-md border border-slate-300 px-4 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-slate-600"
+					disabled={documentsBusy || !documentsHasNext}
+					data-testid="flow-ops-lag-documents-pager-next"
+					onclick={ondocumentsnext}
+				>
+					{$t('flow.operations.lag.next')}
+				</button>
+			</nav>
 		{/if}
 	{/if}
 

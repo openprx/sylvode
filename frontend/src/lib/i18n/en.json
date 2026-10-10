@@ -3099,7 +3099,8 @@
           "document_missing": "The document is missing",
           "replay_failed": "The document could not be replayed",
           "unknown": "Failed for a reason this version cannot describe"
-        }
+        },
+        "pageNote": "Up to {n} documents per page; page through to see all of them, failed documents included. The counts above cover the whole workspace."
       },
       "drawer": {
         "title": {

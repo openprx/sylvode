@@ -466,7 +466,7 @@ export interface FlowAdminLagGroup {
 
 /** `GET /admin/workspaces/{workspace_id}/flow/lag`. The server pages the per-document items
  * (`cursor?`, `limit<=100`, default 50; the last page omits `next_cursor`); the operations panel
- * shows the first page and says when more documents exist. */
+ * pages through them. */
 export interface FlowAdminLag {
 	projection: FlowAdminLagGroup;
 	search: FlowAdminLagGroup;
@@ -1271,16 +1271,23 @@ export const flowApi = {
 		return apiClient.get<FlowAdminHealth>(`/api/v1/admin/workspaces/${workspaceId}/flow/health`);
 	},
 
-	getAdminLag(workspaceId: string): Promise<ApiResult<FlowAdminLag>> {
-		return apiClient.get<FlowAdminLag>(`/api/v1/admin/workspaces/${workspaceId}/flow/lag`);
+	/** One page of per-document lag rows (`cursor?`, `limit` 1..=100); the maxima are
+	 * workspace-wide on every page. */
+	getAdminLag(
+		workspaceId: string,
+		query: { cursor?: string; limit?: number } = {}
+	): Promise<ApiResult<FlowAdminLag>> {
+		const qs = buildQuery({ cursor: query.cursor, limit: query.limit });
+		return apiClient.get<FlowAdminLag>(`/api/v1/admin/workspaces/${workspaceId}/flow/lag${qs}`);
 	},
 
-	/** The first page of `documents[]` only; `counts` are workspace-wide regardless. */
+	/** One page of `documents[]` (`cursor?`, `limit` 1..=100); `counts` are workspace-wide
+	 * regardless. */
 	getAdminIntegrity(
 		workspaceId: string,
-		query: { scope: 'summary' | 'documents'; limit?: number }
+		query: { scope: 'summary' | 'documents'; cursor?: string; limit?: number }
 	): Promise<ApiResult<FlowAdminIntegrity>> {
-		const qs = buildQuery({ scope: query.scope, limit: query.limit });
+		const qs = buildQuery({ scope: query.scope, cursor: query.cursor, limit: query.limit });
 		return apiClient.get<FlowAdminIntegrity>(
 			`/api/v1/admin/workspaces/${workspaceId}/flow/integrity${qs}`
 		);

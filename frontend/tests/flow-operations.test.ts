@@ -45,6 +45,7 @@ import {
 	MaintenanceOperation,
 	OPERATION_NAME_KEYS,
 	OperationsPanelSession,
+	CursorPager,
 	PROJECTION_UNAVAILABLE_KEY,
 	ProjectionLagPager,
 	RECEIPT_FIELD_KEYS,
@@ -200,8 +201,8 @@ await suite.checkAsync(
 			const repo = new FlowObjectRepository();
 			const commands = new FlowCommandService();
 			await repo.getAdminHealth(WS);
-			await repo.getAdminLag(WS);
-			await repo.getAdminIntegrity(WS, { scope: 'documents', limit: 50 });
+			await repo.getAdminLag(WS, { cursor: 'lc2', limit: 50 });
+			await repo.getAdminIntegrity(WS, { scope: 'documents', cursor: 'ic2', limit: 50 });
 			await repo.getProjectionLag(WS, { cursor: 'c1', limit: 20 });
 			await commands.verifyDocument(DOC, { dry_run: true, deep: true, idempotency_key: 'k1' });
 			await commands.compactDocument(DOC, {
@@ -230,10 +231,14 @@ await suite.checkAsync(
 			seen,
 			[
 				{ method: 'GET', path: `/api/v1/admin/workspaces/${WS}/flow/health`, body: null },
-				{ method: 'GET', path: `/api/v1/admin/workspaces/${WS}/flow/lag`, body: null },
 				{
 					method: 'GET',
-					path: `/api/v1/admin/workspaces/${WS}/flow/integrity?scope=documents&limit=50`,
+					path: `/api/v1/admin/workspaces/${WS}/flow/lag?cursor=lc2&limit=50`,
+					body: null
+				},
+				{
+					method: 'GET',
+					path: `/api/v1/admin/workspaces/${WS}/flow/integrity?scope=documents&cursor=ic2&limit=50`,
 					body: null
 				},
 				{
@@ -897,8 +902,8 @@ await suite.checkAsync('page reads map 403/404 to the forbidden-safe state', asy
 			getProjectionLag: () => Promise.resolve(err(500))
 		}
 	});
-	assertEqual((await service.loadLag()).status, 'forbidden', 'lag 404');
-	assertEqual((await service.loadIntegrity(50)).status, 'forbidden', 'integrity 403');
+	assertEqual((await service.adminLagPager().load()).status, 'forbidden', 'lag 404');
+	assertEqual((await service.integrityPager(50).load()).status, 'forbidden', 'integrity 403');
 	const lag = await service.projectionLagPager().load();
 	assertEqual(lag.status, 'failed', 'projection-lag 500 is a failure, not forbidden');
 });
@@ -1531,6 +1536,113 @@ await suite.checkAsync('every static i18n key used by the panel exists in zh and
 			`${locale}.json pageTitle.flowOperations`
 		);
 	}
+});
+
+await suite.checkAsync(
+	'admin lag rows and integrity documents page by cursor, at most 100 per page',
+	async () => {
+		const lagQueries: Array<{ cursor?: string; limit?: number }> = [];
+		const integrityQueries: Array<{ scope: string; cursor?: string; limit?: number }> = [];
+		const lagPage = (cursor: string | undefined): FlowAdminLag => ({
+			...ADMIN_LAG,
+			projection: {
+				max: 3,
+				p95: 1,
+				items: [
+					{
+						object_id: `o-${cursor ?? 'first'}`,
+						document_id: `d-${cursor ?? 'first'}`,
+						head_seq: 3,
+						projection_seq: 0,
+						lag: 3
+					}
+				]
+			},
+			next_cursor: cursor === undefined ? 'lag-c2' : undefined
+		});
+		const integrityPage = (cursor: string | undefined): FlowAdminIntegrity => ({
+			...ADMIN_INTEGRITY,
+			next_cursor: cursor === undefined ? 'int-c2' : cursor === 'int-c2' ? 'int-c3' : undefined
+		});
+		const service = new FlowOperationsService(WS, {
+			reads: {
+				getAdminHealth: () => Promise.resolve(ok(health())),
+				getAdminLag: (_ws: string, query: { cursor?: string; limit?: number } = {}) => {
+					lagQueries.push(query);
+					return Promise.resolve(ok(lagPage(query.cursor)));
+				},
+				getAdminIntegrity: (
+					_ws: string,
+					query: { scope: 'summary' | 'documents'; cursor?: string; limit?: number }
+				) => {
+					integrityQueries.push(query);
+					return Promise.resolve(ok(integrityPage(query.cursor)));
+				},
+				getProjectionLag: () =>
+					Promise.resolve(ok({ max_lag: 0, p95_lag: 0, items: [] } as FlowProjectionLag))
+			},
+			commands: fakeCommands({}).commands,
+			isWorkspaceAdmin: () => Promise.resolve(true),
+			newKey: keys(),
+			now: () => NOW,
+			schedule: () => () => {}
+		});
+		const states: OpsPanelState[] = [];
+		const session = new OperationsPanelSession(service, (state) => states.push(state));
+		await session.open();
+		assertDeepEqual(lagQueries[0], { cursor: undefined, limit: 50 }, 'first lag page');
+		assertDeepEqual(
+			integrityQueries[0],
+			{ scope: 'documents', cursor: undefined, limit: 50 },
+			'first integrity page'
+		);
+		assertEqual(session.snapshot.lagDocumentsHasNext, true, 'more lag rows');
+		assertEqual(session.snapshot.lagDocumentsHasPrevious, false, 'on the first lag page');
+		await session.loadLag('next');
+		assertDeepEqual(lagQueries[1], { cursor: 'lag-c2', limit: 50 }, 'next lag page by cursor');
+		assertEqual(session.snapshot.lagDocumentsPage, 2, 'lag page 2');
+		assertEqual(session.snapshot.lag?.projection.items[0]?.object_id, 'o-lag-c2', 'its rows');
+		assertEqual(session.snapshot.lagDocumentsHasNext, false, 'last lag page');
+		await session.loadLag('previous');
+		assertEqual(lagQueries[2].cursor, undefined, 'previous re-reads the first page');
+		assertEqual(session.snapshot.lagDocumentsPage, 1, 'lag page 1');
+
+		await session.pageIntegrity('next');
+		await session.pageIntegrity('next');
+		assertDeepEqual(
+			integrityQueries.slice(1).map((query) => query.cursor),
+			['int-c2', 'int-c3'],
+			'integrity pages follow next_cursor'
+		);
+		assertEqual(session.snapshot.integrityPage, 3, 'integrity page 3');
+		assertEqual(session.snapshot.integrityHasNext, false, 'last integrity page');
+		await session.pageIntegrity('previous');
+		assertEqual(integrityQueries[3].cursor, 'int-c2', 'previous re-reads page 2');
+		await session.loadIntegrity(100);
+		assertDeepEqual(
+			integrityQueries[4],
+			{ scope: 'documents', cursor: undefined, limit: 100 },
+			'a new limit starts over at page 1'
+		);
+		assertEqual(session.snapshot.integrityPage, 1, 'back on page 1');
+		assert(
+			[...lagQueries, ...integrityQueries].every(
+				(query) => typeof query.limit === 'number' && query.limit <= 100
+			),
+			'every page is at most 100 rows'
+		);
+		session.dispose();
+	}
+);
+
+suite.check('a pager never asks for more than 100 rows', () => {
+	const asked: number[] = [];
+	const pager = new CursorPager<FlowAdminLag>((query) => {
+		asked.push(query.limit);
+		return Promise.resolve(ok(ADMIN_LAG));
+	}, 1000);
+	void pager.load();
+	assertEqual(asked[0], 100, 'clamped to 100');
 });
 
 finish(suite.result());

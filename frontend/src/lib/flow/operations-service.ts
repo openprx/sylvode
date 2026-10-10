@@ -49,10 +49,14 @@ export const OPS_HEALTH_REFRESH_MS = 15_000;
  * value in `events/dispatcher.rs::REPLAY_MAX_WINDOW_DAYS`). The local check only saves a round
  * trip; the server still refuses anything outside the window. */
 export const REPLAY_MAX_WINDOW_DAYS = 30;
-/** `GET .../integrity` accepts `limit` 1..=100; this panel shows the first page only. */
+/** `GET .../integrity` accepts `limit` 1..=100 and pages `documents[]` by cursor. */
 export const OPS_INTEGRITY_LIMITS = [50, 100] as const;
 export type OpsIntegrityLimit = (typeof OPS_INTEGRITY_LIMITS)[number];
 export const OPS_LAG_PAGE_SIZE = 20;
+/** Per-document rows per page of `GET /admin/.../flow/lag` (the server allows 1..=100). */
+export const OPS_ADMIN_LAG_PAGE_SIZE = 50;
+/** The admin endpoints' page ceiling (`operations.rs::admin_page_limit`). */
+export const OPS_PAGE_LIMIT_MAX = 100;
 
 const DAY_MS = 86_400_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1173,20 +1177,25 @@ export class DeliveryReplay {
 
 // ---- lag paging -------------------------------------------------------------------------------
 
-/** Cursor pager over `GET .../flow/projection-lag` items (the admin lag endpoint returns no
- * per-object items at this baseline). */
-export class ProjectionLagPager {
+/**
+ * Cursor pager over one paged read (`{..., next_cursor?}`): the server's opaque cursors are kept
+ * per page so "previous" re-reads the page it came from. A page is at most `OPS_PAGE_LIMIT_MAX`
+ * rows. A failed read keeps the page on screen and the position unchanged.
+ */
+export class CursorPager<T extends { next_cursor?: string | null }> {
 	private readonly cursors: Array<string | undefined> = [undefined];
 	private index = 0;
-	private page: FlowProjectionLag | null = null;
+	private page: T | null = null;
+	readonly limit: number;
 
 	constructor(
-		private readonly workspaceId: string,
-		private readonly reads: Pick<FlowObjectRepository, 'getProjectionLag'>,
-		private readonly limit = OPS_LAG_PAGE_SIZE
-	) {}
+		private readonly read: (query: { cursor?: string; limit: number }) => Promise<ApiResult<T>>,
+		limit: number
+	) {
+		this.limit = Math.min(Math.max(Math.trunc(limit), 1), OPS_PAGE_LIMIT_MAX);
+	}
 
-	get current(): FlowProjectionLag | null {
+	get current(): T | null {
 		return this.page;
 	}
 
@@ -1202,33 +1211,39 @@ export class ProjectionLagPager {
 		return this.index > 0;
 	}
 
-	load(): Promise<OpsRead<FlowProjectionLag>> {
+	load(): Promise<OpsRead<T>> {
 		return this.fetch(this.index);
 	}
 
-	async next(): Promise<OpsRead<FlowProjectionLag> | null> {
+	async next(): Promise<OpsRead<T> | null> {
 		if (!this.hasNext()) return null;
-		this.cursors[this.index + 1] = this.page?.next_cursor;
+		this.cursors[this.index + 1] = this.page?.next_cursor ?? undefined;
 		return this.fetch(this.index + 1);
 	}
 
-	async previous(): Promise<OpsRead<FlowProjectionLag> | null> {
+	async previous(): Promise<OpsRead<T> | null> {
 		if (!this.hasPrevious()) return null;
 		return this.fetch(this.index - 1);
 	}
 
-	private async fetch(index: number): Promise<OpsRead<FlowProjectionLag>> {
-		const read = toRead(
-			await this.reads.getProjectionLag(this.workspaceId, {
-				cursor: this.cursors[index],
-				limit: this.limit
-			})
-		);
+	private async fetch(index: number): Promise<OpsRead<T>> {
+		const read = toRead(await this.read({ cursor: this.cursors[index], limit: this.limit }));
 		if (read.status === 'ready') {
 			this.index = index;
 			this.page = read.data;
 		}
 		return read;
+	}
+}
+
+/** Cursor pager over `GET .../flow/projection-lag` items. */
+export class ProjectionLagPager extends CursorPager<FlowProjectionLag> {
+	constructor(
+		workspaceId: string,
+		reads: Pick<FlowObjectRepository, 'getProjectionLag'>,
+		limit = OPS_LAG_PAGE_SIZE
+	) {
+		super((query) => reads.getProjectionLag(workspaceId, query), limit);
 	}
 }
 
@@ -1282,17 +1297,24 @@ export class FlowOperationsService {
 		);
 	}
 
-	async loadLag(): Promise<OpsRead<FlowAdminLag>> {
-		return toRead(await this.deps.reads.getAdminLag(this.workspaceId));
+	/** The admin lag aggregate with its per-document rows, paged by cursor. */
+	adminLagPager(): CursorPager<FlowAdminLag> {
+		return new CursorPager(
+			(query) => this.deps.reads.getAdminLag(this.workspaceId, query),
+			OPS_ADMIN_LAG_PAGE_SIZE
+		);
 	}
 
 	projectionLagPager(): ProjectionLagPager {
 		return new ProjectionLagPager(this.workspaceId, this.deps.reads);
 	}
 
-	async loadIntegrity(limit: OpsIntegrityLimit): Promise<OpsRead<FlowAdminIntegrity>> {
-		return toRead(
-			await this.deps.reads.getAdminIntegrity(this.workspaceId, { scope: 'documents', limit })
+	/** Workspace integrity: `counts` are workspace-wide on every page; `documents[]` is paged. */
+	integrityPager(limit: OpsIntegrityLimit): CursorPager<FlowAdminIntegrity> {
+		return new CursorPager(
+			(query) =>
+				this.deps.reads.getAdminIntegrity(this.workspaceId, { scope: 'documents', ...query }),
+			limit
 		);
 	}
 
@@ -1361,6 +1383,10 @@ export interface OpsPanelState {
 	readonly health: HealthSnapshot | null;
 	readonly lag: FlowAdminLag | null;
 	readonly lagErrorKey: string;
+	readonly lagDocumentsPage: number;
+	readonly lagDocumentsHasPrevious: boolean;
+	readonly lagDocumentsHasNext: boolean;
+	readonly lagDocumentsBusy: boolean;
 	readonly projection: ProjectionBlock;
 	readonly lagPage: number;
 	readonly lagHasPrevious: boolean;
@@ -1370,6 +1396,18 @@ export interface OpsPanelState {
 	readonly integrityErrorKey: string;
 	readonly integrityLimit: OpsIntegrityLimit;
 	readonly integrityBusy: boolean;
+	readonly integrityPage: number;
+	readonly integrityHasPrevious: boolean;
+	readonly integrityHasNext: boolean;
+}
+
+export type PageStep = 'load' | 'previous' | 'next';
+
+function pagerStep<T extends { next_cursor?: string | null }>(
+	pager: CursorPager<T>,
+	step: PageStep
+): Promise<OpsRead<T> | null> {
+	return step === 'load' ? pager.load() : step === 'previous' ? pager.previous() : pager.next();
 }
 
 /**
@@ -1389,6 +1427,10 @@ export class OperationsPanelSession {
 		health: null,
 		lag: null,
 		lagErrorKey: '',
+		lagDocumentsPage: 1,
+		lagDocumentsHasPrevious: false,
+		lagDocumentsHasNext: false,
+		lagDocumentsBusy: false,
 		projection: { data: null, errorKey: '', unavailable: false },
 		lagPage: 1,
 		lagHasPrevious: false,
@@ -1397,10 +1439,15 @@ export class OperationsPanelSession {
 		integrity: null,
 		integrityErrorKey: '',
 		integrityLimit: OPS_INTEGRITY_LIMITS[0],
-		integrityBusy: false
+		integrityBusy: false,
+		integrityPage: 1,
+		integrityHasPrevious: false,
+		integrityHasNext: false
 	};
 	private monitor: HealthMonitor | null = null;
 	private pager: ProjectionLagPager | null = null;
+	private lagPager: CursorPager<FlowAdminLag> | null = null;
+	private integrityPager: CursorPager<FlowAdminIntegrity> | null = null;
 	private disposed = false;
 
 	constructor(
@@ -1437,6 +1484,7 @@ export class OperationsPanelSession {
 		this.set({ view: 'ready' });
 		monitor.start();
 		this.pager = this.service.projectionLagPager();
+		this.lagPager = this.service.adminLagPager();
 		await Promise.all([this.loadLag(), this.loadProjection('load'), this.loadIntegrity()]);
 		return this.state;
 	}
@@ -1459,12 +1507,23 @@ export class OperationsPanelSession {
 		if (!this.disposed) void this.monitor?.refresh();
 	}
 
-	async loadLag(): Promise<void> {
-		const read = await this.service.loadLag();
+	/** The admin lag page (`step` pages its per-document rows; the maxima are workspace-wide). */
+	async loadLag(step: PageStep = 'load'): Promise<void> {
+		const pager = this.lagPager;
+		if (!pager || this.disposed) return;
+		this.set({ lagDocumentsBusy: true });
+		const read = await pagerStep(pager, step);
 		if (this.disposed) return;
-		if (read.status === 'ready') this.set({ lag: read.data, lagErrorKey: '' });
-		else if (read.status === 'forbidden') this.set({ view: 'forbidden' });
-		else this.set({ lagErrorKey: read.failure.messageKey });
+		const position = {
+			lagDocumentsBusy: false,
+			lagDocumentsPage: pager.pageNumber,
+			lagDocumentsHasPrevious: pager.hasPrevious(),
+			lagDocumentsHasNext: pager.hasNext()
+		};
+		if (!read) this.set(position);
+		else if (read.status === 'ready') this.set({ ...position, lag: read.data, lagErrorKey: '' });
+		else if (read.status === 'forbidden') this.set({ ...position, view: 'forbidden' });
+		else this.set({ ...position, lagErrorKey: read.failure.messageKey });
 	}
 
 	async loadProjection(step: 'load' | 'previous' | 'next'): Promise<void> {
@@ -1487,18 +1546,38 @@ export class OperationsPanelSession {
 		});
 	}
 
-	async loadIntegrity(limit: OpsIntegrityLimit = this.state.integrityLimit): Promise<void> {
+	/** Integrity: a new `limit` starts over at the first page; `step` pages `documents[]`. */
+	async loadIntegrity(
+		limit: OpsIntegrityLimit = this.state.integrityLimit,
+		step: PageStep = 'load'
+	): Promise<void> {
 		if (this.disposed) return;
-		this.set({ integrityLimit: limit, integrityBusy: true });
-		const read = await this.service.loadIntegrity(limit);
-		if (this.disposed) return;
-		if (read.status === 'ready') {
-			this.set({ integrity: read.data, integrityErrorKey: '', integrityBusy: false });
-		} else if (read.status === 'forbidden') {
-			this.set({ view: 'forbidden', integrityBusy: false });
-		} else {
-			this.set({ integrityErrorKey: read.failure.messageKey, integrityBusy: false });
+		if (!this.integrityPager || limit !== this.state.integrityLimit) {
+			this.integrityPager = this.service.integrityPager(limit);
 		}
+		const pager = this.integrityPager;
+		this.set({ integrityLimit: limit, integrityBusy: true });
+		const read = await pagerStep(pager, step);
+		if (this.disposed) return;
+		const position = {
+			integrityBusy: false,
+			integrityPage: pager.pageNumber,
+			integrityHasPrevious: pager.hasPrevious(),
+			integrityHasNext: pager.hasNext()
+		};
+		if (!read) {
+			this.set(position);
+		} else if (read.status === 'ready') {
+			this.set({ ...position, integrity: read.data, integrityErrorKey: '' });
+		} else if (read.status === 'forbidden') {
+			this.set({ ...position, view: 'forbidden' });
+		} else {
+			this.set({ ...position, integrityErrorKey: read.failure.messageKey });
+		}
+	}
+
+	pageIntegrity(step: 'previous' | 'next'): Promise<void> {
+		return this.loadIntegrity(this.state.integrityLimit, step);
 	}
 
 	/** After a maintenance execute: reload every section and the health sample. */
