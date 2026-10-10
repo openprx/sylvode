@@ -237,13 +237,38 @@ export interface FlowPackageArtifactReceipt {
 	expires_at: string;
 }
 
+/** `manifest_summary.projects[]` row: a source project the package's objects belong to. `title`
+ * is `null` for packages exported without the optional manifest `projects` field. */
+export interface FlowPackageManifestProject {
+	source_project_id: string;
+	title: string | null;
+}
+
+/** `imports/preview` `manifest_summary` (`rest-api-v1.md` v0.8, 2026-10-10;
+ * `apps/api/src/flow/package_import.rs::ManifestSummary`). */
+export interface FlowPackageManifestSummary {
+	projects: FlowPackageManifestProject[];
+	object_count: number;
+	document_count: number;
+	package_schema: string;
+	engine: { name: string; crate_version: string; wire_format_version: number };
+}
+
+/** One structured preview conflict (`package_import.rs::ImportConflict`, tagged by `kind`). */
+export type FlowPackageConflictDetail =
+	| { kind: 'lineage_exists'; source_object_id: string; existing_target_id: string }
+	| { kind: 'project_unmapped'; source_project_id: string; title: string | null };
+
 export interface FlowPackageImportPreview {
 	preview_id: string;
 	package_id: string;
 	package_sha256: string;
 	mapping_hash: string;
+	manifest_summary: FlowPackageManifestSummary;
 	mapping: Record<string, unknown>;
+	/** Bare subject ids, kept for compatibility; `conflict_details` carries the kinds. */
 	conflicts: string[];
+	conflict_details: FlowPackageConflictDetail[];
 	warnings: string[];
 	estimated_changes: Record<string, number>;
 	expires_at: string;
@@ -259,8 +284,10 @@ export interface CreateWorkspaceExportInput {
 }
 
 /** Export job receipt. `POST .../exports` returns it without `download_url`; `GET
- * /flow/exports/{job_id}` adds `download_url` (`apps/api/src/routes/flow.rs::get_flow_export`).
- * `error` is in the contract row but the server does not emit it at this baseline. */
+ * /flow/exports/{job_id}` adds `download_url` only for `completed`
+ * (`apps/api/src/routes/flow.rs::get_flow_export`). A render that fails inside the request is
+ * still a success envelope with `status:"failed"` and `error` set to a stable code, with an empty
+ * `checksum` and `size: 0` (`rest-api-v1.md` v0.8, 2026-10-10). */
 export interface FlowExportJob {
 	job_id: string;
 	status: string;

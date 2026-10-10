@@ -2740,7 +2740,10 @@
         "unprojected": "不归属项目",
         "removeMapping": "移除",
         "addMapping": "添加项目映射",
-        "mappingInvalid": "每个源项目 ID 都必须是有效且不重复的 UUID。"
+        "mappingInvalid": "每个源项目 ID 都必须是有效且不重复的 UUID。",
+        "unmappedNotice": "预览发现以下来源项目没有映射。请为每一个选择目标项目或「不归属项目」，然后重新预览。",
+        "chooseTarget": "请选择目标…",
+        "targetFor": "{project} 的目标"
       },
       "packageSha256": "包 SHA-256",
       "mappingHash": "映射哈希",
@@ -2759,7 +2762,26 @@
         "conflicts": "冲突",
         "warnings": "警告",
         "none": "无",
-        "rerun": "重新预览"
+        "rerun": "重新预览",
+        "hold": {
+          "projectUnmapped": "包内有来源项目尚未映射。请在映射步骤为每个来源项目选择目标后重新预览。",
+          "lineageExists": "这些对象已导入过本工作区，且当前策略为「拒绝导入」，因此本次预览无法确认。可改为复用之前的导入重新预览，或导入其它包。"
+        },
+        "reuseAction": "改为复用之前的导入并重新预览",
+        "manifest": {
+          "heading": "包内容",
+          "objects": "包内对象数",
+          "documents": "包内文档数",
+          "schema": "包格式版本",
+          "engine": "引擎",
+          "engineValue": "{name} {version}（wire 格式 {wire}）",
+          "projects": "来源项目",
+          "noProjects": "无（包内对象不属于任何项目）"
+        },
+        "conflict": {
+          "lineage": "已导入：{source} → 现有对象 {target}",
+          "unmapped": "来源项目未映射：{project}"
+        }
       },
       "confirm": {
         "copy": "复制哈希",
@@ -2781,13 +2803,16 @@
         "uploaded": "上传完成。",
         "cancelled": "上传已取消。",
         "previewing": "正在执行服务器预览…",
-        "committed": "导入已提交。"
+        "committed": "导入已提交。",
+        "unmapped": "有 {n} 个来源项目需要映射后才能确认预览。"
       },
       "error": {
         "previewRejected": "服务器拒绝了预览。请确认“包含历史”与包一致，并且每个源项目都已映射。",
         "conflict": "这些对象已导入过本工作区。请选择“复用之前的导入”，或导入其他包。",
         "commitConflict": "该导入已与其预览不一致，请重新预览。",
-        "pending": "导入仍在进行中。"
+        "pending": "导入仍在进行中。",
+        "projectUnmapped": "导入被拒绝：包内有来源项目没有映射。请为所有来源项目设置映射后重新预览。",
+        "lineageRejected": "导入被拒绝：这些对象已导入过本工作区，且策略为「拒绝导入」。请改为复用之前的导入重新预览。"
       },
       "report": {
         "title": "导入报告",

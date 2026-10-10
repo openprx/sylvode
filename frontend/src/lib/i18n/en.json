@@ -2740,7 +2740,10 @@
         "unprojected": "Unprojected",
         "removeMapping": "Remove",
         "addMapping": "Add project mapping",
-        "mappingInvalid": "Each source project ID must be a valid, unique UUID."
+        "mappingInvalid": "Each source project ID must be a valid, unique UUID.",
+        "unmappedNotice": "The preview found source projects without a mapping. Choose a target project or Unprojected for each one, then run the preview again.",
+        "chooseTarget": "Choose a target…",
+        "targetFor": "Target for {project}"
       },
       "packageSha256": "Package SHA-256",
       "mappingHash": "Mapping hash",
@@ -2759,7 +2762,26 @@
         "conflicts": "Conflicts",
         "warnings": "Warnings",
         "none": "None",
-        "rerun": "Run preview again"
+        "rerun": "Run preview again",
+        "hold": {
+          "projectUnmapped": "Some source projects in the package are not mapped yet. Map each one on the mapping step and run the preview again.",
+          "lineageExists": "These objects were already imported into this workspace, and the policy is \"Reject the import\", so this preview cannot be confirmed. Preview again reusing the earlier import, or import a different package."
+        },
+        "reuseAction": "Preview again reusing the earlier import",
+        "manifest": {
+          "heading": "Package contents",
+          "objects": "Objects in the package",
+          "documents": "Documents in the package",
+          "schema": "Package schema",
+          "engine": "Engine",
+          "engineValue": "{name} {version} (wire format {wire})",
+          "projects": "Source projects",
+          "noProjects": "None (the package has no project objects)"
+        },
+        "conflict": {
+          "lineage": "Already imported: {source} → existing object {target}",
+          "unmapped": "Source project not mapped: {project}"
+        }
       },
       "confirm": {
         "copy": "Copy hash",
@@ -2781,13 +2803,16 @@
         "uploaded": "Upload complete.",
         "cancelled": "Upload cancelled.",
         "previewing": "Running server preview…",
-        "committed": "Import submitted."
+        "committed": "Import submitted.",
+        "unmapped": "{n} source projects need a mapping before the preview can be confirmed."
       },
       "error": {
         "previewRejected": "The server rejected the preview. Check that \"includes history\" matches the package and that every source project is mapped.",
         "conflict": "These objects were already imported into this workspace. Choose \"Reuse the earlier import\" or import a different package.",
         "commitConflict": "The import no longer matches its preview. Run the preview again.",
-        "pending": "The import is still running."
+        "pending": "The import is still running.",
+        "projectUnmapped": "The import was refused because a source project in the package has no mapping. Map every source project and run the preview again.",
+        "lineageRejected": "The import was refused: these objects were already imported into this workspace and the policy is \"Reject the import\". Preview again reusing the earlier import."
       },
       "report": {
         "title": "Import report",

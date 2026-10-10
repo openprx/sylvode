@@ -9,6 +9,9 @@
 //   1s, 2s, 4s and 5s thereafter (exponential, capped at 5s) -- and polling stops at a terminal
 //   status, on a permanent error, or when the tracker is disposed;
 // - `download_url` is surfaced only for a successful terminal status;
+// - a `failed` job is a failure even when its envelope is a success: a render that fails inside
+//   the POST answers `code:0, status:"failed", error:<stable code>` (`rest-api-v1.md` v0.8,
+//   2026-10-10), so the job's own `error` code selects the text, never only `error_code`;
 // - the export write goes through `CommandService.startWorkspaceExport`, the job read and the
 //   artifact download through `ObjectRepository` (`ui-surface-v1.md` five adapters);
 // - recent job ids are a per-user, per-workspace convenience in `localStorage` (at most 10; every
@@ -46,6 +49,20 @@ export function isTerminalExportStatus(status: string): boolean {
 
 export function isSuccessfulExportStatus(status: string): boolean {
 	return SUCCESS_STATUSES.has(status);
+}
+
+/** The failure a job reports about itself: a `failed` job's stored stable `error` code, worded
+ * like the same code in an error envelope. A failed job without a code still fails (generic
+ * text). Any other status is not a failure. */
+export function exportJobFailure(
+	job: Pick<FlowExportJob, 'status' | 'error'> | null
+): FlowPackageFailure | null {
+	if (!job || job.status !== 'failed') return null;
+	const code = typeof job.error === 'string' && job.error !== '' ? job.error : null;
+	if (code === null) return classifyPackageFailure({ code: 400, error_code: 'unknown' }, 'export');
+	// The numeric code is irrelevant for a stable code; it only routes unknown codes to the
+	// generic permanent text.
+	return { ...classifyPackageFailure({ code: 400, error_code: code }, 'export'), retryable: false };
 }
 
 /** The wait before poll number `attempt` (0-based) after the first, immediate one. */
@@ -225,6 +242,12 @@ export class PackageExportController {
 		this.intent = null;
 		const jobId = result.data.job_id;
 		rememberExport(this.workspaceId, jobId, this.deps.store);
+		const failed = exportJobFailure(result.data);
+		if (failed) {
+			// Already terminal: the job is stored (a reload re-attaches to it), nothing to poll.
+			this.put({ jobId, job: result.data, polling: false, failure: failed }, true);
+			return { status: 'failed', failure: failed };
+		}
 		this.put({ jobId, job: result.data, polling: true, failure: null }, true);
 		void this.poll(jobId);
 		return { status: 'started', jobId };
@@ -255,7 +278,10 @@ export class PackageExportController {
 				if (this.disposed) break;
 				if (result.code === 0 && result.data) {
 					const terminal = isTerminalExportStatus(result.data.status);
-					this.put({ jobId, job: result.data, polling: !terminal, failure: null }, false);
+					this.put(
+						{ jobId, job: result.data, polling: !terminal, failure: exportJobFailure(result.data) },
+						false
+					);
 					if (terminal) break;
 					continue;
 				}
