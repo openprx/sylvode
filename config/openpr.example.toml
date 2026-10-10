@@ -192,6 +192,11 @@ allow_private = false
 # listed here. Default: empty, which refuses every live editing session; list the origin the
 # web UI is served from.
 # collab_allowed_origins = ["https://sylvode.example.com"]
+#
+# Seconds between two sweeps that fail conversion jobs left `started` for more than 15 minutes
+# (their run crashed or was abandoned), so they can be retried. The API also sweeps once at
+# startup. Default: 60. Must be between 1 and 86400.
+# conversion_reap_interval_secs = 60
 
 
 # ---------------------------------------------------------------------------------------------

@@ -13566,8 +13566,9 @@ mod flow_database_tests {
 
     /// FP2-B4 ruling 2: a job left `started` past the threshold (its run crashed) is reaped to
     /// `failed`/`server_rejected` with one business `flow.conversion.failed` (`reason=stale_started`);
-    /// a fresh `started` job is left alone; a second sweep writes nothing; and a retry that finds
-    /// a stale `started` job reaps it in place and proceeds.
+    /// a fresh `started` job is left alone; a second sweep writes nothing; and a retry that finds a
+    /// `started` job, fresh or stale, answers `server_draining{reason:"contention"}` and never reaps
+    /// it in place (`rest-api-v1.md` v0.7, `error-mapping-v1.md`).
     #[tokio::test]
     async fn fp2_b4_stale_started_conversion_jobs_are_reaped_once_and_become_retryable() {
         let scratch = scratch_or_skip!("fp2-b4-reap");
@@ -13594,7 +13595,7 @@ mod flow_database_tests {
         }
 
         let threshold = crate::flow::bridge::conversion_started_stale_after();
-        let reaped = crate::flow::bridge::reap_stale_conversion_jobs(&state, threshold, None)
+        let reaped = crate::flow::bridge::reap_stale_conversion_jobs(&state, threshold)
             .await
             .expect("the sweep runs");
         assert_eq!(reaped, 1, "only the job older than the threshold is reaped");
@@ -13614,7 +13615,7 @@ mod flow_database_tests {
         );
         assert_eq!(fp2_b4_reaped_events(&state, fresh_job).await, (0, 0));
 
-        let again = crate::flow::bridge::reap_stale_conversion_jobs(&state, threshold, None)
+        let again = crate::flow::bridge::reap_stale_conversion_jobs(&state, threshold)
             .await
             .expect("the second sweep runs");
         assert_eq!(again, 0, "the sweep is idempotent");
@@ -13625,12 +13626,14 @@ mod flow_database_tests {
         assert_eq!(retried["code"], 0, "{retried}");
         assert_eq!(retried["data"]["status"], "completed", "{retried}");
 
-        // A retry that finds a fresh `started` job is still refused; ...
+        // A retry that finds a fresh `started` job is a request on a job in flight; ...
         let refused = fp2_b4_retry(&state, &fx, &fresh_job.to_string()).await;
-        assert_typed(&refused, "policy_rejected", 403);
+        assert_typed(&refused, "server_draining", 409);
+        assert_eq!(refused["details"]["reason"], "contention", "{refused}");
+        assert!(refused["details"]["retry_after_ms"].as_u64().is_some(), "{refused}");
         assert_eq!(fp2_b4_job_status(&state, fresh_job).await.0, "started");
-        // ... one that finds a stale one (it went stale after the startup sweep) reaps it in place
-        // and proceeds.
+        // ... and so is one that finds a stale one (it went stale after the last sweep): the retry
+        // does not reap in place, the periodic sweep does.
         exec(
             &state,
             "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
@@ -13638,10 +13641,67 @@ mod flow_database_tests {
             vec![retry_job.into()],
         )
         .await;
-        let reaped_in_place = fp2_b4_retry(&state, &fx, &retry_job.to_string()).await;
-        assert_eq!(reaped_in_place["code"], 0, "{reaped_in_place}");
-        assert_eq!(reaped_in_place["data"]["status"], "completed", "{reaped_in_place}");
-        assert_eq!(fp2_b4_reaped_events(&state, retry_job).await, (1, 1));
+        let not_reaped = fp2_b4_retry(&state, &fx, &retry_job.to_string()).await;
+        assert_typed(&not_reaped, "server_draining", 409);
+        assert_eq!(not_reaped["details"]["reason"], "contention", "{not_reaped}");
+        assert_eq!(
+            fp2_b4_job_status(&state, retry_job).await,
+            ("started".to_string(), None)
+        );
+        assert_eq!(fp2_b4_reaped_events(&state, retry_job).await, (0, 0));
+        scratch.drop_self().await;
+    }
+
+    /// `rest-api-v1.md` v0.7: the stale-`started` sweep runs at startup *and periodically*. A job
+    /// that goes stale after the reaper's first sweep is failed by a later one without any retry
+    /// or restart, and the loop ends when it is told to stop.
+    #[tokio::test]
+    async fn the_conversion_reaper_fails_jobs_that_go_stale_after_startup_and_stops_on_shutdown() {
+        let scratch = scratch_or_skip!("conversion-reaper");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        let job = fp2_b4_failed_job(&state, &fx, "conversion-reaper-job").await;
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, updated_at=now() WHERE id=$1",
+            vec![job.into()],
+        )
+        .await;
+        let (stop, stop_rx) = tokio::sync::watch::channel(false);
+        let reaper = tokio::spawn(crate::flow::bridge::run_conversion_reaper(
+            state.clone(),
+            std::time::Duration::from_millis(200),
+            stop_rx,
+        ));
+        // Let the startup sweep pass while the job is still fresh.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert_eq!(
+            fp2_b4_job_status(&state, job).await,
+            ("started".to_string(), None),
+            "a fresh started job survives the sweeps"
+        );
+        // The run crashes long ago, as far as the row is concerned.
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET updated_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![job.into()],
+        )
+        .await;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while fp2_b4_job_status(&state, job).await.0 == "started" && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            fp2_b4_job_status(&state, job).await,
+            ("failed".to_string(), Some("server_rejected".to_string())),
+            "a later periodic sweep fails the job without a retry"
+        );
+        assert_eq!(fp2_b4_reaped_events(&state, job).await, (1, 1));
+        stop.send(true).expect("the reaper is listening");
+        tokio::time::timeout(std::time::Duration::from_secs(5), reaper)
+            .await
+            .expect("the reaper stops on shutdown")
+            .expect("the reaper task ends cleanly");
         scratch.drop_self().await;
     }
 
@@ -14274,7 +14334,6 @@ mod flow_database_tests {
         let reaped = crate::flow::bridge::reap_stale_conversion_jobs(
             &state,
             crate::flow::bridge::conversion_started_stale_after(),
-            None,
         )
         .await
         .expect("the sweep runs");

@@ -20,8 +20,9 @@ use uuid::Uuid;
 
 use super::secret::Secret;
 use super::{
-    AuditConfig, AuthConfig, ConfigError, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_OPERATION_LOG_RETENTION_DAYS,
-    DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, LogFormat, LogOutput, LoggingConfig,
+    AuditConfig, AuthConfig, ConfigError, DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
+    DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR,
+    DatabaseConfig, FlowConfig, LogFormat, LogOutput, LoggingConfig, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
     MIN_JWT_SECRET_LEN, McpConfig, McpTransport, MigrationsConfig, OpenPrConfig, OutboundConfig, S3Config,
     ServerConfig, StorageBackend, StorageConfig,
 };
@@ -104,6 +105,7 @@ struct RawAuth {
 struct RawFlow {
     dispatch_max_attempts: Option<i32>,
     collab_allowed_origins: Option<Vec<String>>,
+    conversion_reap_interval_secs: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -508,9 +510,20 @@ impl RawFlow {
             .into_iter()
             .filter_map(|entry| issues.record(validate_origin_entry(&entry)))
             .collect();
+        let conversion_reap_interval_secs =
+            self.conversion_reap_interval_secs
+                .map_or(DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, |value| {
+                    if (1..=MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS).contains(&value) {
+                        value
+                    } else {
+                        issues.push("flow.conversion_reap_interval_secs must be between 1 and 86400");
+                        DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS
+                    }
+                });
         FlowConfig {
             dispatch_max_attempts,
             collab_allowed_origins,
+            conversion_reap_interval_secs,
         }
     }
 }

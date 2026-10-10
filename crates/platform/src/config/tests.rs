@@ -1030,3 +1030,27 @@ fn only_loopback_addresses_and_localhost_count_as_a_loopback_bind() {
         assert!(!super::raw::is_loopback_bind_addr(bind), "{bind} is not loopback");
     }
 }
+
+// ---- flow.conversion_reap_interval_secs ----
+
+#[test]
+fn the_conversion_reap_interval_defaults_to_sixty_seconds_and_is_read_from_flow() {
+    let defaulted = parse("").unwrap_or_else(|err| panic!("an empty file validates: {err}"));
+    assert_eq!(defaulted.flow.conversion_reap_interval_secs, 60);
+    let configured = parse("[flow]\nconversion_reap_interval_secs = 2\n")
+        .unwrap_or_else(|err| panic!("a two-second interval validates: {err}"));
+    assert_eq!(configured.flow.conversion_reap_interval_secs, 2);
+}
+
+#[test]
+fn a_conversion_reap_interval_outside_one_second_to_one_day_is_refused() {
+    for value in ["0", "86401"] {
+        let reported = issues(&format!("[flow]\nconversion_reap_interval_secs = {value}\n"));
+        assert!(
+            reported
+                .iter()
+                .any(|issue| issue.contains("flow.conversion_reap_interval_secs must be between 1 and 86400")),
+            "{value}: {reported:?}"
+        );
+    }
+}

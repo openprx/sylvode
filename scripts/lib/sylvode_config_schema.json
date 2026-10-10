@@ -24,7 +24,7 @@
     "migrations": ["replay", "continue_on_error"],
     "outbound": ["allowed_hosts", "allow_private"],
     "mcp": ["api_url", "bot_token", "workspace_id", "transport", "bind_addr"],
-    "flow": ["dispatch_max_attempts", "collab_allowed_origins"]
+    "flow": ["dispatch_max_attempts", "collab_allowed_origins", "conversion_reap_interval_secs"]
   },
   "retired": {
     "mcp.auth_token": "the shared inbound secret has been removed and the MCP server refuses to start while the key is present. An http/sse caller now presents its own workspace bot token in the Authorization: Bearer opr_... header, which the server forwards to the API unchanged. Fix: delete the auth_token line from the [mcp] section"

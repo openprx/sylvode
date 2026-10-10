@@ -653,9 +653,11 @@ replacement and the earliest removal.
   job was created, or recording its failure failed) is now reaped to `failed` with
   `error = "server_rejected"` and one business `flow.conversion.failed` event whose payload
   carries `reason = "stale_started"`, so it can be retried instead of being stuck. The API
-  reaps such jobs once at startup, and a retry that finds a job `started` past the threshold
-  reaps it in place and proceeds; a retry of a job that is `started` more recently is still
-  refused. The 15-minute threshold is an implementation constant, not a contract limit.
+  reaps such jobs at startup and then periodically, every `[flow] conversion_reap_interval_secs`
+  seconds (default 60, 1..=86400). A retry only accepts a `failed` job: a retry of a job that is
+  still `started`, stale or not, answers `server_draining` with `reason = "contention"` and
+  `retry_after_ms` and never reaps it in place. The 15-minute threshold is an implementation
+  constant, not a contract limit.
 - Flow conversions: when a commit or retry fails after its job exists, the typed error's
   `details` now also carry `job_id` and `job_status` (normally `"failed"`), so a client can open
   the job and retry it without a second request. `error_code`, `message` and the existing
