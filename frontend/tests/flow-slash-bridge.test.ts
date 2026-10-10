@@ -57,7 +57,7 @@ interface Call {
 	idempotencyKey: string | null;
 }
 
-type Responder = (call: Call) => { body: unknown } | 'throw';
+type Responder = (call: Call) => { body: unknown } | { html: string } | 'throw';
 
 const calls: Call[] = [];
 let responder: Responder = () => ({ body: { code: 0, message: 'ok', data: {} } });
@@ -74,6 +74,8 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 	calls.push(call);
 	const answer = responder(call);
 	if (answer === 'throw') throw new TypeError('network down');
+	// A proxy/gateway error page: not JSON, no envelope at all.
+	if ('html' in answer) return new Response(answer.html, { status: 502 });
 	return new Response(JSON.stringify(answer.body), {
 		headers: { 'Content-Type': 'application/json' }
 	});
@@ -234,14 +236,16 @@ await suite.checkAsync(
 );
 
 await suite.checkAsync(
-	'a transport failure is retryable with the generic key; a new start mints a new key',
+	'no response is the local network_error: a retryable transport failure; a new start mints a new key',
 	async () => {
 		reset(() => 'throw');
 		const session = new CollectionEmbedSession(PAGE, new FlowCommandService(), () => {}, mint);
 		await session.start('Bugs', LABELS);
 		const failure = session.snapshot().failure;
 		assertEqual(failure?.retryable, true, 'retryable');
-		assertEqual(failure?.key, 'flow.canvas.slashMenu.collectionFailed', 'generic key');
+		assertEqual(failure?.code, 'network_error', 'Web-local network_error');
+		assertEqual(failure?.kind, 'transport', 'a transport failure, not a server refusal');
+		assertEqual(failure?.key, 'flow.error.network_error', 'network_error key');
 		const firstKey = (calls[0].body as { idempotency_key: string }).idempotency_key;
 		await session.start('Bugs', LABELS);
 		const secondKey = (calls[1].body as { idempotency_key: string }).idempotency_key;
@@ -263,6 +267,58 @@ await suite.checkAsync(
 			assertEqual(again.kind, 'failed', 'retry refused');
 			assertEqual(calls.length, 1, `${code}: retry sends nothing`);
 		}
+	}
+);
+
+await suite.checkAsync(
+	'a 5xx without error_code is network_error and retries under the same key; an unknown 4xx is a server refusal',
+	async () => {
+		// `error-mapping-v1.md` "Web 本地错误码 network_error": a gateway page or an envelope 5xx
+		// with no `error_code` must not be reported as `invalid_update` (recoverable=false).
+		for (const answer of [
+			{ html: '<html><body>502 Bad Gateway</body></html>' },
+			{ body: { code: 503, message: 'upstream unavailable', data: null } },
+			{ body: { code: 500, message: 'database error', data: null } }
+		]) {
+			let attempt = 0;
+			reset(() => {
+				attempt += 1;
+				return attempt === 1
+					? answer
+					: ok(accepted({ collection_id: COLLECTION, block_id: BLOCK }));
+			});
+			const session = new CollectionEmbedSession(PAGE, new FlowCommandService(), () => {}, mint);
+			await session.start('Gateway', LABELS);
+			const failure = session.snapshot().failure;
+			const label = JSON.stringify(answer).slice(0, 40);
+			assertEqual(failure?.code, 'network_error', `${label}: network_error`);
+			assertEqual(failure?.kind, 'transport', `${label}: transport`);
+			assertEqual(failure?.retryable, true, `${label}: retryable`);
+			const again = await session.retry();
+			assertEqual(again.kind, 'created', `${label}: retry succeeds`);
+			assertDeepEqual(
+				calls[1].body,
+				calls[0].body,
+				`${label}: retry resends the same body and key`
+			);
+		}
+		reset(() => ({ body: { code: 422, message: 'retry me, it is fine', data: null } }));
+		const session = new CollectionEmbedSession(PAGE, new FlowCommandService(), () => {}, mint);
+		await session.start('Legacy', LABELS);
+		const failure = session.snapshot().failure;
+		assertEqual(failure?.code, 'invalid_update', 'unknown 4xx stays invalid_update');
+		assertEqual(failure?.kind, 'server', 'a server refusal');
+		assertEqual(failure?.retryable, false, 'no retry offered');
+		assertEqual((await session.retry()).kind, 'failed', 'retry refused');
+		assertEqual(calls.length, 1, 'nothing resent');
+		// A typed 5xx keeps its own code: `server_rejected` is permanent, never network_error.
+		reset(() =>
+			typedError(500, 'server_rejected', 'boom', { reason: 'deterministic_database_refusal' })
+		);
+		const typed = new CollectionEmbedSession(PAGE, new FlowCommandService(), () => {}, mint);
+		await typed.start('Typed', LABELS);
+		assertEqual(typed.snapshot().failure?.code, 'server_rejected', 'typed 5xx keeps its code');
+		assertEqual(typed.snapshot().failure?.retryable, false, 'and is permanent');
 	}
 );
 
@@ -372,6 +428,21 @@ await suite.checkAsync('a failed reference create retries with the same key', as
 		'same key'
 	);
 });
+
+await suite.checkAsync(
+	'reference endpoints classify a 5xx without error_code the same way',
+	async () => {
+		reset(() => ({ body: { code: 502, message: 'bad gateway', data: null } }));
+		const session = new BridgeReferenceSession(PAGE, new FlowCommandService(), noReads, mint);
+		const outcome = await session.create({ targetType: 'form', targetId: 'form-1' }, 'embed');
+		assertEqual(outcome.kind, 'failed', 'failed');
+		if (outcome.kind === 'failed') {
+			assertEqual(outcome.failure.code, 'network_error', 'network_error');
+			assertEqual(outcome.failure.kind, 'transport', 'transport');
+			assertEqual(outcome.failure.retryable, true, 'retryable');
+		}
+	}
+);
 
 await suite.checkAsync(
 	'removal needs confirmation and only calls DELETE on the reference, never the target',

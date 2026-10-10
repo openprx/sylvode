@@ -513,6 +513,10 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow Web commands report the Web-local `network_error` (`recoverable`, retried under the same
+  idempotency key) when the API gives no answer or a 5xx without an `error_code`, instead of a
+  permanent `invalid_update`; an unknown 4xx is still `invalid_update`. The Page slash menu shows
+  a retryable transport failure apart from a server refusal.
 - Flow Web collaboration consumes the collaboration contract directly now that the server
   answers it: a replayed `update_id` is resent and acknowledged from the server's original
   receipt (no longer guessed from the snapshot), a `rejected` frame is matched only by its own

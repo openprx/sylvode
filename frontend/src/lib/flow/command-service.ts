@@ -63,7 +63,7 @@ import {
 	type VerifyDocumentInput
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
-import { flowErrorFromEnvelope, invalidUpdateDisposition } from './errors';
+import { clientError, flowErrorFromEnvelope, invalidUpdateDisposition } from './errors';
 import type { FlowError } from './types';
 
 function newIdempotencyKey(): string {
@@ -107,7 +107,7 @@ export class FlowCommandService {
 			options.idempotencyKey ?? newIdempotencyKey()
 		);
 		if (result.code !== 0 || !result.data) {
-			throw flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
+			throw flowErrorFromResult(result);
 		}
 		return result.data;
 	}
@@ -134,7 +134,7 @@ export class FlowCommandService {
 			options.idempotencyKey ?? newIdempotencyKey()
 		);
 		if (result.code !== 0 || !result.data) {
-			throw flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
+			throw flowErrorFromResult(result);
 		}
 		return result.data;
 	}
@@ -155,7 +155,7 @@ export class FlowCommandService {
 			options.idempotencyKey ?? newIdempotencyKey()
 		);
 		if (result.code !== 0 || !result.data) {
-			throw flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
+			throw flowErrorFromResult(result);
 		}
 		return result.data;
 	}
@@ -166,7 +166,7 @@ export class FlowCommandService {
 	async diff(objectId: string, fromSeq: number, toSeq: number): Promise<FlowDiffResponse> {
 		const result = await flowApi.getDiff(objectId, { from_seq: fromSeq, to_seq: toSeq });
 		if (result.code !== 0 || !result.data) {
-			throw flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
+			throw flowErrorFromResult(result);
 		}
 		return result.data;
 	}
@@ -379,17 +379,39 @@ export class FlowCommandService {
 export type PreviewImportInput = Parameters<typeof flowApi.previewPackageImport>[1];
 export type CommitImportInput = Parameters<typeof flowApi.commitPackageImport>[2];
 
-function mapErrorCode(code: number): FlowError {
+/**
+ * The fallback for a rejection that carries no recognised `error_code`.
+ *
+ * `error-mapping-v1.md` "Web 本地错误码 `network_error`": no response at all (`ApiClient.request`
+ * turns a thrown `fetch` or an unparseable body into envelope code 500 without `error_code`) or a
+ * 5xx without an `error_code` (a proxy/gateway error page) is the local `network_error`,
+ * `recoverable=true`: nothing says the server even saw the request, and the caller may resend the
+ * same body under the same idempotency key. A legacy 4xx without an `error_code` is still a server
+ * answer and keeps the old status-shaped fallback; an unknown 4xx stays `invalid_update`
+ * (`recoverable=false`).
+ */
+export function mapErrorCode(code: number): FlowError {
+	if (code >= 500 && code <= 599) return clientError('network_error');
 	switch (code) {
 		case 401:
-			return { code: 'unauthenticated', recoverable: true };
+			return { code: 'unauthenticated', recoverable: true, origin: 'server' };
 		case 403:
-			return { code: 'forbidden', recoverable: false };
+			return { code: 'forbidden', recoverable: false, origin: 'server' };
 		case 404:
-			return { code: 'not_found', recoverable: false };
+			return { code: 'not_found', recoverable: false, origin: 'server' };
 		case 409:
-			return { code: 'stale_frontier', recoverable: true };
+			return { code: 'stale_frontier', recoverable: true, origin: 'server' };
 		default:
-			return { code: 'invalid_update', recoverable: false };
+			return { code: 'invalid_update', recoverable: false, origin: 'server' };
 	}
+}
+
+/** A non-success envelope as a `FlowError`: the typed `error_code` when there is one, else
+ * `mapErrorCode`'s fallback (including the local `network_error`). */
+export function flowErrorFromResult(result: {
+	code: number;
+	error_code?: string | null;
+	details?: unknown;
+}): FlowError {
+	return flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
 }

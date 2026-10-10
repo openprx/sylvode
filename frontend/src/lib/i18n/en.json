@@ -2539,7 +2539,8 @@
         "causal_dependency_missing": "This change depends on an earlier change that was refused, so it cannot be committed on its own. It is kept in the recovery draft with the changes after it.",
         "cross_workspace_relation": "The relation target is in another workspace. The write was refused and recorded as an integrity issue; a workspace administrator has to review it on the operations page."
       },
-      "integrityRepairLink": "Open workspace operations"
+      "integrityRepairLink": "Open workspace operations",
+      "network_error": "Could not reach the server (network failure or gateway error). Nothing was committed; it is safe to retry."
     },
     "history": {
       "title": "History",

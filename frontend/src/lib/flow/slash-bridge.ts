@@ -31,7 +31,8 @@ import type {
 	FlowReferenceReceipt
 } from '$lib/api/flow';
 import { formsApi, type FormField, type FormRecord, type UniversalForm } from '$lib/api/forms';
-import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
+import { flowErrorFromResult } from './command-service';
+import { flowErrorI18nKey } from './errors';
 import { listWorkspaceProjects } from './package-export';
 import type { FlowError } from './types';
 
@@ -80,28 +81,36 @@ export function newIdempotencyKey(): string {
 		: `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-/** Failure shown to the user. `retryable` is false for permanent failures (`server_rejected`
- * and every non-recoverable typed code), which must not offer a retry. */
+/** Failure shown to the user. `kind` separates a retryable transport failure (no answer, or a
+ * 5xx without an `error_code`: the local `network_error`) from an answer the server gave
+ * (`server`). `retryable` is false for permanent failures (`server_rejected` and every
+ * non-recoverable typed code), which must not offer a retry. */
 export interface SlashFailure {
 	readonly key: string;
 	readonly code: string;
+	readonly kind: 'transport' | 'server';
 	readonly retryable: boolean;
 }
 
-/** Classifies a thrown `CommandService` error. A typed server error keeps its own key and its
- * `recoverable` flag; anything else (a transport failure or a legacy envelope with no
- * `error_code`) is reported with the caller's generic key and stays retryable, which is safe
+/** Classifies a thrown `CommandService` error (`error-mapping-v1.md` "Web 本地错误码"). The local
+ * `network_error` is a transport failure, retried under the same key. A server answer keeps its
+ * own key and its `recoverable` flag. Anything else -- a throw that is not a `FlowError` at all --
+ * is reported with the caller's generic key as a transport failure, which is safe to retry
  * because a retry resends the same key. */
 function failureFrom(raw: unknown, genericKey: string): SlashFailure {
 	const error = raw as FlowError | null;
+	if (error && error.code === 'network_error') {
+		return { key: flowErrorI18nKey(error), code: error.code, kind: 'transport', retryable: true };
+	}
 	if (error && typeof error.code === 'string' && error.origin === 'server') {
 		return {
 			key: flowErrorI18nKey(error),
 			code: error.code,
+			kind: 'server',
 			retryable: error.code !== 'server_rejected' && error.recoverable === true
 		};
 	}
-	return { key: genericKey, code: 'transport', retryable: true };
+	return { key: genericKey, code: 'transport', kind: 'transport', retryable: true };
 }
 
 /** Same classification for a raw `ApiResult` envelope (the bridge endpoints return one). */
@@ -109,8 +118,7 @@ function failureFromEnvelope(
 	result: { code: number; error_code?: string | null; details?: unknown },
 	genericKey: string
 ): SlashFailure {
-	const error = flowErrorFromEnvelope(result);
-	return failureFrom(error, genericKey);
+	return failureFrom(flowErrorFromResult(result), genericKey);
 }
 
 // ---- Collection embed -------------------------------------------------------------------------
@@ -264,6 +272,7 @@ export class CollectionEmbedSession {
 				failure: this.failure ?? {
 					key: COLLECTION_EMBED_FAILED_KEY,
 					code: 'none',
+					kind: 'server',
 					retryable: false
 				}
 			};

@@ -19,6 +19,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Suite, assert, assertEqual, assertNotEqual, finish } from './support/harness';
 import {
+	FLOW_ERROR_CODES,
+	FLOW_LOCAL_ERROR_CODES,
 	INVALID_UPDATE_REASONS,
 	drainDisposition,
 	flowErrorDetailKey,
@@ -27,7 +29,11 @@ import {
 	flowErrorI18nKey,
 	invalidUpdateDisposition
 } from '../src/lib/flow/errors';
-import { sendWithDriftRekey } from '../src/lib/flow/command-service';
+import {
+	flowErrorFromResult,
+	mapErrorCode,
+	sendWithDriftRekey
+} from '../src/lib/flow/command-service';
 import type { ApiResult } from '../src/lib/api/client';
 
 const suite = new Suite('flow_error_reasons');
@@ -77,6 +83,45 @@ suite.check('each named reason maps to its action and key, on REST and WS alike'
 		}
 	}
 });
+
+suite.check(
+	'network_error is Web-local: a 5xx without error_code, recoverable, never a server code',
+	() => {
+		assert(
+			!(FLOW_ERROR_CODES as readonly string[]).includes('network_error'),
+			'network_error is not in the server code set'
+		);
+		assert(
+			(FLOW_LOCAL_ERROR_CODES as readonly string[]).includes('network_error'),
+			'network_error is a local code'
+		);
+		for (const code of [500, 502, 503, 504]) {
+			const error = mapErrorCode(code);
+			assertEqual(error.code, 'network_error', `${code} -> network_error`);
+			assertEqual(error.recoverable, true, `${code} recoverable`);
+			assertEqual(error.origin, 'client', `${code} is minted locally`);
+			assertEqual(flowErrorI18nKey(error), 'flow.error.network_error', `${code} key`);
+		}
+		assertEqual(mapErrorCode(422).code, 'invalid_update', 'unknown 4xx stays invalid_update');
+		assertEqual(mapErrorCode(422).recoverable, false, 'and non-recoverable');
+		assertEqual(
+			flowErrorFromResult({ code: 500, error_code: 'server_rejected' }).code,
+			'server_rejected',
+			'a typed 5xx keeps its code'
+		);
+		// A peer that names a local code on the wire is not decoded as one.
+		assertEqual(
+			flowErrorFromEnvelope({ code: 500, error_code: 'network_error' }),
+			null,
+			'the envelope decoder does not accept network_error'
+		);
+		assertEqual(
+			flowErrorFromResult({ code: 400, error_code: 'network_error' }).code,
+			'invalid_update',
+			'a 4xx naming network_error is still a server refusal'
+		);
+	}
+);
 
 suite.check('the defensive reason is the integrity-repair path', () => {
 	const error = flowErrorFromEnvelope(envelope('subtree_spans_multiple_projects'));
