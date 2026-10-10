@@ -87,6 +87,38 @@ fn bridge_policy_rejected(message: impl Into<String>, state: &BridgePermissionSt
     ApiError::policy_rejected_with_details(message, json!({ "permission_state": state }))
 }
 
+/// `policy_rejected.details.reason` values approved by `error-mapping-v1.md` (2026-10-10).
+pub const PREVIEW_EXPIRED_REASON: &str = "preview_expired";
+pub const TARGET_SCHEMA_CHANGED_REASON: &str = "target_schema_changed";
+pub const PERMISSION_UNCONFIGURED_REASON: &str = "permission_unconfigured";
+
+/// `policy_rejected` with an approved `details.reason` and, when the caller already holds a
+/// decision for the target, its current `permission_state`.
+fn policy_rejected_reason(
+    message: impl Into<String>,
+    reason: &'static str,
+    state: Option<&BridgePermissionState>,
+) -> ApiError {
+    let details = state.map_or_else(
+        || json!({ "reason": reason }),
+        |state| json!({ "reason": reason, "permission_state": state }),
+    );
+    ApiError::policy_rejected_with_details(message, details)
+}
+
+/// The refusal for a target form whose decision does not include `record.create`. A form with no
+/// policy row is read-only by ADR-0019 BR-4 and says so with `permission_unconfigured`, so the
+/// caller can tell "ask an admin to configure the form" from "you are not allowed".
+fn record_create_rejected(state: &BridgePermissionState) -> ApiError {
+    const MESSAGE: &str = "target record creation is not permitted";
+    match state.configuration {
+        PolicyConfiguration::Unconfigured => {
+            policy_rejected_reason(MESSAGE, PERMISSION_UNCONFIGURED_REASON, Some(state))
+        }
+        PolicyConfiguration::Explicit => bridge_policy_rejected(MESSAGE, state),
+    }
+}
+
 fn permission_state_after_flow_change(snapshot: &Value, level: PermissionLevel) -> BridgePermissionState {
     let mut state = serde_json::from_value::<BridgePermissionState>(snapshot.clone())
         .unwrap_or_else(|_| denied_permission_state(PolicyConfiguration::Unconfigured));
@@ -984,12 +1016,7 @@ pub async fn preview_conversion(
             let permission = target_permission(&state.db, &actor, &target).await?;
             let permission = match permission {
                 Some(decision) if decision.allows("record.create") => decision,
-                Some(decision) => {
-                    return Err(bridge_policy_rejected(
-                        "target record creation is not permitted",
-                        &decision.state,
-                    ));
-                }
+                Some(decision) => return Err(record_create_rejected(&decision.state)),
                 None => {
                     return Err(ApiError::not_found("bridge target not found".to_string()));
                 }
@@ -1401,12 +1428,7 @@ async fn run_conversion(
         let permission = target_permission(&tx, &actor, &target).await?;
         let permission = match permission {
             Some(decision) if decision.allows("record.create") => decision,
-            Some(decision) => {
-                return Err(bridge_policy_rejected(
-                    "target record creation is not permitted",
-                    &decision.state,
-                ));
-            }
+            Some(decision) => return Err(record_create_rejected(&decision.state)),
             None => {
                 return Err(bridge_policy_rejected(
                     "target record creation is not permitted",
@@ -1418,9 +1440,10 @@ async fn run_conversion(
             .await?
             .ok_or_else(|| ApiError::policy_rejected("target form changed before commit"))?;
         if version != run.target_schema_version {
-            return Err(bridge_policy_rejected(
+            return Err(policy_rejected_reason(
                 "target schema version changed before commit",
-                &permission.state,
+                TARGET_SCHEMA_CHANGED_REASON,
+                Some(&permission.state),
             ));
         }
         (Some(schema), Some(permission))
@@ -1600,7 +1623,11 @@ async fn precheck_commit(
         && let Some((_, version, _)) = form_schema(&state.db, preview.workspace_id, form_id).await?
         && version != preview.target_schema_version
     {
-        return Err(ApiError::policy_rejected("target schema version changed before commit"));
+        return Err(policy_rejected_reason(
+            "target schema version changed before commit",
+            TARGET_SCHEMA_CHANGED_REASON,
+            None,
+        ));
     }
     Ok(())
 }
@@ -1666,13 +1693,21 @@ pub async fn commit_conversion(
         ));
     }
     if input.target_schema_version != preview.target_schema_version {
-        return Err(ApiError::policy_rejected("target schema version differs from preview"));
+        return Err(policy_rejected_reason(
+            "target schema version differs from preview",
+            TARGET_SCHEMA_CHANGED_REASON,
+            None,
+        ));
     }
     if let Some(job_id) = existing_commit_job(&state.db, &preview, &input.idempotency_key).await? {
         return load_job(&state.db, job_id).await;
     }
     if preview.expires_at <= Utc::now() {
-        return Err(ApiError::policy_rejected("conversion preview expired"));
+        return Err(policy_rejected_reason(
+            "conversion preview expired",
+            PREVIEW_EXPIRED_REASON,
+            None,
+        ));
     }
     precheck_commit(state, &source, &preview).await?;
 
