@@ -1022,7 +1022,66 @@ struct LagRow {
     fanout_p95: i64,
 }
 
-pub async fn workspace_lag(db: &DatabaseConnection, workspace_id: Uuid) -> Result<Value, ApiError> {
+const OPERATIONS_PAGE_LIMIT_DEFAULT: u64 = 50;
+const OPERATIONS_PAGE_LIMIT_MAX: u64 = 100;
+
+/// Validates an admin page size (`limit<=100`, default 50) and returns it as a SQL bind value.
+fn admin_page_limit(limit: Option<u64>) -> Result<i64, ApiError> {
+    let limit = limit.unwrap_or(OPERATIONS_PAGE_LIMIT_DEFAULT);
+    if limit == 0 || limit > OPERATIONS_PAGE_LIMIT_MAX {
+        return Err(ApiError::invalid_update("limit must be in 1..=100".to_string()));
+    }
+    i64::try_from(limit).map_err(|_| ApiError::invalid_update("limit must be in 1..=100".to_string()))
+}
+
+/// Opaque keyset cursor over a workspace's documents in id order. The `kind` prefix binds a cursor
+/// to the endpoint that issued it, so a lag cursor is not accepted by integrity and vice versa.
+fn encode_document_cursor(kind: &str, document_id: Uuid) -> String {
+    base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        format!("{kind}:{document_id}"),
+    )
+}
+
+fn decode_document_cursor(kind: &str, raw: &str) -> Result<Uuid, ApiError> {
+    let invalid = || ApiError::invalid_update("cursor is not valid".to_string());
+    let bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, raw).map_err(|_| invalid())?;
+    let text = String::from_utf8(bytes).map_err(|_| invalid())?;
+    let id = text
+        .strip_prefix(kind)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .ok_or_else(invalid)?;
+    Uuid::parse_str(id).map_err(|_| invalid())
+}
+
+/// Puts `next_cursor` on a page response only when another page exists; the key is omitted on the
+/// last page (`rest-api-v1.md` `next_cursor?`).
+fn with_next_cursor(mut page: Value, next_cursor: Option<String>) -> Value {
+    if let (Some(cursor), Some(object)) = (next_cursor, page.as_object_mut()) {
+        object.insert("next_cursor".to_string(), Value::String(cursor));
+    }
+    page
+}
+
+#[derive(Debug, FromQueryResult)]
+struct LagItemRow {
+    document_id: Uuid,
+    object_id: Uuid,
+    head_seq: i64,
+    projection_seq: i64,
+    indexed_seq: i64,
+    fanout_seq: i64,
+}
+
+pub async fn workspace_lag(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    cursor: Option<&str>,
+    limit: Option<u64>,
+) -> Result<Value, ApiError> {
+    let limit = admin_page_limit(limit)?;
+    let after = cursor.map(|raw| decode_document_cursor("lag", raw)).transpose()?;
     let row = LagRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
@@ -1051,12 +1110,68 @@ pub async fn workspace_lag(db: &DatabaseConnection, workspace_id: Uuid) -> Resul
     .one(db)
     .await?
     .ok_or_else(ApiError::internal)?;
-    Ok(json!({
-        "projection": {"max": row.projection_max, "p95": row.projection_p95, "items": []},
-        "search": {"max": row.search_max, "p95": row.search_p95, "items": []},
-        "fanout": {"max": row.fanout_max, "p95": row.fanout_p95, "items": []},
-        "next_cursor": null,
-    }))
+    let mut rows = LagItemRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+          SELECT cd.id AS document_id, cd.object_id, cd.head_seq,
+                 COALESCE(fp.document_seq,0)::bigint AS projection_seq,
+                 COALESCE(si.indexed_seq,0)::bigint AS indexed_seq,
+                 COALESCE((SELECT max(fn.document_seq) FROM flow_fanout_notices fn
+                            WHERE fn.document_id=cd.id AND fn.notice_kind='document_update'),0)::bigint AS fanout_seq
+            FROM collab_documents cd
+            JOIN flow_objects fo ON fo.id=cd.object_id
+            LEFT JOIN flow_object_projections fp ON fp.object_id=cd.object_id
+            LEFT JOIN flow_search_index si ON si.object_id=cd.object_id
+           WHERE fo.workspace_id=$1 AND ($2::uuid IS NULL OR cd.id > $2::uuid)
+           ORDER BY cd.id
+           LIMIT $3
+        ",
+        vec![workspace_id.into(), after.into(), limit.saturating_add(1).into()],
+    ))
+    .all(db)
+    .await?;
+    let page_len = usize::try_from(limit).unwrap_or(usize::MAX);
+    let next_cursor = if rows.len() > page_len {
+        rows.truncate(page_len);
+        rows.last().map(|row| encode_document_cursor("lag", row.document_id))
+    } else {
+        None
+    };
+    let lag = |head_seq: i64, seen: i64| head_seq.saturating_sub(seen).max(0);
+    let mut projection_items = Vec::with_capacity(rows.len());
+    let mut search_items = Vec::with_capacity(rows.len());
+    let mut fanout_items = Vec::with_capacity(rows.len());
+    for row in &rows {
+        projection_items.push(json!({
+            "object_id": row.object_id,
+            "document_id": row.document_id,
+            "head_seq": row.head_seq,
+            "projection_seq": row.projection_seq,
+            "lag": lag(row.head_seq, row.projection_seq),
+        }));
+        search_items.push(json!({
+            "object_id": row.object_id,
+            "document_id": row.document_id,
+            "head_seq": row.head_seq,
+            "indexed_seq": row.indexed_seq,
+            "lag": lag(row.head_seq, row.indexed_seq),
+        }));
+        fanout_items.push(json!({
+            "object_id": row.object_id,
+            "document_id": row.document_id,
+            "head_seq": row.head_seq,
+            "fanout_seq": row.fanout_seq,
+            "lag": lag(row.head_seq, row.fanout_seq),
+        }));
+    }
+    Ok(with_next_cursor(
+        json!({
+            "projection": {"max": row.projection_max, "p95": row.projection_p95, "items": projection_items},
+            "search": {"max": row.search_max, "p95": row.search_p95, "items": search_items},
+            "fanout": {"max": row.fanout_max, "p95": row.fanout_p95, "items": fanout_items},
+        }),
+        next_cursor,
+    ))
 }
 
 #[derive(Debug, FromQueryResult)]

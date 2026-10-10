@@ -1101,17 +1101,24 @@ pub async fn get_flow_admin_health(
     ))
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct AdminLagQuery {
+    pub cursor: Option<String>,
+    pub limit: Option<u64>,
+}
+
 pub async fn get_flow_admin_lag(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(workspace_id): Path<Uuid>,
+    Query(query): Query<AdminLagQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_exact_admin_tool(bot.as_ref(), "collab.status")?;
     let extensions = build_auth_extensions(claims, bot);
     policy::require_flow_workspace_admin_access(&state, &extensions, workspace_id).await?;
     Ok(ApiResponse::success(
-        crate::flow::operations::workspace_lag(&state.db, workspace_id).await?,
+        crate::flow::operations::workspace_lag(&state.db, workspace_id, query.cursor.as_deref(), query.limit).await?,
     ))
 }
 
@@ -10160,7 +10167,14 @@ mod flow_database_tests {
         assert!(health["data"]["dead_letter"]["delivery_failed"].is_number());
         assert!(health["data"]["delivery_cancelled"].is_number());
         let lag = body_json(to_response(
-            get_flow_admin_lag(State(state.clone()), claims_for(owner_id), None, Path(workspace_id)).await,
+            get_flow_admin_lag(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(workspace_id),
+                Query(super::AdminLagQuery::default()),
+            )
+            .await,
         ))
         .await;
         assert_eq!(lag["code"], 0, "{lag}");
@@ -12141,6 +12155,154 @@ mod flow_database_tests {
         assert_eq!(event_type, "flow.repair.completed");
         assert_eq!(payload["kind"], "rebuild_projection");
         assert_eq!(payload["after_hash"], rebuild_exec["data"]["result"]["after_hash"]);
+        scratch.drop_self().await;
+    }
+
+    /// GETs one admin operations endpoint through the production router and extractors, so the
+    /// query string is parsed exactly as for a real client.
+    async fn fp2_b3_admin_get(state: AppState, user_id: Uuid, uri: String) -> Value {
+        use tower::ServiceExt as _;
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/admin/workspaces/{workspace_id}/flow/lag",
+                axum::routing::get(get_flow_admin_lag),
+            )
+            .route(
+                "/api/v1/admin/workspaces/{workspace_id}/flow/integrity",
+                axum::routing::get(get_flow_admin_integrity),
+            )
+            .layer(claims_for(user_id))
+            .with_state(state);
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method(axum::http::Method::GET)
+                    .uri(uri)
+                    .body(axum::body::Body::empty())
+                    .expect("the request builds"),
+            )
+            .await
+            .expect("the router answers");
+        body_json(response).await
+    }
+
+    /// FP2-B3 N3-③: admin lag pages per-document `items` with an opaque cursor and `limit<=100`,
+    /// and omits `next_cursor` on the last (or an empty) page.
+    #[tokio::test]
+    async fn fp2_b3_admin_lag_pages_per_document_items_with_a_cursor() {
+        let scratch = scratch_or_skip!("fp2-b3-lag");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let lag_page = |cursor: Option<String>, limit: Option<u64>, workspace: Uuid| {
+            let mut query = Vec::new();
+            if let Some(cursor) = cursor {
+                query.push(format!("cursor={cursor}"));
+            }
+            if let Some(limit) = limit {
+                query.push(format!("limit={limit}"));
+            }
+            fp2_b3_admin_get(
+                state.clone(),
+                owner_id,
+                format!("/api/v1/admin/workspaces/{workspace}/flow/lag?{}", query.join("&")),
+            )
+        };
+
+        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "fp2 b3 lag").await;
+        let document_id = document_of(&state, object_id).await;
+        exec(
+            &state,
+            "UPDATE collab_documents SET head_seq = 7 WHERE id = $1",
+            vec![document_id.into()],
+        )
+        .await;
+        let total: i64 = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT count(*) AS n FROM collab_documents cd JOIN flow_objects fo ON fo.id = cd.object_id \
+                 WHERE fo.workspace_id = $1",
+                vec![workspace_id.into()],
+            ))
+            .await
+            .expect("count runs")
+            .expect("count row")
+            .try_get("", "n")
+            .expect("count reads");
+        assert_eq!(total, 2, "a page plus its navigator root");
+
+        let first = lag_page(None, Some(1), workspace_id).await;
+        assert_eq!(first["code"], 0, "{first}");
+        assert_eq!(
+            first["data"]["fanout"]["items"].as_array().map(Vec::len),
+            Some(1),
+            "{first}"
+        );
+        let cursor = first["data"]["next_cursor"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a full first page carries next_cursor: {first}"))
+            .to_string();
+        let second = lag_page(Some(cursor), Some(1), workspace_id).await;
+        assert_eq!(second["code"], 0, "{second}");
+        assert_eq!(
+            second["data"]["fanout"]["items"].as_array().map(Vec::len),
+            Some(1),
+            "{second}"
+        );
+        assert!(
+            second["data"].get("next_cursor").is_none(),
+            "last page omits next_cursor: {second}"
+        );
+
+        let mut seen = Vec::new();
+        for page in [&first, &second] {
+            for group in ["projection", "search", "fanout"] {
+                let item = &page["data"][group]["items"][0];
+                for key in ["object_id", "document_id", "lag"] {
+                    assert!(item.get(key).is_some(), "{group} item lacks {key}: {page}");
+                }
+            }
+            seen.push(page["data"]["fanout"]["items"][0]["document_id"].clone());
+        }
+        assert_ne!(seen[0], seen[1], "the second page continues after the first");
+        assert!(seen.contains(&json!(document_id.to_string())), "{seen:?}");
+        let lagging = [&first, &second]
+            .into_iter()
+            .map(|page| &page["data"]["fanout"]["items"][0])
+            .find(|item| item["document_id"] == document_id.to_string())
+            .expect("the lagging document is listed");
+        assert_eq!(lagging["lag"], 7, "{lagging}");
+        assert_eq!(lagging["object_id"], object_id.to_string());
+        assert_eq!(first["data"]["fanout"]["max"], 7, "{first}");
+
+        // A Flow workspace with no documents at all (its navigator root removed).
+        let (empty_workspace, _) = seed_workspace(&state, true).await;
+        exec(
+            &state,
+            "DELETE FROM flow_objects WHERE workspace_id = $1",
+            vec![empty_workspace.into()],
+        )
+        .await;
+        exec(
+            &state,
+            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
+            vec![empty_workspace.into(), owner_id.into()],
+        )
+        .await;
+        let empty = lag_page(None, Some(1), empty_workspace).await;
+        assert_eq!(empty["code"], 0, "{empty}");
+        for group in ["projection", "search", "fanout"] {
+            assert_eq!(empty["data"][group]["items"], json!([]), "{empty}");
+        }
+        assert!(
+            empty["data"].get("next_cursor").is_none(),
+            "an empty page has no cursor: {empty}"
+        );
+
+        let bad_limit = lag_page(None, Some(101), workspace_id).await;
+        assert_typed(&bad_limit, "invalid_update", 400);
+        let bad_cursor = lag_page(Some("not-a-cursor".to_string()), None, workspace_id).await;
+        assert_typed(&bad_cursor, "invalid_update", 400);
         scratch.drop_self().await;
     }
 }
