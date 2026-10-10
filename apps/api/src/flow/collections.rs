@@ -41,6 +41,7 @@ const QUERY_SCAN_ROWS_MAX: u32 = 1_000;
 #[derive(FromQueryResult)]
 struct FieldTypeRow {
     field_type: String,
+    config: Value,
 }
 
 #[derive(FromQueryResult)]
@@ -215,6 +216,35 @@ fn validate_field_config(config: &Map<String, Value>) -> Result<bool, ApiError> 
     }
 }
 
+/// [`validate_field_config`] for a config a command is about to write, which additionally checks
+/// a `select`/`multi_select` field's `config.options` (`rest-api-v1.md` v0.6 Web 落地登记: an array
+/// of non-empty, distinct option strings). Configs already stored in a document are re-read by
+/// the projection through [`validate_field_config`] alone, so an older, malformed `options`
+/// cannot block unrelated writes.
+fn validate_written_field_config(field_type: &str, config: &Map<String, Value>) -> Result<bool, ApiError> {
+    let restricted = validate_field_config(config)?;
+    if matches!(field_type, "select" | "multi_select")
+        && let Some(options) = config.get("options")
+    {
+        let options = options
+            .as_array()
+            .ok_or_else(|| ApiError::invalid_update("field config options must be an array of strings"))?;
+        let mut seen = BTreeSet::new();
+        for option in options {
+            let option = option
+                .as_str()
+                .ok_or_else(|| ApiError::invalid_update("field config options must be an array of strings"))?;
+            if option.trim().is_empty() {
+                return Err(ApiError::invalid_update("field config options must not be empty"));
+            }
+            if !seen.insert(option) {
+                return Err(ApiError::invalid_update("field config options must be distinct"));
+            }
+        }
+    }
+    Ok(restricted)
+}
+
 #[derive(Debug, Deserialize)]
 struct FieldCreatePayload {
     field_id: Uuid,
@@ -360,7 +390,7 @@ pub fn apply_initial_collection_schema(engine: &mut LoroCollabEngine, schema: &V
     for raw in fields {
         let field: FieldCreatePayload = parse_payload("initial collection field", &raw)?;
         validate_field_type(&field.field_type)?;
-        let _ = validate_field_config(&field.config)?;
+        let _ = validate_written_field_config(&field.field_type, &field.config)?;
         let label = validate_label(&field.label, "field label")?;
         let id = node_id(field.field_id);
         for operation in [
@@ -804,27 +834,91 @@ pub async fn rebuild_typed_projections(
     })
 }
 
+/// Why a value does not fit its field type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypedValueError {
+    /// The JSON type is wrong (a number for a text field, a string for a relation, ...).
+    Shape,
+    /// The JSON type is right but the value is not meaningful for the field type: a date string
+    /// that is not a date, a relation element that is not a UUID.
+    Semantic,
+}
+
+/// `invalid_update.details.reason` for a record value that passes the JSON type check but not the
+/// field type's semantics (`error-mapping-v1.md`'s approved reason table).
+pub const INVALID_FIELD_VALUE_REASON: &str = "invalid_field_value";
+
+fn invalid_field_value(field_id: Uuid, message: &str) -> ApiError {
+    ApiError::invalid_update_with_details(
+        message,
+        json!({ "reason": INVALID_FIELD_VALUE_REASON, "field_id": field_id }),
+    )
+}
+
+/// Whether `raw` is a date the typed index column (`timestamptz`) accepts. Deliberately a strict
+/// subset of `PostgreSQL`'s input syntax (ISO 8601 calendar dates with an optional time and
+/// offset, four-digit years), so a value accepted here can never fail the typed projection's cast.
+fn is_typed_date(raw: &str) -> bool {
+    let year_ok = raw.len() >= 10 && raw.as_bytes().iter().take(4).all(u8::is_ascii_digit) && !raw.starts_with("0000");
+    year_ok
+        && (chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").is_ok()
+            || chrono::DateTime::parse_from_rfc3339(raw).is_ok()
+            || chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S%.f").is_ok()
+            || chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S%.f").is_ok()
+            || chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M").is_ok())
+}
+
+fn check_typed_value(field_type: &str, value: &Value) -> Result<(), TypedValueError> {
+    let semantic = |valid: bool| if valid { Ok(()) } else { Err(TypedValueError::Semantic) };
+    match field_type {
+        "text" | "select" if value.is_string() => Ok(()),
+        "number" if value.is_number() => Ok(()),
+        "boolean" if value.is_boolean() => Ok(()),
+        "date" => value
+            .as_str()
+            .ok_or(TypedValueError::Shape)
+            .and_then(|raw| semantic(is_typed_date(raw))),
+        "multi_select"
+            if value
+                .as_array()
+                .is_some_and(|values| values.iter().all(Value::is_string)) =>
+        {
+            Ok(())
+        }
+        "relation" => {
+            let values = value
+                .as_array()
+                .filter(|values| values.iter().all(Value::is_string))
+                .ok_or(TypedValueError::Shape)?;
+            semantic(
+                values
+                    .iter()
+                    .all(|value| value.as_str().is_some_and(|raw| Uuid::parse_str(raw).is_ok())),
+            )
+        }
+        _ => Err(TypedValueError::Shape),
+    }
+}
+
+/// [`check_typed_value`] for a stored value or a query filter: either failure is a plain
+/// `invalid_update` (there is no single written field value to point at).
 fn validate_typed_value(field_type: &str, value: &Value) -> Result<(), ApiError> {
-    let valid = match field_type {
-        "text" | "select" | "date" => value.is_string(),
-        "number" => value.is_number(),
-        "boolean" => value.is_boolean(),
-        "multi_select" => value
-            .as_array()
-            .is_some_and(|values| values.iter().all(Value::is_string)),
-        "relation" => value.as_array().is_some_and(|values| {
-            values
-                .iter()
-                .all(|value| value.as_str().is_some_and(|raw| Uuid::parse_str(raw).is_ok()))
-        }),
-        _ => false,
+    check_typed_value(field_type, value)
+        .map_err(|_| ApiError::invalid_update(format!("record value does not match field type {field_type}")))
+}
+
+/// The values a `select`/`multi_select` value names must be options of the field, when the field
+/// declares `config.options`; a field without `options` (created before the convention) stays
+/// unconstrained.
+fn value_is_declared_option(field_type: &str, config: &Value, value: &Value) -> bool {
+    let Some(options) = config.get("options").and_then(Value::as_array) else {
+        return true;
     };
-    if valid {
-        Ok(())
-    } else {
-        Err(ApiError::invalid_update(format!(
-            "record value does not match field type {field_type}"
-        )))
+    let is_option = |candidate: &Value| options.iter().any(|option| option == candidate);
+    match field_type {
+        "select" => is_option(value),
+        "multi_select" => value.as_array().is_some_and(|values| values.iter().all(is_option)),
+        _ => true,
     }
 }
 
@@ -1195,7 +1289,7 @@ async fn collection_operations(
         CollectionCommandType::FieldCreate => {
             let payload: FieldCreatePayload = parse_payload("field_create", payload)?;
             validate_field_type(&payload.field_type)?;
-            let _ = validate_field_config(&payload.config)?;
+            let _ = validate_written_field_config(&payload.field_type, &payload.config)?;
             let label = validate_label(&payload.label, "field label")?;
             let id = node_id(payload.field_id);
             vec![
@@ -1245,7 +1339,8 @@ async fn collection_operations(
                 });
             }
             if let Some(config) = payload.config {
-                let _ = validate_field_config(&config)?;
+                let field_type = existing.properties.get("field_type").map_or("", String::as_str);
+                let _ = validate_written_field_config(field_type, &config)?;
                 operations.push(Operation::SetProperty {
                     id,
                     key: "config".to_string(),
@@ -1370,7 +1465,7 @@ async fn validate_properties_against_fields<C: ConnectionTrait>(
             .map_err(|_| ApiError::invalid_update("record property key must be a field UUID"))?;
         let field = FieldTypeRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT field_type FROM flow_field_projections \
+            "SELECT field_type, config FROM flow_field_projections \
              WHERE collection_id = $1 AND field_id = $2 AND archived_at IS NULL",
             vec![collection_id.into(), field_id.into()],
         ))
@@ -1380,20 +1475,37 @@ async fn validate_properties_against_fields<C: ConnectionTrait>(
         if value.is_null() {
             continue;
         }
-        validate_typed_value(&field.field_type, value)?;
+        match check_typed_value(&field.field_type, value) {
+            Ok(()) => {}
+            Err(TypedValueError::Shape) => {
+                return Err(ApiError::invalid_update(format!(
+                    "record value does not match field type {}",
+                    field.field_type
+                )));
+            }
+            Err(TypedValueError::Semantic) => {
+                return Err(invalid_field_value(
+                    field_id,
+                    "record value is not a valid value of its field type",
+                ));
+            }
+        }
+        if !value_is_declared_option(&field.field_type, &field.config, value) {
+            return Err(invalid_field_value(
+                field_id,
+                "record value is not one of the field's options",
+            ));
+        }
         if field.field_type == "relation" {
             let ids = value
                 .as_array()
-                .ok_or_else(|| ApiError::invalid_update("relation value must be an array"))?
+                .ok_or_else(|| invalid_field_value(field_id, "relation value must be an array"))?
                 .iter()
                 .map(|value| {
                     value
                         .as_str()
-                        .ok_or_else(|| ApiError::invalid_update("relation value must contain UUID strings"))
-                        .and_then(|raw| {
-                            Uuid::parse_str(raw)
-                                .map_err(|_| ApiError::invalid_update("relation value must contain UUID strings"))
-                        })
+                        .and_then(|raw| Uuid::parse_str(raw).ok())
+                        .ok_or_else(|| invalid_field_value(field_id, "relation value must contain UUID strings"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let count = CountRow::find_by_statement(Statement::from_sql_and_values(
@@ -1408,7 +1520,8 @@ async fn validate_properties_against_fields<C: ConnectionTrait>(
             .ok_or_else(ApiError::internal)?;
             let expected = i64::try_from(ids.len()).map_err(|_| ApiError::internal())?;
             if count.count != expected {
-                return Err(ApiError::invalid_update(
+                return Err(invalid_field_value(
+                    field_id,
                     "relation value references an object outside the collection workspace",
                 ));
             }
@@ -4874,6 +4987,21 @@ mod database_tests {
         member_id
     }
 
+    fn fp2_b6_reason(error: &ApiError) -> (ApiErrorKind, Option<String>, Option<String>) {
+        let details = match error {
+            ApiError::Typed { details, .. } => details.clone(),
+            _ => None,
+        };
+        let text = |key: &str| {
+            details
+                .as_ref()
+                .and_then(|details| details.get(key))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        (error.kind(), text("reason"), text("field_id"))
+    }
+
     /// FP2-B6 (P0, `ADR-0018` NR-7): under `field_secrecy_enabled` the single-object read of a
     /// Record (`GET /flow/objects/{record_id}`, both renders) and its diff must apply the same
     /// redaction the records query applies to `semantic_content`, for every reader. A Record of a
@@ -5049,6 +5177,218 @@ mod database_tests {
                 .expect("authorization epoch is stable");
         let plain_text = serde_json::to_string(&plain_view.semantic_content).expect("serializes");
         assert!(plain_text.contains("PLAIN-VALUE-731") && plain_text.contains("PLAIN-BODY-731"));
+        scratch.drop_self().await;
+    }
+
+    /// FP2-B6: values that pass the JSON type check but not the field type's semantics are
+    /// `invalid_update` with `details.reason="invalid_field_value"` and `details.field_id`, on
+    /// both record create and `record_patch`; an unparseable date no longer reaches the typed index
+    /// (it used to surface as a driver error). A filter with an unparseable date is a typed
+    /// `invalid_update` too. Legacy select fields without `config.options` stay unconstrained.
+    #[tokio::test]
+    async fn fp2_b6_semantically_invalid_record_values_are_invalid_field_value() {
+        let scratch = scratch_or_skip!("fp2_b6_field_values");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed(&state).await;
+        let collection_id = create_object_for(&state, workspace_id, owner_id, "collection", "Typed values").await;
+        let date_field = Uuid::new_v4();
+        let select_field = Uuid::new_v4();
+        let multi_field = Uuid::new_v4();
+        let relation_field = Uuid::new_v4();
+        let legacy_select = Uuid::new_v4();
+        for (field_id, field_type, config) in [
+            (date_field, "date", json!({})),
+            (select_field, "select", json!({"options": ["todo", "done"]})),
+            (multi_field, "multi_select", json!({"options": ["a", "b"]})),
+            (relation_field, "relation", json!({})),
+            (legacy_select, "select", json!({})),
+        ] {
+            command(
+                &state,
+                owner_id,
+                collection_id,
+                "field_create",
+                json!({"field_id": field_id, "label": format!("{field_type} field"), "field_type": field_type, "config": config}),
+                Uuid::new_v4().to_string(),
+            )
+            .await
+            .expect("field creates");
+        }
+        for (field_id, value) in [
+            (date_field, json!("notadate")),
+            (date_field, json!("2026-13-45")),
+            (select_field, json!("nope")),
+            (multi_field, json!(["a", "zzz"])),
+            (relation_field, json!(["not-a-uuid"])),
+            (relation_field, json!([Uuid::new_v4().to_string()])),
+        ] {
+            let refused = command(
+                &state,
+                owner_id,
+                collection_id,
+                "record_create",
+                json!({"properties": {field_id.to_string(): value.clone()}}),
+                Uuid::new_v4().to_string(),
+            )
+            .await
+            .expect_err("a semantically invalid value is refused");
+            assert_eq!(
+                fp2_b6_reason(&refused),
+                (
+                    ApiErrorKind::InvalidUpdate,
+                    Some("invalid_field_value".to_string()),
+                    Some(field_id.to_string())
+                ),
+                "record_create {value} on {field_id}: {refused:?}"
+            );
+        }
+        let record = command(
+            &state,
+            owner_id,
+            collection_id,
+            "record_create",
+            json!({"properties": {
+                date_field.to_string(): "2026-10-10",
+                select_field.to_string(): "todo",
+                multi_field.to_string(): ["a", "b"],
+                relation_field.to_string(): [collection_id.to_string()],
+                legacy_select.to_string(): "anything goes",
+            }}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("valid values create a record")
+        .object;
+        command(
+            &state,
+            owner_id,
+            collection_id,
+            "record_patch",
+            json!({"record_id": record.id, "properties": {date_field.to_string(): "2026-10-10T08:30:00Z"}}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("an RFC 3339 timestamp is a valid date");
+        let refused_patch = command(
+            &state,
+            owner_id,
+            collection_id,
+            "record_patch",
+            json!({"record_id": record.id, "properties": {date_field.to_string(): "notadate"}}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect_err("record_patch refuses an unparseable date");
+        assert_eq!(
+            fp2_b6_reason(&refused_patch),
+            (
+                ApiErrorKind::InvalidUpdate,
+                Some("invalid_field_value".to_string()),
+                Some(date_field.to_string())
+            ),
+            "{refused_patch:?}"
+        );
+
+        let access = read_access(&state, workspace_id, owner_id, collection_id).await;
+        let filtered = query_collection_records(
+            &state,
+            &access,
+            &RecordQueryPayload {
+                filter: Some(RecordFilter {
+                    field_id: date_field,
+                    op: "eq".to_string(),
+                    value: json!("notadate"),
+                }),
+                sort: None,
+                group: None,
+                cursor: None,
+                limit: 10,
+                field_ids: Vec::new(),
+            },
+        )
+        .await
+        .expect_err("a filter on an unparseable date is refused before SQL");
+        assert_eq!(fp2_b6_reason(&filtered).0, ApiErrorKind::InvalidUpdate, "{filtered:?}");
+        scratch.drop_self().await;
+    }
+
+    /// FP2-B6: `config.options` of a `select`/`multi_select` field must be an array of distinct,
+    /// non-empty strings, on `field_create`, `field_update` and an initial schema.
+    #[tokio::test]
+    async fn fp2_b6_select_options_config_is_validated() {
+        let scratch = scratch_or_skip!("fp2_b6_select_options");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed(&state).await;
+        let collection_id = create_object_for(&state, workspace_id, owner_id, "collection", "Options").await;
+        for field_type in ["select", "multi_select"] {
+            for options in [
+                json!([1, 2]),
+                json!(["a", ""]),
+                json!(["a", "a"]),
+                json!("a"),
+                json!(["a", null]),
+            ] {
+                let refused = command(
+                    &state,
+                    owner_id,
+                    collection_id,
+                    "field_create",
+                    json!({"field_id": Uuid::new_v4(), "label": "Bad options", "field_type": field_type, "config": {"options": options.clone()}}),
+                    Uuid::new_v4().to_string(),
+                )
+                .await
+                .expect_err("malformed options are refused");
+                assert_eq!(
+                    refused.kind(),
+                    ApiErrorKind::InvalidUpdate,
+                    "{field_type} {options}: {refused:?}"
+                );
+            }
+        }
+        let field_id = Uuid::new_v4();
+        command(
+            &state,
+            owner_id,
+            collection_id,
+            "field_create",
+            json!({"field_id": field_id, "label": "Status", "field_type": "select", "config": {"options": ["todo", "done"]}}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("well-formed options are accepted");
+        let refused_update = command(
+            &state,
+            owner_id,
+            collection_id,
+            "field_update",
+            json!({"field_id": field_id, "config": {"options": ["todo", "todo"]}}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect_err("field_update refuses duplicate options");
+        assert_eq!(refused_update.kind(), ApiErrorKind::InvalidUpdate, "{refused_update:?}");
+        let refused_schema = create_object_with_collection_schema(
+            &state,
+            CreateObjectInput {
+                workspace_id,
+                actor_id: owner_id,
+                actor_is_bot: false,
+                object_type: "collection".to_string(),
+                project_id: None,
+                parent_object_id: None,
+                title: "Bad initial options".to_string(),
+                idempotency_key: Uuid::new_v4().to_string(),
+                message: None,
+                origin: CommandOrigin::first_request_from(EventSurface::Rest),
+            },
+            json!({"initial_fields": [{
+                "field_id": Uuid::new_v4(), "label": "Status", "field_type": "select",
+                "config": {"options": ["x", ""]}, "index": 0
+            }]}),
+        )
+        .await
+        .expect_err("an initial schema with malformed options is refused");
+        assert_eq!(refused_schema.kind(), ApiErrorKind::InvalidUpdate, "{refused_schema:?}");
         scratch.drop_self().await;
     }
 }
