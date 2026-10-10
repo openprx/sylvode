@@ -293,3 +293,23 @@ jobs:
       - name: Stop stack
         if: always()
         run: bash scripts/e2e-web-stack.sh down
+
+  # Builds the api and worker images from Dockerfile.prebuilt with the Build job's binaries and
+  # checks what each ships: the api image must carry collab-isolated-apply-worker next to the API
+  # (without it every Flow collaborative write is refused), the worker image must not.
+  image-contents:
+    name: Image contents
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Download release binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-binaries
+          path: target/release
+      - name: Restore executable bits
+        run: chmod +x target/release/api target/release/worker target/release/collab-isolated-apply-worker
+      - name: Build images and check their contents
+        run: bash scripts/verify-prebuilt-images.sh
