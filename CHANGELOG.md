@@ -376,6 +376,8 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow conversions: the job returned by commit, `GET /api/v1/flow/conversions/{job_id}` and
+  retry now carries `target_type` (`form` or `form_record`), as the contract's job shape requires.
 - Flow conversions: a malformed id in `GET /api/v1/flow/conversions/{job_id}`,
   `GET /api/v1/flow/conversions/{id}/owner` and `POST /api/v1/flow/conversions/{job_id}/retry`
   now answers the typed `not_found` envelope, like an unknown id, instead of a plain-text 400

@@ -12689,6 +12689,234 @@ mod flow_database_tests {
         }
         scratch.drop_self().await;
     }
+
+    struct Fp2B4 {
+        workspace_id: Uuid,
+        owner_id: Uuid,
+        project_id: Uuid,
+        form_id: Uuid,
+        source_id: Uuid,
+        frontier: String,
+    }
+
+    fn fp2_b4_text_schema() -> Value {
+        json!({
+            "version":"openpr.form.schema.v1",
+            "fields":[
+                {"field_id":"fld_fp2b4_req","key":"req","type":"text","required":true},
+                {"field_id":"fld_fp2b4_opt","key":"opt","type":"text","required":false}
+            ]
+        })
+    }
+
+    /// One workspace, one project, one target form (optionally with an explicit owner policy that
+    /// allows `record.create`) and one source Page, all through production handlers.
+    async fn fp2_b4_seed(state: &AppState, explicit_policy: bool) -> Fp2B4 {
+        let (workspace_id, owner_id) = seed_workspace(state, true).await;
+        let project_id = Uuid::new_v4();
+        exec(
+            state,
+            "INSERT INTO projects (id, workspace_id, key, name, created_by) \
+             VALUES ($1, $2, 'FB4', 'FP2 B4', $3)",
+            vec![project_id.into(), workspace_id.into(), owner_id.into()],
+        )
+        .await;
+        let form = body_json(to_response(
+            create_project_form(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(project_id),
+                Json(CreateFormRequest {
+                    key: "fp2_b4_target".to_string(),
+                    name: "FP2 B4 target".to_string(),
+                    description: None,
+                    icon: None,
+                    color: None,
+                    title_template: None,
+                    schema: Some(fp2_b4_text_schema()),
+                    detail_layout: None,
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(form["code"], 0, "{form}");
+        let form_id = Uuid::parse_str(form["data"]["id"].as_str().expect("form id")).expect("UUID");
+        if explicit_policy {
+            fp2_b4_set_record_create(state, owner_id, form_id, true).await;
+        }
+        let source_id = create_page_as_owner(state, workspace_id, owner_id, "fp2 b4 source").await;
+        let frontier = fp2_b4_frontier(state, source_id).await;
+        Fp2B4 {
+            workspace_id,
+            owner_id,
+            project_id,
+            form_id,
+            source_id,
+            frontier,
+        }
+    }
+
+    async fn fp2_b4_frontier(state: &AppState, source_id: Uuid) -> String {
+        #[derive(FromQueryResult)]
+        struct Head {
+            head_frontier: Vec<u8>,
+        }
+        let head = Head::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT head_frontier FROM collab_documents WHERE object_id=$1",
+            vec![source_id.into()],
+        ))
+        .one(&state.db)
+        .await
+        .expect("frontier query")
+        .expect("frontier");
+        base64::engine::general_purpose::STANDARD.encode(head.head_frontier)
+    }
+
+    async fn fp2_b4_set_record_create(state: &AppState, owner_id: Uuid, form_id: Uuid, allowed: bool) {
+        let body = body_json(to_response(
+            update_form_permissions(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(form_id),
+                Json(UpdateFormPermissionsRequest {
+                    policies: vec![UpsertFormPermissionPolicy {
+                        subject_type: "role".to_string(),
+                        subject_id: "owner".to_string(),
+                        policy: json!({"actions":{"form.view":true,"record.create":allowed}}),
+                    }],
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(body["code"], 0, "{body}");
+    }
+
+    async fn fp2_b4_preview(state: &AppState, fx: &Fp2B4, mapping: Value) -> Value {
+        body_json(to_response(
+            post_flow_conversion_preview(
+                State(state.clone()),
+                claims_for(fx.owner_id),
+                None,
+                Json(crate::flow::bridge::ConversionPreviewInput {
+                    source_object_id: fx.source_id,
+                    source_frontier: fx.frontier.clone(),
+                    target_type: if mapping.get("target_project_id").is_some() {
+                        "form".to_string()
+                    } else {
+                        "form_record".to_string()
+                    },
+                    mapping,
+                    idempotency_key: Uuid::new_v4().to_string(),
+                }),
+            )
+            .await,
+        ))
+        .await
+    }
+
+    async fn fp2_b4_record_preview(state: &AppState, fx: &Fp2B4) -> (Uuid, Value) {
+        let preview = fp2_b4_preview(
+            state,
+            fx,
+            json!({"target_form_id":fx.form_id,"title":"Converted","values":{"req":"value","opt":"value"}}),
+        )
+        .await;
+        assert_eq!(preview["code"], 0, "{preview}");
+        let preview_id = Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
+        (preview_id, preview)
+    }
+
+    async fn fp2_b4_commit(state: &AppState, fx: &Fp2B4, preview_id: Uuid, schema_version: i32, key: &str) -> Value {
+        body_json(to_response(
+            post_flow_conversion(
+                State(state.clone()),
+                claims_for(fx.owner_id),
+                None,
+                Json(crate::flow::bridge::ConversionCommitInput {
+                    preview_id,
+                    source_frontier: fx.frontier.clone(),
+                    target_schema_version: schema_version,
+                    idempotency_key: key.to_string(),
+                    confirm: true,
+                }),
+            )
+            .await,
+        ))
+        .await
+    }
+
+    async fn fp2_b4_count(state: &AppState, sql: &str, values: Vec<sea_orm::Value>) -> i64 {
+        state
+            .db
+            .query_one(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
+            .await
+            .expect("count query")
+            .expect("count row")
+            .try_get::<i64>("", "n")
+            .expect("count")
+    }
+
+    /// FP2-B4 N5-③: every job response carries `target_type`.
+    #[tokio::test]
+    async fn fp2_b4_conversion_job_responses_carry_target_type() {
+        let scratch = scratch_or_skip!("fp2-b4-target-type");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        let committed = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-target-record").await;
+        assert_eq!(committed["data"]["target_type"], "form_record", "{committed}");
+        let read = fp2_b4_route(
+            &state,
+            fx.owner_id,
+            "GET",
+            &format!(
+                "/api/v1/flow/conversions/{}",
+                committed["data"]["job_id"].as_str().expect("job id")
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(read["data"]["target_type"], "form_record", "{read}");
+
+        let preview = fp2_b4_preview(
+            &state,
+            &fx,
+            json!({"target_project_id":fx.project_id,"key":"fp2_b4_new_form","name":"New form"}),
+        )
+        .await;
+        assert_eq!(preview["code"], 0, "{preview}");
+        let preview_id = Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
+        let committed = fp2_b4_commit(&state, &fx, preview_id, 0, "fp2-b4-target-form").await;
+        assert_eq!(committed["code"], 0, "{committed}");
+        assert_eq!(committed["data"]["target_type"], "form", "{committed}");
+        let read = fp2_b4_route(
+            &state,
+            fx.owner_id,
+            "GET",
+            &format!(
+                "/api/v1/flow/conversions/{}",
+                committed["data"]["job_id"].as_str().expect("job id")
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(read["data"]["target_type"], "form", "{read}");
+        assert_eq!(
+            fp2_b4_count(
+                &state,
+                "SELECT count(*) AS n FROM project_forms WHERE workspace_id=$1",
+                vec![fx.workspace_id.into()]
+            )
+            .await,
+            2
+        );
+        scratch.drop_self().await;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
