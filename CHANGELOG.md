@@ -507,6 +507,10 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow Collections: `GET /flow/objects/{record_id}/schema` returns the owning Collection's
+  schema (the same body as the Collection's own schema) to a caller who can read the Record and
+  its Collection; it used to answer `not_found` for every Record. `GET /flow/collections/{id}`
+  still accepts only Collections.
 - Flow Pages: `create_collection_embed` accepts `after_block_id` and inserts the embed block
   right after that block (under the same parent); without it the block is still appended. An
   `after_block_id` that names no live block of the Page is refused with `invalid_update` and

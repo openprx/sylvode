@@ -1516,7 +1516,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route(
             "/api/v1/flow/objects/{object_id}/schema",
-            get(routes::flow::get_flow_collection).route_layer(axum_middleware::from_fn_with_state(
+            get(routes::flow::get_flow_object_schema).route_layer(axum_middleware::from_fn_with_state(
                 state.clone(),
                 middleware::bot_auth::bot_or_user_auth_middleware,
             )),

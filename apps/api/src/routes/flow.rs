@@ -1322,6 +1322,53 @@ pub async fn get_flow_collection(
     Err(policy::authorization_read_unstable())
 }
 
+/// `GET /api/v1/flow/objects/{object_id}/schema` (`rest-api-v1.md` v0.6 schema row).
+///
+/// A Collection returns its own schema, exactly as `GET /flow/collections/{id}`; a Record returns
+/// its owning Collection's schema, to a caller who can read both the Record and that Collection.
+/// Any other object type has no Collection schema and is `not_found`, as before.
+pub async fn get_flow_object_schema(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(object_id): Path<Uuid>,
+    Query(params): Query<DescribeCollectionQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let extensions = build_auth_extensions(claims, bot);
+    let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("collection not found".to_string()))?;
+    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
+        let Some(object_access) = policy::require_flow_object_access(
+            &state,
+            &extensions,
+            workspace_id,
+            object_id,
+            crate::flow::collab::authz::PermissionLevel::View,
+        )
+        .await?
+        else {
+            continue;
+        };
+        let access = match collections::owning_collection_id(&state.db, object_id).await? {
+            Some(collection_id) => {
+                let Some(collection_access) = collection_read_access(&state, &extensions, collection_id).await? else {
+                    continue;
+                };
+                // Both authorizations read the same workspace epoch, which
+                // `describe_collection` re-checks before answering.
+                collection_access
+            }
+            None => object_access,
+        };
+        let Some(description) = collections::describe_collection(&state, &access, params.at_seq).await? else {
+            continue;
+        };
+        return Ok(ApiResponse::success(description));
+    }
+    Err(policy::authorization_read_unstable())
+}
+
 #[derive(Debug, Deserialize)]
 pub struct GetCollectionRecordsQuery {
     pub filter: Option<String>,
@@ -13677,6 +13724,203 @@ mod flow_database_tests {
             off["data"]["flow_lineage"],
             json!({"references": [], "conversions": []}),
             "{off}"
+        );
+        scratch.drop_self().await;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // FP2-B6: backend tidy-up (records view_id, record schema, bootstrap level, job error_reason)
+    // ---------------------------------------------------------------------------------------------
+
+    /// The FP2-B6 routes mounted on their production paths (the schema route on the handler
+    /// `main.rs` registers for it), with an `Extension<JwtClaims>` standing in for the auth
+    /// middleware. Returns the HTTP status and the JSON body.
+    async fn fp2_b6_route(
+        state: &AppState,
+        user_id: Uuid,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
+        use tower::ServiceExt as _;
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/flow/collections/{collection_id}/records",
+                axum::routing::get(super::get_flow_collection_records).post(super::post_flow_collection_record),
+            )
+            .route(
+                "/api/v1/flow/collections/{collection_id}",
+                axum::routing::get(super::get_flow_collection),
+            )
+            .route(
+                "/api/v1/flow/objects/{object_id}/schema",
+                axum::routing::get(super::get_flow_object_schema),
+            )
+            .route(
+                "/api/v1/flow/objects/{object_id}/commands",
+                axum::routing::post(post_flow_object_command),
+            )
+            .route(
+                "/api/v1/flow/objects/{object_id}/bootstrap",
+                axum::routing::get(get_flow_object_bootstrap),
+            )
+            .layer(claims_for(user_id))
+            .with_state(state.clone());
+        let request = axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                body.map_or_else(Vec::new, |value| value.to_string().into_bytes()),
+            ))
+            .expect("the request builds");
+        let response = app.oneshot(request).await.expect("the router answers");
+        let status = response.status().as_u16();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body reads");
+        let json = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| json!({"non_json_body": String::from_utf8_lossy(&bytes).to_string()}));
+        (status, json)
+    }
+
+    async fn fp2_b6_command(state: &AppState, user_id: Uuid, object_id: Uuid, kind: &str, payload: Value) -> Value {
+        let (_, body) = fp2_b6_route(
+            state,
+            user_id,
+            "POST",
+            &format!("/api/v1/flow/objects/{object_id}/commands"),
+            Some(json!({
+                "command": {"type": kind, "payload": payload},
+                "idempotency_key": Uuid::new_v4().to_string(),
+            })),
+        )
+        .await;
+        assert_eq!(body["code"], 0, "{kind}: {body}");
+        body
+    }
+
+    async fn fp2_b6_collection(state: &AppState, workspace_id: Uuid, owner_id: Uuid, title: &str) -> Uuid {
+        let body = body_json(to_response(
+            create_flow_object(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(workspace_id),
+                Json(CreateFlowObjectRequest {
+                    object_type: "collection".to_string(),
+                    project_id: None,
+                    parent_object_id: None,
+                    title: title.to_string(),
+                    idempotency_key: Uuid::new_v4().to_string(),
+                    message: None,
+                    initial_fields: Vec::new(),
+                    initial_view: None,
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(body["code"], 0, "{body}");
+        Uuid::parse_str(body["data"]["object"]["id"].as_str().expect("object id")).expect("uuid")
+    }
+
+    async fn fp2_b6_record(state: &AppState, owner_id: Uuid, collection_id: Uuid, values: Value) -> Uuid {
+        let (_, body) = fp2_b6_route(
+            state,
+            owner_id,
+            "POST",
+            &format!("/api/v1/flow/collections/{collection_id}/records"),
+            Some(json!({"values_by_field_id": values, "idempotency_key": Uuid::new_v4().to_string()})),
+        )
+        .await;
+        assert_eq!(body["code"], 0, "{body}");
+        Uuid::parse_str(body["data"]["object"]["id"].as_str().expect("record id")).expect("uuid")
+    }
+
+    /// FP2-B6 (`rest-api-v1.md` v0.6 schema row): `GET /flow/objects/{record_id}/schema` returns
+    /// the owning Collection's schema to a reader of the record, while
+    /// `GET /flow/collections/{record_id}` stays `not_found` and a non-reader gets `not_found`.
+    #[tokio::test]
+    async fn fp2_b6_record_schema_returns_the_owning_collection_schema() {
+        let scratch = scratch_or_skip!("fp2-b6-record-schema");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let member_id = seed_member(&state, workspace_id).await;
+        let outsider_id = seed_user(&state).await;
+        exec(
+            &state,
+            "UPDATE flow_workspace_settings SET default_member_level = 'view' WHERE workspace_id = $1",
+            vec![workspace_id.into()],
+        )
+        .await;
+        let collection_id = fp2_b6_collection(&state, workspace_id, owner_id, "Schema owner").await;
+        let field_id = Uuid::new_v4();
+        fp2_b6_command(
+            &state,
+            owner_id,
+            collection_id,
+            "field_create",
+            json!({"field_id": field_id, "label": "Name", "field_type": "text"}),
+        )
+        .await;
+        let record_id = fp2_b6_record(&state, owner_id, collection_id, json!({field_id.to_string(): "x"})).await;
+
+        let (_, collection_schema) = fp2_b6_route(
+            &state,
+            member_id,
+            "GET",
+            &format!("/api/v1/flow/objects/{collection_id}/schema"),
+            None,
+        )
+        .await;
+        assert_eq!(collection_schema["code"], 0, "{collection_schema}");
+        let (status_code, record_schema) = fp2_b6_route(
+            &state,
+            member_id,
+            "GET",
+            &format!("/api/v1/flow/objects/{record_id}/schema"),
+            None,
+        )
+        .await;
+        assert_eq!(status_code, 200, "{record_schema}");
+        assert_eq!(record_schema["code"], 0, "{record_schema}");
+        assert_eq!(
+            record_schema["data"]["object"]["id"],
+            collection_id.to_string(),
+            "{record_schema}"
+        );
+        assert_eq!(
+            record_schema["data"]["fields"][0]["field_id"],
+            field_id.to_string(),
+            "{record_schema}"
+        );
+        assert_eq!(
+            record_schema["data"], collection_schema["data"],
+            "same schema as the collection's own"
+        );
+
+        let (_, by_collection_path) = fp2_b6_route(
+            &state,
+            member_id,
+            "GET",
+            &format!("/api/v1/flow/collections/{record_id}"),
+            None,
+        )
+        .await;
+        assert_typed(&by_collection_path, "not_found", 404);
+        let (_, outsider) = fp2_b6_route(
+            &state,
+            outsider_id,
+            "GET",
+            &format!("/api/v1/flow/objects/{record_id}/schema"),
+            None,
+        )
+        .await;
+        assert_ne!(outsider["code"], 0, "{outsider}");
+        assert!(
+            include_str!("../main.rs").contains("get(routes::flow::get_flow_object_schema)"),
+            "main.rs must route the schema resource to the record-aware handler"
         );
         scratch.drop_self().await;
     }
