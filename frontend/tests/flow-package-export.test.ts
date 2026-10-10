@@ -29,6 +29,7 @@ import {
 	exportDownloadUrl,
 	exportFileName,
 	exportJobFailure,
+	listWorkspaceProjects,
 	readRecentExports,
 	recentExportsKey,
 	rememberExport,
@@ -527,6 +528,60 @@ await suite.checkAsync(
 			'flow.package.error.rejected',
 			'failed without a code is still a failure'
 		);
+	}
+);
+
+await suite.checkAsync(
+	'the project list is read page by page to total_pages, never cut at 100; a failed page fails soft whole',
+	async () => {
+		const original = globalThis.fetch;
+		const total = 250;
+		const pages: Array<{ page: string | null; per_page: string | null }> = [];
+		let failPage: string | null = null;
+		globalThis.fetch = (async (input: string | URL | Request) => {
+			const url = new URL(String(input), 'http://local');
+			const page = url.searchParams.get('page');
+			const perPage = url.searchParams.get('per_page');
+			pages.push({ page, per_page: perPage });
+			if (page === failPage) {
+				return new Response(JSON.stringify({ code: 500, message: 'x', data: null }));
+			}
+			const n = Number(page);
+			const size = Number(perPage);
+			const items = Array.from(
+				{ length: Math.max(0, Math.min(size, total - (n - 1) * size)) },
+				(_, i) => {
+					const index = (n - 1) * size + i;
+					return { id: `p-${index}`, key: `K${index}`, name: `Project ${index}` };
+				}
+			);
+			return new Response(
+				JSON.stringify({
+					code: 0,
+					message: 'ok',
+					data: { items, total, page: n, per_page: size, total_pages: Math.ceil(total / size) }
+				})
+			);
+		}) as typeof fetch;
+		try {
+			const all = await listWorkspaceProjects('ws');
+			assertEqual(all.length, 250, 'every project, past the first 100');
+			assertDeepEqual(
+				pages,
+				[
+					{ page: '1', per_page: '100' },
+					{ page: '2', per_page: '100' },
+					{ page: '3', per_page: '100' }
+				],
+				'pages 1..total_pages'
+			);
+			assertEqual(all[249].label, 'K249 - Project 249', 'the last page is included');
+			pages.length = 0;
+			failPage = '2';
+			assertDeepEqual(await listWorkspaceProjects('ws'), [], 'no partial list on a failed page');
+		} finally {
+			globalThis.fetch = original;
+		}
 	}
 );
 

@@ -432,18 +432,40 @@ export interface WorkspaceProjectOption {
 	readonly label: string;
 }
 
-/** Projects of the workspace, for the export scope and the import project mapping. Fails soft to
- * an empty list (the whole-workspace / unprojected choices still work). */
+/** Page size for the project list (the projects endpoint caps `per_page` at 100). */
+export const PROJECT_LIST_PAGE_SIZE = 100;
+/** Safety bound on the pages walked (100 x 1000 projects); a workspace beyond it is a defect to
+ * report, not something to truncate silently, so reaching it fails soft like any other error. */
+export const PROJECT_LIST_MAX_PAGES = 1000;
+
+/** Every project of the workspace, for the export scope, the import project mapping and the
+ * Forms pickers: the list is read page by page (`page` 1..`total_pages`) so it is never cut at
+ * the first 100. Fails soft to an empty list -- never to a partial one -- when any page cannot be
+ * read (the whole-workspace / unprojected choices still work). */
 export async function listWorkspaceProjects(
 	workspaceId: string
 ): Promise<WorkspaceProjectOption[]> {
+	const options: WorkspaceProjectOption[] = [];
+	const seen = new Set<string>();
 	try {
-		const result = await projectsApi.list(workspaceId, { page: 1, per_page: 100 });
-		if (result.code !== 0 || !result.data) return [];
-		return result.data.items.map((project) => ({
-			id: project.id,
-			label: project.key ? `${project.key} - ${project.name}` : project.name
-		}));
+		for (let page = 1; page <= PROJECT_LIST_MAX_PAGES; page += 1) {
+			const result = await projectsApi.list(workspaceId, {
+				page,
+				per_page: PROJECT_LIST_PAGE_SIZE
+			});
+			if (result.code !== 0 || !result.data) return [];
+			for (const project of result.data.items) {
+				if (seen.has(project.id)) continue;
+				seen.add(project.id);
+				options.push({
+					id: project.id,
+					label: project.key ? `${project.key} - ${project.name}` : project.name
+				});
+			}
+			const totalPages = Number.isFinite(result.data.total_pages) ? result.data.total_pages : 1;
+			if (page >= totalPages || result.data.items.length === 0) return options;
+		}
+		return [];
 	} catch {
 		return [];
 	}
