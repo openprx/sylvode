@@ -21,7 +21,8 @@ use super::event_policy::{
 };
 use super::package::{
     ENGINE_CRATE_VERSION, ENGINE_NAME, ENGINE_WIRE_FORMAT_VERSION, ExportPackageManifest, ExportPolicy, PackageCounts,
-    PackageEngine, PackageHistory, PackageMemberInput, PackageProducer, PackageSource, build_package, verify_package,
+    PackageEngine, PackageHistory, PackageMemberInput, PackageProducer, PackageProject, PackageSource, build_package,
+    verify_package,
 };
 
 const EXPORT_ARTIFACT_TTL_MINUTES: i64 = 30;
@@ -385,6 +386,7 @@ pub async fn create_package_export(
         });
     }
 
+    let projects = load_projects(&tx, workspace_id, &objects).await?;
     let roots = selected_roots(&objects, &selected);
     let now = Utc::now();
     let manifest = ExportPackageManifest {
@@ -428,6 +430,7 @@ pub async fn create_package_export(
             complete: true,
             permission_snapshot_at: now.to_rfc3339(),
         },
+        projects,
     };
     let package = build_package(manifest, members)?;
     verify_package(Cursor::new(&package.bytes), Some(&package.package_sha256))?;
@@ -759,6 +762,43 @@ async fn load_history_events<C: ConnectionTrait>(
     Ok(rows
         .into_iter()
         .filter(|row| flow_event_payload_policy(&row.event_type).is_some())
+        .collect())
+}
+
+/// The source projects referenced by the exported objects, ordered by id, for the optional
+/// `projects` manifest field. Only projects of the export's own workspace are read.
+async fn load_projects<C: ConnectionTrait>(
+    conn: &C,
+    workspace_id: Uuid,
+    objects: &[ExportObjectRow],
+) -> Result<Vec<PackageProject>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct ProjectRow {
+        id: Uuid,
+        name: String,
+    }
+    let project_ids: Vec<Uuid> = objects
+        .iter()
+        .filter_map(|row| row.project_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if project_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = ProjectRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id,name FROM projects WHERE workspace_id=$1 AND id=ANY($2) ORDER BY id",
+        vec![workspace_id.into(), project_ids.into()],
+    ))
+    .all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| PackageProject {
+            source_project_id: row.id.to_string(),
+            title: row.name,
+        })
         .collect())
 }
 

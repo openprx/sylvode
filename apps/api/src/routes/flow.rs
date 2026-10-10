@@ -10843,6 +10843,255 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
+    /// FP2-B2 fixture: workspace A holds one project with two Pages; its workspace package is
+    /// exported over HTTP and uploaded into workspace B, which has its own project.
+    struct Fp2B2Package {
+        target_app: axum::Router,
+        target_workspace: Uuid,
+        target_project: Uuid,
+        source_project: Uuid,
+        artifact_id: Value,
+    }
+
+    async fn fp2_b2_seed_project(state: &AppState, workspace_id: Uuid, owner_id: Uuid, name: &str) -> Uuid {
+        let project_id = Uuid::new_v4();
+        exec(
+            state,
+            "INSERT INTO projects (id, workspace_id, key, name, created_by) VALUES ($1, $2, $3, $4, $5)",
+            vec![
+                project_id.into(),
+                workspace_id.into(),
+                format!("K{}", &project_id.simple().to_string()[..6]).into(),
+                name.to_string().into(),
+                owner_id.into(),
+            ],
+        )
+        .await;
+        project_id
+    }
+
+    async fn fp2_b2_send(app: &axum::Router, method: &str, uri: String, body: Option<Value>) -> Value {
+        use tower::ServiceExt as _;
+        let builder = axum::http::Request::builder().method(method).uri(uri);
+        let request = match body {
+            Some(body) => builder
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap(),
+            None => builder.body(axum::body::Body::empty()).unwrap(),
+        };
+        body_json(app.clone().oneshot(request).await.unwrap()).await
+    }
+
+    async fn fp2_b2_exported_project_package(state: &AppState) -> Fp2B2Package {
+        use tower::ServiceExt as _;
+
+        let (source_workspace, source_owner) = seed_workspace(state, true).await;
+        let (target_workspace, target_owner) = seed_workspace(state, true).await;
+        let source_project = fp2_b2_seed_project(state, source_workspace, source_owner, "Source roadmap").await;
+        let target_project = fp2_b2_seed_project(state, target_workspace, target_owner, "Target roadmap").await;
+        for title in ["page one", "page two"] {
+            let body = body_json(to_response(
+                create_flow_object(
+                    State(state.clone()),
+                    claims_for(source_owner),
+                    None,
+                    Path(source_workspace),
+                    Json(CreateFlowObjectRequest {
+                        object_type: "page".to_string(),
+                        project_id: Some(source_project),
+                        parent_object_id: None,
+                        title: title.to_string(),
+                        idempotency_key: Uuid::new_v4().to_string(),
+                        message: None,
+                        initial_fields: Vec::new(),
+                        initial_view: None,
+                    }),
+                )
+                .await,
+            ))
+            .await;
+            assert_eq!(body["code"], 0, "{body}");
+        }
+        let source_app = axum::Router::new()
+            .route(
+                "/api/v1/workspaces/{workspace_id}/flow/exports",
+                axum::routing::post(super::post_flow_workspace_export),
+            )
+            .route(
+                "/api/v1/flow/exports/{job_id}/artifact",
+                axum::routing::get(super::get_flow_export_artifact),
+            )
+            .layer(claims_for(source_owner))
+            .with_state(state.clone());
+        let exported = fp2_b2_send(
+            &source_app,
+            "POST",
+            format!("/api/v1/workspaces/{source_workspace}/flow/exports"),
+            Some(json!({"format":"package","include_history":false,"idempotency_key":"fp2-b2-export"})),
+        )
+        .await;
+        assert_eq!(exported["code"], 0, "{exported}");
+        let export_job = exported["data"]["job_id"].as_str().unwrap();
+        let artifact = source_app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/v1/flow/exports/{export_job}/artifact"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let package = to_bytes(artifact.into_body(), usize::MAX).await.unwrap();
+
+        let target_app = axum::Router::new()
+            .route(
+                "/api/v1/workspaces/{workspace_id}/flow/import-artifacts",
+                axum::routing::post(super::post_flow_import_artifact),
+            )
+            .route(
+                "/api/v1/workspaces/{workspace_id}/flow/imports/preview",
+                axum::routing::post(super::post_flow_import_preview),
+            )
+            .route(
+                "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}/commit",
+                axum::routing::post(super::post_flow_import_commit),
+            )
+            .route(
+                "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}",
+                axum::routing::get(super::get_flow_import),
+            )
+            .layer(claims_for(target_owner))
+            .with_state(state.clone());
+        let upload = fp2_b2_send(
+            &target_app,
+            "POST",
+            format!("/api/v1/workspaces/{target_workspace}/flow/import-artifacts"),
+            Some(json!({
+                "source":{"kind":"inline_base64","package_base64":base64::engine::general_purpose::STANDARD.encode(&package)},
+                "idempotency_key":"fp2-b2-upload"
+            })),
+        )
+        .await;
+        assert_eq!(upload["code"], 0, "{upload}");
+        Fp2B2Package {
+            target_app,
+            target_workspace,
+            target_project,
+            source_project,
+            artifact_id: upload["data"]["artifact_id"].clone(),
+        }
+    }
+
+    async fn fp2_b2_preview(fixture: &Fp2B2Package, project_mapping: Value, policy: &str, key: &str) -> Value {
+        fp2_b2_send(
+            &fixture.target_app,
+            "POST",
+            format!("/api/v1/workspaces/{}/flow/imports/preview", fixture.target_workspace),
+            Some(json!({
+                "artifact_id":fixture.artifact_id,"project_mapping":project_mapping,
+                "external_reference_policy":"detach","conflict_policy":policy,
+                "include_history":false,"idempotency_key":key
+            })),
+        )
+        .await
+    }
+
+    async fn fp2_b2_commit(fixture: &Fp2B2Package, preview: &Value, policy: &str, key: &str) -> Value {
+        let preview_id = preview["data"]["preview_id"].as_str().unwrap();
+        fp2_b2_send(
+            &fixture.target_app,
+            "POST",
+            format!(
+                "/api/v1/workspaces/{}/flow/imports/{preview_id}/commit",
+                fixture.target_workspace
+            ),
+            Some(json!({
+                "package_sha256":preview["data"]["package_sha256"],
+                "mapping_hash":preview["data"]["mapping_hash"],"conflict_policy":policy,
+                "confirm":true,"idempotency_key":key
+            })),
+        )
+        .await
+    }
+
+    async fn fp2_b2_report(fixture: &Fp2B2Package, committed: &Value) -> Value {
+        let import_id = committed["data"]["import_id"].as_str().unwrap();
+        fp2_b2_send(
+            &fixture.target_app,
+            "GET",
+            format!(
+                "/api/v1/workspaces/{}/flow/imports/{import_id}",
+                fixture.target_workspace
+            ),
+            None,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn fp2_b2_preview_manifest_summary_lists_the_package_source_projects() {
+        let scratch = scratch_or_skip!("fp2-b2-manifest-summary");
+        let state = state_for(scratch.db.clone());
+        let fixture = fp2_b2_exported_project_package(&state).await;
+        let preview = fp2_b2_preview(
+            &fixture,
+            json!({ fixture.source_project.to_string(): fixture.target_project }),
+            "reject_existing",
+            "fp2-b2-summary",
+        )
+        .await;
+        assert_eq!(preview["code"], 0, "{preview}");
+        let summary = &preview["data"]["manifest_summary"];
+        assert_eq!(
+            summary["projects"],
+            json!([{"source_project_id":fixture.source_project,"title":"Source roadmap"}]),
+            "{preview}"
+        );
+        assert_eq!(summary["object_count"], 2, "{preview}");
+        assert_eq!(summary["document_count"], 2, "{preview}");
+        assert_eq!(
+            summary["package_schema"],
+            crate::flow::package::PACKAGE_SCHEMA,
+            "{preview}"
+        );
+        assert_eq!(
+            summary["engine"]["name"],
+            crate::flow::package::ENGINE_NAME,
+            "{preview}"
+        );
+        let replay = fp2_b2_preview(
+            &fixture,
+            json!({ fixture.source_project.to_string(): fixture.target_project }),
+            "reject_existing",
+            "fp2-b2-summary",
+        )
+        .await;
+        assert_eq!(replay["data"]["preview_id"], preview["data"]["preview_id"]);
+        assert_eq!(
+            replay["data"]["manifest_summary"], *summary,
+            "an idempotent replay keeps the summary"
+        );
+        let committed = fp2_b2_commit(&fixture, &preview, "reject_existing", "fp2-b2-summary-commit").await;
+        assert_eq!(committed["code"], 0, "{committed}");
+        let report = fp2_b2_report(&fixture, &committed).await;
+        assert_eq!(report["data"]["counts"]["created"], 2, "{report}");
+        let in_target_project: i64 = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT count(*) AS n FROM flow_objects WHERE workspace_id=$1 AND project_id=$2 AND object_type='page'",
+                vec![fixture.target_workspace.into(), fixture.target_project.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "n")
+            .unwrap();
+        assert_eq!(in_target_project, 2, "both pages land in the mapped target project");
+        scratch.drop_self().await;
+    }
+
     #[tokio::test]
     async fn flow_package_import_wire_limits_accept_exact_boundary_and_reject_plus_one_with_zero_writes() {
         use tower::ServiceExt as _;
@@ -11026,6 +11275,7 @@ mod flow_database_tests {
                 complete: true,
                 permission_snapshot_at: "2026-09-12T12:00:00Z".to_string(),
             },
+            projects: Vec::new(),
         };
         let package_with_snapshot = |snapshot: Vec<u8>| {
             build_package(

@@ -376,6 +376,12 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow package import: `POST .../flow/imports/preview` returns the contract's `manifest_summary`
+  (`projects:[{source_project_id,title}]`, `object_count`, `document_count`, `package_schema`,
+  `engine`), so a caller can see which source projects to map before committing. Workspace
+  package exports carry the referenced project titles in a new optional `projects` manifest
+  field (omitted when empty, so packages without projects are byte-identical to before); for
+  packages without it the title is `null`.
 - Tests: two measurement assertions that only mean something under controlled conditions no
   longer fail on shared CI runners. The depth-32 inheritance-evaluation regression ceilings are
   enforced only with `OPENPR_FLOW_QUIET_PG_QUALIFIED=1` and otherwise recorded in the evidence
