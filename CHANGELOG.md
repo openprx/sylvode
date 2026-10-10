@@ -507,6 +507,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow Collections: `GET /flow/collections/{id}/records` honours `view_id`. Records are queried
+  with the view's saved `config.filter`, `config.sort` and `config.group_field_id`; an explicit
+  `filter`, `sort` or `group` parameter overrides the saved value for that part only, and a
+  `view_id` that is not a view of the Collection is `invalid_update`. The parameter used to be
+  ignored.
 - Flow Collections: `GET /flow/objects/{record_id}/schema` returns the owning Collection's
   schema (the same body as the Collection's own schema) to a caller who can read the Record and
   its Collection; it used to answer `not_found` for every Record. `GET /flow/collections/{id}`
