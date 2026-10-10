@@ -22,9 +22,11 @@ OpenPR name keeps working; see **Deprecated**.
   different request body (object/record create, embeds, grants, lifecycle and governance
   commands, package export/import, delivery replay, maintenance operations) now answers envelope
   `code` 400 with that reason, so it can be told apart from `stale_frontier` (still 409) without
-  reading `message`. Internal failures on the Flow surface answer `server_rejected` (500,
-  non-retryable) instead of the untyped 500; an identical request that is still running answers
-  `server_draining` with `reason = "contention"` and `retry_after_ms`.
+  reading `message`. Internal failures that Flow code reports as such answer `server_rejected`
+  (500, non-retryable) instead of the untyped 500; database driver errors that reach a Flow
+  handler unclassified still answer the legacy envelope (`code` 500, `message` "database error",
+  no `error_code`). An identical request that is still running answers `server_draining` with
+  `reason = "contention"` and `retry_after_ms`.
 
 - **Every existing bot token only works with the REST API after the upgrade.** Migration
   `0062_flow_forms_bridge.sql` adds a transport surface to each bot token,
@@ -606,6 +608,9 @@ replacement and the earliest removal.
   command responses (`object.semantic_content` and `semantic_diff`) apply the records query's
   redaction (`semantic_content` is `{}`). They used to return every `record_property` value,
   including restricted ones, and the Record body.
+- Flow REST: a query string that does not parse on any `/flow` route (a non-numeric `limit`,
+  `before_seq` or `at_seq`, a non-UUID `view_id` or `project_id`, ...) answers `invalid_update`
+  in the business envelope instead of axum's plain-text HTTP 400.
 - Flow authorization: `PUT /flow/objects/{id}/grants` and `PUT /flow/objects/{id}/inheritance`
   compare a replayed `idempotency_key`'s request body (roster, levels, `inherit_from_parent`,
   `initial_grants`, `confirm_self_lockout`) with the first request's. A different body answers
@@ -726,7 +731,8 @@ replacement and the earliest removal.
   (1..=100, default 50) and lists one row per document in `projection.items`, `search.items` and
   `fanout.items` (`object_id`, `document_id`, `head_seq`, the consumer's seq, `lag`), paged in
   document-id order. `next_cursor` is present only when another page exists. The workspace-wide
-  `max`/`p95` aggregates are unchanged. An invalid cursor or limit answers `invalid_update`.
+  `max`/`p95` aggregates are unchanged. An invalid cursor or an out-of-range limit answers
+  `invalid_update`.
 - Flow maintenance operations: the `OperationReceipt` returned by document compact, projection
   rebuild and document verify now carries the contract's full shape — `mode`
   (`dry_run`/`execute`), `scope`, `observed_head_seq`, `changes[]` (before/after boundary and
