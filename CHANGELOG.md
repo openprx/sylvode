@@ -376,6 +376,13 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow export: an accepted, authorized export that fails while rendering (a canonical
+  snapshot/update integrity check, or a server-side refusal) is now recorded as a `failed` job
+  whose `error` carries the stable code (for example `checksum_mismatch`). `POST` returns that
+  job receipt with `status: "failed"` instead of the bare error, an idempotent replay returns the
+  same job, and `GET /api/v1/flow/exports/{job_id}` reports `error` and omits `download_url`
+  (`checksum` is empty and `size` is 0, since there is no artifact). Request, permission and
+  precondition errors still answer the request directly.
 - Flow package import: previewing a package whose objects already have import lineage in the
   target workspace under `conflict_policy = "reject_existing"` succeeds and lists the hits as
   `lineage_exists` conflicts instead of failing; committing that preview (or any

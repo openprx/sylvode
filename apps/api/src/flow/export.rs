@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::error::ApiError;
+use crate::error::{ApiError, ApiErrorKind};
 
 use super::collab::authz::{self, PermissionLevel};
 use super::event_policy::{
@@ -76,6 +76,10 @@ pub struct ExportJobReceipt {
     pub checksum: String,
     pub size: u64,
     pub expires_at: String,
+    /// The stable error code of a `failed` job; absent for every other status. A failed job has
+    /// no artifact, so its `checksum` is empty and its `size` is 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -161,6 +165,7 @@ struct ExistingJob {
     package_sha256: Option<String>,
     size_bytes: Option<i64>,
     expires_at: Option<DateTime<Utc>>,
+    error: Option<String>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -175,6 +180,7 @@ struct ExportAccessRow {
     package_sha256: Option<String>,
     size_bytes: Option<i64>,
     expires_at: Option<DateTime<Utc>>,
+    error: Option<String>,
     package_bytes: Option<Vec<u8>>,
 }
 
@@ -190,6 +196,40 @@ pub async fn create_package_export(
         return Ok(existing);
     }
 
+    let mut authorized_workspace = None;
+    match render_export(db, request, &mut authorized_workspace).await {
+        Ok((workspace_id, bytes, checksum)) => {
+            persist_export(db, request, workspace_id, &request_hash, bytes, checksum).await
+        }
+        Err(error) => match (authorized_workspace, export_failure_code(&error)) {
+            (Some(workspace_id), Some(code)) => {
+                tracing::warn!(error = %error, code, "flow export job failed");
+                persist_failed_export(db, request, workspace_id, &request_hash, code).await
+            }
+            _ => Err(error),
+        },
+    }
+}
+
+/// The stable code recorded on a `failed` export job (`rest-api-v1.md`: `GET /flow/exports/{job_id}`
+/// `error?` is required in the `failed` terminal state). Only failures of an accepted, authorized
+/// job become a failed job: integrity failures while rendering the package and server-side
+/// refusals. Request, permission and precondition errors keep answering the request directly, and
+/// database errors stay retryable rather than turning into a terminal job.
+const fn export_failure_code(error: &ApiError) -> Option<&'static str> {
+    match error.kind() {
+        kind @ (ApiErrorKind::ChecksumMismatch | ApiErrorKind::ServerRejected) => Some(kind.stable_code()),
+        _ => None,
+    }
+}
+
+/// Renders the export bytes. `authorized_workspace` is set once the caller has passed every
+/// scope and permission check, so only failures after that point can be recorded as a job.
+async fn render_export(
+    db: &DatabaseConnection,
+    request: &CreateExportRequest,
+    authorized_workspace: &mut Option<Uuid>,
+) -> Result<(Uuid, Vec<u8>, String), ApiError> {
     let tx = db
         .begin_with_config(Some(IsolationLevel::RepeatableRead), Some(AccessMode::ReadWrite))
         .await?;
@@ -214,6 +254,7 @@ pub async fn create_package_export(
     if request.include_history {
         authorize_all(&tx, workspace_id, &object_ids, &request.principal, "history export").await?;
     }
+    *authorized_workspace = Some(workspace_id);
 
     let selected: HashSet<Uuid> = object_ids.iter().copied().collect();
     let mut members = Vec::new();
@@ -305,7 +346,7 @@ pub async fn create_package_export(
         let bytes = rendered_object.ok_or_else(ApiError::internal)?;
         let checksum = sha256_hex(&bytes);
         tx.commit().await?;
-        return persist_export(db, request, workspace_id, &request_hash, bytes, checksum).await;
+        return Ok((workspace_id, bytes, checksum));
     }
 
     let relations = load_relations(&tx, workspace_id, &object_ids).await?;
@@ -436,15 +477,7 @@ pub async fn create_package_export(
     verify_package(Cursor::new(&package.bytes), Some(&package.package_sha256))?;
     tx.commit().await?;
 
-    persist_export(
-        db,
-        request,
-        workspace_id,
-        &request_hash,
-        package.bytes,
-        package.package_sha256,
-    )
-    .await
+    Ok((workspace_id, package.bytes, package.package_sha256))
 }
 
 pub async fn get_package_export(
@@ -478,7 +511,7 @@ pub async fn download_package_export(
 async fn export_access_row(db: &DatabaseConnection, job_id: Uuid) -> Result<ExportAccessRow, ApiError> {
     ExportAccessRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT j.id,j.workspace_id,j.object_id,j.format,j.actor_kind,j.actor_id,j.status,j.package_sha256,j.size_bytes,j.expires_at,a.package_bytes \
+        "SELECT j.id,j.workspace_id,j.object_id,j.format,j.actor_kind,j.actor_id,j.status,j.package_sha256,j.size_bytes,j.expires_at,j.error,a.package_bytes \
          FROM flow_export_jobs j LEFT JOIN flow_package_artifacts a ON a.id=j.artifact_id WHERE j.id=$1",
         vec![job_id.into()],
     ))
@@ -512,16 +545,60 @@ async fn authorize_export_access(
 }
 
 fn access_receipt(row: &ExportAccessRow) -> Result<ExportJobReceipt, ApiError> {
-    Ok(ExportJobReceipt {
-        job_id: row.id,
-        status: row.status.clone(),
-        format: row.format.clone(),
+    stored_receipt(StoredJob {
+        id: row.id,
         workspace_id: row.workspace_id,
         object_id: row.object_id,
-        package_schema: if row.format == "package" { "v1" } else { "" }.to_string(),
-        checksum: row.package_sha256.clone().ok_or_else(ApiError::internal)?,
-        size: u64::try_from(row.size_bytes.ok_or_else(ApiError::internal)?).map_err(|_| ApiError::internal())?,
-        expires_at: row.expires_at.ok_or_else(ApiError::internal)?.to_rfc3339(),
+        format: &row.format,
+        status: &row.status,
+        package_sha256: row.package_sha256.as_deref(),
+        size_bytes: row.size_bytes,
+        expires_at: row.expires_at,
+        error: row.error.as_deref(),
+    })
+}
+
+#[derive(Clone, Copy)]
+struct StoredJob<'a> {
+    id: Uuid,
+    workspace_id: Uuid,
+    object_id: Option<Uuid>,
+    format: &'a str,
+    status: &'a str,
+    package_sha256: Option<&'a str>,
+    size_bytes: Option<i64>,
+    expires_at: Option<DateTime<Utc>>,
+    error: Option<&'a str>,
+}
+
+/// One receipt shape for a stored job. A `completed` job must carry its artifact facts; a `failed`
+/// job must carry its error code and has no artifact.
+fn stored_receipt(job: StoredJob<'_>) -> Result<ExportJobReceipt, ApiError> {
+    let failed = job.status == "failed";
+    let (checksum, size, error) = if failed {
+        (
+            String::new(),
+            0,
+            Some(job.error.ok_or_else(ApiError::internal)?.to_string()),
+        )
+    } else {
+        (
+            job.package_sha256.ok_or_else(ApiError::internal)?.to_string(),
+            u64::try_from(job.size_bytes.ok_or_else(ApiError::internal)?).map_err(|_| ApiError::internal())?,
+            None,
+        )
+    };
+    Ok(ExportJobReceipt {
+        job_id: job.id,
+        status: job.status.to_string(),
+        format: job.format.to_string(),
+        workspace_id: job.workspace_id,
+        object_id: job.object_id,
+        package_schema: if job.format == "package" { "v1" } else { "" }.to_string(),
+        checksum,
+        size,
+        expires_at: job.expires_at.ok_or_else(ApiError::internal)?.to_rfc3339(),
+        error,
     })
 }
 
@@ -849,7 +926,7 @@ async fn find_existing_job(
 ) -> Result<Option<ExportJobReceipt>, ApiError> {
     let row = ExistingJob::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id,workspace_id,object_id,format,request_hash,status,package_sha256,size_bytes,expires_at \
+        "SELECT id,workspace_id,object_id,format,request_hash,status,package_sha256,size_bytes,expires_at,error \
          FROM flow_export_jobs WHERE workspace_id=$1 AND actor_kind=$2 AND actor_id=$3 AND idempotency_key=$4",
         vec![
             workspace_id.into(),
@@ -860,25 +937,25 @@ async fn find_existing_job(
     ))
     .one(db)
     .await?;
-    row.map(|row| existing_receipt(row, request_hash)).transpose()
+    row.map(|row| existing_receipt(&row, request_hash)).transpose()
 }
 
-fn existing_receipt(row: ExistingJob, request_hash: &str) -> Result<ExportJobReceipt, ApiError> {
+fn existing_receipt(row: &ExistingJob, request_hash: &str) -> Result<ExportJobReceipt, ApiError> {
     if row.request_hash != request_hash {
         return Err(ApiError::idempotency_key_body_drift(
             "export idempotency key body drift",
         ));
     }
-    Ok(ExportJobReceipt {
-        job_id: row.id,
-        status: row.status,
-        format: row.format.clone(),
+    stored_receipt(StoredJob {
+        id: row.id,
         workspace_id: row.workspace_id,
         object_id: row.object_id,
-        package_schema: if row.format == "package" { "v1" } else { "" }.to_string(),
-        checksum: row.package_sha256.ok_or_else(ApiError::internal)?,
-        size: u64::try_from(row.size_bytes.ok_or_else(ApiError::internal)?).map_err(|_| ApiError::internal())?,
-        expires_at: row.expires_at.ok_or_else(ApiError::internal)?.to_rfc3339(),
+        format: &row.format,
+        status: &row.status,
+        package_sha256: row.package_sha256.as_deref(),
+        size_bytes: row.size_bytes,
+        expires_at: row.expires_at,
+        error: row.error.as_deref(),
     })
 }
 
@@ -969,6 +1046,68 @@ async fn persist_export(
         checksum: package_sha256,
         size,
         expires_at: expires_at.to_rfc3339(),
+        error: None,
+    })
+}
+
+/// Records an accepted export that failed while rendering as a `failed` job carrying the stable
+/// `error` code, so the job, its idempotent replay and `GET /flow/exports/{job_id}` all report the
+/// same terminal state. No artifact is stored.
+async fn persist_failed_export(
+    db: &DatabaseConnection,
+    request: &CreateExportRequest,
+    workspace_id: Uuid,
+    request_hash: &str,
+    code: &'static str,
+) -> Result<ExportJobReceipt, ApiError> {
+    let job_id = Uuid::new_v4();
+    let expires_at = Utc::now() + Duration::minutes(EXPORT_ARTIFACT_TTL_MINUTES);
+    let (object_id, project_id, scope_kind) = match request.scope {
+        ExportScope::Object(id) => (Some(id), None, "object"),
+        ExportScope::Workspace { project_id, .. } => (None, project_id, "workspace"),
+    };
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO flow_export_jobs \
+             (id,workspace_id,object_id,project_id,scope_kind,format,at_seq,include_history,actor_kind,actor_id, \
+              idempotency_key,request_hash,status,error,expires_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'failed',$13,$14) \
+             ON CONFLICT (workspace_id,actor_kind,actor_id,idempotency_key) DO NOTHING",
+            vec![
+                job_id.into(),
+                workspace_id.into(),
+                object_id.into(),
+                project_id.into(),
+                scope_kind.into(),
+                request.format.clone().into(),
+                request.at_seq.into(),
+                request.include_history.into(),
+                request.principal.kind.clone().into(),
+                request.principal.id.into(),
+                request.idempotency_key.clone().into(),
+                request_hash.to_string().into(),
+                code.into(),
+                expires_at.into(),
+            ],
+        ))
+        .await?;
+    if inserted.rows_affected() == 0 {
+        return find_existing_job(db, workspace_id, request, request_hash)
+            .await?
+            .ok_or_else(ApiError::internal);
+    }
+    Ok(ExportJobReceipt {
+        job_id,
+        status: "failed".to_string(),
+        format: request.format.clone(),
+        workspace_id,
+        object_id,
+        package_schema: if request.format == "package" { "v1" } else { "" }.to_string(),
+        checksum: String::new(),
+        size: 0,
+        expires_at: expires_at.to_rfc3339(),
+        error: Some(code.to_string()),
     })
 }
 
