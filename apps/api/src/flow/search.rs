@@ -81,7 +81,7 @@ fn validate(params: SearchParams, is_bot: bool) -> Result<ValidatedSearch, ApiEr
         ));
     }
     if is_bot && params.all_visible {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
             "bot callers cannot request all_visible Flow search".to_string(),
         ));
     }
@@ -283,7 +283,7 @@ async fn policy_filtered_frontier(
     let row = FrontierAggregateRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
         .one(&state.db)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     Ok(SearchIndexFrontier {
         indexed_seq: row.indexed_seq,
         head_seq: row.head_seq,
@@ -330,7 +330,7 @@ fn cursor_key(secret: &str) -> Result<LessSafeKey, ApiError> {
     digest.update(secret.as_bytes());
     UnboundKey::new(&aead::CHACHA20_POLY1305, &digest.finalize())
         .map(LessSafeKey::new)
-        .map_err(|_| ApiError::Internal)
+        .map_err(|_| ApiError::internal())
 }
 
 fn encode_cursor(secret: &str, search: &ValidatedSearch, rank: f32, object_id: Uuid) -> Result<String, ApiError> {
@@ -339,15 +339,15 @@ fn encode_cursor(secret: &str, search: &ValidatedSearch, rank: f32, object_id: U
         rank_bits: rank.to_bits(),
         object_id,
     };
-    let mut encrypted = serde_json::to_vec(&payload).map_err(|_| ApiError::Internal)?;
+    let mut encrypted = serde_json::to_vec(&payload).map_err(|_| ApiError::internal())?;
     let mut nonce_bytes = [0_u8; aead::NONCE_LEN];
     SystemRandom::new()
         .fill(&mut nonce_bytes)
-        .map_err(|_| ApiError::Internal)?;
+        .map_err(|_| ApiError::internal())?;
     let nonce = Nonce::assume_unique_for_key(nonce_bytes);
     cursor_key(secret)?
         .seal_in_place_append_tag(nonce, Aad::from(CURSOR_AAD), &mut encrypted)
-        .map_err(|_| ApiError::Internal)?;
+        .map_err(|_| ApiError::internal())?;
     let mut token = Vec::with_capacity(1 + aead::NONCE_LEN + encrypted.len());
     token.push(CURSOR_VERSION);
     token.extend_from_slice(&nonce_bytes);
@@ -522,7 +522,7 @@ pub async fn search(
     params: SearchParams,
 ) -> Result<Option<FlowSearchResponse>, ApiError> {
     if params.workspace_id != access.workspace_id() {
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
     runtime::runtime().ensure_workspace_accepting(params.workspace_id)?;
     let search = validate(params, access.is_bot())?;
@@ -555,7 +555,7 @@ pub async fn search(
             return Ok(None);
         };
         if visible.len() != batch_len {
-            return Err(ApiError::Internal);
+            return Err(ApiError::internal());
         }
         for (row, is_visible) in batch.into_iter().zip(visible) {
             examined = examined.saturating_add(1);

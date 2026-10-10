@@ -12,8 +12,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::error::ApiError;
+use crate::error::{ApiError, ServerDrainingReason};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
+use crate::flow::IN_FLIGHT_RETRY_AFTER_MS;
 
 use super::package::{ExportPackageManifest, VerifiedPackage, verify_package};
 use super::{import::BoundedImportStager, projection, repository};
@@ -259,13 +260,15 @@ pub async fn upload_package_artifact(
     .await?
     {
         if existing.request_hash.as_deref() != Some(request_hash.as_str()) {
-            return Err(ApiError::Conflict("artifact idempotency key body drift".to_string()));
+            return Err(ApiError::idempotency_key_body_drift(
+                "artifact idempotency key body drift",
+            ));
         }
         return Ok((existing.id, existing.package_sha256, existing.expires_at));
     }
     let id = Uuid::new_v4();
     let expires_at = Utc::now() + Duration::minutes(IMPORT_ARTIFACT_TTL_MINUTES);
-    let size = i64::try_from(bytes.len()).map_err(|_| ApiError::Internal)?;
+    let size = i64::try_from(bytes.len()).map_err(|_| ApiError::internal())?;
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "INSERT INTO flow_package_artifacts \
@@ -320,10 +323,16 @@ pub async fn get_import_report(
     enforce_admin(principal)?;
     let job = repository::fetch_import_job(db, workspace_id, import_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("import not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("import not found".to_string()))?;
     job.report
-        .ok_or_else(|| ApiError::Conflict("import has not completed".to_string()))
-        .and_then(|value| serde_json::from_value(value).map_err(|_| ApiError::Internal))
+        .ok_or_else(|| {
+            ApiError::server_draining(
+                ServerDrainingReason::Contention,
+                IN_FLIGHT_RETRY_AFTER_MS,
+                "import has not completed",
+            )
+        })
+        .and_then(|value| serde_json::from_value(value).map_err(|_| ApiError::internal()))
 }
 
 pub async fn preview_package_import(
@@ -335,7 +344,7 @@ pub async fn preview_package_import(
     let artifact = load_artifact(db, request.workspace_id, request.artifact_id, &request.principal).await?;
     let plan = parse_plan(&artifact.package_bytes, &artifact.package_sha256)?;
     if request.include_history != plan.verified.manifest.history.included {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "include_history must match the uploaded package manifest".to_string(),
         ));
     }
@@ -358,12 +367,10 @@ pub async fn preview_package_import(
         .map(|(_, source_id)| source_id.to_string())
         .collect();
     if !conflicts.is_empty() && request.conflict_policy == ConflictPolicy::RejectExisting {
-        return Err(ApiError::Conflict(
-            "package objects already have import lineage".to_string(),
-        ));
+        return Err(ApiError::invalid_update("package objects already have import lineage"));
     }
     let mapping = freeze_mapping(request, &plan, &prior_targets)?;
-    let mapping_json = serde_json::to_value(&mapping).map_err(|_| ApiError::Internal)?;
+    let mapping_json = serde_json::to_value(&mapping).map_err(|_| ApiError::internal())?;
     let mapping_hash = sha256_json(&mapping_json)?;
     let preview_id = Uuid::new_v4();
     let expires_at = Utc::now() + Duration::minutes(IMPORT_ARTIFACT_TTL_MINUTES);
@@ -415,7 +422,7 @@ pub async fn commit_package_import(
     request: &CommitImportRequest,
 ) -> Result<ImportReport, ApiError> {
     if !request.confirm {
-        return Err(ApiError::BadRequest("confirm=true is required".to_string()));
+        return Err(ApiError::invalid_update("confirm=true is required".to_string()));
     }
     validate_key(&request.idempotency_key)?;
     enforce_admin(&request.principal)?;
@@ -429,12 +436,20 @@ pub async fn commit_package_import(
     {
         let expected = commit_request_hash(request)?;
         if existing.request_body_hash != expected {
-            return Err(ApiError::Conflict("import idempotency key body drift".to_string()));
+            return Err(ApiError::idempotency_key_body_drift(
+                "import idempotency key body drift",
+            ));
         }
         return existing
             .report
-            .ok_or_else(|| ApiError::Conflict("import job has not completed".to_string()))
-            .and_then(|value| serde_json::from_value(value).map_err(|_| ApiError::Internal));
+            .ok_or_else(|| {
+                ApiError::server_draining(
+                    ServerDrainingReason::Contention,
+                    IN_FLIGHT_RETRY_AFTER_MS,
+                    "import job has not completed",
+                )
+            })
+            .and_then(|value| serde_json::from_value(value).map_err(|_| ApiError::internal()));
     }
 
     if super::rollback::control(db).await?.import_promotion_paused {
@@ -451,12 +466,18 @@ pub async fn commit_package_import(
     if let Some(import_id) = preview.committed_import_id {
         let job = repository::fetch_import_job(&tx, request.workspace_id, import_id)
             .await?
-            .ok_or(ApiError::Internal)?;
+            .ok_or_else(ApiError::internal)?;
         tx.rollback().await?;
         return job
             .report
-            .ok_or_else(|| ApiError::Conflict("import job has not completed".to_string()))
-            .and_then(|value| serde_json::from_value(value).map_err(|_| ApiError::Internal));
+            .ok_or_else(|| {
+                ApiError::server_draining(
+                    ServerDrainingReason::Contention,
+                    IN_FLIGHT_RETRY_AFTER_MS,
+                    "import job has not completed",
+                )
+            })
+            .and_then(|value| serde_json::from_value(value).map_err(|_| ApiError::internal()));
     }
     let mapping: FrozenImportMapping = serde_json::from_value(preview.mapping.clone())
         .map_err(|_| ApiError::checksum_mismatch("frozen import mapping cannot be decoded"))?;
@@ -554,7 +575,7 @@ pub async fn commit_package_import(
         actor: request.principal.id,
         audit_event_id: event.event_id,
     };
-    let report_json = serde_json::to_value(&report).map_err(|_| ApiError::Internal)?;
+    let report_json = serde_json::to_value(&report).map_err(|_| ApiError::internal())?;
     repository::finish_import_job(
         &tx,
         import_id,
@@ -580,7 +601,7 @@ pub async fn commit_package_import(
 
 fn enforce_admin(principal: &ImportPrincipal) -> Result<(), ApiError> {
     if !matches!(principal.kind.as_str(), "user" | "bot") || !matches!(principal.role.as_str(), "owner" | "admin") {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
             "package import requires workspace admin".to_string(),
         ));
     }
@@ -593,7 +614,7 @@ fn actor_user_id(principal: &ImportPrincipal) -> Option<Uuid> {
 
 fn validate_key(key: &str) -> Result<(), ApiError> {
     if key.trim().is_empty() || key.len() > 255 {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "idempotency_key must contain 1-255 characters".to_string(),
         ));
     }
@@ -637,9 +658,9 @@ async fn load_artifact_tx<C: ConnectionTrait>(
     ))
     .one(conn)
     .await?
-    .ok_or_else(|| ApiError::NotFound("import artifact not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("import artifact not found".to_string()))?;
     if row.actor_kind != principal.kind || row.actor_id != principal.id || row.expires_at <= Utc::now() {
-        return Err(ApiError::NotFound("import artifact not found".to_string()));
+        return Err(ApiError::not_found("import artifact not found".to_string()));
     }
     Ok(row)
 }
@@ -650,18 +671,16 @@ async fn load_preview<C: ConnectionTrait>(conn: &C, request: &CommitImportReques
         "SELECT artifact_id,actor_kind,actor_id,package_sha256,mapping_hash,mapping,request,expires_at,committed_import_id \
          FROM flow_import_previews WHERE id=$1 AND workspace_id=$2 FOR UPDATE",
         vec![request.preview_id.into(), request.workspace_id.into()],
-    )).one(conn).await?.ok_or_else(|| ApiError::NotFound("import preview not found".to_string()))?;
+    )).one(conn).await?.ok_or_else(|| ApiError::not_found("import preview not found".to_string()))?;
     if row.actor_kind != request.principal.kind || row.actor_id != request.principal.id || row.expires_at <= Utc::now()
     {
-        return Err(ApiError::NotFound("import preview not found".to_string()));
+        return Err(ApiError::not_found("import preview not found".to_string()));
     }
     if row.package_sha256 != request.package_sha256 || row.mapping_hash != request.mapping_hash {
         return Err(ApiError::checksum_mismatch("commit does not match the frozen preview"));
     }
     if row.request.get("conflict_policy") != Some(&json!(request.conflict_policy)) {
-        return Err(ApiError::Conflict(
-            "commit conflict policy differs from preview".to_string(),
-        ));
+        return Err(ApiError::invalid_update("commit conflict policy differs from preview"));
     }
     Ok(row)
 }
@@ -688,7 +707,9 @@ async fn existing_preview(
         .as_ref()
         .is_some_and(|existing| existing.request_hash != request_hash)
     {
-        return Err(ApiError::Conflict("preview idempotency key body drift".to_string()));
+        return Err(ApiError::idempotency_key_body_drift(
+            "preview idempotency key body drift",
+        ));
     }
     Ok(row)
 }
@@ -702,10 +723,10 @@ fn preview_receipt(
         package_id: parse_manifest_uuid(manifest)?,
         package_sha256: row.package_sha256,
         mapping_hash: row.mapping_hash,
-        mapping: serde_json::from_value(row.mapping).map_err(|_| ApiError::Internal)?,
-        conflicts: serde_json::from_value(row.conflicts).map_err(|_| ApiError::Internal)?,
-        warnings: serde_json::from_value(row.warnings).map_err(|_| ApiError::Internal)?,
-        estimated_changes: serde_json::from_value(row.estimated_changes).map_err(|_| ApiError::Internal)?,
+        mapping: serde_json::from_value(row.mapping).map_err(|_| ApiError::internal())?,
+        conflicts: serde_json::from_value(row.conflicts).map_err(|_| ApiError::internal())?,
+        warnings: serde_json::from_value(row.warnings).map_err(|_| ApiError::internal())?,
+        estimated_changes: serde_json::from_value(row.estimated_changes).map_err(|_| ApiError::internal())?,
         expires_at: row.expires_at,
     })
 }
@@ -902,7 +923,7 @@ async fn validate_projects<C: ConnectionTrait>(
 ) -> Result<(), ApiError> {
     let source_projects: HashSet<_> = objects.iter().filter_map(|row| row.project_id).collect();
     if source_projects.iter().any(|id| !project_map.contains_key(id)) {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "project_map must cover every source project".to_string(),
         ));
     }
@@ -915,7 +936,7 @@ async fn validate_projects<C: ConnectionTrait>(
             ))
             .await?;
         if found.is_none() {
-            return Err(ApiError::BadRequest(
+            return Err(ApiError::invalid_update(
                 "project_map target does not belong to the target workspace".to_string(),
             ));
         }
@@ -974,13 +995,17 @@ async fn promote_objects<C: ConnectionTrait>(
             return Err(ApiError::unsupported_format("object parent graph contains a cycle"));
         }
         for source_id in ready {
-            let object = pending.remove(&source_id).ok_or(ApiError::Internal)?;
-            let target_object = mapping.object_map.get(&source_id).copied().ok_or(ApiError::Internal)?;
+            let object = pending.remove(&source_id).ok_or_else(ApiError::internal)?;
+            let target_object = mapping
+                .object_map
+                .get(&source_id)
+                .copied()
+                .ok_or_else(ApiError::internal)?;
             let target_document = mapping
                 .document_map
                 .get(&object.source_document_id)
                 .copied()
-                .ok_or(ApiError::Internal)?;
+                .ok_or_else(ApiError::internal)?;
             let snapshot = reconstruct_head(package, &plan.verified.manifest, object)?;
             let engine = LoroCollabEngine::load(&snapshot)
                 .map_err(|_| ApiError::checksum_mismatch("import snapshot cannot be decoded"))?;
@@ -1022,12 +1047,14 @@ async fn promote_objects<C: ConnectionTrait>(
                         || existing.head_frontier != decode_frontier(&object.accepted_frontier)?
                         || existing_engine
                             .semantic_snapshot()
-                            .map_err(|_| ApiError::Internal)?
+                            .map_err(|_| ApiError::internal())?
                             .semantic_hash()
                             != object.semantic_hash
                     {
-                        return Err(ApiError::Conflict(
-                            "reused import lineage target has drifted".to_string(),
+                        return Err(ApiError::stale_frontier(
+                            "reused import lineage target has drifted",
+                            Some(existing.head_seq),
+                            None,
                         ));
                     }
                     inserted.insert(source_id);
@@ -1044,7 +1071,7 @@ async fn promote_objects<C: ConnectionTrait>(
                         .object_map
                         .get(&source_parent)
                         .copied()
-                        .ok_or(ApiError::Internal)?,
+                        .ok_or_else(ApiError::internal)?,
                 )
             } else {
                 Some(repository::ensure_navigator_root(tx, request.workspace_id, project_id).await?)
@@ -1065,7 +1092,7 @@ async fn promote_objects<C: ConnectionTrait>(
                 vec![target_object.into(),request.workspace_id.into(),project_id.into(),object.object_type.clone().into(),parent_id.into(),
                     governance.into(),lifecycle.into(),actor_user_id(&request.principal).into(),archived_at.into()],
             )).await?;
-            let byte_count = i64::try_from(snapshot.len()).map_err(|_| ApiError::Internal)?;
+            let byte_count = i64::try_from(snapshot.len()).map_err(|_| ApiError::internal())?;
             tx.execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "INSERT INTO collab_documents \
@@ -1080,8 +1107,8 @@ async fn promote_objects<C: ConnectionTrait>(
                     object_id: target_object,
                     document_seq: object.accepted_seq,
                     document_frontier: engine.frontier().as_bytes().to_vec(),
-                    title: engine.title().map_err(|_| ApiError::Internal)?,
-                    state: projection::state_json(&semantic).map_err(|_| ApiError::Internal)?,
+                    title: engine.title().map_err(|_| ApiError::internal())?,
+                    state: projection::state_json(&semantic).map_err(|_| ApiError::internal())?,
                     plain_text: projection::plain_text(&semantic),
                 },
             )
@@ -1172,7 +1199,7 @@ async fn promote_relations<C: ConnectionTrait>(
         let target = mapping.object_map.get(&relation.target.source_object_id).copied();
         let (Some(source), Some(target)) = (source, target) else {
             if mapping.external_reference_policy == ExternalReferencePolicy::Reject {
-                return Err(ApiError::BadRequest(
+                return Err(ApiError::invalid_update(
                     "external relation reference rejected by import policy".to_string(),
                 ));
             }
@@ -1183,7 +1210,7 @@ async fn promote_relations<C: ConnectionTrait>(
             .relation_map
             .get(&relation.source_relation_id)
             .copied()
-            .ok_or(ApiError::Internal)?;
+            .ok_or_else(ApiError::internal)?;
         if mapping.conflict_policy == ConflictPolicy::ReuseImportLineage {
             let existing = tx
                 .query_one(Statement::from_sql_and_values(
@@ -1227,7 +1254,7 @@ async fn promote_relations<C: ConnectionTrait>(
             &plan.verified.package_sha256,
             "relation",
             relation.source_relation_id,
-            &sha256_json(&serde_json::to_value(relation).map_err(|_| ApiError::Internal)?)?,
+            &sha256_json(&serde_json::to_value(relation).map_err(|_| ApiError::internal())?)?,
             relation_id,
         )
         .await?;
@@ -1311,7 +1338,7 @@ fn manifest_summary(manifest: &ExportPackageManifest) -> Value {
 }
 
 fn sha256_json(value: &Value) -> Result<String, ApiError> {
-    let bytes = serde_jcs::to_vec(value).map_err(|_| ApiError::Internal)?;
+    let bytes = serde_jcs::to_vec(value).map_err(|_| ApiError::internal())?;
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
@@ -1594,7 +1621,7 @@ mod tests {
         assert!(
             matches!(
                 commit_package_import(&state.db, &cross_actor).await,
-                Err(ApiError::NotFound(_))
+                Err(ref e) if e.kind() == crate::error::ApiErrorKind::NotFound
             ),
             "a preview is actor-bound even when the other principal claims an admin role"
         );
@@ -1603,7 +1630,7 @@ mod tests {
         assert!(
             matches!(
                 commit_package_import(&state.db, &cross_workspace).await,
-                Err(ApiError::NotFound(_))
+                Err(ref e) if e.kind() == crate::error::ApiErrorKind::NotFound
             ),
             "a preview id cannot be replayed in another workspace"
         );
@@ -1745,10 +1772,15 @@ mod tests {
         }
         let mut drift = commit.clone();
         drift.mapping_hash = "0".repeat(64);
-        assert!(matches!(
-            commit_package_import(&state.db, &drift).await,
-            Err(ApiError::Conflict(_))
-        ));
+        let drifted = commit_package_import(&state.db, &drift)
+            .await
+            .expect_err("a drifted commit body under a used key must be refused");
+        assert_eq!(drifted.kind(), crate::error::ApiErrorKind::InvalidUpdate, "{drifted:?}");
+        assert!(
+            matches!(&drifted, ApiError::Typed { details: Some(details), .. }
+                if details["reason"] == crate::error::IDEMPOTENCY_KEY_BODY_DRIFT_REASON),
+            "{drifted:?}"
+        );
         assert!(matches!(
             upload_package_artifact(
                 &state.db,
@@ -1762,7 +1794,7 @@ mod tests {
                 "artifact-denied",
             )
             .await,
-            Err(ApiError::Forbidden(_))
+            Err(ref e) if e.kind() == crate::error::ApiErrorKind::Forbidden
         ));
         scratch.drop_self().await;
     }

@@ -36,7 +36,7 @@ use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::error::ApiError;
+use crate::error::{ApiError, ApiErrorKind};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
 
 use super::collab::authz::{self, GRANTS_PER_REQUEST_MAX, OBJECT_GRANTS_MAX, PermissionLevel};
@@ -248,7 +248,7 @@ fn validate_idempotency_key(key: &str) -> Result<(), ApiError> {
     if (IDEMPOTENCY_KEY_MIN_BYTES..=IDEMPOTENCY_KEY_MAX_BYTES).contains(&key.len()) {
         return Ok(());
     }
-    Err(ApiError::BadRequest(format!(
+    Err(ApiError::invalid_update(format!(
         "idempotency_key must be {IDEMPOTENCY_KEY_MIN_BYTES}-{IDEMPOTENCY_KEY_MAX_BYTES} bytes"
     )))
 }
@@ -402,7 +402,7 @@ async fn lock_inherit_flag(tx: &DatabaseTransaction, workspace_id: Uuid, object_
     .one(tx)
     .await?;
     row.map(|r| r.inherit_from_parent)
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))
 }
 
 async fn set_inherit_flag(
@@ -492,7 +492,7 @@ async fn level_of(
         // An affected principal sitting behind a chain this workspace cannot evaluate holds
         // nothing, which is the honest summary line for them; it is not a reason to fail the
         // caller's whole request, whose own permission was judged separately and did resolve.
-        Err(ApiError::Forbidden(_)) => Ok(PermissionLevel::Denied),
+        Err(err) if err.kind() == ApiErrorKind::Forbidden => Ok(PermissionLevel::Denied),
         Err(err) => Err(err),
     }
 }
@@ -839,7 +839,7 @@ async fn apply_in_transaction(
     )
     .await?;
     if caller_before < PermissionLevel::FullAccess {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
             "full_access on this object is required to change its authorization".to_string(),
         ));
     }
@@ -1169,8 +1169,8 @@ async fn replay(
     if !existing.event_type.starts_with(FLOW_PERMISSION_EVENT_TYPE_PREFIX)
         || existing.aggregate_id != object_id.to_string()
     {
-        return Err(ApiError::Conflict(
-            "idempotency_key was already used for a different operation".to_string(),
+        return Err(ApiError::idempotency_key_body_drift(
+            "idempotency_key was already used for a different operation",
         ));
     }
     let rows = grants_on(tx, &[object_id]).await?;
@@ -2237,7 +2237,7 @@ mod database_tests {
         )
         .await
         {
-            Err(ApiError::Forbidden(_)) => {}
+            Err(e) if e.kind() == ApiErrorKind::Forbidden => {}
             Ok(_) => panic!("an admin bot granted itself access behind a boundary"),
             Err(other) => panic!("expected Forbidden for the admin bot's grant attempt, got {other:?}"),
         }
@@ -2623,7 +2623,7 @@ mod database_tests {
         )
         .await
         {
-            Err(ApiError::Forbidden(_)) => {}
+            Err(e) if e.kind() == ApiErrorKind::Forbidden => {}
             Ok(_) => panic!("dry_run became a permission probe for a caller without full_access"),
             Err(other) => panic!("expected Forbidden, got {other:?}"),
         }
@@ -2733,7 +2733,7 @@ mod database_tests {
         let late_writer = scratch.db.begin().await.expect("a second write opens its transaction");
         let fenced = authz::fence_epoch_for_share(&late_writer, fx.workspace_id, checked_epoch).await;
         match fenced {
-            Err(ApiError::Conflict(_)) => {}
+            Err(e) if e.kind() == ApiErrorKind::PolicyRejected => {}
             Ok(()) => panic!(
                 "a write whose permission was checked against the pre-revocation epoch passed the \
                  fence -- the revoked write would have landed"

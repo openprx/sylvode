@@ -119,7 +119,7 @@ impl<A: Write, E: Write> BoundedImportStager<A, E> {
             return self.fail(error);
         }
         if self.archive_stage.write_all(chunk).is_err() {
-            return self.fail(ApiError::Internal);
+            return self.fail(ApiError::internal());
         }
         self.archive_bytes = observed;
         Ok(())
@@ -138,7 +138,7 @@ impl<A: Write, E: Write> BoundedImportStager<A, E> {
                 Err(_) => return self.fail(ApiError::invalid_update("import archive stream failed")),
             };
             let Some(decoded) = chunk.get(..read) else {
-                return self.fail(ApiError::Internal);
+                return self.fail(ApiError::internal());
             };
             self.write_archive_chunk(decoded)?;
         }
@@ -225,7 +225,7 @@ impl<A: Write, E: Write> BoundedImportStager<A, E> {
         }
 
         if self.expanded_stage.write_all(chunk).is_err() {
-            return self.fail(ApiError::Internal);
+            return self.fail(ApiError::internal());
         }
         self.expanded_bytes = total_expanded;
         self.current_entry = Some(EntryBudget {
@@ -248,7 +248,7 @@ impl<A: Write, E: Write> BoundedImportStager<A, E> {
                 Err(_) => return self.fail(ApiError::invalid_update("import entry decompression failed")),
             };
             let Some(decoded) = chunk.get(..read) else {
-                return self.fail(ApiError::Internal);
+                return self.fail(ApiError::internal());
             };
             self.write_expanded_chunk(decoded)?;
         }

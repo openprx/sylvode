@@ -68,7 +68,7 @@ pub struct CompactionResult {
 /// intentionally conservative: until a verified ack arrives this lease blocks history pruning.
 pub async fn begin_client_view(db: &DatabaseConnection, document_id: Uuid, client_id: &str) -> Result<(), ApiError> {
     if client_id.trim().is_empty() {
-        return Err(ApiError::BadRequest("client_id is required".to_string()));
+        return Err(ApiError::invalid_update("client_id is required".to_string()));
     }
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -148,23 +148,23 @@ pub async fn compact(
 ) -> Result<CompactionResult, ApiError> {
     let boot = bootstrap::load(db, document_id).await?;
     if boot.head_seq != expected_head_seq {
-        return Err(ApiError::Conflict("stale_frontier".to_string()));
+        return Err(ApiError::stale_frontier("stale_frontier", Some(boot.head_seq), None));
     }
 
     let candidate = if boot.snapshot_seq < boot.head_seq {
         snapshot::build_candidate(db, document_id)
             .await?
-            .ok_or(ApiError::Internal)?
+            .ok_or_else(ApiError::internal)?
     } else {
         let engine = collab_core::LoroCollabEngine::load(&boot.snapshot).map_err(|error| {
             tracing::error!(%document_id, %error, "compaction: current snapshot failed to decode");
-            ApiError::Internal
+            ApiError::internal()
         })?;
         let semantic_hash = engine
             .semantic_snapshot()
             .map_err(|error| {
                 tracing::error!(%document_id, %error, "compaction: current snapshot semantic read failed");
-                ApiError::Internal
+                ApiError::internal()
             })?
             .semantic_hash();
         snapshot::Candidate {
@@ -178,7 +178,7 @@ pub async fn compact(
     };
 
     if bootstrap::content_hash(&candidate.snapshot_bytes) != candidate.snapshot_checksum {
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
 
     let tx = db.begin().await?;
@@ -189,13 +189,13 @@ pub async fn compact(
     ))
     .one(&tx)
     .await?
-    .ok_or_else(|| ApiError::NotFound("document not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("document not found".to_string()))?;
     if locked.head_seq != expected_head_seq
         || locked.head_seq != candidate.head_seq
         || locked.head_frontier != candidate.head_frontier
     {
         tx.rollback().await?;
-        return Err(ApiError::Conflict("stale_frontier".to_string()));
+        return Err(ApiError::stale_frontier("stale_frontier", Some(locked.head_seq), None));
     }
 
     let lagging = CountRow::find_by_statement(Statement::from_sql_and_values(
@@ -211,7 +211,7 @@ pub async fn compact(
     ))
     .one(&tx)
     .await?
-    .ok_or(ApiError::Internal)?;
+    .ok_or_else(ApiError::internal)?;
     let lagging_clients = u64::try_from(lagging.count).unwrap_or(0);
     let disposition = history_disposition(lagging_clients, force_resync);
 

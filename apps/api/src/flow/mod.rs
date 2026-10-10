@@ -45,3 +45,9 @@ pub mod relations;
 pub mod repository;
 pub mod rollback;
 pub mod search;
+
+/// `retry_after_ms` for a request whose identical twin (same idempotency key, same body) is still
+/// being executed: retrying after this delay returns the first run's stored result. Reported as
+/// `server_draining{reason:"contention"}` because the in-flight run holds the idempotency claim
+/// the retry has to wait on.
+pub(crate) const IN_FLIGHT_RETRY_AFTER_MS: u64 = 1_000;

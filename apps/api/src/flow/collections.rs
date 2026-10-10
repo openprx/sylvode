@@ -22,7 +22,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::error::ApiError;
+use crate::error::{ApiError, ApiErrorKind};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
 
 use super::collab::{authz, bootstrap, frame, runtime, write};
@@ -383,7 +383,7 @@ pub fn apply_initial_collection_schema(engine: &mut LoroCollabEngine, schema: &V
             Operation::SetProperty {
                 id,
                 key: "config".to_string(),
-                value: serde_json::to_string(&field.config).map_err(|_| ApiError::Internal)?,
+                value: serde_json::to_string(&field.config).map_err(|_| ApiError::internal())?,
             },
         ] {
             engine
@@ -416,7 +416,7 @@ pub fn apply_initial_collection_schema(engine: &mut LoroCollabEngine, schema: &V
             Operation::SetProperty {
                 id,
                 key: "config".to_string(),
-                value: serde_json::to_string(&view.config).map_err(|_| ApiError::Internal)?,
+                value: serde_json::to_string(&view.config).map_err(|_| ApiError::internal())?,
             },
         ] {
             engine
@@ -432,9 +432,9 @@ fn node_id(id: Uuid) -> NodeId {
 }
 
 fn engine_at_head(boot: &bootstrap::BootstrapResult) -> Result<LoroCollabEngine, ApiError> {
-    let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|_| ApiError::Internal)?;
+    let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|_| ApiError::internal())?;
     for update in &boot.tail_updates {
-        engine.import_update(&update.bytes).map_err(|_| ApiError::Internal)?;
+        engine.import_update(&update.bytes).map_err(|_| ApiError::internal())?;
     }
     Ok(engine)
 }
@@ -447,7 +447,7 @@ fn export_operations(boot: &bootstrap::BootstrapResult, operations: &[Operation]
             .apply_operation(operation)
             .map_err(|err| ApiError::invalid_update(format!("collection semantic operation rejected: {err}")))?;
     }
-    engine.export_from(&base).map_err(|_| ApiError::Internal)
+    engine.export_from(&base).map_err(|_| ApiError::internal())
 }
 
 async fn sync_collection_projection(
@@ -456,7 +456,7 @@ async fn sync_collection_projection(
     document_seq: i64,
     candidate: &LoroCollabEngine,
 ) -> Result<(), ApiError> {
-    let semantic = candidate.semantic_snapshot().map_err(|_| ApiError::Internal)?;
+    let semantic = candidate.semantic_snapshot().map_err(|_| ApiError::internal())?;
     let mut field_secrecy_enabled = false;
     let mut fields: Vec<_> = semantic
         .nodes
@@ -499,7 +499,7 @@ async fn sync_collection_projection(
         if !node.deleted {
             field_secrecy_enabled |= restricted;
         }
-        let position = i64::try_from(position).map_err(|_| ApiError::Internal)?;
+        let position = i64::try_from(position).map_err(|_| ApiError::internal())?;
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r"
@@ -558,7 +558,7 @@ async fn sync_collection_projection(
             .get("config")
             .map_or_else(|| Ok(json!({})), |raw| serde_json::from_str(raw))
             .map_err(|_| ApiError::invalid_update("view config is invalid"))?;
-        let position = i64::try_from(position).map_err(|_| ApiError::Internal)?;
+        let position = i64::try_from(position).map_err(|_| ApiError::internal())?;
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r"
@@ -608,7 +608,7 @@ async fn sync_record_projection(
     document_seq: i64,
     candidate: &LoroCollabEngine,
 ) -> Result<(), ApiError> {
-    let semantic = candidate.semantic_snapshot().map_err(|_| ApiError::Internal)?;
+    let semantic = candidate.semantic_snapshot().map_err(|_| ApiError::internal())?;
     let mut properties = Map::new();
     let mut body = None;
     for (id, node) in &semantic.nodes {
@@ -736,7 +736,7 @@ pub async fn rebuild_typed_projections(
     ))
     .one(&state.db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("collection not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("collection not found".to_string()))?;
     let collection_boot = bootstrap::load(&state.db, collection.document_id).await?;
     let collection_engine = engine_at_head(&collection_boot)?;
     let records = RebuildDocumentRow::find_by_statement(Statement::from_sql_and_values(
@@ -783,7 +783,7 @@ pub async fn rebuild_typed_projections(
     ))
     .one(&tx)
     .await?
-    .ok_or(ApiError::Internal)?
+    .ok_or_else(ApiError::internal)?
     .count;
     let value_count = CountRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -792,7 +792,7 @@ pub async fn rebuild_typed_projections(
     ))
     .one(&tx)
     .await?
-    .ok_or(ApiError::Internal)?
+    .ok_or_else(ApiError::internal)?
     .count;
     tx.commit().await?;
     Ok(ProjectionRebuildResult {
@@ -965,7 +965,7 @@ async fn semantic_event_rewrite(
         }
         "record_patch" => {
             let ProjectionSync::Record { record_id, .. } = sync else {
-                return Err(ApiError::Internal);
+                return Err(ApiError::internal());
             };
             let mut changed_field_ids = input
                 .payload
@@ -987,7 +987,7 @@ async fn semantic_event_rewrite(
                 }),
             })
         }
-        _ => Err(ApiError::Internal),
+        _ => Err(ApiError::internal()),
     }
 }
 
@@ -1038,7 +1038,7 @@ async fn execute_document_update(
                 return Err(map_write_rejection(&rejected));
             }
             write::HydrateOutcome::Rejected(write::AcceptOutcome::Accepted(_)) => {
-                return Err(ApiError::Internal);
+                return Err(ApiError::internal());
             }
         };
         let tx = state.db.begin().await?;
@@ -1065,7 +1065,7 @@ async fn execute_document_update(
             write::set_locked_phase_statement_budgets(&tx, 1).await?;
             match authz::fence_epoch_for_share(&tx, workspace_id, checked_epoch).await {
                 Ok(()) => {}
-                Err(ApiError::Conflict(_)) => return Ok(AttemptOutcome::EpochMismatch),
+                Err(err) if err.kind() == ApiErrorKind::PolicyRejected => return Ok(AttemptOutcome::EpochMismatch),
                 Err(err) => return Err(err),
             }
             let staged = match write::stage_one_document(
@@ -1134,7 +1134,7 @@ async fn execute_document_update(
                 }
                 continue;
             }
-            Err(err @ ApiError::Database(_)) if !err.is_deterministic_database_failure() => {
+            Err(err) if err.is_database_failure() && !err.is_deterministic_database_failure() => {
                 let _ = tx.rollback().await;
                 if attempt == MAX_REBASE_ATTEMPTS {
                     return Err(ApiError::server_draining(
@@ -1172,14 +1172,14 @@ async fn execute_document_update(
         );
         let row = repository::fetch_object_view(&state.db, response_object_id)
             .await?
-            .ok_or(ApiError::Internal)?;
+            .ok_or_else(ApiError::internal)?;
         let mut change = super::command::accepted_change_from_row(row, accepted.event_id);
         change.accepted_seq = accepted.head_seq;
         change.projection_seq = accepted.projection_seq;
         change.affected_object_ids = vec![response_object_id];
         return Ok(change);
     }
-    Err(ApiError::Internal)
+    Err(ApiError::internal())
 }
 
 async fn collection_operations(
@@ -1190,7 +1190,7 @@ async fn collection_operations(
 ) -> Result<Vec<Operation>, ApiError> {
     let boot = bootstrap::load(&state.db, document_id).await?;
     let engine = engine_at_head(&boot)?;
-    let semantic = engine.semantic_snapshot().map_err(|_| ApiError::Internal)?;
+    let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;
     let operations = match kind {
         CollectionCommandType::FieldCreate => {
             let payload: FieldCreatePayload = parse_payload("field_create", payload)?;
@@ -1218,7 +1218,7 @@ async fn collection_operations(
                 Operation::SetProperty {
                     id,
                     key: "config".to_string(),
-                    value: serde_json::to_string(&payload.config).map_err(|_| ApiError::Internal)?,
+                    value: serde_json::to_string(&payload.config).map_err(|_| ApiError::internal())?,
                 },
             ]
         }
@@ -1249,7 +1249,7 @@ async fn collection_operations(
                 operations.push(Operation::SetProperty {
                     id,
                     key: "config".to_string(),
-                    value: serde_json::to_string(&config).map_err(|_| ApiError::Internal)?,
+                    value: serde_json::to_string(&config).map_err(|_| ApiError::internal())?,
                 });
             }
             if operations.is_empty() {
@@ -1296,7 +1296,7 @@ async fn collection_operations(
                 Operation::SetProperty {
                     id,
                     key: "config".to_string(),
-                    value: serde_json::to_string(&payload.config).map_err(|_| ApiError::Internal)?,
+                    value: serde_json::to_string(&payload.config).map_err(|_| ApiError::internal())?,
                 },
             ]
         }
@@ -1326,7 +1326,7 @@ async fn collection_operations(
                 operations.push(Operation::SetProperty {
                     id,
                     key: "config".to_string(),
-                    value: serde_json::to_string(&config).map_err(|_| ApiError::Internal)?,
+                    value: serde_json::to_string(&config).map_err(|_| ApiError::internal())?,
                 });
             }
             if operations.is_empty() {
@@ -1342,7 +1342,7 @@ async fn collection_operations(
                 index: payload.index,
             }]
         }
-        _ => return Err(ApiError::Internal),
+        _ => return Err(ApiError::internal()),
     };
     Ok(operations)
 }
@@ -1353,7 +1353,7 @@ async fn ensure_collection_target(
 ) -> Result<repository::ObjectViewRow, ApiError> {
     let row = repository::fetch_object_view(&state.db, collection_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("collection not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("collection not found".to_string()))?;
     if row.object_type != "collection" || row.lifecycle_status == "archived" {
         return Err(ApiError::invalid_update("command target must be an active collection"));
     }
@@ -1405,8 +1405,8 @@ async fn validate_properties_against_fields<C: ConnectionTrait>(
             ))
             .one(conn)
             .await?
-            .ok_or(ApiError::Internal)?;
-            let expected = i64::try_from(ids.len()).map_err(|_| ApiError::Internal)?;
+            .ok_or_else(ApiError::internal)?;
+            let expected = i64::try_from(ids.len()).map_err(|_| ApiError::internal())?;
             if count.count != expected {
                 return Err(ApiError::invalid_update(
                     "relation value references an object outside the collection workspace",
@@ -1423,7 +1423,7 @@ fn build_record_engine(properties: &Map<String, Value>, body: Option<&str>) -> R
         let field_id = Uuid::parse_str(field_id)
             .map_err(|_| ApiError::invalid_update("record property key must be a field UUID"))?;
         let id = node_id(field_id);
-        let index = u32::try_from(index).map_err(|_| ApiError::Internal)?;
+        let index = u32::try_from(index).map_err(|_| ApiError::internal())?;
         engine
             .apply_operation(&Operation::CreateNode {
                 id: id.clone(),
@@ -1436,7 +1436,7 @@ fn build_record_engine(properties: &Map<String, Value>, body: Option<&str>) -> R
             .apply_operation(&Operation::SetProperty {
                 id,
                 key: "value".to_string(),
-                value: serde_json::to_string(value).map_err(|_| ApiError::Internal)?,
+                value: serde_json::to_string(value).map_err(|_| ApiError::internal())?,
             })
             .map_err(|err| ApiError::invalid_update(format!("record property value rejected: {err}")))?;
     }
@@ -1470,7 +1470,7 @@ struct RecordCreateIdempotencyBody {
 }
 
 fn record_create_idempotency_fingerprint(body: &RecordCreateIdempotencyBody) -> Result<String, ApiError> {
-    let canonical = serde_json::to_vec(body).map_err(|_| ApiError::Internal)?;
+    let canonical = serde_json::to_vec(body).map_err(|_| ApiError::internal())?;
     Ok(hex::encode(Sha256::digest(canonical)))
 }
 
@@ -1484,8 +1484,8 @@ async fn replay_record_create(
         return Ok(None);
     };
     if event.event_type != "flow.record.created" {
-        return Err(ApiError::Conflict(
-            "idempotency_key was already used for a different operation".to_string(),
+        return Err(ApiError::idempotency_key_body_drift(
+            "idempotency_key was already used for a different operation",
         ));
     }
     let expected = record_create_idempotency_fingerprint(body)?;
@@ -1494,19 +1494,17 @@ async fn replay_record_create(
     } else if let Some(legacy) = event.metadata.get("idempotency_body") {
         serde_json::from_value::<RecordCreateIdempotencyBody>(legacy.clone()).is_ok_and(|stored| stored == *body)
     } else {
-        return Err(ApiError::Conflict(
-            "record create replay identity is missing".to_string(),
-        ));
+        return Err(ApiError::invalid_update("record create replay identity is missing"));
     };
     if !matches {
-        return Err(ApiError::Conflict(
-            "idempotency_key was already used with a different record create request".to_string(),
+        return Err(ApiError::idempotency_key_body_drift(
+            "idempotency_key was already used with a different record create request",
         ));
     }
-    let record_id = Uuid::parse_str(&event.aggregate_id).map_err(|_| ApiError::Internal)?;
+    let record_id = Uuid::parse_str(&event.aggregate_id).map_err(|_| ApiError::internal())?;
     let row = repository::fetch_object_view(&state.db, record_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     let mut change = super::command::accepted_change_from_row(row, event.id);
     change.command_result = Some(json!({"record_id": record_id}));
     Ok(Some(change))
@@ -1535,10 +1533,10 @@ async fn create_record(
     let document_id = Uuid::new_v4();
     authz::ensure_parent_can_adopt_child(&state.db, workspace_id, input.object_id).await?;
     let engine = build_record_engine(&payload.properties, payload.body.as_deref())?;
-    let snapshot = engine.export_snapshot().map_err(|_| ApiError::Internal)?;
+    let snapshot = engine.export_snapshot().map_err(|_| ApiError::internal())?;
     let frontier = engine.frontier().as_bytes().to_vec();
-    let semantic = engine.semantic_snapshot().map_err(|_| ApiError::Internal)?;
-    let state_json = projection::state_json(&semantic).map_err(|_| ApiError::Internal)?;
+    let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;
+    let state_json = projection::state_json(&semantic).map_err(|_| ApiError::internal())?;
     let tx = state.db.begin().await?;
     authz::fence_epoch_for_share(&tx, workspace_id, checked_epoch).await?;
     repository::insert_flow_object(
@@ -1613,12 +1611,12 @@ async fn create_record(
         tx.rollback().await?;
         return replay_record_create(state, workspace_id, &input.idempotency_key, &idempotency_body)
             .await?
-            .ok_or(ApiError::Internal);
+            .ok_or_else(ApiError::internal);
     }
     tx.commit().await?;
     let row = repository::fetch_object_view(&state.db, record_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     let mut change = super::command::accepted_change_from_row(row, event.event_id);
     change.command_result = Some(json!({"record_id": record_id}));
     Ok(change)
@@ -1647,7 +1645,7 @@ async fn fetch_record_target<C: ConnectionTrait>(
     ))
     .one(conn)
     .await?
-    .ok_or_else(|| ApiError::NotFound("record not found in collection".to_string()))
+    .ok_or_else(|| ApiError::not_found("record not found in collection".to_string()))
 }
 
 async fn record_patch(
@@ -1682,7 +1680,7 @@ async fn record_patch(
     }
     let boot = bootstrap::load(&state.db, target.document_id).await?;
     let engine = engine_at_head(&boot)?;
-    let semantic = engine.semantic_snapshot().map_err(|_| ApiError::Internal)?;
+    let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;
     let mut operations = Vec::new();
     for (index, (field_id, value)) in payload.properties.iter().enumerate() {
         let field_id = Uuid::parse_str(field_id)
@@ -1692,14 +1690,14 @@ async fn record_patch(
             operations.push(Operation::CreateNode {
                 id: id.clone(),
                 parent: None,
-                index: u32::try_from(index).map_err(|_| ApiError::Internal)?,
+                index: u32::try_from(index).map_err(|_| ApiError::internal())?,
                 kind: NodeKind::RecordProperty,
             });
         }
         operations.push(Operation::SetProperty {
             id,
             key: "value".to_string(),
-            value: serde_json::to_string(value).map_err(|_| ApiError::Internal)?,
+            value: serde_json::to_string(value).map_err(|_| ApiError::internal())?,
         });
     }
     if let Some(body) = payload.body {
@@ -1745,7 +1743,7 @@ async fn archive_record(
     let payload: RecordIdPayload = parse_payload("record_archive", &input.payload)?;
     let target = fetch_record_target(&state.db, input.object_id, payload.record_id).await?;
     if target.lifecycle_status == "archived" {
-        return Err(ApiError::Conflict("record is already archived".to_string()));
+        return Err(ApiError::invalid_update("record is already archived"));
     }
     let level = authz::effective_permission(
         &state.db,
@@ -1773,7 +1771,11 @@ async fn archive_record(
         ))
         .await?;
     if updated.rows_affected() != 1 {
-        return Err(ApiError::Conflict("record archive lost a concurrent race".to_string()));
+        return Err(ApiError::stale_frontier(
+            "record archive lost a concurrent race",
+            None,
+            None,
+        ));
     }
     let event = insert_flow_event(
         &tx,
@@ -1801,7 +1803,7 @@ async fn archive_record(
     tx.commit().await?;
     let row = repository::fetch_object_view(&state.db, payload.record_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     let mut change = super::command::accepted_change_from_row(row, event.event_id);
     change.command_result = Some(json!({"record_id": payload.record_id}));
     Ok(change)
@@ -1885,13 +1887,13 @@ fn query_cursor_key(secret: &str) -> Result<LessSafeKey, ApiError> {
     digest.update(secret.as_bytes());
     UnboundKey::new(&aead::CHACHA20_POLY1305, &digest.finalize())
         .map(LessSafeKey::new)
-        .map_err(|_| ApiError::Internal)
+        .map_err(|_| ApiError::internal())
 }
 
 fn query_fingerprint(query: &RecordQueryPayload) -> Result<String, ApiError> {
     let mut canonical = query.clone();
     canonical.cursor = None;
-    let bytes = serde_json::to_vec(&canonical).map_err(|_| ApiError::Internal)?;
+    let bytes = serde_json::to_vec(&canonical).map_err(|_| ApiError::internal())?;
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
@@ -1899,12 +1901,12 @@ fn encode_query_cursor(secret: &str, cursor: &RecordQueryCursor) -> Result<Strin
     let mut nonce_bytes = [0_u8; aead::NONCE_LEN];
     SystemRandom::new()
         .fill(&mut nonce_bytes)
-        .map_err(|_| ApiError::Internal)?;
+        .map_err(|_| ApiError::internal())?;
     let nonce = Nonce::assume_unique_for_key(nonce_bytes);
-    let mut encrypted = serde_json::to_vec(cursor).map_err(|_| ApiError::Internal)?;
+    let mut encrypted = serde_json::to_vec(cursor).map_err(|_| ApiError::internal())?;
     query_cursor_key(secret)?
         .seal_in_place_append_tag(nonce, Aad::from(QUERY_CURSOR_AAD), &mut encrypted)
-        .map_err(|_| ApiError::Internal)?;
+        .map_err(|_| ApiError::internal())?;
     let mut token = Vec::with_capacity(1 + aead::NONCE_LEN + encrypted.len());
     token.push(QUERY_CURSOR_VERSION);
     token.extend_from_slice(&nonce_bytes);
@@ -1950,7 +1952,7 @@ async fn collection_read_row<C: ConnectionTrait>(conn: &C, collection_id: Uuid) 
     ))
     .one(conn)
     .await?
-    .ok_or_else(|| ApiError::NotFound("collection not found".to_string()))
+    .ok_or_else(|| ApiError::not_found("collection not found".to_string()))
 }
 
 async fn collection_fields<C: ConnectionTrait>(
@@ -2004,9 +2006,9 @@ pub async fn describe_collection(
 ) -> Result<Option<CollectionDescription>, ApiError> {
     let object_row = repository::fetch_object_view(&state.db, access.object_id())
         .await?
-        .ok_or_else(|| ApiError::NotFound("collection not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("collection not found".to_string()))?;
     if object_row.object_type != "collection" || object_row.workspace_id != access.workspace_id() {
-        return Err(ApiError::NotFound("collection not found".to_string()));
+        return Err(ApiError::not_found("collection not found".to_string()));
     }
     let collection = collection_read_row(&state.db, access.object_id()).await?;
     if let Some(at_seq) = at_seq
@@ -2030,7 +2032,7 @@ pub async fn describe_collection(
     ))
     .one(&state.db)
     .await?
-    .ok_or(ApiError::Internal)?;
+    .ok_or_else(ApiError::internal)?;
     if !policy::ensure_epoch_current(state, access.context()).await? {
         return Ok(None);
     }
@@ -2066,7 +2068,7 @@ fn scalar_sql_parameter(column: &str, parameter: usize) -> Result<String, ApiErr
         "boolean_value" => Ok(format!("(${parameter}::jsonb #>> '{{}}')::boolean")),
         "date_value" => Ok(format!("(${parameter}::jsonb #>> '{{}}')::timestamptz")),
         "multi_select_value" | "relation_value" => Ok(format!("${parameter}::jsonb")),
-        _ => Err(ApiError::Internal),
+        _ => Err(ApiError::internal()),
     }
 }
 
@@ -2234,7 +2236,7 @@ async fn query_collection_records_inner(
         return Ok(None);
     };
     if visible.len() != candidates.len() {
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
 
     let requested_fields = if request.field_ids.is_empty() {
@@ -2258,14 +2260,14 @@ async fn query_collection_records_inner(
         if !is_visible {
             continue;
         }
-        if items.len() == usize::try_from(request.limit).map_err(|_| ApiError::Internal)? {
+        if items.len() == usize::try_from(request.limit).map_err(|_| ApiError::internal())? {
             has_more = true;
             break;
         }
         let object_row = repository::fetch_object_view(&state.db, candidate.record_id)
             .await?
-            .ok_or(ApiError::Internal)?;
-        let properties = candidate.properties.as_object().ok_or(ApiError::Internal)?;
+            .ok_or_else(ApiError::internal)?;
+        let properties = candidate.properties.as_object().ok_or_else(ApiError::internal)?;
         let values_by_field_id = properties
             .iter()
             .filter_map(|(field_id, value)| {
@@ -2284,11 +2286,11 @@ async fn query_collection_records_inner(
             record,
             values_by_field_id,
         });
-        let consumed = u32::try_from(index + 1).map_err(|_| ApiError::Internal)?;
+        let consumed = u32::try_from(index + 1).map_err(|_| ApiError::internal())?;
         last_returned_offset = Some(offset.saturating_add(consumed));
     }
-    if !has_more && candidates.len() == usize::try_from(QUERY_SCAN_ROWS_MAX).map_err(|_| ApiError::Internal)? {
-        if items.len() < usize::try_from(request.limit).map_err(|_| ApiError::Internal)? {
+    if !has_more && candidates.len() == usize::try_from(QUERY_SCAN_ROWS_MAX).map_err(|_| ApiError::internal())? {
+        if items.len() < usize::try_from(request.limit).map_err(|_| ApiError::internal())? {
             return Err(ApiError::limit_exceeded(
                 "record query authorization scan budget exhausted",
                 "scan_budget",
@@ -2368,8 +2370,8 @@ async fn replay_embed(
         return Ok(None);
     };
     if event.event_type != "flow.content.accepted" || event.aggregate_id != page_document_id.to_string() {
-        return Err(ApiError::Conflict(
-            "idempotency_key was already used for a different operation".to_string(),
+        return Err(ApiError::idempotency_key_body_drift(
+            "idempotency_key was already used for a different operation",
         ));
     }
     let stored_body: EmbedIdempotencyBody = serde_json::from_value(
@@ -2377,29 +2379,29 @@ async fn replay_embed(
             .metadata
             .get("embed_idempotency_body")
             .cloned()
-            .ok_or_else(|| ApiError::Conflict("embed replay identity is missing".to_string()))?,
+            .ok_or_else(|| ApiError::idempotency_key_body_drift("embed replay identity is missing"))?,
     )
-    .map_err(|_| ApiError::Conflict("embed replay identity is invalid".to_string()))?;
+    .map_err(|_| ApiError::internal())?;
     if stored_body != *body {
-        return Err(ApiError::Conflict(
-            "idempotency_key was already used with a different embed request".to_string(),
+        return Err(ApiError::idempotency_key_body_drift(
+            "idempotency_key was already used with a different embed request",
         ));
     }
     let result = event
         .metadata
         .get("command_result")
         .cloned()
-        .ok_or_else(|| ApiError::Conflict("embed replay result is missing".to_string()))?;
+        .ok_or_else(ApiError::internal)?;
     let row = repository::fetch_object_view(&state.db, page_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     let mut change = super::command::accepted_change_from_row(row, event.id);
     change.command_result = Some(result.clone());
     let collection_id = result
         .get("collection_id")
         .and_then(Value::as_str)
         .and_then(|raw| Uuid::parse_str(raw).ok())
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     change.affected_object_ids = vec![page_id, collection_id];
     Ok(Some(change))
 }
@@ -2494,16 +2496,18 @@ async fn create_collection_embed(
                 return Err(map_write_rejection(&rejected));
             }
             write::HydrateOutcome::Rejected(write::AcceptOutcome::Accepted(_)) => {
-                return Err(ApiError::Internal);
+                return Err(ApiError::internal());
             }
         };
         let mut collection_engine = LoroCollabEngine::new_empty(rand::random());
-        collection_engine.set_title(&title).map_err(|_| ApiError::Internal)?;
+        collection_engine.set_title(&title).map_err(|_| ApiError::internal())?;
         apply_initial_collection_schema(&mut collection_engine, &idempotency_body.initial_schema)?;
-        let collection_snapshot = collection_engine.export_snapshot().map_err(|_| ApiError::Internal)?;
+        let collection_snapshot = collection_engine.export_snapshot().map_err(|_| ApiError::internal())?;
         let collection_frontier = collection_engine.frontier().as_bytes().to_vec();
-        let collection_semantic = collection_engine.semantic_snapshot().map_err(|_| ApiError::Internal)?;
-        let collection_state = projection::state_json(&collection_semantic).map_err(|_| ApiError::Internal)?;
+        let collection_semantic = collection_engine
+            .semantic_snapshot()
+            .map_err(|_| ApiError::internal())?;
+        let collection_state = projection::state_json(&collection_semantic).map_err(|_| ApiError::internal())?;
         let tx = state.db.begin().await?;
         write::set_locked_phase_statement_budgets(&tx, 1).await?;
         authz::fence_epoch_for_share(&tx, workspace_id, checked_epoch).await?;
@@ -2659,13 +2663,13 @@ async fn create_collection_embed(
         );
         let row = repository::fetch_object_view(&state.db, input.object_id)
             .await?
-            .ok_or(ApiError::Internal)?;
+            .ok_or_else(ApiError::internal)?;
         let mut change = super::command::accepted_change_from_row(row, accepted.event_id);
         change.command_result = Some(command_result);
         change.affected_object_ids = vec![input.object_id, collection_id];
         return Ok(change);
     }
-    Err(ApiError::Internal)
+    Err(ApiError::internal())
 }
 
 async fn replay_existing_command(
@@ -2698,7 +2702,7 @@ async fn replay_existing_command(
                 CollectionCommandType::ViewCreate => "flow.view.created",
                 CollectionCommandType::ViewUpdate => "flow.view.updated",
                 CollectionCommandType::ViewReorder => "flow.view.reordered",
-                _ => return Err(ApiError::Internal),
+                _ => return Err(ApiError::internal()),
             };
             (event_type, view_id.to_string(), input.object_id, None)
         }
@@ -2726,13 +2730,13 @@ async fn replay_existing_command(
         | CollectionCommandType::CreateCollectionEmbed => return Ok(None),
     };
     if event.event_type != expected_type || event.aggregate_id != expected_aggregate {
-        return Err(ApiError::Conflict(
-            "idempotency_key was already used for a different operation".to_string(),
+        return Err(ApiError::idempotency_key_body_drift(
+            "idempotency_key was already used for a different operation",
         ));
     }
     let row = repository::fetch_object_view(&state.db, response_id)
         .await?
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(ApiError::internal)?;
     let mut change = super::command::accepted_change_from_row(row, event.id);
     change.command_result = result;
     Ok(Some(change))
@@ -2786,7 +2790,7 @@ pub async fn execute(
         CollectionCommandType::RecordPatch => record_patch(state, input, workspace_id, checked_epoch).await,
         CollectionCommandType::RecordArchive => archive_record(state, input, workspace_id, checked_epoch).await,
         CollectionCommandType::RecordQuery => record_query_requires_read_endpoint(&input.payload),
-        CollectionCommandType::CreateCollectionEmbed => Err(ApiError::Internal),
+        CollectionCommandType::CreateCollectionEmbed => Err(ApiError::internal()),
     }
 }
 
@@ -3508,7 +3512,9 @@ mod database_tests {
             &["https://flow.test".to_string()],
         )
         .await;
-        assert!(matches!(ticket, Err(ApiError::Forbidden(message)) if message.contains("server-only typed commands")));
+        assert!(
+            matches!(ticket, Err(ApiError::Typed { kind: ApiErrorKind::Forbidden, ref message, .. }) if message.contains("server-only typed commands"))
+        );
 
         let boot = bootstrap::load(&state.db, collection.document_id)
             .await
@@ -4524,7 +4530,7 @@ mod database_tests {
         let record_access = read_access(&state, workspace_id, owner_id, record.id).await;
         let bootstrap = crate::flow::query::get_bootstrap(&state, &record_access, None, None).await;
         assert!(
-            matches!(bootstrap, Err(ApiError::Forbidden(_))),
+            matches!(bootstrap, Err(ref e) if e.kind() == ApiErrorKind::Forbidden),
             "full Record CRDT snapshot must be denied"
         );
         let leaked_events = CountRow::find_by_statement(Statement::from_sql_and_values(

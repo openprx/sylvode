@@ -11,7 +11,7 @@ use sea_orm::FromQueryResult;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use uuid::Uuid;
 
-use crate::error::ApiError;
+use crate::error::{ApiError, ApiErrorKind};
 use crate::middleware::bot_auth::require_workspace_access;
 use crate::middleware::bot_auth::{extract_bot_context, require_workspace_access_from_auth};
 
@@ -106,7 +106,9 @@ pub async fn require_flow_workspace_access(
     extensions: &Extensions,
     workspace_id: Uuid,
 ) -> Result<(Uuid, String, bool), ApiError> {
-    let actor = require_workspace_access(state, extensions, workspace_id).await?;
+    let actor = require_workspace_access(state, extensions, workspace_id)
+        .await
+        .map_err(ApiError::into_typed)?;
     require_flow_enabled(state, workspace_id).await?;
     Ok(actor)
 }
@@ -124,11 +126,14 @@ pub(crate) async fn resolve_flow_principal(
 ) -> Result<(Uuid, String, bool), ApiError> {
     let claims = extensions
         .get::<platform::auth::JwtClaims>()
-        .ok_or_else(|| ApiError::Unauthorized("missing auth context".to_string()))?;
+        .ok_or_else(|| ApiError::unauthenticated("missing auth context".to_string()))?;
     if let Some(bot) = extract_bot_context(extensions) {
-        return require_workspace_access_from_auth(state, claims, Some(bot), workspace_id).await;
+        return require_workspace_access_from_auth(state, claims, Some(bot), workspace_id)
+            .await
+            .map_err(ApiError::into_typed);
     }
-    let actor_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
+    let actor_id =
+        Uuid::parse_str(&claims.sub).map_err(|_| ApiError::unauthenticated("invalid user id".to_string()))?;
     let role = WorkspaceRoleRow::find_by_statement(sea_orm::Statement::from_sql_and_values(
         sea_orm::DbBackend::Postgres,
         "SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
@@ -266,7 +271,7 @@ pub async fn authorize_flow_objects(
 
     levels
         .into_iter()
-        .map(|level| level.map(|level| level >= minimum).ok_or(ApiError::Internal))
+        .map(|level| level.map(|level| level >= minimum).ok_or_else(ApiError::internal))
         .collect::<Result<Vec<_>, _>>()
         .map(Some)
 }
@@ -373,13 +378,13 @@ async fn inject_epoch_change_if_planned(state: &AppState, workspace_id: Uuid) ->
 
 pub(crate) fn collapse_object_denial(err: ApiError) -> ApiError {
     match err {
-        ApiError::Forbidden(_) | ApiError::NotFound(_) => object_not_found(),
-        other => other,
+        err if matches!(err.kind(), ApiErrorKind::Forbidden | ApiErrorKind::NotFound) => object_not_found(),
+        other => other.into_typed(),
     }
 }
 
 pub(crate) fn object_not_found() -> ApiError {
-    ApiError::NotFound("flow object not found".to_string())
+    ApiError::not_found("flow object not found".to_string())
 }
 
 /// Plain workspace membership, deliberately *not* gated on `flow_enabled`.
@@ -394,7 +399,9 @@ pub async fn require_flow_feature_read_access(
     extensions: &Extensions,
     workspace_id: Uuid,
 ) -> Result<(Uuid, String, bool), ApiError> {
-    require_workspace_access(state, extensions, workspace_id).await
+    require_workspace_access(state, extensions, workspace_id)
+        .await
+        .map_err(ApiError::into_typed)
 }
 
 /// Workspace membership *and* an admin-level role, for `PUT /workspaces/{workspace_id}/features/flow`.
@@ -410,9 +417,11 @@ pub async fn require_flow_workspace_admin_access(
     extensions: &Extensions,
     workspace_id: Uuid,
 ) -> Result<(Uuid, String, bool), ApiError> {
-    let actor = require_workspace_access(state, extensions, workspace_id).await?;
+    let actor = require_workspace_access(state, extensions, workspace_id)
+        .await
+        .map_err(ApiError::into_typed)?;
     if actor.1 != "owner" && actor.1 != "admin" {
-        return Err(ApiError::Forbidden("workspace admin access required".to_string()));
+        return Err(ApiError::forbidden("workspace admin access required".to_string()));
     }
     Ok(actor)
 }
@@ -445,8 +454,6 @@ pub async fn require_flow_enabled_on<C: sea_orm::ConnectionTrait>(
     if repository::fetch_flow_enabled(conn, workspace_id).await? {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(
-            "flow is not enabled for this workspace".to_string(),
-        ))
+        Err(ApiError::feature_disabled("flow is not enabled for this workspace"))
     }
 }

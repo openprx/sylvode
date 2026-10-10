@@ -407,12 +407,12 @@ async fn fetch_chain<C: ConnectionTrait>(
 ) -> Result<Vec<ChainNode>, ApiError> {
     match walk_chain(conn, workspace_id, object_id).await? {
         ChainWalk::Complete(chain) => Ok(chain),
-        ChainWalk::Missing => Err(ApiError::NotFound("flow object not found".to_string())),
-        ChainWalk::TooDeep => Err(ApiError::Forbidden(
+        ChainWalk::Missing => Err(ApiError::not_found("flow object not found".to_string())),
+        ChainWalk::TooDeep => Err(ApiError::forbidden(
             "object inheritance chain is deeper than the frozen tree depth limit".to_string(),
         )),
-        ChainWalk::Cyclic => Err(ApiError::Forbidden("object inheritance chain is cyclic".to_string())),
-        ChainWalk::Incomplete => Err(ApiError::Forbidden(
+        ChainWalk::Cyclic => Err(ApiError::forbidden("object inheritance chain is cyclic".to_string())),
+        ChainWalk::Incomplete => Err(ApiError::forbidden(
             "object inheritance chain is incomplete".to_string(),
         )),
     }
@@ -467,7 +467,7 @@ pub async fn ensure_parent_can_adopt_child<C: ConnectionTrait>(
             }
             Ok(())
         }
-        ChainWalk::Missing => Err(ApiError::BadRequest("parent_object_id not found".to_string())),
+        ChainWalk::Missing => Err(ApiError::invalid_update("parent_object_id not found".to_string())),
         ChainWalk::TooDeep => Err(ApiError::limit_exceeded(
             "parent_object_id's inheritance chain is already deeper than the frozen tree depth limit",
             "tree_depth",
@@ -562,9 +562,9 @@ async fn workspace_baseline<C: ConnectionTrait>(
     ))
     .one(conn)
     .await?;
-    let row = row.ok_or_else(|| ApiError::NotFound("flow workspace settings not found".to_string()))?;
+    let row = row.ok_or_else(|| ApiError::not_found("flow workspace settings not found".to_string()))?;
     PermissionLevel::parse(&row.default_member_level)
-        .ok_or_else(|| ApiError::Forbidden("flow workspace baseline is invalid".to_string()))
+        .ok_or_else(|| ApiError::forbidden("flow workspace baseline is invalid".to_string()))
 }
 
 /// `ADR-0012` §3's effective-permission rule.
@@ -633,7 +633,7 @@ pub async fn effective_permission<C: ConnectionTrait>(
         }
         // Collapses "belongs to another workspace" and "does not exist" into one answer, so the
         // override cannot be used as a cross-tenant existence oracle.
-        return Err(ApiError::NotFound("flow object not found".to_string()));
+        return Err(ApiError::not_found("flow object not found".to_string()));
     }
 
     let chain = fetch_chain(conn, workspace_id, object_id).await?;
@@ -662,7 +662,7 @@ pub async fn effective_permission<C: ConnectionTrait>(
             // Unreachable: `index` came from `chain.iter().enumerate()`. Fail closed with an
             // error rather than inventing a permission level if that ever stops holding.
             tracing::error!(index, len = chain.len(), "authz: boundary index outside the chain");
-            return Err(ApiError::Internal);
+            return Err(ApiError::internal());
         };
         // No grant at or below the boundary ⇒ the maximum is taken over the empty set, which is
         // *nothing*, not `view` — see [`PermissionLevel::Denied`].
@@ -909,7 +909,7 @@ pub async fn lock_epoch_for_update<C: ConnectionTrait>(conn: &C, workspace_id: U
     .one(conn)
     .await?;
     row.map(|r| r.authz_epoch)
-        .ok_or_else(|| ApiError::NotFound("flow workspace settings not found".to_string()))
+        .ok_or_else(|| ApiError::not_found("flow workspace settings not found".to_string()))
 }
 
 /// The `flow_workspace_settings.authz_epoch` row's current value, read outside any lock (used
@@ -932,7 +932,7 @@ pub async fn read_epoch<C: ConnectionTrait>(conn: &C, workspace_id: Uuid) -> Res
     .one(conn)
     .await?;
     row.map(|r| r.authz_epoch)
-        .ok_or_else(|| ApiError::NotFound("flow workspace settings not found".to_string()))
+        .ok_or_else(|| ApiError::not_found("flow workspace settings not found".to_string()))
 }
 
 /// Reads the current authorization epoch under `FOR SHARE`, held until the caller's transaction
@@ -954,7 +954,7 @@ pub async fn lock_epoch_for_share<C: ConnectionTrait>(conn: &C, workspace_id: Uu
     .one(conn)
     .await?;
     row.map(|row| row.authz_epoch)
-        .ok_or_else(|| ApiError::NotFound("flow workspace settings not found".to_string()))
+        .ok_or_else(|| ApiError::not_found("flow workspace settings not found".to_string()))
 }
 
 /// The commit-time fencing barrier (`ADR-0012` §3.1, `collab-protocol-v1.md` §"鉴权与连接" point
@@ -993,10 +993,10 @@ pub async fn fence_epoch_for_share<C: ConnectionTrait>(
     .one(conn)
     .await?;
     let Some(row) = row else {
-        return Err(ApiError::NotFound("flow workspace settings not found".to_string()));
+        return Err(ApiError::not_found("flow workspace settings not found".to_string()));
     };
     if row.authz_epoch != checked_epoch {
-        return Err(ApiError::Conflict(format!(
+        return Err(ApiError::policy_rejected(format!(
             "authz_epoch advanced from {checked_epoch} to {}; permission must be rechecked",
             row.authz_epoch
         )));
@@ -1051,7 +1051,7 @@ pub async fn advance_epoch_for_roots<C: ConnectionTrait>(
     .one(conn)
     .await?;
     row.map(|r| r.authz_epoch)
-        .ok_or_else(|| ApiError::NotFound("flow workspace settings not found".to_string()))
+        .ok_or_else(|| ApiError::not_found("flow workspace settings not found".to_string()))
 }
 
 /// Advances `authz_epoch` when this workspace already has Flow settings.
@@ -1385,7 +1385,7 @@ mod database_tests {
 
     fn assert_forbidden(result: &Result<PermissionLevel, ApiError>, what: &str) {
         match result {
-            Err(ApiError::Forbidden(_)) => {}
+            Err(e) if e.kind() == crate::error::ApiErrorKind::Forbidden => {}
             Err(other) => panic!("{what}: expected Forbidden, got {other:?}"),
             Ok(level) => panic!("{what}: expected Forbidden, but permission resolved to {level:?} (fail-open)"),
         }
@@ -1774,7 +1774,7 @@ mod database_tests {
         assert!(
             matches!(
                 effective_permission(&scratch.db, fx.workspace_id, absent, "user", fx.member_id, "member").await,
-                Err(ApiError::NotFound(_))
+                Err(ref e) if e.kind() == crate::error::ApiErrorKind::NotFound
             ),
             "an explicitly requested absent object remains a rejection"
         );
@@ -1817,11 +1817,11 @@ mod database_tests {
         )
         .await;
         assert!(
-            matches!(single_missing, Err(ApiError::NotFound(_))),
+            matches!(single_missing, Err(ref e) if e.kind() == crate::error::ApiErrorKind::NotFound),
             "single evaluator manufactured a baseline: {single_missing:?}"
         );
         assert!(
-            matches!(batch_missing, Err(ApiError::NotFound(_))),
+            matches!(batch_missing, Err(ref e) if e.kind() == crate::error::ApiErrorKind::NotFound),
             "batch evaluator manufactured a baseline: {batch_missing:?}"
         );
         scratch.drop_self().await;
@@ -1947,7 +1947,7 @@ mod database_tests {
                 // role. Both answers must collapse to the same `NotFound`, so the override cannot
                 // double as a cross-tenant existence oracle either.
                 match effective_permission(&scratch.db, fx.workspace_id, object_id, "user", fx.member_id, role).await {
-                    Err(ApiError::NotFound(_)) => {}
+                    Err(e) if e.kind() == crate::error::ApiErrorKind::NotFound => {}
                     Ok(level) => panic!("role {role} got {level:?} for {what} (cross-tenant fail-open)"),
                     Err(other) => panic!("role {role}: expected NotFound for {what}, got {other:?}"),
                 }
@@ -2019,7 +2019,7 @@ mod database_tests {
         let fx = seed_workspace(&scratch.db).await;
 
         match member_level(&scratch.db, &fx, Uuid::new_v4()).await {
-            Err(ApiError::NotFound(_)) => {}
+            Err(e) if e.kind() == crate::error::ApiErrorKind::NotFound => {}
             other => panic!("expected NotFound for an absent object, got {other:?}"),
         }
 

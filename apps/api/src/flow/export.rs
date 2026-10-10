@@ -195,7 +195,7 @@ pub async fn create_package_export(
     let objects = load_scope(&tx, request.scope).await?;
     let first = objects
         .first()
-        .ok_or_else(|| ApiError::NotFound("Flow export scope is empty".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("Flow export scope is empty".to_string()))?;
     let workspace_id = first.workspace_id;
     if request
         .scope
@@ -203,7 +203,7 @@ pub async fn create_package_export(
         .is_some_and(|expected| expected != workspace_id)
         || objects.iter().any(|row| row.workspace_id != workspace_id)
     {
-        return Err(ApiError::NotFound("Flow export scope is empty".to_string()));
+        return Err(ApiError::not_found("Flow export scope is empty".to_string()));
     }
 
     lock_authorization_epoch(&tx, workspace_id).await?;
@@ -221,8 +221,10 @@ pub async fn create_package_export(
     let mut rendered_object = None;
     for object in &objects {
         if request.at_seq.is_some_and(|at_seq| at_seq != object.head_seq) {
-            return Err(ApiError::Conflict(
-                "at_seq is not the current accepted head".to_string(),
+            return Err(ApiError::stale_frontier(
+                "at_seq is not the current accepted head",
+                Some(object.head_seq),
+                None,
             ));
         }
         let updates = load_updates(&tx, object).await?;
@@ -272,7 +274,7 @@ pub async fn create_package_export(
                 )
                 .into_bytes(),
                 "package" => Vec::new(),
-                _ => return Err(ApiError::BadRequest("unsupported export format".to_string())),
+                _ => return Err(ApiError::unsupported_format("unsupported export format")),
             });
         }
         members.push(PackageMemberInput {
@@ -299,7 +301,7 @@ pub async fn create_package_export(
     }
 
     if request.format != "package" {
-        let bytes = rendered_object.ok_or(ApiError::Internal)?;
+        let bytes = rendered_object.ok_or_else(ApiError::internal)?;
         let checksum = sha256_hex(&bytes);
         tx.commit().await?;
         return persist_export(db, request, workspace_id, &request_hash, bytes, checksum).await;
@@ -460,12 +462,12 @@ pub async fn download_package_export(
     let row = export_access_row(db, job_id).await?;
     authorize_export_access(db, &row, principal).await?;
     if row.expires_at.is_none_or(|expires| expires <= Utc::now()) {
-        return Err(ApiError::NotFound("export artifact expired".to_string()));
+        return Err(ApiError::not_found("export artifact expired".to_string()));
     }
     Ok((
         row.package_bytes
-            .ok_or_else(|| ApiError::NotFound("export artifact not found".to_string()))?,
-        row.package_sha256.ok_or(ApiError::Internal)?,
+            .ok_or_else(|| ApiError::not_found("export artifact not found".to_string()))?,
+        row.package_sha256.ok_or_else(ApiError::internal)?,
         row.format,
     ))
 }
@@ -479,7 +481,7 @@ async fn export_access_row(db: &DatabaseConnection, job_id: Uuid) -> Result<Expo
     ))
     .one(db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("export job not found".to_string()))
+    .ok_or_else(|| ApiError::not_found("export job not found".to_string()))
 }
 
 async fn authorize_export_access(
@@ -489,7 +491,7 @@ async fn authorize_export_access(
 ) -> Result<(), ApiError> {
     let initiating = row.actor_kind == principal.kind && row.actor_id == principal.id;
     if !(initiating || principal.kind == "user" && matches!(principal.role.as_str(), "owner" | "admin")) {
-        return Err(ApiError::NotFound("export job not found".to_string()));
+        return Err(ApiError::not_found("export job not found".to_string()));
     }
     let tx = db.begin().await?;
     lock_authorization_epoch(&tx, row.workspace_id).await?;
@@ -498,7 +500,7 @@ async fn authorize_export_access(
     } else if !((principal.kind == "user" && matches!(principal.role.as_str(), "owner" | "admin"))
         || (principal.kind == "bot" && principal.workspace_export_capability))
     {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
             "workspace export permission is required".to_string(),
         ));
     }
@@ -514,9 +516,9 @@ fn access_receipt(row: &ExportAccessRow) -> Result<ExportJobReceipt, ApiError> {
         workspace_id: row.workspace_id,
         object_id: row.object_id,
         package_schema: if row.format == "package" { "v1" } else { "" }.to_string(),
-        checksum: row.package_sha256.clone().ok_or(ApiError::Internal)?,
-        size: u64::try_from(row.size_bytes.ok_or(ApiError::Internal)?).map_err(|_| ApiError::Internal)?,
-        expires_at: row.expires_at.ok_or(ApiError::Internal)?.to_rfc3339(),
+        checksum: row.package_sha256.clone().ok_or_else(ApiError::internal)?,
+        size: u64::try_from(row.size_bytes.ok_or_else(ApiError::internal)?).map_err(|_| ApiError::internal())?,
+        expires_at: row.expires_at.ok_or_else(ApiError::internal)?.to_rfc3339(),
     })
 }
 
@@ -528,17 +530,17 @@ fn validate_request(request: &CreateExportRequest) -> Result<(), ApiError> {
         return Err(ApiError::unauthenticated("unsupported principal kind"));
     }
     if !matches!(request.format.as_str(), "json" | "markdown" | "csv" | "package") {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "format must be json, markdown, csv, or package".to_string(),
         ));
     }
     if matches!(request.scope, ExportScope::Workspace { .. }) && request.format != "package" {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "workspace export format must be package".to_string(),
         ));
     }
     if request.format != "package" && request.include_history {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "include_history is only valid for package exports".to_string(),
         ));
     }
@@ -553,7 +555,7 @@ fn enforce_scope_principal(request: &CreateExportRequest, _workspace_id: Uuid) -
             request.principal.workspace_export_capability
         };
         if !permitted {
-            return Err(ApiError::Forbidden(
+            return Err(ApiError::forbidden(
                 "workspace package export permission denied".to_string(),
             ));
         }
@@ -592,7 +594,7 @@ async fn authorize_all<C: ConnectionTrait>(
     )
     .await?;
     if levels.len() != object_ids.len() || levels.iter().any(|(_, level)| *level < PermissionLevel::View) {
-        return Err(ApiError::Forbidden(format!("{action} permission denied")));
+        return Err(ApiError::forbidden(format!("{action} permission denied")));
     }
     Ok(())
 }
@@ -771,7 +773,7 @@ fn selected_roots(objects: &[ExportObjectRow], selected: &HashSet<Uuid>) -> Vec<
 }
 
 fn canonical_json(value: &Value) -> Result<Vec<u8>, ApiError> {
-    serde_jcs::to_vec(value).map_err(|_| ApiError::Internal)
+    serde_jcs::to_vec(value).map_err(|_| ApiError::internal())
 }
 
 fn canonical_jsonl(values: impl Iterator<Item = Value>) -> Result<Vec<u8>, ApiError> {
@@ -823,7 +825,9 @@ async fn find_existing_job(
 
 fn existing_receipt(row: ExistingJob, request_hash: &str) -> Result<ExportJobReceipt, ApiError> {
     if row.request_hash != request_hash {
-        return Err(ApiError::Conflict("export idempotency key body drift".to_string()));
+        return Err(ApiError::idempotency_key_body_drift(
+            "export idempotency key body drift",
+        ));
     }
     Ok(ExportJobReceipt {
         job_id: row.id,
@@ -832,9 +836,9 @@ fn existing_receipt(row: ExistingJob, request_hash: &str) -> Result<ExportJobRec
         workspace_id: row.workspace_id,
         object_id: row.object_id,
         package_schema: if row.format == "package" { "v1" } else { "" }.to_string(),
-        checksum: row.package_sha256.ok_or(ApiError::Internal)?,
-        size: u64::try_from(row.size_bytes.ok_or(ApiError::Internal)?).map_err(|_| ApiError::Internal)?,
-        expires_at: row.expires_at.ok_or(ApiError::Internal)?.to_rfc3339(),
+        checksum: row.package_sha256.ok_or_else(ApiError::internal)?,
+        size: u64::try_from(row.size_bytes.ok_or_else(ApiError::internal)?).map_err(|_| ApiError::internal())?,
+        expires_at: row.expires_at.ok_or_else(ApiError::internal)?.to_rfc3339(),
     })
 }
 
@@ -912,7 +916,7 @@ async fn persist_export(
         tx.rollback().await?;
         return find_existing_job(db, workspace_id, request, request_hash)
             .await?
-            .ok_or(ApiError::Internal);
+            .ok_or_else(ApiError::internal);
     }
     tx.commit().await?;
     Ok(ExportJobReceipt {
@@ -1174,7 +1178,7 @@ mod tests {
         };
         assert!(matches!(
             create_package_export(&scratch.db, &drift).await,
-            Err(ApiError::Conflict(_))
+            Err(ref e) if e.kind() == crate::error::ApiErrorKind::InvalidUpdate
         ));
 
         let object_request = CreateExportRequest {
@@ -1239,7 +1243,7 @@ mod tests {
         };
         assert!(matches!(
             create_package_export(&scratch.db, &stale).await,
-            Err(ApiError::Conflict(_))
+            Err(ref e) if e.kind() == crate::error::ApiErrorKind::StaleFrontier
         ));
 
         scratch.drop_self().await;
@@ -1278,7 +1282,7 @@ mod tests {
         };
         assert!(matches!(
             create_package_export(&scratch.db, &workspace_request).await,
-            Err(ApiError::Forbidden(_))
+            Err(ref e) if e.kind() == crate::error::ApiErrorKind::Forbidden
         ));
 
         let guest_request = CreateExportRequest {
@@ -1292,7 +1296,7 @@ mod tests {
         };
         assert!(matches!(
             create_package_export(&scratch.db, &guest_request).await,
-            Err(ApiError::Forbidden(_))
+            Err(ref e) if e.kind() == crate::error::ApiErrorKind::Forbidden
         ));
         let count = scratch
             .db

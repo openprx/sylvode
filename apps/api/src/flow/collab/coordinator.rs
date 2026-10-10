@@ -21,7 +21,11 @@ use parking_lot::Mutex;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use uuid::Uuid;
 
-use crate::error::ApiError;
+use crate::error::{ApiError, ServerDrainingReason};
+
+/// `retry_after_ms` when the coordinator itself has been closed (process shutdown): reconnect
+/// to an instance that is serving rather than hammering this one.
+const COORDINATOR_CLOSED_RETRY_AFTER_MS: u64 = 5_000;
 
 use super::limits::COORDINATOR_ACQUIRE_TIMEOUT_MS;
 
@@ -91,7 +95,7 @@ impl DocumentCoordinator {
     /// holds its single permit.
     ///
     /// # Errors
-    /// `ApiError::Conflict` when any one slot's [`COORDINATOR_ACQUIRE_TIMEOUT_MS`] elapses first.
+    /// `server_draining{reason:"contention"}` when any one slot's [`COORDINATOR_ACQUIRE_TIMEOUT_MS`] elapses first.
     /// Permits already taken by this call are dropped (released) on that path, so a timed-out
     /// acquisition never leaves a partially-held set behind.
     pub async fn acquire_many(&self, document_ids: &[Uuid]) -> Result<Vec<DocumentPermit>, ApiError> {
@@ -113,18 +117,22 @@ impl DocumentCoordinator {
     /// document at a time, so it cannot get that ordering wrong on its own.
     ///
     /// # Errors
-    /// `ApiError::Conflict` (mapped to `server_draining`/`reason="contention"` on the wire by the
-    /// caller) when the timeout elapses first.
+    /// `server_draining` with `reason="contention"` when the timeout elapses first (a document
+    /// lock wait, `error-mapping-v1.md`), or `reason="drain"` when the coordinator is shutting down.
     pub async fn acquire(&self, document_id: Uuid) -> Result<DocumentPermit, ApiError> {
         let semaphore = self.semaphore_for(document_id);
         let acquire = semaphore.acquire_owned();
         match tokio::time::timeout(Duration::from_millis(COORDINATOR_ACQUIRE_TIMEOUT_MS), acquire).await {
             Ok(Ok(permit)) => Ok(DocumentPermit { _permit: permit }),
-            Ok(Err(_closed)) => Err(ApiError::Conflict(
-                "document coordinator semaphore was closed".to_string(),
+            Ok(Err(_closed)) => Err(ApiError::server_draining(
+                ServerDrainingReason::Drain,
+                COORDINATOR_CLOSED_RETRY_AFTER_MS,
+                "document coordinator semaphore was closed",
             )),
-            Err(_timeout) => Err(ApiError::Conflict(
-                "document coordinator acquisition timed out".to_string(),
+            Err(_timeout) => Err(ApiError::server_draining(
+                ServerDrainingReason::Contention,
+                COORDINATOR_ACQUIRE_TIMEOUT_MS,
+                "document coordinator acquisition timed out",
             )),
         }
     }

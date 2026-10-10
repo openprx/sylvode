@@ -96,7 +96,7 @@ pub async fn read_tail_stats(db: &DatabaseConnection, document_id: Uuid) -> Resu
     ))
     .one(db)
     .await?
-    .ok_or(ApiError::Internal)?; // `count(*)` always returns exactly one row, even over zero matches.
+    .ok_or_else(ApiError::internal)?; // `count(*)` always returns exactly one row, even over zero matches.
 
     Ok(Some(TailStats {
         snapshot_seq: doc.snapshot_seq,
@@ -190,12 +190,12 @@ pub async fn build_candidate(db: &DatabaseConnection, document_id: Uuid) -> Resu
 
     let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|err| {
         tracing::error!(error = %err, %document_id, "snapshot advancement: base snapshot failed to decode");
-        ApiError::Internal
+        ApiError::internal()
     })?;
     for tail in &boot.tail_updates {
         engine.import_update(&tail.bytes).map_err(|err| {
             tracing::error!(error = %err, %document_id, "snapshot advancement: tail update failed to re-apply");
-            ApiError::Internal
+            ApiError::internal()
         })?;
     }
     if engine.frontier().as_bytes() != boot.head_frontier.as_slice() {
@@ -203,19 +203,19 @@ pub async fn build_candidate(db: &DatabaseConnection, document_id: Uuid) -> Resu
             %document_id,
             "snapshot advancement: replayed frontier does not match the bootstrap loader's verified head_frontier"
         );
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
     let expected_hash = engine
         .semantic_snapshot()
         .map_err(|err| {
             tracing::error!(error = %err, %document_id, "snapshot advancement: semantic_snapshot failed on the replayed engine");
-            ApiError::Internal
+            ApiError::internal()
         })?
         .semantic_hash();
 
     let snapshot_bytes = engine.export_snapshot().map_err(|err| {
         tracing::error!(error = %err, %document_id, "snapshot advancement: export_snapshot failed");
-        ApiError::Internal
+        ApiError::internal()
     })?;
 
     // Round-trip validation: decode the exported candidate bytes into a fresh, independent engine
@@ -223,22 +223,22 @@ pub async fn build_candidate(db: &DatabaseConnection, document_id: Uuid) -> Resu
     // candidate is ever offered to `commit_candidate`.
     let reloaded = LoroCollabEngine::load(&snapshot_bytes).map_err(|err| {
         tracing::error!(error = %err, %document_id, "snapshot advancement: candidate snapshot failed to round-trip decode");
-        ApiError::Internal
+        ApiError::internal()
     })?;
     if reloaded.frontier().as_bytes() != boot.head_frontier.as_slice() {
         tracing::error!(%document_id, "snapshot advancement: candidate snapshot round-trip frontier mismatch");
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
     let reloaded_hash = reloaded
         .semantic_snapshot()
         .map_err(|err| {
             tracing::error!(error = %err, %document_id, "snapshot advancement: semantic_snapshot failed on the round-trip engine");
-            ApiError::Internal
+            ApiError::internal()
         })?
         .semantic_hash();
     if reloaded_hash != expected_hash {
         tracing::error!(%document_id, "snapshot advancement: candidate snapshot round-trip semantic hash mismatch");
-        return Err(ApiError::Internal);
+        return Err(ApiError::internal());
     }
 
     #[allow(clippy::cast_possible_truncation)]
@@ -304,7 +304,7 @@ pub async fn commit_candidate(
     .await?
     else {
         let _ = tx.rollback().await;
-        return Err(ApiError::NotFound("document not found".to_string()));
+        return Err(ApiError::not_found("document not found".to_string()));
     };
 
     if locked.snapshot_seq >= candidate.head_seq {
@@ -677,7 +677,7 @@ mod database_tests {
     use uuid::Uuid;
 
     use super::{AdvanceOutcome, SnapshotAdvancer, Trigger, advance, evaluate, read_tail_stats};
-    use crate::error::ApiError;
+    use crate::error::ApiErrorKind;
     use crate::events::{BusinessEventInput, insert_business_event};
     use crate::flow::collab::authz;
     use crate::flow::collab::bootstrap;
@@ -1499,7 +1499,7 @@ mod database_tests {
             .await
             .expect_err("changed snapshot bytes must fail before any state is returned");
         assert!(
-            matches!(error, ApiError::Conflict(ref message) if message == "resync_required"),
+            error.kind() == ApiErrorKind::ResyncRequired,
             "snapshot checksum mismatch must fail closed as resync_required, got {error:?}"
         );
 

@@ -99,7 +99,7 @@ impl PermissionCache {
         state
             .flow_permission_cache
             .get_or_init(Self::default)
-            .ok_or(ApiError::Internal)
+            .ok_or_else(ApiError::internal)
     }
 
     /// Reads one entry only when it was computed at `current_epoch`.

@@ -17,6 +17,15 @@ OpenPR name keeps working; see **Deprecated**.
 
 ### Breaking and behaviour changes
 
+- **Flow idempotency-key body drift is `invalid_update` with `details.reason =
+  "idempotency_key_body_drift"`, no longer a 409 `Conflict`.** Reusing an idempotency key with a
+  different request body (object/record create, embeds, grants, lifecycle and governance
+  commands, package export/import, delivery replay, maintenance operations) now answers envelope
+  `code` 400 with that reason, so it can be told apart from `stale_frontier` (still 409) without
+  reading `message`. Internal failures on the Flow surface answer `server_rejected` (500,
+  non-retryable) instead of the untyped 500; an identical request that is still running answers
+  `server_draining` with `reason = "contention"` and `retry_after_ms`.
+
 - **Every existing bot token only works with the REST API after the upgrade.** Migration
   `0062_flow_forms_bridge.sql` adds a transport surface to each bot token,
   `ALTER TABLE workspace_bots ADD COLUMN IF NOT EXISTS transport_surface TEXT NOT NULL DEFAULT 'rest';`,
@@ -367,6 +376,15 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow: every error the Flow REST surface constructs (`/api/v1/flow/**`, the workspace Flow
+  feature, projection-lag, conversion, package import/export and operations endpoints, and the
+  collab ticket/WebSocket routes) is now a typed envelope carrying `error_code` (and `details`
+  where the contract defines them) instead of the legacy `{code,message}` shape. A
+  `flow_typed_error_gate` test lists any new untyped construction point on that surface.
+  "Flow is not enabled for this workspace" is `feature_disabled` everywhere (it was a bare 403
+  on `projection-lag` and every other route behind the feature check), workspace-admin and
+  tool-policy refusals are `forbidden`, a missing `confirm` on dangerous operations is
+  `policy_rejected`, and the not-found answers keep collapsing "no access" into `not_found`.
 - Packaging: the `api` container image and every release archive now ship
   `collab-isolated-apply-worker` beside `api`. The API spawns that process for every Flow
   collaborative write and looks for it next to its own executable; the image built by

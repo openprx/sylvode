@@ -375,7 +375,7 @@ pub async fn aggregate_projection_lag<C: ConnectionTrait>(
     ProjectionLagAggregate::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
         .one(conn)
         .await?
-        .ok_or(ApiError::Internal)
+        .ok_or_else(ApiError::internal)
 }
 
 /// Reads one stable keyset page of projection-lag candidates before policy filtering.
@@ -671,7 +671,7 @@ pub async fn ensure_navigator_root<C: ConnectionTrait>(
     .one(conn)
     .await?
     .map(|row| row.id)
-    .ok_or(ApiError::Internal)
+    .ok_or_else(ApiError::internal)
 }
 
 /// Compatibility helper for call sites that explicitly mean the unprojected scope.
@@ -709,7 +709,7 @@ pub async fn fetch_navigator_nodes<C: ConnectionTrait>(
     depth: u64,
     include_archived: bool,
 ) -> Result<Vec<NavigatorNodeRow>, ApiError> {
-    let depth = i64::try_from(depth).map_err(|_| ApiError::BadRequest("depth is too large".to_string()))?;
+    let depth = i64::try_from(depth).map_err(|_| ApiError::invalid_update("depth is too large".to_string()))?;
     Ok(NavigatorNodeRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"

@@ -577,6 +577,10 @@ impl ApiErrorKind {
     }
 }
 
+/// `invalid_update.details.reason` for an idempotency key replayed with a different body
+/// (`error-mapping-v1.md`'s approved reason table).
+pub const IDEMPOTENCY_KEY_BODY_DRIFT_REASON: &str = "idempotency_key_body_drift";
+
 #[derive(Debug, Error)]
 pub enum ApiError {
     #[error("{0}")]
@@ -644,6 +648,63 @@ impl ApiError {
             message: message.into(),
             details: Some(details),
         }
+    }
+
+    /// `forbidden`: the caller is identified but not allowed (`error-mapping-v1.md`: `Forbidden` /
+    /// 403). Paths that must not reveal whether the target exists use [`Self::not_found`] instead.
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::typed(ApiErrorKind::Forbidden, message)
+    }
+
+    /// `not_found`, also the shape for "exists but not visible to you" (`error-mapping-v1.md`:
+    /// "cross-workspace 也归此类"; "不泄露 object/document").
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::typed(ApiErrorKind::NotFound, message)
+    }
+
+    /// The typed twin of the legacy [`Self::Internal`]: `error-mapping-v1.md` maps `server_rejected`
+    /// to exactly `Internal` / 500, so an internal failure on a typed surface is reported as that
+    /// stable code, with no `details` (an unclassified failure has no approved reason to name) and
+    /// the same caller-safe message the legacy variant used.
+    pub fn internal() -> Self {
+        Self::typed(ApiErrorKind::ServerRejected, "internal server error")
+    }
+
+    /// `invalid_update` with `details.reason = "idempotency_key_body_drift"` (`error-mapping-v1.md`,
+    /// 2026-10-10): the idempotency key was already used with a different request body (including a
+    /// dry-run reusing an execute key or vice versa). Distinct from `stale_frontier` by `error_code`
+    /// itself, so no caller has to read `message` to tell the two 409-era causes apart.
+    pub fn idempotency_key_body_drift(message: impl Into<String>) -> Self {
+        Self::invalid_update_with_details(message, json!({ "reason": IDEMPOTENCY_KEY_BODY_DRIFT_REASON }))
+    }
+
+    /// Re-expresses a legacy string-typed variant as the [`Self::Typed`] error with the one stable
+    /// code its status unambiguously means, keeping the message. For typed surfaces (Flow) that
+    /// call shared helpers which still produce the legacy shape -- workspace membership checks in
+    /// `middleware::bot_auth` above all -- so that the response carries an `error_code` without
+    /// changing those helpers for every other route.
+    ///
+    /// `Database` is kept as is: its retry classification ([`Self::is_deterministic_database_failure`],
+    /// [`Self::is_known_transient_database_failure`]) needs the driver error. `Conflict` is kept as
+    /// is because the 409 bucket has several stable codes and guessing one would be worse than
+    /// leaving it unclassified; no shared helper reachable from Flow produces it.
+    #[must_use]
+    pub fn into_typed(self) -> Self {
+        match self {
+            Self::Unauthorized(message) => Self::unauthenticated(message),
+            Self::Forbidden(message) => Self::forbidden(message),
+            Self::NotFound(message) => Self::not_found(message),
+            Self::BadRequest(message) => Self::invalid_update(message),
+            Self::Internal => Self::internal(),
+            other @ (Self::Conflict(_) | Self::Database(_) | Self::Typed { .. }) => other,
+        }
+    }
+
+    /// Whether this error is a database failure (deterministic or transient). Lets typed call
+    /// sites branch on "came from the driver" without naming the legacy variant.
+    #[must_use]
+    pub const fn is_database_failure(&self) -> bool {
+        matches!(self, Self::Database(_))
     }
 
     pub fn unauthenticated(message: impl Into<String>) -> Self {

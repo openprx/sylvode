@@ -76,11 +76,11 @@ pub async fn create_ticket(
     Json(req): Json<CreateTicketRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     if bot.is_some() {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
             "bot tokens cannot open a direct collab session".to_string(),
         ));
     }
-    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::unauthenticated("invalid user id".to_string()))?;
 
     let issued = ticket::issue(
         &state.db,
@@ -201,7 +201,7 @@ pub async fn ws_upgrade(
         .to_string();
 
     let Ok(consumed) = ticket::consume(&state.db, &params.ticket, &params.client_id, &origin).await else {
-        return ApiError::Unauthorized("invalid ticket".to_string()).into_response();
+        return ApiError::unauthenticated("invalid ticket".to_string()).into_response();
     };
     if let Err(err) = crate::flow::policy::require_flow_enabled_on(&state.db, consumed.workspace_id).await {
         return err.into_response();
@@ -236,7 +236,7 @@ pub async fn get_collab_diagnostics(
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     crate::flow::policy::require_flow_workspace_access(&state, &extensions, workspace_id).await?;
 
     #[derive(sea_orm::FromQueryResult)]
@@ -261,7 +261,7 @@ pub async fn get_collab_diagnostics(
     ))
     .one(&state.db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("collab document not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("collab document not found".to_string()))?;
 
     #[derive(sea_orm::FromQueryResult)]
     struct ProjectionRow {
@@ -356,11 +356,11 @@ pub async fn verify_collab(
     let extensions = build_auth_extensions(claims, bot);
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound("flow object not found".to_string()))?;
+        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     crate::flow::policy::require_flow_workspace_access(&state, &extensions, workspace_id).await?;
 
     if req.deep {
-        return Err(ApiError::BadRequest(
+        return Err(ApiError::invalid_update(
             "deep verification is not implemented in v0.4; pass deep=false".to_string(),
         ));
     }
@@ -377,7 +377,7 @@ pub async fn verify_collab(
     ))
     .one(&state.db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("collab document not found".to_string()))?;
+    .ok_or_else(|| ApiError::not_found("collab document not found".to_string()))?;
 
     let started_at = Utc::now();
     let mut warnings = Vec::new();
