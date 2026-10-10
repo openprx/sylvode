@@ -57,7 +57,10 @@ pub async fn publish_document_update(
     // Insert the durable pointer and emit its wake-up hint in one server round trip. These used to
     // be two sequential autocommit statements on the per-document coordinator's critical path.
     // `pg_notify` runs only after the INSERT has produced an id; if the statement fails, neither
-    // effect is visible, preserving the old best-effort failure semantics.
+    // effect is visible, preserving the old best-effort failure semantics. The call sits in a
+    // LATERAL subquery whose output is discarded: `pg_notify` returns `void`, which is never NULL,
+    // so filtering on its result (the previous `WHERE pg_notify(..) IS NULL`) dropped the row and
+    // reported every successful publication as a failure.
     let notice = NoticeId::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "WITH inserted AS ( \
@@ -65,8 +68,8 @@ pub async fn publish_document_update(
                  (workspace_id, document_id, notice_kind, document_seq) \
              VALUES ($1, $2, 'document_update', $3) RETURNING id \
          ) \
-         SELECT id FROM inserted \
-         WHERE pg_notify('openpr_flow_fanout', id::text) IS NULL",
+         SELECT inserted.id FROM inserted \
+         CROSS JOIN LATERAL (SELECT pg_notify('openpr_flow_fanout', inserted.id::text)) AS notified",
         vec![workspace_id.into(), document_id.into(), document_seq.into()],
     ))
     .one(db)

@@ -4231,4 +4231,76 @@ mod database_tests {
 
         scratch.drop_self().await;
     }
+
+    /// `fanout::publish_document_update` inserts the durable notice, emits its wake-up hint and
+    /// returns the notice id. Its callers only log a failure (the canonical write stays accepted),
+    /// so no write-path test above can observe a wrongly reported failure; this pins the function
+    /// itself against a real database: `Ok(id)`, exactly one new `flow_fanout_notices` row with
+    /// that id, and a notification on the fanout channel carrying it.
+    #[tokio::test]
+    async fn fanout_publication_returns_the_notice_id_and_notifies_listeners() {
+        let scratch = scratch_or_skip!("fanout-publication");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state).await;
+        let (_, document_id) = create_page(&state, workspace_id, owner_id).await;
+
+        #[derive(FromQueryResult)]
+        struct Count {
+            n: i64,
+        }
+        let notices_for = |id: Option<i64>| {
+            let db = state.db.clone();
+            async move {
+                Count::find_by_statement(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT count(*) AS n FROM flow_fanout_notices \
+                     WHERE document_id = $1 AND ($2::bigint IS NULL OR id = $2)",
+                    vec![document_id.into(), id.into()],
+                ))
+                .one(&db)
+                .await
+                .expect("count query runs")
+                .expect("count query returns a row")
+                .n
+            }
+        };
+        let before = notices_for(None).await;
+
+        let mut listener = sea_orm::sqlx::postgres::PgListener::connect_with(state.db.get_postgres_connection_pool())
+            .await
+            .expect("listener connects");
+        listener.listen("openpr_flow_fanout").await.expect("LISTEN succeeds");
+
+        let published =
+            crate::flow::collab::fanout::publish_document_update(&state.db, workspace_id, document_id, 1).await;
+        let notice_id = match published {
+            Ok(id) => id,
+            Err(error) => panic!("publication must report the inserted notice id, got Err({error})"),
+        };
+
+        assert_eq!(
+            notices_for(None).await,
+            before + 1,
+            "exactly one notice row is inserted"
+        );
+        assert_eq!(
+            notices_for(Some(notice_id)).await,
+            1,
+            "the returned id names the inserted row"
+        );
+
+        let notification = tokio::time::timeout(Duration::from_secs(5), listener.recv())
+            .await
+            .expect("the wake-up hint arrives within 5 s")
+            .expect("the listener connection stays healthy");
+        assert_eq!(notification.channel(), "openpr_flow_fanout");
+        assert_eq!(
+            notification.payload(),
+            notice_id.to_string(),
+            "the hint carries the notice id"
+        );
+
+        drop(listener);
+        scratch.drop_self().await;
+    }
 }

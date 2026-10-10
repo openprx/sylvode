@@ -357,6 +357,12 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow collaboration: publishing the cross-instance fanout notice after a committed update no
+  longer reports a failure on every write. The statement filtered on `pg_notify(..) IS NULL`,
+  which is never true (`pg_notify` returns `void`), so it returned no row and the API logged
+  `committed update fanout publication failed ... internal server error` for each accepted
+  update even though the notice row and the notification were written. The notification is now
+  emitted from a LATERAL subquery in the same single round trip.
 - Web UI: on screens narrower than 1024px the Flow navigator is a drawer, closed by default and
   opened from a 44px "Show navigator" button (`aria-expanded`, Escape closes it), so the object,
   convert and conversion job pages use the full width. At 390px the navigator used to sit beside
