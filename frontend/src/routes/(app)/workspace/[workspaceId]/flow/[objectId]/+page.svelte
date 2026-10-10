@@ -15,6 +15,7 @@
 	import FlowCanvas from '$lib/components/flow/FlowCanvas.svelte';
 	import FlowContextPanel from '$lib/components/flow/FlowContextPanel.svelte';
 	import FlowSyncIndicator from '$lib/components/flow/FlowSyncIndicator.svelte';
+	import CollectionRenderer from '$lib/components/flow/collection/CollectionRenderer.svelte';
 	import type { FlowError, SyncState } from '$lib/flow/types';
 	import { flowErrorI18nKey } from '$lib/flow/errors';
 	import type { FlowObjectView } from '$lib/api/flow';
@@ -32,12 +33,15 @@
 	// on an open document flipped the `{#if loadError}` branch and replaced `FlowCanvas` with the
 	// full-page error view.)
 	let runtimeError = $state<FlowError | null>(null);
-	// An object that exists but whose type has no registered renderer and no collaboration session
-	// (a v0.6 Collection until its `collection:*` renderers are registered; the server refuses a
-	// collab ticket for it, `flow/collab/ticket.rs::object_type_admits_collab_session`). Shown as
-	// the registry's unsupported fallback instead of the open failure ("Renderer registry":
-	// unregistered `${objectType}:${viewType}` fails to read_only/unsupported).
+	// An object that exists but whose type has no registered renderer. Shown as the registry's
+	// unsupported fallback instead of the open failure ("Renderer registry": unregistered
+	// `${objectType}:${viewType}` fails to read_only/unsupported).
 	let unsupportedObject = $state<FlowObjectView | null>(null);
+	// A v0.6 Collection or Record: server-only documents (the server refuses a collab ticket and a
+	// bootstrap for both, `flow/collab/ticket.rs::object_type_admits_collab_session`), rendered by
+	// the registry's `collection:table|board` / `record:panel` renderers over typed reads, never
+	// through `repository.open` (no engine doc, no WebSocket).
+	let collectionObject = $state<FlowObjectView | null>(null);
 	let syncState = $state<SyncState>('local');
 	let title = $state('');
 	let titleSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -68,10 +72,35 @@
 		loadError = null;
 		runtimeError = null;
 		unsupportedObject = null;
+		collectionObject = null;
 
 		const controller = new AbortController();
+		// Dispatch on `object_type` first. The read is handed to `open` so a Page is not read twice.
+		const read = await repository.get(objectId);
+		if (openedObjectId !== objectId) return;
+		const object = read.code === 0 && read.data ? read.data : null;
+		if (object && (object.object_type === 'collection' || object.object_type === 'record')) {
+			const kind = registryObjectType(object.object_type);
+			const registered =
+				kind === 'collection'
+					? (resolveRenderer('collection', 'table') ?? resolveRenderer('collection', 'board'))
+					: kind === 'record'
+						? resolveRenderer('record', 'panel')
+						: null;
+			if (registered && (object.object_type === 'collection' || object.parent_id)) {
+				collectionObject = object;
+			} else {
+				unsupportedObject = object;
+			}
+			return;
+		}
 		try {
-			const opened = await repository.open({ workspaceId, objectId, signal: controller.signal });
+			const opened = await repository.open({
+				workspaceId,
+				objectId,
+				signal: controller.signal,
+				object: object ?? undefined
+			});
 			if (openedObjectId !== objectId) return; // navigated away again before this resolved
 			entry = opened;
 			title = opened.handle.object.title;
@@ -188,6 +217,39 @@
 		<p class="max-w-md text-sm text-slate-500 dark:text-slate-400">
 			{$t(flowErrorI18nKey(loadError))}
 		</p>
+	</div>
+{:else if collectionObject}
+	{@const routeWorkspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId')}
+	<div
+		class="flex items-center justify-between border-b border-slate-200 px-6 py-3 dark:border-slate-800"
+	>
+		<h1 class="flex-1 truncate text-lg font-semibold text-slate-900 dark:text-slate-100">
+			{collectionObject.object_type === 'record'
+				? collectionObject.title || $t('flow.collection.record.untitled')
+				: collectionObject.title || $t('flow.nav.untitled')}
+		</h1>
+	</div>
+	<div class="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+		{#key collectionObject.id}
+			{#if collectionObject.object_type === 'record' && collectionObject.parent_id}
+				<div
+					class="flex min-w-0 flex-col lg:flex-1 lg:overflow-auto"
+					data-testid="flow-record-route"
+				>
+					<CollectionRenderer
+						workspaceId={routeWorkspaceId}
+						collectionId={collectionObject.parent_id}
+						recordId={collectionObject.id}
+					/>
+				</div>
+			{:else}
+				<!-- Below lg the column scrolls as a whole (no inner scroller that would clip the cards). -->
+				<div class="flex min-w-0 flex-col lg:flex-1 lg:overflow-auto" data-object-type="collection">
+					<CollectionRenderer workspaceId={routeWorkspaceId} collectionId={collectionObject.id} />
+				</div>
+			{/if}
+		{/key}
+		<FlowContextPanel object={collectionObject} />
 	</div>
 {:else if unsupportedObject}
 	<div

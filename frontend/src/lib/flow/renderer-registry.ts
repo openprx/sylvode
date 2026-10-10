@@ -3,11 +3,15 @@
 // four block-level renderers this alpha ships. An unregistered `${objectType}:${viewType}` fails
 // to `read_only`/`unsupported` -- it must never let an arbitrary component path reach the CRDT.
 
-// `collection` and `record` are real object types from v0.6 (`FlowReadableObjectType`); until
-// their `collection:table` / `collection:board` / `record:panel` renderers are registered every
-// lookup for them returns `null`, i.e. the read_only/unsupported fallback.
+// v0.6 registers `collection:table` and `record:panel` (`collection:board` follows). Their
+// components are loaded through `load()` (a dynamic import), so their code is a separate chunk
+// that only the Flow object route ever requests; `page:canvas` / `navigator:tree` are mounted
+// statically by their routes and carry no loader.
+
+import type { Component } from 'svelte';
+
 export type ObjectType = 'page' | 'navigator' | 'collection' | 'record';
-export type ViewType = 'canvas' | 'tree';
+export type ViewType = 'canvas' | 'tree' | 'table' | 'board' | 'panel';
 export type RendererKey = `${ObjectType}:${ViewType}`;
 export type Capability = 'edit' | 'view';
 
@@ -15,11 +19,31 @@ export interface ViewRendererRegistration {
 	readonly key: RendererKey;
 	readonly capabilities: readonly Capability[];
 	readonly fallback: 'unsupported' | 'read_only';
+	// Svelte's `Component` is invariant in its props; each renderer declares its own.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	readonly load?: () => Promise<Component<any>>;
 }
 
 const REGISTRY: Partial<Record<RendererKey, ViewRendererRegistration>> = {
 	'page:canvas': { key: 'page:canvas', capabilities: ['edit', 'view'], fallback: 'read_only' },
-	'navigator:tree': { key: 'navigator:tree', capabilities: ['edit', 'view'], fallback: 'read_only' }
+	'navigator:tree': {
+		key: 'navigator:tree',
+		capabilities: ['edit', 'view'],
+		fallback: 'read_only'
+	},
+	'collection:table': {
+		key: 'collection:table',
+		capabilities: ['edit', 'view'],
+		fallback: 'unsupported',
+		load: async () =>
+			(await import('$lib/components/flow/collection/CollectionTable.svelte')).default
+	},
+	'record:panel': {
+		key: 'record:panel',
+		capabilities: ['edit', 'view'],
+		fallback: 'unsupported',
+		load: async () => (await import('$lib/components/flow/collection/RecordPanel.svelte')).default
+	}
 };
 
 export function resolveRenderer(objectType: ObjectType, viewType: ViewType): ViewRendererRegistration | null {

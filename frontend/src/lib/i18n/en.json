@@ -3435,6 +3435,132 @@
       "synced": "Synced",
       "lagging": "Syncing: up to {max} changes behind (p95 {p95})",
       "unavailable": "Sync status unavailable"
+    },
+    "collection": {
+      "loadFailed": "This Collection could not be loaded.",
+      "secrecyNotice": "Some fields of this Collection are restricted and are not shown.",
+      "view": {
+        "tabs": "Collection views",
+        "table": "Table",
+        "board": "Board",
+        "none": "No saved views"
+      },
+      "schema": {
+        "enter": "Design schema",
+        "exit": "Done designing",
+        "title": "Schema design",
+        "required": "Field and view changes are only available in schema design mode.",
+        "fields": "Fields",
+        "views": "Views",
+        "fieldLabel": "Field name",
+        "fieldType": "Field type",
+        "newFieldLabel": "New field name",
+        "addField": "Add field",
+        "options": "Options",
+        "optionsPlaceholder": "Comma-separated, e.g. Todo, Done",
+        "saveOptions": "Save options",
+        "archive": "Archive",
+        "moveUp": "Move up",
+        "moveDown": "Move down",
+        "newViewName": "New view name",
+        "viewName": "View name",
+        "viewKind": "View type",
+        "addView": "Add view",
+        "labelRequired": "Enter a name.",
+        "labelTooLong": "Names can be at most 500 characters.",
+        "typeUnsupported": "This field type cannot be created here.",
+        "reorderUnavailable": "This item cannot be moved right now. Reload and try again."
+      },
+      "fieldType": {
+        "text": "Text",
+        "number": "Number",
+        "boolean": "Checkbox",
+        "date": "Date",
+        "select": "Select",
+        "multi_select": "Multi-select",
+        "relation": "Relation"
+      },
+      "value": {
+        "empty": "No value",
+        "restricted": "Restricted",
+        "invalid": "Unreadable value",
+        "yes": "Yes",
+        "no": "No",
+        "none": "None",
+        "noOptions": "No options yet",
+        "readOnly": "Read-only here",
+        "invalidNumber": "Enter a number, e.g. 42 or 3.5.",
+        "invalidDate": "Enter a valid date.",
+        "unknownOption": "Choose one of the field's options.",
+        "relationLink": "Object {id}"
+      },
+      "cell": {
+        "saving": "Saving…",
+        "conflict": "Changed elsewhere; reloaded. Press Enter to save again."
+      },
+      "record": {
+        "stale": "A record changed elsewhere, so the list was reloaded. Your unsaved edit is kept.",
+        "untitled": "Untitled record"
+      },
+      "table": {
+        "openColumn": "Open",
+        "openRecord": "Open record",
+        "resize": "Resize column {field}",
+        "empty": "No records yet.",
+        "loadMore": "Load more",
+        "newRecord": "New record",
+        "count": "{loaded} records loaded"
+      },
+      "board": {
+        "noValue": "No value",
+        "needsSelect": "A board groups records by a select field. Add a select field in schema design mode to use this board.",
+        "newInColumn": "New record in {column}",
+        "moveLeft": "Move to previous column",
+        "moveRight": "Move to next column",
+        "moveFailed": "The card could not be moved."
+      },
+      "query": {
+        "filterField": "Filter",
+        "noFilter": "No filter",
+        "operator": "Condition",
+        "value": "Value",
+        "applyFilter": "Apply",
+        "sortField": "Sort by",
+        "noSort": "No sort",
+        "direction": "Direction",
+        "asc": "Ascending",
+        "desc": "Descending",
+        "groupBy": "Group by",
+        "draft": "Unsaved view changes",
+        "reset": "Reset",
+        "saveView": "Save view",
+        "saved": "View saved.",
+        "op": {
+          "eq": "is",
+          "ne": "is not",
+          "lt": "less than",
+          "lte": "at most",
+          "gt": "greater than",
+          "gte": "at least",
+          "contains": "contains"
+        }
+      }
+    },
+    "record": {
+      "title": "Record",
+      "close": "Close record",
+      "opening": "Opening record…",
+      "openFailed": "This record could not be opened.",
+      "notLoaded": "This record is not in the loaded list.",
+      "notFound": "This record was not found in its Collection.",
+      "properties": "Properties",
+      "body": "Body",
+      "bodyPlaceholder": "Write notes for this record…",
+      "save": "Save",
+      "saveBody": "Save body",
+      "discard": "Discard",
+      "unsaved": "Unsaved changes",
+      "bodySaved": "Saved"
     }
   }
 }
