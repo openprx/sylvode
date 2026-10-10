@@ -3,10 +3,10 @@
 // four block-level renderers this alpha ships. An unregistered `${objectType}:${viewType}` fails
 // to `read_only`/`unsupported` -- it must never let an arbitrary component path reach the CRDT.
 
-// `collection` is a real object type from v0.6 (`FlowObjectType`); until its `collection:table` /
-// `collection:board` renderers are registered every lookup for it returns `null`, i.e. the
-// read_only/unsupported fallback.
-export type ObjectType = 'page' | 'navigator' | 'collection';
+// `collection` and `record` are real object types from v0.6 (`FlowReadableObjectType`); until
+// their `collection:table` / `collection:board` / `record:panel` renderers are registered every
+// lookup for them returns `null`, i.e. the read_only/unsupported fallback.
+export type ObjectType = 'page' | 'navigator' | 'collection' | 'record';
 export type ViewType = 'canvas' | 'tree';
 export type RendererKey = `${ObjectType}:${ViewType}`;
 export type Capability = 'edit' | 'view';
@@ -24,6 +24,13 @@ const REGISTRY: Partial<Record<RendererKey, ViewRendererRegistration>> = {
 
 export function resolveRenderer(objectType: ObjectType, viewType: ViewType): ViewRendererRegistration | null {
 	return REGISTRY[`${objectType}:${viewType}`] ?? null;
+}
+
+/** Narrows a wire `object_type` to a registry object type (`null` for anything else). */
+export function registryObjectType(value: string): ObjectType | null {
+	return value === 'page' || value === 'navigator' || value === 'collection' || value === 'record'
+		? value
+		: null;
 }
 
 export type FlowBlockRendererType = 'paragraph' | 'heading' | 'bulletItem' | 'codeBlock';

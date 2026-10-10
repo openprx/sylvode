@@ -250,6 +250,14 @@ OpenPR name keeps working; see **Deprecated**.
     with New Page and New Collection, and 44px header buttons instead of the emoji glyphs. New
     Collection asks for a name, optional text fields (one default field) and a table or board
     view and creates it with one `POST .../flow/objects`; Collections are listed in the tree.
+  - Web UI adapters for Collections: `flowApi.getObjectSchema`, `getCollection`,
+    `listCollectionRecords` (filter, sort, group, cursor, field ids), `queryCollectionRecords` and
+    `createCollectionRecord`, behind `ObjectRepository.getSchema` / `getCollection` /
+    `listRecords` / `queryRecords` and `CommandService.createRecord`. `ObjectRepository.openRecord`
+    / `closeRecord` reference-count the one read of a record's document; `open` accepts an object
+    the caller already read. `CommandService.execute` now throws the envelope's typed
+    `error_code` (with `details`) and falls back to the HTTP-status mapping only for a legacy
+    envelope.
   - Migrations `0054` to `0069`.
 - **`sylvode` CLI**, a new binary in every release archive with fifteen command groups: the Flow
   commands `features`, `objects`, `collections`, `records`, `collab` and `deliveries`, which

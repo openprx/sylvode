@@ -28,6 +28,7 @@ import {
 	type AcceptedChange,
 	type CollabTicket,
 	type CompactDocumentInput,
+	type CreateCollectionRecordInput,
 	type CreateFlowObjectInput,
 	type CreateTicketInput,
 	type CreateObjectExportInput,
@@ -110,7 +111,28 @@ export class FlowCommandService {
 			message: options.message
 		});
 		if (result.code !== 0 || !result.data) {
-			throw mapErrorCode(result.code);
+			throw flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
+		}
+		return result.data;
+	}
+
+	/**
+	 * `POST /flow/collections/{id}/records` (v0.6). The key belongs to the caller's intent: a
+	 * retry of the same new record resends the same key and body, so the server replays it
+	 * instead of creating a second record (`collections.rs::replay_record_create`). Throws a typed
+	 * `FlowError`.
+	 */
+	async createRecord(
+		collectionId: string,
+		input: Omit<CreateCollectionRecordInput, 'idempotency_key'>,
+		options: { idempotencyKey?: string } = {}
+	): Promise<AcceptedChange> {
+		const result = await flowApi.createCollectionRecord(collectionId, {
+			...input,
+			idempotency_key: options.idempotencyKey ?? newIdempotencyKey()
+		});
+		if (result.code !== 0 || !result.data) {
+			throw flowErrorFromEnvelope(result) ?? mapErrorCode(result.code);
 		}
 		return result.data;
 	}

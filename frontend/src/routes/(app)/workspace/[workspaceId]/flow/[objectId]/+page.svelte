@@ -10,7 +10,7 @@
 	import { requireRouteParam } from '$lib/utils/route-params';
 	import type { FlowObjectRepository, OpenFlowObjectResult } from '$lib/flow/object-repository';
 	import { FLOW_REPOSITORY_CONTEXT } from '$lib/flow/context-keys';
-	import { resolveRenderer } from '$lib/flow/renderer-registry';
+	import { registryObjectType, resolveRenderer } from '$lib/flow/renderer-registry';
 	import { toast } from '$lib/stores/toast';
 	import FlowCanvas from '$lib/components/flow/FlowCanvas.svelte';
 	import FlowContextPanel from '$lib/components/flow/FlowContextPanel.svelte';
@@ -91,7 +91,8 @@
 	async function unsupportedFallback(objectId: string): Promise<FlowObjectView | null> {
 		const result = await repository.get(objectId);
 		if (result.code !== 0 || !result.data) return null;
-		return resolveRenderer(result.data.object_type, 'canvas') ? null : result.data;
+		const kind = registryObjectType(result.data.object_type);
+		return kind && resolveRenderer(kind, 'canvas') ? null : result.data;
 	}
 
 	onMount(() => {
@@ -170,9 +171,11 @@
 
 	// `contracts/ui-surface-v1.md` "Renderer registry": an unregistered `${objectType}:${viewType}`
 	// must fail to read-only/unsupported, never reach the CRDT-backed canvas.
-	const canvasRenderer = $derived(
-		entry ? resolveRenderer(entry.handle.objectType, 'canvas') : null
-	);
+	const canvasRenderer = $derived.by(() => {
+		if (!entry) return null;
+		const kind = registryObjectType(entry.handle.objectType);
+		return kind ? resolveRenderer(kind, 'canvas') : null;
+	});
 </script>
 
 {#if loadError}
