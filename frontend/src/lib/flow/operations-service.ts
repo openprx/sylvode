@@ -16,7 +16,7 @@
 //   style choice: `apps/api/src/flow/operations.rs::request_hash` and
 //   `routes/flow.rs::post_flow_delivery_replay` both hash `dry_run` into the request body, so
 //   reusing the dry-run key for the execute is answered with 409 "idempotency key body drift"
-//   (reproduced against the real API; see `task/openpr/receipt-fp-N3.md`).
+//   (reproduced against the real API before this adapter was written).
 // - Errors branch on `error_code`, or on the numeric code for the legacy envelope that carries no
 //   `error_code` -- never on `message`. `server_rejected` (and any typed code this build does not
 //   know) is a permanent failure: no retry is offered and the operation is closed.
