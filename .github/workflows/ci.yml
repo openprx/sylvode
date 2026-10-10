@@ -198,8 +198,8 @@ jobs:
           retention-days: 3
 
   # Browser E2E against a real stack: release API + PostgreSQL + the built frontend behind a
-  # same-origin proxy, started by the same script used locally (scripts/e2e-web-stack.sh). The
-  # universal-forms specs are not run here: they need the demo seed accounts and fixed UUIDs.
+  # same-origin proxy and the background worker, started by the same script used locally
+  # (scripts/e2e-web-stack.sh). The specs it runs are listed (with the exclusions) in the run step.
   web-e2e:
     name: Web E2E
     needs: build
@@ -259,11 +259,13 @@ jobs:
           E2E_REQUIRE_DATABASE: "1"
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/results.json
         run: |
+          # Every Flow spec (the glob picks up new flow-*.spec.ts files) plus the workspace home.
+          # Not run here: universal-forms-*.spec.ts need the demo seed accounts and fixed UUIDs,
+          # bot-transport-surface.spec.ts and webhook-events.spec.ts need TEST_EMAIL/TEST_PASSWORD
+          # of an existing account (without them they self-register, which this stack refuses
+          # because its instance admin is already the first account).
           npx playwright test \
-            tests/e2e/web/flow-settings.spec.ts \
-            tests/e2e/web/flow-package-roundtrip.spec.ts \
-            tests/e2e/web/flow-operations.spec.ts \
-            tests/e2e/web/flow-convert.spec.ts \
+            tests/e2e/web/flow-*.spec.ts \
             tests/e2e/web/workspace-home.spec.ts \
             --reporter=list,json
       - name: Report counts and skipped tests
@@ -287,6 +289,7 @@ jobs:
           path: |
             test-results/
             ${{ env.E2E_STACK_DIR }}/api.log
+            ${{ env.E2E_STACK_DIR }}/worker.log
             ${{ env.E2E_STACK_DIR }}/proxy.log
           if-no-files-found: ignore
           retention-days: 7

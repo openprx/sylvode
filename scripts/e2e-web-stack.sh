@@ -10,6 +10,9 @@
 # - the release API (target/release/api), which must have collab-isolated-apply-worker next to
 #   it: the API spawns that binary for every Flow collaborative write, so `up` refuses to start
 #   without it;
+# - the background worker (target/release/worker) on the same configuration and database: it
+#   copies accepted projections into the Flow search index and runs the other Flow ticks, so the
+#   navigator search specs see a real index; `up` refuses to start without it;
 # - a generated configuration with a random jwt_secret, uploads in the state directory, and
 #   [flow] collab_allowed_origins set to the UI origin;
 # - a Bun same-origin proxy (scripts/lib/e2e-web-proxy.ts) serving frontend/build and forwarding
@@ -21,16 +24,16 @@
 #                             last path segment is swapped for the scratch database name.
 #   E2E_API_PORT              API port, default 18081.
 #   E2E_WEB_PORT              UI port, default 18080.
-#   E2E_BIN_DIR               directory with api and collab-isolated-apply-worker,
+#   E2E_BIN_DIR               directory with api, collab-isolated-apply-worker and worker,
 #                             default <repo>/target/release.
 #   E2E_BUILD_DIR             frontend build output, default <repo>/frontend/build.
 #   E2E_STACK_DIR             state directory (config, logs, pids, env file), default
 #                             ${RUNNER_TEMP:-${TMPDIR:-/tmp}}/sylvode-e2e-web-<E2E_API_PORT>.
 #
 # Outputs: `up` writes <state>/env (shell `export` lines for BASE_URL, E2E_DATABASE_URL,
-# ADMIN_EMAIL, ADMIN_PASSWORD) and prints its path; source it before running Playwright. When
+# ADMIN_EMAIL, ADMIN_PASSWORD, E2E_STACK_DIR; the worker's pid is <state>/worker.pid) and prints its path; source it before running Playwright. When
 # GITHUB_ENV is set the same variables are appended there for the following CI steps. The API
-# log is <state>/api.log and the proxy log <state>/proxy.log.
+# log is <state>/api.log, the worker log <state>/worker.log and the proxy log <state>/proxy.log.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -116,6 +119,7 @@ cmd_down() {
     return 0
   fi
   stop_pid "$STACK_DIR/proxy.pid"
+  stop_pid "$STACK_DIR/worker.pid"
   stop_pid "$STACK_DIR/api.pid"
   if [[ -f $STACK_DIR/admin_database_url && -f $STACK_DIR/database_name ]]; then
     local admin_url db_name
@@ -137,16 +141,19 @@ cmd_up() {
   check_port E2E_WEB_PORT "$WEB_PORT"
   [[ $API_PORT != "$WEB_PORT" ]] || die "E2E_API_PORT and E2E_WEB_PORT must differ"
 
-  local api_bin="$BIN_DIR/api" worker_bin="$BIN_DIR/$WORKER_NAME"
+  local api_bin="$BIN_DIR/api" worker_bin="$BIN_DIR/$WORKER_NAME" background_bin="$BIN_DIR/worker"
   [[ -x $api_bin ]] || die "missing API binary: $api_bin is not an executable file (build it with: cargo build --workspace --release)"
   # The API looks for the worker next to its own executable and refuses every Flow write without it.
   [[ -x $worker_bin ]] || die "missing $WORKER_NAME: $worker_bin is not an executable file; the API spawns it for every Flow collaborative write and looks for it next to $api_bin"
+  # The background worker is the only writer of the Flow search index; without it search specs
+  # would wait on an index that never fills.
+  [[ -x $background_bin ]] || die "missing worker: $background_bin is not an executable file (build it with: cargo build --workspace --release); it fills the Flow search index the navigator specs search"
   [[ -f $BUILD_DIR/index.html ]] || die "missing frontend build: $BUILD_DIR/index.html (run: cd frontend && bun run build)"
   local tool
   for tool in bun curl psql; do
     command -v "$tool" >/dev/null || die "$tool is required but not on PATH"
   done
-  if pid_alive "$STACK_DIR/api.pid" || pid_alive "$STACK_DIR/proxy.pid"; then
+  if pid_alive "$STACK_DIR/api.pid" || pid_alive "$STACK_DIR/worker.pid" || pid_alive "$STACK_DIR/proxy.pid"; then
     die "a stack is already running from $STACK_DIR; run '$0 down' first"
   fi
 
@@ -194,6 +201,16 @@ TOML
   echo $! >"$STACK_DIR/api.pid"
   wait_http_200 "$api_origin/health" "$STACK_DIR/api.pid" "$STACK_DIR/api.log" api
 
+  # Started after the API has applied the migrations, against the same configuration file.
+  (cd "$STACK_DIR" && exec "$background_bin" --config "$STACK_DIR/sylvode.toml") >"$STACK_DIR/worker.log" 2>&1 &
+  echo $! >"$STACK_DIR/worker.pid"
+  sleep 1
+  if ! pid_alive "$STACK_DIR/worker.pid"; then
+    echo "e2e-web-stack: worker exited right after start; last log lines:" >&2
+    tail -n 40 "$STACK_DIR/worker.log" >&2 || true
+    false
+  fi
+
   E2E_PROXY_BUILD_DIR="$BUILD_DIR" E2E_PROXY_API_ORIGIN="$api_origin" E2E_PROXY_PORT="$WEB_PORT" \
     bun "$ROOT_DIR/scripts/lib/e2e-web-proxy.ts" >"$STACK_DIR/proxy.log" 2>&1 &
   echo $! >"$STACK_DIR/proxy.pid"
@@ -217,6 +234,7 @@ TOML
     printf 'export E2E_DATABASE_URL=%q\n' "$database_url"
     printf 'export ADMIN_EMAIL=%q\n' "$admin_email"
     printf 'export ADMIN_PASSWORD=%q\n' "$admin_password"
+    printf 'export E2E_STACK_DIR=%q\n' "$STACK_DIR"
   } >"$STACK_DIR/env"
   chmod 600 "$STACK_DIR/env"
   if [[ -n ${GITHUB_ENV:-} ]]; then
@@ -234,6 +252,7 @@ TOML
   echo "e2e-web-stack: up"
   echo "  UI:       $web_origin (proxy log $STACK_DIR/proxy.log)"
   echo "  API:      $api_origin (log $STACK_DIR/api.log)"
+  echo "  worker:   pid $(<"$STACK_DIR/worker.pid") (log $STACK_DIR/worker.log)"
   echo "  database: $db_name"
   echo "  env:      source $STACK_DIR/env"
 }

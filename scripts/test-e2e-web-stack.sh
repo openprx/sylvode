@@ -8,6 +8,7 @@
 # API without it accepts no Flow collaborative write, and the stack the browser E2E specs run
 # against must not come up in that state. The control case (worker present) must get past every
 # preflight check and reach database creation, which proves the check is what fails the others.
+# The same holds for the background worker (`worker`), the only writer of the Flow search index.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,6 +26,8 @@ fail() {
 mkdir -p "$SCRATCH/bin" "$SCRATCH/build" "$SCRATCH/tools"
 printf '#!/bin/sh\nexit 0\n' >"$SCRATCH/bin/api"
 chmod +x "$SCRATCH/bin/api"
+printf '#!/bin/sh\nexit 0\n' >"$SCRATCH/bin/worker"
+chmod +x "$SCRATCH/bin/worker"
 printf '<!doctype html>\n' >"$SCRATCH/build/index.html"
 for tool in bun curl; do
   printf '#!/bin/sh\necho "stub %s" >&2\nexit 1\n' "$tool" >"$SCRATCH/tools/$tool"
@@ -86,7 +89,33 @@ else
   fail "control: state directory left behind after a failed up"
 fi
 
-# 4. Missing database URL.
+# 4. Background worker absent (collab-isolated-apply-worker present).
+background="$SCRATCH/bin/worker"
+rm -f "$background"
+run_up no-background
+if [[ $rc -ne 0 && $out == *"missing worker: $background"* && $out != *"stub psql reached"* ]]; then
+  pass "up exits $rc and names $background when the background worker is absent"
+else
+  fail "background worker absent: expected non-zero exit naming $background before any database work, got rc=$rc: $out"
+fi
+if [[ ! -e $SCRATCH/state-no-background ]]; then
+  pass "nothing was started or written when the background worker is absent"
+else
+  fail "background worker absent: state directory was created"
+fi
+
+# 5. Background worker present but not executable.
+printf '#!/bin/sh\nexit 0\n' >"$background"
+chmod -x "$background"
+run_up background-not-executable
+if [[ $rc -ne 0 && $out == *"missing worker: $background"* ]]; then
+  pass "up exits $rc when the background worker is not executable"
+else
+  fail "background worker not executable: expected non-zero exit naming $background, got rc=$rc: $out"
+fi
+chmod +x "$background"
+
+# 6. Missing database URL.
 run_up no-db OPENPR_TEST_DATABASE_URL=
 if [[ $rc -ne 0 && $out == *"OPENPR_TEST_DATABASE_URL is not set"* ]]; then
   pass "up exits $rc without OPENPR_TEST_DATABASE_URL"
