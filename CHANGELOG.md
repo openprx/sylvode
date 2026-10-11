@@ -163,6 +163,11 @@ OpenPR name keeps working; see **Deprecated**.
 
 ### Added
 
+- MCP `objects.create` accepts an optional `after_block_id` and `sylvode objects create` an
+  optional `--after-block`: with `embed_page_id` / `--embed-page` the new Collection's embed
+  block is inserted right after that block of the Page, as the REST `create_collection_embed`
+  command already allowed; without it the embed is appended as before. Either is refused locally
+  without an embed Page, and a block id the Page does not have is the server's `invalid_update`.
 - Flow Share panel: the add picker offers the workspace's active bots next to its members, so a
   grant can name a bot (`principal_kind = "bot"`). Listing bots needs a workspace owner or admin;
   other managers still see the members.

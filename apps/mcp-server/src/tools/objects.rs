@@ -1206,7 +1206,7 @@ fn command_body(command_type: &str, payload: &Value, idempotency_key: &str, mess
 pub fn create_flow_object_tool() -> ToolDefinition {
     ToolDefinition {
         name: "objects.create".to_string(),
-        description: "Create a page, navigator, or Collection Flow object. A Collection with embed_page_id uses the server's atomic Page embed command; Record creation is collection-scoped.".to_string(),
+        description: "Create a page, navigator, or Collection Flow object. A Collection with embed_page_id uses the server's atomic Page embed command (after_block_id places the embed block); Record creation is collection-scoped.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -1215,6 +1215,7 @@ pub fn create_flow_object_tool() -> ToolDefinition {
                 "type": { "type": "string", "enum": ["page", "navigator", "collection"] },
                 "parent_id": { "type": "string" },
                 "embed_page_id": { "type": "string", "description": "For type=collection, atomically create and embed in this Page" },
+                "after_block_id": { "type": "string", "description": "With embed_page_id, insert the embed block right after this block of the Page; appended when omitted" },
                 "initial_fields": {"type": "array", "items": {"type": "object"}},
                 "initial_view": {"type": "object"},
                 "title": { "type": "string" },
@@ -1236,6 +1237,7 @@ struct CreateFlowObjectInput {
     object_type: String,
     parent_id: Option<String>,
     embed_page_id: Option<String>,
+    after_block_id: Option<String>,
     #[serde(default)]
     initial_fields: Vec<Value>,
     initial_view: Option<Value>,
@@ -1263,14 +1265,22 @@ pub async fn create_flow_object(client: &OpenPrClient, args: Value) -> CallToolR
     if input.embed_page_id.is_some() && input.parent_id.is_some() {
         return CallToolResult::error("embed_page_id and parent_id are mutually exclusive".to_string());
     }
+    if input.after_block_id.is_some() && input.embed_page_id.is_none() {
+        return CallToolResult::error("after_block_id is only valid with embed_page_id".to_string());
+    }
     if let Some(page_id) = input.embed_page_id.as_deref() {
+        let mut payload = json!({
+            "title": input.title,
+            "initial_fields": input.initial_fields,
+            "initial_view": input.initial_view,
+        });
+        // Left out when not given, so the request body is the one sent before the argument existed.
+        if let (Some(after_block_id), Some(object)) = (input.after_block_id, payload.as_object_mut()) {
+            object.insert("after_block_id".to_string(), json!(after_block_id));
+        }
         let body = command_body(
             "create_collection_embed",
-            &json!({
-                "title": input.title,
-                "initial_fields": input.initial_fields,
-                "initial_view": input.initial_view,
-            }),
+            &payload,
             &input.idempotency_key,
             input.message.as_deref(),
         );
