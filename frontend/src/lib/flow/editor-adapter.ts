@@ -17,7 +17,12 @@
 
 import type { EditorAdapterContract, EngineDiff, RelativeSelection } from './types';
 import { isRegisteredBlockType } from './renderer-registry';
-import { presenceInitials, type PresenceCursor, type RemotePresence } from './presence';
+import {
+	presenceInitials,
+	safePresenceColor,
+	type PresenceCursor,
+	type RemotePresence
+} from './presence';
 // Type-only import: erased at compile time, so this does not pull `loro-prosemirror` into the
 // module graph -- only its exported *type* `LoroDocType` (the specific `{doc, data}` container
 // shape it expects) is used here, to type the doc reference the caller constructs at runtime via
@@ -229,6 +234,12 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 			const decorations: import('prosemirror-view').Decoration[] = [];
 			for (const peer of peers) {
 				if (!peer.cursor) continue;
+				// Re-checked here so no peer-controlled string ever reaches a style, whatever
+				// produced `peers` (`collab-protocol-v1.md`: colour only `#rrggbb`).
+				const color = safePresenceColor(peer.user.color, peer.user.userId);
+				const attribution: Record<string, string> = peer.attested
+					? { 'data-presence-user': peer.user.userId }
+					: {};
 				const block = this.blockPosById(state, peer.cursor.blockId);
 				if (!block) continue;
 				const start = block.pos + 1;
@@ -239,8 +250,8 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 					decorations.push(
 						pmView.Decoration.inline(Math.min(anchor, head), Math.max(anchor, head), {
 							class: 'flow-presence-selection',
-							style: `background-color: ${peer.user.color}33`,
-							'data-presence-user': peer.user.userId
+							style: `background-color: ${color}33`,
+							...attribution
 						})
 					);
 				}
@@ -251,14 +262,14 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 							const caret = document.createElement('span');
 							caret.className = 'flow-presence-caret';
 							caret.setAttribute('data-testid', 'flow-presence-caret');
-							caret.setAttribute('data-presence-user', peer.user.userId);
+							if (peer.attested) caret.setAttribute('data-presence-user', peer.user.userId);
 							// The name is rendered by CSS from this attribute, so it never becomes
 							// part of the document's text (copy, find, text assertions). The peer
 							// list next to the canvas carries the same names for screen readers.
 							caret.setAttribute('data-presence-name', peer.user.name);
 							caret.setAttribute('aria-hidden', 'true');
-							caret.style.borderColor = peer.user.color;
-							caret.style.setProperty('--flow-presence-color', peer.user.color);
+							caret.style.borderColor = color;
+							caret.style.setProperty('--flow-presence-color', color);
 							return caret;
 						},
 						{ key: `caret-${peer.sessionId}-${head}-${peer.user.name}`, side: 1 }
@@ -270,7 +281,7 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 							avatar.className = 'flow-presence-avatar';
 							avatar.setAttribute('data-testid', 'flow-presence-avatar');
 							avatar.setAttribute('aria-hidden', 'true');
-							avatar.style.backgroundColor = peer.user.color;
+							avatar.style.backgroundColor = color;
 							avatar.title = peer.user.name;
 							avatar.setAttribute('data-initials', presenceInitials(peer.user.name));
 							return avatar;

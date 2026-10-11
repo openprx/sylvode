@@ -524,6 +524,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow presence identifies a peer by the frame's server-attested `actor.user_id` (the payload's
+  self-reported `userId` only seeds the colour for a frame without `actor` and is never shown as
+  the peer's identity); a peer colour that is not `#rrggbb` is replaced by the palette colour and
+  a peer name is reduced to plain text of at most 64 characters, so no peer-controlled value
+  reaches the canvas or editor styles.
 - Flow offline outbox, recovery drafts and the snapshot cache are kept per signed-in user (one
   IndexedDB database per user, `sylvode-flow-outbox-v1:<user_id>` and
   `sylvode-flow-cache-v1:<user_id>`), so another account on the same browser never replays,
