@@ -205,7 +205,9 @@ async fn record_operation<C: ConnectionTrait>(
 /// returned unchanged (it reports no success), and the failure is logged the same way. The
 /// operation itself has already run by then, so a caller that sees the internal error retries
 /// with its idempotency key where the command takes one. On a Flow route the internal error is
-/// the typed envelope of the database failure ([`ApiError::internal_database_failure`]).
+/// the typed `server_rejected` with no `details`, whatever kind of database failure it was
+/// ([`ApiError::internal_after_operation`]): a transient failure is not reported as
+/// `server_draining` here, because that would invite a retry of an operation that has run.
 fn fail_closed_on_audit_failure(
     response: Response,
     business_code: i32,
@@ -224,7 +226,7 @@ fn fail_closed_on_audit_failure(
         "bot operation log write failed; the operation is not reported as successful without its attribution record"
     );
     if business_code == 0 {
-        Err(ApiError::internal_database_failure(error))
+        Err(ApiError::internal_after_operation())
     } else {
         Ok(response)
     }
@@ -911,6 +913,59 @@ mod audit_failure_tests {
         let response = fail_closed_on_audit_failure(teapot(), 0, Uuid::new_v4(), EventSurface::Cli, Ok(()))
             .expect("an audited operation keeps its response");
         assert_eq!(response.status(), StatusCode::IM_A_TEAPOT);
+    }
+
+    /// On a typed surface the missing attribution record of a successful operation is answered
+    /// `server_rejected` with no `details` even when the write failed for a transient reason: the
+    /// operation has run, so the answer must not be the retryable `server_draining`. Nothing of
+    /// the driver's text is sent. Outside such a surface the answer is the legacy internal
+    /// error, byte for byte.
+    #[tokio::test]
+    async fn a_missing_audit_row_is_never_answered_as_retryable() {
+        use axum::response::IntoResponse as _;
+        use sea_orm::{DbErr, RuntimeErr};
+
+        const DRIVER_TEXT: &str = "pool timed out while waiting for an open connection to 10.0.0.7";
+        let transient = || Err(DbErr::Conn(RuntimeErr::Internal(DRIVER_TEXT.to_string())));
+        assert!(
+            !ApiError::from(DbErr::Conn(RuntimeErr::Internal(DRIVER_TEXT.to_string())))
+                .is_deterministic_database_failure(),
+            "the injected failure is of the transient class"
+        );
+        let answer = || async {
+            let outcome = fail_closed_on_audit_failure(teapot(), 0, Uuid::new_v4(), EventSurface::Rest, transient());
+            let error = outcome.expect_err("success is not reported without the attribution record");
+            let typed_variant = matches!(error, ApiError::Typed { .. });
+            let body = axum::body::to_bytes(error.into_response().into_body(), 64 * 1024)
+                .await
+                .expect("the body is readable");
+            (typed_variant, String::from_utf8(body.to_vec()).expect("UTF-8"))
+        };
+        let legacy = (false, r#"{"code":500,"message":"internal server error"}"#.to_string());
+
+        assert_eq!(answer().await, legacy);
+
+        let (typed_variant, text) = crate::error::with_typed_database_failures(answer()).await;
+        assert!(typed_variant, "{text}");
+        assert!(
+            !text.contains("server_draining") && !text.contains("contention"),
+            "{text}"
+        );
+        assert!(!text.contains("retry_after_ms"), "{text}");
+        assert!(!text.contains("pool") && !text.contains("10.0.0.7"), "{text}");
+        let body: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+        assert_eq!(
+            body.pointer("/error_code"),
+            Some(&serde_json::json!("server_rejected")),
+            "{text}"
+        );
+        assert_eq!(body.pointer("/code"), Some(&serde_json::json!(500)), "{text}");
+        assert!(
+            body.pointer("/details").is_none_or(serde_json::Value::is_null),
+            "{text}"
+        );
+
+        assert_eq!(answer().await, legacy, "the scope does not outlive its future");
     }
 
     #[test]

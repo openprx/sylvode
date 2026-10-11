@@ -723,7 +723,7 @@ impl ApiError {
     }
 
     /// The error for a database failure in code that reports such failures as [`Self::Internal`]
-    /// (the authentication middleware).
+    /// (the authentication middleware looking up a credential, before the operation runs).
     ///
     /// While a typed surface serves the request (see [`with_typed_database_failures`]) the driver
     /// error is kept, so the response is the same typed envelope a handler's database failure
@@ -732,6 +732,22 @@ impl ApiError {
     pub(crate) fn internal_database_failure(err: sea_orm::DbErr) -> Self {
         if typed_database_failures_enabled() {
             Self::Database(err)
+        } else {
+            Self::Internal
+        }
+    }
+
+    /// The error for a failure that happens after the operation it belongs to has already run
+    /// (the authentication middleware could not write a bot operation's attribution record).
+    ///
+    /// While a typed surface serves the request this is always [`Self::internal`], that is
+    /// `server_rejected` with no `details`, whatever made the write fail. It is never
+    /// `server_draining`: that code tells the client to send the request again, and the operation
+    /// has been carried out, so a command without an idempotency key would run twice. Anywhere
+    /// else it is [`Self::Internal`], as it has always been, and the response is unchanged.
+    pub(crate) fn internal_after_operation() -> Self {
+        if typed_database_failures_enabled() {
+            Self::internal()
         } else {
             Self::Internal
         }

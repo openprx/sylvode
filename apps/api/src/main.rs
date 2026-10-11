@@ -5339,6 +5339,24 @@ mod flow_surface_boundary_tests {
         assert_no_driver_text(answer, context);
     }
 
+    /// The answer for an operation that ran and whose attribution record could not be written:
+    /// `server_rejected` with no `details`, and nothing that invites a retry.
+    fn assert_rejected_after_operation(answer: &Answer, context: &str) {
+        let body = answer.json();
+        assert!(answer.behind_boundary, "{context}");
+        assert_eq!(answer.status, StatusCode::OK, "{context}: {body}");
+        assert_eq!(body["code"], 500, "{context}: {body}");
+        assert_eq!(body["error_code"], "server_rejected", "{context}: {body}");
+        assert!(body["details"].is_null(), "{context}: {body}");
+        assert!(body["data"].is_null(), "{context}: {body}");
+        let text = answer.text();
+        assert!(
+            !text.contains("server_draining") && !text.contains("retry_after_ms"),
+            "{context}: {text}"
+        );
+        assert_no_driver_text(answer, context);
+    }
+
     fn assert_server_draining(answer: &Answer, context: &str) {
         let body = answer.json();
         assert_eq!(answer.status, StatusCode::OK, "{context}: {body}");
@@ -5545,10 +5563,12 @@ mod flow_surface_boundary_tests {
 
     /// A bot credential (`opr_...`) and the two database statements the authentication
     /// middleware runs for it, the credential lookup before the handler and the attribution
-    /// record after it. When either fails, a Flow route (`GET .../flow/objects`) answers the
-    /// typed envelope of that failure, exactly as it does for a failure inside the handler, and
-    /// a route outside the Flow surface (`GET .../labels`) answers the legacy internal error
-    /// byte for byte. This also shows each Flow route's own authentication layer runs inside
+    /// record after it. When the lookup fails, a Flow route (`GET .../flow/objects`) answers the
+    /// typed envelope of that failure, exactly as it does for a failure inside the handler. When
+    /// the attribution record fails the operation has already run, so the Flow route answers
+    /// `server_rejected` with no `details` whether the failure is deterministic or transient,
+    /// and never `server_draining`. A route outside the Flow surface (`GET .../labels`) answers
+    /// the legacy internal error byte for byte in every case. This also shows each Flow route's own authentication layer runs inside
     /// the boundary.
     #[tokio::test]
     async fn bot_credential_database_failures_are_typed_on_flow_routes_and_unchanged_elsewhere() {
@@ -5610,7 +5630,7 @@ mod flow_surface_boundary_tests {
         db.execute_unprepared("ALTER TABLE bot_operation_logs RENAME TO bot_operation_logs_renamed")
             .await
             .expect("the attribution failure is injected");
-        assert_server_rejected(&flow().await, "Flow route, attribution record refused");
+        assert_rejected_after_operation(&flow().await, "Flow route, attribution record refused");
         assert_legacy(
             &labels().await,
             LEGACY_INTERNAL_ERROR_BODY,
@@ -5619,6 +5639,25 @@ mod flow_surface_boundary_tests {
         db.execute_unprepared("ALTER TABLE bot_operation_logs_renamed RENAME TO bot_operation_logs")
             .await
             .expect("the attribution failure is removed");
+
+        // ---- the attribution record fails for a transient reason (a serialization failure) ----
+        db.execute_unprepared(
+            "CREATE FUNCTION boundary_attribution_failure() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN RAISE EXCEPTION 'could not serialize access' USING ERRCODE = '40001'; END $$; \
+             CREATE TRIGGER boundary_attribution_failure BEFORE INSERT ON bot_operation_logs \
+               FOR EACH ROW EXECUTE FUNCTION boundary_attribution_failure()",
+        )
+        .await
+        .expect("the transient attribution failure is injected");
+        assert_rejected_after_operation(&flow().await, "Flow route, attribution record transient failure");
+        assert_legacy(
+            &labels().await,
+            LEGACY_INTERNAL_ERROR_BODY,
+            "label route, attribution record transient failure",
+        );
+        db.execute_unprepared("DROP TRIGGER boundary_attribution_failure ON bot_operation_logs")
+            .await
+            .expect("the transient attribution failure is removed");
         for (name, answer) in [("flow", flow().await), ("labels", labels().await)] {
             assert_eq!(answer.json()["code"], 0, "{name} after the repairs: {}", answer.text());
         }

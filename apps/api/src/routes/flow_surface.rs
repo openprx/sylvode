@@ -32,7 +32,9 @@ pub struct FlowSurfaceResponse;
 ///
 /// The layer wraps every route of `routes`, including each route's own authentication layer, so
 /// a handler added to the router that is sealed cannot answer outside it, and a database failure
-/// of the authentication layer is rendered like one of the handler. It wraps the routes only: the
+/// of the authentication layer's credential lookup is rendered like one of the handler. (A bot
+/// operation whose attribution record cannot be written afterwards is always `server_rejected`,
+/// never the retryable `server_draining`: the operation has run.) It wraps the routes only: the
 /// fallback that answers a path no route matches stays the application's, outside the boundary.
 /// Nothing inside a handler takes part: retry loops still see the driver error and classify it
 /// themselves.
