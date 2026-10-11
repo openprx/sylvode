@@ -524,6 +524,9 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow standalone Record route reads its owning Collection's schema through
+  `GET /flow/objects/{record_id}/schema`; the uncalled `ObjectRepository.queryRecords` and
+  `openRecordIds` adapters are removed.
 - Flow writes are never resent automatically under a new idempotency key: an
   `idempotency_key_body_drift` refusal from object create, commands or record create reaches the
   caller as a typed error and is shown as such (an automatic re-key could execute an already

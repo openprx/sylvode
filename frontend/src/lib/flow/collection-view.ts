@@ -72,12 +72,21 @@ export type CollectionMode = 'entry' | 'schema';
 
 export interface CollectionReads {
 	getCollection(collectionId: string): Promise<ApiResult<FlowCollectionDescription>>;
+	/** `GET /flow/objects/{id}/schema`: for a Record, its owning Collection's schema. */
+	getSchema(objectId: string): Promise<ApiResult<FlowCollectionDescription>>;
 	listRecords(
 		collectionId: string,
 		query: FlowCollectionRecordsQuery
 	): Promise<ApiResult<FlowCollectionRecordsResponse>>;
 	openRecord(recordId: string): Promise<FlowObjectView>;
 	closeRecord(recordId: string): void;
+}
+
+export interface CollectionViewOptions {
+	/** A Record opened on its own route: the schema is read through that record
+	 * (`GET /flow/objects/{record}/schema`, readable by whoever can read the record and its
+	 * Collection) instead of `GET /flow/collections/{id}`. */
+	readonly schemaFromRecord?: string;
 }
 
 export interface CollectionWrites {
@@ -276,6 +285,7 @@ const INITIAL_STATE: CollectionViewState = {
 export class CollectionViewController {
 	readonly collectionId: string;
 	private readonly reads: CollectionReads;
+	private readonly schemaFromRecord: string | null;
 	private readonly writes: CollectionWrites;
 	private readonly store = writable<CollectionViewState>(INITIAL_STATE);
 	private current: CollectionViewState = INITIAL_STATE;
@@ -289,10 +299,16 @@ export class CollectionViewController {
 	private openedRecordId: string | null = null;
 	private disposed = false;
 
-	constructor(collectionId: string, reads: CollectionReads, writes: CollectionWrites) {
+	constructor(
+		collectionId: string,
+		reads: CollectionReads,
+		writes: CollectionWrites,
+		options: CollectionViewOptions = {}
+	) {
 		this.collectionId = collectionId;
 		this.reads = reads;
 		this.writes = writes;
+		this.schemaFromRecord = options.schemaFromRecord ?? null;
 	}
 
 	get state(): Readable<CollectionViewState> {
@@ -344,7 +360,9 @@ export class CollectionViewController {
 	}
 
 	private async reloadSchema(preferredViewId: string | null = null): Promise<boolean> {
-		const result = await this.reads.getCollection(this.collectionId);
+		const result = this.schemaFromRecord
+			? await this.reads.getSchema(this.schemaFromRecord)
+			: await this.reads.getCollection(this.collectionId);
 		if (this.disposed) return false;
 		if (result.code !== 0 || !result.data) {
 			const error = flowErrorFromEnvelope(result);
