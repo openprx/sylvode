@@ -194,6 +194,8 @@ dir = "$STACK_DIR/uploads"
 
 [flow]
 collab_allowed_origins = ["$web_origin"]
+# Short reaper period so the conversion spec observes a stale started job being reclaimed.
+conversion_reap_interval_secs = 2
 TOML
   chmod 600 "$STACK_DIR/sylvode.toml"
 

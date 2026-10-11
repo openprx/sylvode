@@ -524,6 +524,10 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow conversion E2E observes the real reclaim path: the Web E2E stack runs the API with
+  `[flow] conversion_reap_interval_secs = 2`, and the spec only moves a stuck `started` job's
+  start 16 minutes back, then waits for the API's periodic reaper to fail it with
+  `server_rejected` / `stale_started` instead of writing those result fields itself.
 - Flow Collection table virtualisation and records paging have real checks: a server-side render
   of the table with 250 records must put only the virtual window in the DOM, and a browser test
   over 55 REST-created records requires a first read of `limit=50`, the next page by cursor
