@@ -591,6 +591,30 @@ pub const CROSS_WORKSPACE_RELATION_REASON: &str = "cross_workspace_relation";
 /// the document (`error-mapping-v1.md`'s approved reason table).
 pub const CAUSAL_DEPENDENCY_MISSING_REASON: &str = "causal_dependency_missing";
 
+tokio::task_local! {
+    /// Present while the current task serves a request of a typed surface; see
+    /// [`with_typed_database_failures`].
+    static TYPED_DATABASE_FAILURES: ();
+}
+
+/// Runs `serve` with database failures rendered as typed envelopes.
+///
+/// An [`ApiError::Database`] turned into a response while `serve` is being polled answers
+/// `server_rejected` or `server_draining` (see [`ApiError::typed_database_failure`]) instead of
+/// the legacy envelope. Everything else, and every response rendered outside such a scope, is
+/// unchanged. The error value itself is not touched, so code that inspects it before it becomes a
+/// response (retry loops, [`ApiError::is_deterministic_database_failure`]) still sees the driver
+/// error.
+///
+/// Called by the Flow surface boundary (`routes::flow_surface::seal`) and nowhere else.
+pub(crate) async fn with_typed_database_failures<F: Future>(serve: F) -> F::Output {
+    TYPED_DATABASE_FAILURES.scope((), serve).await
+}
+
+fn typed_database_failures_enabled() -> bool {
+    TYPED_DATABASE_FAILURES.try_with(|()| ()).is_ok()
+}
+
 #[derive(Debug, Error)]
 pub enum ApiError {
     #[error("{0}")]
@@ -680,6 +704,27 @@ impl ApiError {
         Self::typed(ApiErrorKind::ServerRejected, "internal server error")
     }
 
+    /// The typed answer for a database failure of class `class` on a typed surface.
+    ///
+    /// A deterministic refusal (constraint, data or schema error) is `server_rejected` with
+    /// `details.reason = "deterministic_database_refusal"`: the same request will be refused
+    /// again. Anything else (connection, pool, a transient or unrecognized `SQLSTATE`, none at
+    /// all) is `server_draining` with `reason = "contention"`, retryable after
+    /// [`crate::flow::IN_FLIGHT_RETRY_AFTER_MS`], the delay the surface already publishes for a
+    /// request that has to wait on another one. Neither carries anything of the driver's error.
+    fn typed_database_failure(class: DbFailureClass) -> Self {
+        match class {
+            DbFailureClass::Deterministic => {
+                Self::server_rejected(crate::flow::collab::frame::SERVER_REJECTED_REASON_DATABASE)
+            }
+            DbFailureClass::Transient => Self::server_draining(
+                ServerDrainingReason::Contention,
+                crate::flow::IN_FLIGHT_RETRY_AFTER_MS,
+                "server_draining",
+            ),
+        }
+    }
+
     /// `invalid_update` with `details.reason = "idempotency_key_body_drift"` (`error-mapping-v1.md`,
     /// 2026-10-10): the idempotency key was already used with a different request body (including a
     /// dry-run reusing an execute key or vice versa). Distinct from `stale_frontier` by `error_code`
@@ -695,7 +740,8 @@ impl ApiError {
     /// changing those helpers for every other route.
     ///
     /// `Database` is kept as is: its retry classification ([`Self::is_deterministic_database_failure`],
-    /// [`Self::is_known_transient_database_failure`]) needs the driver error. `Conflict` is kept as
+    /// [`Self::is_known_transient_database_failure`]) needs the driver error. It becomes typed only
+    /// when it is rendered as a response inside [`with_typed_database_failures`]. `Conflict` is kept as
     /// is because the 409 bucket has several stable codes and guessing one would be worse than
     /// leaving it unclassified; no shared helper reachable from Flow produces it.
     #[must_use]
@@ -957,6 +1003,10 @@ impl IntoResponse for ApiError {
             Self::Internal => Self::legacy_response(500, "internal server error", "internal server error"),
             Self::Database(err) => {
                 tracing::error!(error = %err, "database error");
+                if typed_database_failures_enabled() {
+                    // Always a `Typed` error, so this does not come back to this arm.
+                    return Self::typed_database_failure(classify_db_failure(&err)).into_response();
+                }
                 Self::legacy_response(500, "database error", "database error")
             }
         }
@@ -1127,5 +1177,69 @@ mod server_rejected_row_tests {
         let object = details.as_object().expect("details is an object");
         assert_eq!(object.keys().collect::<Vec<_>>(), vec!["reason"]);
         assert_eq!(object["reason"], "deterministic_database_refusal");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod typed_database_failure_tests {
+    use super::{ApiError, with_typed_database_failures};
+    use axum::response::IntoResponse;
+    use sea_orm::{DbErr, RuntimeErr};
+    use serde_json::{Value, json};
+
+    const DRIVER_TEXT: &str = "pool timed out while waiting for an open connection to 10.0.0.7";
+
+    async fn rendered() -> (Vec<u8>, Option<i32>) {
+        let response = ApiError::Database(DbErr::Conn(RuntimeErr::Internal(DRIVER_TEXT.to_string()))).into_response();
+        let business_code = response
+            .extensions()
+            .get::<crate::response::OperationResponseMeta>()
+            .map(|meta| meta.business_code);
+        let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("the body is readable")
+            .to_vec();
+        (body, business_code)
+    }
+
+    /// Outside the scope a database failure is the legacy envelope, byte for byte; inside it the
+    /// same error is `server_draining` / `contention` (no `SQLSTATE`, so not deterministic) with
+    /// nothing of the driver's text, and the operation metadata reports the code that was sent.
+    /// The scope ends with the future it wraps.
+    #[tokio::test]
+    async fn a_database_failure_is_typed_only_inside_the_scope() {
+        let legacy = (br#"{"code":500,"message":"database error"}"#.to_vec(), Some(500));
+        assert_eq!(rendered().await, legacy);
+
+        let (body, business_code) = with_typed_database_failures(rendered()).await;
+        let text = String::from_utf8(body).expect("UTF-8");
+        assert!(!text.contains("pool") && !text.contains("10.0.0.7"), "{text}");
+        let body: Value = serde_json::from_str(&text).expect("JSON");
+        assert_eq!(
+            body,
+            json!({
+                "code": 409,
+                "message": "server_draining",
+                "data": null,
+                "error_code": "server_draining",
+                "details": {"reason": "contention", "retry_after_ms": crate::flow::IN_FLIGHT_RETRY_AFTER_MS},
+            })
+        );
+        assert_eq!(business_code, Some(409));
+
+        assert_eq!(rendered().await, legacy, "the scope does not outlive its future");
+    }
+
+    /// Only the rendering changes: the error a retry loop inspects is still the driver error.
+    #[tokio::test]
+    async fn the_scope_does_not_change_the_error_value() {
+        with_typed_database_failures(async {
+            let error = ApiError::from(DbErr::Custom("boom".to_string()));
+            assert!(error.is_database_failure());
+            assert!(!error.is_deterministic_database_failure());
+            assert!(matches!(error.into_typed(), ApiError::Database(_)));
+        })
+        .await;
     }
 }

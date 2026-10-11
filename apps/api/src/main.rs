@@ -98,7 +98,6 @@ async fn main() -> anyhow::Result<()> {
         flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
     };
     api::flow::collab::fanout::spawn_listener(state.clone(), &api::flow::collab::runtime::runtime().registry);
-    let auth_state = state.clone();
     // Proposal settlement deliberately does not run here. It used to run both as an API
     // background task and inline on `GET /api/v1/proposals*`, which made a read request write
     // decisions and trust scores. The worker polling pipeline is now the only writer.
@@ -113,13 +112,27 @@ async fn main() -> anyhow::Result<()> {
         reaper_stop_rx,
     ));
 
+    let app = build_router(state);
+
+    let listener = tokio::net::TcpListener::bind(&cfg.bind_addr).await?;
+    tracing::info!(bind_addr = %cfg.bind_addr, "api server started");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(drain_then_shutdown(reaper_stop))
+        .await?;
+    Ok(())
+}
+
+/// The application router: every REST route, with the global layers applied.
+fn build_router(state: AppState) -> Router {
+    let auth_state = state.clone();
+
     // Uploaded object downloads are gated by `uploads_access_middleware`: it accepts either a
     // signed download URL or a normal session, and the handlers then scope the object to the
     // workspace that owns it.
     let uploads_access_layer =
         || axum_middleware::from_fn_with_state(auth_state.clone(), routes::upload::uploads_access_middleware);
 
-    let app = Router::new()
+    Router::new()
         .route(
             "/uploads/{file_name}",
             get(routes::upload::get_uploaded_file).route_layer(uploads_access_layer()),
@@ -1411,334 +1424,9 @@ async fn main() -> anyhow::Result<()> {
                 ),
             ),
         )
-        // Sylvode Flow routes (protected). v0.4 REST API layer, package 1: object create/list/get
-        // /history/commands/bootstrap — package 2 (collab tickets/ws/diagnostics/verify) follows
-        // below.
-        .route(
-            "/api/v1/workspaces/{workspace_id}/flow/objects",
-            post(routes::flow::create_flow_object)
-                .get(routes::flow::list_flow_objects)
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                )),
-        )
-        .route(
-            "/api/v1/workspaces/{workspace_id}/flow/projection-lag",
-            get(routes::flow::get_flow_projection_lag).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/workspaces/{workspace_id}/flow/navigator",
-            get(routes::flow::get_flow_navigator).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/workspaces/{workspace_id}/flow/search",
-            get(routes::flow::get_flow_search).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/workspaces/{workspace_id}/flow/exports",
-            post(routes::flow::post_flow_workspace_export).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/workspaces/{workspace_id}/flow/import-artifacts",
-            post(routes::flow::post_flow_import_artifact).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/workspaces/{workspace_id}/flow/imports/preview",
-            post(routes::flow::post_flow_import_preview).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}/commit",
-            post(routes::flow::post_flow_import_commit).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}",
-            get(routes::flow::get_flow_import).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}",
-            get(routes::flow::get_flow_object).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}/exports",
-            post(routes::flow::post_flow_object_export).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/exports/{job_id}",
-            get(routes::flow::get_flow_export).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/exports/{job_id}/artifact",
-            get(routes::flow::get_flow_export_artifact).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}/schema",
-            get(routes::flow::get_flow_object_schema).route_layer(axum_middleware::from_fn_with_state(
-                state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/collections/{collection_id}",
-            get(routes::flow::get_flow_collection).route_layer(axum_middleware::from_fn_with_state(
-                state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/collections/{collection_id}/records",
-            get(routes::flow::get_flow_collection_records)
-                .post(routes::flow::post_flow_collection_record)
-                .route_layer(axum_middleware::from_fn_with_state(
-                    state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                )),
-        )
-        .route(
-            "/api/v1/flow/collections/{collection_id}/query",
-            post(routes::flow::post_flow_collection_query).route_layer(axum_middleware::from_fn_with_state(
-                state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}/commands",
-            post(routes::flow::post_flow_object_command).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}/relations",
-            get(routes::flow::get_flow_object_relations).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}/references",
-            get(routes::flow::get_flow_object_references)
-                .post(routes::flow::post_flow_object_reference)
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}/references/{reference_id}",
-            delete(routes::flow::delete_flow_object_reference).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/conversions/preview",
-            post(routes::flow::post_flow_conversion_preview).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/conversions",
-            post(routes::flow::post_flow_conversion).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/conversions/{job_id}",
-            get(routes::flow::get_flow_conversion).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/conversions/{conversion_id}/owner",
-            get(routes::flow::get_flow_conversion_owner).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/conversions/{job_id}/retry",
-            post(routes::flow::post_flow_conversion_retry).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}/bootstrap",
-            get(routes::flow::get_flow_object_bootstrap).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}/history",
-            get(routes::flow::get_flow_object_history).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}/diff",
-            get(routes::flow::get_flow_object_diff).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        // `ADR-0012`'s v0.5 authorization surface. Both PUTs demand object-level `full_access`,
-        // which `flow::grants` checks inside the transaction it would commit — the middleware
-        // here only establishes workspace membership, exactly as it does for `commands`.
-        .route(
-            "/api/v1/flow/objects/{object_id}/grants",
-            get(routes::flow::get_flow_object_grants)
-                .put(routes::flow::put_flow_object_grants)
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}/inheritance",
-            put(routes::flow::put_flow_object_inheritance).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        // `flow_workspace_settings` read/write — `ADR-0012` §3.1's `flow_enabled` rollout flag
-        // and (v0.5-frozen) `default_member_level`/`authz_epoch`. GET is plain workspace
-        // membership; PUT requires a workspace admin (see `flow::policy`).
-        .route(
-            "/api/v1/workspaces/{workspace_id}/features/flow",
-            get(routes::flow::get_flow_feature)
-                .put(routes::flow::set_flow_feature)
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                )),
-        )
-        .route(
-            "/api/v1/admin/workspaces/{workspace_id}/flow/deliveries/replay",
-            post(routes::flow::post_flow_delivery_replay).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/admin/flow/documents/{document_id}/verify",
-            post(routes::flow::post_flow_verify_document).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/admin/flow/documents/{document_id}/compact",
-            post(routes::flow::post_flow_compact_document).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/admin/flow/objects/{object_id}/rebuild-projection",
-            post(routes::flow::post_flow_rebuild_projection).route_layer(
-                axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                ),
-            ),
-        )
-        .route(
-            "/api/v1/admin/flow/repairs/quarantine",
-            post(routes::flow::post_flow_repair_quarantine).route_layer(
-                axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                ),
-            ),
-        )
-        .route(
-            "/api/v1/admin/workspaces/{workspace_id}/flow/health",
-            get(routes::flow::get_flow_admin_health).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/admin/workspaces/{workspace_id}/flow/lag",
-            get(routes::flow::get_flow_admin_lag).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/admin/workspaces/{workspace_id}/flow/integrity",
-            get(routes::flow::get_flow_admin_integrity).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        // Collab tickets/diagnostics/verify (protected, user or bot per `rest-api-v1.md`); the
-        // WebSocket upgrade route below is deliberately unprotected by this middleware — it
-        // authenticates via the one-time ticket itself (`ADR-0007`), never a Bearer/cookie token.
-        .route(
-            "/api/v1/collab/tickets",
-            post(routes::collab::create_ticket).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route("/api/v1/collab/ws", get(routes::collab::ws_upgrade))
-        .route(
-            "/api/v1/flow/objects/{object_id}/collab",
-            get(routes::collab::get_collab_diagnostics).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/flow/objects/{object_id}/collab/verify",
-            post(routes::collab::verify_collab).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
+        // The Flow surface: every `routes::flow` / `routes::collab` route, behind the one boundary
+        // that renders its database failures as typed envelopes.
+        .merge(routes::flow_surface::seal(flow_surface_routes(&auth_state)))
         // Label routes (protected)
         .route(
             "/api/v1/workspaces/{workspace_id}/labels",
@@ -2085,14 +1773,346 @@ async fn main() -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http().make_span_with(routes::collab::trace_span))
         .layer(CorsLayer::permissive())
         .layer(CompressionLayer::new())
-        .with_state(state);
+        .with_state(state)
+}
 
-    let listener = tokio::net::TcpListener::bind(&cfg.bind_addr).await?;
-    tracing::info!(bind_addr = %cfg.bind_addr, "api server started");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(drain_then_shutdown(reaper_stop))
-        .await?;
-    Ok(())
+/// Every route of the Flow surface (the `routes::flow` and `routes::collab` handlers, admin Flow
+/// routes included), and nothing else.
+///
+/// [`build_router`] merges the result through `routes::flow_surface::seal` and through nothing
+/// else, so a route registered here cannot answer a database failure with the legacy envelope.
+/// A Flow route belongs here and not in [`build_router`]; `tests/flow_typed_error_gate.rs` fails
+/// on one registered anywhere else, and on a route here that is not a Flow handler.
+fn flow_surface_routes(auth_state: &AppState) -> Router<AppState> {
+    Router::new()
+        // Sylvode Flow routes (protected). v0.4 REST API layer, package 1: object create/list/get
+        // /history/commands/bootstrap — package 2 (collab tickets/ws/diagnostics/verify) follows
+        // below.
+        .route(
+            "/api/v1/workspaces/{workspace_id}/flow/objects",
+            post(routes::flow::create_flow_object)
+                .get(routes::flow::list_flow_objects)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/flow/projection-lag",
+            get(routes::flow::get_flow_projection_lag).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/flow/navigator",
+            get(routes::flow::get_flow_navigator).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/flow/search",
+            get(routes::flow::get_flow_search).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/flow/exports",
+            post(routes::flow::post_flow_workspace_export).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/flow/import-artifacts",
+            post(routes::flow::post_flow_import_artifact).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/flow/imports/preview",
+            post(routes::flow::post_flow_import_preview).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}/commit",
+            post(routes::flow::post_flow_import_commit).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}",
+            get(routes::flow::get_flow_import).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}",
+            get(routes::flow::get_flow_object).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/exports",
+            post(routes::flow::post_flow_object_export).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/exports/{job_id}",
+            get(routes::flow::get_flow_export).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/exports/{job_id}/artifact",
+            get(routes::flow::get_flow_export_artifact).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/schema",
+            get(routes::flow::get_flow_object_schema).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/collections/{collection_id}",
+            get(routes::flow::get_flow_collection).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/collections/{collection_id}/records",
+            get(routes::flow::get_flow_collection_records)
+                .post(routes::flow::post_flow_collection_record)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/flow/collections/{collection_id}/query",
+            post(routes::flow::post_flow_collection_query).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/commands",
+            post(routes::flow::post_flow_object_command).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/relations",
+            get(routes::flow::get_flow_object_relations).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/references",
+            get(routes::flow::get_flow_object_references)
+                .post(routes::flow::post_flow_object_reference)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/references/{reference_id}",
+            delete(routes::flow::delete_flow_object_reference).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/conversions/preview",
+            post(routes::flow::post_flow_conversion_preview).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/conversions",
+            post(routes::flow::post_flow_conversion).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/conversions/{job_id}",
+            get(routes::flow::get_flow_conversion).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/conversions/{conversion_id}/owner",
+            get(routes::flow::get_flow_conversion_owner).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/conversions/{job_id}/retry",
+            post(routes::flow::post_flow_conversion_retry).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/bootstrap",
+            get(routes::flow::get_flow_object_bootstrap).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/history",
+            get(routes::flow::get_flow_object_history).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/diff",
+            get(routes::flow::get_flow_object_diff).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        // `ADR-0012`'s v0.5 authorization surface. Both PUTs demand object-level `full_access`,
+        // which `flow::grants` checks inside the transaction it would commit — the middleware
+        // here only establishes workspace membership, exactly as it does for `commands`.
+        .route(
+            "/api/v1/flow/objects/{object_id}/grants",
+            get(routes::flow::get_flow_object_grants)
+                .put(routes::flow::put_flow_object_grants)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/inheritance",
+            put(routes::flow::put_flow_object_inheritance).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        // `flow_workspace_settings` read/write — `ADR-0012` §3.1's `flow_enabled` rollout flag
+        // and (v0.5-frozen) `default_member_level`/`authz_epoch`. GET is plain workspace
+        // membership; PUT requires a workspace admin (see `flow::policy`).
+        .route(
+            "/api/v1/workspaces/{workspace_id}/features/flow",
+            get(routes::flow::get_flow_feature)
+                .put(routes::flow::set_flow_feature)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/admin/workspaces/{workspace_id}/flow/deliveries/replay",
+            post(routes::flow::post_flow_delivery_replay).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/admin/flow/documents/{document_id}/verify",
+            post(routes::flow::post_flow_verify_document).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/admin/flow/documents/{document_id}/compact",
+            post(routes::flow::post_flow_compact_document).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/admin/flow/objects/{object_id}/rebuild-projection",
+            post(routes::flow::post_flow_rebuild_projection).route_layer(
+                axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ),
+            ),
+        )
+        .route(
+            "/api/v1/admin/flow/repairs/quarantine",
+            post(routes::flow::post_flow_repair_quarantine).route_layer(
+                axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ),
+            ),
+        )
+        .route(
+            "/api/v1/admin/workspaces/{workspace_id}/flow/health",
+            get(routes::flow::get_flow_admin_health).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/admin/workspaces/{workspace_id}/flow/lag",
+            get(routes::flow::get_flow_admin_lag).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/admin/workspaces/{workspace_id}/flow/integrity",
+            get(routes::flow::get_flow_admin_integrity).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        // Collab tickets/diagnostics/verify (protected, user or bot per `rest-api-v1.md`); the
+        // WebSocket upgrade route below is deliberately unprotected by this middleware — it
+        // authenticates via the one-time ticket itself (`ADR-0007`), never a Bearer/cookie token.
+        .route(
+            "/api/v1/collab/tickets",
+            post(routes::collab::create_ticket).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route("/api/v1/collab/ws", get(routes::collab::ws_upgrade))
+        .route(
+            "/api/v1/flow/objects/{object_id}/collab",
+            get(routes::collab::get_collab_diagnostics).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/collab/verify",
+            post(routes::collab::verify_collab).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
 }
 
 fn write_build_info() -> anyhow::Result<()> {
@@ -3634,7 +3654,6 @@ mod tests {
 
         let mut unauthenticated: Vec<String> = Vec::new();
         let mut block: Option<String> = None;
-        let mut in_router = false;
 
         let finish = |block: &str, out: &mut Vec<String>| {
             if block.contains("route_layer") {
@@ -3645,24 +3664,18 @@ mod tests {
             }
         };
 
+        // Both router functions (`build_router`, `flow_surface_routes`) are one method chain
+        // whose calls start at this indentation; a block ends at the next call of the chain or at
+        // the end of the function.
         for line in source.lines() {
-            if line.contains("let app = Router::new()") {
-                in_router = true;
-                continue;
-            }
-            if !in_router {
-                continue;
-            }
             let starts_route = line.starts_with("        .route(");
-            let ends_router = line.starts_with("        .layer(");
-            if starts_route || ends_router {
-                if let Some(previous) = block.take() {
-                    finish(&previous, &mut unauthenticated);
-                }
-                if ends_router {
-                    in_router = false;
-                    continue;
-                }
+            let ends_block = line.starts_with("        .") || line == "}";
+            if (starts_route || ends_block)
+                && let Some(previous) = block.take()
+            {
+                finish(&previous, &mut unauthenticated);
+            }
+            if starts_route {
                 block = Some(String::new());
             }
             if let Some(current) = block.as_mut() {
@@ -4927,6 +4940,450 @@ mod proposal_scope_database_tests {
         governance_tick(&state).await.expect("the worker tick is idempotent");
         assert_eq!(decision_count(&state, &tenant.proposal_id).await, 1);
 
+        scratch.drop_self().await;
+    }
+}
+
+/// The Flow surface answers database failures with typed envelopes, through the real router.
+///
+/// `routes::flow_surface::seal` is the one place that switches this on, and [`build_router`]
+/// applies it to [`flow_surface_routes`] only. The first test needs no database: it drives every
+/// registered route and checks, on the responses, which ones are behind the boundary. The second
+/// injects real `PostgreSQL` failures (same `OPENPR_TEST_DATABASE_URL` as the migration tests).
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stderr,
+    clippy::indexing_slicing,
+    clippy::too_many_lines
+)]
+mod flow_surface_boundary_tests {
+    use super::migration_runner_database_tests::scratch;
+    use super::{MigrationOptions, build_router, run_migrations_with};
+    use api::routes::flow_surface::FlowSurfaceResponse;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode, header};
+    use platform::{
+        app::AppState,
+        auth::JwtManager,
+        config::{AppConfig, Secret},
+    };
+    use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+    use serde_json::Value;
+    use tower::ServiceExt as _;
+    use uuid::Uuid;
+
+    const JWT_SECRET: &str = "flow-surface-boundary-test-secret";
+
+    /// The legacy envelope of a database failure, as every route outside the Flow surface has
+    /// always sent it.
+    const LEGACY_DATABASE_ERROR_BODY: &str = r#"{"code":500,"message":"database error"}"#;
+
+    fn state_for(db: DatabaseConnection) -> AppState {
+        AppState {
+            cfg: AppConfig {
+                app_name: "api-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new(JWT_SECRET),
+                jwt_access_ttl_seconds: 900,
+                jwt_refresh_ttl_seconds: 3600,
+                default_author_id: None,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db,
+            flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
+        }
+    }
+
+    fn token_for(user_id: Uuid) -> String {
+        JwtManager::new(JWT_SECRET, 900, 3600)
+            .issue_access_token(&user_id.to_string(), &format!("{user_id}@boundary.test"))
+            .expect("the token is issued")
+    }
+
+    struct Answer {
+        status: StatusCode,
+        content_type: Option<String>,
+        behind_boundary: bool,
+        body: Vec<u8>,
+    }
+
+    impl Answer {
+        fn json(&self) -> Value {
+            serde_json::from_slice(&self.body).unwrap_or(Value::Null)
+        }
+
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.body).into_owned()
+        }
+    }
+
+    async fn call(state: &AppState, method: &Method, uri: &str, token: Option<&str>, body: Option<&Value>) -> Answer {
+        let mut request = Request::builder().method(method.clone()).uri(uri);
+        if let Some(token) = token {
+            request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        if body.is_some() {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+        }
+        let request = request
+            .body(body.map_or_else(Body::empty, |value| Body::from(value.to_string())))
+            .expect("the request is well formed");
+        let response = build_router(state.clone())
+            .oneshot(request)
+            .await
+            .expect("the router answers");
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let behind_boundary = response.extensions().get::<FlowSurfaceResponse>().is_some();
+        let body = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
+            .await
+            .expect("the response body is readable")
+            .to_vec();
+        Answer {
+            status,
+            content_type,
+            behind_boundary,
+            body,
+        }
+    }
+
+    /// Every `.route("<path>", ..)` registered by the two router functions, with whether the
+    /// call names a `routes::flow` / `routes::collab` handler.
+    fn registered_routes() -> Vec<(String, bool)> {
+        let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
+            .expect("the router source is readable");
+        let mut routes = Vec::new();
+        let mut block: Option<String> = None;
+        let mut finish = |block: &str| {
+            if let Some(path) = block.split('"').nth(1) {
+                let flow = block.contains("routes::flow::") || block.contains("routes::collab::");
+                routes.push((path.to_string(), flow));
+            }
+        };
+        for line in source.lines() {
+            let starts_route = line.starts_with("        .route(");
+            let ends_block = line.starts_with("        .") || line == "}";
+            if (starts_route || ends_block)
+                && let Some(previous) = block.take()
+            {
+                finish(&previous);
+            }
+            if starts_route {
+                block = Some(String::new());
+            }
+            if let Some(current) = block.as_mut() {
+                current.push_str(line);
+                current.push('\n');
+            }
+        }
+        routes
+    }
+
+    /// `path` with every `{parameter}` replaced by a UUID.
+    fn concrete(path: &str) -> String {
+        path.split('/')
+            .map(|segment| {
+                if segment.starts_with('{') {
+                    Uuid::new_v4().to_string()
+                } else {
+                    segment.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
+    fn is_typed_database_failure(body: &Value) -> bool {
+        let draining = body["error_code"] == "server_draining" && body["details"]["reason"] == "contention";
+        let rejected =
+            body["error_code"] == "server_rejected" && body["details"]["reason"] == "deterministic_database_refusal";
+        draining || rejected
+    }
+
+    #[derive(Default)]
+    struct Tally {
+        flow_answers: usize,
+        other_answers: usize,
+        typed_database_failures: usize,
+    }
+
+    /// Calls `path` with every method, and checks each answer of a method the route accepts.
+    async fn probe_route(state: &AppState, token: &str, path: &str, flow: bool, tally: &mut Tally) {
+        let uri = concrete(path);
+        let empty = serde_json::json!({});
+        // Outside the Flow surface only the unauthenticated answer is taken: it is enough to see
+        // the boundary marker and runs no handler behind a session.
+        let callers: &[Option<&str>] = if flow { &[None, Some(token)] } else { &[None] };
+        let mut accepted = 0_usize;
+        for method in [Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
+            let body = (method != Method::GET).then_some(&empty);
+            for caller in callers {
+                let answer = call(state, &method, &uri, *caller, body).await;
+                if answer.status != StatusCode::METHOD_NOT_ALLOWED {
+                    accepted += 1;
+                    check_answer(&answer, &format!("{method} {path}"), flow, caller.is_some(), tally);
+                }
+            }
+        }
+        assert!(accepted > 0, "{path} accepted none of the probed methods");
+    }
+
+    fn check_answer(answer: &Answer, route: &str, flow: bool, authenticated: bool, tally: &mut Tally) {
+        assert_ne!(answer.status, StatusCode::NOT_FOUND, "{route} is not routed");
+        assert_eq!(
+            answer.behind_boundary, flow,
+            "{route}: a Flow route must answer behind the Flow surface boundary and no other route may"
+        );
+        let typed = is_typed_database_failure(&answer.json());
+        if flow {
+            tally.flow_answers += 1;
+            assert_ne!(
+                answer.text(),
+                LEGACY_DATABASE_ERROR_BODY,
+                "{route} answered the legacy database envelope"
+            );
+            tally.typed_database_failures += usize::from(authenticated && typed);
+        } else {
+            tally.other_answers += 1;
+            assert!(
+                !typed,
+                "{route} is not a Flow route and answered a typed database failure"
+            );
+        }
+    }
+
+    /// Structural proof on the running router, with a database that refuses every statement:
+    /// each route that names a Flow handler answers behind the boundary, on every method it
+    /// accepts and whether or not the caller is authenticated; no other route does; and no Flow
+    /// route ever answers the legacy database envelope. A Flow route registered outside
+    /// `flow_surface_routes`, or after the boundary, fails the first assertion.
+    #[tokio::test]
+    async fn every_flow_route_answers_behind_the_boundary_and_no_other_route_does() {
+        let state = state_for(DatabaseConnection::Disconnected);
+        let token = token_for(Uuid::new_v4());
+        let routes = registered_routes();
+        let flow_routes = routes.iter().filter(|(_, flow)| *flow).count();
+        assert!(
+            flow_routes >= 40 && routes.len() > flow_routes + 100,
+            "the router parser found {flow_routes} Flow routes of {}; it no longer matches main.rs",
+            routes.len()
+        );
+
+        let mut tally = Tally::default();
+        for (path, flow) in &routes {
+            probe_route(&state, &token, path, *flow, &mut tally).await;
+        }
+        let Tally {
+            flow_answers,
+            other_answers,
+            typed_database_failures,
+        } = tally;
+        eprintln!(
+            "flow surface boundary: {flow_routes} Flow routes, {flow_answers} Flow answers \
+             ({typed_database_failures} typed database failures), {other_answers} other answers"
+        );
+        assert!(
+            typed_database_failures >= 20,
+            "only {typed_database_failures} Flow answers were typed database failures; the probe no longer \
+             reaches the database"
+        );
+    }
+
+    async fn exec(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
+        db.execute(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
+            .await
+            .unwrap_or_else(|err| panic!("setup statement failed: {err}"));
+    }
+
+    /// Nothing the database or the driver said may travel in a typed envelope.
+    fn assert_no_driver_text(answer: &Answer, context: &str) {
+        let text = answer.text().to_lowercase();
+        for fragment in [
+            "database error",
+            "relation",
+            "constraint",
+            "violates",
+            "does not exist",
+            "sqlstate",
+            "sqlx",
+            "pool",
+            "connection",
+            "flow_objects",
+            "flow_workspace_settings",
+            "boundary_refusal",
+            "serializ",
+        ] {
+            assert!(!text.contains(fragment), "{context}: `{fragment}` in {text}");
+        }
+    }
+
+    fn assert_server_rejected(answer: &Answer, context: &str) {
+        let body = answer.json();
+        assert_eq!(answer.status, StatusCode::OK, "{context}: {body}");
+        assert_eq!(body["code"], 500, "{context}: {body}");
+        assert_eq!(body["error_code"], "server_rejected", "{context}: {body}");
+        assert_eq!(
+            body["details"],
+            serde_json::json!({"reason": "deterministic_database_refusal"}),
+            "{context}: {body}"
+        );
+        assert_eq!(body["message"], "server_rejected", "{context}: {body}");
+        assert!(body["data"].is_null(), "{context}: {body}");
+        assert_no_driver_text(answer, context);
+    }
+
+    fn assert_server_draining(answer: &Answer, context: &str) {
+        let body = answer.json();
+        assert_eq!(answer.status, StatusCode::OK, "{context}: {body}");
+        assert_eq!(body["code"], 409, "{context}: {body}");
+        assert_eq!(body["error_code"], "server_draining", "{context}: {body}");
+        assert_eq!(
+            body["details"],
+            serde_json::json!({"reason": "contention", "retry_after_ms": 1000}),
+            "{context}: {body}"
+        );
+        assert_eq!(body["message"], "server_draining", "{context}: {body}");
+        assert!(body["data"].is_null(), "{context}: {body}");
+        assert_no_driver_text(answer, context);
+    }
+
+    /// The legacy answer, byte for byte: status, content type and body.
+    fn assert_legacy_database_error(answer: &Answer, context: &str) {
+        assert_eq!(answer.status, StatusCode::OK, "{context}");
+        assert_eq!(answer.content_type.as_deref(), Some("application/json"), "{context}");
+        assert_eq!(answer.text(), LEGACY_DATABASE_ERROR_BODY, "{context}");
+        assert!(!answer.behind_boundary, "{context}");
+    }
+
+    /// Real database failures on one Flow read route (`GET .../flow/objects`), one Flow write
+    /// route (`PUT .../features/flow`) and one route outside the Flow surface
+    /// (`GET .../labels`), all through the application router:
+    ///
+    /// * deterministic (a missing relation, `42P01`; a violated check constraint, `23514`):
+    ///   Flow answers `server_rejected` / `deterministic_database_refusal`;
+    /// * not deterministic (a serialization failure raised by the database, `40001`; a closed
+    ///   connection pool, no `SQLSTATE`): Flow answers `server_draining` / `contention`;
+    /// * the label route answers the legacy envelope byte for byte for both kinds.
+    #[tokio::test]
+    async fn real_database_failures_are_typed_on_flow_routes_and_unchanged_elsewhere() {
+        let Some(scratch) = scratch("flow_surface_boundary").await else {
+            eprintln!("skipped: OPENPR_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let db = scratch.connection().clone();
+        run_migrations_with(&db, MigrationOptions::default())
+            .await
+            .expect("migrations apply");
+        let state = state_for(db.clone());
+        let workspace_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        exec(
+            &db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active) \
+             VALUES ($1, $2, '!', 'boundary', 'user', true)",
+            vec![owner_id.into(), format!("{owner_id}@boundary.test").into()],
+        )
+        .await;
+        exec(
+            &db,
+            "INSERT INTO workspaces (id, slug, name, created_by) VALUES ($1, $2, 'boundary', $3)",
+            vec![
+                workspace_id.into(),
+                format!("ws-{workspace_id}").into(),
+                owner_id.into(),
+            ],
+        )
+        .await;
+        exec(
+            &db,
+            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
+            vec![workspace_id.into(), owner_id.into()],
+        )
+        .await;
+        exec(
+            &db,
+            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true)",
+            vec![workspace_id.into()],
+        )
+        .await;
+        let token = token_for(owner_id);
+        let read_uri = format!("/api/v1/workspaces/{workspace_id}/flow/objects");
+        let write_uri = format!("/api/v1/workspaces/{workspace_id}/features/flow");
+        let label_uri = format!("/api/v1/workspaces/{workspace_id}/labels");
+        let read = || call(&state, &Method::GET, &read_uri, Some(&token), None);
+        let write = |key: &'static str| {
+            let body = serde_json::json!({"enabled": true, "default_member_level": "edit", "idempotency_key": key});
+            let (state, uri, token) = (&state, &write_uri, &token);
+            async move { call(state, &Method::PUT, uri, Some(token), Some(&body)).await }
+        };
+        let labels = || call(&state, &Method::GET, &label_uri, Some(&token), None);
+
+        // Healthy: all three succeed, so every failure below is the injected one.
+        for (name, answer) in [
+            ("read", read().await),
+            ("write", write("boundary-healthy").await),
+            ("labels", labels().await),
+        ] {
+            assert_eq!(answer.json()["code"], 0, "{name}: {}", answer.text());
+        }
+
+        // ---- deterministic: the database refuses the statement for good ----
+        db.execute_unprepared(
+            "ALTER TABLE flow_objects RENAME TO flow_objects_renamed; \
+             ALTER TABLE labels RENAME TO labels_renamed; \
+             ALTER TABLE flow_workspace_settings \
+               ADD CONSTRAINT boundary_refusal CHECK (default_member_level <> 'view') NOT VALID",
+        )
+        .await
+        .expect("the deterministic failures are injected");
+        assert_server_rejected(&read().await, "read route, missing relation");
+        let refused = {
+            let body = serde_json::json!({
+                "enabled": true, "default_member_level": "view", "idempotency_key": "boundary-check"
+            });
+            call(&state, &Method::PUT, &write_uri, Some(&token), Some(&body)).await
+        };
+        assert_server_rejected(&refused, "write route, violated check constraint");
+        assert_legacy_database_error(&labels().await, "label route, missing relation");
+        db.execute_unprepared(
+            "ALTER TABLE flow_objects_renamed RENAME TO flow_objects; \
+             ALTER TABLE labels_renamed RENAME TO labels; \
+             ALTER TABLE flow_workspace_settings DROP CONSTRAINT boundary_refusal",
+        )
+        .await
+        .expect("the deterministic failures are removed");
+
+        // ---- not deterministic, with an SQLSTATE: the database reports a serialization failure ----
+        db.execute_unprepared(
+            "CREATE FUNCTION boundary_serialization_failure() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN RAISE EXCEPTION 'could not serialize access' USING ERRCODE = '40001'; END $$; \
+             CREATE TRIGGER boundary_serialization_failure BEFORE INSERT OR UPDATE ON flow_workspace_settings \
+               FOR EACH ROW EXECUTE FUNCTION boundary_serialization_failure()",
+        )
+        .await
+        .expect("the serialization failure is injected");
+        assert_server_draining(
+            &write("boundary-serialization").await,
+            "write route, serialization failure",
+        );
+        db.execute_unprepared("DROP TRIGGER boundary_serialization_failure ON flow_workspace_settings")
+            .await
+            .expect("the serialization failure is removed");
+
+        // ---- not deterministic, without an SQLSTATE: the connection pool is closed ----
+        db.clone().close().await.expect("the pool closes");
+        assert_server_draining(&read().await, "read route, closed pool");
+        assert_server_draining(&write("boundary-closed").await, "write route, closed pool");
+        assert_legacy_database_error(&labels().await, "label route, closed pool");
         scratch.drop_self().await;
     }
 }

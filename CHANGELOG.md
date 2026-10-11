@@ -23,10 +23,14 @@ OpenPR name keeps working; see **Deprecated**.
   commands, package export/import, delivery replay, maintenance operations) now answers envelope
   `code` 400 with that reason, so it can be told apart from `stale_frontier` (still 409) without
   reading `message`. Internal failures that Flow code reports as such answer `server_rejected`
-  (500, non-retryable) instead of the untyped 500; database driver errors that reach a Flow
-  handler unclassified still answer the legacy envelope (`code` 500, `message` "database error",
-  no `error_code`). An identical request that is still running answers `server_draining` with
-  `reason = "contention"` and `retry_after_ms`.
+  (500, non-retryable) instead of the untyped 500. A database failure that reaches the response
+  of a Flow route (`/flow/`, `/collab/`, `features/flow`, admin Flow routes) is typed as well:
+  `server_rejected` with `details.reason = "deterministic_database_refusal"` when the database
+  refused the statement for good (constraint, data or schema error), otherwise `server_draining`
+  with `reason = "contention"` and `retry_after_ms` (connection, pool and transient errors). The
+  driver's text is logged, never sent. Routes outside Flow keep the legacy envelope (`code` 500,
+  `message` "database error", no `error_code`) unchanged. An identical request that is still
+  running answers `server_draining` with `reason = "contention"` and `retry_after_ms`.
 
 - **Every existing bot token only works with the REST API after the upgrade.** Migration
   `0062_flow_forms_bridge.sql` adds a transport surface to each bot token,
@@ -524,6 +528,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow REST routes no longer answer the legacy `database error` envelope: a database failure
+  propagated to the response of any Flow route is `server_rejected`
+  (`deterministic_database_refusal`) or `server_draining` (`contention`, `retry_after_ms`), so
+  clients can classify it by `error_code`. One response boundary around the Flow router does
+  this; routes outside Flow are byte for byte unchanged.
 - Flow conversion jobs: the stale-`started` sweep measures a run from a dedicated `started_at`
   column instead of `updated_at`, so a write to a `started` job no longer postpones its reclaim.
   `started_at` is set when the job is created and reset when a retry claims a `failed` job;
