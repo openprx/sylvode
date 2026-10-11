@@ -16,6 +16,8 @@
 export const OUTBOX_DB_PREFIX = 'sylvode-flow-outbox-v1';
 export const CACHE_DB_PREFIX = 'sylvode-flow-cache-v1';
 const FLOW_DB_PREFIXES = [OUTBOX_DB_PREFIX, CACHE_DB_PREFIX] as const;
+/** How long logout waits for the deletes before it goes on (see `clearFlowLocalData`). */
+const CLEAR_WAIT_MS = 3000;
 
 /** The database name of one user's store, or `null` without a user (nothing is persisted). */
 export function flowDatabaseName(prefix: string, userId: string | null | undefined): string | null {
@@ -50,7 +52,8 @@ function deleteDatabase(factory: IDBFactory, name: string): Promise<void> {
  */
 export async function clearFlowLocalData(
 	knownUserIds: readonly string[] = [],
-	factory: IDBFactory | undefined = typeof indexedDB === 'undefined' ? undefined : indexedDB
+	factory: IDBFactory | undefined = typeof indexedDB === 'undefined' ? undefined : indexedDB,
+	waitMs = CLEAR_WAIT_MS
 ): Promise<void> {
 	if (!factory) return;
 	const names = new Set<string>(FLOW_DB_PREFIXES);
@@ -69,5 +72,15 @@ export async function clearFlowLocalData(
 			// The listing is best effort; the known names are still deleted.
 		}
 	}
-	await Promise.all([...names].map((name) => deleteDatabase(factory, name)));
+	// A connection that ignores `versionchange` (another tab still running an older build) keeps
+	// a delete pending until that tab closes. The delete stays queued and completes then; logout
+	// does not wait for it beyond `waitMs`.
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	await Promise.race([
+		Promise.all([...names].map((name) => deleteDatabase(factory, name))),
+		new Promise<void>((resolve) => {
+			timer = setTimeout(resolve, waitMs);
+		})
+	]);
+	if (timer !== undefined) clearTimeout(timer);
 }

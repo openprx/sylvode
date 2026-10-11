@@ -580,7 +580,9 @@ export class LoroObjectSession implements ObjectSessionContract {
 					this.remotePresence.receive(
 						frame.session_id,
 						frame.payload,
-						typeof frame.ttl_seconds === 'number' ? frame.ttl_seconds : PRESENCE_TTL_SECONDS_DEFAULT,
+						typeof frame.ttl_seconds === 'number'
+							? frame.ttl_seconds
+							: PRESENCE_TTL_SECONDS_DEFAULT,
 						frame.actor
 					);
 				}

@@ -99,14 +99,12 @@ async function leaveAnOfflineEditAsA(server: FakeCollabServer): Promise<void> {
 }
 
 function flowDatabases(idb: IDBFactory): Promise<string[]> {
-	return idb
-		.databases()
-		.then((list) =>
-			list
-				.map((db) => db.name ?? '')
-				.filter((name) => name.startsWith('sylvode-flow-'))
-				.sort()
-		);
+	return idb.databases().then((list) =>
+		list
+			.map((db) => db.name ?? '')
+			.filter((name) => name.startsWith('sylvode-flow-'))
+			.sort()
+	);
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
@@ -148,7 +146,7 @@ for (const level of ['edit', 'view'] as const) {
 }
 
 await suite.checkAsync(
-	'a repository that outlives a sign-in switch opens the new user\'s outbox',
+	"a repository that outlives a sign-in switch opens the new user's outbox",
 	async () => {
 		await freshIndexedDb();
 		const server = new FakeCollabServer();
@@ -218,5 +216,28 @@ await suite.checkAsync('logout deletes the outbox, the drafts and the snapshot c
 		await back.close();
 	}
 });
+
+await suite.checkAsync(
+	'logout is not held up by another tab whose connection ignores versionchange',
+	async () => {
+		const idb = await freshIndexedDb();
+		const name = `sylvode-flow-outbox-v1:${USER_A.id}`;
+		const stale = await new Promise<IDBDatabase>((resolve, reject) => {
+			const request = idb.open(name, 1);
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => reject(request.error);
+		});
+		const { clearFlowLocalData } = await import('../src/lib/flow/local-data');
+		const started = Date.now();
+		await clearFlowLocalData([USER_A.id], idb, 200);
+		const waited = Date.now() - started;
+		assert(waited < 2000, `logout went on after ${waited} ms`);
+		stale.close();
+		for (let i = 0; i < 30 && (await flowDatabases(idb)).includes(name); i += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		assertDeepEqual(await flowDatabases(idb), [], 'and the database is gone afterwards');
+	}
+);
 
 finish(suite.result());

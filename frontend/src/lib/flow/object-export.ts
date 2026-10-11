@@ -56,9 +56,7 @@ export const OBJECT_EXPORT_FIELD_SECRECY_KEY = 'flow.panel.export.fieldSecrecy';
 
 /** Classifies a refused export start. The field secrecy refusal gets its own wording (export as
  * JSON or Markdown instead); everything else is the shared package classification. */
-export function classifyObjectExportFailure(
-	result: FlowPackageEnvelope
-): FlowPackageFailure {
+export function classifyObjectExportFailure(result: FlowPackageEnvelope): FlowPackageFailure {
 	const flowError = flowErrorFromEnvelope(result);
 	const reason =
 		typeof result.details === 'object' && result.details !== null

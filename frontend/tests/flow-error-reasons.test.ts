@@ -35,7 +35,6 @@ import {
 	flowErrorFromResult,
 	mapErrorCode
 } from '../src/lib/flow/command-service';
-import type { ApiResult } from '../src/lib/api/client';
 
 const suite = new Suite('flow_error_reasons');
 const ROOT = new URL('..', import.meta.url).pathname;
@@ -218,7 +217,8 @@ await suite.checkAsync(
 			],
 			[
 				'createRecord',
-				() => commands.createRecord('col-1', { values_by_field_id: {} }, { idempotencyKey: 'k-record' })
+				() =>
+					commands.createRecord('col-1', { values_by_field_id: {} }, { idempotencyKey: 'k-record' })
 			]
 		];
 		for (const [method, send] of writes) {
@@ -275,18 +275,24 @@ suite.check(
 	}
 );
 
-suite.check('network_error copy says the result is unknown, never that nothing was committed', () => {
-	for (const [locale, unknown, claims] of [
-		['en', /unknown/i, /nothing was committed|not (been )?committed|was not saved/i],
-		['zh', /未知/, /尚未提交|未提交|没有提交/]
-	] as const) {
-		const data = JSON.parse(readFileSync(join(ROOT, 'src/lib/i18n', `${locale}.json`), 'utf8'));
-		const text: unknown = data?.flow?.error?.network_error;
-		assert(typeof text === 'string', `${locale}: flow.error.network_error exists`);
-		assert(unknown.test(text as string), `${locale}: says the outcome is unknown: ${text}`);
-		assert(!claims.test(text as string), `${locale}: does not claim nothing was committed: ${text}`);
+suite.check(
+	'network_error copy says the result is unknown, never that nothing was committed',
+	() => {
+		for (const [locale, unknown, claims] of [
+			['en', /unknown/i, /nothing was committed|not (been )?committed|was not saved/i],
+			['zh', /未知/, /尚未提交|未提交|没有提交/]
+		] as const) {
+			const data = JSON.parse(readFileSync(join(ROOT, 'src/lib/i18n', `${locale}.json`), 'utf8'));
+			const text: unknown = data?.flow?.error?.network_error;
+			assert(typeof text === 'string', `${locale}: flow.error.network_error exists`);
+			assert(unknown.test(text as string), `${locale}: says the outcome is unknown: ${text}`);
+			assert(
+				!claims.test(text as string),
+				`${locale}: does not claim nothing was committed: ${text}`
+			);
+		}
 	}
-});
+);
 
 await suite.checkAsync(
 	'a create or move target outside the workspace is not_found, worded like any missing object',
@@ -321,7 +327,10 @@ suite.check('cross_workspace_relation copy describes a stored relation found on 
 		const data = JSON.parse(readFileSync(join(ROOT, 'src/lib/i18n', `${locale}.json`), 'utf8'));
 		const text: unknown = data?.flow?.error?.invalid_update_reason?.cross_workspace_relation;
 		assert(typeof text === 'string', `${locale}: key exists`);
-		assert(!writeClaim.test(text as string), `${locale}: no write path produces it any more: ${text}`);
+		assert(
+			!writeClaim.test(text as string),
+			`${locale}: no write path produces it any more: ${text}`
+		);
 	}
 });
 
