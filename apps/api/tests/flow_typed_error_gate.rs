@@ -21,11 +21,18 @@
 //! source: every route that names a `routes::flow` / `routes::collab` handler, or whose path has a
 //! `flow` / `collab` segment, is registered inside `fn flow_surface_routes` in `src/main.rs`, and
 //! that function's router reaches the application only through `seal`. A Flow route registered
-//! anywhere else turns it red. The binary's own test module drives every registered route through
-//! the real router and checks the same thing on the responses.
+//! anywhere else turns it red. So does a route that is Flow by its path and names a handler of
+//! another module (or the reverse), and so does a handler that is not written out as
+//! `routes::<module>::<handler>`, because an alias would hide a Flow handler from every check
+//! here. The binary's own test module drives every registered route through the real router and
+//! checks the same thing on the responses.
 //!
-//! Not claimed by this gate: errors produced by shared helpers outside the scanned tree
-//! (authentication middleware), which never surface a database error as such.
+//! Not claimed by this gate: errors produced by shared helpers outside the scanned tree. The
+//! authentication middleware is one: its user-session path propagates a database failure as
+//! `Database`, and its bot-credential path reports one through
+//! `ApiError::internal_database_failure`; both are rendered typed at the same boundary (the
+//! binary's tests drive a bot credential through it). Its other refusals (a missing or invalid
+//! credential) keep the legacy envelope.
 #![allow(clippy::print_stderr, clippy::panic, clippy::indexing_slicing, clippy::expect_used)]
 
 use std::fmt::Write as _;
@@ -381,17 +388,81 @@ struct RouteCall {
     path: String,
     /// Whether the call names a handler of `routes::flow` or `routes::collab`.
     flow_handler: bool,
+    /// The handler each method router of the call is given, as written (`routes::label::list`).
+    handlers: Vec<String>,
+}
+
+/// The constructors and methods of `axum::routing::MethodRouter` that take a handler.
+const METHOD_ROUTERS: &[&str] = &[
+    "get", "post", "put", "patch", "delete", "head", "options", "trace", "connect", "any", "fallback",
+];
+
+/// The `routes` module of a handler written as `routes::<module>::<handler>`, else `None`.
+fn handler_module(handler: &str) -> Option<&str> {
+    let mut parts = handler.split("::");
+    let is_ident = |part: &str| !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("routes"), Some(module), Some(name), None) if is_ident(module) && is_ident(name) => Some(module),
+        _ => None,
+    }
+}
+
+/// The handlers that are not written as `routes::<module>::<handler>`, as `(path, handler)`:
+/// the liveness and readiness probes, which are functions of `main.rs` itself and so cannot be
+/// handlers of `routes::flow` / `routes::collab`. Nothing else may be added without a reason of
+/// that kind.
+const LOCAL_HANDLERS: &[(&str, &str)] = &[("/health", "health"), ("/ready", "ready")];
+
+fn is_flow_module(module: &str) -> bool {
+    module == "flow" || module == "collab"
 }
 
 impl RouteCall {
+    /// Whether the path has a `flow` / `collab` segment. Every path of the Flow surface has one
+    /// and no other path does, so this needs no list of exceptions.
+    fn flow_path(&self) -> bool {
+        self.path
+            .split('/')
+            .any(|segment| segment == "flow" || segment == "collab")
+    }
+
     /// A route of the Flow surface: a Flow handler, or a path with a `flow` / `collab` segment.
     fn is_flow(&self) -> bool {
-        self.flow_handler
-            || self
-                .path
-                .split('/')
-                .any(|segment| segment == "flow" || segment == "collab")
+        self.flow_handler || self.flow_path()
     }
+}
+
+/// The first argument of every method-router call (`get(..)`, `.post(..)`, ...) in `body`, the
+/// production code of one `.route(..)` call.
+fn method_router_handlers(body: &[char]) -> Vec<String> {
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut handlers = Vec::new();
+    for name in METHOD_ROUTERS {
+        for at in occurrences(body, &format!("{name}(")) {
+            // `get(` itself or `.get(`, not the tail of another identifier (`budget(`).
+            if at > 0 && is_ident(body[at - 1]) {
+                continue;
+            }
+            let open = at + name.len();
+            let close = matching_paren(body, open);
+            let mut depth = 0i32;
+            let mut end = close;
+            for (k, ch) in body.iter().enumerate().take(close).skip(open + 1) {
+                match ch {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => depth -= 1,
+                    ',' if depth == 0 => {
+                        end = k;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            let handler: String = body[open + 1..end].iter().filter(|c| !c.is_whitespace()).collect();
+            handlers.push(handler);
+        }
+    }
+    handlers
 }
 
 /// Every `.route("<path>", ..)` call in the production code of `raw`.
@@ -409,6 +480,7 @@ fn route_calls(raw: &str) -> Vec<RouteCall> {
                 at,
                 path: call.split('"').nth(1).unwrap_or_default().to_string(),
                 flow_handler: body.contains("routes::flow::") || body.contains("routes::collab::"),
+                handlers: method_router_handlers(&code[open..=close]),
             }
         })
         .collect()
@@ -453,6 +525,57 @@ fn flow_wiring_findings(main: &str) -> Vec<String> {
             findings.push(format!(
                 "{} inside `fn flow_surface_routes` names no routes::flow / routes::collab handler",
                 route.path
+            ));
+        }
+        // Handler by handler: written out in full, and Flow exactly when the path is.
+        if route.handlers.is_empty() {
+            findings.push(format!("{} has no method router with a handler", route.path));
+        }
+        for handler in &route.handlers {
+            let Some(module) = handler_module(handler) else {
+                if LOCAL_HANDLERS.contains(&(route.path.as_str(), handler.as_str())) && !route.flow_path() {
+                    continue;
+                }
+                findings.push(format!(
+                    "{} is served by `{handler}`, which is not written as `routes::<module>::<handler>`",
+                    route.path
+                ));
+                continue;
+            };
+            if route.flow_path() && !is_flow_module(module) {
+                findings.push(format!(
+                    "Flow path {} is served by `{handler}`, which is not a routes::flow / routes::collab handler",
+                    route.path
+                ));
+            }
+            if !route.flow_path() && is_flow_module(module) {
+                findings.push(format!(
+                    "`{handler}` is served on {}, a path without a `flow` / `collab` segment",
+                    route.path
+                ));
+            }
+        }
+    }
+    // The handler modules are reached by their full path only: an import or an alias of
+    // `routes`, `routes::flow` or `routes::collab` would let a handler be named in a way the
+    // checks above cannot attribute.
+    for module in ["routes::flow", "routes::collab"] {
+        for at in occurrences(&code, module) {
+            let next = code.get(at + module.len()).copied();
+            let longer_name = next.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+            if next != Some(':') && !longer_name {
+                let rest: String = code[at..code.len().min(at + 40)].iter().collect();
+                findings.push(format!(
+                    "`{}`: {module} is imported or aliased instead of being named in full at each handler",
+                    rest.trim()
+                ));
+            }
+        }
+    }
+    for needle in ["routes::{", "routes::*", "routes as "] {
+        if !occurrences(&code, needle).is_empty() {
+            findings.push(format!(
+                "`{needle}`: the routes modules are imported or aliased instead of being named in full"
             ));
         }
     }
@@ -507,8 +630,30 @@ fn the_wiring_check_sees_a_flow_route_registered_outside_the_boundary() {
         )
     };
     assert_eq!(flow_wiring_findings(&template("", "")), Vec::<String>::new());
-    // By handler, by path alone, and a non-Flow route put behind the boundary.
+    // By handler, by path alone, a non-Flow route put behind the boundary, a handler of another
+    // module chained onto a Flow path, an aliased Flow handler on a path that does not look like
+    // a Flow path, and a Flow handler on such a path behind the boundary.
     for (app_route, flow_route, expected) in [
+        (
+            "",
+            "        .route(\"/api/v1/flow/mixed\", get(routes::flow::thing).post(routes::label::create))\n",
+            "is served by `routes::label::create`, which is not a routes::flow",
+        ),
+        (
+            "        .route(\"/api/v1/aliased\", get(flow_alias::thing))\n",
+            "",
+            "is served by `flow_alias::thing`, which is not written as",
+        ),
+        (
+            "        .route(\"/api/v1/nested\", get(routes::flow::nested::thing))\n",
+            "",
+            "which is not written as",
+        ),
+        (
+            "",
+            "        .route(\"/api/v1/plain\", get(routes::flow::thing))\n",
+            "a path without a `flow` / `collab` segment",
+        ),
         (
             "        .route(\"/api/v1/other\", get(routes::flow::thing))\n",
             "",
@@ -534,6 +679,21 @@ fn the_wiring_check_sees_a_flow_route_registered_outside_the_boundary() {
         assert!(
             findings.iter().any(|finding| finding.contains(expected)),
             "{app_route}{flow_route}: {findings:?}"
+        );
+    }
+    for (import, expected) in [
+        (
+            "use api::routes::flow as flow_alias;\n",
+            "routes::flow is imported or aliased",
+        ),
+        ("use api::routes::collab;\n", "routes::collab is imported or aliased"),
+        ("use api::routes::{flow, label};\n", "`routes::{`"),
+        ("use api::routes as r;\n", "`routes as `"),
+    ] {
+        let findings = flow_wiring_findings(&format!("{import}{}", template("", "")));
+        assert!(
+            findings.iter().any(|finding| finding.contains(expected)),
+            "{import}: {findings:?}"
         );
     }
     let sealed_twice = template("", "").replace(
