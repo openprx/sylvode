@@ -13,6 +13,8 @@
  * Run standalone: `bun tests/flow-local-data-isolation.test.ts`
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Suite, assert, assertDeepEqual, assertEqual, finish, waitFor } from './support/harness';
 import {
 	FakeCollabServer,
@@ -26,7 +28,7 @@ import {
 } from './support/collab-fakes';
 import type { FlowObjectView } from '../src/lib/api/flow';
 import type { RecoveryDraftEntry } from '../src/lib/flow/outbox';
-import { authStore } from '../src/lib/stores/auth';
+import { authStore, verifySession } from '../src/lib/stores/auth';
 
 const suite = new Suite('flow_local_data_isolation');
 
@@ -239,5 +241,61 @@ await suite.checkAsync(
 		assertDeepEqual(await flowDatabases(idb), [], 'and the database is gone afterwards');
 	}
 );
+
+for (const [label, answer] of [
+	[
+		'network failure (code 500, no error_code)',
+		{ code: 500, message: 'Network error', data: null }
+	],
+	['expired session (401)', { code: 401, message: 'unauthorized', data: null }]
+] as const) {
+	await suite.checkAsync(
+		`a failed session check (${label}) keeps the user's Flow data; their next sign-in replays it`,
+		async () => {
+			const idb = await freshIndexedDb();
+			const server = new FakeCollabServer();
+			await leaveAnOfflineEditAsA(server);
+			authStore.setUser(USER_A);
+			const outcome = await verifySession(async () => answer);
+			assertEqual(outcome, 'ended', 'the session ended');
+			let user: unknown = 'unset';
+			authStore.subscribe((state) => (user = state.user))();
+			assertEqual(user, null, 'no signed-in user any more');
+			await settle();
+			assert(
+				(await flowDatabases(idb)).includes(`sylvode-flow-outbox-v1:${USER_A.id}`),
+				"A's outbox database is still there"
+			);
+			authStore.setUser(USER_A);
+			const again = await open(server);
+			try {
+				await waitFor(
+					() => again.pending() === 0 && server.accepted.length === 1,
+					'A replayed its own edit after signing in again',
+					5000
+				);
+			} finally {
+				await again.close();
+			}
+			await authStore.logout();
+			assertDeepEqual(await flowDatabases(idb), [], "the user's own sign-out deletes everything");
+		}
+	);
+}
+
+suite.check('only the sign-out button path calls the deleting logout in the app shell', () => {
+	const source = readFileSync(
+		join(new URL('..', import.meta.url).pathname, 'src/routes/(app)/+layout.svelte'),
+		'utf8'
+	);
+	const calls = [...source.matchAll(/authStore\.logout\(/g)].length;
+	assertEqual(calls, 1, 'one deleting logout call');
+	const handler = source.slice(source.indexOf('async function handleLogout'));
+	assert(
+		/authStore\.logout\(/.test(handler.slice(0, handler.indexOf('\n\t}\n'))),
+		'and it is inside handleLogout'
+	);
+	assert(/verifySession\(/.test(source), 'the session check goes through verifySession');
+});
 
 finish(suite.result());
