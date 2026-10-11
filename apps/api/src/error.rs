@@ -1254,7 +1254,7 @@ mod typed_database_failure_tests {
     use sea_orm::{DbErr, RuntimeErr};
     use serde_json::{Value, json};
 
-    const DRIVER_TEXT: &str = "pool timed out while waiting for an open connection to 10.0.0.7";
+    const DRIVER_TEXT: &str = "pool timed out while waiting for an open connection to db.internal.example";
 
     async fn rendered() -> (Vec<u8>, Option<i32>) {
         let response = ApiError::Database(DbErr::Conn(RuntimeErr::Internal(DRIVER_TEXT.to_string()))).into_response();
@@ -1280,7 +1280,10 @@ mod typed_database_failure_tests {
 
         let (body, business_code) = with_typed_database_failures(rendered()).await;
         let text = String::from_utf8(body).expect("UTF-8");
-        assert!(!text.contains("pool") && !text.contains("10.0.0.7"), "{text}");
+        assert!(
+            !text.contains("pool") && !text.contains("db.internal.example"),
+            "{text}"
+        );
         let body: Value = serde_json::from_str(&text).expect("JSON");
         assert_eq!(
             body,

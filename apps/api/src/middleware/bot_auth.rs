@@ -925,7 +925,7 @@ mod audit_failure_tests {
         use axum::response::IntoResponse as _;
         use sea_orm::{DbErr, RuntimeErr};
 
-        const DRIVER_TEXT: &str = "pool timed out while waiting for an open connection to 10.0.0.7";
+        const DRIVER_TEXT: &str = "pool timed out while waiting for an open connection to db.internal.example";
         let transient = || Err(DbErr::Conn(RuntimeErr::Internal(DRIVER_TEXT.to_string())));
         assert!(
             !ApiError::from(DbErr::Conn(RuntimeErr::Internal(DRIVER_TEXT.to_string())))
@@ -952,7 +952,10 @@ mod audit_failure_tests {
             "{text}"
         );
         assert!(!text.contains("retry_after_ms"), "{text}");
-        assert!(!text.contains("pool") && !text.contains("10.0.0.7"), "{text}");
+        assert!(
+            !text.contains("pool") && !text.contains("db.internal.example"),
+            "{text}"
+        );
         let body: serde_json::Value = serde_json::from_str(&text).expect("JSON");
         assert_eq!(
             body.pointer("/error_code"),
