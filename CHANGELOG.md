@@ -524,6 +524,9 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow Share panel: retrying a permission downgrade whose dry run failed (unavailable, network
+  error, draining) runs the dry run again and stops at its preview; a downgrade is only ever
+  committed after its `permission_changes` were shown.
 - Flow package wizard, export scope and the Forms pickers list every project of the workspace
   (read page by page up to `total_pages`) instead of only the first 100.
 - Flow operations page: the per-document lag rows and the integrity document list page through

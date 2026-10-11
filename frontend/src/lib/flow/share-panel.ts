@@ -298,6 +298,9 @@ export interface SharePending {
 	 * inheritance change (no `initial_grants`: the explicit grants stay untouched). */
 	readonly roster: FlowGrantInput[];
 	readonly key: string;
+	/** The change can lower someone's permission: it is only ever committed after a dry run
+	 * returned its `permission_changes`. */
+	readonly needsPreview: boolean;
 	readonly phase: SharePendingPhase;
 	/** `permission_changes` of the dry run. Display only; never treated as authorization. */
 	readonly preview: FlowPermissionChanges | null;
@@ -414,6 +417,7 @@ export class FlowSharePanelController {
 			change,
 			roster: rosterAfter(view, change),
 			key: this.deps.newKey(),
+			needsPreview: changeLowersPermissions(view, change),
 			phase: 'previewing',
 			preview: null,
 			caller: null,
@@ -422,7 +426,7 @@ export class FlowSharePanelController {
 			failure: null
 		};
 		this.receipt_ = null;
-		if (!changeLowersPermissions(view, change)) {
+		if (!pending.needsPreview) {
 			this.pending_ = { ...pending, phase: 'submitting' };
 			this.emit();
 			return this.commit(false);
@@ -446,13 +450,20 @@ export class FlowSharePanelController {
 		return this.preview(true);
 	}
 
-	/** Sends the real request for the pending intent, with the intent's key. */
+	/** Sends the real request for the pending intent, with the intent's key. A downgrade whose
+	 * dry run never produced a preview (it failed, or the commit's post-state changed) is not
+	 * committed: the same intent is dry-run again and stops at the preview. */
 	async confirm(): Promise<ShareOutcome> {
 		const pending = this.pending_;
 		if (!pending || (pending.phase !== 'confirm' && pending.phase !== 'failed')) {
 			return { status: 'refused' };
 		}
 		if (pending.selfLockout && !pending.acknowledged) return { status: 'refused' };
+		if (pending.needsPreview && pending.preview === null) {
+			this.pending_ = { ...pending, phase: 'previewing', failure: null };
+			this.emit();
+			return this.preview(pending.selfLockout && pending.acknowledged);
+		}
 		this.pending_ = { ...pending, phase: 'submitting', failure: null };
 		this.emit();
 		return this.commit(pending.selfLockout && pending.acknowledged);
