@@ -11109,9 +11109,9 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B2 fixture: workspace A holds one project with two Pages; its workspace package is
+    /// Workspace A holds one project with two Pages; its workspace package is
     /// exported over HTTP and uploaded into workspace B, which has its own project.
-    struct Fp2B2Package {
+    struct ExportedPackage {
         target_app: axum::Router,
         target_workspace: Uuid,
         target_project: Uuid,
@@ -11119,7 +11119,7 @@ mod flow_database_tests {
         artifact_id: Value,
     }
 
-    async fn fp2_b2_seed_project(state: &AppState, workspace_id: Uuid, owner_id: Uuid, name: &str) -> Uuid {
+    async fn package_seed_project(state: &AppState, workspace_id: Uuid, owner_id: Uuid, name: &str) -> Uuid {
         let project_id = Uuid::new_v4();
         exec(
             state,
@@ -11136,7 +11136,7 @@ mod flow_database_tests {
         project_id
     }
 
-    async fn fp2_b2_send(app: &axum::Router, method: &str, uri: String, body: Option<Value>) -> Value {
+    async fn package_send(app: &axum::Router, method: &str, uri: String, body: Option<Value>) -> Value {
         use tower::ServiceExt as _;
         let builder = axum::http::Request::builder().method(method).uri(uri);
         let request = match body {
@@ -11149,13 +11149,13 @@ mod flow_database_tests {
         body_json(app.clone().oneshot(request).await.unwrap()).await
     }
 
-    async fn fp2_b2_exported_project_package(state: &AppState) -> Fp2B2Package {
+    async fn exported_project_package(state: &AppState) -> ExportedPackage {
         use tower::ServiceExt as _;
 
         let (source_workspace, source_owner) = seed_workspace(state, true).await;
         let (target_workspace, target_owner) = seed_workspace(state, true).await;
-        let source_project = fp2_b2_seed_project(state, source_workspace, source_owner, "Source roadmap").await;
-        let target_project = fp2_b2_seed_project(state, target_workspace, target_owner, "Target roadmap").await;
+        let source_project = package_seed_project(state, source_workspace, source_owner, "Source roadmap").await;
+        let target_project = package_seed_project(state, target_workspace, target_owner, "Target roadmap").await;
         for title in ["page one", "page two"] {
             let body = body_json(to_response(
                 create_flow_object(
@@ -11190,11 +11190,11 @@ mod flow_database_tests {
             )
             .layer(claims_for(source_owner))
             .with_state(state.clone());
-        let exported = fp2_b2_send(
+        let exported = package_send(
             &source_app,
             "POST",
             format!("/api/v1/workspaces/{source_workspace}/flow/exports"),
-            Some(json!({"format":"package","include_history":false,"idempotency_key":"fp2-b2-export"})),
+            Some(json!({"format":"package","include_history":false,"idempotency_key":"package-export"})),
         )
         .await;
         assert_eq!(exported["code"], 0, "{exported}");
@@ -11229,18 +11229,18 @@ mod flow_database_tests {
             )
             .layer(claims_for(target_owner))
             .with_state(state.clone());
-        let upload = fp2_b2_send(
+        let upload = package_send(
             &target_app,
             "POST",
             format!("/api/v1/workspaces/{target_workspace}/flow/import-artifacts"),
             Some(json!({
                 "source":{"kind":"inline_base64","package_base64":base64::engine::general_purpose::STANDARD.encode(&package)},
-                "idempotency_key":"fp2-b2-upload"
+                "idempotency_key":"package-upload"
             })),
         )
         .await;
         assert_eq!(upload["code"], 0, "{upload}");
-        Fp2B2Package {
+        ExportedPackage {
             target_app,
             target_workspace,
             target_project,
@@ -11249,8 +11249,8 @@ mod flow_database_tests {
         }
     }
 
-    async fn fp2_b2_preview(fixture: &Fp2B2Package, project_mapping: Value, policy: &str, key: &str) -> Value {
-        fp2_b2_send(
+    async fn package_preview(fixture: &ExportedPackage, project_mapping: Value, policy: &str, key: &str) -> Value {
+        package_send(
             &fixture.target_app,
             "POST",
             format!("/api/v1/workspaces/{}/flow/imports/preview", fixture.target_workspace),
@@ -11263,9 +11263,9 @@ mod flow_database_tests {
         .await
     }
 
-    async fn fp2_b2_commit(fixture: &Fp2B2Package, preview: &Value, policy: &str, key: &str) -> Value {
+    async fn package_commit(fixture: &ExportedPackage, preview: &Value, policy: &str, key: &str) -> Value {
         let preview_id = preview["data"]["preview_id"].as_str().unwrap();
-        fp2_b2_send(
+        package_send(
             &fixture.target_app,
             "POST",
             format!(
@@ -11281,9 +11281,9 @@ mod flow_database_tests {
         .await
     }
 
-    async fn fp2_b2_report(fixture: &Fp2B2Package, committed: &Value) -> Value {
+    async fn package_report(fixture: &ExportedPackage, committed: &Value) -> Value {
         let import_id = committed["data"]["import_id"].as_str().unwrap();
-        fp2_b2_send(
+        package_send(
             &fixture.target_app,
             "GET",
             format!(
@@ -11296,15 +11296,15 @@ mod flow_database_tests {
     }
 
     #[tokio::test]
-    async fn fp2_b2_preview_manifest_summary_lists_the_package_source_projects() {
-        let scratch = scratch_or_skip!("fp2-b2-manifest-summary");
+    async fn preview_manifest_summary_lists_the_package_source_projects() {
+        let scratch = scratch_or_skip!("package-manifest-summary");
         let state = state_for(scratch.db.clone());
-        let fixture = fp2_b2_exported_project_package(&state).await;
-        let preview = fp2_b2_preview(
+        let fixture = exported_project_package(&state).await;
+        let preview = package_preview(
             &fixture,
             json!({ fixture.source_project.to_string(): fixture.target_project }),
             "reject_existing",
-            "fp2-b2-summary",
+            "package-summary",
         )
         .await;
         assert_eq!(preview["code"], 0, "{preview}");
@@ -11326,11 +11326,11 @@ mod flow_database_tests {
             crate::flow::package::ENGINE_NAME,
             "{preview}"
         );
-        let replay = fp2_b2_preview(
+        let replay = package_preview(
             &fixture,
             json!({ fixture.source_project.to_string(): fixture.target_project }),
             "reject_existing",
-            "fp2-b2-summary",
+            "package-summary",
         )
         .await;
         assert_eq!(replay["data"]["preview_id"], preview["data"]["preview_id"]);
@@ -11338,9 +11338,9 @@ mod flow_database_tests {
             replay["data"]["manifest_summary"], *summary,
             "an idempotent replay keeps the summary"
         );
-        let committed = fp2_b2_commit(&fixture, &preview, "reject_existing", "fp2-b2-summary-commit").await;
+        let committed = package_commit(&fixture, &preview, "reject_existing", "package-summary-commit").await;
         assert_eq!(committed["code"], 0, "{committed}");
-        let report = fp2_b2_report(&fixture, &committed).await;
+        let report = package_report(&fixture, &committed).await;
         assert_eq!(report["data"]["counts"]["created"], 2, "{report}");
         let in_target_project: i64 = state
             .db
@@ -11358,7 +11358,7 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    async fn fp2_b2_page_count(state: &AppState, workspace_id: Uuid, project_id: Option<Uuid>) -> i64 {
+    async fn package_page_count(state: &AppState, workspace_id: Uuid, project_id: Option<Uuid>) -> i64 {
         state
             .db
             .query_one(Statement::from_sql_and_values(
@@ -11375,13 +11375,13 @@ mod flow_database_tests {
     }
 
     #[tokio::test]
-    async fn fp2_b2_empty_project_mapping_previews_unmapped_projects_and_commit_is_project_unmapped() {
-        let scratch = scratch_or_skip!("fp2-b2-unmapped");
+    async fn empty_project_mapping_previews_unmapped_projects_and_commit_is_project_unmapped() {
+        let scratch = scratch_or_skip!("package-unmapped");
         let state = state_for(scratch.db.clone());
-        let fixture = fp2_b2_exported_project_package(&state).await;
+        let fixture = exported_project_package(&state).await;
         let source = fixture.source_project;
 
-        let preview = fp2_b2_preview(&fixture, json!({}), "reject_existing", "fp2-b2-unmapped").await;
+        let preview = package_preview(&fixture, json!({}), "reject_existing", "package-unmapped").await;
         assert_eq!(
             preview["code"], 0,
             "an empty mapping previews instead of failing: {preview}"
@@ -11399,20 +11399,20 @@ mod flow_database_tests {
             json!([{"kind":"project_unmapped","source_project_id":source,"title":"Source roadmap"}]),
             "{preview}"
         );
-        let committed = fp2_b2_commit(&fixture, &preview, "reject_existing", "fp2-b2-unmapped-commit").await;
+        let committed = package_commit(&fixture, &preview, "reject_existing", "package-unmapped-commit").await;
         assert_typed(&committed, "invalid_update", 400);
         assert_eq!(committed["details"]["reason"], "project_unmapped", "{committed}");
-        assert_eq!(fp2_b2_page_count(&state, fixture.target_workspace, None).await, 0);
+        assert_eq!(package_page_count(&state, fixture.target_workspace, None).await, 0);
         assert_eq!(
-            fp2_b2_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
+            package_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
             0
         );
 
-        let unprojected = fp2_b2_preview(
+        let unprojected = package_preview(
             &fixture,
             json!({ source.to_string(): "unprojected" }),
             "reject_existing",
-            "fp2-b2-unprojected",
+            "package-unprojected",
         )
         .await;
         assert_eq!(unprojected["code"], 0, "{unprojected}");
@@ -11423,24 +11423,24 @@ mod flow_database_tests {
             json!({ source.to_string(): null }),
             "the literal freezes to the same mapping as null"
         );
-        let committed = fp2_b2_commit(&fixture, &unprojected, "reject_existing", "fp2-b2-unprojected-commit").await;
+        let committed = package_commit(&fixture, &unprojected, "reject_existing", "package-unprojected-commit").await;
         assert_eq!(committed["code"], 0, "{committed}");
-        let report = fp2_b2_report(&fixture, &committed).await;
+        let report = package_report(&fixture, &committed).await;
         assert_eq!(report["data"]["counts"]["created"], 2, "{report}");
-        assert_eq!(fp2_b2_page_count(&state, fixture.target_workspace, None).await, 2);
+        assert_eq!(package_page_count(&state, fixture.target_workspace, None).await, 2);
         scratch.drop_self().await;
     }
 
     #[tokio::test]
-    async fn fp2_b2_package_roundtrip_reports_unmapped_projects_and_lineage_conflicts_in_preview() {
-        let scratch = scratch_or_skip!("fp2-b2-roundtrip");
+    async fn package_roundtrip_reports_unmapped_projects_and_lineage_conflicts_in_preview() {
+        let scratch = scratch_or_skip!("package-roundtrip");
         let state = state_for(scratch.db.clone());
-        let fixture = fp2_b2_exported_project_package(&state).await;
+        let fixture = exported_project_package(&state).await;
         let source = fixture.source_project;
         let mapped = json!({ source.to_string(): fixture.target_project });
 
         // (1) An empty mapping previews and names the one source project as unmapped.
-        let empty = fp2_b2_preview(&fixture, json!({}), "reject_existing", "fp2-b2-rt-empty").await;
+        let empty = package_preview(&fixture, json!({}), "reject_existing", "package-rt-empty").await;
         assert_eq!(empty["code"], 0, "{empty}");
         assert_eq!(
             empty["data"]["manifest_summary"]["projects"].as_array().unwrap().len(),
@@ -11453,22 +11453,22 @@ mod flow_database_tests {
         );
 
         // (2) Mapped onto B's project, the commit creates both pages.
-        let first = fp2_b2_preview(&fixture, mapped.clone(), "reject_existing", "fp2-b2-rt-first").await;
+        let first = package_preview(&fixture, mapped.clone(), "reject_existing", "package-rt-first").await;
         assert_eq!(first["code"], 0, "{first}");
         assert_eq!(first["data"]["conflicts"], json!([]), "{first}");
-        let committed = fp2_b2_commit(&fixture, &first, "reject_existing", "fp2-b2-rt-first-commit").await;
+        let committed = package_commit(&fixture, &first, "reject_existing", "package-rt-first-commit").await;
         assert_eq!(committed["code"], 0, "{committed}");
-        let report = fp2_b2_report(&fixture, &committed).await;
+        let report = package_report(&fixture, &committed).await;
         assert_eq!(report["data"]["counts"]["created"], 2, "{report}");
         let object_mapping = report["data"]["object_mapping"].as_object().unwrap().clone();
         assert_eq!(object_mapping.len(), 2);
         let pages_after_import =
-            fp2_b2_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await;
+            package_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await;
         assert_eq!(pages_after_import, 2);
 
         // (3) The same package again under reject_existing: preview succeeds and lists both
         // lineage hits; the commit is refused as policy_rejected with zero canonical writes.
-        let again = fp2_b2_preview(&fixture, mapped.clone(), "reject_existing", "fp2-b2-rt-again").await;
+        let again = package_preview(&fixture, mapped.clone(), "reject_existing", "package-rt-again").await;
         assert_eq!(
             again["code"], 0,
             "a lineage hit is a preview conflict, not an error: {again}"
@@ -11488,32 +11488,32 @@ mod flow_database_tests {
         let mut expected_ids: Vec<&String> = object_mapping.keys().collect();
         expected_ids.sort();
         assert_eq!(again["data"]["conflicts"], json!(expected_ids), "{again}");
-        let refused = fp2_b2_commit(&fixture, &again, "reject_existing", "fp2-b2-rt-again-commit").await;
+        let refused = package_commit(&fixture, &again, "reject_existing", "package-rt-again-commit").await;
         assert_typed(&refused, "policy_rejected", 403);
         assert_eq!(
-            fp2_b2_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
+            package_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
             pages_after_import
         );
 
         // (4) reuse_import_lineage resolves the same conflicts to the existing targets.
-        let reuse = fp2_b2_preview(&fixture, mapped, "reuse_import_lineage", "fp2-b2-rt-reuse").await;
+        let reuse = package_preview(&fixture, mapped, "reuse_import_lineage", "package-rt-reuse").await;
         assert_eq!(reuse["code"], 0, "{reuse}");
         assert_eq!(reuse["data"]["conflict_details"], again["data"]["conflict_details"]);
-        let reuse_commit = fp2_b2_commit(&fixture, &reuse, "reuse_import_lineage", "fp2-b2-rt-reuse-commit").await;
+        let reuse_commit = package_commit(&fixture, &reuse, "reuse_import_lineage", "package-rt-reuse-commit").await;
         assert_eq!(reuse_commit["code"], 0, "{reuse_commit}");
-        let reuse_report = fp2_b2_report(&fixture, &reuse_commit).await;
+        let reuse_report = package_report(&fixture, &reuse_commit).await;
         assert_eq!(reuse_report["data"]["counts"]["reused"], 2, "{reuse_report}");
         assert_eq!(reuse_report["data"]["counts"]["created"], 0, "{reuse_report}");
         assert_eq!(
-            fp2_b2_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
+            package_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
             pages_after_import
         );
         scratch.drop_self().await;
     }
 
     #[tokio::test]
-    async fn fp2_b2_export_that_fails_while_rendering_is_a_failed_job_with_a_stable_error() {
-        let scratch = scratch_or_skip!("fp2-b2-export-failed");
+    async fn export_that_fails_while_rendering_is_a_failed_job_with_a_stable_error() {
+        let scratch = scratch_or_skip!("package-export-failed");
         let state = state_for(scratch.db.clone());
         let (export_workspace, owner_id) = seed_workspace(&state, true).await;
         let page = create_page_as_owner(&state, export_workspace, owner_id, "corrupted export source").await;
@@ -11540,8 +11540,8 @@ mod flow_database_tests {
             )
             .layer(claims_for(owner_id))
             .with_state(state.clone());
-        let request = json!({"format":"package","include_history":false,"idempotency_key":"fp2-b2-failed-export"});
-        let created = fp2_b2_send(
+        let request = json!({"format":"package","include_history":false,"idempotency_key":"package-failed-export"});
+        let created = package_send(
             &app,
             "POST",
             format!("/api/v1/workspaces/{export_workspace}/flow/exports"),
@@ -11553,13 +11553,13 @@ mod flow_database_tests {
         assert_eq!(created["data"]["error"], "checksum_mismatch", "{created}");
         let job = created["data"]["job_id"].as_str().unwrap().to_string();
 
-        let status = fp2_b2_send(&app, "GET", format!("/api/v1/flow/exports/{job}"), None).await;
+        let status = package_send(&app, "GET", format!("/api/v1/flow/exports/{job}"), None).await;
         assert_eq!(status["code"], 0, "{status}");
         assert_eq!(status["data"]["status"], "failed", "{status}");
         assert_eq!(status["data"]["error"], "checksum_mismatch", "{status}");
         assert!(status["data"].get("download_url").is_none(), "{status}");
 
-        let replay = fp2_b2_send(
+        let replay = package_send(
             &app,
             "POST",
             format!("/api/v1/workspaces/{export_workspace}/flow/exports"),
@@ -11569,7 +11569,7 @@ mod flow_database_tests {
         assert_eq!(replay["data"]["job_id"], json!(job), "{replay}");
         assert_eq!(replay["data"]["error"], "checksum_mismatch", "{replay}");
 
-        let artifact = fp2_b2_send(&app, "GET", format!("/api/v1/flow/exports/{job}/artifact"), None).await;
+        let artifact = package_send(&app, "GET", format!("/api/v1/flow/exports/{job}/artifact"), None).await;
         assert_typed(&artifact, "not_found", 404);
         scratch.drop_self().await;
     }
@@ -11918,7 +11918,7 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    // ---- FP2-B1: every Flow error path below answers with a typed `error_code` ----
+    // ---- Every Flow error path below answers with a typed `error_code` ----
 
     /// Asserts the typed envelope shape `error-mapping-v1.md` requires: a stable `error_code`, the
     /// matching numeric `code`, and an explicit `data: null`.
@@ -11929,8 +11929,8 @@ mod flow_database_tests {
     }
 
     #[tokio::test]
-    async fn fp2_b1_non_admin_put_features_flow_is_typed_forbidden() {
-        let scratch = scratch_or_skip!("fp2-b1-features-forbidden");
+    async fn non_admin_put_features_flow_is_typed_forbidden() {
+        let scratch = scratch_or_skip!("typed-features-forbidden");
         let state = state_for(scratch.db.clone());
         let (workspace_id, _owner_id) = seed_workspace(&state, true).await;
         let member_id = seed_member(&state, workspace_id).await;
@@ -11973,8 +11973,8 @@ mod flow_database_tests {
     }
 
     #[tokio::test]
-    async fn fp2_b1_projection_lag_with_flow_disabled_is_feature_disabled() {
-        let scratch = scratch_or_skip!("fp2-b1-lag-feature-disabled");
+    async fn projection_lag_with_flow_disabled_is_feature_disabled() {
+        let scratch = scratch_or_skip!("typed-lag-feature-disabled");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, false).await;
         let lag = |user: Uuid| {
@@ -11999,8 +11999,8 @@ mod flow_database_tests {
     /// replaying a key with a changed body is `invalid_update` + `idempotency_key_body_drift`,
     /// a stale expected head is `stale_frontier` without that reason.
     #[tokio::test]
-    async fn fp2_b1_idempotency_body_drift_and_stale_frontier_are_distinct_typed_codes() {
-        let scratch = scratch_or_skip!("fp2-b1-drift-vs-stale");
+    async fn idempotency_body_drift_and_stale_frontier_are_distinct_typed_codes() {
+        let scratch = scratch_or_skip!("typed-drift-vs-stale");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let now = chrono::Utc::now();
@@ -12013,7 +12013,7 @@ mod flow_database_tests {
             to: now - chrono::Duration::hours(1),
             dry_run: true,
             confirm: true,
-            idempotency_key: "fp2-b1-replay-key".to_string(),
+            idempotency_key: "typed-replay-key".to_string(),
         };
         let replay = |req: ReplayDeliveriesRequest| {
             post_flow_delivery_replay(
@@ -12033,7 +12033,7 @@ mod flow_database_tests {
         assert_eq!(body["details"]["reason"], "idempotency_key_body_drift", "{body}");
 
         // Same reason on the maintenance-operation ledger (`flow::operations::claim`).
-        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "fp2 b1 compact").await;
+        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "typed compact").await;
         let document_id = document_of(&state, object_id).await;
         let compact = |expected: i64, key: &str| {
             post_flow_compact_document(
@@ -12050,7 +12050,7 @@ mod flow_database_tests {
                 }),
             )
         };
-        let behind = body_json(to_response(compact(9_999, "fp2-b1-compact-stale").await)).await;
+        let behind = body_json(to_response(compact(9_999, "typed-compact-stale").await)).await;
         assert_typed(&behind, "stale_frontier", 409);
         assert!(behind["details"].get("reason").is_none(), "{behind}");
         assert!(behind["details"]["current_seq"].is_i64(), "{behind}");
@@ -12059,17 +12059,17 @@ mod flow_database_tests {
             .await
             .expect("bootstrap loads")
             .head_seq;
-        let ok = body_json(to_response(compact(head, "fp2-b1-compact-key").await)).await;
+        let ok = body_json(to_response(compact(head, "typed-compact-key").await)).await;
         assert_eq!(ok["code"], 0, "{ok}");
-        let drifted = body_json(to_response(compact(head + 1, "fp2-b1-compact-key").await)).await;
+        let drifted = body_json(to_response(compact(head + 1, "typed-compact-key").await)).await;
         assert_typed(&drifted, "invalid_update", 400);
         assert_eq!(drifted["details"]["reason"], "idempotency_key_body_drift", "{drifted}");
         scratch.drop_self().await;
     }
 
     #[tokio::test]
-    async fn fp2_b1_conversion_get_and_retry_of_unknown_job_are_typed_not_found() {
-        let scratch = scratch_or_skip!("fp2-b1-conversion-not-found");
+    async fn conversion_get_and_retry_of_unknown_job_are_typed_not_found() {
+        let scratch = scratch_or_skip!("typed-conversion-not-found");
         let state = state_for(scratch.db.clone());
         let (_workspace_id, owner_id) = seed_workspace(&state, true).await;
         let missing = Uuid::new_v4();
@@ -12103,8 +12103,8 @@ mod flow_database_tests {
     }
 
     #[tokio::test]
-    async fn fp2_b1_import_preview_of_a_bad_artifact_is_typed() {
-        let scratch = scratch_or_skip!("fp2-b1-import-bad-artifact");
+    async fn import_preview_of_a_bad_artifact_is_typed() {
+        let scratch = scratch_or_skip!("typed-import-bad-artifact");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let preview = body_json(to_response(
@@ -12159,8 +12159,8 @@ mod flow_database_tests {
     /// neither keeps the historical single-page listing.
     #[allow(clippy::literal_string_with_formatting_args)]
     #[tokio::test]
-    async fn fp2_b1_list_projects_honours_page_and_per_page() {
-        let scratch = scratch_or_skip!("fp2-b1-projects-pagination");
+    async fn list_projects_honours_page_and_per_page() {
+        let scratch = scratch_or_skip!("typed-projects-pagination");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         for index in 0..5 {
@@ -12238,10 +12238,10 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B3 N3-②: `OperationReceipt` carries the contract's full shape, and an execute's
+    /// `OperationReceipt` carries the contract's full shape, and an execute's
     /// `audit_event_id` is a real `business_events` row.
     #[tokio::test]
-    async fn fp2_b3_operation_receipt_full_shape_and_execute_audit_event_id() {
+    async fn operation_receipt_full_shape_and_execute_audit_event_id() {
         async fn audit_row(state: &AppState, event_id: &str) -> Option<(String, Value)> {
             let id = Uuid::parse_str(event_id).expect("audit_event_id is a uuid");
             state
@@ -12294,10 +12294,10 @@ mod flow_database_tests {
                 "{receipt}"
             );
         }
-        let scratch = scratch_or_skip!("fp2-b3-receipt");
+        let scratch = scratch_or_skip!("admin-receipt");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "fp2 b3 receipt").await;
+        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "admin receipt").await;
         let document_id = document_of(&state, object_id).await;
         let head = crate::flow::collab::bootstrap::load(&state.db, document_id)
             .await
@@ -12320,7 +12320,7 @@ mod flow_database_tests {
             )
         };
 
-        let dry = body_json(to_response(compact(true, "fp2-b3-compact-dry").await)).await;
+        let dry = body_json(to_response(compact(true, "admin-compact-dry").await)).await;
         assert_full_shape(&dry, "dry_run");
         assert!(
             dry["data"]["audit_event_id"].is_string(),
@@ -12330,7 +12330,7 @@ mod flow_database_tests {
         assert_eq!(dry["data"]["observed_head_seq"], head);
         assert_eq!(dry["data"]["changes"][0]["kind"], "compaction", "{dry}");
 
-        let executed = body_json(to_response(compact(false, "fp2-b3-compact-exec").await)).await;
+        let executed = body_json(to_response(compact(false, "admin-compact-exec").await)).await;
         assert_full_shape(&executed, "execute");
         let audit_event_id = executed["data"]["audit_event_id"]
             .as_str()
@@ -12351,7 +12351,7 @@ mod flow_database_tests {
         );
         assert!(change["before"]["snapshot_checksum"].is_string(), "{executed}");
 
-        let replayed = body_json(to_response(compact(false, "fp2-b3-compact-exec").await)).await;
+        let replayed = body_json(to_response(compact(false, "admin-compact-exec").await)).await;
         assert_eq!(replayed["data"]["operation_id"], executed["data"]["operation_id"]);
         assert_eq!(
             replayed["data"]["audit_event_id"], executed["data"]["audit_event_id"],
@@ -12387,10 +12387,10 @@ mod flow_database_tests {
                 }),
             )
         };
-        let rebuild_dry = body_json(to_response(rebuild(true, "fp2-b3-rebuild-dry").await)).await;
+        let rebuild_dry = body_json(to_response(rebuild(true, "admin-rebuild-dry").await)).await;
         assert_full_shape(&rebuild_dry, "dry_run");
         assert!(rebuild_dry["data"]["audit_event_id"].is_string(), "{rebuild_dry}");
-        let rebuild_exec = body_json(to_response(rebuild(false, "fp2-b3-rebuild-exec").await)).await;
+        let rebuild_exec = body_json(to_response(rebuild(false, "admin-rebuild-exec").await)).await;
         assert_full_shape(&rebuild_exec, "execute");
         let change = &rebuild_exec["data"]["changes"][0];
         assert_eq!(change["kind"], "projection_rebuild", "{rebuild_exec}");
@@ -12467,12 +12467,12 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B3 ruling 1 (`events-v1.md`): every dry-run writes one `delivery_class=audit_only`
+    /// `events-v1.md`: every dry-run writes one `delivery_class=audit_only`
     /// preview event (no `event_dispatch` row) whose id is the receipt's `audit_event_id`; an
     /// execute writes exactly one business `completed` event plus one dispatch row; a same-key
     /// replay writes nothing.
     #[tokio::test]
-    async fn fp2_b3_dry_runs_write_audit_only_events_and_executes_dispatch_once() {
+    async fn dry_runs_write_audit_only_events_and_executes_dispatch_once() {
         async fn count(state: &AppState, sql: &str, workspace_id: Uuid) -> i64 {
             state
                 .db
@@ -12529,10 +12529,10 @@ mod flow_database_tests {
             )
         }
 
-        let scratch = scratch_or_skip!("fp2-b3-audit-classes");
+        let scratch = scratch_or_skip!("admin-audit-classes");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "fp2 b3 audit").await;
+        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "admin audit").await;
         let document_id = document_of(&state, object_id).await;
         let head = crate::flow::collab::bootstrap::load(&state.db, document_id)
             .await
@@ -12570,7 +12570,7 @@ mod flow_database_tests {
 
         // compact dry-run: one audit-only previewed row, no dispatch.
         let (events, dispatch) = totals(&state, workspace_id).await;
-        let dry = body_json(to_response(compact(true, "fp2-b3-ac-compact-dry").await)).await;
+        let dry = body_json(to_response(compact(true, "admin-ac-compact-dry").await)).await;
         assert_eq!(dry["code"], 0, "{dry}");
         let (event_type, payload, own_dispatch) = event_of(&state, &dry).await;
         assert_eq!(event_type, "flow.compaction.previewed");
@@ -12582,7 +12582,7 @@ mod flow_database_tests {
             (events + 1, dispatch),
             "dry-run: +1 event, +0 dispatch"
         );
-        let dry_replay = body_json(to_response(compact(true, "fp2-b3-ac-compact-dry").await)).await;
+        let dry_replay = body_json(to_response(compact(true, "admin-ac-compact-dry").await)).await;
         assert_eq!(dry_replay["data"]["audit_event_id"], dry["data"]["audit_event_id"]);
         assert_eq!(
             totals(&state, workspace_id).await,
@@ -12591,7 +12591,7 @@ mod flow_database_tests {
         );
 
         // compact execute: one business completed row with exactly one dispatch row.
-        let executed = body_json(to_response(compact(false, "fp2-b3-ac-compact-exec").await)).await;
+        let executed = body_json(to_response(compact(false, "admin-ac-compact-exec").await)).await;
         assert_eq!(executed["code"], 0, "{executed}");
         let (event_type, _, own_dispatch) = event_of(&state, &executed).await;
         assert_eq!(event_type, "flow.compaction.completed");
@@ -12608,7 +12608,7 @@ mod flow_database_tests {
         )
         .await;
         assert_eq!(completed_rows, 1, "one execute, one completed event");
-        let exec_replay = body_json(to_response(compact(false, "fp2-b3-ac-compact-exec").await)).await;
+        let exec_replay = body_json(to_response(compact(false, "admin-ac-compact-exec").await)).await;
         assert_eq!(
             exec_replay["data"]["audit_event_id"],
             executed["data"]["audit_event_id"]
@@ -12620,7 +12620,7 @@ mod flow_database_tests {
         );
 
         // rebuild dry-run and verify: audit-only repair previews.
-        let rebuild_dry = body_json(to_response(rebuild(true, "fp2-b3-ac-rebuild-dry").await)).await;
+        let rebuild_dry = body_json(to_response(rebuild(true, "admin-ac-rebuild-dry").await)).await;
         let (event_type, payload, own_dispatch) = event_of(&state, &rebuild_dry).await;
         assert_eq!(event_type, "flow.repair.previewed");
         assert_eq!(payload["kind"], "rebuild_projection", "{payload}");
@@ -12639,7 +12639,7 @@ mod flow_database_tests {
                     dry_run: true,
                     deep: false,
                     expected_head_seq: Some(head),
-                    idempotency_key: "fp2-b3-ac-verify".to_string(),
+                    idempotency_key: "admin-ac-verify".to_string(),
                 }),
             )
             .await,
@@ -12658,7 +12658,7 @@ mod flow_database_tests {
         );
 
         // rebuild execute: business completed with one dispatch row.
-        let rebuild_exec = body_json(to_response(rebuild(false, "fp2-b3-ac-rebuild-exec").await)).await;
+        let rebuild_exec = body_json(to_response(rebuild(false, "admin-ac-rebuild-exec").await)).await;
         let (event_type, _, own_dispatch) = event_of(&state, &rebuild_exec).await;
         assert_eq!(event_type, "flow.repair.completed");
         assert_eq!(own_dispatch, 1);
@@ -12668,7 +12668,7 @@ mod flow_database_tests {
 
     /// GETs one admin operations endpoint through the production router and extractors, so the
     /// query string is parsed exactly as for a real client.
-    async fn fp2_b3_admin_get(state: AppState, user_id: Uuid, uri: String) -> Value {
+    async fn flow_admin_get(state: AppState, user_id: Uuid, uri: String) -> Value {
         use tower::ServiceExt as _;
         let app = axum::Router::new()
             .route(
@@ -12694,11 +12694,11 @@ mod flow_database_tests {
         body_json(response).await
     }
 
-    /// FP2-B3 N3-③: admin lag pages per-document `items` with an opaque cursor and `limit<=100`,
+    /// Admin lag pages per-document `items` with an opaque cursor and `limit<=100`,
     /// and omits `next_cursor` on the last (or an empty) page.
     #[tokio::test]
-    async fn fp2_b3_admin_lag_pages_per_document_items_with_a_cursor() {
-        let scratch = scratch_or_skip!("fp2-b3-lag");
+    async fn admin_lag_pages_per_document_items_with_a_cursor() {
+        let scratch = scratch_or_skip!("admin-lag");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let lag_page = |cursor: Option<String>, limit: Option<u64>, workspace: Uuid| {
@@ -12709,14 +12709,14 @@ mod flow_database_tests {
             if let Some(limit) = limit {
                 query.push(format!("limit={limit}"));
             }
-            fp2_b3_admin_get(
+            flow_admin_get(
                 state.clone(),
                 owner_id,
                 format!("/api/v1/admin/workspaces/{workspace}/flow/lag?{}", query.join("&")),
             )
         };
 
-        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "fp2 b3 lag").await;
+        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "admin lag").await;
         let document_id = document_of(&state, object_id).await;
         exec(
             &state,
@@ -12814,16 +12814,16 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B3 N3-④: workspace integrity pages `documents[]` with a cursor and lists failing
+    /// Workspace integrity pages `documents[]` with a cursor and lists failing
     /// documents with their status / `checked_at` / failure class; `counts` are workspace-wide on
     /// every page and every scope (ruling 3).
     #[tokio::test]
-    async fn fp2_b3_integrity_pages_and_lists_failed_documents() {
-        let scratch = scratch_or_skip!("fp2-b3-integrity");
+    async fn integrity_pages_and_lists_failed_documents() {
+        let scratch = scratch_or_skip!("admin-integrity");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let mut pages = Vec::new();
-        for title in ["fp2 b3 a", "fp2 b3 b", "fp2 b3 c"] {
+        for title in ["admin a", "admin b", "admin c"] {
             pages.push(create_page_as_owner(&state, workspace_id, owner_id, title).await);
         }
         let broken = document_of(&state, pages[1]).await;
@@ -12835,7 +12835,7 @@ mod flow_database_tests {
         )
         .await;
         let integrity = |query: String| {
-            fp2_b3_admin_get(
+            flow_admin_get(
                 state.clone(),
                 owner_id,
                 format!("/api/v1/admin/workspaces/{workspace_id}/flow/integrity?{query}"),
@@ -12919,13 +12919,13 @@ mod flow_database_tests {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // FP2-B4: conversion (Forms bridge) job lifecycle
+    // Conversion (Forms bridge) job lifecycle
     // ---------------------------------------------------------------------------------------------
 
     /// Calls the conversion read/retry/owner routes through the production router and its path
     /// extractors, so a malformed id is parsed exactly as for a real client. A non-JSON body is
     /// returned as `{"non_json_body": <text>}` instead of panicking.
-    async fn fp2_b4_route(state: &AppState, user_id: Uuid, method: &str, uri: &str, body: Option<Value>) -> Value {
+    async fn conversion_route(state: &AppState, user_id: Uuid, method: &str, uri: &str, body: Option<Value>) -> Value {
         use tower::ServiceExt as _;
         let app = axum::Router::new()
             .route(
@@ -13014,11 +13014,11 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B4 N5-⑦: a malformed conversion/job id is a typed `not_found` envelope on every
+    /// A malformed conversion/job id is a typed `not_found` envelope on every
     /// conversion route, not axum's plain-text path rejection.
     #[tokio::test]
-    async fn fp2_b4_non_uuid_conversion_ids_are_typed_not_found() {
-        let scratch = scratch_or_skip!("fp2-b4-non-uuid");
+    async fn non_uuid_conversion_ids_are_typed_not_found() {
+        let scratch = scratch_or_skip!("bridge-non-uuid");
         let state = state_for(scratch.db.clone());
         let (_, owner_id) = seed_workspace(&state, true).await;
         for (method, uri, body) in [
@@ -13030,13 +13030,13 @@ mod flow_database_tests {
                 Some(json!({"idempotency_key":"k","confirm":true})),
             ),
         ] {
-            let response = fp2_b4_route(&state, owner_id, method, uri, body).await;
+            let response = conversion_route(&state, owner_id, method, uri, body).await;
             assert_typed(&response, "not_found", 404);
         }
         scratch.drop_self().await;
     }
 
-    struct Fp2B4 {
+    struct ConversionFixture {
         workspace_id: Uuid,
         owner_id: Uuid,
         project_id: Uuid,
@@ -13045,25 +13045,25 @@ mod flow_database_tests {
         frontier: String,
     }
 
-    fn fp2_b4_text_schema() -> Value {
+    fn conversion_text_schema() -> Value {
         json!({
             "version":"openpr.form.schema.v1",
             "fields":[
-                {"field_id":"fld_fp2b4_req","key":"req","type":"text","required":true},
-                {"field_id":"fld_fp2b4_opt","key":"opt","type":"text","required":false}
+                {"field_id":"fld_conversion_req","key":"req","type":"text","required":true},
+                {"field_id":"fld_conversion_opt","key":"opt","type":"text","required":false}
             ]
         })
     }
 
     /// One workspace, one project, one target form (optionally with an explicit owner policy that
     /// allows `record.create`) and one source Page, all through production handlers.
-    async fn fp2_b4_seed(state: &AppState, explicit_policy: bool) -> Fp2B4 {
+    async fn conversion_seed(state: &AppState, explicit_policy: bool) -> ConversionFixture {
         let (workspace_id, owner_id) = seed_workspace(state, true).await;
         let project_id = Uuid::new_v4();
         exec(
             state,
             "INSERT INTO projects (id, workspace_id, key, name, created_by) \
-             VALUES ($1, $2, 'FB4', 'FP2 B4', $3)",
+             VALUES ($1, $2, 'FB4', 'Conversion', $3)",
             vec![project_id.into(), workspace_id.into(), owner_id.into()],
         )
         .await;
@@ -13074,13 +13074,13 @@ mod flow_database_tests {
                 None,
                 Path(project_id),
                 Json(CreateFormRequest {
-                    key: "fp2_b4_target".to_string(),
-                    name: "FP2 B4 target".to_string(),
+                    key: "bridge_target".to_string(),
+                    name: "Conversion target".to_string(),
                     description: None,
                     icon: None,
                     color: None,
                     title_template: None,
-                    schema: Some(fp2_b4_text_schema()),
+                    schema: Some(conversion_text_schema()),
                     detail_layout: None,
                 }),
             )
@@ -13090,11 +13090,11 @@ mod flow_database_tests {
         assert_eq!(form["code"], 0, "{form}");
         let form_id = Uuid::parse_str(form["data"]["id"].as_str().expect("form id")).expect("UUID");
         if explicit_policy {
-            fp2_b4_set_record_create(state, owner_id, form_id, true).await;
+            conversion_set_record_create(state, owner_id, form_id, true).await;
         }
-        let source_id = create_page_as_owner(state, workspace_id, owner_id, "fp2 b4 source").await;
-        let frontier = fp2_b4_frontier(state, source_id).await;
-        Fp2B4 {
+        let source_id = create_page_as_owner(state, workspace_id, owner_id, "conversion source").await;
+        let frontier = conversion_frontier(state, source_id).await;
+        ConversionFixture {
             workspace_id,
             owner_id,
             project_id,
@@ -13104,7 +13104,7 @@ mod flow_database_tests {
         }
     }
 
-    async fn fp2_b4_frontier(state: &AppState, source_id: Uuid) -> String {
+    async fn conversion_frontier(state: &AppState, source_id: Uuid) -> String {
         #[derive(FromQueryResult)]
         struct Head {
             head_frontier: Vec<u8>,
@@ -13121,7 +13121,7 @@ mod flow_database_tests {
         base64::engine::general_purpose::STANDARD.encode(head.head_frontier)
     }
 
-    async fn fp2_b4_set_record_create(state: &AppState, owner_id: Uuid, form_id: Uuid, allowed: bool) {
+    async fn conversion_set_record_create(state: &AppState, owner_id: Uuid, form_id: Uuid, allowed: bool) {
         let body = body_json(to_response(
             update_form_permissions(
                 State(state.clone()),
@@ -13142,7 +13142,7 @@ mod flow_database_tests {
         assert_eq!(body["code"], 0, "{body}");
     }
 
-    async fn fp2_b4_preview(state: &AppState, fx: &Fp2B4, mapping: Value) -> Value {
+    async fn conversion_preview(state: &AppState, fx: &ConversionFixture, mapping: Value) -> Value {
         body_json(to_response(
             post_flow_conversion_preview(
                 State(state.clone()),
@@ -13165,8 +13165,8 @@ mod flow_database_tests {
         .await
     }
 
-    async fn fp2_b4_record_preview(state: &AppState, fx: &Fp2B4) -> (Uuid, Value) {
-        let preview = fp2_b4_preview(
+    async fn conversion_record_preview(state: &AppState, fx: &ConversionFixture) -> (Uuid, Value) {
+        let preview = conversion_preview(
             state,
             fx,
             json!({"target_form_id":fx.form_id,"title":"Converted","values":{"req":"value","opt":"value"}}),
@@ -13177,7 +13177,13 @@ mod flow_database_tests {
         (preview_id, preview)
     }
 
-    async fn fp2_b4_commit(state: &AppState, fx: &Fp2B4, preview_id: Uuid, schema_version: i32, key: &str) -> Value {
+    async fn conversion_commit(
+        state: &AppState,
+        fx: &ConversionFixture,
+        preview_id: Uuid,
+        schema_version: i32,
+        key: &str,
+    ) -> Value {
         body_json(to_response(
             post_flow_conversion(
                 State(state.clone()),
@@ -13196,7 +13202,7 @@ mod flow_database_tests {
         .await
     }
 
-    async fn fp2_b4_count(state: &AppState, sql: &str, values: Vec<sea_orm::Value>) -> i64 {
+    async fn conversion_count(state: &AppState, sql: &str, values: Vec<sea_orm::Value>) -> i64 {
         state
             .db
             .query_one(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
@@ -13207,16 +13213,16 @@ mod flow_database_tests {
             .expect("count")
     }
 
-    /// FP2-B4 N5-③: every job response carries `target_type`.
+    /// Every job response carries `target_type`.
     #[tokio::test]
-    async fn fp2_b4_conversion_job_responses_carry_target_type() {
-        let scratch = scratch_or_skip!("fp2-b4-target-type");
+    async fn conversion_job_responses_carry_target_type() {
+        let scratch = scratch_or_skip!("bridge-target-type");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
-        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
-        let committed = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-target-record").await;
+        let fx = conversion_seed(&state, true).await;
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        let committed = conversion_commit(&state, &fx, preview_id, 1, "bridge-target-record").await;
         assert_eq!(committed["data"]["target_type"], "form_record", "{committed}");
-        let read = fp2_b4_route(
+        let read = conversion_route(
             &state,
             fx.owner_id,
             "GET",
@@ -13229,18 +13235,18 @@ mod flow_database_tests {
         .await;
         assert_eq!(read["data"]["target_type"], "form_record", "{read}");
 
-        let preview = fp2_b4_preview(
+        let preview = conversion_preview(
             &state,
             &fx,
-            json!({"target_project_id":fx.project_id,"key":"fp2_b4_new_form","name":"New form"}),
+            json!({"target_project_id":fx.project_id,"key":"bridge_new_form","name":"New form"}),
         )
         .await;
         assert_eq!(preview["code"], 0, "{preview}");
         let preview_id = Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
-        let committed = fp2_b4_commit(&state, &fx, preview_id, 0, "fp2-b4-target-form").await;
+        let committed = conversion_commit(&state, &fx, preview_id, 0, "bridge-target-form").await;
         assert_eq!(committed["code"], 0, "{committed}");
         assert_eq!(committed["data"]["target_type"], "form", "{committed}");
-        let read = fp2_b4_route(
+        let read = conversion_route(
             &state,
             fx.owner_id,
             "GET",
@@ -13253,7 +13259,7 @@ mod flow_database_tests {
         .await;
         assert_eq!(read["data"]["target_type"], "form", "{read}");
         assert_eq!(
-            fp2_b4_count(
+            conversion_count(
                 &state,
                 "SELECT count(*) AS n FROM project_forms WHERE workspace_id=$1",
                 vec![fx.workspace_id.into()]
@@ -13265,14 +13271,14 @@ mod flow_database_tests {
     }
 
     #[derive(FromQueryResult)]
-    struct Fp2B4JobRow {
+    struct ConversionJobRow {
         id: Uuid,
         status: String,
         error_code: Option<String>,
     }
 
-    async fn fp2_b4_jobs_of_preview(state: &AppState, preview_id: Uuid) -> Vec<Fp2B4JobRow> {
-        Fp2B4JobRow::find_by_statement(Statement::from_sql_and_values(
+    async fn conversion_jobs_of_preview(state: &AppState, preview_id: Uuid) -> Vec<ConversionJobRow> {
+        ConversionJobRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT id, status, error_code FROM flow_conversion_jobs WHERE preview_id=$1",
             vec![preview_id.into()],
@@ -13282,19 +13288,19 @@ mod flow_database_tests {
         .expect("job query")
     }
 
-    /// FP2-B4 N4-①: a second commit of the same preview under a different idempotency key returns
+    /// A second commit of the same preview under a different idempotency key returns
     /// the same job (200), never a 500 from the `UNIQUE (preview_id)` constraint, and writes nothing.
     #[tokio::test]
-    async fn fp2_b4_second_commit_of_a_preview_with_another_key_returns_the_same_job() {
-        let scratch = scratch_or_skip!("fp2-b4-same-job");
+    async fn second_commit_of_a_preview_with_another_key_returns_the_same_job() {
+        let scratch = scratch_or_skip!("bridge-same-job");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
-        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        let fx = conversion_seed(&state, true).await;
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
 
-        let first = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-key-a").await;
+        let first = conversion_commit(&state, &fx, preview_id, 1, "bridge-key-a").await;
         assert_eq!(first["code"], 0, "{first}");
         assert_eq!(first["data"]["status"], "completed", "{first}");
-        let second = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-key-b").await;
+        let second = conversion_commit(&state, &fx, preview_id, 1, "bridge-key-b").await;
         assert_eq!(
             second["code"], 0,
             "the second key must get the job, not an error: {second}"
@@ -13304,10 +13310,10 @@ mod flow_database_tests {
             second["data"]["created_target_ids"], first["data"]["created_target_ids"],
             "{second}"
         );
-        let replay_a = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-key-a").await;
+        let replay_a = conversion_commit(&state, &fx, preview_id, 1, "bridge-key-a").await;
         assert_eq!(replay_a["data"]["job_id"], first["data"]["job_id"], "{replay_a}");
         assert_eq!(
-            fp2_b4_count(
+            conversion_count(
                 &state,
                 "SELECT count(*) AS n FROM form_records WHERE form_id=$1",
                 vec![fx.form_id.into()]
@@ -13316,7 +13322,7 @@ mod flow_database_tests {
             1,
             "one preview converts at most once"
         );
-        let jobs = fp2_b4_jobs_of_preview(&state, preview_id).await;
+        let jobs = conversion_jobs_of_preview(&state, preview_id).await;
         assert_eq!(jobs.len(), 1);
         assert_eq!(first["data"]["job_id"], jobs[0].id.to_string());
         assert_eq!(jobs[0].status, "completed");
@@ -13325,7 +13331,7 @@ mod flow_database_tests {
     }
 
     /// The 14 stable codes of `error-mapping-v1.md`; a conversion job's `error` must be one of them.
-    const FP2_B4_STABLE_CODES: [&str; 14] = [
+    const CONVERSION_STABLE_CODES: [&str; 14] = [
         "unauthenticated",
         "forbidden",
         "feature_disabled",
@@ -13342,28 +13348,28 @@ mod flow_database_tests {
         "unsupported_format",
     ];
 
-    /// FP2-B4 N5-①/N5-④: a failure after the job row exists -- here the production-reachable
+    /// A failure after the job row exists -- here the production-reachable
     /// Forms policy revocation and form archive between preview and commit -- leaves the job
     /// `failed` with a stable `error` code, emits `flow.conversion.failed`, and still answers the
     /// caller with a typed error.
     #[tokio::test]
-    async fn fp2_b4_execution_failure_persists_a_failed_job_with_a_stable_error() {
-        let scratch = scratch_or_skip!("fp2-b4-failed-job");
+    async fn execution_failure_persists_a_failed_job_with_a_stable_error() {
+        let scratch = scratch_or_skip!("bridge-failed-job");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
+        let fx = conversion_seed(&state, true).await;
 
         // (a) record.create revoked after the preview.
-        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
-        let rejected = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-revoked").await;
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let rejected = conversion_commit(&state, &fx, preview_id, 1, "bridge-revoked").await;
         assert_typed(&rejected, "policy_rejected", 403);
-        let jobs = fp2_b4_jobs_of_preview(&state, preview_id).await;
+        let jobs = conversion_jobs_of_preview(&state, preview_id).await;
         assert_eq!(jobs.len(), 1, "the job row must survive the failure");
         assert_eq!(jobs[0].status, "failed");
         assert_eq!(jobs[0].error_code.as_deref(), Some("policy_rejected"));
         assert_eq!(rejected["details"]["job_id"], jobs[0].id.to_string(), "{rejected}");
         assert_eq!(rejected["details"]["job_status"], "failed", "{rejected}");
-        let read = fp2_b4_route(
+        let read = conversion_route(
             &state,
             fx.owner_id,
             "GET",
@@ -13375,11 +13381,11 @@ mod flow_database_tests {
         assert_eq!(read["data"]["status"], "failed", "{read}");
         let error = read["data"]["error"].as_str().expect("a failed job carries error");
         assert!(
-            FP2_B4_STABLE_CODES.contains(&error),
+            CONVERSION_STABLE_CODES.contains(&error),
             "unstable job error {error}: {read}"
         );
         assert_eq!(
-            fp2_b4_count(
+            conversion_count(
                 &state,
                 "SELECT count(*) AS n FROM business_events WHERE aggregate_id=$1 \
                  AND event_type='flow.conversion.failed' AND payload->>'error'='policy_rejected'",
@@ -13389,7 +13395,7 @@ mod flow_database_tests {
             1
         );
         assert_eq!(
-            fp2_b4_count(
+            conversion_count(
                 &state,
                 "SELECT count(*) AS n FROM form_records WHERE form_id=$1",
                 vec![fx.form_id.into()]
@@ -13400,22 +13406,22 @@ mod flow_database_tests {
         );
 
         // (b) the target form is archived through the Forms route after the preview.
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
-        let (archived_preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        let (archived_preview_id, _) = conversion_record_preview(&state, &fx).await;
         let archived = body_json(to_response(
             delete_form(State(state.clone()), claims_for(fx.owner_id), None, Path(fx.form_id)).await,
         ))
         .await;
         assert_eq!(archived["code"], 0, "{archived}");
-        let rejected = fp2_b4_commit(&state, &fx, archived_preview_id, 1, "fp2-b4-archived").await;
+        let rejected = conversion_commit(&state, &fx, archived_preview_id, 1, "bridge-archived").await;
         assert!(
             rejected["error_code"]
                 .as_str()
-                .is_some_and(|code| FP2_B4_STABLE_CODES.contains(&code)),
+                .is_some_and(|code| CONVERSION_STABLE_CODES.contains(&code)),
             "{rejected}"
         );
         assert!(rejected["data"].is_null(), "{rejected}");
-        let jobs = fp2_b4_jobs_of_preview(&state, archived_preview_id).await;
+        let jobs = conversion_jobs_of_preview(&state, archived_preview_id).await;
         assert_eq!(jobs.len(), 1, "the job row must survive the failure");
         assert_eq!(jobs[0].status, "failed");
         assert_eq!(jobs[0].error_code.as_deref(), rejected["error_code"].as_str());
@@ -13424,34 +13430,34 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B4 N4-⑥: an expired preview is refused with `policy_rejected` +
+    /// An expired preview is refused with `policy_rejected` +
     /// `details.reason=preview_expired`, before any job exists.
     #[tokio::test]
-    async fn fp2_b4_expired_preview_commit_is_policy_rejected_preview_expired() {
-        let scratch = scratch_or_skip!("fp2-b4-expired");
+    async fn expired_preview_commit_is_policy_rejected_preview_expired() {
+        let scratch = scratch_or_skip!("bridge-expired");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
-        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+        let fx = conversion_seed(&state, true).await;
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
         exec(
             &state,
             "UPDATE flow_conversion_previews SET expires_at=now()-interval '1 second' WHERE id=$1",
             vec![preview_id.into()],
         )
         .await;
-        let rejected = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-expired").await;
+        let rejected = conversion_commit(&state, &fx, preview_id, 1, "bridge-expired").await;
         assert_typed(&rejected, "policy_rejected", 403);
         assert_eq!(rejected["details"]["reason"], "preview_expired", "{rejected}");
-        assert!(fp2_b4_jobs_of_preview(&state, preview_id).await.is_empty());
+        assert!(conversion_jobs_of_preview(&state, preview_id).await.is_empty());
         scratch.drop_self().await;
     }
 
-    /// FP2-B4 N4-⑥: a form without any policy row is `permission_unconfigured` (ADR-0019 BR-4).
+    /// A form without any policy row is `permission_unconfigured` (ADR-0019 BR-4).
     #[tokio::test]
-    async fn fp2_b4_unconfigured_target_form_is_policy_rejected_permission_unconfigured() {
-        let scratch = scratch_or_skip!("fp2-b4-unconfigured");
+    async fn unconfigured_target_form_is_policy_rejected_permission_unconfigured() {
+        let scratch = scratch_or_skip!("bridge-unconfigured");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, false).await;
-        let rejected = fp2_b4_preview(
+        let fx = conversion_seed(&state, false).await;
+        let rejected = conversion_preview(
             &state,
             &fx,
             json!({"target_form_id":fx.form_id,"values":{"req":"value"}}),
@@ -13466,8 +13472,8 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    async fn fp2_b4_retry(state: &AppState, fx: &Fp2B4, job_id: &str) -> Value {
-        fp2_b4_route(
+    async fn conversion_retry(state: &AppState, fx: &ConversionFixture, job_id: &str) -> Value {
+        conversion_route(
             state,
             fx.owner_id,
             "POST",
@@ -13477,11 +13483,11 @@ mod flow_database_tests {
         .await
     }
 
-    async fn fp2_b4_change_schema(state: &AppState, fx: &Fp2B4, expected_version: i32) {
-        let mut schema = fp2_b4_text_schema();
+    async fn conversion_change_schema(state: &AppState, fx: &ConversionFixture, expected_version: i32) {
+        let mut schema = conversion_text_schema();
         if let Some(fields) = schema["fields"].as_array_mut() {
             fields.push(json!({
-                "field_id": format!("fld_fp2b4_extra_{expected_version}"),
+                "field_id": format!("fld_conversion_extra_{expected_version}"),
                 "key": format!("extra_{expected_version}"),
                 "type": "text",
                 "required": false
@@ -13510,62 +13516,62 @@ mod flow_database_tests {
         assert_eq!(updated["code"], 0, "{updated}");
     }
 
-    /// FP2-B4 N4-⑥ / N5-⑤: a target schema change between preview and commit (or between a
+    /// A target schema change between preview and commit (or between a
     /// failure and its retry) is `policy_rejected` + `details.reason=target_schema_changed`.
     #[tokio::test]
-    async fn fp2_b4_target_schema_change_is_policy_rejected_target_schema_changed() {
-        let scratch = scratch_or_skip!("fp2-b4-schema-changed");
+    async fn target_schema_change_is_policy_rejected_target_schema_changed() {
+        let scratch = scratch_or_skip!("bridge-schema-changed");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
+        let fx = conversion_seed(&state, true).await;
 
-        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
-        fp2_b4_change_schema(&state, &fx, 1).await;
-        let rejected = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-schema-commit").await;
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        conversion_change_schema(&state, &fx, 1).await;
+        let rejected = conversion_commit(&state, &fx, preview_id, 1, "bridge-schema-commit").await;
         assert_typed(&rejected, "policy_rejected", 403);
         assert_eq!(rejected["details"]["reason"], "target_schema_changed", "{rejected}");
-        let mismatched = fp2_b4_commit(&state, &fx, preview_id, 2, "fp2-b4-schema-input").await;
+        let mismatched = conversion_commit(&state, &fx, preview_id, 2, "bridge-schema-input").await;
         assert_typed(&mismatched, "policy_rejected", 403);
         assert_eq!(mismatched["details"]["reason"], "target_schema_changed", "{mismatched}");
 
         // A failed job whose target schema moves on before the retry.
-        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
-        let failed = fp2_b4_commit(&state, &fx, preview_id, 2, "fp2-b4-schema-retry").await;
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let failed = conversion_commit(&state, &fx, preview_id, 2, "bridge-schema-retry").await;
         assert_typed(&failed, "policy_rejected", 403);
-        let job_id = fp2_b4_jobs_of_preview(&state, preview_id)
+        let job_id = conversion_jobs_of_preview(&state, preview_id)
             .await
             .first()
             .map(|job| job.id)
             .expect("the failed job exists");
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
-        fp2_b4_change_schema(&state, &fx, 2).await;
-        let retried = fp2_b4_retry(&state, &fx, &job_id.to_string()).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        conversion_change_schema(&state, &fx, 2).await;
+        let retried = conversion_retry(&state, &fx, &job_id.to_string()).await;
         assert_typed(&retried, "policy_rejected", 403);
         assert_eq!(retried["details"]["reason"], "target_schema_changed", "{retried}");
-        let jobs = fp2_b4_jobs_of_preview(&state, preview_id).await;
+        let jobs = conversion_jobs_of_preview(&state, preview_id).await;
         assert_eq!(jobs[0].status, "failed");
         assert_eq!(jobs[0].error_code.as_deref(), Some("policy_rejected"));
         scratch.drop_self().await;
     }
 
-    /// FP2-B4 N5-⑤: retry does not depend on the preview TTL. A job that failed is retried 20
+    /// Retry does not depend on the preview TTL. A job that failed is retried 20
     /// minutes after its preview expired, against the job's own frozen frontier/schema version;
     /// a source that moved on in the meantime is `stale_frontier`.
     #[tokio::test]
-    async fn fp2_b4_failed_job_retries_twenty_minutes_after_its_preview_expired() {
-        let scratch = scratch_or_skip!("fp2-b4-retry-ttl");
+    async fn failed_job_retries_twenty_minutes_after_its_preview_expired() {
+        let scratch = scratch_or_skip!("bridge-retry-ttl");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
-        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
-        let failed = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-ttl-commit").await;
+        let fx = conversion_seed(&state, true).await;
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let failed = conversion_commit(&state, &fx, preview_id, 1, "bridge-ttl-commit").await;
         assert_typed(&failed, "policy_rejected", 403);
-        let job_id = fp2_b4_jobs_of_preview(&state, preview_id)
+        let job_id = conversion_jobs_of_preview(&state, preview_id)
             .await
             .first()
             .map(|job| job.id)
             .expect("the failed job exists");
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
         exec(
             &state,
             "UPDATE flow_conversion_previews SET created_at=now()-interval '35 minutes', \
@@ -13573,7 +13579,7 @@ mod flow_database_tests {
             vec![preview_id.into()],
         )
         .await;
-        let retried = fp2_b4_retry(&state, &fx, &job_id.to_string()).await;
+        let retried = conversion_retry(&state, &fx, &job_id.to_string()).await;
         assert_eq!(retried["code"], 0, "{retried}");
         assert_eq!(retried["data"]["job_id"], job_id.to_string(), "{retried}");
         assert_eq!(retried["data"]["status"], "completed", "{retried}");
@@ -13585,16 +13591,16 @@ mod flow_database_tests {
         assert!(retried["data"]["error"].is_null(), "{retried}");
 
         // Source advanced after the failure: retry is stale_frontier and the job stays failed.
-        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
-        let failed = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-ttl-stale").await;
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let failed = conversion_commit(&state, &fx, preview_id, 1, "bridge-ttl-stale").await;
         assert_typed(&failed, "policy_rejected", 403);
-        let job_id = fp2_b4_jobs_of_preview(&state, preview_id)
+        let job_id = conversion_jobs_of_preview(&state, preview_id)
             .await
             .first()
             .map(|job| job.id)
             .expect("the failed job exists");
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
         let advanced = body_json(to_response(
             post_flow_object_command(
                 State(state.clone()),
@@ -13615,22 +13621,22 @@ mod flow_database_tests {
         ))
         .await;
         assert_eq!(advanced["code"], 0, "{advanced}");
-        let stale_retry = fp2_b4_retry(&state, &fx, &job_id.to_string()).await;
+        let stale_retry = conversion_retry(&state, &fx, &job_id.to_string()).await;
         assert_typed(&stale_retry, "stale_frontier", 409);
-        let jobs = fp2_b4_jobs_of_preview(&state, preview_id).await;
+        let jobs = conversion_jobs_of_preview(&state, preview_id).await;
         assert_eq!(jobs[0].status, "failed");
         assert_eq!(jobs[0].error_code.as_deref(), Some("stale_frontier"));
         scratch.drop_self().await;
     }
 
-    /// FP2-B4 N4-④: preview and job report the unmapped target field and the mapped value with no
+    /// Preview and job report the unmapped target field and the mapped value with no
     /// target field.
     #[tokio::test]
-    async fn fp2_b4_preview_and_job_report_mapping_warnings() {
-        let scratch = scratch_or_skip!("fp2-b4-warnings");
+    async fn preview_and_job_report_mapping_warnings() {
+        let scratch = scratch_or_skip!("bridge-warnings");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
-        let preview = fp2_b4_preview(
+        let fx = conversion_seed(&state, true).await;
+        let preview = conversion_preview(
             &state,
             &fx,
             json!({"target_form_id":fx.form_id,"values":{"req":"value","ghost":"dropped"}}),
@@ -13640,7 +13646,7 @@ mod flow_database_tests {
         let expected = json!(["target_value_missing:opt", "unknown_target_field:ghost"]);
         assert_eq!(preview["data"]["warnings"], expected, "{preview}");
         let preview_id = Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
-        let committed = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b4-warnings").await;
+        let committed = conversion_commit(&state, &fx, preview_id, 1, "bridge-warnings").await;
         assert_eq!(committed["data"]["status"], "completed", "{committed}");
         assert_eq!(committed["data"]["warnings"], expected, "{committed}");
         scratch.drop_self().await;
@@ -13648,21 +13654,21 @@ mod flow_database_tests {
 
     /// Leaves one job of `preview` failed through the production path (record.create revoked
     /// between preview and commit), then restores the policy. Returns the job id.
-    async fn fp2_b4_failed_job(state: &AppState, fx: &Fp2B4, key: &str) -> Uuid {
-        let (preview_id, _) = fp2_b4_record_preview(state, fx).await;
-        fp2_b4_set_record_create(state, fx.owner_id, fx.form_id, false).await;
-        let failed = fp2_b4_commit(state, fx, preview_id, 1, key).await;
+    async fn conversion_failed_job(state: &AppState, fx: &ConversionFixture, key: &str) -> Uuid {
+        let (preview_id, _) = conversion_record_preview(state, fx).await;
+        conversion_set_record_create(state, fx.owner_id, fx.form_id, false).await;
+        let failed = conversion_commit(state, fx, preview_id, 1, key).await;
         assert_typed(&failed, "policy_rejected", 403);
-        fp2_b4_set_record_create(state, fx.owner_id, fx.form_id, true).await;
-        fp2_b4_jobs_of_preview(state, preview_id)
+        conversion_set_record_create(state, fx.owner_id, fx.form_id, true).await;
+        conversion_jobs_of_preview(state, preview_id)
             .await
             .first()
             .map(|job| job.id)
             .expect("the failed job exists")
     }
 
-    async fn fp2_b4_job_status(state: &AppState, job_id: Uuid) -> (String, Option<String>) {
-        let row = Fp2B4JobRow::find_by_statement(Statement::from_sql_and_values(
+    async fn conversion_job_status(state: &AppState, job_id: Uuid) -> (String, Option<String>) {
+        let row = ConversionJobRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT id, status, error_code FROM flow_conversion_jobs WHERE id=$1",
             vec![job_id.into()],
@@ -13675,8 +13681,8 @@ mod flow_database_tests {
         (row.status, row.error_code)
     }
 
-    async fn fp2_b4_reaped_events(state: &AppState, job_id: Uuid) -> (i64, i64) {
-        let events = fp2_b4_count(
+    async fn conversion_reaped_events(state: &AppState, job_id: Uuid) -> (i64, i64) {
+        let events = conversion_count(
             state,
             "SELECT count(*) AS n FROM business_events WHERE aggregate_id=$1 \
              AND event_type='flow.conversion.failed' AND payload->>'reason'='stale_started' \
@@ -13684,7 +13690,7 @@ mod flow_database_tests {
             vec![job_id.to_string().into()],
         )
         .await;
-        let dispatch = fp2_b4_count(
+        let dispatch = conversion_count(
             state,
             "SELECT count(*) AS n FROM event_dispatch d JOIN business_events e ON e.id = d.event_id \
              WHERE e.aggregate_id=$1 AND e.event_type='flow.conversion.failed' \
@@ -13703,15 +13709,15 @@ mod flow_database_tests {
     async fn a_failed_conversion_commit_reports_the_jobs_real_status() {
         let scratch = scratch_or_skip!("conversion-job-status");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
+        let fx = conversion_seed(&state, true).await;
         for (fault, expected) in [(1_u8, "failed"), (4_u8, "started"), (3_u8, "completed")] {
-            let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
+            let (preview_id, _) = conversion_record_preview(&state, &fx).await;
             crate::flow::bridge::set_conversion_fault_for_test(preview_id, fault);
-            let body = fp2_b4_commit(&state, &fx, preview_id, 1, &format!("job-status-{fault}")).await;
+            let body = conversion_commit(&state, &fx, preview_id, 1, &format!("job-status-{fault}")).await;
             crate::flow::bridge::set_conversion_fault_for_test(preview_id, 0);
             assert_typed(&body, "server_rejected", 500);
             assert_eq!(body["details"]["job_status"], expected, "fault {fault}: {body}");
-            let jobs = fp2_b4_jobs_of_preview(&state, preview_id).await;
+            let jobs = conversion_jobs_of_preview(&state, preview_id).await;
             assert_eq!(jobs.len(), 1, "fault {fault}");
             assert_eq!(
                 body["details"]["job_id"],
@@ -13726,19 +13732,19 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B4 ruling 2: a job left `started` past the threshold (its run crashed) is reaped to
+    /// A job left `started` past the threshold (its run crashed) is reaped to
     /// `failed`/`server_rejected` with one business `flow.conversion.failed` (`reason=stale_started`);
     /// a fresh `started` job is left alone; a second sweep writes nothing; and a retry that finds a
     /// `started` job, fresh or stale, answers `server_draining{reason:"contention"}` and never reaps
     /// it in place (`rest-api-v1.md` v0.7, `error-mapping-v1.md`).
     #[tokio::test]
-    async fn fp2_b4_stale_started_conversion_jobs_are_reaped_once_and_become_retryable() {
-        let scratch = scratch_or_skip!("fp2-b4-reap");
+    async fn stale_started_conversion_jobs_are_reaped_once_and_become_retryable() {
+        let scratch = scratch_or_skip!("bridge-reap");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
-        let stale_job = fp2_b4_failed_job(&state, &fx, "fp2-b4-reap-stale").await;
-        let fresh_job = fp2_b4_failed_job(&state, &fx, "fp2-b4-reap-fresh").await;
-        let retry_job = fp2_b4_failed_job(&state, &fx, "fp2-b4-reap-retry").await;
+        let fx = conversion_seed(&state, true).await;
+        let stale_job = conversion_failed_job(&state, &fx, "bridge-reap-stale").await;
+        let fresh_job = conversion_failed_job(&state, &fx, "bridge-reap-fresh").await;
+        let retry_job = conversion_failed_job(&state, &fx, "bridge-reap-retry").await;
         // Simulate runs that crashed after their claim: the job row is still `started`.
         for (job_id, age) in [
             (stale_job, "16 minutes"),
@@ -13762,38 +13768,38 @@ mod flow_database_tests {
             .expect("the sweep runs");
         assert_eq!(reaped, 1, "only the job older than the threshold is reaped");
         assert_eq!(
-            fp2_b4_job_status(&state, stale_job).await,
+            conversion_job_status(&state, stale_job).await,
             ("failed".to_string(), Some("server_rejected".to_string()))
         );
         assert_eq!(
-            fp2_b4_reaped_events(&state, stale_job).await,
+            conversion_reaped_events(&state, stale_job).await,
             (1, 1),
             "one business event"
         );
         assert_eq!(
-            fp2_b4_job_status(&state, fresh_job).await,
+            conversion_job_status(&state, fresh_job).await,
             ("started".to_string(), None),
             "a fresh started job is not reaped"
         );
-        assert_eq!(fp2_b4_reaped_events(&state, fresh_job).await, (0, 0));
+        assert_eq!(conversion_reaped_events(&state, fresh_job).await, (0, 0));
 
         let again = crate::flow::bridge::reap_stale_conversion_jobs(&state, threshold)
             .await
             .expect("the second sweep runs");
         assert_eq!(again, 0, "the sweep is idempotent");
-        assert_eq!(fp2_b4_reaped_events(&state, stale_job).await, (1, 1));
+        assert_eq!(conversion_reaped_events(&state, stale_job).await, (1, 1));
 
         // The sweep made the stale job retryable.
-        let retried = fp2_b4_retry(&state, &fx, &stale_job.to_string()).await;
+        let retried = conversion_retry(&state, &fx, &stale_job.to_string()).await;
         assert_eq!(retried["code"], 0, "{retried}");
         assert_eq!(retried["data"]["status"], "completed", "{retried}");
 
         // A retry that finds a fresh `started` job is a request on a job in flight; ...
-        let refused = fp2_b4_retry(&state, &fx, &fresh_job.to_string()).await;
+        let refused = conversion_retry(&state, &fx, &fresh_job.to_string()).await;
         assert_typed(&refused, "server_draining", 409);
         assert_eq!(refused["details"]["reason"], "contention", "{refused}");
         assert!(refused["details"]["retry_after_ms"].as_u64().is_some(), "{refused}");
-        assert_eq!(fp2_b4_job_status(&state, fresh_job).await.0, "started");
+        assert_eq!(conversion_job_status(&state, fresh_job).await.0, "started");
         // ... and so is one that finds a stale one (it went stale after the last sweep): the retry
         // does not reap in place, the periodic sweep does.
         exec(
@@ -13803,14 +13809,14 @@ mod flow_database_tests {
             vec![retry_job.into()],
         )
         .await;
-        let not_reaped = fp2_b4_retry(&state, &fx, &retry_job.to_string()).await;
+        let not_reaped = conversion_retry(&state, &fx, &retry_job.to_string()).await;
         assert_typed(&not_reaped, "server_draining", 409);
         assert_eq!(not_reaped["details"]["reason"], "contention", "{not_reaped}");
         assert_eq!(
-            fp2_b4_job_status(&state, retry_job).await,
+            conversion_job_status(&state, retry_job).await,
             ("started".to_string(), None)
         );
-        assert_eq!(fp2_b4_reaped_events(&state, retry_job).await, (0, 0));
+        assert_eq!(conversion_reaped_events(&state, retry_job).await, (0, 0));
         scratch.drop_self().await;
     }
 
@@ -13821,8 +13827,8 @@ mod flow_database_tests {
     async fn the_conversion_reaper_fails_jobs_that_go_stale_after_startup_and_stops_on_shutdown() {
         let scratch = scratch_or_skip!("conversion-reaper");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
-        let job = fp2_b4_failed_job(&state, &fx, "conversion-reaper-job").await;
+        let fx = conversion_seed(&state, true).await;
+        let job = conversion_failed_job(&state, &fx, "conversion-reaper-job").await;
         exec(
             &state,
             "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, started_at=now() WHERE id=$1",
@@ -13838,7 +13844,7 @@ mod flow_database_tests {
         // Let the startup sweep pass while the job is still fresh.
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         assert_eq!(
-            fp2_b4_job_status(&state, job).await,
+            conversion_job_status(&state, job).await,
             ("started".to_string(), None),
             "a fresh started job survives the sweeps"
         );
@@ -13850,15 +13856,15 @@ mod flow_database_tests {
         )
         .await;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while fp2_b4_job_status(&state, job).await.0 == "started" && std::time::Instant::now() < deadline {
+        while conversion_job_status(&state, job).await.0 == "started" && std::time::Instant::now() < deadline {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
         assert_eq!(
-            fp2_b4_job_status(&state, job).await,
+            conversion_job_status(&state, job).await,
             ("failed".to_string(), Some("server_rejected".to_string())),
             "a later periodic sweep fails the job without a retry"
         );
-        assert_eq!(fp2_b4_reaped_events(&state, job).await, (1, 1));
+        assert_eq!(conversion_reaped_events(&state, job).await, (1, 1));
         stop.send(true).expect("the reaper is listening");
         tokio::time::timeout(std::time::Duration::from_secs(5), reaper)
             .await
@@ -13941,9 +13947,9 @@ mod flow_database_tests {
     async fn the_conversion_sweep_measures_a_run_from_started_at_and_ignores_updated_at() {
         let scratch = scratch_or_skip!("conversion-started-at");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
-        let touched_job = fp2_b4_failed_job(&state, &fx, "started-at-touched").await;
-        let young_job = fp2_b4_failed_job(&state, &fx, "started-at-young").await;
+        let fx = conversion_seed(&state, true).await;
+        let touched_job = conversion_failed_job(&state, &fx, "started-at-touched").await;
+        let young_job = conversion_failed_job(&state, &fx, "started-at-young").await;
         // A run that began 16 minutes ago whose row was written a moment ago ...
         exec(
             &state,
@@ -13968,17 +13974,17 @@ mod flow_database_tests {
         .await
         .expect("the sweep runs");
         assert_eq!(
-            fp2_b4_job_status(&state, touched_job).await,
+            conversion_job_status(&state, touched_job).await,
             ("failed".to_string(), Some("server_rejected".to_string())),
             "a run past the threshold is reclaimed although its row was just written"
         );
-        assert_eq!(fp2_b4_reaped_events(&state, touched_job).await, (1, 1));
+        assert_eq!(conversion_reaped_events(&state, touched_job).await, (1, 1));
         assert_eq!(
-            fp2_b4_job_status(&state, young_job).await,
+            conversion_job_status(&state, young_job).await,
             ("started".to_string(), None),
             "a run that just began is left alone although its row was last written long ago"
         );
-        assert_eq!(fp2_b4_reaped_events(&state, young_job).await, (0, 0));
+        assert_eq!(conversion_reaped_events(&state, young_job).await, (0, 0));
         assert_eq!(reaped, 1);
         scratch.drop_self().await;
     }
@@ -13992,14 +13998,14 @@ mod flow_database_tests {
     async fn a_conversion_retry_claim_resets_started_at_and_no_other_write_moves_it() {
         let scratch = scratch_or_skip!("conversion-started-at-retry");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
+        let fx = conversion_seed(&state, true).await;
         record_started_at_moves(&state).await;
         let claim = || vec![("failed".to_string(), "started".to_string())];
         let none = Vec::<(String, String)>::new;
 
         // Created, run and failed: the failure write keeps the creation time.
-        let job = fp2_b4_failed_job(&state, &fx, "started-at-retry").await;
-        assert_eq!(fp2_b4_job_status(&state, job).await.0, "failed");
+        let job = conversion_failed_job(&state, &fx, "started-at-retry").await;
+        assert_eq!(conversion_job_status(&state, job).await.0, "failed");
         assert_eq!(
             take_started_at_moves(&state, job).await,
             none(),
@@ -14031,11 +14037,11 @@ mod flow_database_tests {
             .expect("preview id");
         // The retried run fails and its failure cannot be recorded: the job stays `started`.
         crate::flow::bridge::set_conversion_fault_for_test(preview_id, 4);
-        let retried = fp2_b4_retry(&state, &fx, &job.to_string()).await;
+        let retried = conversion_retry(&state, &fx, &job.to_string()).await;
         crate::flow::bridge::set_conversion_fault_for_test(preview_id, 0);
         assert_typed(&retried, "server_rejected", 500);
         assert_eq!(retried["details"]["job_status"], "started", "{retried}");
-        assert_eq!(fp2_b4_job_status(&state, job).await, ("started".to_string(), None));
+        assert_eq!(conversion_job_status(&state, job).await, ("started".to_string(), None));
         assert_eq!(
             take_started_at_moves(&state, job).await,
             claim(),
@@ -14050,7 +14056,7 @@ mod flow_database_tests {
             .await
             .expect("the sweep runs");
         assert_eq!(reaped, 0, "the run the retry just claimed is not stale");
-        assert_eq!(fp2_b4_job_status(&state, job).await, ("started".to_string(), None));
+        assert_eq!(conversion_job_status(&state, job).await, ("started".to_string(), None));
 
         // The sweep's own write does not move it.
         backdate_started_at(&state, job).await;
@@ -14058,7 +14064,7 @@ mod flow_database_tests {
             .await
             .expect("the sweep runs");
         assert_eq!(reaped, 1);
-        assert_eq!(fp2_b4_job_status(&state, job).await.0, "failed");
+        assert_eq!(conversion_job_status(&state, job).await.0, "failed");
         assert_eq!(
             take_started_at_moves(&state, job).await,
             none(),
@@ -14068,11 +14074,11 @@ mod flow_database_tests {
         assert!(after_reap > 900.0, "reaping keeps started_at: {after_reap}");
 
         // A retry whose run is refused: the claim writes it, recording the failure does not.
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
-        let refused = fp2_b4_retry(&state, &fx, &job.to_string()).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let refused = conversion_retry(&state, &fx, &job.to_string()).await;
         assert_typed(&refused, "policy_rejected", 403);
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
-        assert_eq!(fp2_b4_job_status(&state, job).await.0, "failed");
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        assert_eq!(conversion_job_status(&state, job).await.0, "failed");
         assert_eq!(
             take_started_at_moves(&state, job).await,
             claim(),
@@ -14081,7 +14087,7 @@ mod flow_database_tests {
 
         // A retry that completes: the claim writes it, the completion does not.
         backdate_started_at(&state, job).await;
-        let completed = fp2_b4_retry(&state, &fx, &job.to_string()).await;
+        let completed = conversion_retry(&state, &fx, &job.to_string()).await;
         assert_eq!(completed["data"]["status"], "completed", "{completed}");
         assert_eq!(
             take_started_at_moves(&state, job).await,
@@ -14108,9 +14114,9 @@ mod flow_database_tests {
         const MIGRATION: &str = include_str!("../../../../migrations/0072_flow_conversion_job_started_at.sql");
         let scratch = scratch_or_skip!("conversion-started-at-migration");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
-        let running = fp2_b4_failed_job(&state, &fx, "started-at-migration-running").await;
-        let failed = fp2_b4_failed_job(&state, &fx, "started-at-migration-failed").await;
+        let fx = conversion_seed(&state, true).await;
+        let running = conversion_failed_job(&state, &fx, "started-at-migration-running").await;
+        let failed = conversion_failed_job(&state, &fx, "started-at-migration-failed").await;
         state
             .db
             .execute_unprepared("ALTER TABLE flow_conversion_jobs DROP COLUMN started_at")
@@ -14133,7 +14139,7 @@ mod flow_database_tests {
         let backfilled = |column: &'static str, job_id: Uuid| {
             let state = state.clone();
             async move {
-                fp2_b4_count(
+                conversion_count(
                     &state,
                     &format!("SELECT count(*) AS n FROM flow_conversion_jobs WHERE id=$1 AND started_at = {column}"),
                     vec![job_id.into()],
@@ -14144,7 +14150,7 @@ mod flow_database_tests {
         let column_is_final = || {
             let state = state.clone();
             async move {
-                fp2_b4_count(
+                conversion_count(
                     &state,
                     "SELECT count(*) AS n FROM information_schema.columns \
                      WHERE table_schema = current_schema() AND table_name = 'flow_conversion_jobs' \
@@ -14199,10 +14205,10 @@ mod flow_database_tests {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // FP2-B5: form record detail carries its Flow lineage
+    // Form record detail carries its Flow lineage
     // ---------------------------------------------------------------------------------------------
 
-    async fn fp2_b5_record_detail(state: &AppState, user_id: Uuid, record_id: Uuid) -> Value {
+    async fn lineage_record_detail(state: &AppState, user_id: Uuid, record_id: Uuid) -> Value {
         let body = body_json(to_response(
             crate::routes::form::get_form_record(State(state.clone()), claims_for(user_id), None, Path(record_id))
                 .await,
@@ -14212,15 +14218,15 @@ mod flow_database_tests {
         body
     }
 
-    /// FP2-B5: `GET /form-records/{id}` reports the Flow reference to the record and the
+    /// `GET /form-records/{id}` reports the Flow reference to the record and the
     /// conversion job that created it; a caller who loses Flow read access to the source Page gets
     /// only the ids of the reference/job with `source_available:false`; a removed reference
     /// disappears; Flow disabled yields empty lists.
     #[tokio::test]
-    async fn fp2_b5_record_detail_reports_flow_lineage_filtered_by_source_read_access() {
-        let scratch = scratch_or_skip!("fp2-b5-lineage");
+    async fn record_detail_reports_flow_lineage_filtered_by_source_read_access() {
+        let scratch = scratch_or_skip!("lineage-lineage");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, false).await;
+        let fx = conversion_seed(&state, false).await;
         let member_id = seed_member(&state, fx.workspace_id).await;
         let policies = body_json(to_response(
             update_form_permissions(
@@ -14249,8 +14255,8 @@ mod flow_database_tests {
         assert_eq!(policies["code"], 0, "{policies}");
 
         // Page -> conversion -> record.
-        let (preview_id, _) = fp2_b4_record_preview(&state, &fx).await;
-        let committed = fp2_b4_commit(&state, &fx, preview_id, 1, "fp2-b5-convert").await;
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        let committed = conversion_commit(&state, &fx, preview_id, 1, "lineage-convert").await;
         assert_eq!(committed["data"]["status"], "completed", "{committed}");
         let job_id = committed["data"]["job_id"].as_str().expect("job id").to_string();
         let lineage_id = committed["data"]["lineage_id"].clone();
@@ -14283,7 +14289,7 @@ mod flow_database_tests {
         let source = fx.source_id.to_string();
 
         // (1) Both lineages are visible to a member who can read the Page.
-        let before = fp2_b5_record_detail(&state, member_id, record_id).await;
+        let before = lineage_record_detail(&state, member_id, record_id).await;
         assert_eq!(before["data"]["id"], record_id.to_string(), "{before}");
         let lineage = &before["data"]["flow_lineage"];
         let references = lineage["references"].as_array().expect("references");
@@ -14291,7 +14297,7 @@ mod flow_database_tests {
         assert_eq!(references[0]["reference_id"], reference_id.as_str());
         assert_eq!(references[0]["source_available"], true);
         assert_eq!(references[0]["source_object_id"], source.as_str());
-        assert_eq!(references[0]["source_title"], "fp2 b4 source");
+        assert_eq!(references[0]["source_title"], "conversion source");
         assert_eq!(references[0]["display"], json!({"mode":"card"}));
         assert!(references[0]["created_at"].is_string(), "{before}");
         let conversions = lineage["conversions"].as_array().expect("conversions");
@@ -14299,14 +14305,14 @@ mod flow_database_tests {
         assert_eq!(conversions[0]["job_id"], job_id.as_str());
         assert_eq!(conversions[0]["source_available"], true);
         assert_eq!(conversions[0]["source_object_id"], source.as_str());
-        assert_eq!(conversions[0]["source_title"], "fp2 b4 source");
+        assert_eq!(conversions[0]["source_title"], "conversion source");
         assert_eq!(conversions[0]["status"], "completed");
         assert_eq!(conversions[0]["lineage_id"], lineage_id);
         assert!(conversions[0]["created_at"].is_string(), "{before}");
         // The member reads the source but neither started the job nor administers the workspace,
         // so `GET /flow/conversions/{job_id}` is closed to them; the owner who started it is not.
         assert_eq!(conversions[0]["job_available"], false, "{before}");
-        let member_job = fp2_b4_route(
+        let member_job = conversion_route(
             &state,
             member_id,
             "GET",
@@ -14315,12 +14321,12 @@ mod flow_database_tests {
         )
         .await;
         assert_typed(&member_job, "not_found", 404);
-        let owner_before = fp2_b5_record_detail(&state, fx.owner_id, record_id).await;
+        let owner_before = lineage_record_detail(&state, fx.owner_id, record_id).await;
         assert_eq!(
             owner_before["data"]["flow_lineage"]["conversions"][0]["job_available"], true,
             "{owner_before}"
         );
-        let owner_job = fp2_b4_route(
+        let owner_job = conversion_route(
             &state,
             fx.owner_id,
             "GET",
@@ -14345,7 +14351,7 @@ mod flow_database_tests {
         .await;
         assert_eq!(status, axum::http::StatusCode::OK, "{restricted}");
         assert_eq!(restricted["code"], 0, "{restricted}");
-        let hidden = fp2_b5_record_detail(&state, member_id, record_id).await;
+        let hidden = lineage_record_detail(&state, member_id, record_id).await;
         assert_eq!(
             hidden["data"]["flow_lineage"],
             json!({
@@ -14356,8 +14362,8 @@ mod flow_database_tests {
         );
         let hidden_text = hidden["data"]["flow_lineage"].to_string();
         assert!(!hidden_text.contains(&source), "{hidden_text}");
-        assert!(!hidden_text.contains("fp2 b4 source"), "{hidden_text}");
-        let owner_view = fp2_b5_record_detail(&state, fx.owner_id, record_id).await;
+        assert!(!hidden_text.contains("conversion source"), "{hidden_text}");
+        let owner_view = lineage_record_detail(&state, fx.owner_id, record_id).await;
         assert_eq!(
             owner_view["data"]["flow_lineage"]["references"][0]["source_available"], true,
             "{owner_view}"
@@ -14379,7 +14385,7 @@ mod flow_database_tests {
         ))
         .await;
         assert_eq!(removed["code"], 0, "{removed}");
-        let after_removal = fp2_b5_record_detail(&state, fx.owner_id, record_id).await;
+        let after_removal = lineage_record_detail(&state, fx.owner_id, record_id).await;
         assert_eq!(
             after_removal["data"]["flow_lineage"]["references"],
             json!([]),
@@ -14407,7 +14413,7 @@ mod flow_database_tests {
         ))
         .await;
         assert_eq!(disabled["code"], 0, "{disabled}");
-        let off = fp2_b5_record_detail(&state, fx.owner_id, record_id).await;
+        let off = lineage_record_detail(&state, fx.owner_id, record_id).await;
         assert_eq!(
             off["data"]["flow_lineage"],
             json!({"references": [], "conversions": []}),
@@ -14417,13 +14423,13 @@ mod flow_database_tests {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // FP2-B6: backend tidy-up (records view_id, record schema, bootstrap level, job error_reason)
+    // Backend tidy-up (records view_id, record schema, bootstrap level, job error_reason)
     // ---------------------------------------------------------------------------------------------
 
-    /// The FP2-B6 routes mounted on their production paths (the schema route on the handler
+    /// The record and bootstrap routes mounted on their production paths (the schema route on the handler
     /// `main.rs` registers for it), with an `Extension<JwtClaims>` standing in for the auth
     /// middleware. Returns the HTTP status and the JSON body.
-    async fn fp2_b6_route(
+    async fn mounted_route(
         state: &AppState,
         user_id: Uuid,
         method: &str,
@@ -14472,8 +14478,8 @@ mod flow_database_tests {
         (status, json)
     }
 
-    async fn fp2_b6_command(state: &AppState, user_id: Uuid, object_id: Uuid, kind: &str, payload: Value) -> Value {
-        let (_, body) = fp2_b6_route(
+    async fn run_object_command(state: &AppState, user_id: Uuid, object_id: Uuid, kind: &str, payload: Value) -> Value {
+        let (_, body) = mounted_route(
             state,
             user_id,
             "POST",
@@ -14488,7 +14494,7 @@ mod flow_database_tests {
         body
     }
 
-    async fn fp2_b6_collection(state: &AppState, workspace_id: Uuid, owner_id: Uuid, title: &str) -> Uuid {
+    async fn seeded_collection(state: &AppState, workspace_id: Uuid, owner_id: Uuid, title: &str) -> Uuid {
         let body = body_json(to_response(
             create_flow_object(
                 State(state.clone()),
@@ -14513,8 +14519,8 @@ mod flow_database_tests {
         Uuid::parse_str(body["data"]["object"]["id"].as_str().expect("object id")).expect("uuid")
     }
 
-    async fn fp2_b6_record(state: &AppState, owner_id: Uuid, collection_id: Uuid, values: Value) -> Uuid {
-        let (_, body) = fp2_b6_route(
+    async fn seeded_record(state: &AppState, owner_id: Uuid, collection_id: Uuid, values: Value) -> Uuid {
+        let (_, body) = mounted_route(
             state,
             owner_id,
             "POST",
@@ -14527,7 +14533,7 @@ mod flow_database_tests {
     }
 
     /// Percent-encodes everything outside RFC 3986's unreserved set, for a JSON query value.
-    fn fp2_b6_query_escape(raw: &str) -> String {
+    fn query_escape(raw: &str) -> String {
         use std::fmt::Write as _;
         let mut out = String::with_capacity(raw.len() * 3);
         for byte in raw.bytes() {
@@ -14540,7 +14546,7 @@ mod flow_database_tests {
         out
     }
 
-    fn fp2_b6_numbers(body: &Value, field_id: Uuid) -> Vec<i64> {
+    fn record_numbers(body: &Value, field_id: Uuid) -> Vec<i64> {
         body["data"]["items"]
             .as_array()
             .unwrap_or_else(|| panic!("records response has items: {body}"))
@@ -14553,18 +14559,18 @@ mod flow_database_tests {
             .collect()
     }
 
-    /// FP2-B6 (`rest-api-v1.md` v0.6 records GET `view_id?`): records are queried with the
+    /// `rest-api-v1.md` v0.6 records GET `view_id?`: records are queried with the
     /// filter/sort/group the view saved in its config; an explicit query parameter overrides the
     /// view's value for that part only; an unknown `view_id` is a typed `invalid_update`.
     #[tokio::test]
-    async fn fp2_b6_records_get_applies_the_saved_view_query() {
-        let scratch = scratch_or_skip!("fp2-b6-view-id");
+    async fn records_get_applies_the_saved_view_query() {
+        let scratch = scratch_or_skip!("surface-view-id");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let collection_id = fp2_b6_collection(&state, workspace_id, owner_id, "Ranked").await;
+        let collection_id = seeded_collection(&state, workspace_id, owner_id, "Ranked").await;
         let rank = Uuid::new_v4();
         let status = Uuid::new_v4();
-        fp2_b6_command(
+        run_object_command(
             &state,
             owner_id,
             collection_id,
@@ -14572,7 +14578,7 @@ mod flow_database_tests {
             json!({"field_id": rank, "label": "Rank", "field_type": "number"}),
         )
         .await;
-        fp2_b6_command(
+        run_object_command(
             &state,
             owner_id,
             collection_id,
@@ -14581,7 +14587,7 @@ mod flow_database_tests {
         )
         .await;
         for (value, group) in [(1, "b"), (2, "a"), (3, "b"), (4, "a")] {
-            fp2_b6_record(
+            seeded_record(
                 &state,
                 owner_id,
                 collection_id,
@@ -14590,7 +14596,7 @@ mod flow_database_tests {
             .await;
         }
         let table_view = Uuid::new_v4();
-        fp2_b6_command(
+        run_object_command(
             &state,
             owner_id,
             collection_id,
@@ -14606,7 +14612,7 @@ mod flow_database_tests {
         )
         .await;
         let board_view = Uuid::new_v4();
-        fp2_b6_command(
+        run_object_command(
             &state,
             owner_id,
             collection_id,
@@ -14619,11 +14625,11 @@ mod flow_database_tests {
         .await;
         let records = format!("/api/v1/flow/collections/{collection_id}/records");
 
-        let (_, plain) = fp2_b6_route(&state, owner_id, "GET", &records, None).await;
+        let (_, plain) = mounted_route(&state, owner_id, "GET", &records, None).await;
         assert_eq!(plain["code"], 0, "{plain}");
-        assert_eq!(fp2_b6_numbers(&plain, rank).len(), 4, "no view: every record");
+        assert_eq!(record_numbers(&plain, rank).len(), 4, "no view: every record");
 
-        let (_, saved) = fp2_b6_route(
+        let (_, saved) = mounted_route(
             &state,
             owner_id,
             "GET",
@@ -14633,13 +14639,13 @@ mod flow_database_tests {
         .await;
         assert_eq!(saved["code"], 0, "{saved}");
         assert_eq!(
-            fp2_b6_numbers(&saved, rank),
+            record_numbers(&saved, rank),
             [4, 3, 2],
             "the view's filter and sort apply: {saved}"
         );
 
-        let explicit_sort = fp2_b6_query_escape(&json!({"field_id": rank, "direction": "asc"}).to_string());
-        let (_, overridden) = fp2_b6_route(
+        let explicit_sort = query_escape(&json!({"field_id": rank, "direction": "asc"}).to_string());
+        let (_, overridden) = mounted_route(
             &state,
             owner_id,
             "GET",
@@ -14649,12 +14655,12 @@ mod flow_database_tests {
         .await;
         assert_eq!(overridden["code"], 0, "{overridden}");
         assert_eq!(
-            fp2_b6_numbers(&overridden, rank),
+            record_numbers(&overridden, rank),
             [2, 3, 4],
             "an explicit sort wins, the view's filter still applies: {overridden}"
         );
 
-        let (_, grouped) = fp2_b6_route(
+        let (_, grouped) = mounted_route(
             &state,
             owner_id,
             "GET",
@@ -14664,12 +14670,12 @@ mod flow_database_tests {
         .await;
         assert_eq!(grouped["code"], 0, "{grouped}");
         assert_eq!(
-            fp2_b6_numbers(&grouped, rank),
+            record_numbers(&grouped, rank),
             [2, 4, 1, 3],
             "the board view groups by its saved group field, then sorts: {grouped}"
         );
 
-        let (_, unknown) = fp2_b6_route(
+        let (_, unknown) = mounted_route(
             &state,
             owner_id,
             "GET",
@@ -14681,12 +14687,12 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B6 (`rest-api-v1.md` v0.6 schema row): `GET /flow/objects/{record_id}/schema` returns
+    /// `rest-api-v1.md` v0.6 schema row: `GET /flow/objects/{record_id}/schema` returns
     /// the owning Collection's schema to a reader of the record, while
     /// `GET /flow/collections/{record_id}` stays `not_found` and a non-reader gets `not_found`.
     #[tokio::test]
-    async fn fp2_b6_record_schema_returns_the_owning_collection_schema() {
-        let scratch = scratch_or_skip!("fp2-b6-record-schema");
+    async fn record_schema_returns_the_owning_collection_schema() {
+        let scratch = scratch_or_skip!("surface-record-schema");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let member_id = seed_member(&state, workspace_id).await;
@@ -14697,9 +14703,9 @@ mod flow_database_tests {
             vec![workspace_id.into()],
         )
         .await;
-        let collection_id = fp2_b6_collection(&state, workspace_id, owner_id, "Schema owner").await;
+        let collection_id = seeded_collection(&state, workspace_id, owner_id, "Schema owner").await;
         let field_id = Uuid::new_v4();
-        fp2_b6_command(
+        run_object_command(
             &state,
             owner_id,
             collection_id,
@@ -14707,9 +14713,9 @@ mod flow_database_tests {
             json!({"field_id": field_id, "label": "Name", "field_type": "text"}),
         )
         .await;
-        let record_id = fp2_b6_record(&state, owner_id, collection_id, json!({field_id.to_string(): "x"})).await;
+        let record_id = seeded_record(&state, owner_id, collection_id, json!({field_id.to_string(): "x"})).await;
 
-        let (_, collection_schema) = fp2_b6_route(
+        let (_, collection_schema) = mounted_route(
             &state,
             member_id,
             "GET",
@@ -14718,7 +14724,7 @@ mod flow_database_tests {
         )
         .await;
         assert_eq!(collection_schema["code"], 0, "{collection_schema}");
-        let (status_code, record_schema) = fp2_b6_route(
+        let (status_code, record_schema) = mounted_route(
             &state,
             member_id,
             "GET",
@@ -14743,7 +14749,7 @@ mod flow_database_tests {
             "same schema as the collection's own"
         );
 
-        let (_, by_collection_path) = fp2_b6_route(
+        let (_, by_collection_path) = mounted_route(
             &state,
             member_id,
             "GET",
@@ -14752,7 +14758,7 @@ mod flow_database_tests {
         )
         .await;
         assert_typed(&by_collection_path, "not_found", 404);
-        let (_, outsider) = fp2_b6_route(
+        let (_, outsider) = mounted_route(
             &state,
             outsider_id,
             "GET",
@@ -14768,11 +14774,11 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B6 (`rest-api-v1.md` bootstrap row, 2026-10-10): the REST bootstrap needs `view`, the
+    /// `rest-api-v1.md` bootstrap row, 2026-10-10: the REST bootstrap needs `view`, the
     /// same level as the WebSocket `open`/`snapshot` that shares its loader.
     #[tokio::test]
-    async fn fp2_b6_view_member_can_bootstrap_like_the_websocket_snapshot() {
-        let scratch = scratch_or_skip!("fp2-b6-bootstrap-view");
+    async fn view_member_can_bootstrap_like_the_websocket_snapshot() {
+        let scratch = scratch_or_skip!("surface-bootstrap-view");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let viewer_id = seed_member(&state, workspace_id).await;
@@ -14784,7 +14790,7 @@ mod flow_database_tests {
         )
         .await;
         let page_id = create_page_as_owner(&state, workspace_id, owner_id, "Viewable").await;
-        let (status_code, viewer) = fp2_b6_route(
+        let (status_code, viewer) = mounted_route(
             &state,
             viewer_id,
             "GET",
@@ -14795,7 +14801,7 @@ mod flow_database_tests {
         assert_eq!(status_code, 200, "{viewer}");
         assert_eq!(viewer["code"], 0, "a view member bootstraps: {viewer}");
         assert!(viewer["data"]["snapshot_base64"].is_string(), "{viewer}");
-        let (_, outsider) = fp2_b6_route(
+        let (_, outsider) = mounted_route(
             &state,
             outsider_id,
             "GET",
@@ -14807,16 +14813,16 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B6: a job the stale-`started` sweep failed reports `error_reason:"stale_started"`; any
+    /// A job the stale-`started` sweep failed reports `error_reason:"stale_started"`; any
     /// other `failed` job (and a reaped job that later fails again for another reason) has no
     /// `error_reason` key.
     #[tokio::test]
-    async fn fp2_b6_reaped_conversion_job_reports_error_reason_stale_started() {
-        let scratch = scratch_or_skip!("fp2-b6-error-reason");
+    async fn reaped_conversion_job_reports_error_reason_stale_started() {
+        let scratch = scratch_or_skip!("surface-error-reason");
         let state = state_for(scratch.db.clone());
-        let fx = fp2_b4_seed(&state, true).await;
-        let reaped_job = fp2_b4_failed_job(&state, &fx, "fp2-b6-reason-stale").await;
-        let plain_failed = fp2_b4_failed_job(&state, &fx, "fp2-b6-reason-plain").await;
+        let fx = conversion_seed(&state, true).await;
+        let reaped_job = conversion_failed_job(&state, &fx, "surface-reason-stale").await;
+        let plain_failed = conversion_failed_job(&state, &fx, "surface-reason-plain").await;
         exec(
             &state,
             "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
@@ -14835,7 +14841,7 @@ mod flow_database_tests {
             let state = state.clone();
             let owner_id = fx.owner_id;
             async move {
-                fp2_b4_route(
+                conversion_route(
                     &state,
                     owner_id,
                     "GET",
@@ -14858,13 +14864,13 @@ mod flow_database_tests {
         );
 
         // The reaped job is retried, fails again for an ordinary reason: the reason is gone.
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
-        let refused = fp2_b4_retry(&state, &fx, &reaped_job.to_string()).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let refused = conversion_retry(&state, &fx, &reaped_job.to_string()).await;
         assert_typed(&refused, "policy_rejected", 403);
         let refailed = job(reaped_job).await;
         assert_eq!(refailed["data"]["status"], "failed", "{refailed}");
         assert!(refailed["data"].get("error_reason").is_none(), "{refailed}");
-        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
         scratch.drop_self().await;
     }
 }

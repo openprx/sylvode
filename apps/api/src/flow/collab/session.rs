@@ -4360,7 +4360,7 @@ mod tests {
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
             let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
-            let member_id = fp2_b6_member(&state, workspace_id).await;
+            let member_id = collab_member(&state, workspace_id).await;
             let addr = spawn_server(state.clone()).await;
 
             let owner_ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "actor-owner").await;
@@ -5953,13 +5953,13 @@ mod tests {
         }
 
         // -------------------------------------------------------------------------------------
-        // FP2-B6: epoch re-sourcing, replay answers, update_id on refusals, causal completeness
+        // Epoch re-sourcing, replay answers, update_id on refusals, causal completeness
         // -------------------------------------------------------------------------------------
 
         /// The next `accepted`/`rejected` addressed to `update_id`, skipping fan-out and every
         /// frame about another update. `None` when nothing answers within the timeout or the
         /// socket closes -- the "no answer" this package exists to remove.
-        async fn fp2_b6_answer(ws: &mut WsStream, update_id: Uuid) -> Option<Frame> {
+        async fn collab_answer(ws: &mut WsStream, update_id: Uuid) -> Option<Frame> {
             loop {
                 let next = tokio::time::timeout(Duration::from_secs(3), ws.next()).await.ok()??;
                 let TMessage::Text(text) = next.ok()? else {
@@ -5978,14 +5978,14 @@ mod tests {
             }
         }
 
-        fn fp2_b6_update_id(frame: &Frame) -> Uuid {
+        fn collab_update_id(frame: &Frame) -> Uuid {
             let Frame::Update { update_id, .. } = frame else {
                 panic!("expected an update frame, got {frame:?}");
             };
             *update_id
         }
 
-        async fn fp2_b6_member(state: &AppState, workspace_id: Uuid) -> Uuid {
+        async fn collab_member(state: &AppState, workspace_id: Uuid) -> Uuid {
             let member_id = Uuid::new_v4();
             exec(
                 state,
@@ -6003,7 +6003,7 @@ mod tests {
             member_id
         }
 
-        async fn fp2_b6_set_grant(
+        async fn collab_set_grant(
             state: &AppState,
             workspace_id: Uuid,
             owner_id: Uuid,
@@ -6038,24 +6038,24 @@ mod tests {
             .expect("the grant change commits");
         }
 
-        /// FP2-B6 (P1, `domain-model-v1.md` `authz_epoch`, 2026-10-10): a connection's open-time
+        /// `domain-model-v1.md` `authz_epoch`, 2026-10-10: a connection's open-time
         /// epoch is a cache. After the owner changes B's grant (the workspace epoch advances), the
         /// owner's next write on its existing connection is re-evaluated in place and accepted
         /// (twice, so the refreshed epoch sticks), while B -- now `view` -- is `policy_rejected`.
         #[tokio::test]
-        async fn fp2_b6_epoch_change_is_resourced_in_place_for_existing_connections() {
-            let scratch = scratch_or_skip!("fp2-b6-epoch-resource");
+        async fn epoch_change_is_resourced_in_place_for_existing_connections() {
+            let scratch = scratch_or_skip!("surface-epoch-resource");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
             let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
-            let member_id = fp2_b6_member(&state, workspace_id).await;
+            let member_id = collab_member(&state, workspace_id).await;
             exec(
                 &state,
                 "UPDATE flow_workspace_settings SET default_member_level = 'view' WHERE workspace_id = $1",
                 vec![workspace_id.into()],
             )
             .await;
-            fp2_b6_set_grant(&state, workspace_id, owner_id, object_id, member_id, "edit").await;
+            collab_set_grant(&state, workspace_id, owner_id, object_id, member_id, "edit").await;
 
             let addr = spawn_server(state.clone()).await;
             let owner_ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-owner").await;
@@ -6065,7 +6065,7 @@ mod tests {
 
             let first = next_update_frame(&state, document_id).await;
             send_frame(&mut member, &first).await;
-            let answer = fp2_b6_answer(&mut member, fp2_b6_update_id(&first)).await;
+            let answer = collab_answer(&mut member, collab_update_id(&first)).await;
             assert!(
                 matches!(answer, Some(Frame::Accepted { .. })),
                 "B can write while edit: {answer:?}"
@@ -6074,7 +6074,7 @@ mod tests {
             let epoch_before = crate::flow::collab::authz::read_epoch(&state.db, workspace_id)
                 .await
                 .expect("epoch reads");
-            fp2_b6_set_grant(&state, workspace_id, owner_id, object_id, member_id, "view").await;
+            collab_set_grant(&state, workspace_id, owner_id, object_id, member_id, "view").await;
             let epoch_after = crate::flow::collab::authz::read_epoch(&state.db, workspace_id)
                 .await
                 .expect("epoch reads");
@@ -6083,7 +6083,7 @@ mod tests {
             for round in 0..2 {
                 let owner_update = next_update_frame(&state, document_id).await;
                 send_frame(&mut owner, &owner_update).await;
-                let answer = fp2_b6_answer(&mut owner, fp2_b6_update_id(&owner_update)).await;
+                let answer = collab_answer(&mut owner, collab_update_id(&owner_update)).await;
                 assert!(
                     matches!(answer, Some(Frame::Accepted { .. })),
                     "round {round}: the owner's permission did not change, its write must be accepted: {answer:?}"
@@ -6092,9 +6092,9 @@ mod tests {
 
             let updates_before = count_collab_updates(&state, document_id).await;
             let member_update = next_update_frame(&state, document_id).await;
-            let member_update_id = fp2_b6_update_id(&member_update);
+            let member_update_id = collab_update_id(&member_update);
             send_frame(&mut member, &member_update).await;
-            let answer = fp2_b6_answer(&mut member, member_update_id).await;
+            let answer = collab_answer(&mut member, member_update_id).await;
             assert!(
                 matches!(
                     answer,
@@ -6119,7 +6119,7 @@ mod tests {
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
             let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
-            let member_id = fp2_b6_member(&state, workspace_id).await;
+            let member_id = collab_member(&state, workspace_id).await;
             exec(
                 &state,
                 "UPDATE flow_workspace_settings SET default_member_level = 'view' WHERE workspace_id = $1",
@@ -6132,7 +6132,7 @@ mod tests {
 
             let refused = next_update_frame(&state, document_id).await;
             send_frame(&mut member, &refused).await;
-            let answer = fp2_b6_answer(&mut member, fp2_b6_update_id(&refused)).await;
+            let answer = collab_answer(&mut member, collab_update_id(&refused)).await;
             assert!(
                 matches!(
                     answer,
@@ -6144,11 +6144,11 @@ mod tests {
                 "a view-level connection cannot write: {answer:?}"
             );
 
-            fp2_b6_set_grant(&state, workspace_id, owner_id, object_id, member_id, "edit").await;
+            collab_set_grant(&state, workspace_id, owner_id, object_id, member_id, "edit").await;
             let updates_before = count_collab_updates(&state, document_id).await;
             let upgraded = next_update_frame(&state, document_id).await;
             send_frame(&mut member, &upgraded).await;
-            let answer = fp2_b6_answer(&mut member, fp2_b6_update_id(&upgraded)).await;
+            let answer = collab_answer(&mut member, collab_update_id(&upgraded)).await;
             assert!(
                 matches!(answer, Some(Frame::Accepted { .. })),
                 "the connection is re-sourced after the grant and its write accepted: {answer:?}"
@@ -6169,8 +6169,8 @@ mod tests {
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
             let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
-            let removed = fp2_b6_member(&state, workspace_id).await;
-            let fenced = fp2_b6_member(&state, workspace_id).await;
+            let removed = collab_member(&state, workspace_id).await;
+            let fenced = collab_member(&state, workspace_id).await;
             exec(
                 &state,
                 "UPDATE flow_workspace_settings SET default_member_level = 'view' WHERE workspace_id = $1",
@@ -6213,7 +6213,7 @@ mod tests {
                 let (mut ws, _, _, _) = open_session_full(addr, &ticket, label, document_id).await;
                 let update = next_update_frame(&state, document_id).await;
                 send_frame(&mut ws, &update).await;
-                let answer = fp2_b6_answer(&mut ws, fp2_b6_update_id(&update)).await;
+                let answer = collab_answer(&mut ws, collab_update_id(&update)).await;
                 assert!(
                     matches!(answer, Some(Frame::Accepted { .. })),
                     "{label} writes while edit: {answer:?}"
@@ -6249,7 +6249,7 @@ mod tests {
                 let updates_before = count_collab_updates(&state, document_id).await;
                 let update = next_update_frame(&state, document_id).await;
                 send_frame(ws, &update).await;
-                let answer = fp2_b6_answer(ws, fp2_b6_update_id(&update)).await;
+                let answer = collab_answer(ws, collab_update_id(&update)).await;
                 assert!(
                     matches!(
                         answer,
@@ -6270,12 +6270,12 @@ mod tests {
             scratch.drop_self().await;
         }
 
-        /// FP2-B6 (`collab-protocol-v1.md` 2026-10-10): re-sending an already-committed
+        /// `collab-protocol-v1.md` 2026-10-10: re-sending an already-committed
         /// `update_id` is answered with the original receipt (same seq, frontier and event id),
         /// on a fresh connection and on the connection that committed it.
         #[tokio::test]
-        async fn fp2_b6_same_update_id_replay_is_answered_with_the_original_receipt() {
-            let scratch = scratch_or_skip!("fp2-b6-replay-answer");
+        async fn same_update_id_replay_is_answered_with_the_original_receipt() {
+            let scratch = scratch_or_skip!("surface-replay-answer");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
             let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
@@ -6283,21 +6283,21 @@ mod tests {
             let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-replay").await;
             let (mut first_ws, _, _, _) = open_session_full(addr, &ticket, "b6-replay", document_id).await;
             let update = next_update_frame(&state, document_id).await;
-            let update_id = fp2_b6_update_id(&update);
+            let update_id = collab_update_id(&update);
             send_frame(&mut first_ws, &update).await;
             let Some(Frame::Accepted {
                 head_seq,
                 head_frontier,
                 event_id,
                 ..
-            }) = fp2_b6_answer(&mut first_ws, update_id).await
+            }) = collab_answer(&mut first_ws, update_id).await
             else {
                 panic!("the first send is accepted");
             };
             let updates_after_commit = count_collab_updates(&state, document_id).await;
 
             send_frame(&mut first_ws, &update).await;
-            let same_connection = fp2_b6_answer(&mut first_ws, update_id).await;
+            let same_connection = collab_answer(&mut first_ws, update_id).await;
             assert!(
                 matches!(&same_connection, Some(Frame::Accepted { head_seq: s, head_frontier: f, event_id: e, .. })
                     if *s == head_seq && *f == head_frontier && *e == event_id),
@@ -6311,7 +6311,7 @@ mod tests {
                 "the reconnect snapshot already contains the update"
             );
             send_frame(&mut second_ws, &update).await;
-            let reconnected = fp2_b6_answer(&mut second_ws, update_id).await;
+            let reconnected = collab_answer(&mut second_ws, update_id).await;
             assert!(
                 matches!(&reconnected, Some(Frame::Accepted { head_seq: s, head_frontier: f, event_id: e, .. })
                     if *s == head_seq && *f == head_frontier && *e == event_id),
@@ -6325,11 +6325,11 @@ mod tests {
             scratch.drop_self().await;
         }
 
-        /// FP2-B6: a `rejected` answering an `update` names its `update_id`, including the
+        /// A `rejected` answering an `update` names its `update_id`, including the
         /// `update_rate` and the pre-decode `frame_rate` limiter refusals.
         #[tokio::test]
-        async fn fp2_b6_rate_limit_rejections_carry_the_update_id() {
-            let scratch = scratch_or_skip!("fp2-b6-rate-update-id");
+        async fn rate_limit_rejections_carry_the_update_id() {
+            let scratch = scratch_or_skip!("surface-rate-update-id");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
             let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
@@ -6432,13 +6432,13 @@ mod tests {
             scratch.drop_self().await;
         }
 
-        /// FP2-B6 (`collab-protocol-v1.md` / `error-mapping-v1.md`): an update whose causal
+        /// `collab-protocol-v1.md` / `error-mapping-v1.md`: an update whose causal
         /// dependencies are not in the document is `invalid_update` with
         /// `details.reason="causal_dependency_missing"`, gets no seq and writes nothing.
         #[tokio::test]
-        async fn fp2_b6_causally_incomplete_update_is_refused_without_a_seq() {
+        async fn causally_incomplete_update_is_refused_without_a_seq() {
             use collab_core::{CollabEngine, LoroCollabEngine};
-            let scratch = scratch_or_skip!("fp2-b6-causal");
+            let scratch = scratch_or_skip!("surface-causal");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
             let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
@@ -6480,7 +6480,7 @@ mod tests {
                 },
             )
             .await;
-            let answer = fp2_b6_answer(&mut ws, update_id).await;
+            let answer = collab_answer(&mut ws, update_id).await;
             let Some(Frame::Rejected {
                 code: RejectedCode::InvalidUpdate,
                 write_state: WriteState::NotApplied,

@@ -1121,7 +1121,7 @@ suite.check('every static key the collection layer selects exists in zh and en',
 	}
 });
 
-// ---- FP2-M9: saved-view reads, field errors, withheld body, archive ---------------------------
+// ---- Saved-view reads, field errors, withheld body, archive ---------------------------
 
 await suite.checkAsync(
 	'records are read by view_id; only a draft query is sent explicitly, without view_id',

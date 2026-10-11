@@ -1987,7 +1987,7 @@ mod database_tests {
         .await
         .expect_err("corruption must fail the whole page");
         assert_eq!(err.kind(), ApiErrorKind::InvalidUpdate);
-        // FP2-B6: the refusal names its cause so a client can branch without reading `message`.
+        // The refusal names its cause so a client can branch without reading `message`.
         let reason = match &err {
             ApiError::Typed { details, .. } => details
                 .as_ref()

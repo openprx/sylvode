@@ -280,6 +280,9 @@ await suite.checkAsync(
 	async () => {
 		// `error-mapping-v1.md` "Web 本地错误码 network_error": a gateway page or an envelope 5xx
 		// with no `error_code` must not be reported as `invalid_update` (recoverable=false).
+		// The Flow surface itself types its database failures now; an envelope 5xx without an
+		// `error_code` (the last one is the legacy database envelope) still reaches the client
+		// from a proxy or from a server older than that, and this is the fallback for it.
 		for (const answer of [
 			{ html: '<html><body>502 Bad Gateway</body></html>' },
 			{ body: { code: 503, message: 'upstream unavailable', data: null } },

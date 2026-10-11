@@ -1,5 +1,5 @@
 /**
- * Permission read-only mode (FP2-M6 item 0; `ADR-0012`: "`edit` 起可写、`view` 只读";
+ * Permission read-only mode (`ADR-0012`: "`edit` 起可写、`view` 只读";
  * `error-mapping-v1.md` `forbidden`: "转只读", `policy_rejected`: "保留 intent，不自动重放").
  *
  * - opening an object whose effective level is `view` or `comment` puts the session in

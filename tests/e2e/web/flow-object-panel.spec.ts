@@ -173,7 +173,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 		})
 	);
 
-	// A workspace bot the owner can name in a grant (FP2-M9: the add picker lists bots too).
+	// A workspace bot the owner can name in a grant (the add picker lists bots too).
 	const botName = `Panel bot ${runId}`;
 	const bot = await unwrap<{ id: string }>(
 		await request.post(`/api/v1/workspaces/${workspace.id}/bots`, {

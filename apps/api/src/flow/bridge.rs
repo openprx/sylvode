@@ -1349,7 +1349,8 @@ async fn claim_commit_job(
 }
 
 /// Moves a `failed` job back to `started` under the retry key, with its `flow.conversion.started`
-/// event. The claim begins a new run, so it resets `started_at`. `None` means the job is no longer `failed` (a concurrent retry won) and nothing changed.
+/// event. The claim begins a new run, so it resets `started_at`. `None` means the job is no
+/// longer `failed` (a concurrent retry won) and nothing changed.
 async fn claim_retry_job(
     state: &AppState,
     preview: &PreviewRow,
