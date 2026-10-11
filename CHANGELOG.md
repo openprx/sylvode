@@ -524,6 +524,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow conversion jobs: the stale-`started` sweep measures a run from a dedicated `started_at`
+  column instead of `updated_at`, so a write to a `started` job no longer postpones its reclaim.
+  `started_at` is set when the job is created and reset when a retry claims a `failed` job;
+  nothing else moves it. Migration `0072_flow_conversion_job_started_at.sql` adds and backfills
+  the column. Job responses are unchanged.
 - Flow logout waits at most three seconds for the Flow IndexedDB deletes: a tab of an older build
   that ignores `versionchange` leaves its delete queued (it completes when that tab closes)
   instead of holding the sign-out page.

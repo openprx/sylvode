@@ -951,12 +951,12 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 	// ---- 4. a job the server reclaimed (`error_reason = "stale_started"`) is an interrupted run:
 	// worded as such and retryable, while a plain `server_rejected` job stays permanent ----
 	// The fixture only builds the reaper's INPUT: a job left `started` whose start lies 16 minutes
-	// back (past the 15-minute threshold; the job's `updated_at` is its start while it is
-	// `started`). The result -- `failed`, `server_rejected`, `stale_started` -- is written by the
+	// back (`started_at`, past the 15-minute threshold; `updated_at` stays fresh and does not
+	// count). The result -- `failed`, `server_rejected`, `stale_started` -- is written by the
 	// API's own periodic reaper (`[flow] conversion_reap_interval_secs = 2` in the stack config).
 	const reaped = await failedJobOverRest(request, setup);
 	sql(
-		"UPDATE flow_conversion_jobs SET status = 'started', error_code = NULL, error_reason = NULL, updated_at = now() - interval '16 minutes' WHERE id = :'id';",
+		"UPDATE flow_conversion_jobs SET status = 'started', error_code = NULL, error_reason = NULL, started_at = now() - interval '16 minutes', updated_at = now() WHERE id = :'id';",
 		reaped.jobId
 	);
 	await expect

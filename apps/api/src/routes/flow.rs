@@ -13749,7 +13749,7 @@ mod flow_database_tests {
                 &state,
                 &format!(
                     "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
-                     updated_at=now()-interval '{age}' WHERE id=$1"
+                     started_at=now()-interval '{age}' WHERE id=$1"
                 ),
                 vec![job_id.into()],
             )
@@ -13799,7 +13799,7 @@ mod flow_database_tests {
         exec(
             &state,
             "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
-             updated_at=now()-interval '16 minutes' WHERE id=$1",
+             started_at=now()-interval '16 minutes' WHERE id=$1",
             vec![retry_job.into()],
         )
         .await;
@@ -13825,7 +13825,7 @@ mod flow_database_tests {
         let job = fp2_b4_failed_job(&state, &fx, "conversion-reaper-job").await;
         exec(
             &state,
-            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, updated_at=now() WHERE id=$1",
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, started_at=now() WHERE id=$1",
             vec![job.into()],
         )
         .await;
@@ -13845,7 +13845,7 @@ mod flow_database_tests {
         // The run crashes long ago, as far as the row is concerned.
         exec(
             &state,
-            "UPDATE flow_conversion_jobs SET updated_at=now()-interval '16 minutes' WHERE id=$1",
+            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes' WHERE id=$1",
             vec![job.into()],
         )
         .await;
@@ -13864,6 +13864,225 @@ mod flow_database_tests {
             .await
             .expect("the reaper stops on shutdown")
             .expect("the reaper task ends cleanly");
+        scratch.drop_self().await;
+    }
+
+    async fn conversion_job_started_seconds_ago(state: &AppState, job_id: Uuid) -> f64 {
+        state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT extract(epoch FROM clock_timestamp() - started_at)::float8 AS age \
+                 FROM flow_conversion_jobs WHERE id=$1",
+                vec![job_id.into()],
+            ))
+            .await
+            .expect("started_at query")
+            .expect("job row")
+            .try_get::<f64>("", "age")
+            .expect("age")
+    }
+
+    /// The stale-`started` sweep measures a run from `started_at`, the moment the run entered
+    /// `started`, not from `updated_at`: a statement that touches a `started` job does not
+    /// postpone its reclaim, and an old `updated_at` does not reclaim a run that began just now.
+    #[tokio::test]
+    async fn the_conversion_sweep_measures_a_run_from_started_at_and_ignores_updated_at() {
+        let scratch = scratch_or_skip!("conversion-started-at");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        let touched_job = fp2_b4_failed_job(&state, &fx, "started-at-touched").await;
+        let young_job = fp2_b4_failed_job(&state, &fx, "started-at-young").await;
+        // A run that began 16 minutes ago whose row was written a moment ago ...
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
+             started_at=now()-interval '16 minutes', updated_at=now() WHERE id=$1",
+            vec![touched_job.into()],
+        )
+        .await;
+        // ... and a run that began just now on a row last written 16 minutes ago.
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
+             started_at=now(), updated_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![young_job.into()],
+        )
+        .await;
+
+        let reaped = crate::flow::bridge::reap_stale_conversion_jobs(
+            &state,
+            crate::flow::bridge::conversion_started_stale_after(),
+        )
+        .await
+        .expect("the sweep runs");
+        assert_eq!(
+            fp2_b4_job_status(&state, touched_job).await,
+            ("failed".to_string(), Some("server_rejected".to_string())),
+            "a run past the threshold is reclaimed although its row was just written"
+        );
+        assert_eq!(fp2_b4_reaped_events(&state, touched_job).await, (1, 1));
+        assert_eq!(
+            fp2_b4_job_status(&state, young_job).await,
+            ("started".to_string(), None),
+            "a run that just began is left alone although its row was last written long ago"
+        );
+        assert_eq!(fp2_b4_reaped_events(&state, young_job).await, (0, 0));
+        assert_eq!(reaped, 1);
+        scratch.drop_self().await;
+    }
+
+    /// A new job's `started_at` is its creation; a retry that claims a `failed` job back to
+    /// `started` begins a new run, so `started_at` is reset and the next sweep does not reclaim
+    /// the run it has only just claimed; failing, reaping and completing a job leave it alone.
+    #[tokio::test]
+    async fn a_conversion_retry_claim_resets_started_at_and_no_other_write_moves_it() {
+        let scratch = scratch_or_skip!("conversion-started-at-retry");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        let job = fp2_b4_failed_job(&state, &fx, "started-at-retry").await;
+        assert!(
+            conversion_job_started_seconds_ago(&state, job).await < 60.0,
+            "a new job starts when it is created"
+        );
+        // The first run began, and failed, 16 minutes ago.
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes', \
+             updated_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![job.into()],
+        )
+        .await;
+        let preview_id = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT preview_id FROM flow_conversion_jobs WHERE id=$1",
+                vec![job.into()],
+            ))
+            .await
+            .expect("preview query")
+            .expect("job row")
+            .try_get::<Uuid>("", "preview_id")
+            .expect("preview id");
+        // The retried run fails and its failure cannot be recorded: the job stays `started`.
+        crate::flow::bridge::set_conversion_fault_for_test(preview_id, 4);
+        let retried = fp2_b4_retry(&state, &fx, &job.to_string()).await;
+        crate::flow::bridge::set_conversion_fault_for_test(preview_id, 0);
+        assert_typed(&retried, "server_rejected", 500);
+        assert_eq!(retried["details"]["job_status"], "started", "{retried}");
+        assert_eq!(fp2_b4_job_status(&state, job).await, ("started".to_string(), None));
+        assert!(
+            conversion_job_started_seconds_ago(&state, job).await < 60.0,
+            "the retry claim begins a new run"
+        );
+        let threshold = crate::flow::bridge::conversion_started_stale_after();
+        let reaped = crate::flow::bridge::reap_stale_conversion_jobs(&state, threshold)
+            .await
+            .expect("the sweep runs");
+        assert_eq!(reaped, 0, "the run the retry just claimed is not stale");
+        assert_eq!(fp2_b4_job_status(&state, job).await, ("started".to_string(), None));
+
+        // Reaping, a second retry claim's failure and the final completion do not move it, apart
+        // from the claim itself.
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![job.into()],
+        )
+        .await;
+        let reaped = crate::flow::bridge::reap_stale_conversion_jobs(&state, threshold)
+            .await
+            .expect("the sweep runs");
+        assert_eq!(reaped, 1);
+        let after_reap = conversion_job_started_seconds_ago(&state, job).await;
+        assert!(after_reap > 900.0, "reaping keeps started_at: {after_reap}");
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let refused = fp2_b4_retry(&state, &fx, &job.to_string()).await;
+        assert_typed(&refused, "policy_rejected", 403);
+        fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        assert_eq!(fp2_b4_job_status(&state, job).await.0, "failed");
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![job.into()],
+        )
+        .await;
+        let completed = fp2_b4_retry(&state, &fx, &job.to_string()).await;
+        assert_eq!(completed["data"]["status"], "completed", "{completed}");
+        assert!(
+            conversion_job_started_seconds_ago(&state, job).await < 60.0,
+            "the completing retry's claim reset started_at and its completion kept it"
+        );
+        assert!(
+            completed["data"].get("started_at").is_none(),
+            "the job response gains no field: {completed}"
+        );
+        scratch.drop_self().await;
+    }
+
+    /// Migration 0072 on a database that already holds jobs: a `started` row's `started_at` is
+    /// backfilled from its `updated_at`, any other row's from its `created_at`, the column ends
+    /// `NOT NULL DEFAULT now()`, and running the file again changes nothing.
+    #[tokio::test]
+    async fn the_started_at_migration_backfills_existing_jobs_and_reruns_cleanly() {
+        const MIGRATION: &str = include_str!("../../../../migrations/0072_flow_conversion_job_started_at.sql");
+        let scratch = scratch_or_skip!("conversion-started-at-migration");
+        let state = state_for(scratch.db.clone());
+        let fx = fp2_b4_seed(&state, true).await;
+        let running = fp2_b4_failed_job(&state, &fx, "started-at-migration-running").await;
+        let failed = fp2_b4_failed_job(&state, &fx, "started-at-migration-failed").await;
+        state
+            .db
+            .execute_unprepared("ALTER TABLE flow_conversion_jobs DROP COLUMN started_at")
+            .await
+            .expect("the pre-migration shape");
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
+             created_at=now()-interval '3 hours', updated_at=now()-interval '2 hours' WHERE id=$1",
+            vec![running.into()],
+        )
+        .await;
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET created_at=now()-interval '5 hours', \
+             updated_at=now()-interval '4 hours' WHERE id=$1",
+            vec![failed.into()],
+        )
+        .await;
+        let backfilled = |column: &'static str, job_id: Uuid| {
+            let state = state.clone();
+            async move {
+                fp2_b4_count(
+                    &state,
+                    &format!("SELECT count(*) AS n FROM flow_conversion_jobs WHERE id=$1 AND started_at = {column}"),
+                    vec![job_id.into()],
+                )
+                .await
+            }
+        };
+        for round in 0..2 {
+            state
+                .db
+                .execute_unprepared(MIGRATION)
+                .await
+                .unwrap_or_else(|err| panic!("round {round}: {err}"));
+            assert_eq!(backfilled("updated_at", running).await, 1, "round {round}");
+            assert_eq!(backfilled("created_at", failed).await, 1, "round {round}");
+            assert_eq!(
+                fp2_b4_count(
+                    &state,
+                    "SELECT count(*) AS n FROM information_schema.columns \
+                     WHERE table_schema = current_schema() AND table_name = 'flow_conversion_jobs' \
+                     AND column_name = 'started_at' AND is_nullable = 'NO' AND column_default = 'now()'",
+                    vec![],
+                )
+                .await,
+                1,
+                "round {round}"
+            );
+        }
         scratch.drop_self().await;
     }
 
@@ -14489,7 +14708,7 @@ mod flow_database_tests {
         exec(
             &state,
             "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
-             updated_at=now()-interval '16 minutes' WHERE id=$1",
+             started_at=now()-interval '16 minutes' WHERE id=$1",
             vec![reaped_job.into()],
         )
         .await;

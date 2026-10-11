@@ -1312,7 +1312,8 @@ async fn claim_commit_job(
             DbBackend::Postgres,
             "INSERT INTO flow_conversion_jobs \
              (id, workspace_id, preview_id, actor_id, actor_kind, source_object_id, source_frontier, target_type, \
-              target_schema_version, status, idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'started',$10) \
+              target_schema_version, status, idempotency_key, started_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'started',$10,now()) \
              ON CONFLICT DO NOTHING",
             vec![
                 job_id.into(),
@@ -1348,7 +1349,7 @@ async fn claim_commit_job(
 }
 
 /// Moves a `failed` job back to `started` under the retry key, with its `flow.conversion.started`
-/// event. `None` means the job is no longer `failed` (a concurrent retry won) and nothing changed.
+/// event. The claim begins a new run, so it resets `started_at`. `None` means the job is no longer `failed` (a concurrent retry won) and nothing changed.
 async fn claim_retry_job(
     state: &AppState,
     preview: &PreviewRow,
@@ -1361,7 +1362,7 @@ async fn claim_retry_job(
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, error_reason=NULL, idempotency_key=$2, \
-             updated_at=now() \
+             started_at=now(), updated_at=now() \
              WHERE id=$1 AND status='failed'",
             vec![job_id.into(), idempotency_key.into()],
         ))
@@ -1423,6 +1424,10 @@ pub const STALE_STARTED_REASON: &str = "stale_started";
 
 /// Reaps conversion jobs left `started` for longer than `older_than`.
 ///
+/// The age of a run is measured from `started_at`, which only the job's creation and a retry
+/// claim set; `updated_at` moves with every write to the row and is not consulted, so touching a
+/// `started` job does not postpone its reclaim.
+///
 /// Such a job's run crashed between its claim and its outcome, or its failure could not be
 /// recorded. Each becomes `failed` with
 /// `error = "server_rejected"` and one business `flow.conversion.failed` event carrying
@@ -1443,8 +1448,8 @@ pub async fn reap_stale_conversion_jobs(state: &AppState, older_than: chrono::Du
     let abandoned = Stale::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT id, preview_id, idempotency_key FROM flow_conversion_jobs \
-         WHERE status='started' AND updated_at < now() - make_interval(secs => $1) \
-         ORDER BY updated_at, id FOR UPDATE SKIP LOCKED",
+         WHERE status='started' AND started_at < now() - make_interval(secs => $1) \
+         ORDER BY started_at, id FOR UPDATE SKIP LOCKED",
         vec![older_than.num_seconds().into()],
     ))
     .all(&tx)
