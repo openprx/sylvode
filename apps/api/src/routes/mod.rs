@@ -15,6 +15,7 @@ pub mod decision;
 pub mod decision_domain;
 pub mod export;
 pub mod flow;
+pub mod flow_surface;
 pub mod form;
 pub mod governance;
 pub mod governance_ext;
