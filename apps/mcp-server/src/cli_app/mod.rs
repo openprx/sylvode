@@ -182,6 +182,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 title,
                 parent,
                 embed_page,
+                after_block,
                 schema_file,
                 idempotency_key,
             } => {
@@ -192,6 +193,9 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 }
                 if parent.is_some() && embed_page.is_some() {
                     return Err(CliError::usage("--parent and --embed-page are mutually exclusive"));
+                }
+                if after_block.is_some() && embed_page.is_none() {
+                    return Err(CliError::usage("--after-block requires --embed-page"));
                 }
                 let mut initial_schema = schema_file
                     .as_ref()
@@ -212,6 +216,9 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     let page = checked_uuid("--embed-page", page)?;
                     if let Some(schema_object) = initial_schema.as_object_mut() {
                         schema_object.insert("title".to_string(), json!(title));
+                        if let Some(after_block) = after_block {
+                            schema_object.insert("after_block_id".to_string(), json!(after_block));
+                        }
                     }
                     (
                         format!("/api/v1/flow/objects/{page}/commands"),

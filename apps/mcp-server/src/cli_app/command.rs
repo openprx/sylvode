@@ -126,6 +126,9 @@ pub enum ObjectsAction {
         parent: Option<String>,
         #[arg(long = "embed-page")]
         embed_page: Option<String>,
+        /// With --embed-page, insert the embed block right after this block of the Page
+        #[arg(long = "after-block")]
+        after_block: Option<String>,
         #[arg(long = "schema-file")]
         schema_file: Option<PathBuf>,
         #[arg(long = "idempotency-key")]
