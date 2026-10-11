@@ -704,4 +704,63 @@ await suite.checkAsync(
 	}
 );
 
+const unavailable: ApiResult<FlowSetGrantsResponse> = {
+	code: 503,
+	message: 'irrelevant prose',
+	data: null,
+	error_code: 'server_draining',
+	details: { reason: 'drain', retry_after_ms: 1000 }
+};
+
+await suite.checkAsync(
+	'a downgrade whose dry run failed is retried as a dry run, never committed unseen',
+	async () => {
+		const h = harness({
+			grants: [
+				unavailable,
+				ok({
+					applied: false,
+					event_id: null,
+					permission_changes: changes([
+						{
+							principal_kind: 'user',
+							principal_id: ALICE,
+							before_level: 'edit',
+							after_level: 'none'
+						}
+					])
+				}),
+				ok({ applied: true, event_id: 'evt-9', permission_changes: changes() })
+			]
+		});
+		await h.controller.load();
+		const proposed = await h.controller.propose({
+			kind: 'remove',
+			principal_kind: 'user',
+			principal_id: ALICE
+		});
+		assertEqual(proposed.status, 'failed', 'the dry run failed');
+		assertEqual(h.controller.snapshot.pending?.preview ?? null, null, 'nothing was previewed');
+		const retried = await h.controller.confirm();
+		assertEqual(retried.status, 'previewed', 'the retry re-runs the dry run and stops there');
+		assertDeepEqual(
+			h.puts().map((body) => body.dry_run),
+			[true, true],
+			'no dry_run:false request was sent before a preview was shown'
+		);
+		assert(h.controller.snapshot.pending?.preview !== null, 'the preview is now shown');
+		const committed = await h.controller.confirm();
+		assertEqual(committed.status, 'committed', 'the explicit confirm after the preview commits');
+		assertDeepEqual(
+			h.puts().map((body) => [body.dry_run, body.idempotency_key]),
+			[
+				[true, 'key-1'],
+				[true, 'key-1'],
+				[false, 'key-1']
+			],
+			'one key across the failed dry run, the re-run and the commit'
+		);
+	}
+);
+
 finish(suite.result());
