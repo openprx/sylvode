@@ -1863,7 +1863,7 @@ pub(super) fn map_write_rejection(rejected: &write::Rejected) -> ApiError {
                 // 猜测为维护或竞争、不得用 message 补判" -- the write path never producing a
                 // recognized reason here is a bug in that path, not something to paper over with a
                 // guessed discriminant. It is reported as a typed `server_rejected` with no
-                // `details.reason` (FP2-B1: no untyped envelope on the Flow surface) rather than a
+                // `details.reason` (no untyped envelope on the Flow surface) rather than a
                 // fabricated `ServerDraining` reason.
                 other => {
                     tracing::error!(
@@ -2633,7 +2633,7 @@ mod typed_error_mapping_tests {
             Some(json!({ "reason": "maintenance_window" })),
         ));
 
-        // FP2-B1: still no fabricated `server_draining` reason, but no longer an untyped legacy
+        // Still no fabricated `server_draining` reason, but no longer an untyped legacy
         // envelope either -- a producer contract violation is reported as `server_rejected`
         // without any `details.reason` (no approved reason names it).
         for err in [missing_reason, unknown_reason] {

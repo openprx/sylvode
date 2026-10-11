@@ -191,7 +191,7 @@ test('collection: schema mode, table edit, board drag, record panel body, narrow
 		}
 	});
 
-	// ---- create the Collection through the navigator (FP2-M3 path) --------------------------
+	// ---- create the Collection through the navigator --------------------------
 	await page.goto(`/workspace/${workspace.id}/flow`);
 	await page.getByTestId('flow-nav-new').click();
 	await page.getByRole('menuitem', { name: 'New Collection' }).click();

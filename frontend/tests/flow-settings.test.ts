@@ -290,30 +290,61 @@ await suite.checkAsync(
 // ---- 4. idempotency key reuse on retry --------------------------------------------------
 
 await suite.checkAsync('a retry of the same intent resends the same key', async () => {
-	resetServer();
-	const { ctl } = controller();
-	await ctl.load();
-	const intent = ctl.propose({ field: 'enabled', value: false });
-	assert(intent, 'intent');
-	ctl.confirm(intent);
-	replies.push({ code: 500, message: 'database error' });
-	const failed = await ctl.submit(intent);
-	assertEqual(failed.status, 'failed', 'first attempt fails');
-	if (failed.status === 'failed') assertEqual(failed.retryable, true, '5xx is retryable');
-	assertEqual(ctl.pendingIntent, intent, 'the intent survives a retryable failure');
-	const again = ctl.propose({ field: 'enabled', value: false });
-	assertEqual(again, intent, 're-proposing the same change resumes the same intent');
-	const saved = await ctl.submit(intent);
-	assertEqual(saved.status, 'saved', 'retry succeeds');
-	const [firstPut, secondPut] = puts();
-	assertEqual(
-		(secondPut.body as { idempotency_key: string }).idempotency_key,
-		(firstPut.body as { idempotency_key: string }).idempotency_key,
-		'retry key equals original key'
-	);
-	const next = ctl.propose({ field: 'enabled', value: true });
-	assert(next, 'a later, different intent');
-	assertNotEqual(next.idempotencyKey, intent.idempotencyKey, 'a new intent mints a new key');
+	// A database failure on this route is answered `server_draining` / `contention` by the Flow
+	// surface. The second reply is the legacy envelope without `error_code`, which a server from
+	// before that boundary or a proxy in front of it can still send: it is classified by its
+	// numeric code alone and is retryable too.
+	const retryableFailures: { label: string; reply: Reply; messageKey: string }[] = [
+		{
+			label: 'server_draining',
+			reply: {
+				code: 409,
+				message: 'server_draining',
+				error_code: 'server_draining',
+				details: { reason: 'contention', retry_after_ms: 1000 }
+			},
+			messageKey: 'flow.error.server_draining.contention'
+		},
+		{
+			label: 'legacy 5xx',
+			reply: { code: 500, message: 'database error' },
+			messageKey: 'flow.settings.error.unavailable'
+		}
+	];
+	for (const { label, reply, messageKey } of retryableFailures) {
+		resetServer();
+		const { ctl } = controller();
+		await ctl.load();
+		const intent = ctl.propose({ field: 'enabled', value: false });
+		assert(intent, `${label}: intent`);
+		ctl.confirm(intent);
+		replies.push(reply);
+		const failed = await ctl.submit(intent);
+		assertEqual(failed.status, 'failed', `${label}: first attempt fails`);
+		if (failed.status === 'failed') {
+			assertEqual(failed.retryable, true, `${label} is retryable`);
+			assertEqual(failed.messageKey, messageKey, `${label}: message key`);
+		}
+		assertEqual(ctl.pendingIntent, intent, `${label}: the intent survives a retryable failure`);
+		const again = ctl.propose({ field: 'enabled', value: false });
+		assertEqual(again, intent, `${label}: re-proposing the same change resumes the same intent`);
+		const saved = await ctl.submit(intent);
+		assertEqual(saved.status, 'saved', `${label}: retry succeeds`);
+
+		const [firstPut, secondPut] = puts();
+		assertEqual(
+			(secondPut.body as { idempotency_key: string }).idempotency_key,
+			(firstPut.body as { idempotency_key: string }).idempotency_key,
+			`${label}: retry key equals original key`
+		);
+		const next = ctl.propose({ field: 'enabled', value: true });
+		assert(next, `${label}: a later, different intent`);
+		assertNotEqual(
+			next.idempotencyKey,
+			intent.idempotencyKey,
+			`${label}: a new intent mints a new key`
+		);
+	}
 });
 
 // ---- 5. error branching reads error_code, never message ---------------------------------

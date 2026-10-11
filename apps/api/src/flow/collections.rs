@@ -5074,10 +5074,10 @@ mod database_tests {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // FP2-B6
+    // Record reads, value and option validation, embed position
     // ---------------------------------------------------------------------------------------------
 
-    async fn fp2_b6_member(state: &AppState, workspace_id: Uuid) -> Uuid {
+    async fn collection_member(state: &AppState, workspace_id: Uuid) -> Uuid {
         let member_id = Uuid::new_v4();
         exec(
             &state.db,
@@ -5095,7 +5095,7 @@ mod database_tests {
         member_id
     }
 
-    fn fp2_b6_reason(error: &ApiError) -> (ApiErrorKind, Option<String>, Option<String>) {
+    fn refusal_reason(error: &ApiError) -> (ApiErrorKind, Option<String>, Option<String>) {
         let details = match error {
             ApiError::Typed { details, .. } => details.clone(),
             _ => None,
@@ -5110,16 +5110,16 @@ mod database_tests {
         (error.kind(), text("reason"), text("field_id"))
     }
 
-    /// FP2-B6 (P0, `ADR-0018` NR-7): under `field_secrecy_enabled` the single-object read of a
+    /// `ADR-0018` NR-7: under `field_secrecy_enabled` the single-object read of a
     /// Record (`GET /flow/objects/{record_id}`, both renders) and its diff must apply the same
     /// redaction the records query applies to `semantic_content`, for every reader. A Record of a
     /// Collection without restricted fields keeps its full semantic content.
     #[tokio::test]
-    async fn fp2_b6_single_record_read_redacts_semantic_content_like_the_records_query() {
-        let scratch = scratch_or_skip!("fp2_b6_record_redaction");
+    async fn single_record_read_redacts_semantic_content_like_the_records_query() {
+        let scratch = scratch_or_skip!("surface_record_redaction");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed(&state).await;
-        let member_id = fp2_b6_member(&state, workspace_id).await;
+        let member_id = collection_member(&state, workspace_id).await;
         let collection_id = create_object_for(&state, workspace_id, owner_id, "collection", "Restricted reads").await;
         let secret_field = Uuid::new_v4();
         let open_field = Uuid::new_v4();
@@ -5288,14 +5288,14 @@ mod database_tests {
         scratch.drop_self().await;
     }
 
-    /// FP2-B6: values that pass the JSON type check but not the field type's semantics are
+    /// Values that pass the JSON type check but not the field type's semantics are
     /// `invalid_update` with `details.reason="invalid_field_value"` and `details.field_id`, on
     /// both record create and `record_patch`; an unparseable date no longer reaches the typed index
     /// (it used to surface as a driver error). A filter with an unparseable date is a typed
     /// `invalid_update` too. Legacy select fields without `config.options` stay unconstrained.
     #[tokio::test]
-    async fn fp2_b6_semantically_invalid_record_values_are_invalid_field_value() {
-        let scratch = scratch_or_skip!("fp2_b6_field_values");
+    async fn semantically_invalid_record_values_are_invalid_field_value() {
+        let scratch = scratch_or_skip!("surface_field_values");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed(&state).await;
         let collection_id = create_object_for(&state, workspace_id, owner_id, "collection", "Typed values").await;
@@ -5341,7 +5341,7 @@ mod database_tests {
             .await
             .expect_err("a semantically invalid value is refused");
             assert_eq!(
-                fp2_b6_reason(&refused),
+                refusal_reason(&refused),
                 (
                     ApiErrorKind::InvalidUpdate,
                     Some("invalid_field_value".to_string()),
@@ -5388,7 +5388,7 @@ mod database_tests {
         .await
         .expect_err("record_patch refuses an unparseable date");
         assert_eq!(
-            fp2_b6_reason(&refused_patch),
+            refusal_reason(&refused_patch),
             (
                 ApiErrorKind::InvalidUpdate,
                 Some("invalid_field_value".to_string()),
@@ -5416,15 +5416,15 @@ mod database_tests {
         )
         .await
         .expect_err("a filter on an unparseable date is refused before SQL");
-        assert_eq!(fp2_b6_reason(&filtered).0, ApiErrorKind::InvalidUpdate, "{filtered:?}");
+        assert_eq!(refusal_reason(&filtered).0, ApiErrorKind::InvalidUpdate, "{filtered:?}");
         scratch.drop_self().await;
     }
 
-    /// FP2-B6: `config.options` of a `select`/`multi_select` field must be an array of distinct,
+    /// `config.options` of a `select`/`multi_select` field must be an array of distinct,
     /// non-empty strings, on `field_create`, `field_update` and an initial schema.
     #[tokio::test]
-    async fn fp2_b6_select_options_config_is_validated() {
-        let scratch = scratch_or_skip!("fp2_b6_select_options");
+    async fn select_options_config_is_validated() {
+        let scratch = scratch_or_skip!("surface_select_options");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed(&state).await;
         let collection_id = create_object_for(&state, workspace_id, owner_id, "collection", "Options").await;
@@ -5500,7 +5500,7 @@ mod database_tests {
         scratch.drop_self().await;
     }
 
-    async fn fp2_b6_root_blocks(state: &AppState, page_id: Uuid) -> Vec<String> {
+    async fn page_root_blocks(state: &AppState, page_id: Uuid) -> Vec<String> {
         let page = repository::fetch_object_view(&state.db, page_id)
             .await
             .expect("page reads")
@@ -5520,12 +5520,12 @@ mod database_tests {
         roots.into_iter().map(|(_, id)| id).collect()
     }
 
-    /// FP2-B6: `create_collection_embed` honours `after_block_id` (inserted right after that
+    /// `create_collection_embed` honours `after_block_id` (inserted right after that
     /// block), appends without it, refuses an unknown block id with `invalid_update` and writes
     /// nothing, and treats `after_block_id` as part of the idempotent request body.
     #[tokio::test]
-    async fn fp2_b6_create_collection_embed_inserts_after_the_named_block() {
-        let scratch = scratch_or_skip!("fp2_b6_embed_after");
+    async fn create_collection_embed_inserts_after_the_named_block() {
+        let scratch = scratch_or_skip!("surface_embed_after");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed(&state).await;
         let page_id = create_object_for(&state, workspace_id, owner_id, "page", "Embed host").await;
@@ -5541,7 +5541,7 @@ mod database_tests {
             .await
             .expect("block inserts");
         }
-        assert_eq!(fp2_b6_root_blocks(&state, page_id).await, ["b1", "b2"]);
+        assert_eq!(page_root_blocks(&state, page_id).await, ["b1", "b2"]);
 
         let key = Uuid::new_v4().to_string();
         let payload = json!({"title": "After b1", "after_block_id": "b1"});
@@ -5559,10 +5559,7 @@ mod database_tests {
             .as_str()
             .expect("block id")
             .to_string();
-        assert_eq!(
-            fp2_b6_root_blocks(&state, page_id).await,
-            ["b1", block_id.as_str(), "b2"]
-        );
+        assert_eq!(page_root_blocks(&state, page_id).await, ["b1", block_id.as_str(), "b2"]);
         let replay = command(
             &state,
             owner_id,
@@ -5585,7 +5582,7 @@ mod database_tests {
         .await
         .expect_err("a different after_block_id under the same key is body drift");
         assert_eq!(
-            fp2_b6_reason(&drift).1.as_deref(),
+            refusal_reason(&drift).1.as_deref(),
             Some("idempotency_key_body_drift"),
             "{drift:?}"
         );
@@ -5605,7 +5602,7 @@ mod database_tests {
             .expect("block id")
             .to_string();
         assert_eq!(
-            fp2_b6_root_blocks(&state, page_id).await,
+            page_root_blocks(&state, page_id).await,
             ["b1", block_id.as_str(), "b2", appended_block.as_str()]
         );
 
@@ -5642,7 +5639,7 @@ mod database_tests {
             collections_after.count, collections_before.count,
             "a refused embed writes nothing"
         );
-        assert_eq!(fp2_b6_root_blocks(&state, page_id).await.len(), 4);
+        assert_eq!(page_root_blocks(&state, page_id).await.len(), 4);
         scratch.drop_self().await;
     }
 
@@ -5681,7 +5678,7 @@ mod database_tests {
         let scratch = scratch_or_skip!("export_field_secrecy");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed(&state).await;
-        let member_id = fp2_b6_member(&state, workspace_id).await;
+        let member_id = collection_member(&state, workspace_id).await;
         let collection_id = create_object_for(&state, workspace_id, owner_id, "collection", "Restricted export").await;
         let salary = Uuid::new_v4();
         let diagnosis = Uuid::new_v4();
@@ -5788,7 +5785,7 @@ mod database_tests {
         )
         .await
         .expect_err("a package of a secret record is refused");
-        let (kind, reason, _) = fp2_b6_reason(&refused);
+        let (kind, reason, _) = refusal_reason(&refused);
         assert_eq!(kind, ApiErrorKind::PolicyRejected, "{refused:?}");
         assert_eq!(reason.as_deref(), Some("field_secrecy"), "{refused:?}");
 
@@ -5975,7 +5972,7 @@ mod database_tests {
         )
         .await
         .expect_err("an id outside the workspace is refused");
-        let (kind, reason, field_id) = fp2_b6_reason(&refused);
+        let (kind, reason, field_id) = refusal_reason(&refused);
         assert_eq!(kind, ApiErrorKind::InvalidUpdate, "{refused:?}");
         assert_eq!(reason.as_deref(), Some("invalid_field_value"), "{refused:?}");
         assert_eq!(field_id, Some(relation_field.to_string()), "{refused:?}");

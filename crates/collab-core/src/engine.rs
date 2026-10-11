@@ -738,7 +738,7 @@ mod tests {
         assert_ne!(engine.frontier(), forked.frontier());
     }
 
-    /// FP2-B6: an update whose causal dependencies are not in the document leaves Loro's import
+    /// An update whose causal dependencies are not in the document leaves Loro's import
     /// pending; it must be refused rather than reported as an (empty) success, and must leave the
     /// document unchanged. The same bytes import once their dependency is present.
     #[test]

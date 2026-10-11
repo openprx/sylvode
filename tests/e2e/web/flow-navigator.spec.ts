@@ -376,7 +376,7 @@ test('navigator: Flow search, lag badge and standalone Collection create', async
 	await expect(item).toHaveCount(1);
 	await expect(item).toHaveAttribute('aria-selected', 'true');
 	await expect(item.getByTestId('flow-nav-collection-badge')).toHaveText('Collection');
-	// The object page renders it with the registry's Collection renderer (FP2-M4): the board
+	// The object page renders it with the registry's Collection renderer: the board
 	// view, disabled until the Collection has a select field to group by.
 	await expect(page.getByTestId('flow-object-unsupported')).toHaveCount(0);
 	await expect(page.getByTestId('collection-renderer')).toBeVisible();

@@ -1,11 +1,11 @@
 /**
- * A fake collaboration server for the FP2-M6 suites: a mock `WebSocket`, a `fetch` router for the
+ * A fake collaboration server for the collaboration suites: a mock `WebSocket`, a `fetch` router for the
  * four REST reads the Flow client makes around a session (object, grants, bootstrap, ticket), and
  * a server that holds a real `loro-crdt` document and speaks the wire shapes of
  * `apps/api/src/flow/collab/frame.rs` in the handshake order of `session.rs::run`.
  *
- * It answers by the contract as the server does since FP2-B6 (`collab-protocol-v1.md` 2026-10-10
- * registration):
+ * It answers by the contract as the server does since the `collab-protocol-v1.md` 2026-10-10
+ * registration:
  * - a replayed `update` whose `update_id` already committed is answered with the ORIGINAL receipt
  *   (same `head_seq`/`head_frontier`/`event_id`), on any connection, and is never applied twice;
  * - every `rejected` that answers an update carries its `update_id` (the rate refusal included);
