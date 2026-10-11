@@ -29,8 +29,10 @@ OpenPR name keeps working; see **Deprecated**.
   refused the statement for good (constraint, data or schema error, or an exception raised by a
   database function, `SQLSTATE` class `P0`), otherwise `server_draining` with
   `reason = "contention"` and `retry_after_ms` (connection, pool and transient errors). This
-  holds for the statements the authentication layer runs for a bot token too (the credential
-  lookup and the operation's attribution record). The driver's text is logged, never sent. What
+  holds for the credential lookup the authentication layer runs for a bot token too. A bot
+  operation that ran but whose attribution record could not be written answers `server_rejected`
+  with no `details` on a Flow route, never `server_draining`, so a client is not told to repeat
+  an operation that has been carried out. The driver's text is logged, never sent. What
   still answers a legacy envelope on a Flow route is an authentication refusal that is not a
   database failure (a missing, invalid, disabled or expired credential, or a transport or
   permission the credential does not have: `code` 401 or 403, no `error_code`). Routes outside Flow keep the legacy envelopes (`code` 500, `message`
@@ -543,9 +545,11 @@ replacement and the earliest removal.
   (`deterministic_database_refusal`) or `server_draining` (`contention`, `retry_after_ms`), so
   clients can classify it by `error_code`. One response boundary around the Flow router does
   this; routes outside Flow are byte for byte unchanged.
-  - A bot token gets the same answers: a database failure of its credential lookup or of its
-    operation's attribution record on a Flow route is typed by the same rule instead of the
-    legacy `internal server error` envelope. The only legacy envelopes left on a Flow route are
+  - A bot token gets the same answers: a database failure of its credential lookup on a Flow
+    route is typed by the same rule instead of the legacy `internal server error` envelope. When
+    the operation ran and only its attribution record could not be written, the Flow route
+    answers `server_rejected` with no `details` whatever the database failure was, and never the
+    retryable `server_draining`: the operation has been carried out and must not be repeated. The only legacy envelopes left on a Flow route are
     authentication refusals that are not database failures (a missing, invalid, disabled or
     expired credential, or a transport or permission the credential does not have).
   - An exception raised by one of the application's database functions (`SQLSTATE` class `P0`)
