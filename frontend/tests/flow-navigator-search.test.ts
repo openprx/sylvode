@@ -593,6 +593,20 @@ await suite.checkAsync(
 );
 
 await suite.checkAsync(
+	'after a successful create the same form is a new intent: new key and new ids',
+	async () => {
+		const h = creator([accepted('col-1'), accepted('col-2')]);
+		assertEqual((await h.session.submit(draft())).kind, 'created', 'first created');
+		assertEqual((await h.session.submit(draft())).kind, 'created', 'second created');
+		assert(h.calls[1].key !== h.calls[0].key, 'a second Collection is not a replay of the first');
+		assert(
+			JSON.stringify(h.calls[1].input) !== JSON.stringify(h.calls[0].input),
+			'and gets its own field/view ids'
+		);
+	}
+);
+
+await suite.checkAsync(
 	'editing the form after a failure is a new intent: new key and new ids',
 	async () => {
 		const h = creator([{ code: 'invalid_update', recoverable: false }, accepted('col-1')]);

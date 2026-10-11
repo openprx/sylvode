@@ -524,6 +524,12 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow test gates gained the checks whose absence let regressions through: the i18n parity gate
+  covers the Web-local error codes (`network_error`), the reference card tests pin the
+  `unconfigured` permission badge and admit cards by `visibility` only, the Collection create
+  tests require a fresh intent after a success, and the named-reason test compares against an
+  independent table; the unused `REPREVIEW_REASONS` export is removed; the CI Web E2E job fails
+  when any test was flaky (passed only on a retry).
 - Flow recovery draft "clear" deletes only the drafts that tab showed, so a draft another tab of
   the same user added meanwhile is kept; an unknown `limits.version` in a bootstrap makes the
   canvas read-only as well as the outbox, so no edit is made that can be neither sent nor kept;

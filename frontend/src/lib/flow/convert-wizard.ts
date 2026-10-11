@@ -124,12 +124,6 @@ export const POLICY_REJECTED_REASONS = [
 ] as const;
 export type PolicyRejectedReason = (typeof POLICY_REJECTED_REASONS)[number];
 
-/** The reasons after which a commit is answered by previewing again automatically. */
-export const REPREVIEW_REASONS: ReadonlySet<PolicyRejectedReason> = new Set([
-	'preview_expired',
-	'target_schema_changed'
-]);
-
 export const POLICY_REASON_KEYS: Readonly<Record<PolicyRejectedReason, string>> = {
 	preview_expired: 'flow.bridge.convert.error.previewExpired',
 	target_schema_changed: 'flow.bridge.convert.error.targetSchemaChanged',
