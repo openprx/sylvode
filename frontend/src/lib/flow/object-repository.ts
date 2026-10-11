@@ -707,7 +707,12 @@ export class FlowObjectRepository {
 		if (!entry) return;
 		const negotiation = negotiateFlowLimitsVersion(bootstrap.limits);
 		entry.session.adoptLimits(negotiation);
-		if (negotiation.outcome !== 'supported') entry.offline.setReadOnly(true);
+		if (negotiation.outcome !== 'supported') {
+			// Both halves: the outbox stops sending AND the canvas stops editing, so no edit is
+			// made that could neither be sent nor kept ("Nothing is dropped").
+			entry.offline.setReadOnly(true);
+			entry.readOnlyStore.set(true);
+		}
 	}
 
 	/** `ObjectRepositoryContract.replaceWithAccepted`: imports a bootstrap's snapshot+tail into the

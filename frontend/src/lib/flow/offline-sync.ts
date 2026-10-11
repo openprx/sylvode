@@ -290,9 +290,12 @@ export class FlowOfflineSync {
 		});
 	}
 
+	/** Forgets the drafts this instance holds (the ones its user saw); drafts another tab added
+	 * to the shared store since stay there for that tab. */
 	async clearDraft(): Promise<void> {
-		await this.store.clearDrafts(this.host.objectId);
-		this.drafts = [];
+		const cleared = this.drafts.map((draft) => draft.updateId);
+		await this.store.deleteDrafts(cleared);
+		this.drafts = this.drafts.filter((draft) => !cleared.includes(draft.updateId));
 		this.publish();
 	}
 

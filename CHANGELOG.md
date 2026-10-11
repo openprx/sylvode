@@ -524,6 +524,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow recovery draft "clear" deletes only the drafts that tab showed, so a draft another tab of
+  the same user added meanwhile is kept; an unknown `limits.version` in a bootstrap makes the
+  canvas read-only as well as the outbox, so no edit is made that can be neither sent nor kept;
+  the `network_error` message says the outcome is unknown and that retrying the same change is
+  safe, instead of claiming nothing was committed.
 - Flow standalone Record route reads its owning Collection's schema through
   `GET /flow/objects/{record_id}/schema`; the uncalled `ObjectRepository.queryRecords` and
   `openRecordIds` adapters are removed.

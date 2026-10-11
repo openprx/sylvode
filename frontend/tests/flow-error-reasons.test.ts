@@ -268,6 +268,19 @@ suite.check(
 	}
 );
 
+suite.check('network_error copy says the result is unknown, never that nothing was committed', () => {
+	for (const [locale, unknown, claims] of [
+		['en', /unknown/i, /nothing was committed|not (been )?committed|was not saved/i],
+		['zh', /未知/, /尚未提交|未提交|没有提交/]
+	] as const) {
+		const data = JSON.parse(readFileSync(join(ROOT, 'src/lib/i18n', `${locale}.json`), 'utf8'));
+		const text: unknown = data?.flow?.error?.network_error;
+		assert(typeof text === 'string', `${locale}: flow.error.network_error exists`);
+		assert(unknown.test(text as string), `${locale}: says the outcome is unknown: ${text}`);
+		assert(!claims.test(text as string), `${locale}: does not claim nothing was committed: ${text}`);
+	}
+});
+
 // ---- the production consumers exist (not just the helper) ---------------------------------------
 
 function code(path: string): string {
