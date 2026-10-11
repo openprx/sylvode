@@ -200,6 +200,8 @@ export class FakeCollabServer {
 	online = true;
 	/** The requesting user's effective level, as `GET .../grants` reports it. */
 	effectiveLevel: 'none' | 'view' | 'comment' | 'edit' | 'full_access' = 'edit';
+	/** The REST bootstrap's `limits` (the current version's defaults when `null`). */
+	bootstrapLimits: Record<string, unknown> | null = null;
 	/** Per-update decision; default accepts everything. */
 	policy: (seen: UpdateSeen, index: number) => PolicyVerdict = () => ({ kind: 'accept' });
 	readonly accepted: Array<{ seq: number; updateId: string; bytes: Uint8Array }> = [];
@@ -450,7 +452,7 @@ export class FakeCollabServer {
 				snapshot_base64: this.snapshotBase64(),
 				tail_updates: [],
 				head_frontier: this.frontier(),
-				limits: limitsPayload(),
+				limits: this.bootstrapLimits ?? limitsPayload(),
 				websocket_path: '/api/v1/collab/ws'
 			});
 		}

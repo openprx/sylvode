@@ -385,6 +385,60 @@ await suite.checkAsync(
 	}
 );
 
+await suite.checkAsync(
+	"clearing one tab's recovery draft leaves another tab's drafts in the store",
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		try {
+			// Another tab of the same user refuses an intent after this tab loaded its drafts.
+			const otherTab = {
+				updateId: 'u-other-tab-refused',
+				idempotencyKey: 'u-other-tab-refused',
+				objectId: OBJECT_ID,
+				order: 99,
+				bytes: new Uint8Array([1, 2, 3]),
+				baseFrontier: 'f0',
+				intent: { kind: 'content_edit' as const },
+				enqueuedAt: 1,
+				rejectedAt: 2,
+				reason: { code: 'policy_rejected' as const, source: 'server' as const }
+			};
+			await ctx.store.moveToDraft(otherTab);
+			await ctx.repository.clearRecoveryDraft(OBJECT_ID);
+			const left = await rawDrafts(ctx.idb);
+			assertDeepEqual(
+				left.map((d) => d.updateId),
+				['u-other-tab-refused'],
+				"the other tab's draft is not deleted by this tab's clear"
+			);
+		} finally {
+			await ctx.close();
+		}
+	}
+);
+
+await suite.checkAsync(
+	'an unknown limits version makes the canvas read-only, not just the outbox',
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		try {
+			let readOnly = false;
+			const stop = ctx.entry.readOnly.subscribe((value) => (readOnly = value));
+			assertEqual(readOnly, false, 'writable before the bootstrap');
+			const { limitsPayload } = await import('./support/collab-fakes');
+			server.bootstrapLimits = limitsPayload();
+			server.bootstrapLimits.version = 'sylvode.flow.limits.v99';
+			await ctx.repository.bootstrap(OBJECT_ID);
+			stop();
+			assertEqual(readOnly, true, 'the canvas is read-only under an unknown limits version');
+		} finally {
+			await ctx.close();
+		}
+	}
+);
+
 export const result = suite.result();
 
 if (import.meta.main) finish(result);

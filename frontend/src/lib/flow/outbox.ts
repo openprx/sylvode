@@ -63,7 +63,9 @@ export interface OutboxStore {
 	/** Moves an intent into the draft store: one transaction writes the draft and deletes the
 	 * outbox entry, so a crash between the two can neither lose it nor replay it. */
 	moveToDraft(draft: RecoveryDraftEntry): Promise<void>;
-	clearDrafts(objectId: string): Promise<void>;
+	/** Deletes the named drafts only. Another tab of the same user shares this store, so a clear
+	 * removes exactly the drafts the clearing tab showed, never ones it has not seen. */
+	deleteDrafts(updateIds: readonly string[]): Promise<void>;
 	/** The next free `order` value. */
 	nextOrder(): Promise<number>;
 }
@@ -168,10 +170,10 @@ export class IndexedDbOutboxStore implements OutboxStore {
 		await transactionDone(tx);
 	}
 
-	async clearDrafts(objectId: string): Promise<void> {
-		const drafts = await this.listDrafts(objectId);
+	async deleteDrafts(updateIds: readonly string[]): Promise<void> {
+		if (updateIds.length === 0) return;
 		const tx = this.db.transaction(DRAFT_STORE, 'readwrite');
-		for (const draft of drafts) tx.objectStore(DRAFT_STORE).delete(draft.updateId);
+		for (const updateId of updateIds) tx.objectStore(DRAFT_STORE).delete(updateId);
 		await transactionDone(tx);
 	}
 
@@ -214,8 +216,8 @@ export class MemoryOutboxStore implements OutboxStore {
 		this.outbox.delete(draft.updateId);
 	}
 
-	async clearDrafts(objectId: string): Promise<void> {
-		for (const [id, draft] of this.drafts) if (draft.objectId === objectId) this.drafts.delete(id);
+	async deleteDrafts(updateIds: readonly string[]): Promise<void> {
+		for (const updateId of updateIds) this.drafts.delete(updateId);
 	}
 
 	async nextOrder(): Promise<number> {

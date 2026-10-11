@@ -2540,7 +2540,7 @@
         "cross_workspace_relation": "The relation target is in another workspace. The write was refused and recorded as an integrity issue; a workspace administrator has to review it on the operations page."
       },
       "integrityRepairLink": "Open workspace operations",
-      "network_error": "Could not reach the server (network failure or gateway error). Nothing was committed; it is safe to retry."
+      "network_error": "Could not reach the server (network failure or gateway error). The result is unknown: the change may or may not have been applied. Retrying the same change is safe."
     },
     "history": {
       "title": "History",
