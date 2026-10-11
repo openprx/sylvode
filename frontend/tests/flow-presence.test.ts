@@ -152,9 +152,14 @@ suite.check('a peer colour that is not #rrggbb is replaced by the palette colour
 		const peer = map.list().find((p) => p.sessionId === `s${i}`);
 		assertEqual(peer?.user.color, presenceColor('actor-1'), `palette colour for ${color}`);
 	}
-	map.receive('ok', { v: 1, user: { userId: 'u-x', name: 'X', color: '#AbCdEf' }, cursor: null }, 30, {
-		user_id: 'actor-1'
-	});
+	map.receive(
+		'ok',
+		{ v: 1, user: { userId: 'u-x', name: 'X', color: '#AbCdEf' }, cursor: null },
+		30,
+		{
+			user_id: 'actor-1'
+		}
+	);
 	assertEqual(
 		map.list().find((p) => p.sessionId === 'ok')?.user.color,
 		'#AbCdEf',
@@ -168,7 +173,11 @@ suite.check('a peer name is plain text of at most 64 characters', () => {
 		's1',
 		{
 			v: 1,
-			user: { userId: 'u', name: '<img src=x onerror=alert(1)>Bob\u0000\u202e\u001b[31m', color: '#000000' },
+			user: {
+				userId: 'u',
+				name: '<img src=x onerror=alert(1)>Bob\u0000\u202e\u001b[31m',
+				color: '#000000'
+			},
 			cursor: null
 		},
 		30,
@@ -176,20 +185,39 @@ suite.check('a peer name is plain text of at most 64 characters', () => {
 	);
 	const name = map.list()[0]?.user.name ?? '';
 	assert(!/[<>]/.test(name), `no markup survives: ${JSON.stringify(name)}`);
-	assert(!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(name), `no control characters: ${JSON.stringify(name)}`);
+	const isControl = (ch: string) => {
+		const code = ch.codePointAt(0) ?? 0;
+		return (
+			code < 0x20 ||
+			(code >= 0x7f && code <= 0x9f) ||
+			(code >= 0x202a && code <= 0x202e) ||
+			(code >= 0x2066 && code <= 0x2069)
+		);
+	};
+	assert(!Array.from(name).some(isControl), `no control characters: ${JSON.stringify(name)}`);
 	assert(name.includes('Bob'), 'the text itself is kept');
-	map.receive('s2', { v: 1, user: { userId: 'u', name: '名'.repeat(100), color: '#000000' }, cursor: null }, 30, {
-		user_id: 'a'
-	});
+	map.receive(
+		's2',
+		{ v: 1, user: { userId: 'u', name: '名'.repeat(100), color: '#000000' }, cursor: null },
+		30,
+		{
+			user_id: 'a'
+		}
+	);
 	assertEqual(
 		Array.from(map.list().find((p) => p.sessionId === 's2')?.user.name ?? '').length,
 		64,
 		'truncated to 64 characters'
 	);
 	assertEqual(
-		map.receive('s3', { v: 1, user: { userId: 'u', name: '<b></b>\u0007', color: '#000000' }, cursor: null }, 30, {
-			user_id: 'a'
-		}),
+		map.receive(
+			's3',
+			{ v: 1, user: { userId: 'u', name: '<b></b>\u0007', color: '#000000' }, cursor: null },
+			30,
+			{
+				user_id: 'a'
+			}
+		),
 		false,
 		'a name that is nothing but markup and control characters drops the presence'
 	);
@@ -197,13 +225,23 @@ suite.check('a peer name is plain text of at most 64 characters', () => {
 
 suite.check("identity is the server's actor, never the payload's claimed userId", () => {
 	const map = new RemotePresenceMap(new FakeClock());
-	map.receive('s1', { v: 1, user: { userId: 'u-owner', name: 'Owner', color: '#000000' }, cursor: null }, 30, {
-		user_id: 'u-member'
-	});
+	map.receive(
+		's1',
+		{ v: 1, user: { userId: 'u-owner', name: 'Owner', color: '#000000' }, cursor: null },
+		30,
+		{
+			user_id: 'u-member'
+		}
+	);
 	const attested = map.list()[0];
 	assertEqual(attested.user.userId, 'u-member', 'the actor names the peer');
 	assertEqual(attested.attested, true, 'attested by the server');
-	map.receive('s2', { v: 1, user: { userId: 'u-owner', name: 'Owner', color: 'red' }, cursor: null }, 30, undefined);
+	map.receive(
+		's2',
+		{ v: 1, user: { userId: 'u-owner', name: 'Owner', color: 'red' }, cursor: null },
+		30,
+		undefined
+	);
 	const legacy = map.list().find((p) => p.sessionId === 's2');
 	assertEqual(legacy?.attested, false, 'a frame without actor is not attested');
 	assertEqual(legacy?.user.color, presenceColor('u-owner'), 'the claimed id only seeds the colour');
@@ -220,7 +258,10 @@ suite.check('the canvas and the editor never put a peer value into a style unche
 		assert(!/\$\{peer\.user\.color\}/.test(source), `${label} interpolates peer.user.color`);
 		assert(!/=\s*peer\.user\.color\b/.test(source), `${label} assigns peer.user.color`);
 		assert(!/setProperty\([^)]*peer\.user\.color\)/.test(source), `${label} sets peer.user.color`);
-		assert(/safePresenceColor\(/.test(source), `${label} renders colours through safePresenceColor`);
+		assert(
+			/safePresenceColor\(/.test(source),
+			`${label} renders colours through safePresenceColor`
+		);
 	}
 });
 

@@ -524,6 +524,9 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow logout waits at most three seconds for the Flow IndexedDB deletes: a tab of an older build
+  that ignores `versionchange` leaves its delete queued (it completes when that tab closes)
+  instead of holding the sign-out page.
 - Flow Web client follows the server's 2026-10-10 answers: a create or move target outside the
   workspace is shown as not found (the `cross_workspace_relation` wording now describes a stored
   relation found by the relations read, its only producer); a conversion retry answered

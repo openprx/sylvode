@@ -1392,9 +1392,8 @@ await suite.checkAsync(
 		assertEqual(controller.snapshot().rows.length, 250, 'all 250 records are loaded');
 		const { installSvelteSsr, renderToHtml } = await import('./support/svelte-ssr');
 		await installSvelteSsr();
-		const { default: CollectionTable } = await import(
-			'../src/lib/components/flow/collection/CollectionTable.svelte'
-		);
+		const { default: CollectionTable } =
+			await import('../src/lib/components/flow/collection/CollectionTable.svelte');
 		const html = await renderToHtml(CollectionTable, {
 			controller,
 			snapshot: controller.snapshot(),

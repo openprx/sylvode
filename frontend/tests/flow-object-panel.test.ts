@@ -406,7 +406,10 @@ await suite.checkAsync(
 		assertEqual(failure?.retryable, false, 'not retryable as the same request');
 		for (const locale of ['zh', 'en']) {
 			const data = JSON.parse(
-				readFileSync(join(new URL('..', import.meta.url).pathname, 'src/lib/i18n', `${locale}.json`), 'utf8')
+				readFileSync(
+					join(new URL('..', import.meta.url).pathname, 'src/lib/i18n', `${locale}.json`),
+					'utf8'
+				)
 			);
 			const text = OBJECT_EXPORT_FIELD_SECRECY_KEY.split('.').reduce<unknown>(
 				(node, part) => (node as Record<string, unknown> | undefined)?.[part],
