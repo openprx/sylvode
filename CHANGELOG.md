@@ -524,6 +524,10 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow writes are never resent automatically under a new idempotency key: an
+  `idempotency_key_body_drift` refusal from object create, commands or record create reaches the
+  caller as a typed error and is shown as such (an automatic re-key could execute an already
+  committed intent twice); a retry after `stale_frontier` stays an explicit new intent.
 - Flow presence identifies a peer by the frame's server-attested `actor.user_id` (the payload's
   self-reported `userId` only seeds the colour for a frame without `actor` and is never shown as
   the peer's identity); a peer colour that is not `#rrggbb` is replaced by the palette colour and

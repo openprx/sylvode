@@ -8,7 +8,8 @@
  *   - UI 对每个 server_draining reason 都有对应消费行为（含 contention）
  *
  * Behaviour, not declarations: the dispositions are read off the real envelope/frame decoders; the
- * `idempotency_key_body_drift` consumer is the real `CommandService` resending under a new key; the
+ * `idempotency_key_body_drift` consumer is the real `CommandService` surfacing it as a typed error
+ * (never resending under a new key, `error-mapping-v1.md` "drift 不自动换 key"); the
  * production call sites are located in the shipped source (comments stripped), so deleting a
  * consumer turns this red even if the helper stays.
  *
@@ -30,9 +31,9 @@ import {
 	invalidUpdateDisposition
 } from '../src/lib/flow/errors';
 import {
+	FlowCommandService,
 	flowErrorFromResult,
-	mapErrorCode,
-	sendWithDriftRekey
+	mapErrorCode
 } from '../src/lib/flow/command-service';
 import type { ApiResult } from '../src/lib/api/client';
 
@@ -54,7 +55,7 @@ suite.check('each named reason maps to its action and key, on REST and WS alike'
 		subtree_spans_multiple_projects: 'integrity_repair',
 		child_project_must_match_parent: 'change_project',
 		project_unmapped: 'remap_project',
-		idempotency_key_body_drift: 'rekey_and_resend',
+		idempotency_key_body_drift: 'surface_error',
 		invalid_field_value: 'fix_field_value',
 		causal_dependency_missing: 'keep_in_recovery_draft',
 		cross_workspace_relation: 'integrity_repair'
@@ -156,67 +157,86 @@ suite.check('unknown or absent reason: the unified fallback, never the message',
 	);
 });
 
-await suite.checkAsync('idempotency_key_body_drift: resent once under a NEW key', async () => {
-	const keys: string[] = [];
-	const answers: Array<ApiResult<string>> = [
-		{
-			code: 400,
-			message: 'x',
-			data: null,
-			error_code: 'invalid_update',
-			details: { reason: 'idempotency_key_body_drift' }
-		} as ApiResult<string>,
-		{ code: 0, message: 'ok', data: 'done' }
-	];
-	const result = await sendWithDriftRekey(
-		async (key) => {
-			keys.push(key);
-			return answers[keys.length - 1];
-		},
-		'original-key',
-		() => 'fresh-key'
-	);
-	assertEqual(result.code, 0, 'the resend succeeded');
-	assertEqual(keys.length, 2, 'sent twice');
-	assertEqual(keys[0], 'original-key', 'first under the caller key');
-	assertNotEqual(keys[1], keys[0], 'the resend uses a new key');
-});
+const DRIFT = {
+	code: 400,
+	message: 'irrelevant prose',
+	data: null,
+	error_code: 'invalid_update',
+	details: { reason: 'idempotency_key_body_drift' }
+};
+
+/** Runs `body` against a `fetch` that answers every request with `answer`; returns the bodies. */
+async function withFetch(
+	answer: unknown,
+	body: () => Promise<void>
+): Promise<Array<Record<string, unknown>>> {
+	const seen: Array<Record<string, unknown>> = [];
+	const original = globalThis.fetch;
+	globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+		seen.push(init?.body ? JSON.parse(String(init.body)) : {});
+		return new Response(JSON.stringify(answer), {
+			headers: { 'Content-Type': 'application/json' }
+		});
+	}) as typeof fetch;
+	try {
+		await body();
+	} finally {
+		globalThis.fetch = original;
+	}
+	return seen;
+}
 
 await suite.checkAsync(
-	'any other refusal is returned as is, and a second drift is not chased',
+	'idempotency_key_body_drift: thrown as a typed error, never resent under a new key',
 	async () => {
-		for (const details of [
-			{ reason: 'child_project_must_match_parent' },
-			{ reason: 'other' },
-			undefined
-		]) {
-			let calls = 0;
-			await sendWithDriftRekey(async () => {
-				calls += 1;
-				return {
-					code: 400,
-					message: '',
-					data: null,
-					error_code: 'invalid_update',
-					details
-				} as ApiResult<string>;
-			}, 'k');
-			assertEqual(calls, 1, `no resend for ${JSON.stringify(details)}`);
+		const commands = new FlowCommandService();
+		const writes: Array<[string, () => Promise<unknown>]> = [
+			[
+				'createObject',
+				() =>
+					commands.createObject(
+						'ws-1',
+						{ object_type: 'page', title: 'x' },
+						{ idempotencyKey: 'k-create' }
+					)
+			],
+			[
+				'execute',
+				() =>
+					commands.execute(
+						'obj-1',
+						{ type: 'set_title', payload: { title: 'x' } },
+						{ idempotencyKey: 'k-execute', expectedFrontier: 'f1' }
+					)
+			],
+			[
+				'createRecord',
+				() => commands.createRecord('col-1', { values_by_field_id: {} }, { idempotencyKey: 'k-record' })
+			]
+		];
+		for (const [method, send] of writes) {
+			let thrown: unknown = null;
+			const bodies = await withFetch(DRIFT, async () => {
+				try {
+					await send();
+				} catch (error) {
+					thrown = error;
+				}
+			});
+			assertEqual(bodies.length, 1, `${method}: sent once, no automatic resend`);
+			const error = thrown as { code?: string; details?: { reason?: string } } | null;
+			assertEqual(error?.code, 'invalid_update', `${method}: typed code`);
+			assertEqual(
+				error?.details?.reason,
+				'idempotency_key_body_drift',
+				`${method}: the drift reason reaches the caller`
+			);
+			assertEqual(
+				invalidUpdateDisposition(error as never)?.action,
+				'surface_error',
+				`${method}: shown as an error, not re-keyed`
+			);
 		}
-		let calls = 0;
-		const drift = {
-			code: 400,
-			message: '',
-			data: null,
-			error_code: 'invalid_update',
-			details: { reason: 'idempotency_key_body_drift' }
-		} as ApiResult<string>;
-		const result = await sendWithDriftRekey(async () => {
-			calls += 1;
-			return drift;
-		}, 'k');
-		assertEqual(calls, 2, 'one resend, then the second drift is returned');
-		assertEqual(result.error_code, 'invalid_update', 'returned to the caller');
 	}
 );
 
@@ -269,14 +289,7 @@ suite.check('production call sites consume the named reasons', () => {
 	const navigator = code('src/lib/components/flow/FlowNavigator.svelte');
 	assert(/flowErrorDetailKey\(/.test(navigator), 'navigator create: reason-specific copy');
 	const commands = code('src/lib/flow/command-service.ts');
-	for (const method of ['createObject', 'execute', 'createRecord']) {
-		const body = commands.slice(commands.indexOf(`async ${method}(`));
-		const end = body.indexOf('\n\t}\n');
-		assert(
-			/sendWithDriftRekey\(/.test(body.slice(0, end)),
-			`CommandService.${method} re-keys on drift`
-		);
-	}
+	assert(!/rekey|Rekey|mintKey/.test(commands), 'CommandService has no automatic re-key path');
 	const session = code('src/lib/flow/object-session.ts');
 	assert(/drainDisposition\(error\)/.test(session), 'the session consumes server_draining reasons');
 });
