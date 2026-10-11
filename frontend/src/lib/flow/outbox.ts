@@ -8,6 +8,7 @@
 // leaves the outbox only when the server accepted it, or when it moves -- whole, with the reason it
 // could not be replayed -- into the recovery draft store. Nothing is deleted any other way.
 
+import { OUTBOX_DB_PREFIX, flowDatabaseName } from './local-data';
 import type { FlowErrorCode, SemanticIntent } from './types';
 
 /** One local update waiting for the server's `accepted`. `updateId` doubles as the
@@ -67,7 +68,6 @@ export interface OutboxStore {
 	nextOrder(): Promise<number>;
 }
 
-export const OUTBOX_DB_NAME = 'sylvode-flow-outbox-v1';
 const OUTBOX_STORE = 'outbox';
 const DRAFT_STORE = 'drafts';
 const BY_OBJECT = 'by_object';
@@ -99,9 +99,9 @@ export class IndexedDbOutboxStore implements OutboxStore {
 		this.db = db;
 	}
 
-	/** Opens (creating on first use) the outbox database, or resolves `null` when the browser
-	 * gives this origin no IndexedDB at all. */
-	static open(factory: IDBFactory | undefined): Promise<IndexedDbOutboxStore | null> {
+	/** Opens (creating on first use) the outbox database `name` (one per user, see
+	 * `local-data.ts`), or resolves `null` when the browser gives this origin no IndexedDB at all. */
+	static open(factory: IDBFactory | undefined, name: string): Promise<IndexedDbOutboxStore | null> {
 		return new Promise((resolve) => {
 			if (!factory) {
 				resolve(null);
@@ -109,7 +109,7 @@ export class IndexedDbOutboxStore implements OutboxStore {
 			}
 			let request: IDBOpenDBRequest;
 			try {
-				request = factory.open(OUTBOX_DB_NAME, 1);
+				request = factory.open(name, 1);
 			} catch {
 				resolve(null);
 				return;
@@ -121,7 +121,12 @@ export class IndexedDbOutboxStore implements OutboxStore {
 				const drafts = db.createObjectStore(DRAFT_STORE, { keyPath: 'updateId' });
 				drafts.createIndex(BY_OBJECT, 'objectId', { unique: false });
 			};
-			request.onsuccess = () => resolve(new IndexedDbOutboxStore(request.result));
+			request.onsuccess = () => {
+				const db = request.result;
+				// A logout deletes this database; let the delete through instead of blocking it.
+				db.onversionchange = () => db.close();
+				resolve(new IndexedDbOutboxStore(db));
+			};
 			request.onerror = () => resolve(null);
 		});
 	}
@@ -224,8 +229,12 @@ export class MemoryOutboxStore implements OutboxStore {
 	}
 }
 
-/** The outbox store for this browser: IndexedDB when available, memory otherwise. */
-export async function openOutboxStore(): Promise<OutboxStore> {
+/** The outbox store of `userId` in this browser: its own IndexedDB database when available,
+ * memory otherwise -- and always memory without a known user, so nothing unattributable is
+ * persisted (`local-data.ts`). */
+export async function openOutboxStore(userId: string | null): Promise<OutboxStore> {
+	const name = flowDatabaseName(OUTBOX_DB_PREFIX, userId);
+	if (!name) return new MemoryOutboxStore();
 	const factory = typeof indexedDB === 'undefined' ? undefined : indexedDB;
-	return (await IndexedDbOutboxStore.open(factory)) ?? new MemoryOutboxStore();
+	return (await IndexedDbOutboxStore.open(factory, name)) ?? new MemoryOutboxStore();
 }

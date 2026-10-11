@@ -24,7 +24,7 @@
 
 	async function handleLogout() {
 		await authApi.logout();
-		authStore.logout();
+		await authStore.logout();
 		goto('/auth/login');
 	}
 

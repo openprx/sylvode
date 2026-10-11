@@ -1,7 +1,8 @@
 // 认证状态管理
-import { writable, derived } from 'svelte/store';
+import { derived, get, writable } from 'svelte/store';
 import type { User } from '$lib/api/auth';
 import { apiClient } from '$lib/api/client';
+import { clearFlowLocalData } from '$lib/flow/local-data';
 
 interface AuthState {
 	user: User | null;
@@ -48,12 +49,16 @@ function createAuthStore() {
 		setError: (error: string | null) => {
 			update((state) => ({ ...state, error }));
 		},
-		logout: () => {
+		/** Signs out locally and deletes every Flow IndexedDB database of this browser (outbox,
+		 * recovery drafts, snapshot cache; `lib/flow/local-data.ts`). Resolves once they are gone. */
+		logout: (): Promise<void> => {
+			const userId = get({ subscribe })?.user?.id;
 			apiClient.clearAuth();
 			if (typeof window !== 'undefined') {
 				localStorage.removeItem('auth_user');
 			}
 			set({ user: null, loading: false, error: null });
+			return clearFlowLocalData(userId ? [userId] : []);
 		},
 		reset: () => {
 			set({ user: null, loading: true, error: null });
