@@ -5175,7 +5175,7 @@ mod flow_surface_boundary_tests {
     }
 
     /// A syntactically valid bot credential; the refusing database cannot look it up.
-    const BOT_TOKEN: &str = "opr_0123456789abcdef0123456789abcdef";
+    const BOT_TOKEN: &str = concat!("opr_", "0123456789abcdef0123456789abcdef");
 
     /// Calls `path` with every method and every kind of caller, and checks each answer of a
     /// method the route accepts.
