@@ -93,7 +93,7 @@ export type InvalidUpdateAction =
 	| 'integrity_repair'
 	| 'change_project'
 	| 'remap_project'
-	| 'rekey_and_resend'
+	| 'surface_error'
 	| 'fix_field_value'
 	| 'keep_in_recovery_draft';
 
@@ -107,7 +107,10 @@ const INVALID_UPDATE_ACTIONS: Readonly<Record<InvalidUpdateReason, InvalidUpdate
 	subtree_spans_multiple_projects: 'integrity_repair',
 	child_project_must_match_parent: 'change_project',
 	project_unmapped: 'remap_project',
-	idempotency_key_body_drift: 'rekey_and_resend',
+	// `error-mapping-v1.md` "drift 不自动换 key": the body differs from the first use of the key,
+	// so it is a client defect or a changed intent; shown as an error, never resent under a new key
+	// (that could execute an already committed intent twice).
+	idempotency_key_body_drift: 'surface_error',
 	invalid_field_value: 'fix_field_value',
 	// "不重试该 update；它依赖的前序 update 已被拒，整段进入 recovery draft".
 	causal_dependency_missing: 'keep_in_recovery_draft',

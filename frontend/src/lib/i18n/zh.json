@@ -2534,7 +2534,7 @@
         "subtree_spans_multiple_projects": "此子树跨越了多个项目（正常情况下不会出现）。已停止普通写入，需要工作区管理员执行完整性修复。",
         "child_project_must_match_parent": "子对象必须与父对象位于同一项目。请使用父对象的项目，或不指定项目。",
         "project_unmapped": "包内有项目未映射。请将其映射到目标项目后重新预览。",
-        "idempotency_key_body_drift": "该请求复用了属于另一项修改的幂等键，必须以新键作为新修改发送。",
+        "idempotency_key_body_drift": "该请求复用了属于另一项修改的幂等键，未被应用，也不会自动重发。请刷新后重新进行修改。",
         "invalid_field_value": "某个字段值不符合字段类型，请修正后重试。",
         "causal_dependency_missing": "这项修改依赖一项已被拒绝的修改，无法单独提交。它已和后续修改一起保存在恢复草稿中。",
         "cross_workspace_relation": "关联目标位于另一个工作区，已拒绝并记录为完整性问题。请工作区管理员在运维页处理。"
