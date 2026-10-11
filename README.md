@@ -139,7 +139,7 @@ being silently ignored.
 | `[audit]` | worker | `operation_log_retention_days` (`30`, range `1..=3650`) |
 | `[migrations]` | api | `replay` (`false`), `continue_on_error` (`false`) — both are escape hatches; turn one on deliberately, then turn it back off |
 | `[outbound]` | api, worker | `allowed_hosts` — a TOML **array of strings** (`[]`), `allow_private` (`false`) |
-| `[flow]` | api, worker | `dispatch_max_attempts` (`10`), `collab_allowed_origins` — a TOML array of `scheme://host[:port]` origins allowed to open live collaboration sessions (`[]`; empty refuses every session, so list the web UI's origin to enable live editing) |
+| `[flow]` | api, worker | `dispatch_max_attempts` (`10`), `collab_allowed_origins` — a TOML array of `scheme://host[:port]` origins allowed to open live collaboration sessions (`[]`; empty refuses every session, so list the web UI's origin to enable live editing), `conversion_reap_interval_secs` (`60`, range `1..=86400`; how often the api reclaims conversion jobs left `started` for more than 15 minutes) |
 | `[mcp]` | mcp-server, sylvode | `api_url` (`http://localhost:8081`), `bot_token` (`opr_` prefix; **required** for `stdio` and the CLI subcommands, unused by `http`/`sse`), `workspace_id` (**required**, real non-nil UUID), `transport` — `stdio` \| `http` \| `sse` (`stdio`), `bind_addr` (`127.0.0.1:8090`) |
 
 > **Eager shape, lazy presence.** Every value the file *does* contain is
