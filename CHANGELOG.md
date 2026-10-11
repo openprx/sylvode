@@ -524,6 +524,14 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow Web client follows the server's 2026-10-10 answers: a create or move target outside the
+  workspace is shown as not found (the `cross_workspace_relation` wording now describes a stored
+  relation found by the relations read, its only producer); a conversion retry answered
+  `server_draining` / `contention` says another request is running the job, asks to try again
+  after `retry_after_ms`, keeps retry available and follows the job; a failed commit's
+  `details.job_status` (`failed`, `started`, `completed`) decides how the job page takes over; a
+  Record keeps the package export option and a `field_secrecy` refusal says to export JSON or
+  Markdown instead.
 - Flow conversion E2E observes the real reclaim path: the Web E2E stack runs the API with
   `[flow] conversion_reap_interval_secs = 2`, and the spec only moves a stuck `started` job's
   start 16 minutes back, then waits for the API's periodic reaper to fail it with

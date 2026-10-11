@@ -2537,7 +2537,7 @@
         "idempotency_key_body_drift": "This request reused an idempotency key that belongs to a different change, so it was not applied and was not resent. Reload and make the change again.",
         "invalid_field_value": "A field value does not fit the field's type. Correct it and try again.",
         "causal_dependency_missing": "This change depends on an earlier change that was refused, so it cannot be committed on its own. It is kept in the recovery draft with the changes after it.",
-        "cross_workspace_relation": "The relation target is in another workspace. The write was refused and recorded as an integrity issue; a workspace administrator has to review it on the operations page."
+        "cross_workspace_relation": "A stored relation of this object points into another workspace. It was recorded as an integrity issue; a workspace administrator has to review it on the operations page."
       },
       "integrityRepairLink": "Open workspace operations",
       "network_error": "Could not reach the server (network failure or gateway error). The result is unknown: the change may or may not have been applied. Retrying the same change is safe."
@@ -2604,7 +2604,8 @@
         "downloading": "Downloading…",
         "downloaded": "Downloaded {name}",
         "failed": "The export failed.",
-        "started": "Export started."
+        "started": "Export started.",
+        "fieldSecrecy": "This record has restricted fields, so it cannot be exported as a package. Export it as JSON or Markdown instead; restricted values are left out."
       }
     },
     "route": {
@@ -3373,7 +3374,8 @@
           "previewReady": "Preview ready",
           "refreshing": "Re-reading the Page",
           "committing": "Converting",
-          "committed": "Conversion submitted"
+          "committed": "Conversion submitted",
+          "jobPending": "The conversion's outcome is not recorded yet. Opening its job, which shows how it ends."
         },
         "repreviewed": {
           "previewExpired": "The previous preview expired, so a new preview was taken. Check it and confirm again.",
@@ -3438,7 +3440,8 @@
           "jobFailed": "The conversion failed. Nothing was created by the failed attempt.",
           "targetSchemaChanged": "The target form's fields changed since this job's preview, so this job cannot be retried. Start a new conversion from the Page.",
           "permissionUnconfigured": "The target form has no permission policy, so this job cannot be retried. Ask a workspace admin to configure the form's permissions.",
-          "staleStarted": "Interrupted (reclaimed by the server): the conversion ran too long and the server reclaimed it. Nothing was created by the interrupted run; you can retry it."
+          "staleStarted": "Interrupted (reclaimed by the server): the conversion ran too long and the server reclaimed it. Nothing was created by the interrupted run; you can retry it.",
+          "busy": "Another request is running this job right now. Try again in about {seconds} s; this page follows the job meanwhile."
         },
         "live": {
           "completed": "The conversion is complete.",

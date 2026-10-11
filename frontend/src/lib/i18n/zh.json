@@ -2537,7 +2537,7 @@
         "idempotency_key_body_drift": "该请求复用了属于另一项修改的幂等键，未被应用，也不会自动重发。请刷新后重新进行修改。",
         "invalid_field_value": "某个字段值不符合字段类型，请修正后重试。",
         "causal_dependency_missing": "这项修改依赖一项已被拒绝的修改，无法单独提交。它已和后续修改一起保存在恢复草稿中。",
-        "cross_workspace_relation": "关联目标位于另一个工作区，已拒绝并记录为完整性问题。请工作区管理员在运维页处理。"
+        "cross_workspace_relation": "该对象已存储的某条关联指向另一个工作区，已记录为完整性问题。请工作区管理员在运维页处理。"
       },
       "integrityRepairLink": "打开工作区运维页",
       "network_error": "无法连接到服务器（网络中断或网关错误）。结果未知：修改可能已生效，也可能没有。用同一修改重试是安全的。"
@@ -2604,7 +2604,8 @@
         "downloading": "正在下载…",
         "downloaded": "已下载 {name}",
         "failed": "导出失败。",
-        "started": "导出已开始。"
+        "started": "导出已开始。",
+        "fieldSecrecy": "该记录含受限字段，不能导出为数据包。请改用 JSON 或 Markdown 导出，受限字段的值不会包含在内。"
       }
     },
     "route": {
@@ -3373,7 +3374,8 @@
           "previewReady": "预览已就绪",
           "refreshing": "正在重新读取 Page",
           "committing": "正在转换",
-          "committed": "转换已提交"
+          "committed": "转换已提交",
+          "jobPending": "转换结果尚未记录。正在打开该作业，作业页会显示最终结果。"
         },
         "repreviewed": {
           "previewExpired": "上一次预览已过期，已自动重新预览。请检查后再次确认。",
@@ -3438,7 +3440,8 @@
           "jobFailed": "转换失败，失败的尝试没有创建任何内容。",
           "targetSchemaChanged": "自本任务预览以来目标表单的字段已变化，因此无法重试。请从页面重新发起转换。",
           "permissionUnconfigured": "目标表单没有权限策略，因此无法重试。请联系工作区管理员为表单配置权限。",
-          "staleStarted": "执行中断（服务端回收）：转换运行时间过长，已被服务端回收。本次中断没有创建任何内容，可以重试。"
+          "staleStarted": "执行中断（服务端回收）：转换运行时间过长，已被服务端回收。本次中断没有创建任何内容，可以重试。",
+          "busy": "另一请求正在执行此作业。请约 {seconds} 秒后再试；本页会持续跟踪该作业。"
         },
         "live": {
           "completed": "转换已完成。",

@@ -12,7 +12,9 @@
 //   is rendered ("跨 workspace relation 作为 integrity failure 整次 fail closed"). The server
 //   reports a cross-workspace relation as `invalid_update` with `details.reason=
 //   "cross_workspace_relation"` (`flow/relations.rs::record_relation_integrity`), which gets its
-//   own integrity copy here; any other `invalid_update` keeps the generic integrity copy;
+//   own integrity copy here; any other `invalid_update` keeps the generic integrity copy. This
+//   read is the only producer of that reason: a create/move whose target is in another
+//   workspace answers `not_found` and is handled where the write is made;
 // - errors are classified by `error_code` only.
 
 import type { ApiResult } from '$lib/api/client';

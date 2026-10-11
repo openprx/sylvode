@@ -1033,4 +1033,45 @@ suite.check('every static key exists in zh and en', () => {
 	assertNotEqual(STEP_KEYS.preview, STEP_KEYS.commit, 'distinct step keys');
 });
 
+await suite.checkAsync(
+	"a commit failure's job_status decides the hand-over: failed, still started, or completed",
+	async () => {
+		for (const [jobStatus, expected] of [
+			['failed', 'job_failed'],
+			['started', 'job_pending'],
+			['completed', 'job_completed'],
+			[undefined, 'job_failed']
+		] as const) {
+			const h = harness({
+				previews: [ok(previewResponse())],
+				commits: [
+					err(500, {
+						error_code: 'server_rejected',
+						details: { job_id: FAILED_JOB, ...(jobStatus ? { job_status: jobStatus } : {}) }
+					})
+				]
+			});
+			await toCommit(h);
+			h.wizard.acknowledge(true);
+			const outcome = await h.wizard.commit();
+			assertEqual(outcome.status, expected, `job_status ${String(jobStatus)}`);
+			assertEqual(
+				'jobId' in outcome ? outcome.jobId : null,
+				FAILED_JOB,
+				`job_status ${String(jobStatus)}: the job page takes over`
+			);
+			assertEqual(h.wizard.canCommit(), false, 'no further commit from the wizard');
+		}
+		assertEqual(
+			classifyConvertFailure({
+				code: 500,
+				error_code: 'server_rejected',
+				details: { job_id: FAILED_JOB, job_status: 'exploded' }
+			}).jobStatus,
+			null,
+			'an unknown job_status is not trusted'
+		);
+	}
+);
+
 finish(suite.result());

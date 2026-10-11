@@ -21,8 +21,12 @@ import {
 	type ExportDownloadOutcome,
 	type ExportJobView
 } from './package-export';
-import { classifyPackageFailure, type FlowPackageFailure } from './package-import';
-import { FLOW_ERROR_CODES, flowErrorI18nKey } from './errors';
+import {
+	classifyPackageFailure,
+	type FlowPackageEnvelope,
+	type FlowPackageFailure
+} from './package-import';
+import { FLOW_ERROR_CODES, flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
 import type { FlowErrorCode } from './types';
 
 export const OBJECT_EXPORT_FORMATS = [
@@ -46,7 +50,34 @@ const EXTENSIONS: Readonly<Record<FlowObjectExportFormat, string>> = {
 	package: 'sylvode-flow.zip'
 };
 
-/** The formats offered for an object of `objectType`. */
+/** `policy_rejected{details.reason:"field_secrecy"}`: the object is a Record with restricted
+ * fields, and a package would carry their values (`rest-api-v1.md` v0.6 "导出与字段保密"). */
+export const OBJECT_EXPORT_FIELD_SECRECY_KEY = 'flow.panel.export.fieldSecrecy';
+
+/** Classifies a refused export start. The field secrecy refusal gets its own wording (export as
+ * JSON or Markdown instead); everything else is the shared package classification. */
+export function classifyObjectExportFailure(
+	result: FlowPackageEnvelope
+): FlowPackageFailure {
+	const flowError = flowErrorFromEnvelope(result);
+	const reason =
+		typeof result.details === 'object' && result.details !== null
+			? (result.details as { reason?: unknown }).reason
+			: undefined;
+	if (flowError?.code === 'policy_rejected' && reason === 'field_secrecy') {
+		return {
+			messageKey: OBJECT_EXPORT_FIELD_SECRECY_KEY,
+			values: {},
+			blocking: false,
+			retryable: false,
+			forbidden: false
+		};
+	}
+	return classifyPackageFailure(result, 'export');
+}
+
+/** The formats offered for an object of `objectType`. A Record keeps `package`: whether it has
+ * restricted fields is the server's decision, answered as `field_secrecy` when it does. */
 export function objectExportFormats(objectType: string): FlowObjectExportFormat[] {
 	return OBJECT_EXPORT_FORMATS.filter((format) => format !== 'csv' || objectType === 'collection');
 }
@@ -167,7 +198,7 @@ export class ObjectExportController {
 				buildObjectExportRequest(options, key)
 			);
 			if (result.code !== 0 || !result.data) {
-				const failure = classifyPackageFailure(result, 'export');
+				const failure = classifyObjectExportFailure(result);
 				if (!failure.retryable) this.intent = null;
 				return { status: 'failed', failure };
 			}
