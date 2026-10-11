@@ -540,6 +540,15 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- **The collaborative write path logs the `SQLSTATE` of a locked phase that failed before
+  commit**, so the server log tells a lock-wait timeout (`55P03`) on the document row from a
+  statement timeout (`57014`) when a write ends in `server_draining` / `contention`. The value
+  stays in the log and is never put on the wire. The two-instance sequence allocation test no
+  longer fails when the database holds the document row past the lock-wait budget under load:
+  each instance now resubmits a `contention` answer under the same update id, as the protocol
+  asks of a client, and the test requires that such an answer came only after all three bounded
+  rebase attempts and that the committed sequences, stored updates and fan-out notices are still
+  exactly 1 and 2.
 - Flow REST routes no longer answer the legacy `database error` envelope: a database failure
   propagated to the response of a Flow route is `server_rejected`
   (`deterministic_database_refusal`) or `server_draining` (`contention`, `retry_after_ms`), so
