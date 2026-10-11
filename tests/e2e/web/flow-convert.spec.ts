@@ -31,7 +31,9 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  * job's preview expired 20 minutes ago (retry does not depend on the preview TTL). A failed job
  * whose Page moved on gets a permanent `stale_frontier`, and one whose target form schema changed
  * gets `policy_rejected` / `target_schema_changed`; both withdraw retry with their own wording.
- * Moving the preview TTL into the past is the one step written in SQL, so it needs:
+ * A job left `started` past the 15-minute threshold is reclaimed by the API's periodic reaper
+ * (failed, `server_rejected`, `stale_started`), shown as an interrupted run and retried.
+ * Moving the preview TTL and a stuck job's start into the past are written in SQL, so it needs:
  *
  *   E2E_DATABASE_URL      libpq URL of the database the API under test uses, e.g.
  *                         `postgres://user:pass@127.0.0.1:5432/sylvode`; `psql` must be on PATH.
@@ -948,15 +950,26 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 
 	// ---- 4. a job the server reclaimed (`error_reason = "stale_started"`) is an interrupted run:
 	// worded as such and retryable, while a plain `server_rejected` job stays permanent ----
+	// The fixture only builds the reaper's INPUT: a job left `started` whose start lies 16 minutes
+	// back (past the 15-minute threshold; the job's `updated_at` is its start while it is
+	// `started`). The result -- `failed`, `server_rejected`, `stale_started` -- is written by the
+	// API's own periodic reaper (`[flow] conversion_reap_interval_secs = 2` in the stack config).
 	const reaped = await failedJobOverRest(request, setup);
 	sql(
-		"UPDATE flow_conversion_jobs SET error_code = 'server_rejected', error_reason = 'stale_started' WHERE id = :'id';",
+		"UPDATE flow_conversion_jobs SET status = 'started', error_code = NULL, error_reason = NULL, updated_at = now() - interval '16 minutes' WHERE id = :'id';",
 		reaped.jobId
 	);
-	const reapedJob = await unwrap<Job & { error_reason?: string }>(
-		await request.get(`/api/v1/flow/conversions/${reaped.jobId}`, { headers: setup.auth })
-	);
-	expect(reapedJob.error_reason).toBe('stale_started');
+	await expect
+		.poll(
+			async () => {
+				const job = await unwrap<Job & { error_reason?: string }>(
+					await request.get(`/api/v1/flow/conversions/${reaped.jobId}`, { headers: setup.auth })
+				);
+				return [job.status, job.error, job.error_reason ?? null];
+			},
+			{ message: 'the periodic reaper fails the stale started job', timeout: 20_000 }
+		)
+		.toEqual(['failed', 'server_rejected', 'stale_started']);
 	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${reaped.jobId}`);
 	await expect(status).toHaveAttribute('data-status', 'failed');
 	await expect(storedError).toHaveAttribute('data-code', 'server_rejected');
