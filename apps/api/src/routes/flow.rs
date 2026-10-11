@@ -13883,6 +13883,57 @@ mod flow_database_tests {
             .expect("age")
     }
 
+    /// Makes the database record every `UPDATE` that changes a conversion job's `started_at`,
+    /// with the job's status before and after it. Read with [`take_started_at_moves`].
+    async fn record_started_at_moves(state: &AppState) {
+        state
+            .db
+            .execute_unprepared(
+                "CREATE TABLE conversion_started_at_moves (                    seq BIGSERIAL PRIMARY KEY, job_id UUID NOT NULL, status_before TEXT NOT NULL,                    status_after TEXT NOT NULL);                  CREATE FUNCTION record_conversion_started_at_move() RETURNS trigger LANGUAGE plpgsql AS $$                  BEGIN                    IF NEW.started_at IS DISTINCT FROM OLD.started_at THEN                      INSERT INTO conversion_started_at_moves (job_id, status_before, status_after)                      VALUES (NEW.id, OLD.status, NEW.status);                    END IF;                    RETURN NEW;                  END $$;                  CREATE TRIGGER record_conversion_started_at_move BEFORE UPDATE ON flow_conversion_jobs                    FOR EACH ROW EXECUTE FUNCTION record_conversion_started_at_move()",
+            )
+            .await
+            .expect("the started_at recorder is installed");
+    }
+
+    /// The recorded `started_at` changes of `job_id` since the last call, oldest first, as
+    /// `(status before, status after)`; the record is emptied.
+    async fn take_started_at_moves(state: &AppState, job_id: Uuid) -> Vec<(String, String)> {
+        let rows = state
+            .db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM conversion_started_at_moves WHERE job_id=$1                  RETURNING seq, status_before, status_after",
+                vec![job_id.into()],
+            ))
+            .await
+            .expect("started_at moves query");
+        let mut moves: Vec<(i64, String, String)> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.try_get::<i64>("", "seq").expect("seq"),
+                    row.try_get::<String>("", "status_before").expect("status before"),
+                    row.try_get::<String>("", "status_after").expect("status after"),
+                )
+            })
+            .collect();
+        moves.sort();
+        moves.into_iter().map(|(_, before, after)| (before, after)).collect()
+    }
+
+    /// Sets `job_id`'s `started_at` to 16 minutes ago, as the test's own write: it is not left in
+    /// the record of moves.
+    async fn backdate_started_at(state: &AppState, job_id: Uuid) {
+        exec(
+            state,
+            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![job_id.into()],
+        )
+        .await;
+        let own = take_started_at_moves(state, job_id).await;
+        assert_eq!(own.len(), 1, "the backdating write itself is recorded: {own:?}");
+    }
+
     /// The stale-`started` sweep measures a run from `started_at`, the moment the run entered
     /// `started`, not from `updated_at`: a statement that touches a `started` job does not
     /// postpone its reclaim, and an old `updated_at` does not reclaim a run that began just now.
@@ -13934,13 +13985,26 @@ mod flow_database_tests {
 
     /// A new job's `started_at` is its creation; a retry that claims a `failed` job back to
     /// `started` begins a new run, so `started_at` is reset and the next sweep does not reclaim
-    /// the run it has only just claimed; failing, reaping and completing a job leave it alone.
+    /// the run it has only just claimed. No other statement writes the column: the database
+    /// records every change of it, and the only changes are the retry claims
+    /// (`failed` to `started`), not the failure writes, the sweep's write or the completion.
     #[tokio::test]
     async fn a_conversion_retry_claim_resets_started_at_and_no_other_write_moves_it() {
         let scratch = scratch_or_skip!("conversion-started-at-retry");
         let state = state_for(scratch.db.clone());
         let fx = fp2_b4_seed(&state, true).await;
+        record_started_at_moves(&state).await;
+        let claim = || vec![("failed".to_string(), "started".to_string())];
+        let none = Vec::<(String, String)>::new;
+
+        // Created, run and failed: the failure write keeps the creation time.
         let job = fp2_b4_failed_job(&state, &fx, "started-at-retry").await;
+        assert_eq!(fp2_b4_job_status(&state, job).await.0, "failed");
+        assert_eq!(
+            take_started_at_moves(&state, job).await,
+            none(),
+            "recording the first run's failure does not write started_at"
+        );
         assert!(
             conversion_job_started_seconds_ago(&state, job).await < 60.0,
             "a new job starts when it is created"
@@ -13948,11 +14012,11 @@ mod flow_database_tests {
         // The first run began, and failed, 16 minutes ago.
         exec(
             &state,
-            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes', \
-             updated_at=now()-interval '16 minutes' WHERE id=$1",
+            "UPDATE flow_conversion_jobs SET updated_at=now()-interval '16 minutes' WHERE id=$1",
             vec![job.into()],
         )
         .await;
+        backdate_started_at(&state, job).await;
         let preview_id = state
             .db
             .query_one(Statement::from_sql_and_values(
@@ -13972,6 +14036,11 @@ mod flow_database_tests {
         assert_typed(&retried, "server_rejected", 500);
         assert_eq!(retried["details"]["job_status"], "started", "{retried}");
         assert_eq!(fp2_b4_job_status(&state, job).await, ("started".to_string(), None));
+        assert_eq!(
+            take_started_at_moves(&state, job).await,
+            claim(),
+            "the retry claim, and nothing else, wrote started_at"
+        );
         assert!(
             conversion_job_started_seconds_ago(&state, job).await < 60.0,
             "the retry claim begins a new run"
@@ -13983,33 +14052,42 @@ mod flow_database_tests {
         assert_eq!(reaped, 0, "the run the retry just claimed is not stale");
         assert_eq!(fp2_b4_job_status(&state, job).await, ("started".to_string(), None));
 
-        // Reaping, a second retry claim's failure and the final completion do not move it, apart
-        // from the claim itself.
-        exec(
-            &state,
-            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes' WHERE id=$1",
-            vec![job.into()],
-        )
-        .await;
+        // The sweep's own write does not move it.
+        backdate_started_at(&state, job).await;
         let reaped = crate::flow::bridge::reap_stale_conversion_jobs(&state, threshold)
             .await
             .expect("the sweep runs");
         assert_eq!(reaped, 1);
+        assert_eq!(fp2_b4_job_status(&state, job).await.0, "failed");
+        assert_eq!(
+            take_started_at_moves(&state, job).await,
+            none(),
+            "reaping does not write started_at"
+        );
         let after_reap = conversion_job_started_seconds_ago(&state, job).await;
         assert!(after_reap > 900.0, "reaping keeps started_at: {after_reap}");
+
+        // A retry whose run is refused: the claim writes it, recording the failure does not.
         fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
         let refused = fp2_b4_retry(&state, &fx, &job.to_string()).await;
         assert_typed(&refused, "policy_rejected", 403);
         fp2_b4_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
         assert_eq!(fp2_b4_job_status(&state, job).await.0, "failed");
-        exec(
-            &state,
-            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes' WHERE id=$1",
-            vec![job.into()],
-        )
-        .await;
+        assert_eq!(
+            take_started_at_moves(&state, job).await,
+            claim(),
+            "the refused retry's claim wrote started_at and recording its failure did not"
+        );
+
+        // A retry that completes: the claim writes it, the completion does not.
+        backdate_started_at(&state, job).await;
         let completed = fp2_b4_retry(&state, &fx, &job.to_string()).await;
         assert_eq!(completed["data"]["status"], "completed", "{completed}");
+        assert_eq!(
+            take_started_at_moves(&state, job).await,
+            claim(),
+            "the completing retry's claim wrote started_at and its completion did not"
+        );
         assert!(
             conversion_job_started_seconds_ago(&state, job).await < 60.0,
             "the completing retry's claim reset started_at and its completion kept it"
@@ -14023,7 +14101,8 @@ mod flow_database_tests {
 
     /// Migration 0072 on a database that already holds jobs: a `started` row's `started_at` is
     /// backfilled from its `updated_at`, any other row's from its `created_at`, the column ends
-    /// `NOT NULL DEFAULT now()`, and running the file again changes nothing.
+    /// `NOT NULL DEFAULT now()`, and running the file again changes nothing: a `started_at` that
+    /// was written after the first run (a retry claim) is not backfilled over.
     #[tokio::test]
     async fn the_started_at_migration_backfills_existing_jobs_and_reruns_cleanly() {
         const MIGRATION: &str = include_str!("../../../../migrations/0072_flow_conversion_job_started_at.sql");
@@ -14062,15 +14141,9 @@ mod flow_database_tests {
                 .await
             }
         };
-        for round in 0..2 {
-            state
-                .db
-                .execute_unprepared(MIGRATION)
-                .await
-                .unwrap_or_else(|err| panic!("round {round}: {err}"));
-            assert_eq!(backfilled("updated_at", running).await, 1, "round {round}");
-            assert_eq!(backfilled("created_at", failed).await, 1, "round {round}");
-            assert_eq!(
+        let column_is_final = || {
+            let state = state.clone();
+            async move {
                 fp2_b4_count(
                     &state,
                     "SELECT count(*) AS n FROM information_schema.columns \
@@ -14078,11 +14151,50 @@ mod flow_database_tests {
                      AND column_name = 'started_at' AND is_nullable = 'NO' AND column_default = 'now()'",
                     vec![],
                 )
-                .await,
-                1,
-                "round {round}"
-            );
-        }
+                .await
+            }
+        };
+        state
+            .db
+            .execute_unprepared(MIGRATION)
+            .await
+            .unwrap_or_else(|err| panic!("first run: {err}"));
+        assert_eq!(backfilled("updated_at", running).await, 1, "first run");
+        assert_eq!(backfilled("created_at", failed).await, 1, "first run");
+        assert_eq!(column_is_final().await, 1, "first run");
+
+        // Between the runs both rows get a `started_at` that is neither their `created_at` nor
+        // their `updated_at`, as a retry claim would write it.
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET started_at = created_at + interval '7 minutes' WHERE id = ANY($1)",
+            vec![vec![running, failed].into()],
+        )
+        .await;
+        let kept = |job_id: Uuid| backfilled("created_at + interval '7 minutes'", job_id);
+        assert_eq!(kept(running).await + kept(failed).await, 2, "both rows were rewritten");
+        assert_eq!(
+            backfilled("updated_at", running).await + backfilled("created_at", failed).await,
+            0,
+            "the rewritten values differ from what the backfill computes"
+        );
+
+        state
+            .db
+            .execute_unprepared(MIGRATION)
+            .await
+            .unwrap_or_else(|err| panic!("second run: {err}"));
+        assert_eq!(
+            kept(running).await,
+            1,
+            "running the migration again does not backfill over a `started` row's started_at"
+        );
+        assert_eq!(
+            kept(failed).await,
+            1,
+            "running the migration again does not backfill over a `failed` row's started_at"
+        );
+        assert_eq!(column_is_final().await, 1, "second run");
         scratch.drop_self().await;
     }
 
