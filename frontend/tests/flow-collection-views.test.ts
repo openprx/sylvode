@@ -198,6 +198,7 @@ interface FakeRepository extends CollectionReads {
 	readonly opened: string[];
 	readonly closed: string[];
 	readonly listQueries: FlowCollectionRecordsQuery[];
+	readonly schemaReads: string[];
 	readonly open: Map<string, number>;
 	pages: FlowCollectionRecordsResponse[];
 	describe: FlowCollectionDescription;
@@ -208,10 +209,16 @@ function fakeRepository(pages: FlowCollectionRecordsResponse[]): FakeRepository 
 		opened: [],
 		closed: [],
 		listQueries: [],
+		schemaReads: [],
 		open: new Map(),
 		pages,
 		describe: description(),
-		async getCollection() {
+		async getCollection(collectionId: string) {
+			repo.schemaReads.push(`collection:${collectionId}`);
+			return ok(repo.describe);
+		},
+		async getSchema(objectId: string) {
+			repo.schemaReads.push(`object:${objectId}`);
 			return ok(repo.describe);
 		},
 		async listRecords(_id: string, query: FlowCollectionRecordsQuery) {
@@ -1325,6 +1332,55 @@ await suite.checkAsync(
 		assertEqual(repo.open.size, 0, 'the record document was released');
 	}
 );
+
+await suite.checkAsync(
+	'a record opened on its own route reads its schema through GET objects/{record}/schema',
+	async () => {
+		const repo = fakeRepository([page(['r1'], undefined)]);
+		const controller = new CollectionViewController(COLLECTION, repo, fakeWrites(), {
+			schemaFromRecord: 'r1'
+		});
+		await controller.load();
+		assertEqual(controller.snapshot().status, 'ready', 'loaded');
+		assertDeepEqual(repo.schemaReads, ['object:r1'], 'the record-scoped schema read, only');
+		const plain = fakeRepository([page(['r1'], undefined)]);
+		await new CollectionViewController(COLLECTION, plain, fakeWrites()).load();
+		assertDeepEqual(plain.schemaReads, [`collection:${COLLECTION}`], 'a Collection reads its own');
+
+		const seen: string[] = [];
+		const original = globalThis.fetch;
+		globalThis.fetch = (async (input: string | URL | Request) => {
+			const raw = String(input);
+			seen.push(raw.startsWith('http') ? new URL(raw).pathname : raw);
+			return new Response(JSON.stringify({ code: 0, message: 'ok', data: description() }), {
+				headers: { 'Content-Type': 'application/json' }
+			});
+		}) as typeof fetch;
+		try {
+			const { FlowObjectRepository } = await import('../src/lib/flow/object-repository');
+			await new FlowObjectRepository().getSchema('rec-1');
+		} finally {
+			globalThis.fetch = original;
+		}
+		assertDeepEqual(seen, ['/api/v1/flow/objects/rec-1/schema'], 'the repository route');
+
+		const renderer = readFileSync(
+			join(ROOT, 'src/lib/components/flow/collection/CollectionRenderer.svelte'),
+			'utf8'
+		);
+		assert(
+			/schemaFromRecord:\s*recordId/.test(renderer),
+			'the record route hands its record id to the controller for the schema read'
+		);
+	}
+);
+
+suite.check('ObjectRepository has no Collection adapters without a caller', () => {
+	const repository = readFileSync(join(ROOT, 'src/lib/flow/object-repository.ts'), 'utf8');
+	for (const name of ['queryRecords', 'openRecordIds']) {
+		assert(!new RegExp(`\\b${name}\\(`).test(repository), `${name} is gone`);
+	}
+});
 
 export const result = suite.result();
 

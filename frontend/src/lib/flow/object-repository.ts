@@ -21,7 +21,6 @@ import {
 	type FlowAdminLag,
 	type FlowBootstrap,
 	type FlowCollectionDescription,
-	type FlowCollectionQueryInput,
 	type FlowCollectionRecordsQuery,
 	type FlowCollectionRecordsResponse,
 	type FlowExportJob,
@@ -802,6 +801,8 @@ export class FlowObjectRepository {
 	// typed projections; none of them opens an engine doc. Raw `ApiResult`s, so the collection
 	// view controller (`collection-view.ts`) branches on `error_code`.
 
+	/** `GET /flow/objects/{id}/schema`. A Record answers its owning Collection's schema; the
+	 * standalone record route reads it this way (`CollectionViewOptions.schemaFromRecord`). */
 	getSchema(objectId: string): Promise<ApiResult<FlowCollectionDescription>> {
 		return flowApi.getObjectSchema(objectId);
 	}
@@ -815,13 +816,6 @@ export class FlowObjectRepository {
 		query: FlowCollectionRecordsQuery = {}
 	): Promise<ApiResult<FlowCollectionRecordsResponse>> {
 		return flowApi.listCollectionRecords(collectionId, query);
-	}
-
-	queryRecords(
-		collectionId: string,
-		input: FlowCollectionQueryInput
-	): Promise<ApiResult<FlowCollectionRecordsResponse>> {
-		return flowApi.queryCollectionRecords(collectionId, input);
 	}
 
 	/**
@@ -858,11 +852,6 @@ export class FlowObjectRepository {
 		if (!entry) return;
 		entry.refCount -= 1;
 		if (entry.refCount <= 0) this.records_.delete(recordId);
-	}
-
-	/** Record documents currently open (diagnostics and tests). */
-	openRecordIds(): string[] {
-		return [...this.records_.keys()];
 	}
 
 	/** v0.7 Reference cards / Embed views (`GET .../references`): the bridge's request-time

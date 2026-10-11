@@ -30,7 +30,8 @@
 	const controller = new CollectionViewController(
 		collectionId,
 		repository,
-		new FlowCommandService()
+		new FlowCommandService(),
+		recordId ? { schemaFromRecord: recordId } : {}
 	);
 	const viewState = controller.state;
 
