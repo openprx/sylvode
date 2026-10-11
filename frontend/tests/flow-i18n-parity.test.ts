@@ -22,6 +22,7 @@ import { join, relative } from 'node:path';
 import { Suite, assert, assertNotEqual, finish } from './support/harness';
 import {
 	FLOW_ERROR_CODES,
+	FLOW_LOCAL_ERROR_CODES,
 	INVALID_UPDATE_REASONS,
 	PACKAGE_ROUND_TRIP_ERROR_CODES,
 	SERVER_DRAINING_REASONS
@@ -219,6 +220,20 @@ suite.check('later-version namespaces are absent (they are not v0.4 deliverables
 suite.check('every v0.4 stable error code has a zh and en key', () => {
 	for (const code of FLOW_ERROR_CODES) {
 		if (code === 'server_draining') continue; // discriminated; asserted separately below
+		for (const locale of LOCALES) {
+			assert(
+				value(locale, `flow.error.${code}`) !== undefined,
+				`${locale}.json is missing flow.error.${code}`
+			);
+		}
+	}
+});
+
+suite.check('every Web-local error code has a zh and en key', () => {
+	// `network_error` (`error-mapping-v1.md` "Web 本地错误码") is not a server code, so the loop
+	// above does not reach it; the client still renders `flow.error.<code>` for it.
+	assert(FLOW_LOCAL_ERROR_CODES.length > 0, 'no Web-local error code is enumerated');
+	for (const code of FLOW_LOCAL_ERROR_CODES) {
 		for (const locale of LOCALES) {
 			assert(
 				value(locale, `flow.error.${code}`) !== undefined,

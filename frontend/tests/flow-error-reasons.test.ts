@@ -60,7 +60,14 @@ suite.check('each named reason maps to its action and key, on REST and WS alike'
 		causal_dependency_missing: 'keep_in_recovery_draft',
 		cross_workspace_relation: 'integrity_repair'
 	};
-	for (const reason of INVALID_UPDATE_REASONS) {
+	// The table above is the independent expectation: the decoder must know exactly these
+	// reasons, so dropping one from `INVALID_UPDATE_REASONS` is red, not silently skipped.
+	assertEqual(
+		JSON.stringify([...INVALID_UPDATE_REASONS].sort()),
+		JSON.stringify(Object.keys(expected).sort()),
+		'the client knows exactly the approved reasons'
+	);
+	for (const reason of Object.keys(expected)) {
 		const rest = flowErrorFromEnvelope(envelope(reason));
 		const ws = flowErrorFromRejectedFrame({
 			type: 'rejected',

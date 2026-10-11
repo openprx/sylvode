@@ -43,7 +43,12 @@ import {
 	type PageDocument,
 	type ReferenceReads
 } from '../src/lib/flow/slash-bridge';
-import type { AcceptedChange, BridgePermissionState, FlowObjectView } from '../src/lib/api/flow';
+import type {
+	AcceptedChange,
+	BridgePermissionState,
+	FlowObjectView,
+	FlowReferenceItem
+} from '../src/lib/api/flow';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const suite = new Suite('flow_slash_bridge');
@@ -551,6 +556,18 @@ await suite.checkAsync('an embed with form.view reads the record and its form', 
 		'controlled',
 		'controlled badge'
 	);
+	for (const actions of [['form.view'], ['form.view', 'record.update']]) {
+		assertEqual(
+			permissionBadge({ ...permission(actions), configuration: 'unconfigured' }),
+			'unconfigured',
+			`an unconfigured target says so (${actions.join(',')})`
+		);
+	}
+	assertEqual(
+		permissionBadge({ ...permission([]), configuration: 'unconfigured' }),
+		'no_access',
+		'without form.view the badge stays no_access'
+	);
 });
 
 // ---- Page document blocks ---------------------------------------------------------------------
@@ -620,6 +637,18 @@ suite.check('cards follow document order; missing references are unavailable', (
 		cards.map((c) => c.kind),
 		['collection', 'unavailable', 'reference', 'reference', 'provisional'],
 		'order'
+	);
+	// An `unavailable` item is admitted by its `visibility`, never by fields it should not carry:
+	// one that arrives with a `reference_id` (and a title) is still not a card.
+	const leaky = {
+		...available('gone', 'form', ['form.view']),
+		visibility: 'unavailable'
+	} as unknown as FlowReferenceItem;
+	const withLeak = buildPageCards(blocks, [leaky], null);
+	assertDeepEqual(
+		withLeak.map((c) => c.kind),
+		['collection', 'unavailable', 'unavailable'],
+		'an unavailable item with extra fields neither fills a placeholder nor is appended'
 	);
 	const settled = buildPageCards(blocks, [], {
 		localId: 'p',

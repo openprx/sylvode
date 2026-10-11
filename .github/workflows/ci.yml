@@ -277,9 +277,15 @@ jobs:
           jq -r '.stats | "expected=\(.expected) unexpected=\(.unexpected) flaky=\(.flaky) skipped=\(.skipped)"' "$results"
           jq -r '.suites | .. | objects | select(has("specs")) | .specs[] | . as $spec | .tests[]
                  | select(.status == "skipped") | "SKIPPED: \($spec.file):\($spec.line) \($spec.title)"' "$results"
+          jq -r '.suites | .. | objects | select(has("specs")) | .specs[] | . as $spec | .tests[]
+                 | select(.status == "flaky") | "FLAKY: \($spec.file):\($spec.line) \($spec.title)"' "$results"
           skipped=$(jq '.stats.skipped' "$results")
           expected=$(jq '.stats.expected' "$results")
+          flaky=$(jq '.stats.flaky' "$results")
           if [ "$skipped" -ne 0 ]; then echo "::error::$skipped Web E2E test(s) skipped"; exit 1; fi
+          # Retries stay on (playwright.config.ts) so a failure leaves a trace, but a test that
+          # only passed on a retry is a failure here, not a pass.
+          if [ "$flaky" -ne 0 ]; then echo "::error::$flaky Web E2E test(s) flaky (passed only on retry)"; exit 1; fi
           if [ "$expected" -eq 0 ]; then echo "::error::no Web E2E test passed"; exit 1; fi
       - name: Upload failure artifacts
         if: failure()

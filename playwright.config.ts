@@ -6,6 +6,8 @@ export default defineConfig({
 	expect: {
 		timeout: 10_000
 	},
+	// Retries collect a trace of the failing attempt; CI still fails the run when any test was
+	// flaky (`stats.flaky > 0` in the JSON report, `.github/workflows/ci.yml` Web E2E job).
 	retries: process.env.CI ? 2 : 0,
 	reporter: [
 		['html'],
