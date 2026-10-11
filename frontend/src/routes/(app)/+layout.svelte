@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '$lib/i18n';
 	import { onMount } from 'svelte';
-	import { authStore } from '$lib/stores/auth';
+	import { authStore, verifySession } from '$lib/stores/auth';
 	import { authApi } from '$lib/api/auth';
 	import { notificationsApi } from '$lib/api/notifications';
 	import SearchModal from '$lib/components/SearchModal.svelte';
@@ -156,16 +156,11 @@
 
 	onMount(() => {
 		void (async () => {
-			const meResponse = await authApi.me();
-
-			if (meResponse.code !== 0) {
-				authStore.logout();
+			// A failed session check ends the session but keeps this user's local Flow data; only
+			// the user's own sign-out (`handleLogout`) deletes it.
+			if ((await verifySession(() => authApi.me())) === 'ended') {
 				goto('/auth/login');
 				return;
-			}
-
-			if (meResponse.data) {
-				authStore.setUser(meResponse.data.user);
 			}
 
 			await Promise.all([fetchUnreadCount(), projectOptionsStore.ensureLoaded()]);
