@@ -14,7 +14,11 @@
 	import { FlowEditorAdapter, type FlowBlockType, type SlashMenuState } from '$lib/flow/editor-adapter';
 	import type { LoroDocType } from 'loro-prosemirror';
 	import { SLASH_BRIDGE_OPTIONS, type SlashBridgeOption } from '$lib/flow/slash-bridge';
-	import type { PresenceCursor, RemotePresence } from '$lib/flow/presence';
+	import {
+		safePresenceColor,
+		type PresenceCursor,
+		type RemotePresence
+	} from '$lib/flow/presence';
 	import FlowPageBlocks from './FlowPageBlocks.svelte';
 
 	interface Props {
@@ -145,10 +149,13 @@
 			data-testid="flow-presence-list"
 		>
 			{#each peers as peer (peer.sessionId)}
-				<li class="flex items-center gap-1" data-presence-user={peer.user.userId}>
+				<li
+					class="flex items-center gap-1"
+					data-presence-user={peer.attested ? peer.user.userId : undefined}
+				>
 					<span
 						class="inline-block h-2.5 w-2.5 rounded-full"
-						style={`background-color: ${peer.user.color}`}
+						style:background-color={safePresenceColor(peer.user.color, peer.user.userId)}
 						aria-hidden="true"
 					></span>
 					<span>{$t('flow.presence.editing', { values: { name: peer.user.name } })}</span>

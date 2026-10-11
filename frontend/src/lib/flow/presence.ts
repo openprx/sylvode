@@ -52,10 +52,15 @@ export interface PresencePayload {
 	readonly cursor: PresenceCursor | null;
 }
 
-/** One remote peer, as rendered. `sessionId` is the server's id for the peer's connection. */
+/** One remote peer, as rendered. `sessionId` is the server's id for the peer's connection.
+ * `user.userId` is the frame's server-attested `actor.user_id` (`collab-protocol-v1.md` "presence
+ * 身份由服务端背书"); only a frame without `actor` (an older server) falls back to the payload's
+ * self-reported id, and then `attested` is `false` and the UI never attributes the peer to that id.
+ * `user.name` is sanitised plain text and `user.color` is always `#rrggbb`. */
 export interface RemotePresence {
 	readonly sessionId: string;
 	readonly user: PresenceIdentity;
+	readonly attested: boolean;
 	readonly cursor: PresenceCursor | null;
 	readonly expiresAt: number;
 }
@@ -77,8 +82,45 @@ function isFiniteNonNegative(value: unknown): value is number {
 	return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
+/** `collab-protocol-v1.md`: a peer's display name is plain text of at most 64 characters. */
+export const PRESENCE_NAME_MAX_CHARS = 64;
+
+const PRESENCE_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
+
+/** `collab-protocol-v1.md`: a peer's colour is only ever `#rrggbb`. */
+export function isPresenceColor(value: unknown): value is string {
+	return typeof value === 'string' && PRESENCE_COLOR_PATTERN.test(value);
+}
+
+/** The colour to render for a peer: its own when it is `#rrggbb`, the palette colour of
+ * `userId` otherwise. Every place a peer colour reaches a style goes through this. */
+export function safePresenceColor(color: unknown, userId: string): string {
+	return isPresenceColor(color) ? color : presenceColor(userId);
+}
+
+/** A peer's display name as plain text: markup-like `<...>` runs, control and bidi/format
+ * characters removed, whitespace collapsed, at most `PRESENCE_NAME_MAX_CHARS` characters. */
+export function sanitizePresenceName(raw: string): string {
+	const text = raw
+		.replace(/<[^>]*>?/g, '')
+		.replace(/[<>]/g, '')
+		.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+	return Array.from(text).slice(0, PRESENCE_NAME_MAX_CHARS).join('').trim();
+}
+
+/** The frame's server-attested actor id, or `null` when the frame carries none. */
+export function presenceActorId(actor: unknown): string | null {
+	if (typeof actor !== 'object' || actor === null) return null;
+	const userId = (actor as { user_id?: unknown }).user_id;
+	return typeof userId === 'string' && userId.length > 0 ? userId : null;
+}
+
 /** Reads a peer's `presence.payload`, or `null` for anything that is not this client's v1 shape.
- * A malformed peer payload is dropped, never partially rendered. */
+ * A malformed peer payload is dropped, never partially rendered. The returned name is already
+ * sanitised (a name with no text left drops the payload); the colour is returned as received and
+ * must be rendered through `safePresenceColor`. */
 export function parsePresencePayload(raw: unknown): PresencePayload | null {
 	if (typeof raw !== 'object' || raw === null) return null;
 	const value = raw as Record<string, unknown>;
@@ -93,6 +135,8 @@ export function parsePresencePayload(raw: unknown): PresencePayload | null {
 	) {
 		return null;
 	}
+	const name = sanitizePresenceName(user.name);
+	if (name.length === 0) return null;
 	let cursor: PresenceCursor | null = null;
 	if (value.cursor !== null && value.cursor !== undefined) {
 		const c = value.cursor as Record<string, unknown>;
@@ -108,7 +152,7 @@ export function parsePresencePayload(raw: unknown): PresencePayload | null {
 	}
 	return {
 		v: PRESENCE_PAYLOAD_VERSION,
-		user: { userId: user.userId, name: user.name, color: user.color },
+		user: { userId: user.userId, name, color: user.color },
 		cursor
 	};
 }
@@ -169,17 +213,30 @@ export class RemotePresenceMap {
 		return { subscribe: this.store.subscribe };
 	}
 
-	/** Upserts one peer from a received frame. Returns whether the frame was usable. */
-	receive(sessionId: string, payload: unknown, ttlSeconds: number | null | undefined): boolean {
+	/** Upserts one peer from a received frame (`actor` is the frame's server-attested
+	 * `actor`). Returns whether the frame was usable. */
+	receive(
+		sessionId: string,
+		payload: unknown,
+		ttlSeconds: number | null | undefined,
+		actor?: unknown
+	): boolean {
 		const parsed = parsePresencePayload(payload);
 		if (!parsed) return false;
+		const actorId = presenceActorId(actor);
+		const userId = actorId ?? parsed.user.userId;
 		const ttl =
 			typeof ttlSeconds === 'number' && Number.isFinite(ttlSeconds) && ttlSeconds > 0
 				? Math.min(ttlSeconds, PRESENCE_TTL_SECONDS_DEFAULT)
 				: PRESENCE_TTL_SECONDS_DEFAULT;
 		this.entries.set(sessionId, {
 			sessionId,
-			user: parsed.user,
+			user: {
+				userId,
+				name: parsed.user.name,
+				color: safePresenceColor(parsed.user.color, userId)
+			},
+			attested: actorId !== null,
 			cursor: parsed.cursor,
 			expiresAt: this.clock.now() + ttl * 1000
 		});

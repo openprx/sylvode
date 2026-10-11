@@ -189,6 +189,9 @@ export class FakeConnectivity implements Connectivity {
 interface Connection {
 	readonly socket: MockWebSocket;
 	readonly sessionId: string;
+	/** The user the server authenticated for this connection, put on fanned-out presence as
+	 * `actor.user_id` (`collab-protocol-v1.md`); `null` imitates a server that sends no actor. */
+	readonly userId: string | null;
 }
 
 export class FakeCollabServer {
@@ -210,6 +213,8 @@ export class FakeCollabServer {
 	/** Updates refused as `causal_dependency_missing`. */
 	causalRefusals = 0;
 	readonly connections = new Map<MockWebSocket, Connection>();
+	/** Users assigned to the next connections, in order (see `Connection.userId`). */
+	connectionUserIds: string[] = [];
 	private connectionCounter = 0;
 	private readonly byUpdateId = new Map<string, number>();
 
@@ -221,7 +226,8 @@ export class FakeCollabServer {
 		this.connectionCounter += 1;
 		this.connections.set(socket, {
 			socket,
-			sessionId: `00000000-0000-4000-8000-${String(this.connectionCounter).padStart(12, '0')}`
+			sessionId: `00000000-0000-4000-8000-${String(this.connectionCounter).padStart(12, '0')}`,
+			userId: this.connectionUserIds.shift() ?? null
 		});
 	}
 
@@ -284,7 +290,8 @@ export class FakeCollabServer {
 						document_id: DOCUMENT_ID,
 						session_id: connection.sessionId,
 						payload: frame.payload,
-						ttl_seconds: frame.ttl_seconds ?? 30
+						ttl_seconds: frame.ttl_seconds ?? 30,
+						...(connection.userId ? { actor: { user_id: connection.userId } } : {})
 					});
 				}
 				return;
