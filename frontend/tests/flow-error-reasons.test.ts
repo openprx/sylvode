@@ -288,6 +288,43 @@ suite.check('network_error copy says the result is unknown, never that nothing w
 	}
 });
 
+await suite.checkAsync(
+	'a create or move target outside the workspace is not_found, worded like any missing object',
+	async () => {
+		const commands = new FlowCommandService();
+		let thrown: unknown = null;
+		await withFetch(
+			{ code: 404, message: 'parent_object_id not found', data: null, error_code: 'not_found' },
+			async () => {
+				try {
+					await commands.createObject(
+						'ws-1',
+						{ object_type: 'page', title: 'x', parent_object_id: 'p-elsewhere' },
+						{ idempotencyKey: 'k' }
+					);
+				} catch (error) {
+					thrown = error;
+				}
+			}
+		);
+		const error = thrown as { code: string; details?: unknown };
+		assertEqual(error?.code, 'not_found', 'typed not_found');
+		assertEqual(flowErrorDetailKey(error as never), 'flow.error.not_found', 'the not_found copy');
+	}
+);
+
+suite.check('cross_workspace_relation copy describes a stored relation found on read', () => {
+	for (const [locale, writeClaim] of [
+		['en', /write was refused|was refused/i],
+		['zh', /已拒绝/]
+	] as const) {
+		const data = JSON.parse(readFileSync(join(ROOT, 'src/lib/i18n', `${locale}.json`), 'utf8'));
+		const text: unknown = data?.flow?.error?.invalid_update_reason?.cross_workspace_relation;
+		assert(typeof text === 'string', `${locale}: key exists`);
+		assert(!writeClaim.test(text as string), `${locale}: no write path produces it any more: ${text}`);
+	}
+});
+
 // ---- the production consumers exist (not just the helper) ---------------------------------------
 
 function code(path: string): string {

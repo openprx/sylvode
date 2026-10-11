@@ -24,9 +24,10 @@
 //   `preview_expired` and `target_schema_changed` on commit send the wizard back to the preview
 //   step and preview again under a new key (`target_schema_changed` re-reads the form first);
 //   `permission_unconfigured` tells the user an admin must configure the form's policy;
-// - a commit that fails after its job exists carries `details.job_id` (`rest-api-v1.md` v0.7,
-//   B4): the job is `failed` and can be retried, so the wizard hands over to the job page instead
-//   of staying here;
+// - a commit that fails after its job exists carries `details.job_id` and the job's real
+//   `details.job_status` (`rest-api-v1.md` v0.7): `failed` is retried from the job page,
+//   `started` is followed there until the server settles it, `completed` is shown there as done;
+//   in every case the wizard hands over to the job page instead of staying here;
 // - preview and job `warnings[]` are `<code>:<field_key>` strings; each is shown on its own line,
 //   worded by its code (an unknown code gets a generic line, never the raw string as prose).
 
@@ -148,9 +149,16 @@ export interface ConvertFailure {
 	/** `policy_rejected.details.reason` when it is an approved value; an unknown reason is `null`
 	 * and keeps the generic `policy_rejected` wording. */
 	readonly reason: PolicyRejectedReason | null;
-	/** `details.job_id`: the commit created a job before failing, and that job is now `failed`. */
+	/** `details.job_id`: the commit created a job before failing. */
 	readonly jobId: string | null;
+	/** `details.job_status`: that job's real status at the time of the answer (`failed`: retry
+	 * from its page; `started`: the failure was not recorded and the server's reaper settles it;
+	 * `completed`: the commit succeeded and only its answer failed). `null` when absent or
+	 * unknown -- the job page reads the truth either way. */
+	readonly jobStatus: ConversionJobHandoverStatus | null;
 }
+
+export type ConversionJobHandoverStatus = 'failed' | 'started' | 'completed';
 
 // ---- warnings -----------------------------------------------------------------------------------
 
@@ -440,6 +448,7 @@ function failure(
 		permissionState?: BridgePermissionState | null;
 		reason?: PolicyRejectedReason | null;
 		jobId?: string | null;
+		jobStatus?: ConversionJobHandoverStatus | null;
 	} = {}
 ): ConvertFailure {
 	return {
@@ -448,7 +457,8 @@ function failure(
 		retryable,
 		permissionState: extra.permissionState ?? null,
 		reason: extra.reason ?? null,
-		jobId: extra.jobId ?? null
+		jobId: extra.jobId ?? null,
+		jobStatus: extra.jobStatus ?? null
 	};
 }
 
@@ -467,6 +477,11 @@ function readPolicyReason(details: unknown): PolicyRejectedReason | null {
 		: null;
 }
 
+function readJobStatus(details: unknown): ConversionJobHandoverStatus | null {
+	const status = detailString(details, 'job_status');
+	return status === 'failed' || status === 'started' || status === 'completed' ? status : null;
+}
+
 /** `details.job_id` when it is a job id (a malformed value is ignored, never followed). */
 function readJobId(details: unknown): string | null {
 	const jobId = detailString(details, 'job_id');
@@ -483,28 +498,27 @@ export function classifyConvertFailure(
 	const flowError = flowErrorFromEnvelope(result);
 	if (flowError) {
 		const jobId = readJobId(result.details);
+		const job = { jobId, jobStatus: jobId ? readJobStatus(result.details) : null };
 		switch (flowError.code) {
 			case 'stale_frontier':
-				return failure('stale_frontier', FAILURE_KEYS.stale_frontier, false, { jobId });
+				return failure('stale_frontier', FAILURE_KEYS.stale_frontier, false, job);
 			case 'policy_rejected': {
 				const reason = readPolicyReason(result.details);
 				return failure(
 					'policy_rejected',
 					reason ? POLICY_REASON_KEYS[reason] : FAILURE_KEYS.policy_rejected,
 					false,
-					{ permissionState: readPermissionState(result.details), reason, jobId }
+					{ permissionState: readPermissionState(result.details), reason, ...job }
 				);
 			}
 			case 'forbidden':
-				return failure('forbidden', FAILURE_KEYS.forbidden, false, { jobId });
+				return failure('forbidden', FAILURE_KEYS.forbidden, false, job);
 			case 'not_found':
-				return failure('not_found', FAILURE_KEYS.not_found, false, { jobId });
+				return failure('not_found', FAILURE_KEYS.not_found, false, job);
 			case 'unauthenticated':
-				return failure('unauthenticated', FAILURE_KEYS.unauthenticated, false, { jobId });
+				return failure('unauthenticated', FAILURE_KEYS.unauthenticated, false, job);
 			default:
-				return failure('flow_error', flowErrorI18nKey(flowError), flowError.recoverable, {
-					jobId
-				});
+				return failure('flow_error', flowErrorI18nKey(flowError), flowError.recoverable, job);
 		}
 	}
 	if (typeof result.error_code === 'string' && result.error_code !== '') {
@@ -569,6 +583,11 @@ export type ConvertCommitOutcome =
 	| { readonly status: 'refused' }
 	/** The commit created a job that failed: open the job page (its retry surface). */
 	| { readonly status: 'job_failed'; readonly jobId: string; readonly failure: ConvertFailure }
+	/** The commit failed after its job was created, the failure is not recorded yet (`started`):
+	 * the job page follows it until the server settles it. */
+	| { readonly status: 'job_pending'; readonly jobId: string; readonly failure: ConvertFailure }
+	/** The job completed; only the answer to the commit failed. The job page shows the result. */
+	| { readonly status: 'job_completed'; readonly jobId: string }
 	/** The preview expired or the target schema changed: the wizard is back on the preview step
 	 * with a fresh preview (or its failure). */
 	| {
@@ -961,10 +980,15 @@ export class ConvertWizard {
 		const failure = classifyConvertFailure(result);
 		this.commitFailure = failure;
 		if (failure.jobId !== null) {
-			// The job exists and is `failed`; its page owns the retry. Nothing more to do here.
-			this.jobId = failure.jobId;
+			// The job exists; its page owns what happens next, by the job's real status
+			// (`details.job_status`): retry a `failed` one, follow a `started` one, show a
+			// `completed` one. Nothing more to do here.
+			const jobId = failure.jobId;
+			this.jobId = jobId;
 			this.emit();
-			return { status: 'job_failed', jobId: failure.jobId, failure };
+			if (failure.jobStatus === 'completed') return { status: 'job_completed', jobId };
+			if (failure.jobStatus === 'started') return { status: 'job_pending', jobId, failure };
+			return { status: 'job_failed', jobId, failure };
 		}
 		if (failure.reason === 'preview_expired' || failure.reason === 'target_schema_changed') {
 			const reason = failure.reason;

@@ -404,10 +404,19 @@ await suite.checkAsync('message is never a branch', async () => {
 		classifyJobFailure({
 			code: 500,
 			error_code: 'server_draining',
+			details: { reason: 'drain' }
+		}).messageKey,
+		'flow.error.server_draining.drain',
+		'drain reason key'
+	);
+	assertEqual(
+		classifyJobFailure({
+			code: 500,
+			error_code: 'server_draining',
 			details: { reason: 'contention' }
 		}).messageKey,
-		'flow.error.server_draining.contention',
-		'drain reason key'
+		JOB_FAILURE_KEYS.busy,
+		'contention on a job is "another request is running it"'
 	);
 });
 
@@ -789,5 +798,45 @@ suite.check('every static key and every key the view uses exists in zh and en', 
 		}
 	}
 });
+
+await suite.checkAsync(
+	'a retry answered server_draining{contention} is "try again later": not permanent, polling resumes',
+	async () => {
+		const h = harness({
+			reads: [ok(failed()), ok(started()), ok(job())],
+			retries: [
+				err(409, {
+					error_code: 'server_draining',
+					details: { reason: 'contention', retry_after_ms: 1500 }
+				})
+			]
+		});
+		await h.controller.poll();
+		assert(h.controller.requestRetry(), 'retry offered for the failed job');
+		const outcome = await h.controller.confirmRetry();
+		assertEqual(outcome.status, 'failed', 'this retry did not run');
+		const failure = outcome.status === 'failed' ? outcome.failure : null;
+		assertEqual(failure?.kind, 'contention', 'classified as contention');
+		assertEqual(failure?.retryable, true, 'not a permanent refusal');
+		assertEqual(failure?.retryAfterMs, 1500, 'retry_after_ms kept');
+		assertEqual(failure?.messageKey, JOB_FAILURE_KEYS.busy, 'its own "try later" wording');
+		assertDeepEqual(failure?.messageValues, { seconds: 2 }, 'seconds rounded up from the hint');
+		for (let i = 0; i < 20 && h.controller.snapshot().job?.status !== 'completed'; i += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		}
+		assertEqual(
+			h.controller.snapshot().job?.status,
+			'completed',
+			'the job (now started by the other run) is followed to its end'
+		);
+		assertEqual(
+			classifyJobFailure(
+				err(409, { error_code: 'server_draining', details: { reason: 'contention' } })
+			).messageValues?.seconds,
+			1,
+			'without a hint the wording still says shortly'
+		);
+	}
+);
 
 finish(suite.result());

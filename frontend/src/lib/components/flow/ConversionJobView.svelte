@@ -376,7 +376,9 @@
 								data-kind={snap.retryFailure.kind}
 								data-reason={snap.retryFailure.reason ?? undefined}
 							>
-								{$t(snap.retryFailure.messageKey)}
+								{$t(snap.retryFailure.messageKey, {
+									values: snap.retryFailure.messageValues ?? {}
+								})}
 							</p>
 						{/if}
 						<div class="flex flex-wrap gap-3">

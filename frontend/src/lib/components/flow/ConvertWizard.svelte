@@ -156,12 +156,20 @@
 	async function commit() {
 		announce('flow.bridge.convert.live.committing');
 		const outcome = await wizard.commit();
-		if (outcome.status === 'committed' || outcome.status === 'job_failed') {
-			// A failed job is retried from its own page, so both outcomes leave the wizard.
+		if (
+			outcome.status === 'committed' ||
+			outcome.status === 'job_completed' ||
+			outcome.status === 'job_pending' ||
+			outcome.status === 'job_failed'
+		) {
+			// Once a job exists its own page owns it (retry, follow, or result): every one of these
+			// outcomes leaves the wizard.
 			announce(
-				outcome.status === 'committed'
+				outcome.status === 'committed' || outcome.status === 'job_completed'
 					? 'flow.bridge.convert.live.committed'
-					: outcome.failure.messageKey
+					: outcome.status === 'job_pending'
+						? 'flow.bridge.convert.live.jobPending'
+						: outcome.failure.messageKey
 			);
 			await goto(
 				resolve('/(app)/workspace/[workspaceId]/flow/conversions/[jobId]', {

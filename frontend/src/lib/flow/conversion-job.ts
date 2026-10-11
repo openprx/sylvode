@@ -9,15 +9,18 @@
 //   `flow/bridge.rs:1309` `'started'`, `:1457` `'completed'`, `:1183-1184` `'failed'`);
 // - terminal: `completed` and `failed`. `started` is the only non-terminal value;
 // - retryable: `failed` only. `retry_conversion` replays a `completed` job or a repeated key and
-//   rejects every other non-`failed` status with `policy_rejected`; a real retry re-runs the
+//   answers a `started` job with `server_draining{contention}`; a real retry re-runs the
 //   conversion with every permission re-checked against the frontier and target schema version
 //   the JOB recorded -- it does not depend on the preview TTL (`rest-api-v1.md` v0.7, frozen
 //   2026-10-10). A source that moved on answers `stale_frontier`; a target schema that changed
 //   answers `policy_rejected` with `details.reason = "target_schema_changed"`;
 // - `error` is the job's stored stable error code (one of the 14 in `error-mapping-v1.md`),
 //   worded through `flow.error.<code>`, never driver text;
+// - a retry of a job that is still `started` (another request is running it) answers
+//   `server_draining` with `details.reason = "contention"` and `retry_after_ms`: worded "try again
+//   in N s", retry stays available, and the page follows the job until it ends;
 // - a job left `started` past the server's threshold is reaped to `failed` /
-//   `error = "server_rejected"` server-side (at API start and by a retry) and marked
+//   `error = "server_rejected"` server-side (at API start and periodically) and marked
 //   `error_reason = "stale_started"` (`rest-api-v1.md` v0.7, 2026-10-10); only that reaped job is
 //   an interrupted run rather than a permanent refusal, so it is worded "interrupted (reclaimed
 //   by the server)" and offers retry. This page keeps polling a `started` job, so the reaped
@@ -43,7 +46,13 @@ import type { FlowConversionJob, FlowObjectView } from '$lib/api/flow';
 import { formsApi, type FormRecord } from '$lib/api/forms';
 import type { FlowCommandService } from './command-service';
 import { POLICY_REJECTED_REASONS, type PolicyRejectedReason } from './convert-wizard';
-import { FLOW_ERROR_CODES, flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
+import {
+	FLOW_ERROR_CODES,
+	flowErrorFromEnvelope,
+	flowErrorI18nKey,
+	parseRetryAfterMs,
+	parseServerDrainingReason
+} from './errors';
 import type { FlowObjectRepository } from './object-repository';
 import { exportPollDelay, newIdempotencyKey } from './package-export';
 import type { FlowErrorCode } from './types';
@@ -131,6 +140,7 @@ export const JOB_FAILURE_KEYS = {
 	rejected: 'flow.bridge.job.error.rejected',
 	conflict: 'flow.bridge.job.error.conflict',
 	unavailable: 'flow.bridge.job.error.unavailable',
+	busy: 'flow.bridge.job.error.busy',
 	jobFailed: 'flow.bridge.job.error.jobFailed',
 	staleStarted: 'flow.bridge.job.error.staleStarted',
 	staleSource: 'flow.bridge.job.staleSource'
@@ -163,6 +173,7 @@ export type JobFailureKind =
 	| 'rejected'
 	| 'conflict'
 	| 'unavailable'
+	| 'contention'
 	| 'flow_error';
 
 export interface JobFailure {
@@ -172,6 +183,10 @@ export interface JobFailure {
 	readonly retryable: boolean;
 	/** `policy_rejected.details.reason` when it is an approved conversion reason. */
 	readonly reason: PolicyRejectedReason | null;
+	/** `server_draining.details.retry_after_ms` of a `contention` answer (a lower bound). */
+	readonly retryAfterMs?: number | null;
+	/** Interpolation values for `messageKey`. */
+	readonly messageValues?: Readonly<Record<string, number>>;
 }
 
 function failure(
@@ -181,6 +196,22 @@ function failure(
 	reason: PolicyRejectedReason | null = null
 ): JobFailure {
 	return { kind, messageKey, retryable, reason };
+}
+
+/** `server_draining{reason:"contention"}`: another request holds this job right now (a retry of a
+ * job that is still `started`, `rest-api-v1.md` v0.7 / `error-mapping-v1.md`). Not permanent and
+ * not a read-only state: the user may try again after `retry_after_ms` (at least a second). */
+function contentionFailure(details: unknown): JobFailure {
+	const retryAfterMs = parseRetryAfterMs(details);
+	const seconds = Math.max(1, Math.ceil((retryAfterMs ?? 0) / 1000));
+	return {
+		kind: 'contention',
+		messageKey: JOB_FAILURE_KEYS.busy,
+		retryable: true,
+		reason: null,
+		retryAfterMs,
+		messageValues: { seconds }
+	};
 }
 
 function policyReason(details: unknown): PolicyRejectedReason | null {
@@ -218,6 +249,11 @@ export function classifyJobFailure(
 				return failure('unauthenticated', JOB_FAILURE_KEYS.unauthenticated, false);
 			case 'stale_frontier':
 				return failure('stale_frontier', JOB_FAILURE_KEYS.stale_frontier, false);
+			case 'server_draining':
+				if (parseServerDrainingReason(result.details) === 'contention') {
+					return contentionFailure(result.details);
+				}
+				return failure('flow_error', flowErrorI18nKey(flowError), flowError.recoverable);
 			case 'policy_rejected': {
 				const reason = policyReason(result.details);
 				const key =
@@ -464,8 +500,12 @@ export class ConversionJobController {
 		this.retryFailure = retryFailure;
 		this.emit();
 		// A refused retry may have changed the stored job (e.g. a new `error` code): read it again.
+		// A job another request is running (`contention`) is `started`: follow it to its end.
 		const reread = await this.read();
-		if (reread.code === 0 && reread.data && !this.disposed) await this.applyJob(reread.data);
+		if (reread.code === 0 && reread.data && !this.disposed) {
+			await this.applyJob(reread.data);
+			if (!isTerminalConversionStatus(reread.data.status)) void this.poll();
+		}
 		return { status: 'failed', failure: retryFailure };
 	}
 

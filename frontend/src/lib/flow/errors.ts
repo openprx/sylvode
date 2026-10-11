@@ -114,7 +114,9 @@ const INVALID_UPDATE_ACTIONS: Readonly<Record<InvalidUpdateReason, InvalidUpdate
 	invalid_field_value: 'fix_field_value',
 	// "不重试该 update；它依赖的前序 update 已被拒，整段进入 recovery draft".
 	causal_dependency_missing: 'keep_in_recovery_draft',
-	// "按 integrity 失败显示，指向运维页；不重试".
+	// "按 integrity 失败显示，指向运维页；不重试". Only a READ path (`GET relations`) reports it
+	// now: a create/move target outside the workspace answers `not_found`, like a missing one
+	// (`error-mapping-v1.md` `cross_workspace_relation` row, narrowed 2026-10-10).
 	cross_workspace_relation: 'integrity_repair'
 };
 

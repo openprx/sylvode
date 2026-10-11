@@ -22,6 +22,7 @@ import {
 	semanticDiffLines
 } from '../src/lib/flow/history-diff';
 import {
+	OBJECT_EXPORT_FIELD_SECRECY_KEY,
 	OBJECT_EXPORT_FORMAT_KEYS,
 	ObjectExportController,
 	buildObjectExportRequest,
@@ -368,5 +369,52 @@ await suite.checkAsync('every diff and export i18n key exists in zh and en', asy
 		assertDeepEqual(missing, [], `${locale}.json missing keys`);
 	}
 });
+
+await suite.checkAsync(
+	'a secret record keeps the package option; its field_secrecy refusal has its own wording',
+	async () => {
+		assertDeepEqual(
+			objectExportFormats('record'),
+			['json', 'markdown', 'package'],
+			'the client does not guess which records are secret'
+		);
+		const controller = new ObjectExportController(OBJECT, WS, () => {}, {
+			commands: {
+				startObjectExport: async () => ({
+					code: 403,
+					message: 'irrelevant prose',
+					data: null,
+					error_code: 'policy_rejected',
+					details: { reason: 'field_secrecy' }
+				})
+			},
+			reads: {
+				getExportJob: async () => {
+					throw new Error('no job is polled');
+				},
+				downloadExportArtifact: async () => {
+					throw new Error('nothing is downloaded');
+				}
+			},
+			sleep: async () => {},
+			newKey: () => 'k-secret'
+		});
+		const outcome = await controller.submit({ format: 'package', includeHistory: false });
+		assertEqual(outcome.status, 'failed', 'refused');
+		const failure = outcome.status === 'failed' ? outcome.failure : null;
+		assertEqual(failure?.messageKey, OBJECT_EXPORT_FIELD_SECRECY_KEY, 'field secrecy wording');
+		assertEqual(failure?.retryable, false, 'not retryable as the same request');
+		for (const locale of ['zh', 'en']) {
+			const data = JSON.parse(
+				readFileSync(join(new URL('..', import.meta.url).pathname, 'src/lib/i18n', `${locale}.json`), 'utf8')
+			);
+			const text = OBJECT_EXPORT_FIELD_SECRECY_KEY.split('.').reduce<unknown>(
+				(node, part) => (node as Record<string, unknown> | undefined)?.[part],
+				data
+			);
+			assert(typeof text === 'string' && text.length > 0, `${locale} has the field secrecy text`);
+		}
+	}
+);
 
 finish(suite.result());
