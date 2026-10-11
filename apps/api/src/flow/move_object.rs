@@ -2562,6 +2562,121 @@ mod database_tests {
         attempt().await
     }
 
+    /// The one `SQLSTATE` a move may be resubmitted for without it saying anything about the
+    /// move's own locks: `55P03` reaching the caller *raw*.
+    ///
+    /// Every lock wait inside the move's locked phase is normalized by `execute_on` (retried
+    /// within its bounded budget, then reported as typed `server_draining{contention}`), so a raw
+    /// `55P03` can only come from the one statement after that phase that still runs under the
+    /// transaction's `lock_timeout`: `COMMIT`. A move advances `authz_epoch`, which calls
+    /// `pg_notify`, and a notifying transaction takes `PostgreSQL`'s server-wide notification
+    /// queue lock while it commits. That lock is shared with every other notifying commit on the
+    /// server, in any database, so under the parallel test runner this wait is decided by
+    /// unrelated scratch databases. The commit never happened: the timeout aborts the
+    /// transaction before its commit record is written.
+    const COMMIT_LOCK_TIMEOUT_SQLSTATES: [&str; 1] = ["55P03"];
+
+    /// Runs one logically sequential move, resubmitting the *same* input (same idempotency key)
+    /// only for a raw commit-time lock timeout (see [`COMMIT_LOCK_TIMEOUT_SQLSTATES`]), and only
+    /// after checking that the failed attempt moved nothing and recorded no move event.
+    ///
+    /// Typed `server_draining{contention}` is not resubmitted: it means the move's own locked
+    /// phase could not get its locks within the whole bounded budget, and in a scenario with no
+    /// concurrent writer that is a regression signal. Neither is a deadlock or any other error.
+    ///
+    /// Returns the result and how many times the move was resubmitted.
+    async fn run_sequential_move(
+        state: &AppState,
+        collab: &CollabRuntime,
+        fx: &Fixture,
+        input: &ExecuteCommandInput,
+    ) -> (Result<AcceptedChange, ApiError>, u32) {
+        let parent_before = parent_of(&state.db, input.object_id).await;
+        let events_before = moved_event_count(&state.db, fx.workspace_id).await;
+        crate::flow::collab::write::resubmit_unwritten_database_timeouts(
+            &COMMIT_LOCK_TIMEOUT_SQLSTATES,
+            || run_move_once(state, collab, fx, input),
+            || async {
+                assert_eq!(
+                    parent_of(&state.db, input.object_id).await,
+                    parent_before,
+                    "a move whose COMMIT timed out must not have changed the parent"
+                );
+                assert_eq!(
+                    moved_event_count(&state.db, fx.workspace_id).await,
+                    events_before,
+                    "a move whose COMMIT timed out must not have recorded a move event"
+                );
+            },
+        )
+        .await
+    }
+
+    /// Runs one `set_title` content write as one logical request, resubmitting it under the same
+    /// idempotency key only for typed `server_draining{contention}`, at most
+    /// [`RACING_MOVE_CONTENTION_RETRIES`] times, waiting the server's own `retry_after_ms` hint.
+    ///
+    /// The contention answer is accepted as legal only in its strict form: reached after exactly
+    /// `MAX_REBASE_ATTEMPTS` locked phases on `document_id` (the write spent its whole bounded
+    /// budget; it did not give up early) and with the document head where it was (nothing was
+    /// written). Every other result is returned on the spot.
+    ///
+    /// Returns the result and how many times the write was resubmitted.
+    async fn run_content_write_resubmitting_contention(
+        state: &AppState,
+        fx: &Fixture,
+        object_id: Uuid,
+        document_id: Uuid,
+        idempotency_key: &str,
+    ) -> (Result<AcceptedChange, ApiError>, u32) {
+        let probe = crate::flow::collab::write::LockedPhaseProbe::new(document_id);
+        let rebase_budget = usize::try_from(super::MAX_REBASE_ATTEMPTS).expect("rebase budget fits usize");
+        let mut resubmissions = 0_u32;
+        loop {
+            let head_before = head_seq(&state.db, document_id).await;
+            let result = probe
+                .scope(execute_command(
+                    state,
+                    ExecuteCommandInput {
+                        origin: CommandOrigin::first_request_from(EventSurface::Rest),
+                        object_id,
+                        actor_id: fx.owner_id,
+                        principal_kind: "user".to_string(),
+                        role: "owner".to_string(),
+                        command_type: "set_title".to_string(),
+                        payload: json!({"title": "mixed injection content"}),
+                        expected_frontier: None,
+                        idempotency_key: idempotency_key.to_string(),
+                        message: None,
+                        origin_client_id: "mixed-content".to_string(),
+                    },
+                ))
+                .await;
+            let locked_phases = probe.take_samples().len();
+            let retry_after_ms = result
+                .as_ref()
+                .err()
+                .filter(|error| error.kind() == ApiErrorKind::ServerDraining(ServerDrainingReason::Contention))
+                .filter(|_| resubmissions < RACING_MOVE_CONTENTION_RETRIES)
+                .and_then(move_contention_retry_after_ms);
+            let Some(retry_after_ms) = retry_after_ms else {
+                return (result, resubmissions);
+            };
+            assert_eq!(
+                locked_phases, rebase_budget,
+                "content write reported contention after {locked_phases} locked phase(s); contention is only a \
+                 legal answer once all {rebase_budget} bounded-rebase attempts are spent"
+            );
+            assert_eq!(
+                head_seq(&state.db, document_id).await,
+                head_before,
+                "a content write answered with contention must not have advanced the document head"
+            );
+            resubmissions += 1;
+            tokio::time::sleep(Duration::from_millis(retry_after_ms)).await;
+        }
+    }
+
     /// Every database test goes through the same bounded safe-contention handling. This matters
     /// even for logically sequential scenarios: the test runner exercises many isolated scratch
     /// databases concurrently, so scheduler pressure can spend the command's short lock/statement
@@ -3182,15 +3297,21 @@ mod database_tests {
         let two = create(&state, &fx, "page", Some(fx.project_b), Some(nav_b)).await;
 
         // This deliberately bypasses the race-only retry helper. A logically sequential lock
-        // order scenario producing contention is a regression signal, not an event to mask.
+        // order scenario producing contention on its own locks is a regression signal, not an
+        // event to mask: typed `server_draining{contention}`, a deadlock and every other error
+        // still fail here on the first occurrence. The single exception is a raw lock timeout on
+        // `COMMIT`, which waits on a server-wide lock this scenario does not own; see
+        // `run_sequential_move`.
         let a_input = move_input(one, fx.owner_id, "owner", json!({ "target_object_id": nav_b }));
-        let a_to_b = run_without_contention_retries(|| run_move_once(&state, &collab, &fx, &a_input))
-            .await
-            .expect("A -> B move succeeds");
+        let (a_to_b, a_resubmissions) = run_sequential_move(&state, &collab, &fx, &a_input).await;
+        let a_to_b = a_to_b.expect("A -> B move succeeds");
         let b_input = move_input(two, fx.owner_id, "owner", json!({ "target_object_id": nav_a }));
-        let b_to_a = run_without_contention_retries(|| run_move_once(&state, &collab, &fx, &b_input))
-            .await
-            .expect("B -> A move succeeds");
+        let (b_to_a, b_resubmissions) = run_sequential_move(&state, &collab, &fx, &b_input).await;
+        let b_to_a = b_to_a.expect("B -> A move succeeds");
+        eprintln!(
+            "MOVE_LOCK_ORDER_SYMMETRY_EVIDENCE a_to_b_commit_resubmissions={a_resubmissions} \
+             b_to_a_commit_resubmissions={b_resubmissions}"
+        );
 
         let expected = ascending_document_lock_order(&[doc_a, doc_b]);
         assert_eq!(uuid_list(&command_result(&a_to_b)["document_lock_order"]), expected);
@@ -3585,15 +3706,38 @@ mod database_tests {
             .expect("the controlled barrier holds the first lock rank");
         let start = Arc::new(tokio::sync::Barrier::new(5));
 
+        // The move and the content write are each one logical request under one idempotency
+        // key. Two answers that depend on other transactions' commit latency rather than on lock
+        // rank are resubmitted, each only in its strictly delimited form:
+        //
+        // * the move, for a raw lock timeout on `COMMIT` (`COMMIT_LOCK_TIMEOUT_SQLSTATES`) after
+        //   checking it moved nothing. Typed contention on the move's own locks stays a failure;
+        // * the content write, for typed `server_draining{contention}` reached after exactly
+        //   `MAX_REBASE_ATTEMPTS` locked phases with the document head unmoved. It queues for
+        //   the epoch row behind the move and the grant change, whose commits it cannot hurry.
+        //
+        // The grant change is not resubmitted at all, and nothing else is tolerated.
         let move_task = {
             let state = state.clone();
             let fx = fx.clone();
             let start = start.clone();
+            let idempotency_key = Uuid::new_v4().to_string();
             tokio::spawn(async move {
                 start.wait().await;
-                execute_command(
-                    &state,
-                    move_input(moving, fx.owner_id, "owner", json!({"target_object_id": nav_b})),
+                crate::flow::collab::write::resubmit_unwritten_database_timeouts(
+                    &COMMIT_LOCK_TIMEOUT_SQLSTATES,
+                    || {
+                        let mut input = move_input(moving, fx.owner_id, "owner", json!({"target_object_id": nav_b}));
+                        input.idempotency_key.clone_from(&idempotency_key);
+                        execute_command(&state, input)
+                    },
+                    || async {
+                        assert_eq!(
+                            parent_of(&state.db, moving).await,
+                            Some(nav_a),
+                            "a move whose COMMIT timed out must not have changed the parent"
+                        );
+                    },
                 )
                 .await
             })
@@ -3632,25 +3776,11 @@ mod database_tests {
             let state = state.clone();
             let fx = fx.clone();
             let start = start.clone();
+            let idempotency_key = Uuid::new_v4().to_string();
             tokio::spawn(async move {
                 start.wait().await;
-                execute_command(
-                    &state,
-                    ExecuteCommandInput {
-                        origin: CommandOrigin::first_request_from(EventSurface::Rest),
-                        object_id: content,
-                        actor_id: fx.owner_id,
-                        principal_kind: "user".to_string(),
-                        role: "owner".to_string(),
-                        command_type: "set_title".to_string(),
-                        payload: json!({"title": "mixed injection content"}),
-                        expected_frontier: None,
-                        idempotency_key: Uuid::new_v4().to_string(),
-                        message: None,
-                        origin_client_id: "mixed-content".to_string(),
-                    },
-                )
-                .await
+                run_content_write_resubmitting_contention(&state, &fx, content, content_document, &idempotency_key)
+                    .await
             })
         };
         let subscription_task = {
@@ -3690,11 +3820,11 @@ mod database_tests {
         );
         blocker.rollback().await.expect("the barrier releases all DB tasks");
 
-        let moved = tokio::time::timeout(Duration::from_secs(30), move_task)
+        let (moved, move_commit_resubmissions) = tokio::time::timeout(Duration::from_secs(30), move_task)
             .await
             .expect("move must not hang")
-            .expect("move task joins")
-            .expect("owner move commits after serialization");
+            .expect("move task joins");
+        let moved = moved.expect("owner move commits after serialization");
         assert_eq!(parent_of(&scratch.db, moving).await, Some(nav_b));
         assert_eq!(
             command_result(&moved)["existing_document_cardinality"],
@@ -3706,10 +3836,11 @@ mod database_tests {
             .expect("grant task joins")
             .expect("grant change commits after serialization");
         assert!(grant.applied);
-        let content_result = tokio::time::timeout(Duration::from_secs(30), content_task)
-            .await
-            .expect("content must not hang")
-            .expect("content task joins");
+        let (content_result, content_contention_resubmissions) =
+            tokio::time::timeout(Duration::from_secs(30), content_task)
+                .await
+                .expect("content must not hang")
+                .expect("content task joins");
         let content_outcome = match content_result {
             Ok(_) => "accepted",
             Err(ref error) if error.kind() == ApiErrorKind::PolicyRejected => "epoch_fenced",
@@ -3721,6 +3852,10 @@ mod database_tests {
         runtime.registry.unregister(content_document, replacement);
         eprintln!(
             "MULTI_MIXED_INJECTION_EVIDENCE move=committed grant=committed subscription=replaced content={content_outcome} no_hang=true"
+        );
+        eprintln!(
+            "MULTI_MIXED_INJECTION_RESUBMISSIONS move_commit={move_commit_resubmissions} \
+             content_contention={content_contention_resubmissions}"
         );
 
         scratch.drop_self().await;

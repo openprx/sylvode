@@ -1173,6 +1173,64 @@ fn record_locked_phase_sample(document_id: Uuid, elapsed_ms: f64) {
     });
 }
 
+/// Wall-clock bound on [`resubmit_unwritten_database_timeouts`]: long enough that a stall of the
+/// shared test database is over, short enough that a failure that never clears still fails.
+#[cfg(test)]
+const UNWRITTEN_TIMEOUT_RESUBMIT_DEADLINE: Duration = Duration::from_mins(1);
+/// Attempt bound on [`resubmit_unwritten_database_timeouts`], independent of the deadline.
+#[cfg(test)]
+const UNWRITTEN_TIMEOUT_RESUBMIT_MAX_ATTEMPTS: u32 = 64;
+
+/// Runs `attempt` and resubmits it only while it fails with a raw database error whose
+/// `SQLSTATE` is one of `sqlstates` — a lock-wait timeout (`55P03`) or statement timeout
+/// (`57014`) the server raised against the short budgets a locked phase sets for itself — and
+/// only after `assert_unwritten` has proved that the failed attempt left nothing behind.
+///
+/// For logically sequential test scenarios whose verdict must not depend on how long an
+/// unrelated commit elsewhere on the same `PostgreSQL` server takes. The case that motivated it:
+/// a transaction that called `pg_notify` takes a server-wide lock on the notification queue
+/// while it commits, so its `COMMIT` waits behind every other notifying commit on the server,
+/// in any database, and that wait is cut off by the transaction's own `lock_timeout`.
+///
+/// Deliberately narrow. Anything else `attempt` returns is handed back on the spot, unretried:
+/// a typed `server_draining`, a deadlock (`40P01`), a serialization failure, any other error.
+/// So is the last timeout once the attempt or wall-clock bound is spent. No waiting between
+/// attempts: a failing attempt has already spent its whole lock or statement budget waiting.
+///
+/// Returns the final result and how many attempts were resubmitted.
+#[cfg(test)]
+pub(crate) async fn resubmit_unwritten_database_timeouts<T, Attempt, AttemptFuture, Unwritten, UnwrittenFuture>(
+    sqlstates: &[&str],
+    mut attempt: Attempt,
+    mut assert_unwritten: Unwritten,
+) -> (Result<T, ApiError>, u32)
+where
+    Attempt: FnMut() -> AttemptFuture,
+    AttemptFuture: std::future::Future<Output = Result<T, ApiError>>,
+    Unwritten: FnMut() -> UnwrittenFuture,
+    UnwrittenFuture: std::future::Future<Output = ()>,
+{
+    let started = std::time::Instant::now();
+    let mut resubmissions = 0u32;
+    loop {
+        let error = match attempt().await {
+            Ok(value) => return (Ok(value), resubmissions),
+            Err(error) => error,
+        };
+        let is_listed_timeout = error
+            .database_sqlstate()
+            .is_some_and(|code| sqlstates.contains(&code.as_str()));
+        if !is_listed_timeout
+            || resubmissions >= UNWRITTEN_TIMEOUT_RESUBMIT_MAX_ATTEMPTS
+            || started.elapsed() >= UNWRITTEN_TIMEOUT_RESUBMIT_DEADLINE
+        {
+            return (Err(error), resubmissions);
+        }
+        assert_unwritten().await;
+        resubmissions += 1;
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod probe_isolation_tests {
@@ -2192,28 +2250,86 @@ mod database_tests {
         scratch.drop_self().await;
     }
 
+    /// Submits one logical write through `submit` the way a contract-compliant client does and
+    /// returns the first outcome that does not depend on load, with how many submissions it took.
+    ///
+    /// `collab-protocol-v1.md` makes a lock-wait timeout a legal answer to a write: the
+    /// transaction is rolled back and the caller gets recoverable `server_draining{contention}`
+    /// with nothing written, then resubmits the same intent. How long `PostgreSQL` holds the row
+    /// the write is waiting for is wall clock a test does not control — with many scratch
+    /// databases committing on one server it was measured past three consecutive 80 ms
+    /// `lock_timeout` windows — so the verdict a test asserts on is never allowed to depend on it.
+    /// `submit` must therefore build the *same* request every time, `update_id` included.
+    ///
+    /// What stays strict:
+    ///
+    /// * contention is resubmitted only when the whole bounded-rebase budget was really spent —
+    ///   exactly `MAX_REBASE_ATTEMPTS` locked phases on `document_id`, read from this call's own
+    ///   [`super::LockedPhaseProbe`] — and only with `write_state=not_applied`. A write that gave
+    ///   up on its first head mismatch instead of rebasing fails here, however lucky the timing;
+    /// * a hard error fails immediately;
+    /// * every outcome that is not load-dependent is returned as it is, on the submission that
+    ///   produced it, for the caller to assert on.
+    async fn resubmit_while_load_dependent<Submit, SubmitFuture>(
+        label: &str,
+        document_id: Uuid,
+        update_id: Uuid,
+        captured: &CapturedEvents,
+        mut submit: Submit,
+    ) -> (AcceptOutcome, u32)
+    where
+        Submit: FnMut() -> SubmitFuture,
+        SubmitFuture: std::future::Future<Output = Result<AcceptOutcome, crate::error::ApiError>>,
+    {
+        let probe = super::LockedPhaseProbe::new(document_id);
+        let rebase_budget = usize::try_from(MAX_REBASE_ATTEMPTS).expect("rebase budget fits usize");
+        let started = std::time::Instant::now();
+        let mut submissions = 0u32;
+        loop {
+            let outcome = probe.scope(submit()).await.unwrap_or_else(|err| {
+                panic!(
+                    "{label} hit a hard error on submission {}: {err:?}; captured warnings: {:#?}",
+                    submissions + 1,
+                    captured.lines()
+                )
+            });
+            submissions += 1;
+            let locked_phases = probe.take_samples().len();
+            if !is_load_dependent(&outcome) {
+                return (outcome, submissions);
+            }
+            let rejected = match outcome {
+                AcceptOutcome::Rejected(rejected) => rejected,
+                accepted @ AcceptOutcome::Accepted(_) => return (accepted, submissions),
+            };
+            if rejected.code == RejectedCode::ServerDraining {
+                assert_eq!(
+                    (rejected.write_state, locked_phases),
+                    (WriteState::NotApplied, rebase_budget),
+                    "{label} reported contention on submission {submissions} after {locked_phases} locked \
+                     phase(s); contention is only a legal answer once all {rebase_budget} bounded-rebase \
+                     attempts are spent and nothing was written: {rejected:?}; captured warnings: {:#?}",
+                    captured.lines()
+                );
+            }
+            assert!(
+                submissions < CONTENTION_RETRY_MAX_ATTEMPTS && started.elapsed() < CONTENTION_RETRY_DEADLINE,
+                "{label} was still refused after {submissions} submissions over {:?}: {rejected:?}; \
+                 captured warnings: {:#?}",
+                started.elapsed(),
+                captured.lines()
+            );
+            tokio::time::sleep(contention_backoff(submissions - 1, update_id.as_u128())).await;
+        }
+    }
+
     /// One API instance's side of
     /// `independent_api_instances_allocate_distinct_contiguous_document_sequences`: its own
-    /// connection pool, cache, coordinator and registry, submitting one logical write the way a
-    /// contract-compliant client does.
-    ///
-    /// `collab-protocol-v1.md` makes a lock-wait timeout on the document row a legal answer to a
-    /// write: the transaction is rolled back and the caller gets recoverable
-    /// `server_draining{contention}` with nothing written, then resubmits the same intent. How
-    /// long `PostgreSQL` holds that row for the other instance (its locked phase through `COMMIT`,
-    /// then its fan-out notice, whose foreign key takes a key-share lock on the same row) is wall
-    /// clock the test does not control: with many scratch databases committing on one server it
-    /// was measured past three consecutive 80 ms `lock_timeout` windows. The returned verdict is
-    /// therefore never allowed to depend on it. A load-dependent rejection is resubmitted under
-    /// the *same* `update_id`, and everything the test is about stays strict:
-    ///
-    /// * contention is accepted as an answer only when the whole bounded-rebase budget was really
-    ///   spent — exactly `MAX_REBASE_ATTEMPTS` locked phases, read from this task's own
-    ///   [`LockedPhaseProbe`] — and only with `write_state=not_applied`. A write that gave up on
-    ///   its first head mismatch instead of rebasing fails here, however lucky the timing;
-    /// * any other rejection, and any hard error, fails immediately with the outcome it carried;
-    /// * the caller still requires the two committed seqs, the persisted rows and the fan-out
-    ///   notices to be exactly `[1, 2]`, so an attempt that was rolled back may not leave a gap.
+    /// connection pool, cache, coordinator and registry, submitting one logical write through
+    /// [`resubmit_while_load_dependent`]. Anything but a committed write fails here with the
+    /// outcome it carried; the caller still requires the two committed seqs, the persisted rows
+    /// and the fan-out notices to be exactly `[1, 2]`, so an attempt that was rolled back may
+    /// not leave a gap.
     ///
     /// Returns the committed write and how many submissions it took.
     #[allow(clippy::too_many_arguments)]
@@ -2233,15 +2349,12 @@ mod database_tests {
         let registry = SessionRegistry::new();
         let snapshot_advancer = SnapshotAdvancer::new();
         let update_id = Uuid::new_v4();
-        let probe = super::LockedPhaseProbe::new(document_id);
-        let rebase_budget = usize::try_from(MAX_REBASE_ATTEMPTS).expect("rebase budget fits usize");
+        let instance = format!("instance {label}");
 
         start.wait().await;
-        let started = std::time::Instant::now();
-        let mut submissions = 0u32;
-        loop {
-            let outcome = probe
-                .scope(accept_update(
+        let (outcome, submissions) =
+            resubmit_while_load_dependent(&instance, document_id, update_id, &captured, || {
+                accept_update(
                     &db,
                     &cache,
                     &coordinator,
@@ -2266,46 +2379,16 @@ mod database_tests {
                         checked_epoch,
                         expected_frontier: None,
                     },
-                ))
-                .await
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "instance {label} hit a hard error on submission {}: {err:?}; captured warnings: {:#?}",
-                        submissions + 1,
-                        captured.lines()
-                    )
-                });
-            submissions += 1;
-            let locked_phases = probe.take_samples().len();
-            let rejected = match outcome {
-                AcceptOutcome::Accepted(accepted) => return (accepted, submissions),
-                AcceptOutcome::Rejected(rejected) => rejected,
-            };
-            if rejected.code == RejectedCode::ServerDraining {
-                assert_eq!(
-                    (rejected.write_state, locked_phases),
-                    (WriteState::NotApplied, rebase_budget),
-                    "instance {label} reported contention on submission {submissions} after {locked_phases} \
-                     locked phase(s); contention is only a legal answer once all {rebase_budget} bounded-rebase \
-                     attempts are spent and nothing was written: {rejected:?}; captured warnings: {:#?}",
-                    captured.lines()
-                );
-            } else {
-                assert!(
-                    is_load_dependent(&AcceptOutcome::Rejected(rejected.clone())),
-                    "instance {label} was rejected on submission {submissions} with a verdict that does not \
-                     depend on load: {rejected:?}; captured warnings: {:#?}",
-                    captured.lines()
-                );
-            }
-            assert!(
-                submissions < CONTENTION_RETRY_MAX_ATTEMPTS && started.elapsed() < CONTENTION_RETRY_DEADLINE,
-                "instance {label} was still refused after {submissions} submissions over {:?}: {rejected:?}; \
-                 captured warnings: {:#?}",
-                started.elapsed(),
+                )
+            })
+            .await;
+        match outcome {
+            AcceptOutcome::Accepted(accepted) => (accepted, submissions),
+            AcceptOutcome::Rejected(rejected) => panic!(
+                "{instance} was rejected on submission {submissions} with a verdict that does not depend on \
+                 load: {rejected:?}; captured warnings: {:#?}",
                 captured.lines()
-            );
-            tokio::time::sleep(contention_backoff(submissions - 1, update_id.as_u128())).await;
+            ),
         }
     }
 
@@ -2590,33 +2673,44 @@ mod database_tests {
         let snapshot_advancer = SnapshotAdvancer::new();
         let update_id = Uuid::new_v4();
         let db_for_a = state.db.clone();
+        let captured = CapturedEvents::new();
+        let _capture = tracing::subscriber::set_default(captured.clone());
+        let captured_for_a = captured.clone();
+        // `A` is one logical write under one `update_id`, still carrying the epoch it checked
+        // before `B` moved it. Waiting on `B`'s row lock is bounded by the 80 ms `lock_timeout`
+        // per locked phase, and how long `B`'s `COMMIT` takes once released is not this test's to
+        // decide: if it outlasts all three bounded attempts, `A` is told `contention` with
+        // nothing written, and resubmits the same request as the protocol asks. The verdict
+        // asserted below is the first one that does not depend on that timing.
         let a_task = tokio::spawn(async move {
-            accept_update(
-                &db_for_a,
-                &cache,
-                &coordinator,
-                &registry,
-                &snapshot_advancer,
-                10,
-                None,
-                UpdateRequest {
-                    origin: crate::flow::event_origin::CommandOrigin::first_request_from(
-                        crate::flow::event_origin::EventSurface::Rest,
-                    ),
-                    document_id,
-                    update_id,
-                    bytes: update_bytes,
-                    idempotency_key: None,
-                    event_idempotency_key: None,
-                    origin_client_id: Some("test-client-a".to_string()),
-                    message: None,
-                    actor_id: owner_id,
-                    actor_is_bot: false,
-                    workspace_id,
-                    checked_epoch: original_epoch,
-                    expected_frontier: None,
-                },
-            )
+            resubmit_while_load_dependent("A", document_id, update_id, &captured_for_a, || {
+                accept_update(
+                    &db_for_a,
+                    &cache,
+                    &coordinator,
+                    &registry,
+                    &snapshot_advancer,
+                    10,
+                    None,
+                    UpdateRequest {
+                        origin: crate::flow::event_origin::CommandOrigin::first_request_from(
+                            crate::flow::event_origin::EventSurface::Rest,
+                        ),
+                        document_id,
+                        update_id,
+                        bytes: update_bytes.clone(),
+                        idempotency_key: None,
+                        event_idempotency_key: None,
+                        origin_client_id: Some("test-client-a".to_string()),
+                        message: None,
+                        actor_id: owner_id,
+                        actor_is_bot: false,
+                        workspace_id,
+                        checked_epoch: original_epoch,
+                        expected_frontier: None,
+                    },
+                )
+            })
             .await
         });
 
@@ -2634,14 +2728,19 @@ mod database_tests {
         release_b_tx.send(()).expect("B is still waiting to receive this");
         b_task.await.expect("B task joins");
 
-        let a_result = a_task.await.expect("A task joins").expect("no hard database error");
+        let (a_result, a_submissions) = a_task.await.expect("A task joins");
         let AcceptOutcome::Rejected(rejected) = a_result else {
-            panic!("epoch fencing must reject A's write once B has revoked after A's permission check, got Accepted");
+            panic!(
+                "epoch fencing must reject A's write once B has revoked after A's permission check, got Accepted \
+                 on submission {a_submissions}"
+            );
         };
         assert_eq!(
             rejected.code,
             RejectedCode::PolicyRejected,
-            "the epoch mismatch must surface as policy_rejected, not any other rejection code"
+            "the epoch mismatch must surface as policy_rejected, not any other rejection code \
+             (submission {a_submissions}): {rejected:?}; captured warnings: {:#?}",
+            captured.lines()
         );
 
         // The decisive assertion: "撤权后仍写入成功" must not have happened -- no collab_updates
@@ -2661,6 +2760,7 @@ mod database_tests {
         eprintln!(
             "AUTHZ_CONTENT_EPOCH_EVIDENCE checked_epoch={original_epoch} committed_epoch={final_epoch} outcome=policy_rejected persisted_updates=0"
         );
+        eprintln!("AUTHZ_CONTENT_EPOCH_SUBMISSIONS submissions={a_submissions}");
 
         scratch.drop_self().await;
     }
@@ -2805,6 +2905,80 @@ mod database_tests {
             count_collab_updates(&state, document_id, update_id).await,
             1,
             "A's update must have been persisted exactly once, after B's lock cleared"
+        );
+
+        scratch.drop_self().await;
+    }
+
+    /// Raises `sqlstate` from the database itself, so the error that comes back is a real
+    /// driver error carrying that code rather than one fabricated in Rust.
+    async fn raise_sqlstate(db: &DatabaseConnection, sqlstate: &str) -> Result<(), crate::error::ApiError> {
+        assert!(
+            sqlstate.len() == 5 && sqlstate.bytes().all(|byte| byte.is_ascii_alphanumeric()),
+            "a SQLSTATE is five alphanumeric characters"
+        );
+        db.execute_unprepared(&format!(
+            "DO $$ BEGIN RAISE EXCEPTION 'injected' USING ERRCODE = '{sqlstate}'; END $$"
+        ))
+        .await?;
+        Ok(())
+    }
+
+    /// [`super::resubmit_unwritten_database_timeouts`] is what lets a sequential scenario survive
+    /// a lock or statement timeout it did not cause, so what it must *not* do is pinned here
+    /// against real database errors: a deadlock (`40P01`) and a serialization failure (`40001`)
+    /// are handed back on the first occurrence without the unwritten check ever running, a
+    /// listed timeout is resubmitted only after that check, and a timeout that is not on the
+    /// caller's list is not resubmitted either.
+    #[tokio::test]
+    async fn unwritten_timeout_resubmission_never_resubmits_a_deadlock_or_an_unlisted_error() {
+        let scratch = scratch_or_skip!("unwritten-timeout-resubmission");
+        let db = scratch.db.clone();
+
+        for refused in ["40P01", "40001", "57014", "23505"] {
+            let attempts = std::cell::Cell::new(0u32);
+            let unwritten_checks = std::cell::Cell::new(0u32);
+            let (result, resubmissions) = super::resubmit_unwritten_database_timeouts(
+                &["55P03"],
+                || {
+                    attempts.set(attempts.get() + 1);
+                    raise_sqlstate(&db, refused)
+                },
+                || async { unwritten_checks.set(unwritten_checks.get() + 1) },
+            )
+            .await;
+            let error = result.expect_err("the injected error is returned");
+            assert_eq!(error.database_sqlstate().as_deref(), Some(refused));
+            assert_eq!(
+                (attempts.get(), resubmissions, unwritten_checks.get()),
+                (1, 0, 0),
+                "SQLSTATE {refused} must be returned on its first occurrence, unretried"
+            );
+        }
+
+        let attempts = std::cell::Cell::new(0u32);
+        let unwritten_checks = std::cell::Cell::new(0u32);
+        let (result, resubmissions) = super::resubmit_unwritten_database_timeouts(
+            &["55P03"],
+            || {
+                attempts.set(attempts.get() + 1);
+                let attempt = attempts.get();
+                let db = &db;
+                async move {
+                    if attempt <= 2 {
+                        raise_sqlstate(db, "55P03").await?;
+                    }
+                    Ok(attempt)
+                }
+            },
+            || async { unwritten_checks.set(unwritten_checks.get() + 1) },
+        )
+        .await;
+        assert_eq!(result.expect("the third attempt succeeds"), 3);
+        assert_eq!(
+            (resubmissions, unwritten_checks.get()),
+            (2, 2),
+            "each listed lock timeout is resubmitted once, after one unwritten check"
         );
 
         scratch.drop_self().await;
