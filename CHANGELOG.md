@@ -26,10 +26,15 @@ OpenPR name keeps working; see **Deprecated**.
   (500, non-retryable) instead of the untyped 500. A database failure that reaches the response
   of a Flow route (`/flow/`, `/collab/`, `features/flow`, admin Flow routes) is typed as well:
   `server_rejected` with `details.reason = "deterministic_database_refusal"` when the database
-  refused the statement for good (constraint, data or schema error), otherwise `server_draining`
-  with `reason = "contention"` and `retry_after_ms` (connection, pool and transient errors). The
-  driver's text is logged, never sent. Routes outside Flow keep the legacy envelope (`code` 500,
-  `message` "database error", no `error_code`) unchanged. An identical request that is still
+  refused the statement for good (constraint, data or schema error, or an exception raised by a
+  database function, `SQLSTATE` class `P0`), otherwise `server_draining` with
+  `reason = "contention"` and `retry_after_ms` (connection, pool and transient errors). This
+  holds for the statements the authentication layer runs for a bot token too (the credential
+  lookup and the operation's attribution record). The driver's text is logged, never sent. What
+  still answers a legacy envelope on a Flow route is an authentication refusal that is not a
+  database failure (a missing, invalid, disabled or expired credential, or a transport or
+  permission the credential does not have: `code` 401 or 403, no `error_code`). Routes outside Flow keep the legacy envelopes (`code` 500, `message`
+  "database error" or "internal server error", no `error_code`) unchanged. An identical request that is still
   running answers `server_draining` with `reason = "contention"` and `retry_after_ms`.
 
 - **Every existing bot token only works with the REST API after the upgrade.** Migration
@@ -534,10 +539,22 @@ replacement and the earliest removal.
 ### Fixed
 
 - Flow REST routes no longer answer the legacy `database error` envelope: a database failure
-  propagated to the response of any Flow route is `server_rejected`
+  propagated to the response of a Flow route is `server_rejected`
   (`deterministic_database_refusal`) or `server_draining` (`contention`, `retry_after_ms`), so
   clients can classify it by `error_code`. One response boundary around the Flow router does
   this; routes outside Flow are byte for byte unchanged.
+  - A bot token gets the same answers: a database failure of its credential lookup or of its
+    operation's attribution record on a Flow route is typed by the same rule instead of the
+    legacy `internal server error` envelope. The only legacy envelopes left on a Flow route are
+    authentication refusals that are not database failures (a missing, invalid, disabled or
+    expired credential, or a transport or permission the credential does not have).
+  - An exception raised by one of the application's database functions (`SQLSTATE` class `P0`)
+    is answered as `server_rejected` (`deterministic_database_refusal`) instead of
+    `server_draining`: `GET /api/v1/workspaces/{workspace_id}/flow/navigator` with a `project_id`
+    that does not exist no longer tells the client to retry a request that is refused every
+    time. Retry loops inside the server classify database errors as before.
+  - The boundary covers the Flow routes only. A path no route matches is answered by the
+    application's fallback outside it, as before the boundary existed.
 - Flow conversion jobs: the stale-`started` sweep measures a run from a dedicated `started_at`
   column instead of `updated_at`, so a write to a `started` job no longer postpones its reclaim.
   `started_at` is set when the job is created and reset when a retry claims a `failed` job;

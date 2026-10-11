@@ -204,7 +204,8 @@ async fn record_operation<C: ConnectionTrait>(
 /// logged at ERROR with the database's reason. A response that already reports a failure is
 /// returned unchanged (it reports no success), and the failure is logged the same way. The
 /// operation itself has already run by then, so a caller that sees the internal error retries
-/// with its idempotency key where the command takes one.
+/// with its idempotency key where the command takes one. On a Flow route the internal error is
+/// the typed envelope of the database failure ([`ApiError::internal_database_failure`]).
 fn fail_closed_on_audit_failure(
     response: Response,
     business_code: i32,
@@ -223,7 +224,7 @@ fn fail_closed_on_audit_failure(
         "bot operation log write failed; the operation is not reported as successful without its attribution record"
     );
     if business_code == 0 {
-        Err(ApiError::Internal)
+        Err(ApiError::internal_database_failure(error))
     } else {
         Ok(response)
     }
@@ -461,7 +462,7 @@ pub async fn bot_or_user_auth_middleware(
         ))
         .one(&state.db)
         .await
-        .map_err(|_| ApiError::Internal)?
+        .map_err(ApiError::internal_database_failure)?
         .ok_or_else(|| ApiError::Unauthorized("invalid bot token".to_string()))?;
 
         if !bot.is_active {

@@ -615,6 +615,24 @@ fn typed_database_failures_enabled() -> bool {
     TYPED_DATABASE_FAILURES.try_with(|()| ()).is_ok()
 }
 
+/// How a database failure carrying `sqlstate` is reported when it is rendered on a typed surface.
+///
+/// This is [`classify_sqlstate`] with one addition: class `P0` (an exception a `PL/pgSQL`
+/// function raised; a `RAISE EXCEPTION` without an `ERRCODE` is `P0001`) is a refusal. The
+/// application's own database functions raise it for input they will reject every time, and
+/// telling the client to retry such a request only repeats it. A function that means a transient
+/// condition raises that condition's own `SQLSTATE`, which is classified as before.
+///
+/// It decides the response only. Retry loops keep asking [`classify_db_failure`] and
+/// [`ApiError::is_known_transient_database_failure`], whose answers for class `P0` are unchanged.
+fn response_class_of_sqlstate(sqlstate: Option<&str>) -> DbFailureClass {
+    match sqlstate {
+        Some(code) if code.starts_with("P0") => DbFailureClass::Deterministic,
+        Some(code) => classify_sqlstate(code),
+        None => DbFailureClass::Transient,
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ApiError {
     #[error("{0}")]
@@ -704,9 +722,25 @@ impl ApiError {
         Self::typed(ApiErrorKind::ServerRejected, "internal server error")
     }
 
+    /// The error for a database failure in code that reports such failures as [`Self::Internal`]
+    /// (the authentication middleware).
+    ///
+    /// While a typed surface serves the request (see [`with_typed_database_failures`]) the driver
+    /// error is kept, so the response is the same typed envelope a handler's database failure
+    /// gets. Anywhere else it is [`Self::Internal`], as it has always been, and the response is
+    /// unchanged.
+    pub(crate) fn internal_database_failure(err: sea_orm::DbErr) -> Self {
+        if typed_database_failures_enabled() {
+            Self::Database(err)
+        } else {
+            Self::Internal
+        }
+    }
+
     /// The typed answer for a database failure of class `class` on a typed surface.
     ///
-    /// A deterministic refusal (constraint, data or schema error) is `server_rejected` with
+    /// A deterministic refusal (constraint, data or schema error, or an exception raised by a
+    /// database function; see [`response_class_of_sqlstate`]) is `server_rejected` with
     /// `details.reason = "deterministic_database_refusal"`: the same request will be refused
     /// again. Anything else (connection, pool, a transient or unrecognized `SQLSTATE`, none at
     /// all) is `server_draining` with `reason = "contention"`, retryable after
@@ -1005,7 +1039,8 @@ impl IntoResponse for ApiError {
                 tracing::error!(error = %err, "database error");
                 if typed_database_failures_enabled() {
                     // Always a `Typed` error, so this does not come back to this arm.
-                    return Self::typed_database_failure(classify_db_failure(&err)).into_response();
+                    let class = response_class_of_sqlstate(sqlstate(&err).as_deref());
+                    return Self::typed_database_failure(class).into_response();
                 }
                 Self::legacy_response(500, "database error", "database error")
             }
@@ -1183,7 +1218,10 @@ mod server_rejected_row_tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod typed_database_failure_tests {
-    use super::{ApiError, with_typed_database_failures};
+    use super::{
+        ApiError, DbFailureClass, classify_sqlstate, is_known_transient_sqlstate, response_class_of_sqlstate,
+        with_typed_database_failures,
+    };
     use axum::response::IntoResponse;
     use sea_orm::{DbErr, RuntimeErr};
     use serde_json::{Value, json};
@@ -1241,5 +1279,65 @@ mod typed_database_failure_tests {
             assert!(matches!(error.into_typed(), ApiError::Database(_)));
         })
         .await;
+    }
+
+    /// On a typed surface an exception raised by a database function (class `P0`) is a refusal;
+    /// every other `SQLSTATE`, and none at all, is reported as the shared classification has it.
+    /// The shared classification itself, which retry loops use, still treats class `P0` as it
+    /// did.
+    #[test]
+    fn a_raised_exception_is_a_refusal_in_the_response_only() {
+        for raised in ["P0000", "P0001", "P0002", "P0003", "P0004"] {
+            assert_eq!(
+                response_class_of_sqlstate(Some(raised)),
+                DbFailureClass::Deterministic,
+                "{raised}"
+            );
+            assert_eq!(classify_sqlstate(raised), DbFailureClass::Transient, "{raised}");
+            assert!(!is_known_transient_sqlstate(raised), "{raised}");
+        }
+        for code in [
+            "40001", "40P01", "55P03", "57014", "08006", "53300", "23505", "22001", "42P01", "0A000", "XX000",
+        ] {
+            assert_eq!(
+                response_class_of_sqlstate(Some(code)),
+                classify_sqlstate(code),
+                "{code}"
+            );
+        }
+        assert_eq!(response_class_of_sqlstate(Some("40001")), DbFailureClass::Transient);
+        assert_eq!(response_class_of_sqlstate(None), DbFailureClass::Transient);
+    }
+
+    /// A database failure reported by code that answers `Internal` keeps the driver error only
+    /// inside the scope; outside it the error, and so the response, is the legacy internal error.
+    #[tokio::test]
+    async fn an_internal_database_failure_keeps_the_driver_error_only_inside_the_scope() {
+        let failure =
+            || ApiError::internal_database_failure(DbErr::Conn(RuntimeErr::Internal(DRIVER_TEXT.to_string())));
+        let body_of = |error: ApiError| async move {
+            axum::body::to_bytes(error.into_response().into_body(), 64 * 1024)
+                .await
+                .expect("the body is readable")
+                .to_vec()
+        };
+        let legacy = br#"{"code":500,"message":"internal server error"}"#.to_vec();
+
+        assert!(matches!(failure(), ApiError::Internal));
+        assert_eq!(body_of(failure()).await, legacy);
+
+        with_typed_database_failures(async {
+            assert!(matches!(failure(), ApiError::Database(_)));
+            let body: Value = serde_json::from_slice(&body_of(failure()).await).expect("JSON");
+            assert_eq!(body.pointer("/error_code"), Some(&json!("server_draining")), "{body}");
+            assert_eq!(body.pointer("/details/reason"), Some(&json!("contention")), "{body}");
+        })
+        .await;
+
+        assert!(
+            matches!(failure(), ApiError::Internal),
+            "the scope does not outlive its future"
+        );
+        assert_eq!(body_of(failure()).await, legacy);
     }
 }

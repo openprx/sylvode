@@ -4981,6 +4981,10 @@ mod flow_surface_boundary_tests {
     /// always sent it.
     const LEGACY_DATABASE_ERROR_BODY: &str = r#"{"code":500,"message":"database error"}"#;
 
+    /// The legacy envelope of an internal failure, as the authentication middleware sends it for
+    /// a database failure on every route outside the Flow surface.
+    const LEGACY_INTERNAL_ERROR_BODY: &str = r#"{"code":500,"message":"internal server error"}"#;
+
     fn state_for(db: DatabaseConnection) -> AppState {
         AppState {
             cfg: AppConfig {
@@ -5056,17 +5060,63 @@ mod flow_surface_boundary_tests {
         }
     }
 
-    /// Every `.route("<path>", ..)` registered by the two router functions, with whether the
-    /// call names a `routes::flow` / `routes::collab` handler.
-    fn registered_routes() -> Vec<(String, bool)> {
+    /// One `.route("<path>", ..)` call of the two router functions.
+    struct RegisteredRoute {
+        path: String,
+        /// The `routes` modules whose handlers the call names, in order of appearance.
+        handler_modules: Vec<String>,
+    }
+
+    impl RegisteredRoute {
+        /// Whether the path belongs to the Flow surface. Every Flow path has a path segment that
+        /// is exactly `flow` or `collab`, and no other path has one (`workflow`, `workflows` and
+        /// `workflow-states` are different segments), so there is no list of exceptions.
+        fn flow_path(&self) -> bool {
+            self.path
+                .split('/')
+                .any(|segment| segment == "flow" || segment == "collab")
+        }
+
+        /// Whether every handler the call names is a `routes::flow` / `routes::collab` handler,
+        /// or none is. A call that names both kinds has no answer and fails the test.
+        fn flow_handlers(&self) -> bool {
+            let flow = |module: &String| module == "flow" || module == "collab";
+            // The liveness and readiness probes are functions of this file, not of a `routes`
+            // module; every other route names its handlers in full.
+            assert!(
+                !self.handler_modules.is_empty() || ["/health", "/ready"].contains(&self.path.as_str()),
+                "{} names no `routes::<module>::<handler>`",
+                self.path
+            );
+            let all = !self.handler_modules.is_empty() && self.handler_modules.iter().all(flow);
+            assert!(
+                all || !self.handler_modules.iter().any(flow),
+                "{} mixes Flow handlers with handlers of other modules: {:?}",
+                self.path,
+                self.handler_modules
+            );
+            all
+        }
+    }
+
+    /// Every `.route("<path>", ..)` registered by the two router functions.
+    fn registered_routes() -> Vec<RegisteredRoute> {
         let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
             .expect("the router source is readable");
         let mut routes = Vec::new();
         let mut block: Option<String> = None;
         let mut finish = |block: &str| {
             if let Some(path) = block.split('"').nth(1) {
-                let flow = block.contains("routes::flow::") || block.contains("routes::collab::");
-                routes.push((path.to_string(), flow));
+                let handler_modules = block
+                    .split("routes::")
+                    .skip(1)
+                    .filter_map(|rest| rest.split_once("::"))
+                    .map(|(module, _)| module.to_string())
+                    .collect();
+                routes.push(RegisteredRoute {
+                    path: path.to_string(),
+                    handler_modules,
+                });
             }
         };
         for line in source.lines() {
@@ -5114,44 +5164,70 @@ mod flow_surface_boundary_tests {
         flow_answers: usize,
         other_answers: usize,
         typed_database_failures: usize,
+        typed_bot_database_failures: usize,
     }
 
-    /// Calls `path` with every method, and checks each answer of a method the route accepts.
-    async fn probe_route(state: &AppState, token: &str, path: &str, flow: bool, tally: &mut Tally) {
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum Caller {
+        Anonymous,
+        User,
+        Bot,
+    }
+
+    /// A syntactically valid bot credential; the refusing database cannot look it up.
+    const BOT_TOKEN: &str = "opr_0123456789abcdef0123456789abcdef";
+
+    /// Calls `path` with every method and every kind of caller, and checks each answer of a
+    /// method the route accepts.
+    async fn probe_route(state: &AppState, user_token: &str, path: &str, flow: bool, tally: &mut Tally) {
         let uri = concrete(path);
         let empty = serde_json::json!({});
-        // Outside the Flow surface only the unauthenticated answer is taken: it is enough to see
-        // the boundary marker and runs no handler behind a session.
-        let callers: &[Option<&str>] = if flow { &[None, Some(token)] } else { &[None] };
+        // Outside the Flow surface no session is used: the anonymous and the bot answers are
+        // enough to see the boundary marker, and neither runs a handler (the bot credential
+        // cannot be looked up).
+        let callers: &[Caller] = if flow {
+            &[Caller::Anonymous, Caller::User, Caller::Bot]
+        } else {
+            &[Caller::Anonymous, Caller::Bot]
+        };
         let mut accepted = 0_usize;
         for method in [Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
             let body = (method != Method::GET).then_some(&empty);
             for caller in callers {
-                let answer = call(state, &method, &uri, *caller, body).await;
+                let token = match caller {
+                    Caller::Anonymous => None,
+                    Caller::User => Some(user_token),
+                    Caller::Bot => Some(BOT_TOKEN),
+                };
+                let answer = call(state, &method, &uri, token, body).await;
+                assert_eq!(
+                    answer.behind_boundary, flow,
+                    "{method} {path}: a Flow path must answer behind the Flow surface boundary on every method, \
+                     accepted or not, and no other path may"
+                );
                 if answer.status != StatusCode::METHOD_NOT_ALLOWED {
                     accepted += 1;
-                    check_answer(&answer, &format!("{method} {path}"), flow, caller.is_some(), tally);
+                    check_answer(&answer, &format!("{method} {path} as {caller:?}"), flow, *caller, tally);
                 }
             }
         }
         assert!(accepted > 0, "{path} accepted none of the probed methods");
     }
 
-    fn check_answer(answer: &Answer, route: &str, flow: bool, authenticated: bool, tally: &mut Tally) {
+    fn check_answer(answer: &Answer, route: &str, flow: bool, caller: Caller, tally: &mut Tally) {
         assert_ne!(answer.status, StatusCode::NOT_FOUND, "{route} is not routed");
-        assert_eq!(
-            answer.behind_boundary, flow,
-            "{route}: a Flow route must answer behind the Flow surface boundary and no other route may"
-        );
         let typed = is_typed_database_failure(&answer.json());
         if flow {
             tally.flow_answers += 1;
-            assert_ne!(
-                answer.text(),
-                LEGACY_DATABASE_ERROR_BODY,
-                "{route} answered the legacy database envelope"
-            );
-            tally.typed_database_failures += usize::from(authenticated && typed);
+            for legacy in [LEGACY_DATABASE_ERROR_BODY, LEGACY_INTERNAL_ERROR_BODY] {
+                assert_ne!(
+                    answer.text(),
+                    legacy,
+                    "{route} answered a legacy envelope for a database failure"
+                );
+            }
+            tally.typed_database_failures += usize::from(caller == Caller::User && typed);
+            tally.typed_bot_database_failures += usize::from(caller == Caller::Bot && typed);
         } else {
             tally.other_answers += 1;
             assert!(
@@ -5161,17 +5237,32 @@ mod flow_surface_boundary_tests {
         }
     }
 
-    /// Structural proof on the running router, with a database that refuses every statement:
-    /// each route that names a Flow handler answers behind the boundary, on every method it
-    /// accepts and whether or not the caller is authenticated; no other route does; and no Flow
-    /// route ever answers the legacy database envelope. A Flow route registered outside
-    /// `flow_surface_routes`, or after the boundary, fails the first assertion.
+    /// Structural proof on the running router, with a database that refuses every statement.
+    ///
+    /// A route is a Flow route by its path (a `flow` or `collab` segment), and that is the same
+    /// set as the routes whose handlers are `routes::flow` / `routes::collab` handlers: a Flow
+    /// path that names any other handler, and a Flow handler on any other path, fail here. Each
+    /// Flow path answers behind the boundary on every method, whoever calls (nobody, a user
+    /// session, a bot credential); no other path does; and no Flow route answers a database
+    /// failure with a legacy envelope, the authentication layer's included. A Flow route
+    /// registered outside `flow_surface_routes`, or after the boundary, fails the marker
+    /// assertion.
     #[tokio::test]
     async fn every_flow_route_answers_behind_the_boundary_and_no_other_route_does() {
         let state = state_for(DatabaseConnection::Disconnected);
         let token = token_for(Uuid::new_v4());
         let routes = registered_routes();
-        let flow_routes = routes.iter().filter(|(_, flow)| *flow).count();
+        for route in &routes {
+            assert_eq!(
+                route.flow_path(),
+                route.flow_handlers(),
+                "{}: a path with a `flow` / `collab` segment serves Flow handlers only, and Flow handlers are \
+                 served on such paths only (handlers of: {:?})",
+                route.path,
+                route.handler_modules
+            );
+        }
+        let flow_routes = routes.iter().filter(|route| route.flow_path()).count();
         assert!(
             flow_routes >= 40 && routes.len() > flow_routes + 100,
             "the router parser found {flow_routes} Flow routes of {}; it no longer matches main.rs",
@@ -5179,22 +5270,29 @@ mod flow_surface_boundary_tests {
         );
 
         let mut tally = Tally::default();
-        for (path, flow) in &routes {
-            probe_route(&state, &token, path, *flow, &mut tally).await;
+        for route in &routes {
+            probe_route(&state, &token, &route.path, route.flow_path(), &mut tally).await;
         }
         let Tally {
             flow_answers,
             other_answers,
             typed_database_failures,
+            typed_bot_database_failures,
         } = tally;
         eprintln!(
             "flow surface boundary: {flow_routes} Flow routes, {flow_answers} Flow answers \
-             ({typed_database_failures} typed database failures), {other_answers} other answers"
+             ({typed_database_failures} typed database failures for a user session, \
+             {typed_bot_database_failures} for a bot credential), {other_answers} other answers"
         );
         assert!(
             typed_database_failures >= 20,
             "only {typed_database_failures} Flow answers were typed database failures; the probe no longer \
              reaches the database"
+        );
+        assert!(
+            typed_bot_database_failures >= 40,
+            "only {typed_bot_database_failures} Flow answers to a bot credential were typed database failures; \
+             the credential lookup no longer fails inside the boundary"
         );
     }
 
@@ -5256,12 +5354,52 @@ mod flow_surface_boundary_tests {
         assert_no_driver_text(answer, context);
     }
 
-    /// The legacy answer, byte for byte: status, content type and body.
-    fn assert_legacy_database_error(answer: &Answer, context: &str) {
+    /// A workspace with Flow enabled and its owner.
+    async fn seed_flow_workspace(db: &DatabaseConnection) -> (Uuid, Uuid) {
+        let workspace_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active) \
+             VALUES ($1, $2, '!', 'boundary', 'user', true)",
+            vec![owner_id.into(), format!("{owner_id}@boundary.test").into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO workspaces (id, slug, name, created_by) VALUES ($1, $2, 'boundary', $3)",
+            vec![
+                workspace_id.into(),
+                format!("ws-{workspace_id}").into(),
+                owner_id.into(),
+            ],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
+            vec![workspace_id.into(), owner_id.into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true)",
+            vec![workspace_id.into()],
+        )
+        .await;
+        (workspace_id, owner_id)
+    }
+
+    /// The legacy answer, byte for byte: status, content type and body, outside the boundary.
+    fn assert_legacy(answer: &Answer, body: &str, context: &str) {
         assert_eq!(answer.status, StatusCode::OK, "{context}");
         assert_eq!(answer.content_type.as_deref(), Some("application/json"), "{context}");
-        assert_eq!(answer.text(), LEGACY_DATABASE_ERROR_BODY, "{context}");
+        assert_eq!(answer.text(), body, "{context}");
         assert!(!answer.behind_boundary, "{context}");
+    }
+
+    fn assert_legacy_database_error(answer: &Answer, context: &str) {
+        assert_legacy(answer, LEGACY_DATABASE_ERROR_BODY, context);
     }
 
     /// Real database failures on one Flow read route (`GET .../flow/objects`), one Flow write
@@ -5284,37 +5422,7 @@ mod flow_surface_boundary_tests {
             .await
             .expect("migrations apply");
         let state = state_for(db.clone());
-        let workspace_id = Uuid::new_v4();
-        let owner_id = Uuid::new_v4();
-        exec(
-            &db,
-            "INSERT INTO users (id, email, password_hash, name, role, is_active) \
-             VALUES ($1, $2, '!', 'boundary', 'user', true)",
-            vec![owner_id.into(), format!("{owner_id}@boundary.test").into()],
-        )
-        .await;
-        exec(
-            &db,
-            "INSERT INTO workspaces (id, slug, name, created_by) VALUES ($1, $2, 'boundary', $3)",
-            vec![
-                workspace_id.into(),
-                format!("ws-{workspace_id}").into(),
-                owner_id.into(),
-            ],
-        )
-        .await;
-        exec(
-            &db,
-            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
-            vec![workspace_id.into(), owner_id.into()],
-        )
-        .await;
-        exec(
-            &db,
-            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true)",
-            vec![workspace_id.into()],
-        )
-        .await;
+        let (workspace_id, owner_id) = seed_flow_workspace(&db).await;
         let token = token_for(owner_id);
         let read_uri = format!("/api/v1/workspaces/{workspace_id}/flow/objects");
         let write_uri = format!("/api/v1/workspaces/{workspace_id}/features/flow");
@@ -5385,5 +5493,202 @@ mod flow_surface_boundary_tests {
         assert_server_draining(&write("boundary-closed").await, "write route, closed pool");
         assert_legacy_database_error(&labels().await, "label route, closed pool");
         scratch.drop_self().await;
+    }
+
+    /// An exception the application's own database functions raise (`SQLSTATE` class `P0`; a
+    /// `RAISE EXCEPTION` without an `ERRCODE` is `P0001`) refuses the same request every time, so
+    /// the Flow surface answers it as a refusal and not as contention to retry:
+    /// `GET .../flow/navigator` for a project that does not exist, where `flow_ensure_navigator_root`
+    /// raises. A transient condition raised the same way with its own `SQLSTATE` stays
+    /// `server_draining`.
+    #[tokio::test]
+    async fn an_exception_raised_by_a_database_function_is_a_refusal_and_not_contention() {
+        let Some(scratch) = scratch("flow_surface_raise").await else {
+            eprintln!("skipped: OPENPR_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let db = scratch.connection().clone();
+        run_migrations_with(&db, MigrationOptions::default())
+            .await
+            .expect("migrations apply");
+        let state = state_for(db.clone());
+        let (workspace_id, owner_id) = seed_flow_workspace(&db).await;
+        let token = token_for(owner_id);
+        let navigator = |query: String| {
+            let uri = format!("/api/v1/workspaces/{workspace_id}/flow/navigator{query}");
+            let (state, token) = (&state, &token);
+            async move { call(state, &Method::GET, &uri, Some(token), None).await }
+        };
+
+        let healthy = navigator(String::new()).await;
+        assert_eq!(healthy.json()["code"], 0, "{}", healthy.text());
+        assert!(healthy.behind_boundary);
+
+        let missing_project = navigator(format!("?project_id={}", Uuid::new_v4())).await;
+        assert!(missing_project.behind_boundary);
+        assert_server_rejected(&missing_project, "navigator of a project that does not exist");
+
+        // The same function raising a transient condition is still contention.
+        db.execute_unprepared(
+            "ALTER FUNCTION flow_ensure_navigator_root(uuid, uuid) RENAME TO flow_ensure_navigator_root_kept; \
+             CREATE FUNCTION flow_ensure_navigator_root(uuid, uuid) RETURNS uuid LANGUAGE plpgsql AS $$ \
+             BEGIN RAISE EXCEPTION 'deadlock detected' USING ERRCODE = '40P01'; END $$",
+        )
+        .await
+        .expect("the transient failure is injected");
+        assert_server_draining(
+            &navigator(format!("?project_id={}", Uuid::new_v4())).await,
+            "navigator, deadlock raised by the function",
+        );
+        scratch.drop_self().await;
+    }
+
+    /// A bot credential (`opr_...`) and the two database statements the authentication
+    /// middleware runs for it, the credential lookup before the handler and the attribution
+    /// record after it. When either fails, a Flow route (`GET .../flow/objects`) answers the
+    /// typed envelope of that failure, exactly as it does for a failure inside the handler, and
+    /// a route outside the Flow surface (`GET .../labels`) answers the legacy internal error
+    /// byte for byte. This also shows each Flow route's own authentication layer runs inside
+    /// the boundary.
+    #[tokio::test]
+    async fn bot_credential_database_failures_are_typed_on_flow_routes_and_unchanged_elsewhere() {
+        use sha2::{Digest as _, Sha256};
+
+        let Some(scratch) = scratch("flow_surface_bot").await else {
+            eprintln!("skipped: OPENPR_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let db = scratch.connection().clone();
+        run_migrations_with(&db, MigrationOptions::default())
+            .await
+            .expect("migrations apply");
+        let state = state_for(db.clone());
+        let (workspace_id, owner_id) = seed_flow_workspace(&db).await;
+        let token = format!("opr_{}", Uuid::new_v4().simple());
+        exec(
+            &db,
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix, permissions, created_by) \
+             VALUES ($1, $2, 'boundary-bot', $3, 'opr_boun', '[\"read\",\"write\",\"admin\"]'::jsonb, $4)",
+            vec![
+                Uuid::new_v4().into(),
+                workspace_id.into(),
+                hex::encode(Sha256::digest(token.as_bytes())).into(),
+                owner_id.into(),
+            ],
+        )
+        .await;
+        let flow_uri = format!("/api/v1/workspaces/{workspace_id}/flow/objects");
+        let label_uri = format!("/api/v1/workspaces/{workspace_id}/labels");
+        let flow = || call(&state, &Method::GET, &flow_uri, Some(&token), None);
+        let labels = || call(&state, &Method::GET, &label_uri, Some(&token), None);
+
+        // Healthy: the credential is accepted on both routes, so every failure below is injected.
+        for (name, answer) in [("flow", flow().await), ("labels", labels().await)] {
+            assert_eq!(answer.json()["code"], 0, "{name}: {}", answer.text());
+        }
+
+        // ---- the credential lookup is refused for good (missing relation) ----
+        db.execute_unprepared("ALTER TABLE workspace_bots RENAME TO workspace_bots_renamed")
+            .await
+            .expect("the lookup failure is injected");
+        let answer = flow().await;
+        assert!(
+            answer.behind_boundary,
+            "the authentication layer runs inside the boundary"
+        );
+        assert_server_rejected(&answer, "Flow route, credential lookup refused");
+        assert_legacy(
+            &labels().await,
+            LEGACY_INTERNAL_ERROR_BODY,
+            "label route, credential lookup refused",
+        );
+        db.execute_unprepared("ALTER TABLE workspace_bots_renamed RENAME TO workspace_bots")
+            .await
+            .expect("the lookup failure is removed");
+
+        // ---- the attribution record of a successful operation is refused for good ----
+        db.execute_unprepared("ALTER TABLE bot_operation_logs RENAME TO bot_operation_logs_renamed")
+            .await
+            .expect("the attribution failure is injected");
+        assert_server_rejected(&flow().await, "Flow route, attribution record refused");
+        assert_legacy(
+            &labels().await,
+            LEGACY_INTERNAL_ERROR_BODY,
+            "label route, attribution record refused",
+        );
+        db.execute_unprepared("ALTER TABLE bot_operation_logs_renamed RENAME TO bot_operation_logs")
+            .await
+            .expect("the attribution failure is removed");
+        for (name, answer) in [("flow", flow().await), ("labels", labels().await)] {
+            assert_eq!(answer.json()["code"], 0, "{name} after the repairs: {}", answer.text());
+        }
+
+        // ---- not deterministic: the connection pool is closed ----
+        db.clone().close().await.expect("the pool closes");
+        assert_server_draining(&flow().await, "Flow route, closed pool");
+        assert_legacy(&labels().await, LEGACY_INTERNAL_ERROR_BODY, "label route, closed pool");
+        scratch.drop_self().await;
+    }
+
+    /// What a router with no Flow surface at all answers to a path it does not route: status,
+    /// content type and body.
+    async fn unrouted_baseline(method: &Method, uri: &str) -> (StatusCode, Option<String>, Vec<u8>) {
+        let request = Request::builder()
+            .method(method.clone())
+            .uri(uri)
+            .body(Body::empty())
+            .expect("the request is well formed");
+        let response = axum::Router::new()
+            .route("/health", axum::routing::get(async || "ok"))
+            .oneshot(request)
+            .await
+            .expect("the baseline router answers");
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .expect("the baseline body is readable")
+            .to_vec();
+        (status, content_type, body)
+    }
+
+    /// A path no route matches is answered by the application's fallback, outside the boundary:
+    /// no marker, and the same status, content type and body as a router that has no Flow surface
+    /// at all, whether or not the path looks like a Flow path.
+    #[tokio::test]
+    async fn an_unrouted_path_answers_outside_the_boundary() {
+        let state = state_for(DatabaseConnection::Disconnected);
+        let token = token_for(Uuid::new_v4());
+        let workspace_id = Uuid::new_v4();
+        let mut probes = Vec::new();
+        for uri in [
+            "/api/v1/no-such-route".to_string(),
+            "/api/v1/flow/no-such-route".to_string(),
+            "/api/v1/collab/no-such-route".to_string(),
+            format!("/api/v1/workspaces/{workspace_id}/flow/no-such-route"),
+        ] {
+            for method in [Method::GET, Method::POST, Method::DELETE] {
+                probes.push((method.clone(), uri.clone(), None));
+                probes.push((method, uri.clone(), Some(token.as_str())));
+            }
+        }
+        for (method, uri, caller) in probes {
+            let context = format!("{method} {uri}");
+            let answer = call(&state, &method, &uri, caller, None).await;
+            let (status, content_type, body) = unrouted_baseline(&method, &uri).await;
+            assert_eq!(answer.status, StatusCode::NOT_FOUND, "{context}");
+            assert_eq!(answer.status, status, "{context}");
+            assert_eq!(answer.content_type, content_type, "{context}");
+            assert_eq!(answer.body, body, "{context}");
+            assert!(answer.body.is_empty(), "{context}");
+            assert!(
+                !answer.behind_boundary,
+                "{context}: an unrouted path is answered behind the Flow surface boundary"
+            );
+        }
     }
 }

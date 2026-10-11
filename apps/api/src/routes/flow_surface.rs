@@ -13,8 +13,10 @@ use crate::error::with_typed_database_failures;
 
 /// Marks a response that was produced behind the Flow surface boundary.
 ///
-/// Inserted into the extensions of every response [`seal`] lets out, whatever its status, so a
-/// test can tell from a response alone whether its route is behind the boundary. Never serialized.
+/// Inserted into the extensions of every response a sealed route lets out, whatever its status
+/// (an unaccepted method of a sealed path included), so a test can tell from a response alone
+/// whether its route is behind the boundary. A path no route matches is not answered by a sealed
+/// route and carries no marker. Never serialized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlowSurfaceResponse;
 
@@ -23,15 +25,19 @@ pub struct FlowSurfaceResponse;
 /// While one of these routes serves a request, a database failure that reaches the response is
 /// rendered as a typed envelope: `server_rejected` with
 /// `details.reason = "deterministic_database_refusal"` when the database refused the statement
-/// for good, `server_draining` with `reason = "contention"` and `retry_after_ms` otherwise. The
+/// for good (a constraint, data or schema error, or an exception raised by a database function),
+/// `server_draining` with `reason = "contention"` and `retry_after_ms` otherwise. The
 /// driver's text is logged and never sent. Routes that are not passed through here keep the
 /// legacy envelope byte for byte.
 ///
 /// The layer wraps every route of `routes`, including each route's own authentication layer, so
-/// a handler added to the router that is sealed cannot answer outside it. Nothing inside a
-/// handler takes part: retry loops still see the driver error and classify it themselves.
+/// a handler added to the router that is sealed cannot answer outside it, and a database failure
+/// of the authentication layer is rendered like one of the handler. It wraps the routes only: the
+/// fallback that answers a path no route matches stays the application's, outside the boundary.
+/// Nothing inside a handler takes part: retry loops still see the driver error and classify it
+/// themselves.
 pub fn seal(routes: Router<AppState>) -> Router<AppState> {
-    routes.layer(middleware::from_fn(boundary))
+    routes.route_layer(middleware::from_fn(boundary))
 }
 
 async fn boundary(request: Request, next: Next) -> Response {
