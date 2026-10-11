@@ -2505,6 +2505,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0071_flow_conversion_job_error_reason.sql",
         include_str!("../../../migrations/0071_flow_conversion_job_error_reason.sql"),
     ),
+    (
+        "0072_flow_conversion_job_started_at.sql",
+        include_str!("../../../migrations/0072_flow_conversion_job_started_at.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -2878,6 +2882,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0071_flow_conversion_job_error_reason.sql",
         SchemaProbe::Column("flow_conversion_jobs", "error_reason"),
+    ),
+    (
+        "0072_flow_conversion_job_started_at.sql",
+        SchemaProbe::Column("flow_conversion_jobs", "started_at"),
     ),
 ];
 
@@ -3403,7 +3411,8 @@ mod tests {
                 "0068_flow_authz_revocations.sql",
                 "0069_flow_v08_rollback_control.sql",
                 "0070_bot_operation_logs_surface_check.sql",
-                "0071_flow_conversion_job_error_reason.sql"
+                "0071_flow_conversion_job_error_reason.sql",
+                "0072_flow_conversion_job_started_at.sql"
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
