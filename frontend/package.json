@@ -1,7 +1,7 @@
 {
 	"name": "frontend",
 	"private": true,
-	"version": "0.2.504",
+	"version": "0.2.505",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
@@ -42,6 +42,7 @@
 		"test:flow-slash-bridge": "bun tests/flow-slash-bridge.test.ts",
 		"test:flow-presence": "bun tests/flow-presence.test.ts",
 		"test:flow-outbox": "bun tests/flow-outbox.test.ts",
+		"test:flow-local-data-isolation": "bun tests/flow-local-data-isolation.test.ts",
 		"test:flow-server-rejected-streak": "bun tests/flow-server-rejected-streak.test.ts",
 		"test:flow-offline-recovery": "bun tests/flow-offline-recovery.test.ts",
 		"test:flow-read-only": "bun tests/flow-read-only.test.ts",

@@ -26,7 +26,8 @@ import {
 	freshIndexedDb,
 	installFakes,
 	objectView,
-	tick
+	tick,
+	OUTBOX_DB
 } from './support/collab-fakes';
 import { IndexedDbOutboxStore } from '../src/lib/flow/outbox';
 import type { FlowObjectView } from '../src/lib/api/flow';
@@ -41,7 +42,7 @@ const SERVER_REJECTED = {
 async function open(server: FakeCollabServer) {
 	const idb = await freshIndexedDb();
 	const restore = await installFakes(server);
-	const store = await IndexedDbOutboxStore.open(idb);
+	const store = await IndexedDbOutboxStore.open(idb, OUTBOX_DB);
 	assert(store, 'fake IndexedDB opens');
 	const { FlowObjectRepository } = await import('../src/lib/flow/object-repository');
 	const repository = new FlowObjectRepository({

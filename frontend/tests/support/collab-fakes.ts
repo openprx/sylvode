@@ -515,4 +515,5 @@ export function textOf(doc: unknown): string {
 	return (doc as LoroDoc).getText('body').toString();
 }
 
-export { OUTBOX_DB_NAME as OUTBOX_DB } from '../../src/lib/flow/outbox';
+/** The outbox database the suites open directly (one user's, `local-data.ts`). */
+export const OUTBOX_DB = 'sylvode-flow-outbox-v1:fixture-user';

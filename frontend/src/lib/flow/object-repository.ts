@@ -13,7 +13,7 @@
 // `loro-crdt` is imported dynamically, same rule as `editor-adapter.ts`: this keeps the engine
 // chunk out of every route that isn't Flow.
 
-import { readonly as readonlyStore, writable, type Readable } from 'svelte/store';
+import { get, readonly as readonlyStore, writable, type Readable } from 'svelte/store';
 import {
 	flowApi,
 	type FlowAdminHealth,
@@ -36,6 +36,7 @@ import {
 	type FlowSearchResponse
 } from '$lib/api/flow';
 import type { ApiResult } from '$lib/api/client';
+import { authStore } from '$lib/stores/auth';
 import { FlowCommandService } from './command-service';
 import {
 	LoroObjectSession,
@@ -47,6 +48,7 @@ import { LiveProjectionStore } from './projection-store';
 import { checkUpdateBytes, negotiateFlowLimitsVersion } from './limits';
 import { clientError, flowErrorFromEnvelope } from './errors';
 import { openOutboxStore, type OutboxStore, type RecoveryDraftEntry } from './outbox';
+import { CACHE_DB_PREFIX, flowDatabaseName } from './local-data';
 import {
 	FlowOfflineSync,
 	type OfflineSyncHost,
@@ -66,7 +68,6 @@ import type { EngineDiff, FlowError, ObjectHandle, ObjectProjection, SyncState }
 // this module to `any`.
 import type { LoroDocType } from 'loro-prosemirror';
 
-const DB_NAME = 'sylvode-flow-cache-v1';
 const STORE_NAME = 'snapshots';
 
 interface CachedSnapshot {
@@ -77,40 +78,73 @@ interface CachedSnapshot {
 	cachedAt: number;
 }
 
-function openIndexedDb(): Promise<IDBDatabase | null> {
+/** Opens `userId`'s snapshot cache (`local-data.ts`: one database per user), or `null` without a
+ * user or without IndexedDB. Each caller closes the connection when its transaction ends. */
+function openIndexedDb(userId: string | null): Promise<IDBDatabase | null> {
 	return new Promise((resolve) => {
-		if (typeof indexedDB === 'undefined') {
+		const name = flowDatabaseName(CACHE_DB_PREFIX, userId);
+		if (!name || typeof indexedDB === 'undefined') {
 			resolve(null);
 			return;
 		}
-		const request = indexedDB.open(DB_NAME, 1);
+		let request: IDBOpenDBRequest;
+		try {
+			request = indexedDB.open(name, 1);
+		} catch {
+			resolve(null);
+			return;
+		}
 		request.onupgradeneeded = () => {
 			request.result.createObjectStore(STORE_NAME, { keyPath: 'objectId' });
 		};
-		request.onsuccess = () => resolve(request.result);
+		request.onsuccess = () => {
+			const db = request.result;
+			db.onversionchange = () => db.close();
+			resolve(db);
+		};
 		request.onerror = () => resolve(null);
 	});
 }
 
-async function readCachedSnapshot(objectId: string): Promise<CachedSnapshot | null> {
-	const db = await openIndexedDb();
+async function readCachedSnapshot(
+	userId: string | null,
+	objectId: string
+): Promise<CachedSnapshot | null> {
+	const db = await openIndexedDb(userId);
 	if (!db) return null;
 	return new Promise((resolve) => {
-		const tx = db.transaction(STORE_NAME, 'readonly');
-		const req = tx.objectStore(STORE_NAME).get(objectId);
-		req.onsuccess = () => resolve((req.result as CachedSnapshot | undefined) ?? null);
-		req.onerror = () => resolve(null);
+		const finish = (value: CachedSnapshot | null) => {
+			db.close();
+			resolve(value);
+		};
+		try {
+			const tx = db.transaction(STORE_NAME, 'readonly');
+			const req = tx.objectStore(STORE_NAME).get(objectId);
+			req.onsuccess = () => finish((req.result as CachedSnapshot | undefined) ?? null);
+			req.onerror = () => finish(null);
+		} catch {
+			finish(null);
+		}
 	});
 }
 
-async function writeCachedSnapshot(entry: CachedSnapshot): Promise<void> {
-	const db = await openIndexedDb();
+async function writeCachedSnapshot(userId: string | null, entry: CachedSnapshot): Promise<void> {
+	const db = await openIndexedDb(userId);
 	if (!db) return;
 	await new Promise<void>((resolve) => {
-		const tx = db.transaction(STORE_NAME, 'readwrite');
-		tx.objectStore(STORE_NAME).put(entry);
-		tx.oncomplete = () => resolve();
-		tx.onerror = () => resolve();
+		const finish = () => {
+			db.close();
+			resolve();
+		};
+		try {
+			const tx = db.transaction(STORE_NAME, 'readwrite');
+			tx.objectStore(STORE_NAME).put(entry);
+			tx.oncomplete = finish;
+			tx.onerror = finish;
+			tx.onabort = finish;
+		} catch {
+			finish();
+		}
 	});
 }
 
@@ -156,6 +190,9 @@ export interface OpenFlowObjectResult {
 /** Test seams for `FlowObjectRepository`. Production passes nothing. */
 export interface FlowObjectRepositoryOptions {
 	readonly outboxStore?: OutboxStore;
+	/** Whose local databases (outbox, drafts, snapshot cache) this repository uses; defaults to
+	 * the signed-in user (`authStore`). `null` persists nothing. */
+	readonly currentUserId?: () => string | null;
 	readonly session?: SessionOptions;
 	readonly offlineSync?: OfflineSyncOptions;
 }
@@ -242,16 +279,25 @@ export class FlowObjectRepository {
 	private readonly open_ = new Map<string, OpenEntry>();
 	private readonly options: FlowObjectRepositoryOptions;
 	private outboxStore: Promise<OutboxStore> | null = null;
+	private outboxUser: string | null = null;
 
 	constructor(options: FlowObjectRepositoryOptions = {}) {
 		this.options = options;
 	}
 
-	private outbox(): Promise<OutboxStore> {
-		if (!this.outboxStore) {
-			this.outboxStore = this.options.outboxStore
-				? Promise.resolve(this.options.outboxStore)
-				: openOutboxStore();
+	private currentUserId(): string | null {
+		return this.options.currentUserId
+			? this.options.currentUserId()
+			: (get(authStore).user?.id ?? null);
+	}
+
+	/** The outbox of `userId`: reopened when the signed-in user changed, so one user's entries
+	 * are never listed, replayed or drafted under another's session. */
+	private outbox(userId: string | null): Promise<OutboxStore> {
+		if (this.options.outboxStore) return Promise.resolve(this.options.outboxStore);
+		if (!this.outboxStore || this.outboxUser !== userId) {
+			this.outboxUser = userId;
+			this.outboxStore = openOutboxStore(userId);
 		}
 		return this.outboxStore;
 	}
@@ -305,6 +351,8 @@ export class FlowObjectRepository {
 			existing.refCount += 1;
 			return existing;
 		}
+		// The user whose local databases this open reads and writes, fixed for its lifetime.
+		const userId = this.currentUserId();
 
 		let object: FlowObjectView;
 		if (input.object && input.object.id === input.objectId) {
@@ -353,7 +401,7 @@ export class FlowObjectRepository {
 					}
 					lastKnownFrontierBase64 = payload.headFrontier;
 					projection.applyEngineDiff({ documentId: object.document_id } satisfies EngineDiff, payload.headSeq);
-					void writeCachedSnapshot({
+					void writeCachedSnapshot(userId, {
 						objectId: input.objectId,
 						snapshotBytes: target.export({ mode: 'snapshot' }),
 						headSeq: payload.headSeq,
@@ -439,7 +487,12 @@ export class FlowObjectRepository {
 			},
 			reportError: (error) => flowErrorStore.set(error)
 		};
-		const offline = new FlowOfflineSync(await this.outbox(), session, host, this.options.offlineSync);
+		const offline = new FlowOfflineSync(
+			await this.outbox(userId),
+			session,
+			host,
+			this.options.offlineSync
+		);
 		await offline.load();
 
 		entry = new OpenEntry({
@@ -464,7 +517,7 @@ export class FlowObjectRepository {
 		// snapshot loads, then gets overwritten wholesale by the first `onSnapshot` above. Not a
 		// second writable source -- `doc` is not mutated from this branch, only read for a
 		// display-only best-effort seed value that the projection re-derives from the real doc.
-		const cached = await readCachedSnapshot(input.objectId);
+		const cached = await readCachedSnapshot(userId, input.objectId);
 		if (cached && !input.signal.aborted) {
 			projection.applyEngineDiff({ documentId: object.document_id } satisfies EngineDiff, cached.headSeq);
 		}

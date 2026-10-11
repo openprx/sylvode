@@ -524,6 +524,10 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow offline outbox, recovery drafts and the snapshot cache are kept per signed-in user (one
+  IndexedDB database per user, `sylvode-flow-outbox-v1:<user_id>` and
+  `sylvode-flow-cache-v1:<user_id>`), so another account on the same browser never replays,
+  drafts or reads them; logging out deletes every Flow IndexedDB database of the browser.
 - Flow Share panel: retrying a permission downgrade whose dry run failed (unavailable, network
   error, draining) runs the dry run again and stops at its preview; a downgrade is only ever
   committed after its `permission_changes` were shown.

@@ -27,7 +27,8 @@ import {
 	freshIndexedDb,
 	installFakes,
 	objectView,
-	tick
+	tick,
+	OUTBOX_DB
 } from './support/collab-fakes';
 import {
 	PRESENCE_MIN_INTERVAL_MS,
@@ -130,7 +131,7 @@ suite.check('TTL: received presence expires locally; a refresh replaces, never a
 
 async function openClient(server: FakeCollabServer, idb?: IDBFactory) {
 	const factory = idb ?? (await freshIndexedDb());
-	const store = await IndexedDbOutboxStore.open(factory);
+	const store = await IndexedDbOutboxStore.open(factory, OUTBOX_DB);
 	assert(store, 'fake IndexedDB opens');
 	const { FlowObjectRepository } = await import('../src/lib/flow/object-repository');
 	const repository = new FlowObjectRepository({

@@ -39,7 +39,7 @@ const suite = new Suite('flow_outbox');
 async function open(server: FakeCollabServer, factory?: IDBFactory) {
 	const idb = factory ?? (await freshIndexedDb());
 	const restore = await installFakes(server);
-	const store = await IndexedDbOutboxStore.open(idb);
+	const store = await IndexedDbOutboxStore.open(idb, OUTBOX_DB);
 	assert(store, 'fake IndexedDB opens');
 	const connectivity = new FakeConnectivity();
 	const { FlowObjectRepository } = await import('../src/lib/flow/object-repository');
