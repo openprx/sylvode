@@ -524,6 +524,11 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- Flow Collection table virtualisation and records paging have real checks: a server-side render
+  of the table with 250 records must put only the virtual window in the DOM, and a browser test
+  over 55 REST-created records requires a first read of `limit=50`, the next page by cursor
+  after scrolling, 55 loaded, and fewer than 55 rows in the DOM; it also opens a record on its
+  own route and requires the `GET /flow/objects/{record_id}/schema` read.
 - Flow test gates gained the checks whose absence let regressions through: the i18n parity gate
   covers the Web-local error codes (`network_error`), the reference card tests pin the
   `unconfigured` permission badge and admit cards by `visibility` only, the Collection create

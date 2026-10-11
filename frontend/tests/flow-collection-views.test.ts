@@ -1382,6 +1382,40 @@ suite.check('ObjectRepository has no Collection adapters without a caller', () =
 	}
 });
 
+await suite.checkAsync(
+	'the table renders only the virtual window of a Collection with more than 200 records',
+	async () => {
+		const ids = Array.from({ length: 250 }, (_, i) => `r${String(i).padStart(3, '0')}`);
+		const repo = fakeRepository([page(ids, undefined, (id) => ({ [F_NAME]: `name ${id}` }))]);
+		const controller = new CollectionViewController(COLLECTION, repo, fakeWrites());
+		await controller.load();
+		assertEqual(controller.snapshot().rows.length, 250, 'all 250 records are loaded');
+		const { installSvelteSsr, renderToHtml } = await import('./support/svelte-ssr');
+		await installSvelteSsr();
+		const { default: CollectionTable } = await import(
+			'../src/lib/components/flow/collection/CollectionTable.svelte'
+		);
+		const html = await renderToHtml(CollectionTable, {
+			controller,
+			snapshot: controller.snapshot(),
+			workspaceId: 'ws-1'
+		});
+		const rendered = [...html.matchAll(/data-testid="collection-row"/g)].length;
+		// The first paint: a 480px viewport of 48px rows plus the overscan below it.
+		const expected = virtualWindow({
+			scrollTop: 0,
+			viewportHeight: 480,
+			rowHeight: 48,
+			rowCount: 250
+		});
+		assert(rendered > 0, 'some rows are rendered');
+		assertEqual(rendered, expected.end - expected.start, 'exactly the window is in the DOM');
+		assert(rendered < 50, `far fewer rows than records (${rendered} of 250)`);
+		assert(html.includes('data-record-id="r000"'), 'the first record is rendered');
+		assert(!html.includes('data-record-id="r249"'), 'the last record is not');
+	}
+);
+
 export const result = suite.result();
 
 if (import.meta.main) finish(result);
