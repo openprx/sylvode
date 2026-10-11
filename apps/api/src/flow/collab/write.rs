@@ -1062,7 +1062,11 @@ async fn run_locked_phase(
                 );
                 return LockedOutcome::DeterministicRefusal;
             }
-            tracing::warn!(error = %err, "collab write: locked phase failed before commit, rolling back");
+            tracing::warn!(
+                error = %err,
+                sqlstate = ?err.database_sqlstate(),
+                "collab write: locked phase failed before commit, rolling back"
+            );
             return LockedOutcome::NotApplied("locked phase failed before commit");
         }
         Err(_elapsed) => {
@@ -1713,6 +1717,7 @@ mod database_tests {
     use crate::flow::collab::cache::WarmCache;
     use crate::flow::collab::coordinator::DocumentCoordinator;
     use crate::flow::collab::frame::{RejectedCode, SERVER_REJECTED_REASON_DATABASE, WriteState};
+    use crate::flow::collab::limits::MAX_REBASE_ATTEMPTS;
     use crate::flow::collab::registry::SessionRegistry;
     use crate::flow::command::{CreateObjectInput, ExecuteCommandInput, create_object, execute_command};
 
@@ -1722,6 +1727,66 @@ mod database_tests {
         db: DatabaseConnection,
         name: String,
         admin_url: String,
+    }
+
+    /// Records every `tracing` event emitted on the installing thread, in order, so a failing
+    /// assertion can name *why* a write was refused: `accept_update` reports a contention reason
+    /// and the underlying database error through `tracing` only, never on the returned outcome.
+    #[derive(Clone)]
+    struct CapturedEvents {
+        started: std::time::Instant,
+        lines: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
+    }
+
+    impl CapturedEvents {
+        fn new() -> Self {
+            Self {
+                started: std::time::Instant::now(),
+                lines: std::sync::Arc::default(),
+            }
+        }
+
+        fn lines(&self) -> Vec<String> {
+            self.lines.lock().clone()
+        }
+    }
+
+    struct EventText(String);
+
+    impl tracing::field::Visit for EventText {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            use std::fmt::Write as _;
+            let _ = write!(self.0, " {}={value:?}", field.name());
+        }
+    }
+
+    impl tracing::Subscriber for CapturedEvents {
+        fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+            metadata.is_event() && *metadata.level() <= tracing::Level::WARN
+        }
+
+        fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+        fn event(&self, event: &tracing::Event<'_>) {
+            let mut text = EventText(format!(
+                "+{}ms {} {}",
+                self.started.elapsed().as_millis(),
+                event.metadata().level(),
+                event.metadata().target()
+            ));
+            event.record(&mut text);
+            self.lines.lock().push(text.0);
+        }
+
+        fn enter(&self, _span: &tracing::span::Id) {}
+
+        fn exit(&self, _span: &tracing::span::Id) {}
     }
 
     impl Scratch {
@@ -2127,6 +2192,128 @@ mod database_tests {
         scratch.drop_self().await;
     }
 
+    /// One API instance's side of
+    /// `independent_api_instances_allocate_distinct_contiguous_document_sequences`: its own
+    /// connection pool, cache, coordinator and registry, submitting one logical write the way a
+    /// contract-compliant client does.
+    ///
+    /// `collab-protocol-v1.md` makes a lock-wait timeout on the document row a legal answer to a
+    /// write: the transaction is rolled back and the caller gets recoverable
+    /// `server_draining{contention}` with nothing written, then resubmits the same intent. How
+    /// long `PostgreSQL` holds that row for the other instance (its locked phase through `COMMIT`,
+    /// then its fan-out notice, whose foreign key takes a key-share lock on the same row) is wall
+    /// clock the test does not control: with many scratch databases committing on one server it
+    /// was measured past three consecutive 80 ms `lock_timeout` windows. The returned verdict is
+    /// therefore never allowed to depend on it. A load-dependent rejection is resubmitted under
+    /// the *same* `update_id`, and everything the test is about stays strict:
+    ///
+    /// * contention is accepted as an answer only when the whole bounded-rebase budget was really
+    ///   spent — exactly `MAX_REBASE_ATTEMPTS` locked phases, read from this task's own
+    ///   [`LockedPhaseProbe`] — and only with `write_state=not_applied`. A write that gave up on
+    ///   its first head mismatch instead of rebasing fails here, however lucky the timing;
+    /// * any other rejection, and any hard error, fails immediately with the outcome it carried;
+    /// * the caller still requires the two committed seqs, the persisted rows and the fan-out
+    ///   notices to be exactly `[1, 2]`, so an attempt that was rolled back may not leave a gap.
+    ///
+    /// Returns the committed write and how many submissions it took.
+    #[allow(clippy::too_many_arguments)]
+    async fn write_as_independent_instance(
+        label: &'static str,
+        db: DatabaseConnection,
+        start: std::sync::Arc<tokio::sync::Barrier>,
+        captured: CapturedEvents,
+        workspace_id: Uuid,
+        document_id: Uuid,
+        actor_id: Uuid,
+        checked_epoch: i64,
+        bytes: Vec<u8>,
+    ) -> (super::Accepted, u32) {
+        let cache = WarmCache::new();
+        let coordinator = DocumentCoordinator::new();
+        let registry = SessionRegistry::new();
+        let snapshot_advancer = SnapshotAdvancer::new();
+        let update_id = Uuid::new_v4();
+        let probe = super::LockedPhaseProbe::new(document_id);
+        let rebase_budget = usize::try_from(MAX_REBASE_ATTEMPTS).expect("rebase budget fits usize");
+
+        start.wait().await;
+        let started = std::time::Instant::now();
+        let mut submissions = 0u32;
+        loop {
+            let outcome = probe
+                .scope(accept_update(
+                    &db,
+                    &cache,
+                    &coordinator,
+                    &registry,
+                    &snapshot_advancer,
+                    10,
+                    None,
+                    UpdateRequest {
+                        origin: crate::flow::event_origin::CommandOrigin::first_request_from(
+                            crate::flow::event_origin::EventSurface::Rest,
+                        ),
+                        document_id,
+                        update_id,
+                        bytes: bytes.clone(),
+                        idempotency_key: None,
+                        event_idempotency_key: None,
+                        origin_client_id: Some(format!("api-instance-{label}")),
+                        message: None,
+                        actor_id,
+                        actor_is_bot: false,
+                        workspace_id,
+                        checked_epoch,
+                        expected_frontier: None,
+                    },
+                ))
+                .await
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "instance {label} hit a hard error on submission {}: {err:?}; captured warnings: {:#?}",
+                        submissions + 1,
+                        captured.lines()
+                    )
+                });
+            submissions += 1;
+            let locked_phases = probe.take_samples().len();
+            let rejected = match outcome {
+                AcceptOutcome::Accepted(accepted) => return (accepted, submissions),
+                AcceptOutcome::Rejected(rejected) => rejected,
+            };
+            if rejected.code == RejectedCode::ServerDraining {
+                assert_eq!(
+                    (rejected.write_state, locked_phases),
+                    (WriteState::NotApplied, rebase_budget),
+                    "instance {label} reported contention on submission {submissions} after {locked_phases} \
+                     locked phase(s); contention is only a legal answer once all {rebase_budget} bounded-rebase \
+                     attempts are spent and nothing was written: {rejected:?}; captured warnings: {:#?}",
+                    captured.lines()
+                );
+            } else {
+                assert!(
+                    is_load_dependent(&AcceptOutcome::Rejected(rejected.clone())),
+                    "instance {label} was rejected on submission {submissions} with a verdict that does not \
+                     depend on load: {rejected:?}; captured warnings: {:#?}",
+                    captured.lines()
+                );
+            }
+            assert!(
+                submissions < CONTENTION_RETRY_MAX_ATTEMPTS && started.elapsed() < CONTENTION_RETRY_DEADLINE,
+                "instance {label} was still refused after {submissions} submissions over {:?}: {rejected:?}; \
+                 captured warnings: {:#?}",
+                started.elapsed(),
+                captured.lines()
+            );
+            tokio::time::sleep(contention_backoff(submissions - 1, update_id.as_u128())).await;
+        }
+    }
+
+    /// Two API instances that share nothing but the database — no coordinator, cache or registry
+    /// in common — write the same document at once, both prepared against the same head (the
+    /// prepared pause holds each until the other has prepared too). The document row lock and the
+    /// locked head check are then all that orders them, and they must hand out seq 1 and seq 2:
+    /// distinct, contiguous, with one persisted update and one fan-out notice each.
     #[tokio::test]
     async fn independent_api_instances_allocate_distinct_contiguous_document_sequences() {
         let scratch = scratch_or_skip!("multi-instance-seq");
@@ -2149,81 +2336,42 @@ mod database_tests {
         let db_a = Database::connect(&db_url).await.expect("instance A connects");
         let db_b = Database::connect(&db_url).await.expect("instance B connects");
         let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let captured = CapturedEvents::new();
+        let _capture = tracing::subscriber::set_default(captured.clone());
         install_two_writer_prepared_pause(document_id);
-        let update_a = Uuid::new_v4();
-        let update_b = Uuid::new_v4();
 
-        let barrier_a = std::sync::Arc::clone(&barrier);
-        let task_a = tokio::spawn(async move {
-            barrier_a.wait().await;
-            accept_update(
-                &db_a,
-                &WarmCache::new(),
-                &DocumentCoordinator::new(),
-                &SessionRegistry::new(),
-                &SnapshotAdvancer::new(),
-                10,
-                None,
-                UpdateRequest {
-                    origin: crate::flow::event_origin::CommandOrigin::first_request_from(
-                        crate::flow::event_origin::EventSurface::Rest,
-                    ),
-                    document_id,
-                    update_id: update_a,
-                    bytes: bytes_a,
-                    idempotency_key: None,
-                    event_idempotency_key: None,
-                    origin_client_id: Some("api-instance-a".to_string()),
-                    message: None,
-                    actor_id: owner_id,
-                    actor_is_bot: false,
-                    workspace_id,
-                    checked_epoch,
-                    expected_frontier: None,
-                },
-            )
-            .await
-        });
-        let barrier_b = std::sync::Arc::clone(&barrier);
-        let task_b = tokio::spawn(async move {
-            barrier_b.wait().await;
-            accept_update(
-                &db_b,
-                &WarmCache::new(),
-                &DocumentCoordinator::new(),
-                &SessionRegistry::new(),
-                &SnapshotAdvancer::new(),
-                10,
-                None,
-                UpdateRequest {
-                    origin: crate::flow::event_origin::CommandOrigin::first_request_from(
-                        crate::flow::event_origin::EventSurface::Rest,
-                    ),
-                    document_id,
-                    update_id: update_b,
-                    bytes: bytes_b,
-                    idempotency_key: None,
-                    event_idempotency_key: None,
-                    origin_client_id: Some("api-instance-b".to_string()),
-                    message: None,
-                    actor_id: owner_id,
-                    actor_is_bot: false,
-                    workspace_id,
-                    checked_epoch,
-                    expected_frontier: None,
-                },
-            )
-            .await
-        });
-        let (result_a, result_b) = tokio::join!(task_a, task_b);
-        let outcomes = [result_a.expect("A joins"), result_b.expect("B joins")];
-        let mut allocated = Vec::new();
-        for outcome in outcomes {
-            let AcceptOutcome::Accepted(accepted) = outcome.expect("instance write has no hard error") else {
-                panic!("both independent instance writes must commit");
-            };
-            allocated.push(accepted.head_seq);
-        }
+        let task_a = tokio::spawn(write_as_independent_instance(
+            "a",
+            db_a,
+            std::sync::Arc::clone(&barrier),
+            captured.clone(),
+            workspace_id,
+            document_id,
+            owner_id,
+            checked_epoch,
+            bytes_a,
+        ));
+        let task_b = tokio::spawn(write_as_independent_instance(
+            "b",
+            db_b,
+            std::sync::Arc::clone(&barrier),
+            captured.clone(),
+            workspace_id,
+            document_id,
+            owner_id,
+            checked_epoch,
+            bytes_b,
+        ));
+        // `try_join!`, not `join!`: if one instance panics before it reaches the prepared pause,
+        // the other is parked on that pause for good, and waiting for both would turn a reported
+        // failure into a hang.
+        let ((accepted_a, submissions_a), (accepted_b, submissions_b)) =
+            tokio::try_join!(task_a, task_b).expect("both instance writes finish without panicking");
+        eprintln!(
+            "MULTI_INSTANCE_SEQ_EVIDENCE a_seq={} a_submissions={submissions_a} b_seq={} b_submissions={submissions_b}",
+            accepted_a.head_seq, accepted_b.head_seq
+        );
+        let mut allocated = vec![accepted_a.head_seq, accepted_b.head_seq];
         allocated.sort_unstable();
         assert_eq!(allocated, vec![1, 2]);
 

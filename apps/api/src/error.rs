@@ -675,6 +675,18 @@ impl ApiError {
         matches!(self, Self::Database(err) if classify_db_failure(err) == DbFailureClass::Deterministic)
     }
 
+    /// The `SQLSTATE` the database attached to this error, if it is a database error that carries
+    /// one. For server-side diagnostics only: it names *which* transient condition a retry loop
+    /// ran into (`55P03` lock wait, `57014` statement timeout, ...) and must never be put on a
+    /// wire that `error-mapping-v1.md` forbids echoing driver detail onto.
+    #[must_use]
+    pub fn database_sqlstate(&self) -> Option<String> {
+        match self {
+            Self::Database(err) => sqlstate(err),
+            _ => None,
+        }
+    }
+
     /// Whether `PostgreSQL` identified this error as one of the transient server/transaction
     /// conditions that an in-process command loop may safely retry. Unlike
     /// [`classify_db_failure`], this deliberately does not default an unknown SQLSTATE (or an
