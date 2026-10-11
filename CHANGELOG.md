@@ -540,6 +540,16 @@ replacement and the earliest removal.
 
 ### Fixed
 
+- **Four more Flow database tests no longer fail when the shared test database is slow to
+  commit**: the move lock-order symmetry test, the mixed move / grant / subscription / content
+  lock-rank test, the epoch fencing test and the snapshot soft-trigger test. Each resubmits the
+  same request only for an answer that is retryable and proven unwritten, and still fails on
+  everything else. A sequential move is resubmitted only for a raw lock timeout on `COMMIT`
+  (a move calls `pg_notify`, so its commit queues on the server-wide notification lock behind
+  commits in unrelated databases); typed `server_draining` / `contention`, a deadlock and every
+  other error still fail it. A content write is resubmitted for `contention` only after all
+  three bounded rebase attempts with the document head unmoved, and snapshot advancement only
+  for a lock-wait or statement timeout that left `snapshot_seq` and the tail untouched.
 - **The collaborative write path logs the `SQLSTATE` of a locked phase that failed before
   commit**, so the server log tells a lock-wait timeout (`55P03`) on the document row from a
   statement timeout (`57014`) when a write ends in `server_draining` / `contention`. The value

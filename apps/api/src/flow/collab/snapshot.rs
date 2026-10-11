@@ -1226,12 +1226,42 @@ mod database_tests {
         let before_advance_rows = total_update_rows(&state, document_id).await;
         assert_eq!(before_advance_rows, i64::try_from(soft_max + 1).expect("fits"));
 
-        let outcome = advance(&state.db, document_id, &advancer)
-            .await
-            .expect("advance does not hit a hard database error");
-        assert_eq!(outcome, AdvanceOutcome::Advanced);
+        // Nothing else writes this document, so the advancement itself must succeed. The one
+        // thing resubmitted is a raw lock-wait or statement timeout: the candidate commit runs
+        // under the same 80 ms / 100 ms server-side budgets as a write's locked phase, and on a
+        // server busy with other scratch databases a single statement can outlast them. Such an
+        // attempt was rolled back, which is checked before it is run again; `Contended`,
+        // `NothingToAdvance` and every other error still fail the assertions below.
+        let doc_before = read_doc(&state, document_id).await;
+        let (outcome, timeout_resubmissions) = write::resubmit_unwritten_database_timeouts(
+            &["55P03", "57014"],
+            || advance(&state.db, document_id, &advancer),
+            || async {
+                assert_eq!(
+                    read_doc(&state, document_id).await.snapshot_seq,
+                    doc_before.snapshot_seq,
+                    "an advancement that timed out must not have moved snapshot_seq"
+                );
+                assert_eq!(
+                    total_update_rows(&state, document_id).await,
+                    before_advance_rows,
+                    "an advancement that timed out must not have touched the tail"
+                );
+            },
+        )
+        .await;
+        let outcome = outcome.expect("advance does not hit a hard database error");
+        assert_eq!(
+            outcome,
+            AdvanceOutcome::Advanced,
+            "after {timeout_resubmissions} timeout resubmission(s)"
+        );
 
         let doc_after = read_doc(&state, document_id).await;
+        assert!(
+            doc_after.snapshot_seq > doc_before.snapshot_seq,
+            "the advancement must have moved snapshot_seq forward"
+        );
         assert_eq!(
             doc_after.snapshot_seq, doc_after.head_seq,
             "snapshot_seq must have caught up to head_seq"
