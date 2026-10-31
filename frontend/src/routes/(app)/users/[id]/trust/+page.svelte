@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { trustApi, type Appeal, type UserTrustScore } from '$lib/api/trust';
-	import { toast } from '$lib/stores/toast';
-	import Button from '$lib/components/Button.svelte';
+	import { trustApi, type Appeal, type UserTrustScore } from '#lib/api/trust.js';
+	import { toast } from '#lib/stores/toast.js';
+	import Button from '#lib/components/Button.svelte';
 
-	const userId = $derived($page.params.id || '');
+	const userId = $derived(page.params.id || '');
 
 	let loading = $state(false);
 	let loadingAppeals = $state(false);
@@ -17,7 +17,9 @@
 	let userType = $state<'human' | 'ai'>('human');
 
 	const globalScore = $derived(scores.find((item) => item.domain === 'global'));
-	const domainScores = $derived(scores.filter((item) => item.domain !== 'global').sort((a, b) => b.score - a.score));
+	const domainScores = $derived(
+		scores.filter((item) => item.domain !== 'global').sort((a, b) => b.score - a.score)
+	);
 
 	const totalDomainScore = $derived(
 		domainScores.reduce((sum, item) => sum + Math.max(item.score, 0), 0)
@@ -119,11 +121,17 @@
 </svelte:head>
 
 <div class="mx-auto max-w-6xl space-y-4">
-	<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+	>
 		<div class="mb-4 flex flex-wrap items-end justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">{$t('trustProfile.title')}</h1>
-				<p class="text-sm text-slate-500">{$t('trustProfile.subtitle', { values: { id: userId } })}</p>
+				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+					{$t('trustProfile.title')}
+				</h1>
+				<p class="text-sm text-slate-500">
+					{$t('trustProfile.subtitle', { values: { id: userId } })}
+				</p>
 			</div>
 			<div class="flex gap-2">
 				<input
@@ -143,29 +151,49 @@
 		{:else}
 			<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
 				<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700 lg:col-span-1">
-					<div class="text-xs uppercase tracking-wide text-slate-500">{$t('trustProfile.globalSummary')}</div>
-					<div class="mt-2 text-sm text-slate-600 dark:text-slate-300">{$t('trustProfile.userType')}: {userType === 'ai' ? $t('trustBoard.typeAi') : $t('trustBoard.typeHuman')}</div>
-					<div class="mt-3 text-3xl font-bold text-slate-900 dark:text-slate-100">{globalScore?.score ?? 0}</div>
-					<div class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('trustProfile.weightLabel')}: {(globalScore?.vote_weight ?? 1).toFixed(2)}x</div>
+					<div class="text-xs uppercase tracking-wide text-slate-500">
+						{$t('trustProfile.globalSummary')}
+					</div>
+					<div class="mt-2 text-sm text-slate-600 dark:text-slate-300">
+						{$t('trustProfile.userType')}: {userType === 'ai'
+							? $t('trustBoard.typeAi')
+							: $t('trustBoard.typeHuman')}
+					</div>
+					<div class="mt-3 text-3xl font-bold text-slate-900 dark:text-slate-100">
+						{globalScore?.score ?? 0}
+					</div>
+					<div class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+						{$t('trustProfile.weightLabel')}: {(globalScore?.vote_weight ?? 1).toFixed(2)}x
+					</div>
 					<div class="mt-2">
-						<span class={`rounded px-2 py-0.5 text-xs font-medium ${levelTone(globalScore?.level ?? 'observer')}`}>{levelLabel(globalScore?.level ?? 'observer')}</span>
+						<span
+							class={`rounded px-2 py-0.5 text-xs font-medium ${levelTone(globalScore?.level ?? 'observer')}`}
+							>{levelLabel(globalScore?.level ?? 'observer')}</span
+						>
 					</div>
 				</div>
 
 				<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700 lg:col-span-2">
-					<div class="mb-3 text-xs uppercase tracking-wide text-slate-500">{$t('trustProfile.domainDistribution')}</div>
+					<div class="mb-3 text-xs uppercase tracking-wide text-slate-500">
+						{$t('trustProfile.domainDistribution')}
+					</div>
 					{#if domainScores.length === 0}
 						<div class="text-sm text-slate-500">{$t('trustProfile.noDomainData')}</div>
 					{:else}
 						<div class="space-y-2">
 							{#each domainScores as item (item.project_id + item.domain)}
 								<div>
-									<div class="mb-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
+									<div
+										class="mb-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300"
+									>
 										<span>{item.domain}</span>
 										<span>{item.score}</span>
 									</div>
 									<div class="h-2 rounded bg-slate-100 dark:bg-slate-700">
-										<div class="h-2 rounded bg-blue-500" style={`width:${barWidth(item.score)}`}></div>
+										<div
+											class="h-2 rounded bg-blue-500"
+											style={`width:${barWidth(item.score)}`}
+										></div>
 									</div>
 								</div>
 							{/each}
@@ -176,16 +204,26 @@
 
 			<div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
 				<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
-					<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">{$t('trustProfile.historyTitle')}</h2>
+					<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+						{$t('trustProfile.historyTitle')}
+					</h2>
 					<div class="mt-3 space-y-2">
 						{#each timeline as item (item.project_id + item.domain + item.updated_at)}
 							<div class="rounded border border-slate-200 px-3 py-2 text-sm dark:border-slate-700">
 								<div class="flex items-center justify-between gap-2">
 									<div class="font-medium text-slate-900 dark:text-slate-100">{item.domain}</div>
-									<div class="text-xs text-slate-500">{new Date(item.updated_at).toLocaleString()}</div>
+									<div class="text-xs text-slate-500">
+										{new Date(item.updated_at).toLocaleString()}
+									</div>
 								</div>
 								<div class="mt-1 text-xs text-slate-600 dark:text-slate-300">
-								{$t('trustProfile.historyMeta', { values: { score: item.score, level: levelLabel(item.level), weight: item.vote_weight.toFixed(2) } })}
+									{$t('trustProfile.historyMeta', {
+										values: {
+											score: item.score,
+											level: levelLabel(item.level),
+											weight: item.vote_weight.toFixed(2)
+										}
+									})}
 								</div>
 							</div>
 						{/each}
@@ -193,7 +231,9 @@
 				</div>
 
 				<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
-					<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">{$t('trustProfile.changeLogTitle')}</h2>
+					<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+						{$t('trustProfile.changeLogTitle')}
+					</h2>
 					{#if loadingAppeals}
 						<div class="mt-3 text-sm text-slate-500">{$t('common.loading')}</div>
 					{:else if relatedAppeals.length === 0}
@@ -201,13 +241,21 @@
 					{:else}
 						<div class="mt-3 space-y-2">
 							{#each relatedAppeals as item (item.id)}
-								<div class="rounded border border-slate-200 px-3 py-2 text-sm dark:border-slate-700">
+								<div
+									class="rounded border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"
+								>
 									<div class="flex items-center justify-between gap-2">
-										<div class="font-medium text-slate-900 dark:text-slate-100">{$t('trustProfile.appealWithLog', { values: { id: item.log_id } })}</div>
-										<span class={`rounded px-2 py-0.5 text-xs ${appealTone(item.status)}`}>{appealStatusLabel(item.status)}</span>
+										<div class="font-medium text-slate-900 dark:text-slate-100">
+											{$t('trustProfile.appealWithLog', { values: { id: item.log_id } })}
+										</div>
+										<span class={`rounded px-2 py-0.5 text-xs ${appealTone(item.status)}`}
+											>{appealStatusLabel(item.status)}</span
+										>
 									</div>
 									<p class="mt-1 text-xs text-slate-600 dark:text-slate-300">{item.reason}</p>
-									<p class="mt-1 text-xs text-slate-500">{new Date(item.created_at).toLocaleString()}</p>
+									<p class="mt-1 text-xs text-slate-500">
+										{new Date(item.created_at).toLocaleString()}
+									</p>
 								</div>
 							{/each}
 						</div>

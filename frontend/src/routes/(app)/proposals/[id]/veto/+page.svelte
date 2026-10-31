@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { authStore } from '$lib/stores/auth';
-	import { proposalsApi, type Proposal } from '$lib/api/proposals';
-	import { vetoApi, type VetoEvent } from '$lib/api/veto';
-	import { issuesApi } from '$lib/api/issues';
-	import { toast } from '$lib/stores/toast';
-	import Button from '$lib/components/Button.svelte';
+	import { authStore } from '#lib/stores/auth.js';
+	import { proposalsApi, type Proposal } from '#lib/api/proposals.js';
+	import { vetoApi, type VetoEvent } from '#lib/api/veto.js';
+	import { issuesApi } from '#lib/api/issues.js';
+	import { toast } from '#lib/stores/toast.js';
+	import Button from '#lib/components/Button.svelte';
 
-	const proposalId = $derived($page.params.id || '');
+	const proposalId = $derived(page.params.id || '');
 
 	let loading = $state(false);
 	let actionLoading = $state(false);
@@ -24,9 +24,13 @@
 	const meId = $derived($authStore.user?.id || '');
 	const isAuthor = $derived(Boolean(proposal && meId && proposal.author_id === meId));
 	const hasEscalation = $derived(Boolean(vetoEvent?.escalation_started_at));
-	const canEscalate = $derived(Boolean(isAuthor && vetoEvent?.status === 'active' && !hasEscalation));
+	const canEscalate = $derived(
+		Boolean(isAuthor && vetoEvent?.status === 'active' && !hasEscalation)
+	);
 	const hasMyBallot = $derived(Boolean(vetoEvent?.escalation_votes.ballots[meId] !== undefined));
-	const canVoteEscalation = $derived(Boolean(vetoEvent?.status === 'active' && hasEscalation && !hasMyBallot));
+	const canVoteEscalation = $derived(
+		Boolean(vetoEvent?.status === 'active' && hasEscalation && !hasMyBallot)
+	);
 
 	const escalationDeadlineText = $derived.by(() => {
 		if (!vetoEvent?.escalation_started_at) {
@@ -77,7 +81,7 @@
 	}
 
 	async function resolveProjectId() {
-		const queryProject = $page.url.searchParams.get('project_id');
+		const queryProject = page.url.searchParams.get('project_id');
 		if (queryProject) {
 			projectId = queryProject;
 			return;
@@ -189,57 +193,112 @@
 
 <div class="mx-auto max-w-5xl space-y-4">
 	{#if loading}
-		<div class="rounded-lg border border-slate-200 bg-white p-6 text-slate-500 dark:border-slate-700 dark:bg-slate-900">{$t('common.loading')}</div>
+		<div
+			class="rounded-lg border border-slate-200 bg-white p-6 text-slate-500 dark:border-slate-700 dark:bg-slate-900"
+		>
+			{$t('common.loading')}
+		</div>
 	{:else if proposal && vetoMissing}
-		<div class="rounded-lg border border-slate-200 bg-white px-6 py-14 dark:border-slate-700 dark:bg-slate-900">
+		<div
+			class="rounded-lg border border-slate-200 bg-white px-6 py-14 dark:border-slate-700 dark:bg-slate-900"
+		>
 			<div class="mx-auto flex max-w-md flex-col items-center text-center">
-				<div class="flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
-					<svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-						<path d="M9 12h6" />
-						<path d="M12 9v6" />
-						<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z" />
+				<div
+					class="flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300"
+				>
+					<svg
+						class="h-7 w-7"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.8"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M9 12h6"></path>
+						<path d="M12 9v6"></path>
+
+						<path
+							d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z"
+						></path>
 					</svg>
 				</div>
-				<p class="mt-4 text-base font-medium text-slate-900 dark:text-slate-100">{$t('vetoDetail.empty')}</p>
+				<p class="mt-4 text-base font-medium text-slate-900 dark:text-slate-100">
+					{$t('vetoDetail.empty')}
+				</p>
 				<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">{$t('vetoDetail.emptyHint')}</p>
 				<div class="mt-5">
-					<Button variant="secondary" onclick={() => goto(`/proposals/${proposalId}`)}>{$t('vetoDetail.backToProposal')}</Button>
+					<Button variant="secondary" onclick={() => goto(`/proposals/${proposalId}`)}
+						>{$t('vetoDetail.backToProposal')}</Button
+					>
 				</div>
 			</div>
 		</div>
 	{:else if !proposal || !vetoEvent}
-		<div class="rounded-lg border border-slate-200 bg-white p-6 text-slate-500 dark:border-slate-700 dark:bg-slate-900">{$t('vetoDetail.empty')}</div>
+		<div
+			class="rounded-lg border border-slate-200 bg-white p-6 text-slate-500 dark:border-slate-700 dark:bg-slate-900"
+		>
+			{$t('vetoDetail.empty')}
+		</div>
 	{:else}
-		<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+		<div
+			class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+		>
 			<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 				<div>
-					<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">{$t('vetoDetail.title')}</h1>
+					<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+						{$t('vetoDetail.title')}
+					</h1>
 					<p class="text-sm text-slate-500">{proposal.title}</p>
 				</div>
-				<span class={`rounded px-2 py-1 text-xs font-medium ${statusTone(vetoEvent.status)}`}>{statusLabel(vetoEvent.status)}</span>
+				<span class={`rounded px-2 py-1 text-xs font-medium ${statusTone(vetoEvent.status)}`}
+					>{statusLabel(vetoEvent.status)}</span
+				>
 			</div>
 
 			<div class="grid grid-cols-1 gap-3 text-sm text-slate-700 dark:text-slate-300 md:grid-cols-2">
 				<div>
-					<p><span class="text-slate-500">{$t('vetoDetail.vetoer')}:</span> {vetoEvent.vetoer_id}</p>
+					<p>
+						<span class="text-slate-500">{$t('vetoDetail.vetoer')}:</span>
+						{vetoEvent.vetoer_id}
+					</p>
 					<p><span class="text-slate-500">{$t('vetoDetail.domain')}:</span> {vetoEvent.domain}</p>
-					<p><span class="text-slate-500">{$t('vetoDetail.createdAt')}:</span> {new Date(vetoEvent.created_at).toLocaleString()}</p>
+					<p>
+						<span class="text-slate-500">{$t('vetoDetail.createdAt')}:</span>
+						{new Date(vetoEvent.created_at).toLocaleString()}
+					</p>
 				</div>
 				<div>
-					<p><span class="text-slate-500">{$t('vetoDetail.totalVetoers')}:</span> {totalVetoers || '-'}</p>
-					<p><span class="text-slate-500">{$t('vetoDetail.requiredVotes')}:</span> {requiredVotes || '-'}</p>
-					<p><span class="text-slate-500">{$t('vetoDetail.escalationDeadline')}:</span> {hasEscalation ? escalationDeadlineText : '-'}</p>
+					<p>
+						<span class="text-slate-500">{$t('vetoDetail.totalVetoers')}:</span>
+						{totalVetoers || '-'}
+					</p>
+					<p>
+						<span class="text-slate-500">{$t('vetoDetail.requiredVotes')}:</span>
+						{requiredVotes || '-'}
+					</p>
+					<p>
+						<span class="text-slate-500">{$t('vetoDetail.escalationDeadline')}:</span>
+						{hasEscalation ? escalationDeadlineText : '-'}
+					</p>
 				</div>
 			</div>
 
-			<div class="mt-3 rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+			<div
+				class="mt-3 rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+			>
 				<div class="font-medium text-slate-900 dark:text-slate-100">{$t('vetoDetail.reason')}</div>
 				<p class="mt-1 whitespace-pre-wrap">{vetoEvent.reason}</p>
 			</div>
 		</div>
 
-		<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-			<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">{$t('vetoDetail.escalationTitle')}</h2>
+		<div
+			class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+		>
+			<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+				{$t('vetoDetail.escalationTitle')}
+			</h2>
 			{#if hasEscalation}
 				<div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
 					<div class="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
@@ -250,23 +309,33 @@
 						<div class="text-xs uppercase tracking-wide">{$t('vetoDetail.upholdVotes')}</div>
 						<div class="mt-1 text-xl font-semibold">{vetoEvent.escalation_votes.upheld}</div>
 					</div>
-					<div class="rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+					<div
+						class="rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+					>
 						<div class="text-xs uppercase tracking-wide">{$t('vetoDetail.voteProgress')}</div>
-						<div class="mt-1 text-xl font-semibold">{Object.keys(vetoEvent.escalation_votes.ballots).length}/{totalVetoers || '-'}</div>
+						<div class="mt-1 text-xl font-semibold">
+							{Object.keys(vetoEvent.escalation_votes.ballots).length}/{totalVetoers || '-'}
+						</div>
 					</div>
 				</div>
 
 				{#if canVoteEscalation}
 					<div class="mt-4 flex flex-wrap gap-2">
-						<Button variant="danger" onclick={() => voteEscalation(false)} loading={actionLoading}>{$t('vetoDetail.voteUphold')}</Button>
-						<Button onclick={() => voteEscalation(true)} loading={actionLoading}>{$t('vetoDetail.voteOverturn')}</Button>
+						<Button variant="danger" onclick={() => voteEscalation(false)} loading={actionLoading}
+							>{$t('vetoDetail.voteUphold')}</Button
+						>
+						<Button onclick={() => voteEscalation(true)} loading={actionLoading}
+							>{$t('vetoDetail.voteOverturn')}</Button
+						>
 					</div>
 				{/if}
 			{:else if canEscalate}
 				<div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
 					<p>{$t('vetoDetail.canEscalateHint')}</p>
 					<div class="mt-2">
-						<Button onclick={startEscalation} loading={actionLoading}>{$t('vetoDetail.startEscalation')}</Button>
+						<Button onclick={startEscalation} loading={actionLoading}
+							>{$t('vetoDetail.startEscalation')}</Button
+						>
 					</div>
 				</div>
 			{:else}
@@ -274,12 +343,20 @@
 			{/if}
 		</div>
 
-		<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-			<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">{$t('vetoDetail.authorActions')}</h2>
+		<div
+			class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+		>
+			<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+				{$t('vetoDetail.authorActions')}
+			</h2>
 			<div class="mt-3 flex flex-wrap gap-2">
-				<Button variant="secondary" onclick={() => goto(`/proposals/${proposalId}/edit`)}>{$t('vetoDetail.editProposal')}</Button>
+				<Button variant="secondary" onclick={() => goto(`/proposals/${proposalId}/edit`)}
+					>{$t('vetoDetail.editProposal')}</Button
+				>
 				{#if meId === vetoEvent.vetoer_id && vetoEvent.status === 'active'}
-					<Button variant="danger" onclick={withdrawVeto} loading={actionLoading}>{$t('vetoDetail.withdrawVeto')}</Button>
+					<Button variant="danger" onclick={withdrawVeto} loading={actionLoading}
+						>{$t('vetoDetail.withdrawVeto')}</Button
+					>
 				{/if}
 			</div>
 		</div>

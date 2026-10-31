@@ -4,7 +4,7 @@
  * virtualised table puts in the DOM) instead of on its source text.
  *
  * `installSvelteSsr()` registers a Bun loader that compiles `.svelte` files for the server and
- * resolves the SvelteKit-only `$app/*` modules to inert stubs; `$lib` resolves through
+ * resolves the SvelteKit-only `$app/*` modules to inert stubs; `#lib` resolves through
  * `tsconfig.json` paths as usual. `onMount`/`$effect` never run during SSR, so only the initial
  * render is observable -- which is exactly the first paint a user gets. No locale is loaded, so
  * `$t(key)` renders the key itself (`src/lib/i18n/svelte-i18n.ts`).
@@ -42,8 +42,13 @@ export async function installSvelteSsr(): Promise<void> {
 					'export async function goto() {} export function afterNavigate() {} export function beforeNavigate() {}',
 				'$app/stores':
 					'import { readable } from "svelte/store"; export const page = readable({ url: new URL("http://localhost/"), params: {} });',
+				'$app/state':
+					'export const page = { url: new URL("http://localhost/"), params: {} };',
 				'$app/environment':
-					'export const browser = false; export const dev = false; export const building = false;'
+					'export const browser = false; export const dev = false; export const building = false;',
+				'$app/env': 'export const browser = false; export const dev = false; export const building = false;',
+				'svelte-i18n':
+					'import { readable } from "svelte/store"; export const t = readable((key) => key); export const locale = readable("zh"); export function init() {} export function register() {} export function getLocaleFromNavigator() { return "zh"; }'
 			};
 			for (const [specifier, contents] of Object.entries(stubs)) {
 				build.module(specifier, () => ({ contents, loader: 'js' }));

@@ -4,8 +4,8 @@
 	// document, paged by cursor), and the policy-filtered `GET .../flow/projection-lag` for the lag
 	// badge and the paged per-object rows. Paging state lives in `CursorPager`s.
 	import { t } from 'svelte-i18n';
-	import type { FlowAdminLag, FlowProjectionLag } from '$lib/api/flow';
-	import { PROJECTION_UNAVAILABLE_KEY, adminLagRows } from '$lib/flow/operations-service';
+	import type { FlowAdminLag, FlowProjectionLag } from '#lib/api/flow.js';
+	import { PROJECTION_UNAVAILABLE_KEY, adminLagRows } from '#lib/flow/operations-service.js';
 
 	interface Props {
 		lag: FlowAdminLag | null;

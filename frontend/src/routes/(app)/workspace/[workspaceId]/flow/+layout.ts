@@ -11,8 +11,8 @@
 // behaves correctly today (Flow shows as unavailable, which is true) and will start reflecting
 // the real flag with no code change once the endpoint ships.
 
-import { flowApi } from '$lib/api/flow';
-import { requireRouteParam } from '$lib/utils/route-params';
+import { flowApi } from '#lib/api/flow.js';
+import { requireRouteParam } from '#lib/utils/route-params.js';
 import type { LayoutLoad } from './$types';
 
 export const load: LayoutLoad = async ({ params }) => {

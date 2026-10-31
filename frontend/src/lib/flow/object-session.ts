@@ -18,8 +18,8 @@
 // Offline pending/outbox is out of scope (`ui-surface-v1.md` "v0.5：presence/cursor、offline
 // pending...").
 
-import type { CollabTicket } from '$lib/api/flow';
-import { apiClient, type ApiResult } from '$lib/api/client';
+import type { CollabTicket } from '#lib/api/flow.js';
+import { apiClient, type ApiResult } from '#lib/api/client.js';
 import { writable, type Readable } from 'svelte/store';
 import type {
 	EngineUpdate,

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -10,17 +10,17 @@
 		type IssueSearchResult,
 		type ProjectSearchResult,
 		type SearchResult
-	} from '$lib/api/search';
-	import { toast } from '$lib/stores/toast';
-	import Button from '$lib/components/Button.svelte';
-	import { previewText } from '$lib/utils/search';
+	} from '#lib/api/search.js';
+	import { toast } from '#lib/stores/toast.js';
+	import Button from '#lib/components/Button.svelte';
+	import { previewText } from '#lib/utils/search.js';
 
 	let query = $state('');
 	let searching = $state(false);
 	let results = $state<SearchResult[]>([]);
 
 	onMount(async () => {
-		const initialQuery = $page.url.searchParams.get('q');
+		const initialQuery = page.url.searchParams.get('q');
 		if (initialQuery) {
 			query = initialQuery;
 			await runSearch();
@@ -70,8 +70,9 @@
 	function resolveHref(result: SearchResult): string | null {
 		const anyResult = result as unknown as Record<string, unknown>;
 		const workspaceId = normalizeId(
-			anyResult.workspace_id ?? anyResult.workspaceId ?? $page.params.workspaceId
+			anyResult.workspace_id ?? anyResult.workspaceId ?? page.params.workspaceId
 		);
+
 		if (!workspaceId) {
 			return null;
 		}
@@ -131,14 +132,28 @@
 	</form>
 
 	{#if searching}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400">{$t('search.searching')}</div>
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
+		>
+			{$t('search.searching')}
+		</div>
 	{:else if query.trim() && results.length === 0}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400">{$t('search.noResults')}</div>
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
+		>
+			{$t('search.noResults')}
+		</div>
 	{:else if results.length > 0}
 		<div class="space-y-4">
 			{#if issues.length > 0}
-				<section class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-					<h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Issues ({issues.length})</h2>
+				<section
+					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+				>
+					<h2
+						class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+					>
+						Issues ({issues.length})
+					</h2>
 					<div class="mt-3 space-y-2">
 						{#each issues as item (item.id)}
 							<a
@@ -148,7 +163,9 @@
 							>
 								<p class="font-medium text-slate-900 dark:text-slate-100">{item.title}</p>
 								{#if item.description}
-									<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">{previewText(item.description, 100)}</p>
+									<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">
+										{previewText(item.description, 100)}
+									</p>
 								{/if}
 							</a>
 						{/each}
@@ -157,8 +174,14 @@
 			{/if}
 
 			{#if projects.length > 0}
-				<section class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-					<h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Projects ({projects.length})</h2>
+				<section
+					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+				>
+					<h2
+						class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+					>
+						Projects ({projects.length})
+					</h2>
 					<div class="mt-3 space-y-2">
 						{#each projects as item (item.id)}
 							<a
@@ -168,7 +191,9 @@
 							>
 								<p class="font-medium text-slate-900 dark:text-slate-100">{item.name}</p>
 								{#if item.description}
-									<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">{previewText(item.description, 100)}</p>
+									<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">
+										{previewText(item.description, 100)}
+									</p>
 								{/if}
 							</a>
 						{/each}
@@ -177,8 +202,14 @@
 			{/if}
 
 			{#if comments.length > 0}
-				<section class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-					<h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Comments ({comments.length})</h2>
+				<section
+					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+				>
+					<h2
+						class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+					>
+						Comments ({comments.length})
+					</h2>
 					<div class="mt-3 space-y-2">
 						{#each comments as item (item.id)}
 							<a
@@ -187,7 +218,9 @@
 								class="block rounded-md border border-slate-200 dark:border-slate-700 p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
 							>
 								<p class="font-medium text-slate-900 dark:text-slate-100">{$t('issue.comments')}</p>
-								<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">{previewText(item.body, 100)}</p>
+								<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">
+									{previewText(item.body, 100)}
+								</p>
 							</a>
 						{/each}
 					</div>

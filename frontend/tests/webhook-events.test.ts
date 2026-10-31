@@ -32,7 +32,10 @@ const suite = new Suite('webhook-events');
 function apiEvents(): string[] {
 	const source = readFileSync(join(REPO, 'apps/api/src/entities/webhook.rs'), 'utf8');
 	const list = source.match(/pub const WEBHOOK_EVENTS: &\[&str\] = &\[([\s\S]*?)\];/);
-	assert(list, 'apps/api/src/entities/webhook.rs no longer defines WEBHOOK_EVENTS as a literal list');
+	assert(
+		list,
+		'apps/api/src/entities/webhook.rs no longer defines WEBHOOK_EVENTS as a literal list'
+	);
 	return [...list[1].matchAll(/"([a-z_.]+)"/g)].map((match) => match[1]);
 }
 
@@ -47,7 +50,10 @@ function lookup(tree: unknown, key: string): unknown {
 
 suite.check('the form offers all events the API accepts, in its order', () => {
 	assertDeepEqual([...WEBHOOK_EVENTS], apiEvents(), 'frontend vs apps/api/src/entities/webhook.rs');
-	assert(WEBHOOK_EVENTS.length === 14, `expected the 14 subscribable events, got ${WEBHOOK_EVENTS.length}`);
+	assert(
+		WEBHOOK_EVENTS.length === 14,
+		`expected the 14 subscribable events, got ${WEBHOOK_EVENTS.length}`
+	);
 });
 
 suite.check('every event belongs to the group its prefix names', () => {
@@ -60,7 +66,9 @@ suite.check('every event belongs to the group its prefix names', () => {
 
 for (const locale of LOCALES) {
 	suite.check(`${locale}: every event and group has a label`, () => {
-		const messages = JSON.parse(readFileSync(join(FRONTEND, `src/lib/i18n/${locale}.json`), 'utf8'));
+		const messages = JSON.parse(
+			readFileSync(join(FRONTEND, `src/lib/i18n/${locale}.json`), 'utf8')
+		);
 		const keys = [
 			...WEBHOOK_EVENTS.map(webhookEventLabelKey),
 			...WEBHOOK_EVENT_GROUPS.map((entry) => webhookEventGroupKey(entry.group))
@@ -73,18 +81,29 @@ for (const locale of LOCALES) {
 	});
 }
 
-suite.check('toggling an event adds it when absent and removes it when present, keeping the rest', () => {
-	const start = ['issue.created', 'comment.created'];
-	const added = toggleWebhookEvent(start, 'label.added');
-	assertDeepEqual(added, ['issue.created', 'comment.created', 'label.added'], 'add');
-	assertDeepEqual(start, ['issue.created', 'comment.created'], 'the selection passed in is not modified');
-	const removed = toggleWebhookEvent(added, 'issue.created');
-	assertDeepEqual(removed, ['comment.created', 'label.added'], 'remove');
-	assertDeepEqual(toggleWebhookEvent(toggleWebhookEvent([], 'ai.task_failed'), 'ai.task_failed'), [], 'round trip');
-	let selection: string[] = [];
-	for (const event of WEBHOOK_EVENTS) selection = toggleWebhookEvent(selection, event);
-	assertDeepEqual(selection, [...WEBHOOK_EVENTS], 'every event can be selected');
-});
+suite.check(
+	'toggling an event adds it when absent and removes it when present, keeping the rest',
+	() => {
+		const start = ['issue.created', 'comment.created'];
+		const added = toggleWebhookEvent(start, 'label.added');
+		assertDeepEqual(added, ['issue.created', 'comment.created', 'label.added'], 'add');
+		assertDeepEqual(
+			start,
+			['issue.created', 'comment.created'],
+			'the selection passed in is not modified'
+		);
+		const removed = toggleWebhookEvent(added, 'issue.created');
+		assertDeepEqual(removed, ['comment.created', 'label.added'], 'remove');
+		assertDeepEqual(
+			toggleWebhookEvent(toggleWebhookEvent([], 'ai.task_failed'), 'ai.task_failed'),
+			[],
+			'round trip'
+		);
+		let selection: string[] = [];
+		for (const event of WEBHOOK_EVENTS) selection = toggleWebhookEvent(selection, event);
+		assertDeepEqual(selection, [...WEBHOOK_EVENTS], 'every event can be selected');
+	}
+);
 
 suite.check('each checkbox toggles its own event through toggleWebhookEvent', () => {
 	const code = withoutComments(readFileSync(PAGE, 'utf8'));
@@ -93,14 +112,19 @@ suite.check('each checkbox toggles its own event through toggleWebhookEvent', ()
 		'toggleEvent must apply toggleWebhookEvent to the selection'
 	);
 	assert(
-		/checked=\{form\.events\.includes\(eventName\)\}\s*onchange=\{\(\) => toggleEvent\(eventName\)\}/.test(code),
+		/checked=\{form\.events\.includes\(eventName\)\}\s*onchange=\{\(\) => toggleEvent\(eventName\)\}/.test(
+			code
+		),
 		'each checkbox must reflect and toggle its own event'
 	);
 });
 
 suite.check('the webhook page renders its checkboxes from the shared constant', () => {
 	const page = withoutComments(readFileSync(PAGE, 'utf8'));
-	assert(/\{#each WEBHOOK_EVENT_GROUPS as entry/.test(page), 'the page does not iterate WEBHOOK_EVENT_GROUPS');
+	assert(
+		/\{#each WEBHOOK_EVENT_GROUPS as entry/.test(page),
+		'the page does not iterate WEBHOOK_EVENT_GROUPS'
+	);
 	assert(!/eventOptions\s*=/.test(page), 'the page still declares its own event list');
 });
 

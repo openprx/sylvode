@@ -3,7 +3,7 @@
 	// `FlowSharePanelController` (`lib/flow/share-panel.ts`); this component only renders it and
 	// forwards user actions.
 	import { t } from 'svelte-i18n';
-	import Modal from '$lib/components/Modal.svelte';
+	import Modal from '#lib/components/Modal.svelte';
 	import {
 		FLOW_GRANT_LEVELS,
 		FlowSharePanelController,
@@ -11,8 +11,8 @@
 		shareLevelKey,
 		type ShareChange,
 		type ShareSnapshot
-	} from '$lib/flow/share-panel';
-	import type { FlowGrantLevel, FlowPrincipalKind } from '$lib/api/flow';
+	} from '#lib/flow/share-panel.js';
+	import type { FlowGrantLevel, FlowPrincipalKind } from '#lib/api/flow.js';
 
 	interface Props {
 		objectId: string;

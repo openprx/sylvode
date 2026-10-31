@@ -128,7 +128,7 @@ VITE_API_BASE_URL=http://localhost:8081
 
 For the backend API documentation, see `docs/API_ENDPOINTS_PHASE3.md` in the repository root.
 
-All API requests are sent through `apiClient` in `$lib/api/client.ts`, which handles:
+All API requests are sent through `apiClient` in `#lib/api/client.ts`, which handles:
 
 - JWT token injection (Authorization header)
 - Unified error response format
@@ -168,7 +168,7 @@ The project currently uses `@sveltejs/adapter-auto`, which detects the deploymen
 - Cloudflare Pages
 - and others
 
-To pin a specific adapter, edit `svelte.config.js`.
+To pin a specific adapter, pass it to `sveltekit({ adapter })` in `vite.config.ts`.
 
 ## Development Guide
 

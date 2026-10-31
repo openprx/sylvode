@@ -8,7 +8,7 @@
 		deadLetterTotal,
 		statusKey,
 		type HealthSnapshot
-	} from '$lib/flow/operations-service';
+	} from '#lib/flow/operations-service.js';
 
 	interface Props {
 		snapshot: HealthSnapshot;

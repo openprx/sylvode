@@ -4,7 +4,7 @@
 	// ephemeral form state.
 	import { onDestroy, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
-	import Card from '$lib/components/Card.svelte';
+	import Card from '#lib/components/Card.svelte';
 	import {
 		EXPORT_STATUS_KEYS,
 		PackageExportController,
@@ -14,8 +14,8 @@
 		type ExportJobView,
 		type FlowExportJob,
 		type WorkspaceProjectOption
-	} from '$lib/flow/package-export';
-	import type { FlowPackageFailure } from '$lib/flow/package-import';
+	} from '#lib/flow/package-export.js';
+	import type { FlowPackageFailure } from '#lib/flow/package-import.js';
 
 	interface Props {
 		workspaceId: string;

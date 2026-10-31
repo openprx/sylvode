@@ -1,9 +1,11 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
-	import { apiClient } from '$lib/api/client';
-	import { toast } from '$lib/stores/toast';
-	import type { UploadedAttachment } from '$lib/utils/attachments';
-	import { ISSUE_ATTACHMENT_ACCEPT, ISSUE_ATTACHMENT_MAX_SIZE_BYTES } from '$lib/utils/attachments';
+	import { apiClient } from '#lib/api/client.js';
+	import { toast } from '#lib/stores/toast.js';
+	import type { UploadedAttachment } from '#lib/utils/attachments.js';
+	import {
+		ISSUE_ATTACHMENT_ACCEPT,
+		ISSUE_ATTACHMENT_MAX_SIZE_BYTES
+	} from '#lib/utils/attachments.js';
 	import { t } from 'svelte-i18n';
 
 	interface UploadEventDetail {
@@ -17,6 +19,7 @@
 		multiple?: boolean;
 		value?: UploadedAttachment[];
 		compact?: boolean;
+		onupload?: (detail: UploadEventDetail) => void;
 	}
 
 	type UploadApiResult = {
@@ -39,12 +42,9 @@
 		maxSize = ISSUE_ATTACHMENT_MAX_SIZE_BYTES,
 		multiple = true,
 		value = $bindable<UploadedAttachment[]>([]),
-		compact = false
+		compact = false,
+		onupload
 	}: Props = $props();
-
-	const dispatch = createEventDispatcher<{
-		upload: UploadEventDetail;
-	}>();
 
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let dragActive = $state(false);
@@ -97,7 +97,10 @@
 		pendingUploads = pendingUploads.filter((item) => item.id !== uploadId);
 	}
 
-	function normalizeUploadResult(result: UploadApiResult, fallbackFileName: string): UploadEventDetail | null {
+	function normalizeUploadResult(
+		result: UploadApiResult,
+		fallbackFileName: string
+	): UploadEventDetail | null {
 		if (result.code === 0 && result.data?.url) {
 			return {
 				url: result.data.url,
@@ -115,7 +118,10 @@
 
 	async function uploadFile(file: File): Promise<void> {
 		const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-		pendingUploads = [...pendingUploads, { id: uploadId, filename: file.name, size: file.size, progress: 0 }];
+		pendingUploads = [
+			...pendingUploads,
+			{ id: uploadId, filename: file.name, size: file.size, progress: 0 }
+		];
 
 		const formData = new FormData();
 		formData.append('file', file);
@@ -163,7 +169,7 @@
 							mimeType: file.type
 						}
 					];
-					dispatch('upload', normalized);
+					onupload?.(normalized);
 					toast.success($t('toast.uploadSuccess'));
 				} catch {
 					toast.error($t('toast.uploadParseFail'));
@@ -190,7 +196,9 @@
 				continue;
 			}
 			if (file.size > maxSize) {
-				toast.error($t('issue.uploadSizeLimit', { values: { size: Math.floor(maxSize / (1024 * 1024)) } }));
+				toast.error(
+					$t('issue.uploadSizeLimit', { values: { size: Math.floor(maxSize / (1024 * 1024)) } })
+				);
 				continue;
 			}
 			await uploadFile(file);
@@ -239,7 +247,7 @@
 		bind:this={fileInput}
 		type="file"
 		class="hidden"
-		accept={accept}
+		{accept}
 		{multiple}
 		onchange={handleInputChange}
 	/>
@@ -273,22 +281,33 @@
 				}
 			}}
 		>
-			<p class="text-sm font-medium text-slate-700 dark:text-slate-200">📎 {$t('issue.addAttachments')}</p>
+			<p class="text-sm font-medium text-slate-700 dark:text-slate-200">
+				📎 {$t('issue.addAttachments')}
+			</p>
 			<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{$t('issue.dragFilesHere')}</p>
-			<p class="mt-1 text-xs text-slate-400 dark:text-slate-500">{$t('issue.maxFileSizeHint', { values: { size: Math.floor(maxSize / (1024 * 1024)) } })}</p>
+			<p class="mt-1 text-xs text-slate-400 dark:text-slate-500">
+				{$t('issue.maxFileSizeHint', { values: { size: Math.floor(maxSize / (1024 * 1024)) } })}
+			</p>
 		</div>
 	{/if}
 
 	{#if pendingUploads.length > 0}
 		<div class="space-y-2">
 			{#each pendingUploads as pending (pending.id)}
-				<div class="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
+				<div
+					class="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+				>
 					<div class="mb-1 flex items-center justify-between gap-3">
 						<span class="truncate text-slate-700 dark:text-slate-200">{pending.filename}</span>
-						<span class="text-xs text-slate-500 dark:text-slate-400">{$t('issue.uploading')} {pending.progress}%</span>
+						<span class="text-xs text-slate-500 dark:text-slate-400"
+							>{$t('issue.uploading')} {pending.progress}%</span
+						>
 					</div>
 					<div class="h-2 w-full overflow-hidden rounded bg-slate-100 dark:bg-slate-700">
-						<div class="h-full rounded bg-blue-500 transition-all duration-200" style={`width: ${pending.progress}%`}></div>
+						<div
+							class="h-full rounded bg-blue-500 transition-all duration-200"
+							style={`width: ${pending.progress}%`}
+						></div>
 					</div>
 				</div>
 			{/each}
@@ -298,8 +317,12 @@
 	{#if value.length > 0}
 		<div class="grid gap-2 sm:grid-cols-2">
 			{#each value as file (file.url)}
-				<div class="flex items-start gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
-					<div class="pt-0.5" aria-hidden="true">{file.mimeType.startsWith('image/') ? '🖼️' : '📄'}</div>
+				<div
+					class="flex items-start gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+				>
+					<div class="pt-0.5" aria-hidden="true">
+						{file.mimeType.startsWith('image/') ? '🖼️' : '📄'}
+					</div>
 					<div class="min-w-0 flex-1">
 						<a
 							href={file.url}

@@ -16,7 +16,9 @@ export const ISSUE_ATTACHMENT_MAX_SIZE_BYTES = 50 * 1024 * 1024;
 export const ISSUE_ATTACHMENT_ACCEPT =
 	'.png,.jpg,.jpeg,.gif,.webp,.mp4,.webm,.mov,.avi,.zip,.gz,.tar.gz,.log,.txt,.pdf,.json,.csv,.xml';
 
-const ATTACHMENT_EXTENSIONS = ISSUE_ATTACHMENT_ACCEPT.split(',').map((item) => item.trim().toLowerCase());
+const ATTACHMENT_EXTENSIONS = ISSUE_ATTACHMENT_ACCEPT.split(',').map((item) =>
+	item.trim().toLowerCase()
+);
 
 function fileNameFromUrl(url: string): string {
 	const noQuery = url.split(/[?#]/, 1)[0] ?? '';
@@ -48,7 +50,9 @@ function isAttachmentUrl(url: string): boolean {
 	return ATTACHMENT_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
-function isImageAttachment(attachment: Pick<UploadedAttachment, 'filename' | 'mimeType' | 'url'>): boolean {
+function isImageAttachment(
+	attachment: Pick<UploadedAttachment, 'filename' | 'mimeType' | 'url'>
+): boolean {
 	if (attachment.mimeType?.toLowerCase().startsWith('image/')) {
 		return true;
 	}
@@ -65,7 +69,10 @@ export function attachmentToMarkdown(attachment: UploadedAttachment): string {
 	return `[📎 ${attachment.filename}](${attachment.url})`;
 }
 
-export function appendAttachmentsMarkdown(content: string, attachments: UploadedAttachment[]): string {
+export function appendAttachmentsMarkdown(
+	content: string,
+	attachments: UploadedAttachment[]
+): string {
 	if (attachments.length === 0) {
 		return content;
 	}

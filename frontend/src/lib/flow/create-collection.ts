@@ -16,7 +16,7 @@ import type {
 	CreateFlowObjectInput,
 	FlowCollectionInitialField,
 	FlowCollectionInitialView
-} from '$lib/api/flow';
+} from '#lib/api/flow.js';
 import { flowErrorI18nKey } from './errors';
 import type { FlowError } from './types';
 

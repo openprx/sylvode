@@ -3,15 +3,15 @@
 	// Reloading the page simply resumes polling. Missing and foreign imports share one safe state.
 	import { onDestroy, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import ImportReportView from '$lib/components/flow/ImportReportView.svelte';
-	import { ImportReportPoller, type ImportReportState } from '$lib/flow/import-report';
-	import { requireRouteParam } from '$lib/utils/route-params';
+	import EmptyState from '#lib/components/EmptyState.svelte';
+	import ImportReportView from '#lib/components/flow/ImportReportView.svelte';
+	import { ImportReportPoller, type ImportReportState } from '#lib/flow/import-report.js';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
 
-	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
-	const importId = requireRouteParam($page.params.importId, 'importId');
+	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
+	const importId = requireRouteParam(page.params.importId, 'importId');
 
 	let reportState = $state.raw<ImportReportState>({ status: 'loading' });
 	const poller = new ImportReportPoller(workspaceId, importId, (next) => {

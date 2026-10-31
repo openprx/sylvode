@@ -1,10 +1,10 @@
 <script lang="ts">
-	import '$lib/i18n';
+	import '#lib/i18n/index.js';
 	import { onMount } from 'svelte';
 	import '../app.css';
-	import favicon from '$lib/assets/favicon.svg';
-	import Toast from '$lib/components/Toast.svelte';
-	import { applyTheme } from '$lib/theme';
+	import favicon from '#lib/assets/favicon.svg';
+	import Toast from '#lib/components/Toast.svelte';
+	import { applyTheme } from '#lib/theme.js';
 
 	let { children } = $props();
 

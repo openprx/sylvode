@@ -2,8 +2,21 @@ import { apiClient, type ApiResult, type PaginatedData } from './client';
 import { get } from 'svelte/store';
 import { t } from 'svelte-i18n';
 
-export type ProposalType = 'feature' | 'architecture' | 'priority' | 'resource' | 'governance' | 'bugfix';
-export type ProposalStatus = 'draft' | 'open' | 'voting' | 'approved' | 'rejected' | 'vetoed' | 'archived';
+export type ProposalType =
+	| 'feature'
+	| 'architecture'
+	| 'priority'
+	| 'resource'
+	| 'governance'
+	| 'bugfix';
+export type ProposalStatus =
+	| 'draft'
+	| 'open'
+	| 'voting'
+	| 'approved'
+	| 'rejected'
+	| 'vetoed'
+	| 'archived';
 export type VotingRule = 'simple_majority' | 'absolute_majority' | 'consensus';
 export type CycleTemplate = 'rapid' | 'fast' | 'standard' | 'critical';
 export type VoteChoice = 'yes' | 'no' | 'abstain';
@@ -145,7 +158,11 @@ export const proposalsApi = {
 
 		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(endpoint);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.loadProposalsFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.loadProposalsFailed'),
+				data: null
+			};
 		}
 
 		return {
@@ -161,7 +178,11 @@ export const proposalsApi = {
 	async get(id: string): Promise<ApiResult<ProposalDetail>> {
 		const res = await apiClient.get<Record<string, unknown>>(`/api/v1/proposals/${id}`);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.loadProposalFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.loadProposalFailed'),
+				data: null
+			};
 		}
 
 		const proposalRaw = (res.data.proposal ?? {}) as Record<string, unknown>;
@@ -191,7 +212,11 @@ export const proposalsApi = {
 	async update(id: string, data: UpdateProposalInput): Promise<ApiResult<Proposal>> {
 		const res = await apiClient.patch<Record<string, unknown>>(`/api/v1/proposals/${id}`, data);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.updateProposalFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.updateProposalFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: res.message, data: mapProposal(res.data) };
 	},
@@ -211,9 +236,15 @@ export const proposalsApi = {
 	},
 
 	async startVoting(id: string): Promise<ApiResult<Record<string, unknown>>> {
-		const res = await apiClient.post<Record<string, unknown>>(`/api/v1/proposals/${id}/start-voting`);
+		const res = await apiClient.post<Record<string, unknown>>(
+			`/api/v1/proposals/${id}/start-voting`
+		);
 		return res.code !== 0
-			? { code: res.code, message: res.message || get(t)('api.startProposalVotingFailed'), data: null }
+			? {
+					code: res.code,
+					message: res.message || get(t)('api.startProposalVotingFailed'),
+					data: null
+				}
 			: res;
 	},
 
@@ -224,7 +255,11 @@ export const proposalsApi = {
 			: res;
 	},
 
-	async vote(id: string, choice: VoteChoice, reason?: string): Promise<ApiResult<Record<string, unknown>>> {
+	async vote(
+		id: string,
+		choice: VoteChoice,
+		reason?: string
+	): Promise<ApiResult<Record<string, unknown>>> {
 		const res = await apiClient.post<Record<string, unknown>>(`/api/v1/proposals/${id}/votes`, {
 			choice,
 			reason
@@ -241,14 +276,24 @@ export const proposalsApi = {
 	async withdrawVote(id: string): Promise<ApiResult<null>> {
 		const res = await apiClient.delete<null>(`/api/v1/proposals/${id}/votes/mine`);
 		return res.code !== 0
-			? { code: res.code, message: res.message || get(t)('api.withdrawProposalVoteFailed'), data: null }
+			? {
+					code: res.code,
+					message: res.message || get(t)('api.withdrawProposalVoteFailed'),
+					data: null
+				}
 			: res;
 	},
 
 	async listComments(id: string): Promise<ApiResult<PaginatedData<ProposalComment>>> {
-		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(`/api/v1/proposals/${id}/comments`);
+		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(
+			`/api/v1/proposals/${id}/comments`
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.loadProposalCommentsFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.loadProposalCommentsFailed'),
+				data: null
+			};
 		}
 		return {
 			code: 0,
@@ -257,16 +302,16 @@ export const proposalsApi = {
 				...res.data,
 				items: Array.isArray(res.data.items)
 					? res.data.items.map((raw) => ({
-						id: Number(raw.id ?? 0),
-						proposal_id: String(raw.proposal_id ?? ''),
-						author_id: String(raw.author_id ?? ''),
-						author_name: raw.author_name ? String(raw.author_name) : undefined,
-						author_avatar: raw.author_avatar ? String(raw.author_avatar) : undefined,
-						author_type: (raw.author_type ?? 'human') as 'human' | 'ai',
-						comment_type: String(raw.comment_type ?? 'general'),
-						content: String(raw.content ?? ''),
-						created_at: String(raw.created_at ?? '')
-					}))
+							id: Number(raw.id ?? 0),
+							proposal_id: String(raw.proposal_id ?? ''),
+							author_id: String(raw.author_id ?? ''),
+							author_name: raw.author_name ? String(raw.author_name) : undefined,
+							author_avatar: raw.author_avatar ? String(raw.author_avatar) : undefined,
+							author_type: (raw.author_type ?? 'human') as 'human' | 'ai',
+							comment_type: String(raw.comment_type ?? 'general'),
+							content: String(raw.content ?? ''),
+							created_at: String(raw.created_at ?? '')
+						}))
 					: []
 			}
 		};
@@ -284,22 +329,26 @@ export const proposalsApi = {
 			mentions
 		});
 		return res.code !== 0 || !res.data
-			? { code: res.code, message: res.message || get(t)('api.createProposalCommentFailed'), data: null }
-			: {
-				code: 0,
-				message: res.message,
-				data: {
-					id: Number(res.data.id ?? 0),
-					proposal_id: String(res.data.proposal_id ?? ''),
-					author_id: String(res.data.author_id ?? ''),
-					author_name: res.data.author_name ? String(res.data.author_name) : undefined,
-					author_avatar: res.data.author_avatar ? String(res.data.author_avatar) : undefined,
-					author_type: (res.data.author_type ?? 'human') as 'human' | 'ai',
-					comment_type: String(res.data.comment_type ?? 'general'),
-					content: String(res.data.content ?? ''),
-					created_at: String(res.data.created_at ?? '')
+			? {
+					code: res.code,
+					message: res.message || get(t)('api.createProposalCommentFailed'),
+					data: null
 				}
-			};
+			: {
+					code: 0,
+					message: res.message,
+					data: {
+						id: Number(res.data.id ?? 0),
+						proposal_id: String(res.data.proposal_id ?? ''),
+						author_id: String(res.data.author_id ?? ''),
+						author_name: res.data.author_name ? String(res.data.author_name) : undefined,
+						author_avatar: res.data.author_avatar ? String(res.data.author_avatar) : undefined,
+						author_type: (res.data.author_type ?? 'human') as 'human' | 'ai',
+						comment_type: String(res.data.comment_type ?? 'general'),
+						content: String(res.data.content ?? ''),
+						created_at: String(res.data.created_at ?? '')
+					}
+				};
 	},
 
 	deleteComment(id: string, commentId: number): Promise<ApiResult<null>> {
@@ -307,16 +356,26 @@ export const proposalsApi = {
 	},
 
 	async listIssues(id: string): Promise<ApiResult<PaginatedData<ProposalIssueLink>>> {
-		const res = await apiClient.get<PaginatedData<ProposalIssueLink>>(`/api/v1/proposals/${id}/issues`);
+		const res = await apiClient.get<PaginatedData<ProposalIssueLink>>(
+			`/api/v1/proposals/${id}/issues`
+		);
 		return res.code !== 0 || !res.data
-			? { code: res.code, message: res.message || get(t)('api.loadProposalIssuesFailed'), data: null }
+			? {
+					code: res.code,
+					message: res.message || get(t)('api.loadProposalIssuesFailed'),
+					data: null
+				}
 			: res;
 	},
 
 	async linkIssue(id: string, issueId: string): Promise<ApiResult<null>> {
 		const res = await apiClient.post<null>(`/api/v1/proposals/${id}/issues`, { issue_id: issueId });
 		return res.code !== 0
-			? { code: res.code, message: res.message || get(t)('api.linkProposalIssueFailed'), data: null }
+			? {
+					code: res.code,
+					message: res.message || get(t)('api.linkProposalIssueFailed'),
+					data: null
+				}
 			: res;
 	},
 
@@ -330,9 +389,15 @@ export const proposalsApi = {
 			`/api/v1/search?q=${encoded}&type=issue&limit=10`
 		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.searchProposalIssuesFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.searchProposalIssuesFailed'),
+				data: null
+			};
 		}
-		const rawResults = Array.isArray(res.data.results) ? (res.data.results as Array<Record<string, unknown>>) : [];
+		const rawResults = Array.isArray(res.data.results)
+			? (res.data.results as Array<Record<string, unknown>>)
+			: [];
 		const issues = rawResults
 			.filter((item) => String(item.type ?? '') === 'issue')
 			.map((item) => ({

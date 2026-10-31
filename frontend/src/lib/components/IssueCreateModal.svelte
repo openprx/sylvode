@@ -1,28 +1,27 @@
 <script lang="ts">
-	import { labelsApi } from '$lib/api/labels';
-	import { membersApi, type WorkspaceMember } from '$lib/api/members';
-	import {
-		issuesApi,
-		type Issue,
-		type IssuePriority,
-		type IssueStatus
-	} from '$lib/api/issues';
-	import type { WorkflowStateDef } from '$lib/api/workflows';
-	import { sprintsApi, type Sprint } from '$lib/api/sprints';
-	import { toast } from '$lib/stores/toast';
-	import { renderMarkdown } from '$lib/utils/markdown';
+	import { labelsApi } from '#lib/api/labels.js';
+	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
+	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
+	import type { WorkflowStateDef } from '#lib/api/workflows.js';
+	import { sprintsApi, type Sprint } from '#lib/api/sprints.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { renderMarkdown } from '#lib/utils/markdown.js';
 	import {
 		appendAttachmentsMarkdown,
 		ISSUE_ATTACHMENT_ACCEPT,
 		ISSUE_ATTACHMENT_MAX_SIZE_BYTES,
 		type UploadedAttachment
-	} from '$lib/utils/attachments';
+	} from '#lib/utils/attachments.js';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { apiClient } from '$lib/api/client';
-	import { isImageUploadMime, isAllowedUploadMime } from '$lib/utils/upload';
-	import { getScenarioFields, type EmbeddedScenarioTemplate, type ScenarioFieldDef } from '$lib/utils/scenario-template';
-	import { scenarioTemplateName } from '$lib/utils/project-type-i18n';
+	import { apiClient } from '#lib/api/client.js';
+	import { isImageUploadMime, isAllowedUploadMime } from '#lib/utils/upload.js';
+	import {
+		getScenarioFields,
+		type EmbeddedScenarioTemplate,
+		type ScenarioFieldDef
+	} from '#lib/utils/scenario-template.js';
+	import { scenarioTemplateName } from '#lib/utils/project-type-i18n.js';
 	import Button from './Button.svelte';
 	import FileUpload from './FileUpload.svelte';
 	import Input from './Input.svelte';
@@ -178,14 +177,18 @@
 			toast.error($t('issue.enterTitle'));
 			return;
 		}
-		const missingField = scenarioFields.find((field) => field.required && !scenarioFieldValues[field.key]?.trim());
+		const missingField = scenarioFields.find(
+			(field) => field.required && !scenarioFieldValues[field.key]?.trim()
+		);
 		if (missingField) {
 			toast.error($t('issue.scenarioFieldRequired', { values: { field: missingField.label } }));
 			return;
 		}
 
 		creating = true;
-		const description = appendScenarioFieldsMarkdown(appendAttachmentsMarkdown(form.description, attachments)).trim();
+		const description = appendScenarioFieldsMarkdown(
+			appendAttachmentsMarkdown(form.description, attachments)
+		).trim();
 		const createRes = await issuesApi.create(projectId, {
 			title: form.title.trim(),
 			description: description || undefined,
@@ -243,13 +246,22 @@
 			});
 			const result = await res.json();
 			const url = result?.data?.url ?? result?.url;
-			if (!url) { toast.error(get(t)('toast.uploadFail')); return; }
+			if (!url) {
+				toast.error(get(t)('toast.uploadFail'));
+				return;
+			}
 			const mime = file.type;
-			const md = isImageUploadMime(mime) ? `![image](${url})` : mime.startsWith('video/') ? `<video controls src="${url}"></video>` : `[${file.name}](${url})`;
+			const md = isImageUploadMime(mime)
+				? `![image](${url})`
+				: mime.startsWith('video/')
+					? `<video controls src="${url}"></video>`
+					: `[${file.name}](${url})`;
 			const suffix = form.description.endsWith('\n') || !form.description ? '' : '\n';
 			form.description = `${form.description}${suffix}${md}\n`;
 			toast.success(get(t)('toast.uploadSuccess'));
-		} catch { toast.error(get(t)('toast.uploadNetworkFail')); }
+		} catch {
+			toast.error(get(t)('toast.uploadNetworkFail'));
+		}
 	}
 
 	function handleDescriptionPaste(event: ClipboardEvent) {
@@ -265,8 +277,8 @@
 		}
 	}
 
-	function handleUploadEvent(event: CustomEvent<{ url: string; filename: string }>) {
-		const { url, filename } = event.detail;
+	function handleUploadEvent(detail: { url: string; filename: string }) {
+		const { url, filename } = detail;
 		const att = attachments.find((a) => a.url === url);
 		const mime = att?.mimeType ?? '';
 		if (isImageUploadMime(mime)) {
@@ -317,26 +329,47 @@
 			</div>
 		</div>
 	{:else}
-		<form class="space-y-5" onsubmit={(event) => { event.preventDefault(); handleCreate(); }}>
-			<Input label={$t('issue.title')} required bind:value={form.title} placeholder={$t('issue.titleExample')} />
+		<form
+			class="space-y-5"
+			onsubmit={(event) => {
+				event.preventDefault();
+				handleCreate();
+			}}
+		>
+			<Input
+				label={$t('issue.title')}
+				required
+				bind:value={form.title}
+				placeholder={$t('issue.titleExample')}
+			/>
 
 			{#if scenarioFields.length > 0}
-				<div class="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
+				<div
+					class="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950"
+				>
 					<div class="mb-3">
-						<p class="text-sm font-semibold text-slate-900 dark:text-slate-100">{$t('issue.scenarioFields')}</p>
-						<p class="text-xs text-slate-500 dark:text-slate-400">{scenarioTemplate ? scenarioTemplateName(scenarioTemplate, $t) : ''}</p>
+						<p class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+							{$t('issue.scenarioFields')}
+						</p>
+						<p class="text-xs text-slate-500 dark:text-slate-400">
+							{scenarioTemplate ? scenarioTemplateName(scenarioTemplate, $t) : ''}
+						</p>
 					</div>
 					<div class="grid gap-3 sm:grid-cols-2">
 						{#each scenarioFields as field (field.key)}
 							<div class={field.type === 'textarea' ? 'sm:col-span-2' : ''}>
-								<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for={`scenario-field-${field.key}`}>
+								<label
+									class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+									for={`scenario-field-${field.key}`}
+								>
 									{field.label}{field.required ? ' *' : ''}
 								</label>
 								{#if field.type === 'select' && field.options.length > 0}
 									<select
 										id={`scenario-field-${field.key}`}
 										value={scenarioFieldValues[field.key] ?? ''}
-										onchange={(event) => setScenarioFieldValue(field.key, event.currentTarget.value)}
+										onchange={(event) =>
+											setScenarioFieldValue(field.key, event.currentTarget.value)}
 										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-blue-400"
 									>
 										<option value="">{$t('issue.selectPlaceholder')}</option>
@@ -369,22 +402,31 @@
 
 			<div class="space-y-2">
 				<div class="flex items-center justify-between">
-					<label class="text-sm font-medium text-slate-700 dark:text-slate-300" for="issueDescription">{$t('issue.description')}</label>
-					<div class="inline-flex rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-0.5">
+					<label
+						class="text-sm font-medium text-slate-700 dark:text-slate-300"
+						for="issueDescription">{$t('issue.description')}</label
+					>
+					<div
+						class="inline-flex rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-0.5"
+					>
 						<button
 							type="button"
-							class={`rounded px-2 py-1 text-xs ${descriptionTab === 'edit'
-								? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm dark:shadow-slate-900/50'
-								: 'text-slate-500 hover:text-slate-700 dark:text-slate-300'}`}
+							class={`rounded px-2 py-1 text-xs ${
+								descriptionTab === 'edit'
+									? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm dark:shadow-slate-900/50'
+									: 'text-slate-500 hover:text-slate-700 dark:text-slate-300'
+							}`}
 							onclick={() => (descriptionTab = 'edit')}
 						>
 							{$t('issue.editMode')}
 						</button>
 						<button
 							type="button"
-							class={`rounded px-2 py-1 text-xs ${descriptionTab === 'preview'
-								? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm dark:shadow-slate-900/50'
-								: 'text-slate-500 hover:text-slate-700 dark:text-slate-300'}`}
+							class={`rounded px-2 py-1 text-xs ${
+								descriptionTab === 'preview'
+									? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm dark:shadow-slate-900/50'
+									: 'text-slate-500 hover:text-slate-700 dark:text-slate-300'
+							}`}
 							onclick={() => (descriptionTab = 'preview')}
 						>
 							{$t('issue.previewMode')}
@@ -398,17 +440,18 @@
 						bind:value={form.description}
 						class="min-h-[220px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500"
 						placeholder={$t('issue.descriptionPlaceholder')}
-						onpaste={handleDescriptionPaste}
-					></textarea>
+						onpaste={handleDescriptionPaste}></textarea>
 					<FileUpload
 						bind:value={attachments}
 						accept={ISSUE_ATTACHMENT_ACCEPT}
 						maxSize={ISSUE_ATTACHMENT_MAX_SIZE_BYTES}
 						multiple
-						on:upload={handleUploadEvent}
+						onupload={handleUploadEvent}
 					/>
 				{:else}
-					<div class="markdown-body dark:prose-invert min-h-[220px] rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm text-slate-700 dark:text-slate-300">
+					<div
+						class="markdown-body dark:prose-invert min-h-[220px] rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm text-slate-700 dark:text-slate-300"
+					>
 						{#if form.description.trim()}
 							{@html renderMarkdown(form.description)}
 						{:else}
@@ -420,7 +463,10 @@
 
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div>
-					<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="issueStatus">{$t('issue.status')}</label>
+					<label
+						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						for="issueStatus">{$t('issue.status')}</label
+					>
 					<select
 						id="issueStatus"
 						bind:value={form.status}
@@ -433,7 +479,10 @@
 				</div>
 
 				<div>
-					<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="issuePriority">{$t('issue.priority')}</label>
+					<label
+						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						for="issuePriority">{$t('issue.priority')}</label
+					>
 					<select
 						id="issuePriority"
 						bind:value={form.priority}
@@ -447,7 +496,10 @@
 				</div>
 
 				<div>
-					<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="issueAssignee">{$t('issue.assignee')}</label>
+					<label
+						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						for="issueAssignee">{$t('issue.assignee')}</label
+					>
 					<select
 						id="issueAssignee"
 						bind:value={form.assignee_id}
@@ -461,7 +513,10 @@
 				</div>
 
 				<div>
-					<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="issueSprint">Sprint</label>
+					<label
+						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						for="issueSprint">Sprint</label
+					>
 					<select
 						id="issueSprint"
 						bind:value={form.sprint_id}
@@ -476,13 +531,19 @@
 			</div>
 
 			<fieldset class="space-y-2">
-				<legend class="block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('issue.labels')}</legend>
+				<legend class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+					>{$t('issue.labels')}</legend
+				>
 				{#if labels.length === 0}
-					<p class="rounded-md border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm text-slate-500 dark:text-slate-400">
+					<p
+						class="rounded-md border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm text-slate-500 dark:text-slate-400"
+					>
 						{$t('issue.noWorkspaceLabels')}
 					</p>
 				{:else}
-					<div class="max-h-36 space-y-1 overflow-y-auto rounded-md border border-slate-200 dark:border-slate-700 p-2">
+					<div
+						class="max-h-36 space-y-1 overflow-y-auto rounded-md border border-slate-200 dark:border-slate-700 p-2"
+					>
 						{#each labels as label (label.id)}
 							<label
 								class="flex cursor-pointer items-center justify-between rounded px-2 py-1 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"

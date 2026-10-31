@@ -1,16 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import {
 		governanceExtApi,
 		type AiAlignmentStats,
 		type AiLearningRecord
-	} from '$lib/api/governance-ext';
-	import { toast } from '$lib/stores/toast';
+	} from '#lib/api/governance-ext.js';
+	import { toast } from '#lib/stores/toast.js';
 
-	const participantId = $derived($page.params.id || '');
+	const participantId = $derived(page.params.id || '');
 
 	let loading = $state(true);
 	let loadingFeedback = $state(false);
@@ -91,54 +91,87 @@
 		if (value === 'misaligned') return 'bg-red-100 text-red-700';
 		return 'bg-slate-100 text-slate-700';
 	}
- </script>
+</script>
 
 <svelte:head>
 	<title>{$t('pageTitle.aiLearning')}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-7xl space-y-4">
-	<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
-		<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">{$t('governanceExt.learningTitle')}</h1>
-		<p class="mt-1 text-sm text-slate-500">{$t('governanceExt.learningSubtitle', { values: { id: participantId } })}</p>
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+	>
+		<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+			{$t('governanceExt.learningTitle')}
+		</h1>
+		<p class="mt-1 text-sm text-slate-500">
+			{$t('governanceExt.learningSubtitle', { values: { id: participantId } })}
+		</p>
 	</div>
 
 	{#if stats}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-4">
-			<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+			<div
+				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+			>
 				<p class="text-xs text-slate-500">{$t('common.total')}</p>
 				<p class="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{stats.total}</p>
 			</div>
-			<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+			<div
+				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+			>
 				<p class="text-xs text-slate-500">{$t('governanceExt.overallAlignmentRate')}</p>
-				<p class="mt-1 text-2xl font-semibold text-emerald-700">{pct(stats.overall_alignment_rate)}</p>
+				<p class="mt-1 text-2xl font-semibold text-emerald-700">
+					{pct(stats.overall_alignment_rate)}
+				</p>
 			</div>
-			<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+			<div
+				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+			>
 				<p class="text-xs text-slate-500">{$t('governanceExt.recentAlignmentRate')}</p>
 				<p class="mt-1 text-2xl font-semibold text-blue-700">{pct(stats.recent_alignment_rate)}</p>
 			</div>
-			<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+			<div
+				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+			>
 				<p class="text-xs text-slate-500">{$t('governanceExt.improvementTrend')}</p>
-				<p class={`mt-1 text-2xl font-semibold ${stats.improvement_trend >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+				<p
+					class={`mt-1 text-2xl font-semibold ${stats.improvement_trend >= 0 ? 'text-emerald-700' : 'text-red-700'}`}
+				>
 					{stats.improvement_trend >= 0 ? '+' : ''}{pct(stats.improvement_trend)}
 				</p>
 			</div>
 		</div>
 	{/if}
 
-	<div class="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800 md:grid-cols-4">
+	<div
+		class="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800 md:grid-cols-4"
+	>
 		<div>
-			<label for="learning-domain" class="mb-1 block text-sm text-slate-600">{$t('governance.domainLabel')}</label>
-			<input id="learning-domain" bind:value={domain} type="text" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900" />
+			<label for="learning-domain" class="mb-1 block text-sm text-slate-600"
+				>{$t('governance.domainLabel')}</label
+			>
+			<input
+				id="learning-domain"
+				bind:value={domain}
+				type="text"
+				class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+			/>
 		</div>
 		<div class="md:col-span-3 flex items-end">
-			<button type="button" onclick={search} class="w-full rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700">
+			<button
+				type="button"
+				onclick={search}
+				class="w-full rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+			>
 				{$t('common.search')}
 			</button>
 		</div>
 	</div>
 
-	<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+	>
 		{#if loading}
 			<p class="text-sm text-slate-500">{$t('common.loading')}</p>
 		{:else if records.length === 0}
@@ -160,16 +193,26 @@
 						{#each records as record}
 							<tr class="border-b border-slate-100 dark:border-slate-800">
 								<td class="px-2 py-2 text-xs">
-									<a href={`/proposals/${record.proposal_id}`} class="text-blue-600 hover:underline">{record.review_id}</a>
+									<a href={`/proposals/${record.proposal_id}`} class="text-blue-600 hover:underline"
+										>{record.review_id}</a
+									>
 								</td>
 								<td class="px-2 py-2 text-xs">{record.domain}</td>
 								<td class="px-2 py-2 text-xs">
-									<span class={`rounded px-2 py-0.5 ${tone(record.outcome_alignment)}`}>{record.outcome_alignment}</span>
+									<span class={`rounded px-2 py-0.5 ${tone(record.outcome_alignment)}`}
+										>{record.outcome_alignment}</span
+									>
 								</td>
 								<td class="px-2 py-2 text-xs">{record.review_rating}</td>
-								<td class="px-2 py-2 text-xs text-slate-500">{new Date(record.created_at).toLocaleString()}</td>
+								<td class="px-2 py-2 text-xs text-slate-500"
+									>{new Date(record.created_at).toLocaleString()}</td
+								>
 								<td class="px-2 py-2 text-xs">
-									<button type="button" class="text-blue-600 hover:underline" onclick={() => loadFeedback(record.review_id)}>
+									<button
+										type="button"
+										class="text-blue-600 hover:underline"
+										onclick={() => loadFeedback(record.review_id)}
+									>
 										{$t('governanceExt.viewFeedback')}
 									</button>
 								</td>
@@ -180,20 +223,36 @@
 			</div>
 		{/if}
 
-		<div class="mt-4 flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700">
-			<p class="text-slate-500">{$t('governance.pagination', { values: { total, page: pageNum, pages: totalPages || 1 } })}</p>
+		<div
+			class="mt-4 flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"
+		>
+			<p class="text-slate-500">
+				{$t('governance.pagination', { values: { total, page: pageNum, pages: totalPages || 1 } })}
+			</p>
 			<div class="flex gap-2">
-				<button type="button" onclick={() => goPage(pageNum - 1)} disabled={pageNum <= 1} class="rounded border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:hover:bg-slate-900">
+				<button
+					type="button"
+					onclick={() => goPage(pageNum - 1)}
+					disabled={pageNum <= 1}
+					class="rounded border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:hover:bg-slate-900"
+				>
 					{$t('governance.prevPage')}
 				</button>
-				<button type="button" onclick={() => goPage(pageNum + 1)} disabled={totalPages > 0 && pageNum >= totalPages} class="rounded border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:hover:bg-slate-900">
+				<button
+					type="button"
+					onclick={() => goPage(pageNum + 1)}
+					disabled={totalPages > 0 && pageNum >= totalPages}
+					class="rounded border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:hover:bg-slate-900"
+				>
 					{$t('governance.nextPage')}
 				</button>
 			</div>
 		</div>
 	</div>
 
-	<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+	>
 		<div class="mb-3 flex items-center justify-between">
 			<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
 				{$t('governanceExt.feedbackForReview', { values: { id: feedbackReviewId || '-' } })}

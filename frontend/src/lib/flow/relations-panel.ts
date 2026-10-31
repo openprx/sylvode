@@ -17,12 +17,12 @@
 //   workspace answers `not_found` and is handled where the write is made;
 // - errors are classified by `error_code` only.
 
-import type { ApiResult } from '$lib/api/client';
+import type { ApiResult } from '#lib/api/client.js';
 import type {
 	FlowRelationDirection,
 	FlowRelationListResponse,
 	FlowRelationsQuery
-} from '$lib/api/flow';
+} from '#lib/api/flow.js';
 import { flowErrorFromEnvelope, flowErrorI18nKey, invalidUpdateDisposition } from './errors';
 import { FlowObjectRepository } from './object-repository';
 

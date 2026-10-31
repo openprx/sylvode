@@ -1,4 +1,4 @@
-import { projectOptionsStore, type ProjectOption } from '$lib/stores/project-options';
+import { projectOptionsStore, type ProjectOption } from '#lib/stores/project-options.js';
 
 export type { ProjectOption };
 export interface ProjectOptionGroup {

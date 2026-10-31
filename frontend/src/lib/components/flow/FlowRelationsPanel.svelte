@@ -10,8 +10,8 @@
 		RELATION_DIRECTION_KEYS,
 		relationTarget,
 		type RelationsSnapshot
-	} from '$lib/flow/relations-panel';
-	import type { FlowRelationDirection } from '$lib/api/flow';
+	} from '#lib/flow/relations-panel.js';
+	import type { FlowRelationDirection } from '#lib/api/flow.js';
 
 	interface Props {
 		objectId: string;

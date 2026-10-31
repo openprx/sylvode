@@ -2,23 +2,23 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
-	import { page } from '$app/stores';
-	import { botsApi, type Bot, type CreateBotResponse } from '$lib/api/bots';
+	import { page } from '$app/state';
+	import { botsApi, type Bot, type CreateBotResponse } from '#lib/api/bots.js';
 	import {
 		BOT_TRANSPORT_SURFACES,
 		isBotTransportSurface,
 		surfaceDescriptionKey,
 		surfaceLabelKey,
 		type BotTransportSurface
-	} from '$lib/bots/transport-surfaces';
-	import { createBotRequest } from '$lib/bots/create-bot-request';
-	import { membersApi, type WorkspaceMember, type WorkspaceMemberRole } from '$lib/api/members';
-	import { toast } from '$lib/stores/toast';
-	import { requireRouteParam } from '$lib/utils/route-params';
-	import Button from '$lib/components/Button.svelte';
-	import BotIcon from '$lib/components/BotIcon.svelte';
-	import Input from '$lib/components/Input.svelte';
-	import Modal from '$lib/components/Modal.svelte';
+	} from '#lib/bots/transport-surfaces.js';
+	import { createBotRequest } from '#lib/bots/create-bot-request.js';
+	import { membersApi, type WorkspaceMember, type WorkspaceMemberRole } from '#lib/api/members.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
+	import Button from '#lib/components/Button.svelte';
+	import BotIcon from '#lib/components/BotIcon.svelte';
+	import Input from '#lib/components/Input.svelte';
+	import Modal from '#lib/components/Modal.svelte';
 
 	type EditableRole = Exclude<WorkspaceMemberRole, 'owner'>;
 	type BotPermission = 'read' | 'write' | 'admin';
@@ -29,7 +29,7 @@
 		name: string;
 	}
 
-	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
+	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 	const botPermissionOptions: BotPermission[] = ['read', 'write', 'admin'];
 
 	let loading = $state(true);
@@ -141,7 +141,11 @@
 			return;
 		}
 
-		if (!confirm(get(t)('members.changeRoleConfirm', { values: { email: member.email, role: nextRole } }))) {
+		if (
+			!confirm(
+				get(t)('members.changeRoleConfirm', { values: { email: member.email, role: nextRole } })
+			)
+		) {
 			return;
 		}
 
@@ -311,28 +315,56 @@
 			<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{$t('members.title')}</h1>
 			<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('members.subtitle')}</p>
 		</div>
+
 		<Button onclick={() => (showInviteModal = true)}>{$t('members.addInternalUser')}</Button>
 	</div>
 
-	<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-blue-50 p-4 text-sm text-blue-800">
+	<div
+		class="rounded-lg border border-slate-200 dark:border-slate-700 bg-blue-50 p-4 text-sm text-blue-800"
+	>
 		{$t('members.roleDescription')}
 	</div>
 
 	{#if loading}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
+		>
+			{$t('common.loading')}
+		</div>
 	{:else if members.length === 0}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400">{$t('members.empty')}</div>
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
+		>
+			{$t('members.empty')}
+		</div>
 	{:else}
-		<div class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+		<div
+			class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+		>
 			<div class="overflow-x-auto">
 				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
 					<thead class="bg-slate-50 dark:bg-slate-950">
 						<tr>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.member')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('admin.email')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('admin.role')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.joinedAt')}</th>
-							<th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.actions')}</th>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('members.member')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('admin.email')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('admin.role')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('members.joinedAt')}</th
+							>
+							<th
+								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.actions')}</th
+							>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-900">
@@ -341,15 +373,22 @@
 								<td class="px-4 py-3 text-sm font-medium text-slate-900 dark:text-slate-100">
 									<div class="flex items-center gap-1.5">
 										{#if isBotMember(member)}
-											<BotIcon class="h-4 w-4 text-cyan-700 dark:text-cyan-300" title={$t('admin.botBadge')} />
+											<BotIcon
+												class="h-4 w-4 text-cyan-700 dark:text-cyan-300"
+												title={$t('admin.botBadge')}
+											/>
 										{/if}
 										<span>{member.name || member.user_id}</span>
 									</div>
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{member.email || '-'}</td>
+								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+									>{member.email || '-'}</td
+								>
 								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
 									{#if isBotMember(member)}
-										<span class="inline-flex rounded-full bg-cyan-100 px-2.5 py-1 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
+										<span
+											class="inline-flex rounded-full bg-cyan-100 px-2.5 py-1 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300"
+										>
 											{getBotRoleLabel(member)}
 										</span>
 									{:else}
@@ -368,7 +407,9 @@
 										</select>
 									{/if}
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{formatDate(member.joined_at)}</td>
+								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+									>{formatDate(member.joined_at)}</td
+								>
 								<td class="px-4 py-3 text-right">
 									<Button
 										variant="danger"
@@ -388,11 +429,19 @@
 		</div>
 	{/if}
 
-	<div class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
-		<div class="flex flex-col gap-3 border-b border-slate-200 dark:border-slate-700 p-4 sm:flex-row sm:items-center sm:justify-between">
+	<div
+		class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+	>
+		<div
+			class="flex flex-col gap-3 border-b border-slate-200 dark:border-slate-700 p-4 sm:flex-row sm:items-center sm:justify-between"
+		>
 			<div>
-				<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">{$t('members.apiTokensTitle')}</h2>
-				<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('members.apiTokensSubtitle')}</p>
+				<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+					{$t('members.apiTokensTitle')}
+				</h2>
+				<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+					{$t('members.apiTokensSubtitle')}
+				</p>
 			</div>
 			<Button size="sm" onclick={openCreateTokenModal}>{$t('members.createToken')}</Button>
 		</div>
@@ -400,27 +449,57 @@
 		{#if botsLoading}
 			<div class="p-6 text-sm text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
 		{:else if bots.length === 0}
-			<div class="p-10 text-center text-sm text-slate-500 dark:text-slate-400">{$t('members.apiTokensEmpty')}</div>
+			<div class="p-10 text-center text-sm text-slate-500 dark:text-slate-400">
+				{$t('members.apiTokensEmpty')}
+			</div>
 		{:else}
 			<div class="overflow-x-auto">
 				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
 					<thead class="bg-slate-50 dark:bg-slate-950">
 						<tr>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.tokenName')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.tokenPrefix')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.transportSurfaceColumn')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.permissions')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.status')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('members.lastUsedAt')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.createdAt')}</th>
-							<th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.actions')}</th>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('members.tokenName')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('members.tokenPrefix')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('members.transportSurfaceColumn')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('members.permissions')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.status')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('members.lastUsedAt')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.createdAt')}</th
+							>
+							<th
+								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.actions')}</th
+							>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-900">
 						{#each bots as bot (bot.id)}
 							<tr>
-								<td class="px-4 py-3 text-sm font-medium text-slate-900 dark:text-slate-100">{bot.name}</td>
-								<td class="px-4 py-3 text-sm font-mono text-slate-600 dark:text-slate-300">{bot.token_prefix}</td>
+								<td class="px-4 py-3 text-sm font-medium text-slate-900 dark:text-slate-100"
+									>{bot.name}</td
+								>
+								<td class="px-4 py-3 text-sm font-mono text-slate-600 dark:text-slate-300"
+									>{bot.token_prefix}</td
+								>
 								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
 									<span
 										class="inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
@@ -437,7 +516,9 @@
 											<span>-</span>
 										{:else}
 											{#each bot.permissions as permission}
-												<span class={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${getPermissionClass(permission)}`}>
+												<span
+													class={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${getPermissionClass(permission)}`}
+												>
 													{getPermissionLabel(permission)}
 												</span>
 											{/each}
@@ -446,17 +527,25 @@
 								</td>
 								<td class="px-4 py-3 text-sm">
 									{#if bot.is_active}
-										<span class="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+										<span
+											class="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+										>
 											{$t('members.tokenStatus.active')}
 										</span>
 									{:else}
-										<span class="inline-flex rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+										<span
+											class="inline-flex rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300"
+										>
 											{$t('members.tokenStatus.disabled')}
 										</span>
 									{/if}
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{formatDate(bot.last_used_at)}</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{formatDate(bot.created_at)}</td>
+								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+									>{formatDate(bot.last_used_at)}</td
+								>
+								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+									>{formatDate(bot.created_at)}</td
+								>
 								<td class="px-4 py-3 text-right">
 									<Button
 										variant="danger"
@@ -486,14 +575,22 @@
 			}}
 			class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]"
 		>
-			<Input type="search" label={$t('members.usernameOrEmail')} bind:value={searchKeyword} placeholder={$t('members.usernameOrEmailPlaceholder')} />
+			<Input
+				type="search"
+				label={$t('members.usernameOrEmail')}
+				bind:value={searchKeyword}
+				placeholder={$t('members.usernameOrEmailPlaceholder')}
+			/>
 			<div class="flex items-end">
 				<Button type="submit" loading={searchingUsers}>{$t('common.search')}</Button>
 			</div>
 		</form>
 
 		<div>
-			<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="inviteRole">{$t('admin.role')}</label>
+			<label
+				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				for="inviteRole">{$t('admin.role')}</label
+			>
 			<select
 				id="inviteRole"
 				bind:value={selectedRole}
@@ -504,14 +601,20 @@
 			</select>
 		</div>
 
-		<div class="max-h-72 space-y-2 overflow-y-auto rounded-md border border-slate-200 dark:border-slate-700 p-2">
+		<div
+			class="max-h-72 space-y-2 overflow-y-auto rounded-md border border-slate-200 dark:border-slate-700 p-2"
+		>
 			{#if searchingUsers}
 				<p class="p-2 text-sm text-slate-500 dark:text-slate-400">{$t('search.searching')}</p>
 			{:else if searchResults.length === 0}
-				<p class="p-2 text-sm text-slate-500 dark:text-slate-400">{$t('members.noSearchResults')}</p>
+				<p class="p-2 text-sm text-slate-500 dark:text-slate-400">
+					{$t('members.noSearchResults')}
+				</p>
 			{:else}
 				{#each searchResults as user (user.id)}
-					<div class="flex items-center justify-between rounded-md px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950">
+					<div
+						class="flex items-center justify-between rounded-md px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+					>
 						<div>
 							<p class="text-sm font-medium text-slate-900 dark:text-slate-100">{user.name}</p>
 							<p class="text-xs text-slate-500 dark:text-slate-400">{user.email}</p>
@@ -533,7 +636,9 @@
 		</div>
 
 		<div class="flex justify-end gap-2 pt-2">
-			<Button variant="secondary" onclick={() => (showInviteModal = false)}>{$t('common.close')}</Button>
+			<Button variant="secondary" onclick={() => (showInviteModal = false)}
+				>{$t('common.close')}</Button
+			>
 		</div>
 	</div>
 </Modal>
@@ -555,13 +660,17 @@
 
 		<fieldset aria-describedby="tokenSurfaceHint">
 			<legend class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-				{$t('members.transportSurface')} <span class="text-red-600 dark:text-red-400" aria-hidden="true">*</span>
+				{$t('members.transportSurface')}
+				<span class="text-red-600 dark:text-red-400" aria-hidden="true">*</span>
 			</legend>
-			<p id="tokenSurfaceHint" class="mb-2 text-xs text-slate-500 dark:text-slate-400">{$t('members.transportSurfaceHint')}</p>
+			<p id="tokenSurfaceHint" class="mb-2 text-xs text-slate-500 dark:text-slate-400">
+				{$t('members.transportSurfaceHint')}
+			</p>
 			<div class="space-y-2">
 				{#each BOT_TRANSPORT_SURFACES as surface (surface)}
 					<label
-						class="flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-blue-500 dark:focus-within:ring-blue-400 {tokenSurface === surface
+						class="flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-blue-500 dark:focus-within:ring-blue-400 {tokenSurface ===
+						surface
 							? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20'
 							: 'border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800'}"
 					>
@@ -575,8 +684,14 @@
 							class="mt-0.5 h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800"
 						/>
 						<span>
-							<span class="block font-medium text-slate-900 dark:text-slate-100">{$t(surfaceLabelKey(surface))}</span>
-							<span id={`tokenSurface-${surface}-description`} class="block text-xs text-slate-500 dark:text-slate-400">{$t(surfaceDescriptionKey(surface))}</span>
+							<span class="block font-medium text-slate-900 dark:text-slate-100"
+								>{$t(surfaceLabelKey(surface))}</span
+							>
+							<span
+								id={`tokenSurface-${surface}-description`}
+								class="block text-xs text-slate-500 dark:text-slate-400"
+								>{$t(surfaceDescriptionKey(surface))}</span
+							>
 						</span>
 					</label>
 				{/each}
@@ -584,10 +699,14 @@
 		</fieldset>
 
 		<div>
-			<p class="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('members.permissions')}</p>
+			<p class="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+				{$t('members.permissions')}
+			</p>
 			<div class="flex flex-wrap gap-2">
 				{#each botPermissionOptions as permission}
-					<label class="inline-flex items-center gap-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300">
+					<label
+						class="inline-flex items-center gap-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300"
+					>
 						<input
 							type="checkbox"
 							checked={tokenPermissions.includes(permission)}
@@ -601,7 +720,10 @@
 		</div>
 
 		<div>
-			<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="tokenExpiresAt">{$t('members.expiresAt')}</label>
+			<label
+				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				for="tokenExpiresAt">{$t('members.expiresAt')}</label
+			>
 			<input
 				id="tokenExpiresAt"
 				type="date"
@@ -612,7 +734,10 @@
 		</div>
 
 		<div class="flex justify-end gap-2 pt-2">
-			<Button variant="secondary" onclick={() => (showCreateTokenModal = false)}>{$t('common.cancel')}</Button>
+			<Button variant="secondary" onclick={() => (showCreateTokenModal = false)}
+				>{$t('common.cancel')}</Button
+			>
+
 			<Button type="submit" loading={creatingToken}>{$t('members.createToken')}</Button>
 		</div>
 	</form>
@@ -635,25 +760,36 @@
 				data-testid="created-token-surface"
 			>
 				<p class="font-medium">
-					{$t('members.tokenWorksOn', { values: { surface: getSurfaceLabel(createdToken.transport_surface) } })}
+					{$t('members.tokenWorksOn', {
+						values: { surface: getSurfaceLabel(createdToken.transport_surface) }
+					})}
 				</p>
 				<p class="mt-1 text-xs">{getSurfaceDescription(createdToken.transport_surface)}</p>
 				<p class="mt-1 text-xs">{$t('members.tokenWorksOnlyThere')}</p>
 			</div>
 
 			<div>
-				<p class="mb-1 text-sm font-medium text-slate-700 dark:text-slate-300">{$t('members.fullToken')}</p>
-				<code class="block rounded-md bg-slate-100 dark:bg-slate-950 p-3 text-xs sm:text-sm text-slate-900 dark:text-slate-100 break-all">{createdToken.token}</code>
+				<p class="mb-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+					{$t('members.fullToken')}
+				</p>
+				<code
+					class="block rounded-md bg-slate-100 dark:bg-slate-950 p-3 text-xs sm:text-sm text-slate-900 dark:text-slate-100 break-all"
+					>{createdToken.token}</code
+				>
 			</div>
 
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 				<div>
 					<p class="text-xs text-slate-500 dark:text-slate-400">{$t('members.tokenPrefix')}</p>
-					<p class="text-sm font-mono text-slate-700 dark:text-slate-200">{createdToken.token_prefix}</p>
+					<p class="text-sm font-mono text-slate-700 dark:text-slate-200">
+						{createdToken.token_prefix}
+					</p>
 				</div>
 				<div>
 					<p class="text-xs text-slate-500 dark:text-slate-400">{$t('common.createdAt')}</p>
-					<p class="text-sm text-slate-700 dark:text-slate-200">{formatDate(createdToken.created_at)}</p>
+					<p class="text-sm text-slate-700 dark:text-slate-200">
+						{formatDate(createdToken.created_at)}
+					</p>
 				</div>
 			</div>
 

@@ -26,13 +26,13 @@
 	import { get } from 'svelte/store';
 	import { goto } from '$app/navigation';
 	import { t } from 'svelte-i18n';
-	import type { FlowObjectView } from '$lib/api/flow';
-	import { FlowCommandService } from '$lib/flow/command-service';
+	import type { FlowObjectView } from '#lib/api/flow.js';
+	import { FlowCommandService } from '#lib/flow/command-service.js';
 	import {
 		getNamedMap,
 		type FlowObjectRepository,
 		type OpenFlowObjectResult
-	} from '$lib/flow/object-repository';
+	} from '#lib/flow/object-repository.js';
 	import {
 		appendOrderKey,
 		applyDestination,
@@ -43,18 +43,18 @@
 		seedOrderKeys,
 		type DropSide,
 		type OrderedSibling
-	} from '$lib/flow/navigator-reorder';
-	import { FLOW_REPOSITORY_CONTEXT } from '$lib/flow/context-keys';
-	import { flowErrorDetailKey } from '$lib/flow/errors';
-	import type { FlowError } from '$lib/flow/types';
-	import { resolveRenderer } from '$lib/flow/renderer-registry';
+	} from '#lib/flow/navigator-reorder.js';
+	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
+	import { flowErrorDetailKey } from '#lib/flow/errors.js';
+	import type { FlowError } from '#lib/flow/types.js';
+	import { resolveRenderer } from '#lib/flow/renderer-registry.js';
 	import {
 		FlowNavigatorSearch,
 		SEARCH_QUERY_MAX_CHARS,
 		type SearchSnapshot
-	} from '$lib/flow/navigator-search';
-	import { FlowLagBadge, type LagBadgeState } from '$lib/flow/navigator-lag';
-	import type { AcceptedChange } from '$lib/api/flow';
+	} from '#lib/flow/navigator-search.js';
+	import { FlowLagBadge, type LagBadgeState } from '#lib/flow/navigator-lag.js';
+	import type { AcceptedChange } from '#lib/api/flow.js';
 	import CreateCollectionDialog from './CreateCollectionDialog.svelte';
 
 	// `contracts/ui-surface-v1.md` "Renderer registry": an unregistered `${objectType}:${viewType}`
@@ -84,8 +84,8 @@
 	let creatingParentId = $state<string | null | undefined>(undefined);
 
 	// v0.5 Flow search (`ui-surface-v1.md` "后续版本 UI 派生" v0.5) and the v0.6 standalone
-	// Collection create; debounce/abort/keyboard state lives in `$lib/flow/navigator-search`, the
-	// lag badge's refresh loop in `$lib/flow/navigator-lag`.
+	// Collection create; debounce/abort/keyboard state lives in `#lib/flow/navigator-search.js`, the
+	// lag badge's refresh loop in `#lib/flow/navigator-lag.js`.
 	const search = new FlowNavigatorSearch(
 		() => workspaceId,
 		(snapshot) => (searchState = snapshot),

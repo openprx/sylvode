@@ -4,8 +4,8 @@
 	// snapshot and forwards user input. The confirmation field always starts empty: the
 	// confirmation value is produced by the user typing the target id, never prefilled.
 	import { t } from 'svelte-i18n';
-	import Modal from '$lib/components/Modal.svelte';
-	import type { FlowOperationReceipt } from '$lib/api/flow';
+	import Modal from '#lib/components/Modal.svelte';
+	import type { FlowOperationReceipt } from '#lib/api/flow.js';
 	import {
 		MAINTENANCE_TITLE_KEYS,
 		OPERATION_NAME_KEYS,
@@ -17,7 +17,7 @@
 		receiptWarningKeys,
 		type MaintenanceOperation,
 		type MaintenanceSnapshot
-	} from '$lib/flow/operations-service';
+	} from '#lib/flow/operations-service.js';
 
 	interface Props {
 		open?: boolean;

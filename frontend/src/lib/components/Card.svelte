@@ -18,7 +18,9 @@
 
 	const className = $derived(
 		`rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800 dark:shadow-slate-900/50 ${paddingClasses[padding]} ${
-			hover || clickable ? 'hover:shadow-lg dark:shadow-slate-900/50 dark:hover:shadow-slate-900/50 transition-shadow' : ''
+			hover || clickable
+				? 'hover:shadow-lg dark:shadow-slate-900/50 dark:hover:shadow-slate-900/50 transition-shadow'
+				: ''
 		} ${clickable ? 'cursor-pointer' : ''}`
 	);
 </script>

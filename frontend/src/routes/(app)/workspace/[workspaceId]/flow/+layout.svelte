@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { setContext } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { t } from 'svelte-i18n';
-	import FlowNavigator from '$lib/components/flow/FlowNavigator.svelte';
-	import { FlowObjectRepository } from '$lib/flow/object-repository';
-	import { FLOW_REPOSITORY_CONTEXT } from '$lib/flow/context-keys';
+	import FlowNavigator from '#lib/components/flow/FlowNavigator.svelte';
+	import { FlowObjectRepository } from '#lib/flow/object-repository.js';
+	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
 
 	let { data, children } = $props();
 
@@ -15,13 +15,13 @@
 	const repository = new FlowObjectRepository();
 	setContext(FLOW_REPOSITORY_CONTEXT, repository);
 
-	const selectedObjectId = $derived(($page.params as { objectId?: string }).objectId ?? null);
+	const selectedObjectId = $derived((page.params as { objectId?: string }).objectId ?? null);
 
 	// Below `lg` the navigator is a drawer over the content, closed by default, so the object,
 	// convert and job pages get the full width (390px phones). From `lg` up it is a fixed column.
 	let navOpen = $state(false);
 	$effect(() => {
-		void $page.url.pathname;
+		void page.url.pathname;
 		navOpen = false;
 	});
 
@@ -34,8 +34,12 @@
 
 {#if !data.flowEnabled}
 	<div class="flex h-full min-h-[60vh] flex-col items-center justify-center gap-2 p-8 text-center">
-		<h1 class="text-lg font-semibold text-slate-900 dark:text-slate-100">{$t('flow.route.disabledTitle')}</h1>
-		<p class="max-w-md text-sm text-slate-500 dark:text-slate-400">{$t('flow.route.disabledBody')}</p>
+		<h1 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			{$t('flow.route.disabledTitle')}
+		</h1>
+		<p class="max-w-md text-sm text-slate-500 dark:text-slate-400">
+			{$t('flow.route.disabledBody')}
+		</p>
 	</div>
 {:else}
 	<div class="flex h-[calc(100vh-4rem)] flex-col overflow-hidden lg:flex-row">
@@ -60,7 +64,7 @@
 						stroke-linecap="round"
 						stroke-linejoin="round"
 						d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5"
-					/>
+					></path>
 				</svg>
 				<span>{$t(navOpen ? 'flow.nav.hideNavigator' : 'flow.nav.showNavigator')}</span>
 			</button>

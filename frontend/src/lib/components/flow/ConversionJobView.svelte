@@ -6,19 +6,19 @@
 	import { onDestroy, onMount, tick, untrack } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { resolve } from '$app/paths';
-	import Card from '$lib/components/Card.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import type { FlowCommandService } from '$lib/flow/command-service';
+	import Card from '#lib/components/Card.svelte';
+	import EmptyState from '#lib/components/EmptyState.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import type { FlowCommandService } from '#lib/flow/command-service.js';
 	import {
 		ConversionJobController,
 		jobErrorKey,
 		jobStatusKey,
 		jobTargetTypeKey,
 		type ConversionJobSnapshot
-	} from '$lib/flow/conversion-job';
-	import { parseConversionWarnings } from '$lib/flow/convert-wizard';
-	import type { FlowObjectRepository } from '$lib/flow/object-repository';
+	} from '#lib/flow/conversion-job.js';
+	import { parseConversionWarnings } from '#lib/flow/convert-wizard.js';
+	import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
 
 	interface Props {
 		workspaceId: string;

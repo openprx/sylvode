@@ -14,7 +14,9 @@ export interface WorkspaceMember {
 
 export const membersApi = {
 	list(workspaceId: string): Promise<ApiResult<PaginatedData<WorkspaceMember>>> {
-		return apiClient.get<PaginatedData<WorkspaceMember>>(`/api/v1/workspaces/${workspaceId}/members`);
+		return apiClient.get<PaginatedData<WorkspaceMember>>(
+			`/api/v1/workspaces/${workspaceId}/members`
+		);
 	},
 
 	add(

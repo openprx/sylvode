@@ -1,6 +1,6 @@
 import { get, writable } from 'svelte/store';
-import { projectsApi, type Project } from '$lib/api/projects';
-import { workspacesApi } from '$lib/api/workspaces';
+import { projectsApi, type Project } from '#lib/api/projects.js';
+import { workspacesApi } from '#lib/api/workspaces.js';
 
 export interface ProjectOption {
 	id: string;
@@ -51,7 +51,9 @@ function createProjectOptionsStore() {
 
 		return projectResults
 			.flat()
-			.sort((a, b) => `${a.workspace_name}/${a.name}`.localeCompare(`${b.workspace_name}/${b.name}`));
+			.sort((a, b) =>
+				`${a.workspace_name}/${a.name}`.localeCompare(`${b.workspace_name}/${b.name}`)
+			);
 	}
 
 	async function ensureLoaded(force = false): Promise<ProjectOption[]> {

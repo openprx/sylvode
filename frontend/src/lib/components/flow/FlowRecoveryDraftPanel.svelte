@@ -3,8 +3,8 @@
 	// recovery/limit 状态必须在 canvas 邻近持续可见"). Lists every intent that could not be replayed
 	// and why; the download and copy actions are the caller's (`ObjectRepository` builds both).
 	import { t } from 'svelte-i18n';
-	import type { RecoveryDraftEntry } from '$lib/flow/outbox';
-	import { flowErrorDetailKey } from '$lib/flow/errors';
+	import type { RecoveryDraftEntry } from '#lib/flow/outbox.js';
+	import { flowErrorDetailKey } from '#lib/flow/errors.js';
 
 	interface Props {
 		entries: ReadonlyArray<RecoveryDraftEntry>;

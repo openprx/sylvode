@@ -20,12 +20,20 @@ export const importExportApi = {
 	async exportProject(projectId: string): Promise<ApiResult<unknown>> {
 		const result = await apiClient.get<ExportPayload>(`/api/v1/export/project/${projectId}`);
 		if (result.code !== 0) {
-			return { code: result.code, message: result.message || get(t)('project.exportFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('project.exportFailed'),
+				data: null
+			};
 		}
 
 		if (result.data?.format === 'json' && typeof result.data.content === 'string') {
 			try {
-				return { code: 0, message: result.message, data: JSON.parse(result.data.content) as unknown };
+				return {
+					code: 0,
+					message: result.message,
+					data: JSON.parse(result.data.content) as unknown
+				};
 			} catch {
 				return { code: 0, message: result.message, data: result.data.content };
 			}
@@ -35,6 +43,9 @@ export const importExportApi = {
 	},
 
 	importProject(workspaceId: string, payload: unknown): Promise<ApiResult<ImportedProjectSummary>> {
-		return apiClient.post<ImportedProjectSummary>(`/api/v1/workspaces/${workspaceId}/import/project`, payload);
+		return apiClient.post<ImportedProjectSummary>(
+			`/api/v1/workspaces/${workspaceId}/import/project`,
+			payload
+		);
 	}
 };

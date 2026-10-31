@@ -1044,7 +1044,7 @@ suite.check('registry: collection:table, collection:board and record:panel load 
 		'no static component import'
 	);
 	assert(
-		registry.includes("import('$lib/components/flow/collection/CollectionTable.svelte')"),
+		registry.includes("import('#lib/components/flow/collection/CollectionTable.svelte')"),
 		'dynamic import'
 	);
 });

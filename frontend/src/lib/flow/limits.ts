@@ -69,7 +69,9 @@ export const DEFAULT_FLOW_LIMITS: FlowLimitsV1 = {
 /** Every `FlowLimitsV1` key, taken from the fallback object so the list can never drift from the
  * interface: `DEFAULT_FLOW_LIMITS` is typed `FlowLimitsV1`, so adding a wire field without adding
  * it here is a compile error, and this array is derived from that object rather than re-typed. */
-export const FLOW_LIMITS_FIELDS = Object.keys(DEFAULT_FLOW_LIMITS) as ReadonlyArray<keyof FlowLimitsV1>;
+export const FLOW_LIMITS_FIELDS = Object.keys(DEFAULT_FLOW_LIMITS) as ReadonlyArray<
+	keyof FlowLimitsV1
+>;
 
 /** lowerCamelCase field name -> its snake_case name on the wire. Derived, never hand-mapped:
  * `presencePayloadBytesMax` -> `presence_payload_bytes_max`. */
@@ -152,7 +154,10 @@ export interface LimitViolation {
 	readonly observed: number;
 }
 
-export function checkUpdateBytes(bytes: Uint8Array, limits: FlowLimitsV1 = DEFAULT_FLOW_LIMITS): LimitViolation | null {
+export function checkUpdateBytes(
+	bytes: Uint8Array,
+	limits: FlowLimitsV1 = DEFAULT_FLOW_LIMITS
+): LimitViolation | null {
 	if (bytes.byteLength > limits.updateBytesMax) {
 		return { limitKind: 'update_bytes', limit: limits.updateBytesMax, observed: bytes.byteLength };
 	}
@@ -164,12 +169,19 @@ export function checkTextBlockChars(
 	limits: FlowLimitsV1 = DEFAULT_FLOW_LIMITS
 ): LimitViolation | null {
 	if (text.length > limits.textBlockCharsMax) {
-		return { limitKind: 'text_block_chars', limit: limits.textBlockCharsMax, observed: text.length };
+		return {
+			limitKind: 'text_block_chars',
+			limit: limits.textBlockCharsMax,
+			observed: text.length
+		};
 	}
 	return null;
 }
 
-export function checkTreeDepth(depth: number, limits: FlowLimitsV1 = DEFAULT_FLOW_LIMITS): LimitViolation | null {
+export function checkTreeDepth(
+	depth: number,
+	limits: FlowLimitsV1 = DEFAULT_FLOW_LIMITS
+): LimitViolation | null {
 	if (depth > limits.treeDepthMax) {
 		return { limitKind: 'tree_depth', limit: limits.treeDepthMax, observed: depth };
 	}

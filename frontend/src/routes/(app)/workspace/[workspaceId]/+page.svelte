@@ -1,17 +1,17 @@
 <script lang="ts">
 	// Workspace home (`/workspace/{id}`, task FP-N6): the workspace's entry point into its product
 	// surfaces. Card visibility, the recent-project cut and the loader live in
-	// `$lib/workspace/home`; the Flow flag comes from the shared fail-closed `flowFeatureStore`,
+	// `#lib/workspace/home`; the Flow flag comes from the shared fail-closed `flowFeatureStore`,
 	// which the app layout already refreshes for this workspace (no second flag request here).
 	import { onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import type { Project } from '$lib/api/projects';
-	import type { Workspace } from '$lib/api/workspaces';
-	import { flowFeatureStore } from '$lib/stores/flow-feature';
-	import { requireRouteParam } from '$lib/utils/route-params';
+	import EmptyState from '#lib/components/EmptyState.svelte';
+	import type { Project } from '#lib/api/projects.js';
+	import type { Workspace } from '#lib/api/workspaces.js';
+	import { flowFeatureStore } from '#lib/stores/flow-feature.js';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import {
 		WORKSPACE_ADMIN_LINKS,
 		defaultWorkspaceHomeDeps,
@@ -20,9 +20,9 @@
 		rememberWorkspaceName,
 		workspaceHomeCards,
 		type WorkspaceRole
-	} from '$lib/workspace/home';
+	} from '#lib/workspace/home.js';
 
-	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
+	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 
 	let view = $state<'loading' | 'ready' | 'not_found' | 'failed'>('loading');
 	let workspace = $state.raw<Workspace | null>(null);

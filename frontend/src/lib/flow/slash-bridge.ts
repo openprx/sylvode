@@ -19,7 +19,7 @@
 //   `form.view`; otherwise it is a placeholder and no Forms data is requested at all.
 // - Errors are classified by `error_code` only (`errors.ts`), never by `message`.
 
-import type { ApiResult, PaginatedData } from '$lib/api/client';
+import type { ApiResult, PaginatedData } from '#lib/api/client.js';
 import type {
 	AcceptedChange,
 	BridgePermissionState,
@@ -29,8 +29,8 @@ import type {
 	FlowReferenceItem,
 	FlowReferenceList,
 	FlowReferenceReceipt
-} from '$lib/api/flow';
-import { formsApi, type FormField, type FormRecord, type UniversalForm } from '$lib/api/forms';
+} from '#lib/api/flow.js';
+import { formsApi, type FormField, type FormRecord, type UniversalForm } from '#lib/api/forms.js';
 import { flowErrorFromResult } from './command-service';
 import { flowErrorI18nKey } from './errors';
 import { listWorkspaceProjects } from './package-export';

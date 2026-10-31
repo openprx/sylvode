@@ -2,15 +2,15 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { authStore } from '$lib/stores/auth';
-	import { vetoApi, type VetoerScope } from '$lib/api/veto';
-	import { isAdminUser } from '$lib/utils/auth';
-	import { trustApi, type Appeal, type AppealStatus } from '$lib/api/trust';
-	import { toast } from '$lib/stores/toast';
-	import Button from '$lib/components/Button.svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import Input from '$lib/components/Input.svelte';
-	import Textarea from '$lib/components/Textarea.svelte';
+	import { authStore } from '#lib/stores/auth.js';
+	import { vetoApi, type VetoerScope } from '#lib/api/veto.js';
+	import { isAdminUser } from '#lib/utils/auth.js';
+	import { trustApi, type Appeal, type AppealStatus } from '#lib/api/trust.js';
+	import { toast } from '#lib/stores/toast.js';
+	import Button from '#lib/components/Button.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import Input from '#lib/components/Input.svelte';
+	import Textarea from '#lib/components/Textarea.svelte';
 
 	let myVetoScopeKeys = $state<Set<string>>(new Set());
 
@@ -171,23 +171,33 @@
 </svelte:head>
 
 <div class="mx-auto max-w-6xl space-y-4">
-	<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+	>
 		<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">{$t('appeals.title')}</h1>
+				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+					{$t('appeals.title')}
+				</h1>
 				<p class="text-sm text-slate-500">{$t('appeals.subtitle')}</p>
 			</div>
 			<Button onclick={() => (showCreate = true)}>{$t('appeals.create')}</Button>
 		</div>
 
 		<div class="mb-4 flex flex-wrap gap-2">
-			<select bind:value={statusFilter} onchange={load} class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+			<select
+				bind:value={statusFilter}
+				onchange={load}
+				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+			>
 				<option value="all">{$t('appeals.status.all')}</option>
 				<option value="pending">{$t('appeals.status.pending')}</option>
 				<option value="accepted">{$t('appeals.status.accepted')}</option>
 				<option value="rejected">{$t('appeals.status.rejected')}</option>
 			</select>
-			<label class="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+			<label
+				class="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+			>
 				<input type="checkbox" bind:checked={mineOnly} onchange={load} />
 				{$t('appeals.mineOnly')}
 			</label>
@@ -204,23 +214,47 @@
 						<div class="flex flex-wrap items-start justify-between gap-3">
 							<div class="min-w-0 flex-1">
 								<div class="flex items-center gap-2">
-									<span class="font-medium text-slate-900 dark:text-slate-100">{$t('appeals.logId', { values: { id: item.log_id } })}</span>
-									<span class={`rounded px-2 py-0.5 text-xs ${statusTone(item.status)}`}>{appealStatusLabel(item.status)}</span>
+									<span class="font-medium text-slate-900 dark:text-slate-100"
+										>{$t('appeals.logId', { values: { id: item.log_id } })}</span
+									>
+									<span class={`rounded px-2 py-0.5 text-xs ${statusTone(item.status)}`}
+										>{appealStatusLabel(item.status)}</span
+									>
 								</div>
 								<p class="mt-1 text-sm text-slate-700 dark:text-slate-300">{item.reason}</p>
-								<p class="mt-1 text-xs text-slate-500">{$t('appeals.meta', { values: { appellant: item.appellant_id, created: new Date(item.created_at).toLocaleString() } })}</p>
+								<p class="mt-1 text-xs text-slate-500">
+									{$t('appeals.meta', {
+										values: {
+											appellant: item.appellant_id,
+											created: new Date(item.created_at).toLocaleString()
+										}
+									})}
+								</p>
 								{#if item.review_note}
-									<p class="mt-1 text-xs text-slate-500">{$t('appeals.reviewNote')}: {item.review_note}</p>
+									<p class="mt-1 text-xs text-slate-500">
+										{$t('appeals.reviewNote')}: {item.review_note}
+									</p>
 								{/if}
 							</div>
 
 							<div class="flex flex-wrap gap-2">
 								{#if item.status === 'pending' && canReviewAppeal(item)}
-									<Button size="sm" onclick={() => reviewAppeal(item, 'accepted')} loading={reviewingId === item.id}>{$t('appeals.accept')}</Button>
-									<Button size="sm" variant="danger" onclick={() => reviewAppeal(item, 'rejected')} loading={reviewingId === item.id}>{$t('appeals.reject')}</Button>
+									<Button
+										size="sm"
+										onclick={() => reviewAppeal(item, 'accepted')}
+										loading={reviewingId === item.id}>{$t('appeals.accept')}</Button
+									>
+									<Button
+										size="sm"
+										variant="danger"
+										onclick={() => reviewAppeal(item, 'rejected')}
+										loading={reviewingId === item.id}>{$t('appeals.reject')}</Button
+									>
 								{/if}
 								{#if item.status === 'pending' && item.appellant_id === $authStore.user?.id}
-									<Button size="sm" variant="secondary" onclick={() => removeAppeal(item)}>{$t('common.delete')}</Button>
+									<Button size="sm" variant="secondary" onclick={() => removeAppeal(item)}
+										>{$t('common.delete')}</Button
+									>
 								{/if}
 							</div>
 						</div>
@@ -241,12 +275,18 @@
 	>
 		<Input type="number" label={$t('appeals.logIdInput')} bind:value={createForm.log_id} required />
 		<Textarea label={$t('appeals.reasonInput')} bind:value={createForm.reason} rows={4} required />
-		<Textarea label={$t('appeals.evidenceInput')} bind:value={createForm.evidence} rows={3} hint={$t('appeals.evidenceHint')} />
+		<Textarea
+			label={$t('appeals.evidenceInput')}
+			bind:value={createForm.evidence}
+			rows={3}
+			hint={$t('appeals.evidenceHint')}
+		/>
 		{#if canReview}
 			<Textarea label={$t('appeals.reviewNote')} bind:value={reviewForm.review_note} rows={2} />
 		{/if}
 		<div class="flex justify-end gap-2">
-			<Button variant="secondary" onclick={() => (showCreate = false)}>{$t('common.cancel')}</Button>
+			<Button variant="secondary" onclick={() => (showCreate = false)}>{$t('common.cancel')}</Button
+			>
 			<Button type="submit" loading={saving}>{$t('common.submit')}</Button>
 		</div>
 	</form>

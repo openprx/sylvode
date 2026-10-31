@@ -29,7 +29,8 @@
 			'bg-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100 focus:ring-slate-500 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800 dark:focus:ring-slate-400 disabled:hover:bg-transparent dark:disabled:hover:bg-transparent',
 		danger:
 			'bg-transparent border border-slate-300 text-slate-600 hover:border-red-300 hover:text-red-600 hover:bg-red-50 focus:ring-red-500 dark:border-slate-700 dark:text-slate-400 dark:hover:border-red-700 dark:hover:text-red-400 dark:hover:bg-red-950/30 dark:focus:ring-red-400',
-		dangerSolid: 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 dark:focus:ring-red-400 disabled:hover:bg-red-600',
+		dangerSolid:
+			'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 dark:focus:ring-red-400 disabled:hover:bg-red-600',
 		ghost:
 			'bg-transparent text-slate-700 hover:bg-slate-100 dark:bg-slate-800 focus:ring-slate-500 dark:focus:ring-slate-400 disabled:hover:bg-transparent dark:text-slate-200 dark:hover:bg-slate-700'
 	};

@@ -8,7 +8,7 @@
 		diffKindKey,
 		type HistoryDiffLoader,
 		type HistoryDiffResult
-	} from '$lib/flow/history-diff';
+	} from '#lib/flow/history-diff.js';
 
 	interface Props {
 		seq: number;

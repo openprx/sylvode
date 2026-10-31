@@ -33,9 +33,9 @@ import {
 	type FlowRelationsQuery,
 	type FlowSearchQuery,
 	type FlowSearchResponse
-} from '$lib/api/flow';
-import type { ApiResult } from '$lib/api/client';
-import { authStore } from '$lib/stores/auth';
+} from '#lib/api/flow.js';
+import type { ApiResult } from '#lib/api/client.js';
+import { authStore } from '#lib/stores/auth.js';
 import { FlowCommandService } from './command-service';
 import {
 	LoroObjectSession,
@@ -399,7 +399,10 @@ export class FlowObjectRepository {
 						target.import(update.bytes);
 					}
 					lastKnownFrontierBase64 = payload.headFrontier;
-					projection.applyEngineDiff({ documentId: object.document_id } satisfies EngineDiff, payload.headSeq);
+					projection.applyEngineDiff(
+						{ documentId: object.document_id } satisfies EngineDiff,
+						payload.headSeq
+					);
 					void writeCachedSnapshot(userId, {
 						objectId: input.objectId,
 						snapshotBytes: target.export({ mode: 'snapshot' }),
@@ -414,7 +417,10 @@ export class FlowObjectRepository {
 					// change, so it never re-enters the outbox below.
 					if (notice.remoteBytes) liveDoc().import(notice.remoteBytes);
 					lastKnownFrontierBase64 = notice.headFrontier;
-					projection.applyEngineDiff({ documentId: object.document_id } satisfies EngineDiff, notice.headSeq);
+					projection.applyEngineDiff(
+						{ documentId: object.document_id } satisfies EngineDiff,
+						notice.headSeq
+					);
 				},
 				onFlowError: (error: FlowError) => {
 					flowErrorStore.set(error);
@@ -518,7 +524,10 @@ export class FlowObjectRepository {
 		// display-only best-effort seed value that the projection re-derives from the real doc.
 		const cached = await readCachedSnapshot(userId, input.objectId);
 		if (cached && !input.signal.aborted) {
-			projection.applyEngineDiff({ documentId: object.document_id } satisfies EngineDiff, cached.headSeq);
+			projection.applyEngineDiff(
+				{ documentId: object.document_id } satisfies EngineDiff,
+				cached.headSeq
+			);
 		}
 
 		// The permission re-check runs beside the connect: a `view`/`comment` user gets a
@@ -557,7 +566,10 @@ export class FlowObjectRepository {
 		const result = await flowApi.getGrants(objectId);
 		if (result.code === 0 && result.data) return WRITABLE_LEVELS.has(result.data.effective_level);
 		const typed = flowErrorFromEnvelope(result);
-		if (typed && (typed.code === 'forbidden' || typed.code === 'not_found' || typed.code === 'policy_rejected')) {
+		if (
+			typed &&
+			(typed.code === 'forbidden' || typed.code === 'not_found' || typed.code === 'policy_rejected')
+		) {
 			return false;
 		}
 		return true;
@@ -575,7 +587,10 @@ export class FlowObjectRepository {
 		}
 	}
 
-	private async rebuildFromSnapshotPayload(entry: OpenEntry, payload: SnapshotPayload): Promise<void> {
+	private async rebuildFromSnapshotPayload(
+		entry: OpenEntry,
+		payload: SnapshotPayload
+	): Promise<void> {
 		const { LoroDoc } = await loadLoro();
 		const fresh = new LoroDoc() as unknown as LoroDocType;
 		fresh.import(payload.snapshotBytes);
@@ -585,12 +600,20 @@ export class FlowObjectRepository {
 		entry.rebuildDone = null;
 	}
 
-	private swapDoc(entry: OpenEntry, fresh: LoroDocType, headSeq: number, fallbackFrontier: () => string): void {
+	private swapDoc(
+		entry: OpenEntry,
+		fresh: LoroDocType,
+		headSeq: number,
+		fallbackFrontier: () => string
+	): void {
 		entry.retired.push(entry.current);
 		entry.current = fresh;
 		const frontier = this.frontiers.get(entry.handle.objectId) ?? fallbackFrontier;
 		this.subscribeLocal(entry, frontier);
-		entry.projection.applyEngineDiff({ documentId: entry.handle.documentId } satisfies EngineDiff, headSeq);
+		entry.projection.applyEngineDiff(
+			{ documentId: entry.handle.documentId } satisfies EngineDiff,
+			headSeq
+		);
 		entry.generationStore.update((n) => n + 1);
 	}
 
@@ -672,7 +695,8 @@ export class FlowObjectRepository {
 
 	private recoveryDraftDocument(objectId: string) {
 		const entry = this.open_.get(objectId);
-		if (!entry) throw new Error(`FlowObjectRepository.exportRecoveryDraft: ${objectId} is not open`);
+		if (!entry)
+			throw new Error(`FlowObjectRepository.exportRecoveryDraft: ${objectId} is not open`);
 		return buildRecoveryDraftDocument({
 			objectId,
 			documentId: entry.handle.documentId,
@@ -685,11 +709,18 @@ export class FlowObjectRepository {
 	 * WebSocket session -- callers that need a fresh snapshot without tearing down the current
 	 * connection (e.g. a manual "reload from server" recovery action) use this instead of
 	 * `ObjectSession.reconnect`. */
-	async bootstrap(objectId: string, known?: { seq: number; frontier: string }): Promise<FlowBootstrap> {
-		const result = await flowApi.getBootstrap(objectId, known ? { known_seq: known.seq, known_frontier: known.frontier } : {});
+	async bootstrap(
+		objectId: string,
+		known?: { seq: number; frontier: string }
+	): Promise<FlowBootstrap> {
+		const result = await flowApi.getBootstrap(
+			objectId,
+			known ? { known_seq: known.seq, known_frontier: known.frontier } : {}
+		);
 		if (result.code !== 0 || !result.data) {
 			throw {
-				code: result.code === 404 ? 'not_found' : result.code === 409 ? 'resync_required' : 'forbidden',
+				code:
+					result.code === 404 ? 'not_found' : result.code === 409 ? 'resync_required' : 'forbidden',
 				recoverable: result.code === 409
 			} satisfies FlowError;
 		}
@@ -726,7 +757,10 @@ export class FlowObjectRepository {
 		for (const update of bootstrap.tail_updates) {
 			entry.doc.import(fromBase64(update.bytes));
 		}
-		entry.projection.applyEngineDiff({ documentId: entry.handle.documentId } satisfies EngineDiff, bootstrap.head_seq);
+		entry.projection.applyEngineDiff(
+			{ documentId: entry.handle.documentId } satisfies EngineDiff,
+			bootstrap.head_seq
+		);
 	}
 
 	/** One object's current server view (`GET /flow/objects/{id}`) without opening a collaboration

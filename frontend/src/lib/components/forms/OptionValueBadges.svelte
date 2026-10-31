@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
-	import type { FormField } from '$lib/api/forms';
+	import type { FormField } from '#lib/api/forms.js';
 
 	interface Props {
 		field: FormField | null;
@@ -23,19 +23,29 @@
 
 	function optionColor(option: string): string {
 		if (!field) return '';
-		return sanitizeOptionColor(field.option_colors?.[option] ?? field.option_colors?.[option.trim()]);
+		return sanitizeOptionColor(
+			field.option_colors?.[option] ?? field.option_colors?.[option.trim()]
+		);
 	}
 
 	function optionDescription(option: string): string {
-		return field?.option_descriptions?.[option]?.trim() ?? field?.option_descriptions?.[option.trim()]?.trim() ?? '';
+		return (
+			field?.option_descriptions?.[option]?.trim() ??
+			field?.option_descriptions?.[option.trim()]?.trim() ??
+			''
+		);
 	}
 
 	function optionGroup(option: string): string {
-		return field?.option_groups?.[option]?.trim() ?? field?.option_groups?.[option.trim()]?.trim() ?? '';
+		return (
+			field?.option_groups?.[option]?.trim() ?? field?.option_groups?.[option.trim()]?.trim() ?? ''
+		);
 	}
 
 	function optionArchived(option: string): boolean {
-		return Boolean(field?.option_archived?.includes(option) || field?.option_archived?.includes(option.trim()));
+		return Boolean(
+			field?.option_archived?.includes(option) || field?.option_archived?.includes(option.trim())
+		);
 	}
 
 	function optionDisplayLabel(option: string): string {
@@ -53,7 +63,9 @@
 		if (field.type === 'multi_select') {
 			return Array.isArray(value)
 				? value
-						.map((item) => (typeof item === 'string' || typeof item === 'number' ? String(item).trim() : ''))
+						.map((item) =>
+							typeof item === 'string' || typeof item === 'number' ? String(item).trim() : ''
+						)
 						.filter(Boolean)
 				: [];
 		}

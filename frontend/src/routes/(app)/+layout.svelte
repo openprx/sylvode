@@ -1,24 +1,24 @@
 <script lang="ts">
-	import '$lib/i18n';
+	import '#lib/i18n/index.js';
 	import { onMount } from 'svelte';
-	import { authStore, verifySession } from '$lib/stores/auth';
-	import { authApi } from '$lib/api/auth';
-	import { notificationsApi } from '$lib/api/notifications';
-	import SearchModal from '$lib/components/SearchModal.svelte';
+	import { authStore, verifySession } from '#lib/stores/auth.js';
+	import { authApi } from '#lib/api/auth.js';
+	import { notificationsApi } from '#lib/api/notifications.js';
+	import SearchModal from '#lib/components/SearchModal.svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
-	import { isAdminUser } from '$lib/utils/auth';
+	import { page } from '$app/state';
+	import { isAdminUser } from '#lib/utils/auth.js';
 	import { t } from 'svelte-i18n';
-	import { projectOptionsStore } from '$lib/stores/project-options';
-	import { workspacesApi } from '$lib/api/workspaces';
-	import { flowFeatureStore } from '$lib/stores/flow-feature';
+	import { projectOptionsStore } from '#lib/stores/project-options.js';
+	import { workspacesApi } from '#lib/api/workspaces.js';
+	import { flowFeatureStore } from '#lib/stores/flow-feature.js';
 	import {
 		isWorkspaceHomePath,
 		workspaceHomeNames,
 		workspaceHomeTitle,
 		type WorkspaceRole
-	} from '$lib/workspace/home';
-	import { WorkspaceRoleTracker, showWorkspaceAdminLinks } from '$lib/workspace/role';
+	} from '#lib/workspace/home.js';
+	import { WorkspaceRoleTracker, showWorkspaceAdminLinks } from '#lib/workspace/role.js';
 
 	let { children } = $props();
 
@@ -42,7 +42,7 @@
 	);
 
 	const appPageTitle = $derived.by(() => {
-		const pathname = $page.url.pathname;
+		const pathname = page.url.pathname;
 
 		if (pathname === '/workspace') return $t('pageTitle.workspace');
 		if (isWorkspaceHomePath(pathname)) {
@@ -68,9 +68,11 @@
 		if (/^\/proposals\/[^/]+$/.test(pathname)) return $t('pageTitle.proposalDetailFallback');
 		if (pathname === '/trust-board') return $t('pageTitle.trustBoard');
 		if (pathname === '/trust-scores/appeals') return $t('pageTitle.trustAppeals');
-		if (/^\/users\/[^/]+\/trust$/.test(pathname)) return $t('pageTitle.userTrust', { values: { id: '' } });
+		if (/^\/users\/[^/]+\/trust$/.test(pathname))
+			return $t('pageTitle.userTrust', { values: { id: '' } });
 		if (/^\/projects\/[^/]+\/ai-agents$/.test(pathname)) return $t('pageTitle.aiAgents');
-		if (/^\/projects\/[^/]+\/audit-reports\/[^/]+$/.test(pathname)) return $t('pageTitle.auditReportDetail');
+		if (/^\/projects\/[^/]+\/audit-reports\/[^/]+$/.test(pathname))
+			return $t('pageTitle.auditReportDetail');
 		if (/^\/projects\/[^/]+\/audit-reports$/.test(pathname)) return $t('pageTitle.auditReports');
 		if (pathname === '/search') return $t('pageTitle.search');
 		if (pathname === '/inbox') return $t('pageTitle.inbox');
@@ -94,21 +96,28 @@
 		if (/^\/workspace\/[^/]+\/flow(\/[^/]+)?$/.test(pathname)) return $t('pageTitle.flowWorkspace');
 		if (/^\/workspace\/[^/]+\/members$/.test(pathname)) return $t('pageTitle.workspaceMembers');
 		if (/^\/workspace\/[^/]+\/webhooks$/.test(pathname)) return $t('pageTitle.workspaceWebhooks');
-		if (/^\/workspace\/[^/]+\/connections$/.test(pathname)) return $t('pageTitle.workspaceConnections');
+		if (/^\/workspace\/[^/]+\/connections$/.test(pathname))
+			return $t('pageTitle.workspaceConnections');
 		if (/^\/workspace\/[^/]+\/workflows$/.test(pathname)) return $t('pageTitle.workspaceWorkflows');
-		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/issues\/[^/]+$/.test(pathname)) return $t('pageTitle.issueDetail');
-		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/issues$/.test(pathname)) return $t('pageTitle.issueList');
-		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/board$/.test(pathname)) return $t('pageTitle.projectBoard');
-		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/cycles$/.test(pathname)) return $t('pageTitle.projectCycles');
-		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/forms$/.test(pathname)) return $t('pageTitle.projectForms');
-		if (/^\/workspace\/[^/]+\/projects\/[^/]+$/.test(pathname)) return $t('pageTitle.projectDetail');
+		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/issues\/[^/]+$/.test(pathname))
+			return $t('pageTitle.issueDetail');
+		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/issues$/.test(pathname))
+			return $t('pageTitle.issueList');
+		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/board$/.test(pathname))
+			return $t('pageTitle.projectBoard');
+		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/cycles$/.test(pathname))
+			return $t('pageTitle.projectCycles');
+		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/forms$/.test(pathname))
+			return $t('pageTitle.projectForms');
+		if (/^\/workspace\/[^/]+\/projects\/[^/]+$/.test(pathname))
+			return $t('pageTitle.projectDetail');
 		if (/^\/workspace\/[^/]+\/projects$/.test(pathname)) return $t('pageTitle.workspaceProjects');
 
 		return $t('pageTitle.appDefault');
 	});
 
 	const currentWorkspaceId = $derived.by(() => {
-		const match = $page.url.pathname.match(/^\/workspace\/([^/]+)/);
+		const match = page.url.pathname.match(/^\/workspace\/([^/]+)/);
 		return match?.[1] ?? null;
 	});
 
@@ -129,7 +138,11 @@
 				{ href: `/workspace/${currentWorkspaceId}/members`, label: $t('nav.members') },
 				{ href: `/workspace/${currentWorkspaceId}/webhooks`, label: $t('nav.webhook') },
 				{ href: `/workspace/${currentWorkspaceId}/connections`, label: $t('nav.connections') },
-				{ href: `/workspace/${currentWorkspaceId}/settings`, label: $t('nav.workspaceSettings'), exact: true },
+				{
+					href: `/workspace/${currentWorkspaceId}/settings`,
+					label: $t('nav.workspaceSettings'),
+					exact: true
+				},
 				{ href: `/workspace/${currentWorkspaceId}/settings/flow`, label: $t('nav.flowSettings') }
 			);
 		}
@@ -193,9 +206,9 @@
 
 	function isActive(href: string, exact = false): boolean {
 		if (href === '/' || exact) {
-			return $page.url.pathname === href;
+			return page.url.pathname === href;
 		}
-		return $page.url.pathname === href || $page.url.pathname.startsWith(`${href}/`);
+		return page.url.pathname === href || page.url.pathname.startsWith(`${href}/`);
 	}
 
 	function isGovernanceRoute(pathname: string): boolean {
@@ -222,18 +235,18 @@
 	}
 
 	$effect(() => {
-		$page.url.pathname;
+		page.url.pathname;
 		sidebarOpen = false;
 	});
 </script>
 
-<svelte:window on:keydown={handleGlobalSearchShortcut} />
-<svelte:head>
-	<title>{appPageTitle}</title>
-</svelte:head>
+<svelte:window onkeydown={handleGlobalSearchShortcut} />
+<svelte:head><title>{appPageTitle}</title></svelte:head>
 
 <div class="min-h-screen bg-slate-50 dark:bg-slate-950">
-	<header class="sticky top-0 z-20 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+	<header
+		class="sticky top-0 z-20 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+	>
 		<div class="flex items-center justify-between gap-3 px-4 py-3">
 			<div class="flex items-center gap-3">
 				<button
@@ -242,10 +255,16 @@
 					aria-label={$t('nav.toggleSidebar')}
 				>
 					<svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M4 6h16M4 12h16M4 18h16"
+						></path>
 					</svg>
 				</button>
-				<a href="/workspace" class="text-xl font-bold text-slate-900 dark:text-slate-100">Sylvode</a>
+				<a href="/workspace" class="text-xl font-bold text-slate-900 dark:text-slate-100">Sylvode</a
+				>
 			</div>
 
 			<div class="hidden flex-1 justify-center md:flex">
@@ -255,13 +274,18 @@
 					class="w-full max-w-md rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-left text-sm text-slate-500 hover:bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
 				>
 					{$t('search.placeholder')}
-					<span class="float-right rounded border border-slate-300 px-1.5 text-xs text-slate-400 dark:border-slate-600 dark:text-slate-400">Ctrl+K</span>
+					<span
+						class="float-right rounded border border-slate-300 px-1.5 text-xs text-slate-400 dark:border-slate-600 dark:text-slate-400"
+						>Ctrl+K</span
+					>
 				</button>
 			</div>
 
 			<div class="flex items-center gap-3">
 				{#if !loadingProfile && $authStore.user}
-					<span class="hidden text-sm text-slate-600 dark:text-slate-400 sm:inline">{$authStore.user.email}</span>
+					<span class="hidden text-sm text-slate-600 dark:text-slate-400 sm:inline"
+						>{$authStore.user.email}</span
+					>
 				{/if}
 				<button
 					type="button"
@@ -269,11 +293,24 @@
 					class="relative rounded-md p-2 text-slate-700 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
 					aria-label={$t('nav.notifications')}
 				>
-					<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.4-1.4a2 2 0 01-.6-1.44V11a6 6 0 00-4-5.66V5a2 2 0 10-4 0v.34A6 6 0 006 11v3.16a2 2 0 01-.6 1.44L4 17h5m6 0a3 3 0 01-6 0"></path>
+					<svg
+						class="h-5 w-5"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+						aria-hidden="true"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M15 17h5l-1.4-1.4a2 2 0 01-.6-1.44V11a6 6 0 00-4-5.66V5a2 2 0 10-4 0v.34A6 6 0 006 11v3.16a2 2 0 01-.6 1.44L4 17h5m6 0a3 3 0 01-6 0"
+						></path>
 					</svg>
 					{#if unreadCount > 0}
-						<span class="absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-xs text-white">
+						<span
+							class="absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-xs text-white"
+						>
 							{unreadCount > 99 ? '99+' : unreadCount}
 						</span>
 					{/if}
@@ -298,7 +335,10 @@
 				<div class="space-y-1">
 					<a
 						href="/workspace"
-						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive('/workspace', true)
+						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(
+							'/workspace',
+							true
+						)
 							? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
 							: 'text-slate-700 dark:text-slate-300'}"
 					>
@@ -311,14 +351,20 @@
 								viewBox="0 0 24 24"
 								aria-hidden="true"
 							>
-								<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 4.5h6v6h-6zm9 0h6v6h-6zm-9 9h6v6h-6zm9 0h6v6h-6z"></path>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M4.5 4.5h6v6h-6zm9 0h6v6h-6zm-9 9h6v6h-6zm9 0h6v6h-6z"
+								></path>
 							</svg>
 							<span>{$t('nav.myWorkspace')}</span>
 						</span>
 					</a>
 					<a
 						href="/my-work"
-						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive('/my-work')
+						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(
+							'/my-work'
+						)
 							? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
 							: 'text-slate-700 dark:text-slate-300'}"
 					>
@@ -331,34 +377,48 @@
 								viewBox="0 0 24 24"
 								aria-hidden="true"
 							>
-								<path stroke-linecap="round" stroke-linejoin="round" d="M9 6h10M9 12h10M9 18h10M5.25 6.75h.008v.008H5.25zm0 6h.008v.008H5.25zm0 6h.008v.008H5.25z"></path>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M9 6h10M9 12h10M9 18h10M5.25 6.75h.008v.008H5.25zm0 6h.008v.008H5.25zm0 6h.008v.008H5.25z"
+								></path>
 							</svg>
 							<span>{$t('workspace.myWork')}</span>
 						</span>
 					</a>
 					<a
 						href="/governance"
-						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isGovernanceRoute($page.url.pathname)
+						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isGovernanceRoute(
+							page.url.pathname
+						)
 							? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
 							: 'text-slate-700 dark:text-slate-300'}"
 					>
 						<span class="inline-flex items-center gap-3">
 							<svg
-								class="h-5 w-5 {isGovernanceRoute($page.url.pathname) ? 'text-blue-600' : 'text-slate-400'}"
+								class="h-5 w-5 {isGovernanceRoute(page.url.pathname)
+									? 'text-blue-600'
+									: 'text-slate-400'}"
 								fill="none"
 								stroke="currentColor"
 								stroke-width="1.5"
 								viewBox="0 0 24 24"
 								aria-hidden="true"
 							>
-								<path stroke-linecap="round" stroke-linejoin="round" d="M3 21h18M4.5 18h15M6 18V10.5m4 7.5V10.5m4 7.5V10.5m4 7.5V10.5M12 3l9 4.5H3L12 3z"></path>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M3 21h18M4.5 18h15M6 18V10.5m4 7.5V10.5m4 7.5V10.5m4 7.5V10.5M12 3l9 4.5H3L12 3z"
+								></path>
 							</svg>
 							<span>{$t('nav.governanceCenter')}</span>
 						</span>
 					</a>
 					<a
 						href="/inbox"
-						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive('/inbox')
+						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(
+							'/inbox'
+						)
 							? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
 							: 'text-slate-700 dark:text-slate-300'}"
 					>
@@ -371,11 +431,17 @@
 								viewBox="0 0 24 24"
 								aria-hidden="true"
 							>
-								<path stroke-linecap="round" stroke-linejoin="round" d="M14 17h5l-1.2-1.2a2.5 2.5 0 01-.8-1.8V11a5 5 0 10-10 0v3a2.5 2.5 0 01-.8 1.8L5 17h5m4 0a2 2 0 11-4 0"></path>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M14 17h5l-1.2-1.2a2.5 2.5 0 01-.8-1.8V11a5 5 0 10-10 0v3a2.5 2.5 0 01-.8 1.8L5 17h5m4 0a2 2 0 11-4 0"
+								></path>
 							</svg>
 							<span>{$t('nav.notifications')}</span>
 							{#if unreadCount > 0}
-								<span class="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-xs text-white">
+								<span
+									class="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-xs text-white"
+								>
 									{unreadCount > 99 ? '99+' : unreadCount}
 								</span>
 							{/if}
@@ -383,7 +449,9 @@
 					</a>
 					<a
 						href="/settings"
-						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive('/settings')
+						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(
+							'/settings'
+						)
 							? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
 							: 'text-slate-700 dark:text-slate-300'}"
 					>
@@ -396,7 +464,11 @@
 								viewBox="0 0 24 24"
 								aria-hidden="true"
 							>
-								<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 7.5a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a7.5 7.5 0 0115 0"></path>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M15.75 7.5a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a7.5 7.5 0 0115 0"
+								></path>
 							</svg>
 							<span>{$t('nav.personalSettings')}</span>
 						</span>
@@ -405,12 +477,19 @@
 
 				{#if workspaceNavLinks.length > 0}
 					<div>
-						<p class="mb-2 px-4 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-400">{$t('nav.currentWorkspace')}</p>
+						<p
+							class="mb-2 px-4 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-400"
+						>
+							{$t('nav.currentWorkspace')}
+						</p>
 						<div class="space-y-1">
 							{#each workspaceNavLinks as link}
 								<a
 									href={link.href}
-									class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(link.href, link.exact)
+									class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(
+										link.href,
+										link.exact
+									)
 										? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
 										: 'text-slate-700 dark:text-slate-300'}"
 								>
@@ -423,11 +502,18 @@
 
 				{#if isAdmin}
 					<div>
-						<p class="mb-2 px-4 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-400">{$t('nav.admin')}</p>
+						<p
+							class="mb-2 px-4 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-400"
+						>
+							{$t('nav.admin')}
+						</p>
 						<div class="space-y-1">
 							<a
 								href="/admin"
-								class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive('/admin', true)
+								class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(
+									'/admin',
+									true
+								)
 									? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
 									: 'text-slate-700 dark:text-slate-300'}"
 							>
@@ -440,14 +526,20 @@
 										viewBox="0 0 24 24"
 										aria-hidden="true"
 									>
-										<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 19.5h15M6 16.5V12m4 4.5V8.25m4 8.25v-6m4 6V5.25"></path>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M4.5 19.5h15M6 16.5V12m4 4.5V8.25m4 8.25v-6m4 6V5.25"
+										></path>
 									</svg>
 									<span>{$t('nav.adminDashboard')}</span>
 								</span>
 							</a>
 							<a
 								href="/admin/users"
-								class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive('/admin/users')
+								class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(
+									'/admin/users'
+								)
 									? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
 									: 'text-slate-700 dark:text-slate-300'}"
 							>
@@ -460,27 +552,39 @@
 										viewBox="0 0 24 24"
 										aria-hidden="true"
 									>
-										<path stroke-linecap="round" stroke-linejoin="round" d="M15 7.5a3 3 0 11-6 0 3 3 0 016 0zM20.25 8.25a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zM8.25 8.25a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zM3.75 19.5a5.25 5.25 0 0110.5 0M14.25 19.5a4.5 4.5 0 019 0"></path>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M15 7.5a3 3 0 11-6 0 3 3 0 016 0zM20.25 8.25a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zM8.25 8.25a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zM3.75 19.5a5.25 5.25 0 0110.5 0M14.25 19.5a4.5 4.5 0 019 0"
+										></path>
 									</svg>
 									<span>{$t('nav.userManagement')}</span>
 								</span>
 							</a>
 							<a
 								href="/admin/settings"
-								class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive('/admin/settings')
+								class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(
+									'/admin/settings'
+								)
 									? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
 									: 'text-slate-700 dark:text-slate-300'}"
 							>
 								<span class="inline-flex items-center gap-3">
 									<svg
-										class="h-5 w-5 {isActive('/admin/settings') ? 'text-blue-600' : 'text-slate-400'}"
+										class="h-5 w-5 {isActive('/admin/settings')
+											? 'text-blue-600'
+											: 'text-slate-400'}"
 										fill="none"
 										stroke="currentColor"
 										stroke-width="1.5"
 										viewBox="0 0 24 24"
 										aria-hidden="true"
 									>
-										<path stroke-linecap="round" stroke-linejoin="round" d="M10.5 3.75h3l.75 2.25a7.3 7.3 0 011.74.99l2.2-.74 1.5 2.6-1.74 1.52c.09.37.15.76.15 1.15s-.06.78-.15 1.15l1.74 1.52-1.5 2.6-2.2-.74a7.3 7.3 0 01-1.74.99l-.75 2.25h-3l-.75-2.25a7.3 7.3 0 01-1.74-.99l-2.2.74-1.5-2.6 1.74-1.52A4.86 4.86 0 015 12c0-.39.06-.78.15-1.15L3.4 9.33l1.5-2.6 2.2.74c.54-.4 1.13-.73 1.74-.99l.75-2.25zM12 14.25A2.25 2.25 0 1012 9.75a2.25 2.25 0 000 4.5z"></path>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M10.5 3.75h3l.75 2.25a7.3 7.3 0 011.74.99l2.2-.74 1.5 2.6-1.74 1.52c.09.37.15.76.15 1.15s-.06.78-.15 1.15l1.74 1.52-1.5 2.6-2.2-.74a7.3 7.3 0 01-1.74.99l-.75 2.25h-3l-.75-2.25a7.3 7.3 0 01-1.74-.99l-2.2.74-1.5-2.6 1.74-1.52A4.86 4.86 0 015 12c0-.39.06-.78.15-1.15L3.4 9.33l1.5-2.6 2.2.74c.54-.4 1.13-.73 1.74-.99l.75-2.25zM12 14.25A2.25 2.25 0 1012 9.75a2.25 2.25 0 000 4.5z"
+										></path>
 									</svg>
 									<span>{$t('nav.systemSettings')}</span>
 								</span>

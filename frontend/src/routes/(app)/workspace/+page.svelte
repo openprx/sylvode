@@ -2,19 +2,21 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
-	import { authStore } from '$lib/stores/auth';
-	import { workspacesApi, type Workspace } from '$lib/api/workspaces';
-	import { myApi, type MyActivity, type MyIssue } from '$lib/api/my';
-	import { toast } from '$lib/stores/toast';
+	import { authStore } from '#lib/stores/auth.js';
+	import { workspacesApi, type Workspace } from '#lib/api/workspaces.js';
+	import { myApi, type MyActivity, type MyIssue } from '#lib/api/my.js';
+	import { toast } from '#lib/stores/toast.js';
 	import { goto } from '$app/navigation';
-	import Modal from '$lib/components/Modal.svelte';
-	import Button from '$lib/components/Button.svelte';
-	import Input from '$lib/components/Input.svelte';
-	import Card from '$lib/components/Card.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import { timeAgo } from '$lib/utils/timeago';
+	import Modal from '#lib/components/Modal.svelte';
+	import Button from '#lib/components/Button.svelte';
+	import Input from '#lib/components/Input.svelte';
+	import Card from '#lib/components/Card.svelte';
+	import EmptyState from '#lib/components/EmptyState.svelte';
+	import { timeAgo } from '#lib/utils/timeago.js';
 
-	type InputEventHandler = (event: Event & { currentTarget: EventTarget & HTMLInputElement }) => void;
+	type InputEventHandler = (
+		event: Event & { currentTarget: EventTarget & HTMLInputElement }
+	) => void;
 
 	let workspaces = $state<Workspace[]>([]);
 	let loading = $state(true);
@@ -81,7 +83,7 @@
 
 	async function loadMoreActivities() {
 		if (loadingMoreActivities || activitiesPage >= activitiesTotalPages) return;
-		
+
 		loadingMoreActivities = true;
 		const nextPage = activitiesPage + 1;
 		const response = await myApi.getMyActivities({ page: nextPage, per_page: 10 });
@@ -309,12 +311,18 @@
 				}
 				return get(t)('activity.unassigned');
 			case 'status_changed':
-				return get(t)('activity.statusChanged', { values: { from: formatStatus(from), to: formatStatus(to) } });
+				return get(t)('activity.statusChanged', {
+					values: { from: formatStatus(from), to: formatStatus(to) }
+				});
 			case 'priority_changed':
-				return get(t)('activity.priorityChanged', { values: { from: formatPriority(from), to: formatPriority(to) } });
+				return get(t)('activity.priorityChanged', {
+					values: { from: formatPriority(from), to: formatPriority(to) }
+				});
 			case 'sprint_changed':
 				if (to) {
-					return get(t)('activity.sprintChanged', { values: { name: toName || getSprintDisplay(to) } });
+					return get(t)('activity.sprintChanged', {
+						values: { name: toName || getSprintDisplay(to) }
+					});
 				}
 				return get(t)('activity.sprintRemoved');
 			case 'label_added':
@@ -343,7 +351,8 @@
 	<div class="mb-8 flex items-center justify-between">
 		<div>
 			<h1 class="mb-2 text-3xl font-bold text-slate-900 dark:text-slate-100">
-				{$t('workspace.welcome')}{#if $authStore.user}, {$authStore.user.name || $authStore.user.email}{/if}!
+				{$t('workspace.welcome')}{#if $authStore.user}, {$authStore.user.name ||
+						$authStore.user.email}{/if}!
 			</h1>
 			<p class="text-slate-600 dark:text-slate-400">{$t('workspace.selectWorkspace')}</p>
 		</div>
@@ -425,13 +434,18 @@
 							</svg>
 						</div>
 					</div>
-					<h3 class="mb-2 text-lg font-semibold text-slate-900 dark:text-slate-100">{workspace.name}</h3>
+					<h3 class="mb-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
+						{workspace.name}
+					</h3>
 					{#if workspace.description}
-						<p class="mb-3 line-clamp-2 text-sm text-slate-600 dark:text-slate-400">{workspace.description}</p>
+						<p class="mb-3 line-clamp-2 text-sm text-slate-600 dark:text-slate-400">
+							{workspace.description}
+						</p>
 					{/if}
 					<div class="mt-4 border-t border-slate-100 pt-4 dark:border-slate-700">
 						<div class="text-xs text-slate-500 dark:text-slate-400">
-							{$t('common.createdAt')} {formatDate(workspace.created_at)}
+							{$t('common.createdAt')}
+							{formatDate(workspace.created_at)}
 						</div>
 					</div>
 				</Card>
@@ -444,17 +458,33 @@
 			<div class="xl:col-span-3">
 				<Card>
 					<div class="mb-4 flex items-center justify-between">
-						<h3 class="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
-							<svg class="h-5 w-5 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 20V10m5 10V4m5 16v-7M4 20h16"></path>
+						<h3
+							class="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100"
+						>
+							<svg
+								class="h-5 w-5 text-slate-500 dark:text-slate-400"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M7 20V10m5 10V4m5 16v-7M4 20h16"
+								></path>
 							</svg>
 							{$t('workspace.myWork')} ({myIssues.length})
 						</h3>
 					</div>
 					{#if loadingDashboard}
-						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">
+							{$t('common.loading')}
+						</div>
 					{:else if myIssues.length === 0}
-						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">{$t('workspace.noWork')}</div>
+						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">
+							{$t('workspace.noWork')}
+						</div>
 					{:else}
 						<div class="space-y-3">
 							{#each myIssues as issue (issue.id)}
@@ -463,8 +493,12 @@
 									onclick={() => goToIssue(issue.workspace_id, issue.project_id, issue.id)}
 								>
 									<div class="mb-2 flex items-center justify-between gap-2">
-										<p class="line-clamp-1 text-sm font-medium text-slate-900 dark:text-slate-100">{issue.title}</p>
-										<span class="text-xs text-slate-500 dark:text-slate-400">{formatRelativeTime(issue.updated_at)}</span>
+										<p class="line-clamp-1 text-sm font-medium text-slate-900 dark:text-slate-100">
+											{issue.title}
+										</p>
+										<span class="text-xs text-slate-500 dark:text-slate-400"
+											>{formatRelativeTime(issue.updated_at)}</span
+										>
 									</div>
 									<div class="flex flex-wrap items-center gap-2 text-xs">
 										<span class={`rounded-full px-2 py-1 ${getStatusClass(issue.status)}`}>
@@ -484,35 +518,57 @@
 			<div class="xl:col-span-2">
 				<Card>
 					<div class="mb-4 flex items-center justify-between">
-						<h3 class="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
-							<svg class="h-5 w-5 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+						<h3
+							class="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100"
+						>
+							<svg
+								class="h-5 w-5 text-slate-500 dark:text-slate-400"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M13 10V3L4 14h7v7l9-11h-7z"
+								></path>
 							</svg>
 							{$t('workspace.recentActivity')}
 						</h3>
 					</div>
 					{#if loadingDashboard}
-						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">
+							{$t('common.loading')}
+						</div>
 					{:else if myActivities.length === 0}
-						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">{$t('workspace.noActivity')}</div>
+						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">
+							{$t('workspace.noActivity')}
+						</div>
 					{:else}
 						<div class="space-y-3">
 							{#each myActivities as activity, index (activity.id)}
 								<div class="flex items-start gap-3 py-1">
 									<div class="flex min-h-10 flex-col items-center">
 										<div class="h-2 w-2 rounded-full bg-blue-500"></div>
-										<div class="w-0.5 flex-1 bg-slate-200 dark:bg-slate-700" class:opacity-0={index === myActivities.length - 1}></div>
+										<div
+											class="w-0.5 flex-1 bg-slate-200 dark:bg-slate-700"
+											class:opacity-0={index === myActivities.length - 1}
+										></div>
 									</div>
 									<button
 										class="flex-1 text-left"
-										onclick={() => goToIssue(activity.workspace_id, activity.project_id, activity.issue_id)}
+										onclick={() =>
+											goToIssue(activity.workspace_id, activity.project_id, activity.issue_id)}
 									>
 										<p class="text-sm text-slate-700 dark:text-slate-300">
 											<span class="font-medium">{getActivityAuthor(activity)}</span>
 											<span class="ml-1">{formatActivity(activity)}</span>
 										</p>
 										<p class="text-xs text-slate-500 dark:text-slate-400">
-											#{activity.issue_id.slice(0, 8)} · {activity.issue_title} · {formatRelativeTime(activity.created_at)}
+											#{activity.issue_id.slice(0, 8)} · {activity.issue_title} · {formatRelativeTime(
+												activity.created_at
+											)}
 										</p>
 									</button>
 								</div>
@@ -538,7 +594,13 @@
 
 <!-- Create Modal -->
 <Modal bind:open={showCreateModal} title={$t('workspace.createWorkspace')}>
-	<form onsubmit={(e) => { e.preventDefault(); handleCreate(); }} class="space-y-4">
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			handleCreate();
+		}}
+		class="space-y-4"
+	>
 		<Input
 			label={$t('workspace.name')}
 			placeholder={$t('workspace.namePlaceholder')}
@@ -565,14 +627,22 @@
 	</form>
 
 	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (showCreateModal = false)}>{$t('common.cancel')}</Button>
+		<Button variant="secondary" onclick={() => (showCreateModal = false)}
+			>{$t('common.cancel')}</Button
+		>
 		<Button type="button" loading={creating} onclick={handleCreate}>{$t('common.create')}</Button>
 	{/snippet}
 </Modal>
 
 <!-- Edit Modal -->
 <Modal bind:open={showEditModal} title={$t('workspace.editWorkspace')}>
-	<form onsubmit={(e) => { e.preventDefault(); handleUpdate(); }} class="space-y-4">
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			handleUpdate();
+		}}
+		class="space-y-4"
+	>
 		<Input
 			label={$t('workspace.name')}
 			placeholder={$t('workspace.namePlaceholder')}
@@ -589,7 +659,9 @@
 	</form>
 
 	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (showEditModal = false)}>{$t('common.cancel')}</Button>
+		<Button variant="secondary" onclick={() => (showEditModal = false)}
+			>{$t('common.cancel')}</Button
+		>
 		<Button type="submit" loading={updating} onclick={handleUpdate}>{$t('common.save')}</Button>
 	{/snippet}
 </Modal>
@@ -600,10 +672,17 @@
 		<p class="text-slate-700 dark:text-slate-300">
 			{$t('workspace.deleteConfirm', { values: { name: deletingWorkspace?.name } })}
 		</p>
-		<div class="rounded-md border border-red-200 bg-red-50 p-4 dark:border-red-500/40 dark:bg-red-500/20">
+		<div
+			class="rounded-md border border-red-200 bg-red-50 p-4 dark:border-red-500/40 dark:bg-red-500/20"
+		>
 			<p class="inline-flex items-start gap-2 text-sm text-red-800 dark:text-red-300">
 				<svg class="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 4h.01M4.93 19h14.14a2 2 0 001.73-3L13.73 3a2 2 0 00-3.46 0L3.2 16a2 2 0 001.73 3z"></path>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M12 9v3m0 4h.01M4.93 19h14.14a2 2 0 001.73-3L13.73 3a2 2 0 00-3.46 0L3.2 16a2 2 0 001.73 3z"
+					></path>
 				</svg>
 				<span>{$t('workspace.deleteWarning')}</span>
 			</p>
@@ -611,7 +690,11 @@
 	</div>
 
 	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (showDeleteModal = false)}>{$t('common.cancel')}</Button>
-		<Button variant="danger" loading={deleting} onclick={handleDelete}>{$t('workspace.confirmDelete')}</Button>
+		<Button variant="secondary" onclick={() => (showDeleteModal = false)}
+			>{$t('common.cancel')}</Button
+		>
+		<Button variant="danger" loading={deleting} onclick={handleDelete}
+			>{$t('workspace.confirmDelete')}</Button
+		>
 	{/snippet}
 </Modal>

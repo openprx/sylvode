@@ -1,4 +1,4 @@
-// place files you want to import through the `$lib` alias in this folder.
+// place files you want to import through the `#lib` alias in this folder.
 
 // Components
 export { default as Modal } from './components/Modal.svelte';
