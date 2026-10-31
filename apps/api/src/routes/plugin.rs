@@ -925,8 +925,10 @@ mod invocation_record_database_tests {
             if row.is_some() {
                 return;
             }
+            // The guest keeps running after the request is dropped, then writes the row.
+            // On a loaded CI runner that write has been observed later than 20s.
             assert!(
-                started.elapsed() < std::time::Duration::from_secs(20),
+                started.elapsed() < std::time::Duration::from_secs(60),
                 "no invocation of {plugin_id} was recorded after the request was cancelled"
             );
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;

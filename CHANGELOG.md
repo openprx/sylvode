@@ -41,6 +41,8 @@ OpenPR name keeps working; see **Deprecated**.
   package export then failed closed.
 - The depth-32 lock-hold sample check accepts an extra sample when a lock timeout is
   resubmitted. The parallel suite was failing with 31 samples against the exact count of 30.
+- A cancelled plugin invocation is allowed 60 seconds to land its row. A loaded CI
+  runner was still writing it after the previous 20 second wait.
 
 ### Breaking and behaviour changes
 
