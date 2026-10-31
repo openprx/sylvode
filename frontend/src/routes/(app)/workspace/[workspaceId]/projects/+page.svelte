@@ -2,25 +2,22 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { page } from '$app/stores';
-	import { projectsApi, type Project, type ProjectType } from '$lib/api/projects';
-	import { workspacesApi, type Workspace } from '$lib/api/workspaces';
-	import { workflowsApi, type WorkflowSummary } from '$lib/api/workflows';
-	import { toast } from '$lib/stores/toast';
+	import { page } from '$app/state';
+	import { projectsApi, type Project, type ProjectType } from '#lib/api/projects.js';
+	import { workspacesApi, type Workspace } from '#lib/api/workspaces.js';
+	import { workflowsApi, type WorkflowSummary } from '#lib/api/workflows.js';
+	import { toast } from '#lib/stores/toast.js';
 	import { goto } from '$app/navigation';
 	import { CheckCircle2, Code2, TableProperties } from '@lucide/svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import Button from '$lib/components/Button.svelte';
-	import Input from '$lib/components/Input.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import { requireRouteParam } from '$lib/utils/route-params';
-	import { timeAgo } from '$lib/utils/timeago';
-	import {
-		projectTypeDescription,
-		projectTypeName
-	} from '$lib/utils/project-type-i18n';
+	import Modal from '#lib/components/Modal.svelte';
+	import Button from '#lib/components/Button.svelte';
+	import Input from '#lib/components/Input.svelte';
+	import EmptyState from '#lib/components/EmptyState.svelte';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
+	import { timeAgo } from '#lib/utils/timeago.js';
+	import { projectTypeDescription, projectTypeName } from '#lib/utils/project-type-i18n.js';
 
-	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
+	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 
 	let workspace = $state<Workspace | null>(null);
 	let projects = $state<Project[]>([]);
@@ -58,7 +55,9 @@
 		return ordered.length > 0 ? ordered : projectTypes;
 	});
 	const selectedProjectType = $derived(
-		projectTypes.find((item) => item.key === createForm.type_key) ?? selectableProjectTypes[0] ?? null
+		projectTypes.find((item) => item.key === createForm.type_key) ??
+			selectableProjectTypes[0] ??
+			null
 	);
 
 	onMount(async () => {
@@ -131,7 +130,7 @@
 			description: '',
 			type_key: projectTypes.some((item) => item.key === 'code_project')
 				? 'code_project'
-				: projectTypes[0]?.key ?? 'code_project'
+				: (projectTypes[0]?.key ?? 'code_project')
 		};
 		showCreateModal = true;
 	}
@@ -257,7 +256,10 @@
 		return timeAgo(dateText);
 	}
 
-	function getIssueCount(project: Project, state: 'backlog' | 'todo' | 'in_progress' | 'done'): number {
+	function getIssueCount(
+		project: Project,
+		state: 'backlog' | 'todo' | 'in_progress' | 'done'
+	): number {
 		const counts = project.issue_counts;
 		if (!counts) return 0;
 		return counts.by_state?.[state] ?? 0;
@@ -277,19 +279,25 @@
 		<nav class="mb-4 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
 			<a href="/workspace" class="hover:text-blue-600">{$t('nav.myWorkspace')}</a>
 			<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"
+				></path>
 			</svg>
-			<span class="font-medium text-slate-900 dark:text-slate-100">{workspace?.name || $t('common.loading')}</span>
+			<span class="font-medium text-slate-900 dark:text-slate-100"
+				>{workspace?.name || $t('common.loading')}</span
+			>
 		</nav>
 
 		<div class="flex items-center justify-between">
 			<div>
 				<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{$t('project.title')}</h1>
-				<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('project.count', { values: { count: filteredProjects.length } })}</p>
+				<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+					{$t('project.count', { values: { count: filteredProjects.length } })}
+				</p>
 			</div>
 			<Button onclick={openCreateModal}>
 				<svg class="mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"
+					></path>
 				</svg>
 				{$t('project.create')}
 			</Button>
@@ -335,22 +343,30 @@
 			{/snippet}
 		</EmptyState>
 	{:else if filteredProjects.length === 0}
-		<EmptyState icon="search" title={$t('project.notFound')} description={$t('project.notFoundDesc')} />
+		<EmptyState
+			icon="search"
+			title={$t('project.notFound')}
+			description={$t('project.notFoundDesc')}
+		/>
 	{:else}
 		<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
 			{#each filteredProjects as project}
-				<article class="group rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm dark:shadow-slate-900/50 transition-all hover:-translate-y-0.5 hover:shadow-md dark:shadow-slate-900/50">
+				<article
+					class="group rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm dark:shadow-slate-900/50 transition-all hover:-translate-y-0.5 hover:shadow-md dark:shadow-slate-900/50"
+				>
 					<div class="mb-3 flex items-start justify-between gap-3">
 						<div class="min-w-0">
-								<button
-									type="button"
-									onclick={() => goToProject(project)}
-									class="truncate text-left text-lg font-semibold text-slate-900 dark:text-slate-100 transition-colors hover:text-blue-600"
-								>
-									{project.name}
-								</button>
+							<button
+								type="button"
+								onclick={() => goToProject(project)}
+								class="truncate text-left text-lg font-semibold text-slate-900 dark:text-slate-100 transition-colors hover:text-blue-600"
+							>
+								{project.name}
+							</button>
 							<div class="mt-1">
-								<span class="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
+								<span
+									class="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700"
+								>
 									{project.key}
 								</span>
 							</div>
@@ -387,47 +403,58 @@
 						</div>
 					</div>
 
-					<p class="mb-4 min-h-10 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">{project.description || $t('project.noDescription')}</p>
+					<p class="mb-4 min-h-10 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">
+						{project.description || $t('project.noDescription')}
+					</p>
 
-						{#if isFormsProject(project)}
-							<div class="mb-4 flex min-h-16 items-center gap-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-3 text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">
-								<TableProperties class="h-5 w-5 shrink-0 text-blue-600 dark:text-blue-300" aria-hidden="true" />
-								<div class="min-w-0">
-									<p class="text-sm font-semibold">{$t('project.formsProjectHome')}</p>
-									<p class="mt-0.5 line-clamp-2 text-xs leading-5 text-blue-700 dark:text-blue-200">
-										{$t('project.formsProjectHomeDesc')}
-									</p>
-								</div>
+					{#if isFormsProject(project)}
+						<div
+							class="mb-4 flex min-h-16 items-center gap-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-3 text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100"
+						>
+							<TableProperties
+								class="h-5 w-5 shrink-0 text-blue-600 dark:text-blue-300"
+								aria-hidden="true"
+							/>
+							<div class="min-w-0">
+								<p class="text-sm font-semibold">{$t('project.formsProjectHome')}</p>
+								<p class="mt-0.5 line-clamp-2 text-xs leading-5 text-blue-700 dark:text-blue-200">
+									{$t('project.formsProjectHomeDesc')}
+								</p>
 							</div>
-						{:else}
-							<div class="mb-4 grid grid-cols-4 gap-2">
-								<div class="rounded-lg bg-slate-100 dark:bg-slate-800 px-2 py-2 text-center text-slate-600 dark:text-slate-300">
-									<div class="text-base font-semibold">{getIssueCount(project, 'backlog')}</div>
-									<div class="text-[11px] font-medium">{$t('workflow.backlog')}</div>
-								</div>
-								<div class="rounded-lg bg-blue-50 px-2 py-2 text-center text-blue-600">
-									<div class="text-base font-semibold">{getIssueCount(project, 'todo')}</div>
-									<div class="text-[11px] font-medium">{$t('workflow.todo')}</div>
-								</div>
-								<div class="rounded-lg bg-amber-50 px-2 py-2 text-center text-amber-600">
-									<div class="text-base font-semibold">{getIssueCount(project, 'in_progress')}</div>
-									<div class="text-[11px] font-medium">{$t('workflow.inProgress')}</div>
-								</div>
-								<div class="rounded-lg bg-emerald-50 px-2 py-2 text-center text-emerald-600">
-									<div class="text-base font-semibold">{getIssueCount(project, 'done')}</div>
-									<div class="text-[11px] font-medium">{$t('workflow.done')}</div>
-								</div>
-							</div>
-						{/if}
-
-						<div class="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
-							<a
-								href={projectHref(project)}
-								class="inline-flex items-center rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-700 dark:text-slate-300 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+						</div>
+					{:else}
+						<div class="mb-4 grid grid-cols-4 gap-2">
+							<div
+								class="rounded-lg bg-slate-100 dark:bg-slate-800 px-2 py-2 text-center text-slate-600 dark:text-slate-300"
 							>
-								{isFormsProject(project) ? $t('project.openForms') : $t('project.openProject')}
-							</a>
-						<span class="text-xs text-slate-500 dark:text-slate-400">{$t('project.updatedAt')} {formatRelativeTime(project.updated_at)}</span>
+								<div class="text-base font-semibold">{getIssueCount(project, 'backlog')}</div>
+								<div class="text-[11px] font-medium">{$t('workflow.backlog')}</div>
+							</div>
+							<div class="rounded-lg bg-blue-50 px-2 py-2 text-center text-blue-600">
+								<div class="text-base font-semibold">{getIssueCount(project, 'todo')}</div>
+								<div class="text-[11px] font-medium">{$t('workflow.todo')}</div>
+							</div>
+							<div class="rounded-lg bg-amber-50 px-2 py-2 text-center text-amber-600">
+								<div class="text-base font-semibold">{getIssueCount(project, 'in_progress')}</div>
+								<div class="text-[11px] font-medium">{$t('workflow.inProgress')}</div>
+							</div>
+							<div class="rounded-lg bg-emerald-50 px-2 py-2 text-center text-emerald-600">
+								<div class="text-base font-semibold">{getIssueCount(project, 'done')}</div>
+								<div class="text-[11px] font-medium">{$t('workflow.done')}</div>
+							</div>
+						</div>
+					{/if}
+
+					<div class="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+						<a
+							href={projectHref(project)}
+							class="inline-flex items-center rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-700 dark:text-slate-300 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+						>
+							{isFormsProject(project) ? $t('project.openForms') : $t('project.openProject')}
+						</a>
+						<span class="text-xs text-slate-500 dark:text-slate-400"
+							>{$t('project.updatedAt')} {formatRelativeTime(project.updated_at)}</span
+						>
 					</div>
 				</article>
 			{/each}
@@ -436,16 +463,27 @@
 </div>
 
 <Modal bind:open={showCreateModal} title={$t('project.create')} maxWidthClass="max-w-4xl">
-	<form onsubmit={(e) => { e.preventDefault(); handleCreate(); }} class="space-y-5">
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			handleCreate();
+		}}
+		class="space-y-5"
+	>
 		<div class="space-y-2">
-			<p class="text-sm font-medium text-slate-700 dark:text-slate-300">{$t('project.projectType')}</p>
+			<p class="text-sm font-medium text-slate-700 dark:text-slate-300">
+				{$t('project.projectType')}
+			</p>
 			<div class="grid gap-3 md:grid-cols-2">
 				{#each selectableProjectTypes as item (item.key)}
 					{@const Icon = projectTypeIcon(item.key)}
 					<button
 						type="button"
 						onclick={() => selectProjectType(item.key)}
-						class="min-h-32 rounded-lg border p-4 text-left transition-colors {createForm.type_key === item.key ? 'border-blue-500 bg-blue-50 shadow-sm dark:border-blue-400 dark:bg-blue-950/30' : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-blue-900 dark:hover:bg-slate-800'}"
+						class="min-h-32 rounded-lg border p-4 text-left transition-colors {createForm.type_key ===
+						item.key
+							? 'border-blue-500 bg-blue-50 shadow-sm dark:border-blue-400 dark:bg-blue-950/30'
+							: 'border-slate-200 bg-white hover:border-blue-200 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-blue-900 dark:hover:bg-slate-800'}"
 					>
 						<div class="flex items-start justify-between gap-3">
 							<div class="min-w-0">
@@ -484,33 +522,48 @@
 			label={$t('project.key')}
 			placeholder={$t('project.keyPlaceholder')}
 			bind:value={createForm.key}
-			oninput={(e) => { const t = e.currentTarget; t.value = t.value.toUpperCase(); createForm.key = t.value; }}
+			oninput={(e) => {
+				const t = e.currentTarget;
+				t.value = t.value.toUpperCase();
+				createForm.key = t.value;
+			}}
 			required
 			maxlength={10}
 			hint={$t('project.keyHint')}
 		/>
 		<div class="space-y-1">
-			<label class="block text-sm font-medium text-slate-700 dark:text-slate-300" for="create-project-description">{$t('project.description')}</label>
+			<label
+				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+				for="create-project-description">{$t('project.description')}</label
+			>
 			<textarea
 				id="create-project-description"
 				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder-slate-500 shadow-sm dark:shadow-slate-900/50 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 resize-y"
 				placeholder={$t('project.descriptionPlaceholder')}
 				bind:value={createForm.description}
 				maxlength={350}
-				rows="3"
-			></textarea>
+				rows="3"></textarea>
 			<p class="text-xs text-slate-400 text-right">{createForm.description.length}/350</p>
 		</div>
 	</form>
 
 	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (showCreateModal = false)}>{$t('common.cancel')}</Button>
+		<Button variant="secondary" onclick={() => (showCreateModal = false)}
+			>{$t('common.cancel')}</Button
+		>
+
 		<Button type="submit" loading={creating} onclick={handleCreate}>{$t('common.create')}</Button>
 	{/snippet}
 </Modal>
 
 <Modal bind:open={showEditModal} title={$t('project.editProject')}>
-	<form onsubmit={(e) => { e.preventDefault(); handleUpdate(); }} class="space-y-4">
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			handleUpdate();
+		}}
+		class="space-y-4"
+	>
 		<Input
 			label={$t('project.name')}
 			placeholder={$t('project.namePlaceholder')}
@@ -519,19 +572,24 @@
 			maxlength={100}
 		/>
 		<div class="space-y-1">
-			<label class="block text-sm font-medium text-slate-700 dark:text-slate-300" for="edit-project-description">{$t('project.description')}</label>
+			<label
+				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+				for="edit-project-description">{$t('project.description')}</label
+			>
 			<textarea
 				id="edit-project-description"
 				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder-slate-500 shadow-sm dark:shadow-slate-900/50 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 resize-y"
 				placeholder={$t('project.descriptionPlaceholder')}
 				bind:value={editForm.description}
 				maxlength={350}
-				rows="3"
-			></textarea>
+				rows="3"></textarea>
 			<p class="text-xs text-slate-400 text-right">{editForm.description.length}/350</p>
 		</div>
 		<div class="space-y-1">
-			<label class="block text-sm font-medium text-slate-700 dark:text-slate-300" for="edit-project-workflow">
+			<label
+				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+				for="edit-project-workflow"
+			>
 				Workflow
 			</label>
 			<select
@@ -546,12 +604,16 @@
 			</select>
 		</div>
 		<div class="text-sm text-slate-500 dark:text-slate-400">
-			<strong>{$t('project.note')}:</strong> {$t('project.keyImmutable', { values: { key: editingProject?.key } })}
+			<strong>{$t('project.note')}:</strong>
+			{$t('project.keyImmutable', { values: { key: editingProject?.key } })}
 		</div>
 	</form>
 
 	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (showEditModal = false)}>{$t('common.cancel')}</Button>
+		<Button variant="secondary" onclick={() => (showEditModal = false)}
+			>{$t('common.cancel')}</Button
+		>
+
 		<Button type="submit" loading={updating} onclick={handleUpdate}>{$t('common.save')}</Button>
 	{/snippet}
 </Modal>
@@ -559,12 +621,19 @@
 <Modal bind:open={showDeleteModal} title={$t('project.deleteProject')}>
 	<div class="space-y-4">
 		<p class="text-slate-700 dark:text-slate-300">
-			{$t('project.deleteConfirm', { values: { name: deletingProject?.name, key: deletingProject?.key } })}
+			{$t('project.deleteConfirm', {
+				values: { name: deletingProject?.name, key: deletingProject?.key }
+			})}
 		</p>
 		<div class="rounded-md border border-red-200 bg-red-50 p-4">
 			<p class="inline-flex items-start gap-2 text-sm text-red-800">
 				<svg class="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 4h.01M4.93 19h14.14a2 2 0 001.73-3L13.73 3a2 2 0 00-3.46 0L3.2 16a2 2 0 001.73 3z"></path>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M12 9v3m0 4h.01M4.93 19h14.14a2 2 0 001.73-3L13.73 3a2 2 0 00-3.46 0L3.2 16a2 2 0 001.73 3z"
+					></path>
 				</svg>
 				<span>{$t('project.deleteWarning')}</span>
 			</p>
@@ -572,7 +641,12 @@
 	</div>
 
 	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (showDeleteModal = false)}>{$t('common.cancel')}</Button>
-		<Button variant="danger" loading={deleting} onclick={handleDelete}>{$t('workspace.confirmDelete')}</Button>
+		<Button variant="secondary" onclick={() => (showDeleteModal = false)}
+			>{$t('common.cancel')}</Button
+		>
+
+		<Button variant="danger" loading={deleting} onclick={handleDelete}
+			>{$t('workspace.confirmDelete')}</Button
+		>
 	{/snippet}
 </Modal>

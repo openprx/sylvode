@@ -3,15 +3,15 @@
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { goto } from '$app/navigation';
-	import { authApi } from '$lib/api/auth';
-	import { workspacesApi } from '$lib/api/workspaces';
-	import { projectsApi } from '$lib/api/projects';
-	import { issuesApi } from '$lib/api/issues';
-	import { membersApi } from '$lib/api/members';
-	import { toast } from '$lib/stores/toast';
-	import { isAdminUser } from '$lib/utils/auth';
-	import Card from '$lib/components/Card.svelte';
-	import Button from '$lib/components/Button.svelte';
+	import { authApi } from '#lib/api/auth.js';
+	import { workspacesApi } from '#lib/api/workspaces.js';
+	import { projectsApi } from '#lib/api/projects.js';
+	import { issuesApi } from '#lib/api/issues.js';
+	import { membersApi } from '#lib/api/members.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { isAdminUser } from '#lib/utils/auth.js';
+	import Card from '#lib/components/Card.svelte';
+	import Button from '#lib/components/Button.svelte';
 
 	interface SystemStats {
 		users: number;
@@ -23,14 +23,26 @@
 	let loading = $state(true);
 	let stats = $state<SystemStats>({ users: 0, workspaces: 0, projects: 0, issues: 0 });
 	const statusItems = $derived([
-		{ label: $t('admin.apiService'), value: $t('admin.statusOk'), color: 'text-green-700 bg-green-100' },
-		{ label: $t('admin.databaseConnection'), value: $t('admin.statusOk'), color: 'text-green-700 bg-green-100' },
-		{ label: $t('admin.webhookJobs'), value: $t('admin.statusMonitoring'), color: 'text-blue-700 bg-blue-100' }
+		{
+			label: $t('admin.apiService'),
+			value: $t('admin.statusOk'),
+			color: 'text-green-700 bg-green-100'
+		},
+		{
+			label: $t('admin.databaseConnection'),
+			value: $t('admin.statusOk'),
+			color: 'text-green-700 bg-green-100'
+		},
+		{
+			label: $t('admin.webhookJobs'),
+			value: $t('admin.statusMonitoring'),
+			color: 'text-blue-700 bg-blue-100'
+		}
 	]);
 
 	onMount(async () => {
 		const meResponse = await authApi.me();
-		if ((meResponse.code !== 0) || !isAdminUser(meResponse.data?.user ?? null)) {
+		if (meResponse.code !== 0 || !isAdminUser(meResponse.data?.user ?? null)) {
 			toast.error(get(t)('admin.adminOnlyPage'));
 			goto('/workspace');
 			return;
@@ -43,7 +55,7 @@
 		loading = true;
 
 		const workspaceResponse = await workspacesApi.list();
-		if ((workspaceResponse.code !== 0) || !workspaceResponse.data) {
+		if (workspaceResponse.code !== 0 || !workspaceResponse.data) {
 			toast.error(workspaceResponse.message || get(t)('admin.loadOverviewFailed'));
 			loading = false;
 			return;
@@ -95,13 +107,19 @@
 			<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('admin.overview')}</p>
 		</div>
 		<div class="flex gap-2">
-			<Button variant="secondary" onclick={() => goto('/admin/users')}>{$t('admin.createUser')}</Button>
+			<Button variant="secondary" onclick={() => goto('/admin/users')}
+				>{$t('admin.createUser')}</Button
+			>
 			<Button onclick={() => goto('/inbox')}>{$t('admin.viewRecentActivity')}</Button>
 		</div>
 	</div>
 
 	{#if loading}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
+		>
+			{$t('common.loading')}
+		</div>
 	{:else}
 		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
 			<Card>
@@ -123,12 +141,16 @@
 		</div>
 
 		<Card>
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">{$t('admin.systemStatus')}</h2>
+			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+				{$t('admin.systemStatus')}
+			</h2>
 			<div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
 				{#each statusItems as item}
 					<div class="rounded-md border border-slate-200 dark:border-slate-700 p-3">
 						<p class="text-sm text-slate-500 dark:text-slate-400">{item.label}</p>
-						<span class="mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-medium {item.color}">
+						<span
+							class="mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-medium {item.color}"
+						>
 							{item.value}
 						</span>
 					</div>

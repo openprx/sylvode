@@ -3,14 +3,14 @@
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
 	import { goto } from '$app/navigation';
-	import { authApi } from '$lib/api/auth';
-	import { adminApi, type AdminUser } from '$lib/api/admin';
-	import { toast } from '$lib/stores/toast';
-	import { isAdminUser } from '$lib/utils/auth';
-	import Button from '$lib/components/Button.svelte';
-	import Input from '$lib/components/Input.svelte';
-	import BotIcon from '$lib/components/BotIcon.svelte';
-	import Modal from '$lib/components/Modal.svelte';
+	import { authApi } from '#lib/api/auth.js';
+	import { adminApi, type AdminUser } from '#lib/api/admin.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { isAdminUser } from '#lib/utils/auth.js';
+	import Button from '#lib/components/Button.svelte';
+	import Input from '#lib/components/Input.svelte';
+	import BotIcon from '#lib/components/BotIcon.svelte';
+	import Modal from '#lib/components/Modal.svelte';
 
 	interface ManagedUser extends AdminUser {
 		role: 'admin' | 'user';
@@ -106,7 +106,9 @@
 		if (entityType === 'bot') {
 			if (
 				(agentType === 'openclaw' &&
-					(!openclawConfig.command.trim() || !openclawConfig.channel.trim() || !openclawConfig.target.trim())) ||
+					(!openclawConfig.command.trim() ||
+						!openclawConfig.channel.trim() ||
+						!openclawConfig.target.trim())) ||
 				(agentType === 'webhook' && !webhookConfig.url.trim()) ||
 				(agentType === 'custom' && !customConfig.command.trim())
 			) {
@@ -244,7 +246,11 @@
 		if (actionLoadingUserId) return;
 
 		const actionText = user.status === 'active' ? get(t)('admin.disabled') : get(t)('admin.active');
-		if (!confirm(get(t)('admin.toggleStatusConfirm', { values: { action: actionText, email: user.email } }))) {
+		if (
+			!confirm(
+				get(t)('admin.toggleStatusConfirm', { values: { action: actionText, email: user.email } })
+			)
+		) {
 			return;
 		}
 
@@ -306,12 +312,22 @@
 		<Button onclick={openCreateModal}>{$t('admin.createUser')}</Button>
 	</div>
 
-	<div class="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 lg:grid-cols-4">
+	<div
+		class="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 lg:grid-cols-4"
+	>
 		<div class="lg:col-span-2">
-			<Input type="search" label={$t('common.search')} placeholder={$t('admin.userSearchPlaceholder')} bind:value={keyword} />
+			<Input
+				type="search"
+				label={$t('common.search')}
+				placeholder={$t('admin.userSearchPlaceholder')}
+				bind:value={keyword}
+			/>
 		</div>
 		<div>
-			<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="roleFilter">{$t('admin.role')}</label>
+			<label
+				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				for="roleFilter">{$t('admin.role')}</label
+			>
 			<select
 				id="roleFilter"
 				bind:value={roleFilter}
@@ -323,7 +339,10 @@
 			</select>
 		</div>
 		<div>
-			<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="statusFilter">{$t('admin.status')}</label>
+			<label
+				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				for="statusFilter">{$t('admin.status')}</label
+			>
 			<select
 				id="statusFilter"
 				bind:value={statusFilter}
@@ -337,45 +356,78 @@
 	</div>
 
 	{#if loading}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
+		>
+			{$t('common.loading')}
+		</div>
 	{:else if filteredUsers.length === 0}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400">{$t('admin.noMatchedUsers')}</div>
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
+		>
+			{$t('admin.noMatchedUsers')}
+		</div>
 	{:else}
-		<div class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+		<div
+			class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+		>
 			<div class="space-y-3 p-3 md:hidden">
 				{#each filteredUsers as user (user.id)}
-					<div class="rounded-lg border border-slate-200 dark:border-slate-700 p-4 {isBot(user)
-						? 'bg-cyan-50 dark:bg-cyan-900/20'
-						: 'bg-white dark:bg-slate-900'}">
+					<div
+						class="rounded-lg border border-slate-200 dark:border-slate-700 p-4 {isBot(user)
+							? 'bg-cyan-50 dark:bg-cyan-900/20'
+							: 'bg-white dark:bg-slate-900'}"
+					>
 						<div class="flex items-start justify-between gap-3">
 							<div class="min-w-0">
-								<p class="text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+								<p
+									class="text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5"
+								>
 									{#if isBot(user)}
-										<BotIcon class="h-4 w-4 text-cyan-700 dark:text-cyan-300" title={$t('admin.botBadge')} />
+										<BotIcon
+											class="h-4 w-4 text-cyan-700 dark:text-cyan-300"
+											title={$t('admin.botBadge')}
+										/>
 									{/if}
 									<span>{user.name}</span>
 								</p>
-								<p class="mt-1 break-all text-sm text-slate-600 dark:text-slate-300">{user.email}</p>
-								<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{$t('common.createdAt')} {formatDate(user.created_at)}</p>
+								<p class="mt-1 break-all text-sm text-slate-600 dark:text-slate-300">
+									{user.email}
+								</p>
+								<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+									{$t('common.createdAt')}
+									{formatDate(user.created_at)}
+								</p>
 							</div>
-							<span class="inline-flex rounded-full px-2.5 py-1 text-xs font-medium {user.status === 'active'
-								? 'bg-green-100 text-green-700'
-								: 'bg-red-100 text-red-700'}">
+							<span
+								class="inline-flex rounded-full px-2.5 py-1 text-xs font-medium {user.status ===
+								'active'
+									? 'bg-green-100 text-green-700'
+									: 'bg-red-100 text-red-700'}"
+							>
 								{user.status}
 							</span>
 						</div>
-						<div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+						<div
+							class="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400"
+						>
 							<span>{$t('admin.role')}：{user.role}</span>
 							{#if isBot(user)}
-								<span class="inline-flex rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
+								<span
+									class="inline-flex rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300"
+								>
 									{getAgentTypeLabel(user.agent_type)}
 								</span>
 							{/if}
 						</div>
 						<div class="mt-3 flex flex-wrap gap-2">
-							<Button variant="ghost" size="sm" onclick={() => openEditUser(user)}>{$t('common.edit')}</Button>
+							<Button variant="ghost" size="sm" onclick={() => openEditUser(user)}
+								>{$t('common.edit')}</Button
+							>
 							{#if !isBot(user)}
-								<Button variant="secondary" size="sm" onclick={() => openResetPassword(user)}>{$t('admin.changePassword')}</Button>
+								<Button variant="secondary" size="sm" onclick={() => openResetPassword(user)}
+									>{$t('admin.changePassword')}</Button
+								>
 							{/if}
 							<Button
 								variant={user.status === 'active' ? 'danger' : 'primary'}
@@ -393,12 +445,30 @@
 				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
 					<thead class="bg-slate-50 dark:bg-slate-950">
 						<tr>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('admin.name')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('admin.email')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('admin.role')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.createdAt')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('admin.status')}</th>
-							<th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.actions')}</th>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('admin.name')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('admin.email')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('admin.role')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.createdAt')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('admin.status')}</th
+							>
+							<th
+								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.actions')}</th
+							>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-900">
@@ -407,7 +477,10 @@
 								<td class="px-4 py-3 text-sm text-slate-900 dark:text-slate-100">
 									<div class="flex items-center gap-1.5">
 										{#if isBot(user)}
-											<BotIcon class="h-4 w-4 text-cyan-700 dark:text-cyan-300" title={$t('admin.botBadge')} />
+											<BotIcon
+												class="h-4 w-4 text-cyan-700 dark:text-cyan-300"
+												title={$t('admin.botBadge')}
+											/>
 										{/if}
 										<span>{user.name}</span>
 									</div>
@@ -417,23 +490,32 @@
 									<div class="flex items-center gap-2">
 										<span>{user.role}</span>
 										{#if isBot(user)}
-											<span class="inline-flex rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
+											<span
+												class="inline-flex rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300"
+											>
 												{getAgentTypeLabel(user.agent_type)}
 											</span>
 										{/if}
 									</div>
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{formatDate(user.created_at)}</td>
+								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+									>{formatDate(user.created_at)}</td
+								>
 								<td class="px-4 py-3 text-sm">
-									<span class="inline-flex rounded-full px-2.5 py-1 text-xs font-medium {user.status === 'active'
-										? 'bg-green-100 text-green-700'
-										: 'bg-red-100 text-red-700'}">
+									<span
+										class="inline-flex rounded-full px-2.5 py-1 text-xs font-medium {user.status ===
+										'active'
+											? 'bg-green-100 text-green-700'
+											: 'bg-red-100 text-red-700'}"
+									>
 										{user.status}
 									</span>
 								</td>
 								<td class="px-4 py-3 text-right">
 									<div class="flex justify-end gap-2">
-										<Button variant="ghost" size="sm" onclick={() => openEditUser(user)}>{$t('common.edit')}</Button>
+										<Button variant="ghost" size="sm" onclick={() => openEditUser(user)}
+											>{$t('common.edit')}</Button
+										>
 										{#if !isBot(user)}
 											<Button variant="secondary" size="sm" onclick={() => openResetPassword(user)}>
 												{$t('admin.changePassword')}
@@ -467,7 +549,10 @@
 		class="space-y-4"
 	>
 		<div>
-			<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="entityType">{$t('admin.entityType')}</label>
+			<label
+				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				for="entityType">{$t('admin.entityType')}</label
+			>
 			<select
 				id="entityType"
 				bind:value={entityType}
@@ -479,12 +564,21 @@
 		</div>
 		<Input type="email" label={$t('admin.email')} bind:value={createForm.email} required />
 		{#if entityType === 'human'}
-			<Input type="password" label={$t('auth.password')} bind:value={createForm.password} required minlength={8} />
+			<Input
+				type="password"
+				label={$t('auth.password')}
+				bind:value={createForm.password}
+				required
+				minlength={8}
+			/>
 		{/if}
 		<Input label={$t('admin.name')} bind:value={createForm.name} required />
 		{#if entityType === 'bot'}
 			<div>
-				<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="agentType">{$t('admin.agentType')}</label>
+				<label
+					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					for="agentType">{$t('admin.agentType')}</label
+				>
 				<select
 					id="agentType"
 					bind:value={agentType}
@@ -497,22 +591,60 @@
 			</div>
 
 			<div class="space-y-3 rounded-md border border-slate-200 dark:border-slate-700 p-3">
-				<p class="text-sm font-medium text-slate-700 dark:text-slate-300">{$t('admin.agentConfig')}</p>
+				<p class="text-sm font-medium text-slate-700 dark:text-slate-300">
+					{$t('admin.agentConfig')}
+				</p>
 				{#if agentType === 'openclaw'}
-					<Input label={$t('formLabels.command')} bind:value={openclawConfig.command} placeholder={$t('placeholders.openclawCommand')} required />
-					<Input label={$t('formLabels.channel')} bind:value={openclawConfig.channel} placeholder={$t('placeholders.openclawChannel')} required />
-					<Input label={$t('formLabels.target')} bind:value={openclawConfig.target} placeholder={$t('placeholders.openclawTarget')} required />
+					<Input
+						label={$t('formLabels.command')}
+						bind:value={openclawConfig.command}
+						placeholder={$t('placeholders.openclawCommand')}
+						required
+					/>
+					<Input
+						label={$t('formLabels.channel')}
+						bind:value={openclawConfig.channel}
+						placeholder={$t('placeholders.openclawChannel')}
+						required
+					/>
+					<Input
+						label={$t('formLabels.target')}
+						bind:value={openclawConfig.target}
+						placeholder={$t('placeholders.openclawTarget')}
+						required
+					/>
 				{:else if agentType === 'webhook'}
-					<Input type="url" label={$t('formLabels.url')} bind:value={webhookConfig.url} placeholder={$t('placeholders.webhookUrlInput')} required />
-					<Input label={$t('formLabels.secret')} bind:value={webhookConfig.secret} placeholder={$t('placeholders.webhookSecret')} />
+					<Input
+						type="url"
+						label={$t('formLabels.url')}
+						bind:value={webhookConfig.url}
+						placeholder={$t('placeholders.webhookUrlInput')}
+						required
+					/>
+					<Input
+						label={$t('formLabels.secret')}
+						bind:value={webhookConfig.secret}
+						placeholder={$t('placeholders.webhookSecret')}
+					/>
 				{:else if agentType === 'custom'}
-					<Input label={$t('formLabels.command')} bind:value={customConfig.command} placeholder={$t('placeholders.customCommand')} required />
-					<Input label={$t('formLabels.args')} bind:value={customConfig.args} placeholder={$t('placeholders.customArgs')} />
+					<Input
+						label={$t('formLabels.command')}
+						bind:value={customConfig.command}
+						placeholder={$t('placeholders.customCommand')}
+						required
+					/>
+					<Input
+						label={$t('formLabels.args')}
+						bind:value={customConfig.args}
+						placeholder={$t('placeholders.customArgs')}
+					/>
 				{/if}
 			</div>
 		{/if}
 		<div class="flex justify-end gap-2 pt-2">
-			<Button variant="secondary" onclick={() => (showCreateModal = false)}>{$t('common.cancel')}</Button>
+			<Button variant="secondary" onclick={() => (showCreateModal = false)}
+				>{$t('common.cancel')}</Button
+			>
 			<Button type="submit" loading={creating}>{$t('common.create')}</Button>
 		</div>
 	</form>
@@ -530,18 +662,23 @@
 			<Input label={$t('admin.name')} bind:value={editForm.name} required />
 			<Input type="email" label={$t('admin.email')} bind:value={editForm.email} required />
 			<div>
-				<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="editRole">{$t('admin.role')}</label>
-					<select
-						id="editRole"
-						bind:value={editForm.role}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-					>
+				<label
+					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					for="editRole">{$t('admin.role')}</label
+				>
+				<select
+					id="editRole"
+					bind:value={editForm.role}
+					class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				>
 					<option value="user">{$t('roles.user')}</option>
 					<option value="admin">{$t('roles.admin')}</option>
 				</select>
 			</div>
 			<div class="flex justify-end gap-2 pt-2">
-				<Button variant="secondary" onclick={() => (showEditModal = false)}>{$t('common.cancel')}</Button>
+				<Button variant="secondary" onclick={() => (showEditModal = false)}
+					>{$t('common.cancel')}</Button
+				>
 				<Button type="submit" loading={editSaving}>{$t('common.save')}</Button>
 			</div>
 		</form>
@@ -557,8 +694,16 @@
 			}}
 			class="space-y-4"
 		>
-			<div class="text-sm text-slate-600 dark:text-slate-300">{$t('common.user')}：{passwordUser.email}</div>
-			<Input type="password" label={$t('settings.newPassword')} bind:value={passwordForm.newPassword} required minlength={8} />
+			<div class="text-sm text-slate-600 dark:text-slate-300">
+				{$t('common.user')}：{passwordUser.email}
+			</div>
+			<Input
+				type="password"
+				label={$t('settings.newPassword')}
+				bind:value={passwordForm.newPassword}
+				required
+				minlength={8}
+			/>
 			<Input
 				type="password"
 				label={$t('settings.confirmPassword')}
@@ -567,7 +712,9 @@
 				minlength={8}
 			/>
 			<div class="flex justify-end gap-2 pt-2">
-				<Button variant="secondary" onclick={() => (showPasswordModal = false)}>{$t('common.cancel')}</Button>
+				<Button variant="secondary" onclick={() => (showPasswordModal = false)}
+					>{$t('common.cancel')}</Button
+				>
 				<Button type="submit" loading={passwordSaving}>{$t('common.save')}</Button>
 			</div>
 		</form>

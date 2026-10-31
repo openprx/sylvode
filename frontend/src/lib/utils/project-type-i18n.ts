@@ -1,5 +1,5 @@
-import type { ProjectType, ScenarioTemplate } from '$lib/api/projects';
-import type { EmbeddedScenarioTemplate } from '$lib/utils/scenario-template';
+import type { ProjectType, ScenarioTemplate } from '#lib/api/projects.js';
+import type { EmbeddedScenarioTemplate } from '#lib/utils/scenario-template.js';
 
 type Translate = (id: string) => string;
 
@@ -23,7 +23,11 @@ export function projectTypeName(
 }
 
 export function projectTypeDescription(projectType: ProjectType, t: Translate): string {
-	return translated(t, `projectTypes.systemDescriptions.${projectType.key}`, projectType.description);
+	return translated(
+		t,
+		`projectTypes.systemDescriptions.${projectType.key}`,
+		projectType.description
+	);
 }
 
 export function projectTypeDomain(domain: string, t: Translate): string {
@@ -38,13 +42,21 @@ export function scenarioTemplateName(
 }
 
 export function scenarioTemplateDescription(template: ScenarioTemplate, t: Translate): string {
-	return translated(t, `scenarioTemplates.systemDescriptions.${template.key}`, template.description);
+	return translated(
+		t,
+		`scenarioTemplates.systemDescriptions.${template.key}`,
+		template.description
+	);
 }
 
 export function scenarioTemplateIndustry(industry: string, t: Translate): string {
 	return translated(t, `scenarioTemplates.industries.${industry}`, fallbackName(industry));
 }
 
-export function scenarioTemplateAudience(audience: string, templateKey: string, t: Translate): string {
+export function scenarioTemplateAudience(
+	audience: string,
+	templateKey: string,
+	t: Translate
+): string {
 	return translated(t, `scenarioTemplates.audiences.${templateKey}`, audience);
 }

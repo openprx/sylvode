@@ -48,7 +48,10 @@ function mapTemplate(raw: Record<string, unknown>): ProposalTemplate {
 		name: String(raw.name ?? ''),
 		description: raw.description ? String(raw.description) : undefined,
 		template_type: String(raw.template_type ?? 'governance'),
-		content: (raw.content && typeof raw.content === 'object' ? raw.content : {}) as Record<string, unknown>,
+		content: (raw.content && typeof raw.content === 'object' ? raw.content : {}) as Record<
+			string,
+			unknown
+		>,
 		is_default: Boolean(raw.is_default ?? false),
 		is_active: Boolean(raw.is_active ?? true),
 		created_by: raw.created_by ? String(raw.created_by) : undefined,
@@ -58,7 +61,9 @@ function mapTemplate(raw: Record<string, unknown>): ProposalTemplate {
 }
 
 export const proposalTemplatesApi = {
-	async list(params: ListProposalTemplatesParams): Promise<ApiResult<PaginatedData<ProposalTemplate>>> {
+	async list(
+		params: ListProposalTemplatesParams
+	): Promise<ApiResult<PaginatedData<ProposalTemplate>>> {
 		const query = new URLSearchParams();
 		query.set('project_id', params.project_id);
 		if (params.template_type) query.set('template_type', params.template_type);
@@ -96,7 +101,10 @@ export const proposalTemplatesApi = {
 	},
 
 	async create(payload: CreateProposalTemplateInput): Promise<ApiResult<ProposalTemplate>> {
-		const res = await apiClient.post<Record<string, unknown>>('/api/v1/proposal-templates', payload);
+		const res = await apiClient.post<Record<string, unknown>>(
+			'/api/v1/proposal-templates',
+			payload
+		);
 		if (res.code !== 0 || !res.data) {
 			return {
 				code: res.code,
@@ -107,8 +115,14 @@ export const proposalTemplatesApi = {
 		return { code: 0, message: res.message, data: mapTemplate(res.data) };
 	},
 
-	async update(id: string, payload: UpdateProposalTemplateInput): Promise<ApiResult<ProposalTemplate>> {
-		const res = await apiClient.put<Record<string, unknown>>(`/api/v1/proposal-templates/${id}`, payload);
+	async update(
+		id: string,
+		payload: UpdateProposalTemplateInput
+	): Promise<ApiResult<ProposalTemplate>> {
+		const res = await apiClient.put<Record<string, unknown>>(
+			`/api/v1/proposal-templates/${id}`,
+			payload
+		);
 		if (res.code !== 0 || !res.data) {
 			return {
 				code: res.code,

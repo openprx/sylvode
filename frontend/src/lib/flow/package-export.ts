@@ -17,9 +17,9 @@
 // - recent job ids are a per-user, per-workspace convenience in `localStorage` (at most 10; every
 //   read and write is guarded). The server is the source of truth.
 
-import type { ApiResult } from '$lib/api/client';
-import type { CreateWorkspaceExportInput, FlowExportJob } from '$lib/api/flow';
-import { projectsApi } from '$lib/api/projects';
+import type { ApiResult } from '#lib/api/client.js';
+import type { CreateWorkspaceExportInput, FlowExportJob } from '#lib/api/flow.js';
+import { projectsApi } from '#lib/api/projects.js';
 import { FlowCommandService } from './command-service';
 import { FlowObjectRepository } from './object-repository';
 import { classifyPackageFailure, type FlowPackageFailure } from './package-import';

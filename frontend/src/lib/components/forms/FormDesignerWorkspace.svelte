@@ -1,11 +1,11 @@
 <script lang="ts">
-		import {
-			AlertTriangle,
-			ArrowDown,
-			ArrowUp,
-			Copy,
-			GripVertical,
-			PanelLeftOpen,
+	import {
+		AlertTriangle,
+		ArrowDown,
+		ArrowUp,
+		Copy,
+		GripVertical,
+		PanelLeftOpen,
 		Plus,
 		Save,
 		ShieldCheck,
@@ -14,13 +14,13 @@
 		X
 	} from '@lucide/svelte';
 	import { t } from 'svelte-i18n';
-	import Button from '$lib/components/Button.svelte';
+	import Button from '#lib/components/Button.svelte';
 	import type {
 		FormFieldDependency,
 		FormFieldType,
 		FormFieldUsage,
 		UniversalForm
-	} from '$lib/api/forms';
+	} from '#lib/api/forms.js';
 
 	export type FieldDraft = {
 		field_id?: string;
@@ -204,13 +204,10 @@
 	></button>
 {/if}
 
-	<section
-		class="grid min-w-0 items-start gap-4 xl:grid-cols-[200px_minmax(0,1fr)_300px] 2xl:grid-cols-[240px_minmax(0,1fr)_340px]"
-	>
-	<div
-		class="grid grid-cols-2 gap-2 md:hidden"
-		data-mobile-field-design-toolbar
-	>
+<section
+	class="grid min-w-0 items-start gap-4 xl:grid-cols-[200px_minmax(0,1fr)_300px] 2xl:grid-cols-[240px_minmax(0,1fr)_340px]"
+>
+	<div class="grid grid-cols-2 gap-2 md:hidden" data-mobile-field-design-toolbar>
 		<Button
 			size="sm"
 			variant="secondary"
@@ -233,12 +230,12 @@
 		</Button>
 	</div>
 
-		<aside
-			class="{mobilePanel === 'library'
-				? 'fixed inset-x-3 bottom-3 top-20 z-40 flex max-h-[calc(100vh-6rem)] flex-col overflow-hidden shadow-2xl'
-				: 'hidden'} rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 md:static md:z-auto md:flex md:max-h-none md:flex-col md:overflow-visible md:shadow-none xl:sticky xl:top-4 xl:max-h-[calc(100vh-7rem)] xl:overflow-hidden"
-			data-mobile-field-library-drawer={mobilePanel === 'library' ? 'open' : 'closed'}
-		>
+	<aside
+		class="{mobilePanel === 'library'
+			? 'fixed inset-x-3 bottom-3 top-20 z-40 flex max-h-[calc(100vh-6rem)] flex-col overflow-hidden shadow-2xl'
+			: 'hidden'} rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 md:static md:z-auto md:flex md:max-h-none md:flex-col md:overflow-visible md:shadow-none xl:sticky xl:top-4 xl:max-h-[calc(100vh-7rem)] xl:overflow-hidden"
+		data-mobile-field-library-drawer={mobilePanel === 'library' ? 'open' : 'closed'}
+	>
 		<div
 			class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-700"
 		>
@@ -256,7 +253,7 @@
 				<X class="h-4 w-4" aria-hidden="true" />
 			</button>
 		</div>
-			<div class="space-y-4 overflow-y-auto p-3 xl:max-h-[calc(100vh-11rem)]">
+		<div class="space-y-4 overflow-y-auto p-3 xl:max-h-[calc(100vh-11rem)]">
 			{#each fieldGroups as group}
 				<div>
 					<p class="px-1 text-xs font-medium uppercase text-slate-500 dark:text-slate-400">
@@ -264,20 +261,22 @@
 					</p>
 					<div class="mt-2 grid gap-1">
 						{#each group.types as type}
-								<button
-									type="button"
-									class="flex min-h-10 items-center justify-between gap-2 rounded-md px-3 text-left text-sm text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-slate-300 dark:hover:bg-slate-800 dark:focus:ring-blue-400"
-									data-field-library-type={type}
-									onclick={() => {
-										onAppendField?.(type);
-										mobilePanel = null;
-									}}
+							<button
+								type="button"
+								class="flex min-h-10 items-center justify-between gap-2 rounded-md px-3 text-left text-sm text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-slate-300 dark:hover:bg-slate-800 dark:focus:ring-blue-400"
+								data-field-library-type={type}
+								onclick={() => {
+									onAppendField?.(type);
+									mobilePanel = null;
+								}}
+							>
+								<span>{$t(`forms.fieldTypes.${type}`)}</span>
+								<span
+									class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-200 text-slate-500 dark:border-slate-700 dark:text-slate-300"
 								>
-									<span>{$t(`forms.fieldTypes.${type}`)}</span>
-									<span class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-200 text-slate-500 dark:border-slate-700 dark:text-slate-300">
-										<Plus class="h-4 w-4" aria-hidden="true" />
-									</span>
-								</button>
+									<Plus class="h-4 w-4" aria-hidden="true" />
+								</span>
+							</button>
 						{/each}
 					</div>
 				</div>
@@ -285,27 +284,27 @@
 		</div>
 	</aside>
 
-		<section
-			class="min-w-0 rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
-			data-field-designer-canvas
-		>
+	<section
+		class="min-w-0 rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+		data-field-designer-canvas
+	>
 		<div
 			class="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between"
 		>
 			<div>
-					<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">{form.name}</h3>
-					<p class="mt-0.5 font-mono text-xs text-slate-500 dark:text-slate-400">
-						{form.key} · v{form.schema_version} · {$t('forms.fieldCount', {
-							values: { count: fieldDrafts.length }
-						})}
-					</p>
+				<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">{form.name}</h3>
+				<p class="mt-0.5 font-mono text-xs text-slate-500 dark:text-slate-400">
+					{form.key} · v{form.schema_version} · {$t('forms.fieldCount', {
+						values: { count: fieldDrafts.length }
+					})}
+				</p>
 			</div>
 			<Button size="sm" loading={saving} onclick={onSave}>
 				<Save class="mr-2 h-4 w-4" aria-hidden="true" />
 				{$t('forms.saveDesign')}
 			</Button>
 		</div>
-			<div class="min-h-[520px] bg-slate-50 p-4 dark:bg-slate-950/40">
+		<div class="min-h-[520px] bg-slate-50 p-4 dark:bg-slate-950/40">
 			{#if fieldDrafts.length === 0}
 				<div
 					class="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900"
@@ -359,35 +358,33 @@
 									{field.key || 'field_key'} · {$t(`forms.fieldTypes.${field.type}`)}
 								</span>
 							</span>
-								<span
-									class="flex items-center gap-1"
+							<span class="flex items-center gap-1">
+								<button
+									type="button"
+									class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800 dark:focus:ring-blue-400"
+									disabled={index === 0}
+									onclick={(event) => {
+										event.stopPropagation();
+										onMoveField?.(index, -1);
+									}}
+									aria-label={$t('forms.moveFieldUp')}
+									data-designer-field-move-up={field.key || index}
 								>
-									<button
-										type="button"
-										class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800 dark:focus:ring-blue-400"
-										disabled={index === 0}
-										onclick={(event) => {
-											event.stopPropagation();
-											onMoveField?.(index, -1);
-										}}
-										aria-label={$t('forms.moveFieldUp')}
-										data-designer-field-move-up={field.key || index}
-										>
-											<ArrowUp class="h-3.5 w-3.5" aria-hidden="true" />
-										</button>
-									<button
-										type="button"
-										class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800 dark:focus:ring-blue-400"
-										disabled={index === fieldDrafts.length - 1}
-										onclick={(event) => {
-											event.stopPropagation();
-											onMoveField?.(index, 1);
-										}}
-										aria-label={$t('forms.moveFieldDown')}
-										data-designer-field-move-down={field.key || index}
-										>
-											<ArrowDown class="h-3.5 w-3.5" aria-hidden="true" />
-										</button>
+									<ArrowUp class="h-3.5 w-3.5" aria-hidden="true" />
+								</button>
+								<button
+									type="button"
+									class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800 dark:focus:ring-blue-400"
+									disabled={index === fieldDrafts.length - 1}
+									onclick={(event) => {
+										event.stopPropagation();
+										onMoveField?.(index, 1);
+									}}
+									aria-label={$t('forms.moveFieldDown')}
+									data-designer-field-move-down={field.key || index}
+								>
+									<ArrowDown class="h-3.5 w-3.5" aria-hidden="true" />
+								</button>
 							</span>
 						</div>
 					{/each}
@@ -396,25 +393,25 @@
 		</div>
 	</section>
 
-		<aside
-			class="{mobilePanel === 'inspector'
-				? 'fixed inset-x-3 bottom-3 top-20 z-40 flex max-h-[calc(100vh-6rem)] flex-col overflow-hidden shadow-2xl'
-				: 'hidden'} rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 md:static md:z-auto md:flex md:max-h-none md:flex-col md:overflow-visible md:shadow-none xl:sticky xl:top-4 xl:max-h-[calc(100vh-7rem)] xl:overflow-hidden"
-			data-mobile-field-inspector-drawer={mobilePanel === 'inspector' ? 'open' : 'closed'}
+	<aside
+		class="{mobilePanel === 'inspector'
+			? 'fixed inset-x-3 bottom-3 top-20 z-40 flex max-h-[calc(100vh-6rem)] flex-col overflow-hidden shadow-2xl'
+			: 'hidden'} rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 md:static md:z-auto md:flex md:max-h-none md:flex-col md:overflow-visible md:shadow-none xl:sticky xl:top-4 xl:max-h-[calc(100vh-7rem)] xl:overflow-hidden"
+		data-mobile-field-inspector-drawer={mobilePanel === 'inspector' ? 'open' : 'closed'}
+	>
+		<div
+			class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-700"
 		>
-			<div
-				class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-700"
-			>
-				<div class="min-w-0">
-					<p class="text-sm font-semibold text-slate-950 dark:text-slate-100">
-						{$t('forms.properties')}
+			<div class="min-w-0">
+				<p class="text-sm font-semibold text-slate-950 dark:text-slate-100">
+					{$t('forms.properties')}
+				</p>
+				{#if selectedField}
+					<p class="mt-0.5 truncate font-mono text-xs text-slate-500 dark:text-slate-400">
+						{selectedField.key || 'field_key'} · {$t(`forms.fieldTypes.${selectedField.type}`)}
 					</p>
-					{#if selectedField}
-						<p class="mt-0.5 truncate font-mono text-xs text-slate-500 dark:text-slate-400">
-							{selectedField.key || 'field_key'} · {$t(`forms.fieldTypes.${selectedField.type}`)}
-						</p>
-					{/if}
-				</div>
+				{/if}
+			</div>
 			<button
 				type="button"
 				class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 md:hidden"
@@ -427,7 +424,7 @@
 			</button>
 		</div>
 		{#if selectedField}
-				<div class="space-y-4 overflow-y-auto p-4 xl:max-h-[calc(100vh-11rem)]">
+			<div class="space-y-4 overflow-y-auto p-4 xl:max-h-[calc(100vh-11rem)]">
 				{#if selectedFieldHidden || selectedFieldLocked}
 					<div class="flex flex-wrap items-center gap-1.5">
 						{#if selectedFieldHidden}
@@ -525,8 +522,7 @@
 										event.currentTarget instanceof HTMLTextAreaElement
 											? event.currentTarget.value
 											: ''
-								})}
-						></textarea>
+								})}></textarea>
 					</label>
 					<label class="space-y-1">
 						<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
@@ -543,8 +539,7 @@
 											? event.currentTarget.value
 											: ''
 								})}
-							data-option-colors-input={selectedField.key}
-						></textarea>
+							data-option-colors-input={selectedField.key}></textarea>
 					</label>
 					<label class="space-y-1">
 						<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
@@ -561,8 +556,7 @@
 											? event.currentTarget.value
 											: ''
 								})}
-							data-option-disabled-input={selectedField.key}
-						></textarea>
+							data-option-disabled-input={selectedField.key}></textarea>
 					</label>
 					<label class="space-y-1">
 						<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
@@ -580,8 +574,7 @@
 											: ''
 								})}
 							data-option-archived-input={selectedField.key}
-							data-option-archived-state={selectedField.optionArchivedText}
-						></textarea>
+							data-option-archived-state={selectedField.optionArchivedText}></textarea>
 					</label>
 					<label class="space-y-1">
 						<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
@@ -598,8 +591,7 @@
 											? event.currentTarget.value
 											: ''
 								})}
-							data-option-descriptions-input={selectedField.key}
-						></textarea>
+							data-option-descriptions-input={selectedField.key}></textarea>
 					</label>
 					<label class="space-y-1">
 						<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
@@ -616,8 +608,7 @@
 											? event.currentTarget.value
 											: ''
 								})}
-							data-option-groups-input={selectedField.key}
-						></textarea>
+							data-option-groups-input={selectedField.key}></textarea>
 					</label>
 				{/if}
 				{#if selectedField.type === 'amount'}
@@ -743,8 +734,7 @@
 												event.currentTarget instanceof HTMLTextAreaElement
 													? event.currentTarget.value
 													: ''
-										})}
-								></textarea>
+										})}></textarea>
 							</label>
 						{/if}
 						{#if selectedField.type === 'formula'}
@@ -870,8 +860,7 @@
 											event.currentTarget instanceof HTMLTextAreaElement
 												? event.currentTarget.value
 												: ''
-									})}
-							></textarea>
+									})}></textarea>
 						</label>
 						<label class="space-y-1">
 							<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
@@ -981,8 +970,7 @@
 												event.currentTarget instanceof HTMLTextAreaElement
 													? event.currentTarget.value
 													: ''
-										})}
-								></textarea>
+										})}></textarea>
 							</label>
 							<label class="space-y-1">
 								<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
@@ -1088,8 +1076,7 @@
 											event.currentTarget instanceof HTMLTextAreaElement
 												? event.currentTarget.value
 												: ''
-									})}
-							></textarea>
+									})}></textarea>
 						</label>
 						<label class="space-y-1">
 							<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
@@ -1172,8 +1159,7 @@
 													? event.currentTarget.value
 													: ''
 										})}
-									data-conditional-hidden-input={selectedField.key}
-								></textarea>
+									data-conditional-hidden-input={selectedField.key}></textarea>
 							</label>
 							<label class="space-y-1">
 								<span class="text-xs font-medium text-slate-600 dark:text-slate-400">
@@ -1190,8 +1176,7 @@
 													? event.currentTarget.value
 													: ''
 										})}
-									data-conditional-readonly-input={selectedField.key}
-								></textarea>
+									data-conditional-readonly-input={selectedField.key}></textarea>
 							</label>
 						</div>
 					</div>
@@ -1346,16 +1331,16 @@
 						<p class="mt-2 text-xs opacity-80">{$t('forms.fieldSafetyClear')}</p>
 					{/if}
 				</details>
-					<div class="grid gap-2 pt-2">
-						<Button size="md" variant="secondary" onclick={() => onDuplicateField?.(selectedIndex)}>
-							<Copy class="mr-2 h-4 w-4" aria-hidden="true" />
-							{$t('forms.duplicateField')}
-						</Button>
-						<Button
-							size="md"
-							variant="danger"
-							disabled={fieldDrafts.length === 1 || selectedBlockingDependencyCount > 0}
-							onclick={() => onRemoveField?.(selectedIndex)}
+				<div class="grid gap-2 pt-2">
+					<Button size="md" variant="secondary" onclick={() => onDuplicateField?.(selectedIndex)}>
+						<Copy class="mr-2 h-4 w-4" aria-hidden="true" />
+						{$t('forms.duplicateField')}
+					</Button>
+					<Button
+						size="md"
+						variant="danger"
+						disabled={fieldDrafts.length === 1 || selectedBlockingDependencyCount > 0}
+						onclick={() => onRemoveField?.(selectedIndex)}
 					>
 						<Trash2 class="mr-2 h-4 w-4" aria-hidden="true" />
 						{$t('forms.removeField')}

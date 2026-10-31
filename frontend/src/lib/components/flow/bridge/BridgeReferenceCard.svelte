@@ -17,7 +17,7 @@
 		type AvailableReference,
 		type EmbedContent,
 		type ReferenceMode
-	} from '$lib/flow/slash-bridge';
+	} from '#lib/flow/slash-bridge.js';
 
 	interface Props {
 		workspaceId: string;

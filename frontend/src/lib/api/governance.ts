@@ -49,7 +49,10 @@ function mapGovernanceConfig(raw: Record<string, unknown>): GovernanceConfig {
 		review_reminder_days: Number(raw.review_reminder_days ?? 7),
 		audit_report_cron: String(raw.audit_report_cron ?? ''),
 		trust_update_mode: String(raw.trust_update_mode ?? ''),
-		config: (raw.config && typeof raw.config === 'object' ? raw.config : {}) as Record<string, unknown>,
+		config: (raw.config && typeof raw.config === 'object' ? raw.config : {}) as Record<
+			string,
+			unknown
+		>,
 		updated_by: raw.updated_by ? String(raw.updated_by) : undefined,
 		created_at: String(raw.created_at ?? ''),
 		updated_at: String(raw.updated_at ?? '')
@@ -74,7 +77,9 @@ function mapAuditLog(raw: Record<string, unknown>): GovernanceAuditLog {
 export const governanceApi = {
 	async getConfig(projectId: string): Promise<ApiResult<GovernanceConfig>> {
 		const query = new URLSearchParams({ project_id: projectId });
-		const res = await apiClient.get<Record<string, unknown>>(`/api/v1/governance/config?${query.toString()}`);
+		const res = await apiClient.get<Record<string, unknown>>(
+			`/api/v1/governance/config?${query.toString()}`
+		);
 		if (res.code !== 0 || !res.data) {
 			return {
 				code: res.code,
@@ -105,7 +110,9 @@ export const governanceApi = {
 		return { code: 0, message: res.message, data: mapGovernanceConfig(res.data) };
 	},
 
-	async listAuditLogs(params: GovernanceAuditLogsQuery): Promise<ApiResult<PaginatedData<GovernanceAuditLog>>> {
+	async listAuditLogs(
+		params: GovernanceAuditLogsQuery
+	): Promise<ApiResult<PaginatedData<GovernanceAuditLog>>> {
 		const query = new URLSearchParams();
 		if (params.project_id) query.set('project_id', params.project_id);
 		if (params.action) query.set('action', params.action);

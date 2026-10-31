@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onDestroy, tick } from 'svelte';
-	import { searchApi, type SearchResult } from '$lib/api/search';
-	import { toast } from '$lib/stores/toast';
-	import { previewText } from '$lib/utils/search';
+	import { searchApi, type SearchResult } from '#lib/api/search.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { previewText } from '#lib/utils/search.js';
 	import { t } from 'svelte-i18n';
 
 	interface Props {
@@ -85,7 +85,7 @@
 
 	function getItemHref(item: SearchResult): string | null {
 		const raw = item as unknown as Record<string, unknown>;
-		const workspaceId = normalizeId(raw.workspace_id ?? raw.workspaceId ?? $page.params.workspaceId);
+		const workspaceId = normalizeId(raw.workspace_id ?? raw.workspaceId ?? page.params.workspaceId);
 
 		if (!workspaceId) {
 			return null;
@@ -94,7 +94,9 @@
 		if (item.type === 'issue') {
 			const projectId = normalizeId(raw.project_id ?? raw.projectId);
 			const issueId = normalizeId(item.id);
-			return projectId && issueId ? `/workspace/${workspaceId}/projects/${projectId}/issues/${issueId}` : null;
+			return projectId && issueId
+				? `/workspace/${workspaceId}/projects/${projectId}/issues/${issueId}`
+				: null;
 		}
 		if (item.type === 'project') {
 			const projectId = normalizeId(item.id);
@@ -102,7 +104,9 @@
 		}
 		const projectId = normalizeId(raw.project_id ?? raw.projectId);
 		const issueId = normalizeId(raw.issue_id ?? raw.issueId);
-		return projectId && issueId ? `/workspace/${workspaceId}/projects/${projectId}/issues/${issueId}` : null;
+		return projectId && issueId
+			? `/workspace/${workspaceId}/projects/${projectId}/issues/${issueId}`
+			: null;
 	}
 
 	function closeModal() {
@@ -193,7 +197,12 @@
 			class="w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-800 dark:shadow-slate-900/50"
 		>
 			<div class="flex items-center border-b border-slate-200 px-4 dark:border-slate-700">
-				<svg class="h-5 w-5 text-slate-400 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<svg
+					class="h-5 w-5 text-slate-400 dark:text-slate-400"
+					fill="none"
+					stroke="currentColor"
+					viewBox="0 0 24 24"
+				>
 					<path
 						stroke-linecap="round"
 						stroke-linejoin="round"
@@ -214,11 +223,17 @@
 
 			<div class="max-h-96 overflow-y-auto p-2">
 				{#if loading}
-					<p class="py-4 text-center text-sm text-slate-400 dark:text-slate-400">{$t('search.searching')}</p>
+					<p class="py-4 text-center text-sm text-slate-400 dark:text-slate-400">
+						{$t('search.searching')}
+					</p>
 				{:else if !query.trim()}
-					<p class="py-4 text-center text-sm text-slate-400 dark:text-slate-400">{$t('search.startTyping')}</p>
+					<p class="py-4 text-center text-sm text-slate-400 dark:text-slate-400">
+						{$t('search.startTyping')}
+					</p>
 				{:else if results.length === 0}
-					<p class="py-4 text-center text-sm text-slate-400 dark:text-slate-400">{$t('search.noResults')}</p>
+					<p class="py-4 text-center text-sm text-slate-400 dark:text-slate-400">
+						{$t('search.noResults')}
+					</p>
 				{:else}
 					{#each results as item, index (item.type + '-' + item.id)}
 						<button
@@ -229,10 +244,15 @@
 							onclick={() => navigateToResult(item)}
 						>
 							<div class="flex items-center justify-between gap-3">
-								<div class="font-medium text-slate-900 dark:text-slate-100">{getItemTitle(item)}</div>
-								<span class="text-xs uppercase text-slate-400 dark:text-slate-400">{item.type}</span>
+								<div class="font-medium text-slate-900 dark:text-slate-100">
+									{getItemTitle(item)}
+								</div>
+								<span class="text-xs uppercase text-slate-400 dark:text-slate-400">{item.type}</span
+								>
 							</div>
-							<div class="line-clamp-1 text-xs text-slate-400 dark:text-slate-400">{getItemPreview(item)}</div>
+							<div class="line-clamp-1 text-xs text-slate-400 dark:text-slate-400">
+								{getItemPreview(item)}
+							</div>
 						</button>
 					{/each}
 				{/if}

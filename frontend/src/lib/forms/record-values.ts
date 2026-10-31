@@ -16,7 +16,7 @@
  * number").
  */
 
-import type { FormField, FormFieldType } from '$lib/api/forms';
+import type { FormField, FormFieldType } from '#lib/api/forms.js';
 
 export interface RelationTargetInfo {
 	title?: string;

@@ -37,7 +37,13 @@ export interface AiAgentStats {
 
 function normalizeLevel(value: unknown): AiLevel {
 	const normalized = String(value ?? 'voter').toLowerCase();
-	if (normalized === 'observer' || normalized === 'advisor' || normalized === 'voter' || normalized === 'vetoer' || normalized === 'autonomous') {
+	if (
+		normalized === 'observer' ||
+		normalized === 'advisor' ||
+		normalized === 'voter' ||
+		normalized === 'vetoer' ||
+		normalized === 'autonomous'
+	) {
 		return normalized;
 	}
 	return 'voter';
@@ -59,13 +65,16 @@ function parseStringList(value: unknown): string[] {
 }
 
 function parseDomainOverrides(value: unknown): Record<string, string> | undefined {
-	const parsed = typeof value === 'string' ? (() => {
-		try {
-			return JSON.parse(value) as unknown;
-		} catch {
-			return null;
-		}
-	})() : value;
+	const parsed =
+		typeof value === 'string'
+			? (() => {
+					try {
+						return JSON.parse(value) as unknown;
+					} catch {
+						return null;
+					}
+				})()
+			: value;
 
 	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
 		return undefined;
@@ -104,9 +113,15 @@ function mapAiAgent(raw: Record<string, unknown>): AiAgent {
 
 export const aiAgentsApi = {
 	async list(projectId: string): Promise<ApiResult<PaginatedData<AiAgent>>> {
-		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(`/api/v1/projects/${projectId}/ai-participants`);
+		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(
+			`/api/v1/projects/${projectId}/ai-participants`
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.loadAiAgentsFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.loadAiAgentsFailed'),
+				data: null
+			};
 		}
 		return {
 			code: 0,
@@ -133,9 +148,16 @@ export const aiAgentsApi = {
 			reason_min_length?: number;
 		}
 	): Promise<ApiResult<AiAgent>> {
-		const res = await apiClient.post<Record<string, unknown>>(`/api/v1/projects/${projectId}/ai-participants`, payload);
+		const res = await apiClient.post<Record<string, unknown>>(
+			`/api/v1/projects/${projectId}/ai-participants`,
+			payload
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.createAiAgentFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.createAiAgentFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: res.message, data: mapAiAgent(res.data) };
 	},
@@ -156,9 +178,16 @@ export const aiAgentsApi = {
 			is_active?: boolean;
 		}
 	): Promise<ApiResult<AiAgent>> {
-		const res = await apiClient.patch<Record<string, unknown>>(`/api/v1/projects/${projectId}/ai-participants/${id}`, payload);
+		const res = await apiClient.patch<Record<string, unknown>>(
+			`/api/v1/projects/${projectId}/ai-participants/${id}`,
+			payload
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.updateAiAgentFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.updateAiAgentFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: res.message, data: mapAiAgent(res.data) };
 	},
@@ -168,9 +197,15 @@ export const aiAgentsApi = {
 	},
 
 	async stats(projectId: string, id: string): Promise<ApiResult<AiAgentStats>> {
-		const res = await apiClient.get<Record<string, unknown>>(`/api/v1/projects/${projectId}/ai-participants/${id}/stats`);
+		const res = await apiClient.get<Record<string, unknown>>(
+			`/api/v1/projects/${projectId}/ai-participants/${id}/stats`
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.loadAiAgentStatsFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.loadAiAgentStatsFailed'),
+				data: null
+			};
 		}
 
 		return {
@@ -185,7 +220,9 @@ export const aiAgentsApi = {
 				abstain_votes: Number(res.data.abstain_votes ?? 0),
 				total_comments: Number(res.data.total_comments ?? 0),
 				last_voted_at: res.data.last_voted_at ? String(res.data.last_voted_at) : undefined,
-				last_commented_at: res.data.last_commented_at ? String(res.data.last_commented_at) : undefined,
+				last_commented_at: res.data.last_commented_at
+					? String(res.data.last_commented_at)
+					: undefined,
 				last_active_at: res.data.last_active_at ? String(res.data.last_active_at) : undefined
 			}
 		};

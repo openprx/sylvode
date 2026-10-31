@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { authStore } from '$lib/stores/auth';
-	import { apiClient } from '$lib/api/client';
-	import { membersApi, type WorkspaceMember } from '$lib/api/members';
+	import { authStore } from '#lib/stores/auth.js';
+	import { apiClient } from '#lib/api/client.js';
+	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
 	import {
 		proposalsApi,
 		type Proposal,
@@ -15,21 +15,21 @@
 		type ProposalType,
 		type VoteChoice,
 		type ProposalIssueSearchResult
-	} from '$lib/api/proposals';
+	} from '#lib/api/proposals.js';
 	import {
 		impactReviewsApi,
 		type ImpactReviewDetail,
 		type ReviewRating,
 		type ReviewStatus
-	} from '$lib/api/impact-reviews';
-	import { toast } from '$lib/stores/toast';
-	import { renderMarkdown } from '$lib/utils/markdown';
+	} from '#lib/api/impact-reviews.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { renderMarkdown } from '#lib/utils/markdown.js';
 	import {
 		isAllowedUploadMime,
 		MAX_UPLOAD_SIZE_BYTES,
 		mediaMarkdown,
 		UPLOAD_ACCEPT_ATTR
-	} from '$lib/utils/upload';
+	} from '#lib/utils/upload.js';
 
 	type MentionCandidate = {
 		id: string;
@@ -37,7 +37,7 @@
 		avatar?: string;
 	};
 
-	const proposalId = $derived($page.params.id || '');
+	const proposalId = $derived(page.params.id || '');
 
 	let loading = $state(true);
 	let proposal = $state<Proposal | null>(null);
@@ -75,14 +75,15 @@
 	});
 
 	const workspaceId = $derived.by(() => {
-		if ($page.params.workspaceId) {
-			return $page.params.workspaceId;
+		if (page.params.workspaceId) {
+			return page.params.workspaceId;
 		}
-		const fromQuery = $page.url.searchParams.get('workspaceId') || $page.url.searchParams.get('workspace_id');
+		const fromQuery =
+			page.url.searchParams.get('workspaceId') || page.url.searchParams.get('workspace_id');
 		if (fromQuery) {
 			return fromQuery;
 		}
-		const fromPath = $page.url.pathname.match(/^\/workspace\/([^/]+)/);
+		const fromPath = page.url.pathname.match(/^\/workspace\/([^/]+)/);
 		return fromPath?.[1] ?? '';
 	});
 
@@ -99,16 +100,20 @@
 		try {
 			const response = await membersApi.searchUsers('_', { limit: 50 });
 			if (response.code === 0 && response.data?.items) {
-				workspaceMembers = response.data.items.map((u: { id: string; email: string; name: string }) => ({
-					user_id: u.id,
-					email: u.email,
-					name: u.name || u.email,
-					role: 'member' as const,
-					joined_at: ''
-				}));
+				workspaceMembers = response.data.items.map(
+					(u: { id: string; email: string; name: string }) => ({
+						user_id: u.id,
+						email: u.email,
+						name: u.name || u.email,
+						role: 'member' as const,
+						joined_at: ''
+					})
+				);
 				return;
 			}
-		} catch (_) { /* fallback below */ }
+		} catch (_) {
+			/* fallback below */
+		}
 		workspaceMembers = [];
 	}
 
@@ -134,7 +139,11 @@
 		decisionId = detailRes.data.decision_id || '';
 		tally = detailRes.data.tally;
 		comments = commentsRes.data?.items ?? [];
-		links = (linksRes.data?.items ?? []) as Array<{ issue_id: string; issue_title: string; issue_state: string }>;
+		links = (linksRes.data?.items ?? []) as Array<{
+			issue_id: string;
+			issue_title: string;
+			issue_state: string;
+		}>;
 		await loadImpactReview();
 		loading = false;
 	}
@@ -144,7 +153,11 @@
 		impactStatus = impactReviewDetail?.review.status || 'collecting';
 		impactAchievements = impactReviewDetail?.review.achievements || '';
 		impactLessons = impactReviewDetail?.review.lessons || '';
-		impactGoalAchievementsText = JSON.stringify(impactReviewDetail?.review.goal_achievements || [], null, 2);
+		impactGoalAchievementsText = JSON.stringify(
+			impactReviewDetail?.review.goal_achievements || [],
+			null,
+			2
+		);
 	}
 
 	async function loadImpactReview() {
@@ -217,7 +230,10 @@
 			.slice(0, 8);
 	});
 
-	function parseMentionAtCursor(text: string, cursorPos: number): { start: number | null; filter: string } {
+	function parseMentionAtCursor(
+		text: string,
+		cursorPos: number
+	): { start: number | null; filter: string } {
 		const beforeCursor = text.slice(0, cursorPos);
 		const atMatch = beforeCursor.match(/(^|\s)@([^\s@]*)$/);
 		if (!atMatch) {
@@ -319,16 +335,13 @@
 		}
 
 		try {
-			const response = await fetch('/api/v1/upload', {
-				method: 'POST',
-				headers,
-				body: formData
-			});
+			const response = await fetch('/api/v1/upload', { method: 'POST', headers, body: formData });
 			const result = (await response.json()) as {
 				code?: number;
 				message?: string;
 				data?: { url?: string };
 			};
+
 			if (result.code === 0 && result.data?.url) {
 				appendCommentImage(result.data.url, file.type);
 				toast.success(get(t)('toast.uploadSuccess'));
@@ -372,7 +385,9 @@
 	}
 
 	function commentAuthorName(comment: ProposalComment): string {
-		return comment.author_name || authorMetaMap[comment.author_id]?.name || comment.author_id.slice(0, 8);
+		return (
+			comment.author_name || authorMetaMap[comment.author_id]?.name || comment.author_id.slice(0, 8)
+		);
 	}
 
 	function commentAvatarText(comment: ProposalComment): string {
@@ -650,26 +665,38 @@
 </svelte:head>
 
 {#if loading}
-	<div class="mx-auto max-w-6xl rounded-lg border border-slate-200 bg-white p-8 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-800">
+	<div
+		class="mx-auto max-w-6xl rounded-lg border border-slate-200 bg-white p-8 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-800"
+	>
 		{$t('governance.loading')}
 	</div>
 {:else if proposal}
 	<div class="mx-auto grid max-w-6xl grid-cols-1 gap-4 lg:grid-cols-3">
 		<div class="space-y-4 lg:col-span-2">
-			<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
+			<div
+				class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+			>
 				<div class="mb-3 flex items-start justify-between gap-3">
 					<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">{proposal.title}</h1>
-					<span class={`rounded px-2 py-1 text-xs font-medium ${statusTone(proposal.status)}`}>{statusLabel(proposal.status)}</span>
+					<span class={`rounded px-2 py-1 text-xs font-medium ${statusTone(proposal.status)}`}
+						>{statusLabel(proposal.status)}</span
+					>
 				</div>
 				<div class="mb-4 text-sm text-slate-500">
-					{typeLabel(proposal.proposal_type)} · {proposalAuthorName} · {new Date(proposal.created_at).toLocaleString()}
+					{typeLabel(proposal.proposal_type)} · {proposalAuthorName} · {new Date(
+						proposal.created_at
+					).toLocaleString()}
 				</div>
 				<div class="mb-4 space-y-3">
 					<div class="grid grid-cols-4 gap-2">
 						{#each progressStages as stage, idx}
 							<div class="space-y-1">
-								<div class={`h-1.5 rounded ${idx <= stageIndex(proposal.status) ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}></div>
-								<p class={`text-xs ${idx === stageIndex(proposal.status) ? 'font-medium text-blue-700 dark:text-blue-300' : 'text-slate-500'}`}>
+								<div
+									class={`h-1.5 rounded ${idx <= stageIndex(proposal.status) ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}
+								></div>
+								<p
+									class={`text-xs ${idx === stageIndex(proposal.status) ? 'font-medium text-blue-700 dark:text-blue-300' : 'text-slate-500'}`}
+								>
 									{stageLabel(stage, proposal.status)}
 								</p>
 							</div>
@@ -678,7 +705,11 @@
 					{#if getDeadline(proposal).at}
 						<div class="text-xs text-slate-500">
 							<p>{getDeadline(proposal).label}: {countdownText(getDeadline(proposal).at)}</p>
-							<p>{$t('governance.deadlineAtLabel')}: {new Date(getDeadline(proposal).at ?? '').toLocaleString()}</p>
+							<p>
+								{$t('governance.deadlineAtLabel')}: {new Date(
+									getDeadline(proposal).at ?? ''
+								).toLocaleString()}
+							</p>
 						</div>
 					{/if}
 				</div>
@@ -687,8 +718,12 @@
 				</div>
 			</div>
 
-			<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
-				<h2 class="mb-3 text-lg font-semibold text-slate-900 dark:text-slate-100">{$t('governance.discussion')}</h2>
+			<div
+				class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+			>
+				<h2 class="mb-3 text-lg font-semibold text-slate-900 dark:text-slate-100">
+					{$t('governance.discussion')}
+				</h2>
 				<div class="space-y-3">
 					{#if comments.length === 0}
 						<p class="text-sm text-slate-500">{$t('governance.noComments')}</p>
@@ -697,17 +732,29 @@
 							<div class="rounded-md border border-slate-200 p-3 dark:border-slate-600">
 								<div class="mb-2 flex items-start gap-3">
 									{#if comment.author_avatar}
-										<img src={comment.author_avatar} alt={commentAuthorName(comment)} class="h-8 w-8 rounded-full object-cover" />
+										<img
+											src={comment.author_avatar}
+											alt={commentAuthorName(comment)}
+											class="h-8 w-8 rounded-full object-cover"
+										/>
 									{:else}
-										<div class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-100">
+										<div
+											class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-100"
+										>
 											{commentAvatarText(comment)}
 										</div>
 									{/if}
 									<div>
-										<div class="text-xs text-slate-500">{commentAuthorName(comment)} · {comment.comment_type} · {new Date(comment.created_at).toLocaleString()}</div>
+										<div class="text-xs text-slate-500">
+											{commentAuthorName(comment)} · {comment.comment_type} · {new Date(
+												comment.created_at
+											).toLocaleString()}
+										</div>
 									</div>
 								</div>
-								<div class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300">
+								<div
+									class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300"
+								>
 									{@html renderCommentContent(comment.content)}
 								</div>
 							</div>
@@ -716,21 +763,43 @@
 				</div>
 				<div class="relative mt-3 space-y-2">
 					{#if showMentionDropdown && filteredMentionCandidates.length > 0}
-						<div class="absolute bottom-full left-0 z-20 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800">
+						<div
+							class="absolute bottom-full left-0 z-20 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800"
+						>
 							{#each filteredMentionCandidates as member (member.id)}
-								<button type="button" class="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-700" onclick={() => selectMention(member)}>
+								<button
+									type="button"
+									class="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+									onclick={() => selectMention(member)}
+								>
 									{member.name}
 								</button>
 							{/each}
 						</div>
 					{/if}
-					<div class="mb-1 inline-flex overflow-hidden rounded-md border border-slate-300 text-xs dark:border-slate-600">
-						<button type="button" class={`px-2 py-1 ${newCommentMode === 'edit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'}`} onclick={() => (newCommentMode = 'edit')}>
-							{$t('issue.editMode')}
-						</button>
-						<button type="button" class={`px-2 py-1 ${newCommentMode === 'preview' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'}`} onclick={() => (newCommentMode = 'preview')}>
-							{$t('issue.previewMode')}
-						</button>
+
+					<div
+						class="mb-1 inline-flex overflow-hidden rounded-md border border-slate-300 text-xs dark:border-slate-600"
+					>
+						<button
+							type="button"
+							class={`px-2 py-1 ${
+								newCommentMode === 'edit'
+									? 'bg-blue-600 text-white'
+									: 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'
+							}`}
+							onclick={() => (newCommentMode = 'edit')}>{$t('issue.editMode')}</button
+						>
+
+						<button
+							type="button"
+							class={`px-2 py-1 ${
+								newCommentMode === 'preview'
+									? 'bg-blue-600 text-white'
+									: 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'
+							}`}
+							onclick={() => (newCommentMode = 'preview')}>{$t('issue.previewMode')}</button
+						>
 					</div>
 					{#if newCommentMode === 'edit'}
 						<textarea
@@ -740,12 +809,15 @@
 							placeholder={$t('governance.commentPlaceholder')}
 							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
 							oninput={handleNewCommentInput}
-							onpaste={handleCommentPaste}
-						></textarea>
+							onpaste={handleCommentPaste}></textarea>
 					{:else}
-						<div class="min-h-24 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
+						<div
+							class="min-h-24 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
+						>
 							{#if newComment.trim()}
-								<div class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300">
+								<div
+									class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300"
+								>
 									{@html renderMarkdown(newComment)}
 								</div>
 							{:else}
@@ -754,21 +826,42 @@
 						</div>
 					{/if}
 					<div class="flex items-center justify-between">
-						<label class="inline-flex cursor-pointer items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300">
-							<span>{uploadingCommentImage ? $t('search.searching') : $t('issue.uploadImage')}</span>
-							<input type="file" accept={UPLOAD_ACCEPT_ATTR} class="hidden" onchange={handleCommentImageSelect} disabled={uploadingCommentImage} />
+						<label
+							class="inline-flex cursor-pointer items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+						>
+							<span>{uploadingCommentImage ? $t('search.searching') : $t('issue.uploadImage')}</span
+							>
+							<input
+								type="file"
+								accept={UPLOAD_ACCEPT_ATTR}
+								class="hidden"
+								onchange={handleCommentImageSelect}
+								disabled={uploadingCommentImage}
+							/>
 						</label>
-						<button type="button" onclick={addComment} class="rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700" disabled={!newComment.trim()}>
+						<button
+							type="button"
+							onclick={addComment}
+							class="rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+							disabled={!newComment.trim()}
+						>
 							{$t('governance.commentSubmit')}
 						</button>
 					</div>
 				</div>
 			</div>
 
-			<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
+			<div
+				class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+			>
 				<div class="mb-3 flex items-center justify-between gap-3">
-					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">{$t('impactReview.title')}</h2>
-					<a href={`/proposals/${proposal.id}/review`} class="text-sm text-blue-600 hover:underline">
+					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+						{$t('impactReview.title')}
+					</h2>
+					<a
+						href={`/proposals/${proposal.id}/review`}
+						class="text-sm text-blue-600 hover:underline"
+					>
 						{$t('impactReview.detailLink')}
 					</a>
 				</div>
@@ -777,22 +870,44 @@
 				{:else if !impactReviewDetail}
 					<p class="text-sm text-slate-500">{$t('impactReview.notCreated')}</p>
 					{#if proposal.status === 'approved'}
-						<button type="button" onclick={createImpactReview} class="mt-3 rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700">
+						<button
+							type="button"
+							onclick={createImpactReview}
+							class="mt-3 rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+						>
 							{$t('impactReview.create')}
 						</button>
 					{/if}
 				{:else}
 					<div class="mb-3 grid grid-cols-1 gap-2 text-xs text-slate-500 md:grid-cols-4">
 						<p>{$t('impactReview.reviewId')}: {impactReviewDetail.review.id}</p>
-						<p>{$t('impactReview.scheduledAt')}: {impactReviewDetail.review.scheduled_at ? new Date(impactReviewDetail.review.scheduled_at).toLocaleString() : '-'}</p>
-						<p>{$t('impactReview.conductedAt')}: {impactReviewDetail.review.conducted_at ? new Date(impactReviewDetail.review.conducted_at).toLocaleString() : '-'}</p>
-						<p>{$t('impactReview.trustApplied')}: {impactReviewDetail.review.trust_score_applied ? $t('impactReview.yes') : $t('impactReview.no')}</p>
+						<p>
+							{$t('impactReview.scheduledAt')}: {impactReviewDetail.review.scheduled_at
+								? new Date(impactReviewDetail.review.scheduled_at).toLocaleString()
+								: '-'}
+						</p>
+						<p>
+							{$t('impactReview.conductedAt')}: {impactReviewDetail.review.conducted_at
+								? new Date(impactReviewDetail.review.conducted_at).toLocaleString()
+								: '-'}
+						</p>
+						<p>
+							{$t('impactReview.trustApplied')}: {impactReviewDetail.review.trust_score_applied
+								? $t('impactReview.yes')
+								: $t('impactReview.no')}
+						</p>
 					</div>
 					<div class="space-y-3">
 						<div class="grid grid-cols-1 gap-3 md:grid-cols-2">
 							<div>
-								<label for="proposal-impact-status" class="mb-1 block text-sm text-slate-600">{$t('common.status')}</label>
-								<select id="proposal-impact-status" bind:value={impactStatus} class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900">
+								<label for="proposal-impact-status" class="mb-1 block text-sm text-slate-600"
+									>{$t('common.status')}</label
+								>
+								<select
+									id="proposal-impact-status"
+									bind:value={impactStatus}
+									class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+								>
 									<option value="pending">{$t('impactReview.status.pending')}</option>
 									<option value="collecting">{$t('impactReview.status.collecting')}</option>
 									<option value="completed">{$t('impactReview.status.completed')}</option>
@@ -800,8 +915,14 @@
 								</select>
 							</div>
 							<div>
-								<label for="proposal-impact-rating" class="mb-1 block text-sm text-slate-600">{$t('impactReview.rating')}</label>
-								<select id="proposal-impact-rating" bind:value={impactRating} class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900">
+								<label for="proposal-impact-rating" class="mb-1 block text-sm text-slate-600"
+									>{$t('impactReview.rating')}</label
+								>
+								<select
+									id="proposal-impact-rating"
+									bind:value={impactRating}
+									class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+								>
 									<option value="">{`- ${$t('impactReview.ratingAll')} -`}</option>
 									<option value="S">S</option>
 									<option value="A">A</option>
@@ -812,19 +933,47 @@
 							</div>
 						</div>
 						<div>
-							<label for="proposal-impact-goal-achievements" class="mb-1 block text-sm text-slate-600">{$t('impactReview.goalAchievements')}</label>
-							<textarea id="proposal-impact-goal-achievements" bind:value={impactGoalAchievementsText} rows="5" class="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-600 dark:bg-slate-900"></textarea>
+							<label
+								for="proposal-impact-goal-achievements"
+								class="mb-1 block text-sm text-slate-600"
+								>{$t('impactReview.goalAchievements')}</label
+							>
+							<textarea
+								id="proposal-impact-goal-achievements"
+								bind:value={impactGoalAchievementsText}
+								rows="5"
+								class="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-600 dark:bg-slate-900"
+							></textarea>
 						</div>
 						<div>
-							<label for="proposal-impact-achievements" class="mb-1 block text-sm text-slate-600">{$t('impactReview.achievements')}</label>
-							<textarea id="proposal-impact-achievements" bind:value={impactAchievements} rows="3" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"></textarea>
+							<label for="proposal-impact-achievements" class="mb-1 block text-sm text-slate-600"
+								>{$t('impactReview.achievements')}</label
+							>
+							<textarea
+								id="proposal-impact-achievements"
+								bind:value={impactAchievements}
+								rows="3"
+								class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+							></textarea>
 						</div>
 						<div>
-							<label for="proposal-impact-lessons" class="mb-1 block text-sm text-slate-600">{$t('impactReview.lessons')}</label>
-							<textarea id="proposal-impact-lessons" bind:value={impactLessons} rows="3" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"></textarea>
+							<label for="proposal-impact-lessons" class="mb-1 block text-sm text-slate-600"
+								>{$t('impactReview.lessons')}</label
+							>
+							<textarea
+								id="proposal-impact-lessons"
+								bind:value={impactLessons}
+								rows="3"
+								class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+							></textarea>
 						</div>
 						<div class="flex justify-end">
-							<button type="button" onclick={saveImpactReview} class="rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700" disabled={impactSaving}>
+							<button
+								type="button"
+								onclick={saveImpactReview}
+								class="rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+								disabled={impactSaving}
+							>
 								{impactSaving ? $t('common.saving') : $t('common.save')}
 							</button>
 						</div>
@@ -834,22 +983,50 @@
 		</div>
 
 		<div class="space-y-4">
-			<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-				<h3 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">{$t('governance.actions')}</h3>
+			<div
+				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+			>
+				<h3 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+					{$t('governance.actions')}
+				</h3>
 				<div class="space-y-2">
 					{#if proposal.status === 'draft' && isAuthor}
-						<a href={`/proposals/${proposal.id}/edit`} class="block w-full rounded-md border border-slate-300 px-3 py-2 text-center text-sm hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-900">{$t('governance.editDraft')}</a>
-						<button type="button" onclick={actDeleteDraft} class="w-full rounded-md bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700">{$t('governance.deleteDraft')}</button>
-						<button type="button" onclick={actSubmit} class="w-full rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700">{$t('governance.submitDiscussion')}</button>
+						<a
+							href={`/proposals/${proposal.id}/edit`}
+							class="block w-full rounded-md border border-slate-300 px-3 py-2 text-center text-sm hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-900"
+							>{$t('governance.editDraft')}</a
+						>
+						<button
+							type="button"
+							onclick={actDeleteDraft}
+							class="w-full rounded-md bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700"
+							>{$t('governance.deleteDraft')}</button
+						>
+						<button
+							type="button"
+							onclick={actSubmit}
+							class="w-full rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+							>{$t('governance.submitDiscussion')}</button
+						>
 					{/if}
 					{#if proposal.status === 'open' && isAuthor}
-						<button type="button" onclick={actStartVoting} class="w-full rounded-md bg-amber-600 px-3 py-2 text-sm text-white hover:bg-amber-700">{$t('governance.startVoting')}</button>
+						<button
+							type="button"
+							onclick={actStartVoting}
+							class="w-full rounded-md bg-amber-600 px-3 py-2 text-sm text-white hover:bg-amber-700"
+							>{$t('governance.startVoting')}</button
+						>
 					{/if}
 					{#if proposal.status === 'voting'}
 						<p class="text-xs text-slate-500">{$t('governance.votingInProgress')}</p>
 					{/if}
 					{#if (proposal.status === 'approved' || proposal.status === 'rejected' || proposal.status === 'vetoed') && isAuthor}
-						<button type="button" onclick={actArchive} class="w-full rounded-md bg-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-800">{$t('governance.archiveAction')}</button>
+						<button
+							type="button"
+							onclick={actArchive}
+							class="w-full rounded-md bg-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-800"
+							>{$t('governance.archiveAction')}</button
+						>
 					{/if}
 					{#if proposal.status === 'archived'}
 						<p class="text-xs text-slate-500">{$t('governance.archivedStatus')}</p>
@@ -857,28 +1034,67 @@
 				</div>
 			</div>
 
-			<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-				<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">{$t('governance.voting')}</h3>
+			<div
+				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+			>
+				<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+					{$t('governance.voting')}
+				</h3>
 				<div class="mb-2 grid grid-cols-3 gap-2 text-xs">
-					<div class="rounded bg-emerald-50 px-2 py-1 text-emerald-700">{$t('governance.voteChoice.yes')}: {tally.yes}</div>
-					<div class="rounded bg-red-50 px-2 py-1 text-red-700">{$t('governance.voteChoice.no')}: {tally.no}</div>
-					<div class="rounded bg-slate-100 px-2 py-1 text-slate-700">{$t('governance.voteChoice.abstain')}: {tally.abstain}</div>
+					<div class="rounded bg-emerald-50 px-2 py-1 text-emerald-700">
+						{$t('governance.voteChoice.yes')}: {tally.yes}
+					</div>
+					<div class="rounded bg-red-50 px-2 py-1 text-red-700">
+						{$t('governance.voteChoice.no')}: {tally.no}
+					</div>
+					<div class="rounded bg-slate-100 px-2 py-1 text-slate-700">
+						{$t('governance.voteChoice.abstain')}: {tally.abstain}
+					</div>
 				</div>
 				{#if proposal.status === 'voting'}
-					<textarea bind:value={voteReason} rows="2" placeholder={$t('governance.voteReasonPlaceholder')} class="mb-2 w-full rounded-md border border-slate-300 px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-900"></textarea>
+					<textarea
+						bind:value={voteReason}
+						rows="2"
+						placeholder={$t('governance.voteReasonPlaceholder')}
+						class="mb-2 w-full rounded-md border border-slate-300 px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-900"
+					></textarea>
 					<div class="grid grid-cols-3 gap-2">
-						<button type="button" onclick={() => vote('yes')} class="rounded bg-emerald-600 px-2 py-2 text-xs text-white hover:bg-emerald-700">{$t('governance.voteButton.yes')}</button>
-						<button type="button" onclick={() => vote('no')} class="rounded bg-red-600 px-2 py-2 text-xs text-white hover:bg-red-700">{$t('governance.voteButton.no')}</button>
-						<button type="button" onclick={() => vote('abstain')} class="rounded bg-slate-600 px-2 py-2 text-xs text-white hover:bg-slate-700">{$t('governance.voteButton.abstain')}</button>
+						<button
+							type="button"
+							onclick={() => vote('yes')}
+							class="rounded bg-emerald-600 px-2 py-2 text-xs text-white hover:bg-emerald-700"
+							>{$t('governance.voteButton.yes')}</button
+						>
+						<button
+							type="button"
+							onclick={() => vote('no')}
+							class="rounded bg-red-600 px-2 py-2 text-xs text-white hover:bg-red-700"
+							>{$t('governance.voteButton.no')}</button
+						>
+						<button
+							type="button"
+							onclick={() => vote('abstain')}
+							class="rounded bg-slate-600 px-2 py-2 text-xs text-white hover:bg-slate-700"
+							>{$t('governance.voteButton.abstain')}</button
+						>
 					</div>
-					<button type="button" onclick={withdrawVote} class="mt-2 w-full rounded border border-slate-300 px-2 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-900">{$t('governance.withdrawVote')}</button>
+					<button
+						type="button"
+						onclick={withdrawVote}
+						class="mt-2 w-full rounded border border-slate-300 px-2 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-900"
+						>{$t('governance.withdrawVote')}</button
+					>
 				{:else}
 					<p class="text-xs text-slate-500">{$t('governance.votingOnlyHint')}</p>
 				{/if}
 			</div>
 
-			<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-				<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">{$t('governance.issueLinks')}</h3>
+			<div
+				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+			>
+				<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+					{$t('governance.issueLinks')}
+				</h3>
 				<div class="space-y-2">
 					{#if links.length === 0}
 						<p class="text-xs text-slate-500">{$t('governance.noIssueLinks')}</p>
@@ -893,17 +1109,34 @@
 				{#if proposal.status === 'approved' && isAuthor}
 					<div class="mt-2 space-y-2">
 						<div class="flex gap-2">
-							<input bind:value={issueSearch} onkeydown={(e) => e.key === 'Enter' && searchIssues()} placeholder={$t('governance.searchIssuePlaceholder')} class="w-full rounded-md border border-slate-300 px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-900" />
-							<button type="button" onclick={searchIssues} class="rounded-md bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700">{$t('common.search')}</button>
+							<input
+								bind:value={issueSearch}
+								onkeydown={(e) => e.key === 'Enter' && searchIssues()}
+								placeholder={$t('governance.searchIssuePlaceholder')}
+								class="w-full rounded-md border border-slate-300 px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-900"
+							/>
+							<button
+								type="button"
+								onclick={searchIssues}
+								class="rounded-md bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700"
+								>{$t('common.search')}</button
+							>
 						</div>
 						{#if searchingIssues}
 							<p class="text-xs text-slate-500">{$t('governance.searchingIssues')}</p>
 						{:else if issueResults.length > 0}
 							<div class="space-y-1">
 								{#each issueResults as issue}
-									<div class="flex items-center justify-between rounded border border-slate-200 px-2 py-1 text-xs dark:border-slate-600">
+									<div
+										class="flex items-center justify-between rounded border border-slate-200 px-2 py-1 text-xs dark:border-slate-600"
+									>
 										<span class="truncate pr-2">{issue.title} · {issue.state}</span>
-										<button type="button" onclick={() => linkIssue(issue.id)} class="rounded bg-slate-800 px-2 py-1 text-white hover:bg-slate-900">{$t('governance.select')}</button>
+										<button
+											type="button"
+											onclick={() => linkIssue(issue.id)}
+											class="rounded bg-slate-800 px-2 py-1 text-white hover:bg-slate-900"
+											>{$t('governance.select')}</button
+										>
 									</div>
 								{/each}
 							</div>
@@ -912,10 +1145,16 @@
 				{/if}
 			</div>
 
-			<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-				<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">{$t('governance.decisions.title')}</h3>
+			<div
+				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+			>
+				<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+					{$t('governance.decisions.title')}
+				</h3>
 				{#if decisionId}
-					<p class="text-xs text-slate-600 dark:text-slate-300">{$t('governance.decisions.linkedDecision', { values: { id: decisionId } })}</p>
+					<p class="text-xs text-slate-600 dark:text-slate-300">
+						{$t('governance.decisions.linkedDecision', { values: { id: decisionId } })}
+					</p>
 				{:else}
 					<p class="text-xs text-slate-500">{$t('governance.decisions.none')}</p>
 				{/if}
@@ -933,7 +1172,10 @@
 						{$t('vetoDetail.title')}
 					</a>
 				</div>
-				<a href={`/proposals/${proposal.id}/chain`} class="mt-3 inline-block text-xs text-blue-600 hover:underline">
+				<a
+					href={`/proposals/${proposal.id}/chain`}
+					class="mt-3 inline-block text-xs text-blue-600 hover:underline"
+				>
 					{$t('governanceExt.viewChain')}
 				</a>
 			</div>

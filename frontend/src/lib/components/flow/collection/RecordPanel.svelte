@@ -19,8 +19,8 @@
 		CollectionViewController,
 		draftIn,
 		type CollectionViewState
-	} from '$lib/flow/collection-view';
-	import { editorValue, isEditableField } from '$lib/flow/collection-values';
+	} from '#lib/flow/collection-view.js';
+	import { editorValue, isEditableField } from '#lib/flow/collection-values.js';
 	import CollectionCellValue from './CollectionCellValue.svelte';
 	import CollectionValueEditor from './CollectionValueEditor.svelte';
 

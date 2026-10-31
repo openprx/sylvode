@@ -2,14 +2,14 @@
 	// Renders a finished `ImportReport` (`contracts/export-package-v1.md`). Only report fields are
 	// shown; there are no CRDT bytes in a report and none are requested.
 	import { t } from 'svelte-i18n';
-	import Card from '$lib/components/Card.svelte';
+	import Card from '#lib/components/Card.svelte';
 	import {
 		IMPORT_COUNT_LABEL_KEYS,
 		IMPORT_REPORT_COUNT_KEYS,
 		IMPORT_STATUS_KEYS,
 		type FlowPackageImportReport
-	} from '$lib/flow/import-report';
-	import { CONFLICT_POLICY_KEYS } from '$lib/flow/package-wizard';
+	} from '#lib/flow/import-report.js';
+	import { CONFLICT_POLICY_KEYS } from '#lib/flow/package-wizard.js';
 
 	interface Props {
 		report: FlowPackageImportReport;

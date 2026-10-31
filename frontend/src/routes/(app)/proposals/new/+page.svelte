@@ -3,27 +3,27 @@
 	import { tick } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { apiClient } from '$lib/api/client';
-	import { proposalTemplatesApi, type ProposalTemplate } from '$lib/api/proposal-templates';
+	import { apiClient } from '#lib/api/client.js';
+	import { proposalTemplatesApi, type ProposalTemplate } from '#lib/api/proposal-templates.js';
 	import {
 		proposalsApi,
 		type ProposalType,
 		type VotingRule,
 		type CycleTemplate
-	} from '$lib/api/proposals';
+	} from '#lib/api/proposals.js';
 	import {
 		groupProjectOptionsByWorkspace,
 		loadProjectOptions,
 		type ProjectOption
-	} from '$lib/utils/project-options';
-	import { toast } from '$lib/stores/toast';
-	import { renderMarkdown } from '$lib/utils/markdown';
+	} from '#lib/utils/project-options.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { renderMarkdown } from '#lib/utils/markdown.js';
 	import {
 		isAllowedUploadMime,
 		MAX_UPLOAD_SIZE_BYTES,
 		mediaMarkdown,
 		UPLOAD_ACCEPT_ATTR
-	} from '$lib/utils/upload';
+	} from '#lib/utils/upload.js';
 	import { onMount } from 'svelte';
 
 	let title = $state('');
@@ -272,7 +272,9 @@
 		}
 		if (
 			templateType &&
-			['feature', 'architecture', 'priority', 'resource', 'governance', 'bugfix'].includes(templateType)
+			['feature', 'architecture', 'priority', 'resource', 'governance', 'bugfix'].includes(
+				templateType
+			)
 		) {
 			proposalType = templateType as ProposalType;
 		}
@@ -286,7 +288,10 @@
 		) {
 			votingRule = templateVotingRule as VotingRule;
 		}
-		if (templateCycleTemplate && ['rapid', 'fast', 'standard', 'critical'].includes(templateCycleTemplate)) {
+		if (
+			templateCycleTemplate &&
+			['rapid', 'fast', 'standard', 'critical'].includes(templateCycleTemplate)
+		) {
 			cycleTemplate = templateCycleTemplate as CycleTemplate;
 		}
 		if (templateDomains.length > 0) {
@@ -345,11 +350,17 @@
 </svelte:head>
 
 <div class="mx-auto max-w-3xl">
-	<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
-		<h1 class="mb-4 text-xl font-semibold text-slate-900 dark:text-slate-100">{$t('governance.createTitle')}</h1>
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+	>
+		<h1 class="mb-4 text-xl font-semibold text-slate-900 dark:text-slate-100">
+			{$t('governance.createTitle')}
+		</h1>
 		<div class="space-y-4">
 			<div>
-				<label for="proposal-title" class="mb-1 block text-sm text-slate-600">{$t('governance.field.title')}</label>
+				<label for="proposal-title" class="mb-1 block text-sm text-slate-600"
+					>{$t('governance.field.title')}</label
+				>
 				<input
 					id="proposal-title"
 					type="text"
@@ -361,7 +372,9 @@
 
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
 				<div>
-					<label for="proposal-template-project" class="mb-1 block text-sm text-slate-600">{$t('proposalTemplates.project')}</label>
+					<label for="proposal-template-project" class="mb-1 block text-sm text-slate-600"
+						>{$t('proposalTemplates.project')}</label
+					>
 					<select
 						id="proposal-template-project"
 						bind:value={selectedProjectId}
@@ -379,48 +392,89 @@
 					</select>
 				</div>
 				<div>
-					<label for="proposal-type" class="mb-1 block text-sm text-slate-600">{$t('governance.field.type')}</label>
-					<select id="proposal-type" bind:value={proposalType} onchange={handleTypeChange} class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900">
+					<label for="proposal-type" class="mb-1 block text-sm text-slate-600"
+						>{$t('governance.field.type')}</label
+					>
+					<select
+						id="proposal-type"
+						bind:value={proposalType}
+						onchange={handleTypeChange}
+						class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+					>
 						{#each proposalTypeOptions as option}
 							<option value={option.value}>{$t(option.labelKey)}</option>
 						{/each}
 					</select>
 				</div>
 				<div>
-					<label for="proposal-voting-rule" class="mb-1 block text-sm text-slate-600">{$t('governance.field.votingRule')}</label>
-					<select id="proposal-voting-rule" bind:value={votingRule} class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900">
+					<label for="proposal-voting-rule" class="mb-1 block text-sm text-slate-600"
+						>{$t('governance.field.votingRule')}</label
+					>
+					<select
+						id="proposal-voting-rule"
+						bind:value={votingRule}
+						class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+					>
 						{#each votingRuleOptions as option}
 							<option value={option.value}>{$t(option.labelKey)}</option>
 						{/each}
 					</select>
-					<p class="mt-1 text-xs text-slate-500">{$t(`governance.votingRuleDescription.${votingRule}`)}</p>
+					<p class="mt-1 text-xs text-slate-500">
+						{$t(`governance.votingRuleDescription.${votingRule}`)}
+					</p>
 				</div>
 				<div>
-					<label for="proposal-cycle-template" class="mb-1 block text-sm text-slate-600">{$t('governance.field.cycleTemplate')}</label>
-					<select id="proposal-cycle-template" bind:value={cycleTemplate} class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900">
+					<label for="proposal-cycle-template" class="mb-1 block text-sm text-slate-600"
+						>{$t('governance.field.cycleTemplate')}</label
+					>
+					<select
+						id="proposal-cycle-template"
+						bind:value={cycleTemplate}
+						class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+					>
 						{#each cycleTemplateOptions as option}
 							<option value={option.value}>{$t(option.labelKey)}</option>
 						{/each}
 					</select>
 					<p class="mt-1 text-xs text-slate-500">
-						{$t('governance.recommendedCycle', { values: { cycle: $t(`governance.cycleTemplate.${recommendedCycleByType[proposalType]}`) } })}
+						{$t('governance.recommendedCycle', {
+							values: {
+								cycle: $t(`governance.cycleTemplate.${recommendedCycleByType[proposalType]}`)
+							}
+						})}
 					</p>
-					<p class="mt-1 text-xs text-slate-500">{$t(`governance.cycleDescription.${cycleTemplate}`)}</p>
+					<p class="mt-1 text-xs text-slate-500">
+						{$t(`governance.cycleDescription.${cycleTemplate}`)}
+					</p>
 				</div>
 			</div>
 
 			<div>
-				<label for="proposal-template-id" class="mb-1 block text-sm text-slate-600">{$t('proposalTemplates.applyTemplate')}</label>
-				<select id="proposal-template-id" bind:value={selectedTemplateId} onchange={onTemplateChange} class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900" disabled={loadingTemplates || templateOptions.length === 0}>
+				<label for="proposal-template-id" class="mb-1 block text-sm text-slate-600"
+					>{$t('proposalTemplates.applyTemplate')}</label
+				>
+				<select
+					id="proposal-template-id"
+					bind:value={selectedTemplateId}
+					onchange={onTemplateChange}
+					class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+					disabled={loadingTemplates || templateOptions.length === 0}
+				>
 					<option value="">{`- ${$t('proposalTemplates.none')} -`}</option>
 					{#each templateOptions as template}
-						<option value={template.id}>{template.name}{template.is_default ? ` (${ $t('proposalTemplates.default') })` : ''}</option>
+						<option value={template.id}
+							>{template.name}{template.is_default
+								? ` (${$t('proposalTemplates.default')})`
+								: ''}</option
+						>
 					{/each}
 				</select>
 			</div>
 
 			<div>
-				<label for="proposal-domains" class="mb-1 block text-sm text-slate-600">{$t('governance.field.domains')}</label>
+				<label for="proposal-domains" class="mb-1 block text-sm text-slate-600"
+					>{$t('governance.field.domains')}</label
+				>
 				<input
 					id="proposal-domains"
 					type="text"
@@ -431,12 +485,24 @@
 			</div>
 
 			<div>
-				<label for="proposal-content" class="mb-1 block text-sm text-slate-600">{$t('governance.field.content')}</label>
-				<div class="mb-2 inline-flex overflow-hidden rounded-md border border-slate-300 text-xs dark:border-slate-600">
-					<button type="button" class={`px-2 py-1 ${contentMode === 'edit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'}`} onclick={() => (contentMode = 'edit')}>
+				<label for="proposal-content" class="mb-1 block text-sm text-slate-600"
+					>{$t('governance.field.content')}</label
+				>
+				<div
+					class="mb-2 inline-flex overflow-hidden rounded-md border border-slate-300 text-xs dark:border-slate-600"
+				>
+					<button
+						type="button"
+						class={`px-2 py-1 ${contentMode === 'edit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'}`}
+						onclick={() => (contentMode = 'edit')}
+					>
 						{$t('issue.editMode')}
 					</button>
-					<button type="button" class={`px-2 py-1 ${contentMode === 'preview' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'}`} onclick={() => (contentMode = 'preview')}>
+					<button
+						type="button"
+						class={`px-2 py-1 ${contentMode === 'preview' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'}`}
+						onclick={() => (contentMode = 'preview')}
+					>
 						{$t('issue.previewMode')}
 					</button>
 				</div>
@@ -448,16 +514,26 @@
 						rows="12"
 						placeholder={$t('governance.contentPlaceholder')}
 						class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
-						onpaste={handleContentPaste}
-					></textarea>
+						onpaste={handleContentPaste}></textarea>
 					<div class="mt-2">
-						<label class="inline-flex cursor-pointer items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300">
-							<span>{uploadingContentImage ? $t('search.searching') : $t('issue.uploadImage')}</span>
-							<input type="file" accept={UPLOAD_ACCEPT_ATTR} class="hidden" onchange={handleContentImageSelect} disabled={uploadingContentImage} />
+						<label
+							class="inline-flex cursor-pointer items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+						>
+							<span>{uploadingContentImage ? $t('search.searching') : $t('issue.uploadImage')}</span
+							>
+							<input
+								type="file"
+								accept={UPLOAD_ACCEPT_ATTR}
+								class="hidden"
+								onchange={handleContentImageSelect}
+								disabled={uploadingContentImage}
+							/>
 						</label>
 					</div>
 				{:else}
-					<div class="markdown-body min-h-[280px] rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+					<div
+						class="markdown-body min-h-[280px] rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+					>
 						{#if content.trim()}
 							{@html renderMarkdown(content)}
 						{:else}
@@ -468,7 +544,9 @@
 			</div>
 
 			<div class="flex items-center justify-end gap-2">
-				<a href="/proposals" class="rounded-md border border-slate-300 px-4 py-2 text-sm">{$t('common.cancel')}</a>
+				<a href="/proposals" class="rounded-md border border-slate-300 px-4 py-2 text-sm"
+					>{$t('common.cancel')}</a
+				>
 				<button
 					type="button"
 					onclick={submit}

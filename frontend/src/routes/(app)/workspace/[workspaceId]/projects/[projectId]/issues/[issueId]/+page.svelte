@@ -1,36 +1,36 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount, tick } from 'svelte';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
-	import { activityApi, type Activity } from '$lib/api/activity';
-	import { commentsApi, type Comment } from '$lib/api/comments';
-	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '$lib/api/issues';
-	import { labelsApi, type Label } from '$lib/api/labels';
-	import { sprintsApi, type Sprint } from '$lib/api/sprints';
-	import { membersApi, type WorkspaceMember } from '$lib/api/members';
-	import { workflowsApi, type WorkflowStateDef } from '$lib/api/workflows';
-	import { authStore } from '$lib/stores/auth';
-	import { toast } from '$lib/stores/toast';
-	import { renderMarkdown } from '$lib/utils/markdown';
-	import { requireRouteParam } from '$lib/utils/route-params';
+	import { activityApi, type Activity } from '#lib/api/activity.js';
+	import { commentsApi, type Comment } from '#lib/api/comments.js';
+	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
+	import { labelsApi, type Label } from '#lib/api/labels.js';
+	import { sprintsApi, type Sprint } from '#lib/api/sprints.js';
+	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
+	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
+	import { authStore } from '#lib/stores/auth.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { renderMarkdown } from '#lib/utils/markdown.js';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import {
 		appendAttachmentsMarkdown,
 		extractMarkdownAttachments,
 		ISSUE_ATTACHMENT_ACCEPT,
 		ISSUE_ATTACHMENT_MAX_SIZE_BYTES,
 		type UploadedAttachment
-	} from '$lib/utils/attachments';
-	import Button from '$lib/components/Button.svelte';
-	import { isImageUploadMime, isAllowedUploadMime } from '$lib/utils/upload';
-	import { apiClient } from '$lib/api/client';
-	import FileUpload from '$lib/components/FileUpload.svelte';
-	import Input from '$lib/components/Input.svelte';
-	import Select from '$lib/components/Select.svelte';
-	import Tag from '$lib/components/Tag.svelte';
-	import Textarea from '$lib/components/Textarea.svelte';
-	import BotIcon from '$lib/components/BotIcon.svelte';
+	} from '#lib/utils/attachments.js';
+	import Button from '#lib/components/Button.svelte';
+	import { isImageUploadMime, isAllowedUploadMime } from '#lib/utils/upload.js';
+	import { apiClient } from '#lib/api/client.js';
+	import FileUpload from '#lib/components/FileUpload.svelte';
+	import Input from '#lib/components/Input.svelte';
+	import Select from '#lib/components/Select.svelte';
+	import Tag from '#lib/components/Tag.svelte';
+	import Textarea from '#lib/components/Textarea.svelte';
+	import BotIcon from '#lib/components/BotIcon.svelte';
 
 	type SelectOption = {
 		label: string;
@@ -38,9 +38,9 @@
 		disabled?: boolean;
 	};
 
-	const workspaceId = $derived(requireRouteParam($page.params.workspaceId, 'workspaceId'));
-	const projectId = $derived(requireRouteParam($page.params.projectId, 'projectId'));
-	const issueId = $derived(requireRouteParam($page.params.issueId, 'issueId'));
+	const workspaceId = $derived(requireRouteParam(page.params.workspaceId, 'workspaceId'));
+	const projectId = $derived(requireRouteParam(page.params.projectId, 'projectId'));
+	const issueId = $derived(requireRouteParam(page.params.issueId, 'issueId'));
 
 	let workflowStates = $state<WorkflowStateDef[]>([]);
 	let statusOptions = $state<SelectOption[]>([
@@ -153,6 +153,7 @@
 				if (!keyword) {
 					return true;
 				}
+
 				return (
 					member.name.toLowerCase().includes(keyword) ||
 					member.email.toLowerCase().includes(keyword)
@@ -168,6 +169,7 @@
 				if (!keyword) {
 					return true;
 				}
+
 				return (
 					member.name.toLowerCase().includes(keyword) ||
 					member.email.toLowerCase().includes(keyword)
@@ -176,13 +178,25 @@
 			.slice(0, 8);
 	});
 
-	const existingIssueAttachments = $derived.by(() => extractMarkdownAttachments(issueForm.description));
-	const terminalStateKey = $derived.by(() => workflowStates.find((s) => s.is_terminal)?.key || 'done');
+	const existingIssueAttachments = $derived.by(() =>
+		extractMarkdownAttachments(issueForm.description)
+	);
+	const terminalStateKey = $derived.by(
+		() => workflowStates.find((s) => s.is_terminal)?.key || 'done'
+	);
 
 	async function loadPageData() {
 		loading = true;
 
-		const [issueResponse, commentsResponse, activityResponse, labelsResponse, issueLabelsResponse, sprintsResponse, workflowResponse] = await Promise.all([
+		const [
+			issueResponse,
+			commentsResponse,
+			activityResponse,
+			labelsResponse,
+			issueLabelsResponse,
+			sprintsResponse,
+			workflowResponse
+		] = await Promise.all([
 			issuesApi.get(issueId),
 			commentsApi.list(issueId),
 			activityApi.list(issueId),
@@ -225,8 +239,6 @@
 			projectLabels = labelsResponse.data.items ?? [];
 		}
 
-
-
 		if (issueLabelsResponse.code === 0 && issueLabelsResponse.data) {
 			issueLabels = issueLabelsResponse.data.items ?? [];
 		}
@@ -248,20 +260,23 @@
 		loading = false;
 
 		// Load workspace members for assignee names
-		membersApi.list(workspaceId).then((res) => {
-			if (res.code === 0 && res.data) {
-				workspaceMembers = res.data.items ?? [];
-				const map: Record<string, string> = {};
-				const entityMap: Record<string, string> = {};
-				for (const member of (res.data.items ?? [])) {
-					const fallback = member.user_id.substring(0, 8);
-					map[member.user_id] = member.name || member.email || fallback;
-					entityMap[member.user_id] = member.entity_type || 'human';
+		membersApi
+			.list(workspaceId)
+			.then((res) => {
+				if (res.code === 0 && res.data) {
+					workspaceMembers = res.data.items ?? [];
+					const map: Record<string, string> = {};
+					const entityMap: Record<string, string> = {};
+					for (const member of res.data.items ?? []) {
+						const fallback = member.user_id.substring(0, 8);
+						map[member.user_id] = member.name || member.email || fallback;
+						entityMap[member.user_id] = member.entity_type || 'human';
+					}
+					memberNameMap = map;
+					memberEntityTypeMap = entityMap;
 				}
-				memberNameMap = map;
-				memberEntityTypeMap = entityMap;
-			}
-		}).catch(() => {});
+			})
+			.catch(() => {});
 	}
 
 	function extractIssueLabels(data: Issue): Label[] {
@@ -561,7 +576,10 @@
 		return Boolean(currentUserId && currentUserId === comment.user_id);
 	}
 
-	function parseMentionAtCursor(text: string, cursorPos: number): { start: number | null; filter: string } {
+	function parseMentionAtCursor(
+		text: string,
+		cursorPos: number
+	): { start: number | null; filter: string } {
 		const beforeCursor = text.slice(0, cursorPos);
 		const atMatch = beforeCursor.match(/(^|\s)@([^\s@]*)$/);
 		if (!atMatch) {
@@ -579,9 +597,7 @@
 		const seen = new Set<string>();
 
 		// Sort by name length descending to match longest names first
-		const sorted = [...mentionCandidates].sort(
-			(a, b) => b.name.length - a.name.length
-		);
+		const sorted = [...mentionCandidates].sort((a, b) => b.name.length - a.name.length);
 
 		for (const member of sorted) {
 			const name = member.name.toLowerCase();
@@ -676,10 +692,7 @@
 		editMentionAnchorIndex = null;
 	}
 
-	async function pasteUpload(
-		file: File,
-		target: 'description' | 'comment'
-	): Promise<void> {
+	async function pasteUpload(file: File, target: 'description' | 'comment'): Promise<void> {
 		const formData = new FormData();
 		formData.append('file', file);
 		try {
@@ -742,8 +755,8 @@
 		}
 	}
 
-	function handleDescriptionUpload(event: CustomEvent<{ url: string; filename: string }>) {
-		const { url, filename } = event.detail;
+	function handleDescriptionUpload(detail: { url: string; filename: string }) {
+		const { url, filename } = detail;
 		const att = issueDescriptionAttachments.find((a) => a.url === url);
 		const mime = att?.mimeType ?? '';
 		if (isImageUploadMime(mime)) {
@@ -757,8 +770,8 @@
 		}
 	}
 
-	function handleCommentUpload(event: CustomEvent<{ url: string; filename: string }>) {
-		const { url, filename } = event.detail;
+	function handleCommentUpload(detail: { url: string; filename: string }) {
+		const { url, filename } = detail;
 		const att = commentAttachments.find((a) => a.url === url);
 		const mime = att?.mimeType ?? '';
 		if (isImageUploadMime(mime)) {
@@ -942,12 +955,18 @@
 				}
 				return get(t)('activity.unassigned');
 			case 'status_changed':
-				return get(t)('activity.statusChanged', { values: { from: formatStatus(from), to: formatStatus(to) } });
+				return get(t)('activity.statusChanged', {
+					values: { from: formatStatus(from), to: formatStatus(to) }
+				});
 			case 'priority_changed':
-				return get(t)('activity.priorityChanged', { values: { from: formatPriority(from), to: formatPriority(to) } });
+				return get(t)('activity.priorityChanged', {
+					values: { from: formatPriority(from), to: formatPriority(to) }
+				});
 			case 'sprint_changed':
 				if (to) {
-					return get(t)('activity.sprintChanged', { values: { name: toName || getSprintDisplay(to) } });
+					return get(t)('activity.sprintChanged', {
+						values: { name: toName || getSprintDisplay(to) }
+					});
 				}
 				return get(t)('activity.sprintRemoved');
 			case 'label_added':
@@ -973,30 +992,44 @@
 
 <div class="mx-auto max-w-7xl pb-44 md:pb-0">
 	{#if loading}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10">
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10"
+		>
 			<div class="flex items-center justify-center gap-3 text-slate-500 dark:text-slate-400">
 				<svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
-					<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
-					<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"></path>
+					<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"
+					></circle>
+					<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"
+					></path>
 				</svg>
 				<span>{$t('issue.loadingDetail')}</span>
 			</div>
 		</div>
 	{:else if !issue}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400">
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
+		>
 			{$t('issue.notFound')}
 		</div>
 	{:else}
 		<div class="space-y-4">
-			<div class="flex flex-col gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:flex-row sm:items-center sm:justify-between">
+			<div
+				class="flex flex-col gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:flex-row sm:items-center sm:justify-between"
+			>
 				<div class="text-sm text-slate-600 dark:text-slate-300">
 					<a href="/workspace" class="hover:text-blue-600">{$t('nav.myWorkspace')}</a>
 					<span class="mx-1 text-slate-400">/</span>
-					<a href="/workspace/{workspaceId}/projects" class="hover:text-blue-600">{$t('project.title')}</a>
+					<a href="/workspace/{workspaceId}/projects" class="hover:text-blue-600"
+						>{$t('project.title')}</a
+					>
 					<span class="mx-1 text-slate-400">/</span>
-					<a href="/workspace/{workspaceId}/projects/{projectId}/issues" class="hover:text-blue-600">{$t('issue.list')}</a>
+					<a href="/workspace/{workspaceId}/projects/{projectId}/issues" class="hover:text-blue-600"
+						>{$t('issue.list')}</a
+					>
 					<span class="mx-1 text-slate-400">/</span>
-					<span class="font-medium text-slate-900 dark:text-slate-100">{formatIssueCode(issue)}</span>
+					<span class="font-medium text-slate-900 dark:text-slate-100"
+						>{formatIssueCode(issue)}</span
+					>
 				</div>
 				<div class="flex flex-wrap gap-2">
 					<Button variant="ghost" size="sm" onclick={toggleIssueEditMode}>
@@ -1005,7 +1038,12 @@
 					<Button variant="danger" size="sm" onclick={handleDeleteIssue} loading={deletingIssue}>
 						{$t('common.delete')}
 					</Button>
-					<Button variant="secondary" size="sm" onclick={handleCloseIssue} disabled={issue.status === terminalStateKey}>
+					<Button
+						variant="secondary"
+						size="sm"
+						onclick={handleCloseIssue}
+						disabled={issue.status === terminalStateKey}
+					>
 						{$t('issue.close')}
 					</Button>
 				</div>
@@ -1013,8 +1051,12 @@
 
 			<div class="grid grid-cols-1 gap-4 lg:grid-cols-10">
 				<div class="space-y-4 lg:col-span-7">
-					<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
-						<p class="mb-2 text-xs font-mono text-slate-500 dark:text-slate-400">{formatIssueCode(issue)}</p>
+					<div
+						class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+					>
+						<p class="mb-2 text-xs font-mono text-slate-500 dark:text-slate-400">
+							{formatIssueCode(issue)}
+						</p>
 						{#if issue.proposal_id || issue.governance_exempt}
 							<div class="mb-3 flex flex-wrap items-center gap-2">
 								{#if issue.proposal_id}
@@ -1037,7 +1079,12 @@
 						{/if}
 						{#if editingIssue}
 							<div class="space-y-3">
-								<Input label={$t('issue.title')} bind:value={issueForm.title} maxlength={200} required />
+								<Input
+									label={$t('issue.title')}
+									bind:value={issueForm.title}
+									maxlength={200}
+									required
+								/>
 								<Textarea
 									label={$t('issue.addDescription')}
 									bind:value={issueForm.description}
@@ -1050,11 +1097,15 @@
 									accept={ISSUE_ATTACHMENT_ACCEPT}
 									maxSize={ISSUE_ATTACHMENT_MAX_SIZE_BYTES}
 									multiple
-									on:upload={handleDescriptionUpload}
+									onupload={handleDescriptionUpload}
 								/>
 								{#if existingIssueAttachments.length > 0}
-									<div class="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
-										<p class="mb-1 font-medium text-slate-700 dark:text-slate-200">{$t('issue.existingAttachments')}</p>
+									<div
+										class="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+									>
+										<p class="mb-1 font-medium text-slate-700 dark:text-slate-200">
+											{$t('issue.existingAttachments')}
+										</p>
 										<div class="space-y-1">
 											{#each existingIssueAttachments as attachment (attachment.url)}
 												<a
@@ -1063,33 +1114,50 @@
 													rel="noreferrer"
 													class="block truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
 												>
-													{attachment.isImage ? '🖼️' : '📎'} {attachment.filename}
+													{attachment.isImage ? '🖼️' : '📎'}
+													{attachment.filename}
 												</a>
 											{/each}
 										</div>
 									</div>
 								{/if}
 								<div class="flex gap-2">
-									<Button onclick={saveIssueEdit} loading={savingIssue}>{$t('issue.saveChanges')}</Button>
-									<Button variant="ghost" onclick={toggleIssueEditMode}>{$t('common.cancel')}</Button>
+									<Button onclick={saveIssueEdit} loading={savingIssue}
+										>{$t('issue.saveChanges')}</Button
+									>
+									<Button variant="ghost" onclick={toggleIssueEditMode}
+										>{$t('common.cancel')}</Button
+									>
 								</div>
 							</div>
 						{:else}
-							<h1 class="mb-4 text-2xl font-bold text-slate-900 dark:text-slate-100">{issue.title}</h1>
-							<div class="rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900">
+							<h1 class="mb-4 text-2xl font-bold text-slate-900 dark:text-slate-100">
+								{issue.title}
+							</h1>
+							<div
+								class="rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900"
+							>
 								{#if issue.description?.trim()}
-									<div class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300">
+									<div
+										class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300"
+									>
 										{@html renderMarkdown(issue.description)}
 									</div>
 								{:else}
-									<p class="text-sm text-slate-500 dark:text-slate-400">{$t('issue.noDescriptionPreview')}</p>
+									<p class="text-sm text-slate-500 dark:text-slate-400">
+										{$t('issue.noDescriptionPreview')}
+									</p>
 								{/if}
 							</div>
 						{/if}
 					</div>
 
-					<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
-						<h2 class="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-100">{$t('issue.comments')}（{comments.length}）</h2>
+					<div
+						class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+					>
+						<h2 class="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-100">
+							{$t('issue.comments')}（{comments.length}）
+						</h2>
 						<div class="space-y-4">
 							{#if comments.length === 0}
 								<p class="text-sm text-slate-500 dark:text-slate-400">{$t('issue.noComments')}</p>
@@ -1098,14 +1166,21 @@
 									<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
 										<div class="mb-2 flex items-start justify-between gap-3">
 											<div>
-												<p class="text-sm font-medium text-slate-900 dark:text-slate-100">{comment.author_name || comment.user_id}</p>
-												<p class="text-xs text-slate-500 dark:text-slate-400">{formatDate(comment.created_at)}</p>
+												<p class="text-sm font-medium text-slate-900 dark:text-slate-100">
+													{comment.author_name || comment.user_id}
+												</p>
+												<p class="text-xs text-slate-500 dark:text-slate-400">
+													{formatDate(comment.created_at)}
+												</p>
 											</div>
 											{#if canManageComment(comment)}
 												<div class="flex gap-1">
-													<Button variant="ghost" size="sm" onclick={() => startEditComment(comment)}>
-														{$t('common.edit')}
-													</Button>
+													<Button
+														variant="ghost"
+														size="sm"
+														onclick={() => startEditComment(comment)}>{$t('common.edit')}</Button
+													>
+
 													<Button
 														variant="ghost"
 														size="sm"
@@ -1121,7 +1196,9 @@
 										{#if editingCommentId === comment.id}
 											<div class="space-y-2 relative">
 												{#if showEditMentionDropdown && filteredEditMentionMembers.length > 0}
-													<div class="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-800">
+													<div
+														class="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-800"
+													>
 														{#each filteredEditMentionMembers as member (member.user_id)}
 															<button
 																class="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700"
@@ -1129,11 +1206,16 @@
 															>
 																<span class="font-medium inline-flex items-center gap-1">
 																	{#if isBotMember(member)}
-																		<BotIcon class="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-300" title={$t('admin.botBadge')} />
+																		<BotIcon
+																			class="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-300"
+																			title={$t('admin.botBadge')}
+																		/>
 																	{/if}
 																	<span>{member.name}</span>
 																</span>
-																<span class="ml-1 text-slate-400 dark:text-slate-400">{member.email}</span>
+																<span class="ml-1 text-slate-400 dark:text-slate-400"
+																	>{member.email}</span
+																>
 															</button>
 														{/each}
 													</div>
@@ -1152,11 +1234,15 @@
 													>
 														{$t('common.save')}
 													</Button>
-													<Button variant="ghost" size="sm" onclick={cancelEditComment}>{$t('common.cancel')}</Button>
+													<Button variant="ghost" size="sm" onclick={cancelEditComment}
+														>{$t('common.cancel')}</Button
+													>
 												</div>
 											</div>
 										{:else}
-											<div class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300">
+											<div
+												class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300"
+											>
 												{@html renderCommentContent(comment.content)}
 											</div>
 										{/if}
@@ -1168,7 +1254,9 @@
 				</div>
 
 				<div class="space-y-4 lg:col-span-3">
-					<div class="space-y-3 rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
+					<div
+						class="space-y-3 rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+					>
 						<Select
 							label={$t('common.status')}
 							options={statusOptions}
@@ -1191,11 +1279,20 @@
 							disabled={updatingField !== null}
 						/>
 						<div class="space-y-1">
-							<p class="text-sm font-medium text-slate-700 dark:text-slate-300">{$t('issue.sprint')}</p>
+							<p class="text-sm font-medium text-slate-700 dark:text-slate-300">
+								{$t('issue.sprint')}
+							</p>
 							{#if currentSprintName && currentSprintName !== $t('issue.noSprint')}
-								<span class="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
+								<span
+									class="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium bg-indigo-50 text-indigo-700 border border-indigo-200"
+								>
 									<svg class="mr-1.5 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 4v16m0-14h10l-2 4 2 4H5"></path>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M5 4v16m0-14h10l-2 4 2 4H5"
+										></path>
 									</svg>
 									{currentSprintName}
 								</span>
@@ -1205,10 +1302,14 @@
 						</div>
 
 						<div class="space-y-2">
-							<p class="text-sm font-medium text-slate-700 dark:text-slate-300">{$t('issue.labels')}</p>
+							<p class="text-sm font-medium text-slate-700 dark:text-slate-300">
+								{$t('issue.labels')}
+							</p>
 							<div class="flex flex-wrap gap-2">
 								{#if issueLabels.length === 0}
-									<span class="text-xs text-slate-500 dark:text-slate-400">{$t('issue.noLabels')}</span>
+									<span class="text-xs text-slate-500 dark:text-slate-400"
+										>{$t('issue.noLabels')}</span
+									>
 								{:else}
 									{#each issueLabels as label (label.id)}
 										<Tag
@@ -1229,19 +1330,32 @@
 										disabled={labelSaving || availableLabelOptions.length === 0}
 									/>
 								</div>
-								<Button size="sm" onclick={handleAddLabel} disabled={!selectedLabelId || labelSaving}>
+								<Button
+									size="sm"
+									onclick={handleAddLabel}
+									disabled={!selectedLabelId || labelSaving}
+								>
 									{$t('common.create')}
 								</Button>
 							</div>
 							<div class="grid grid-cols-1 gap-2">
-								<Input bind:value={newLabelName} placeholder={$t('issue.newLabelName')} maxlength={50} />
+								<Input
+									bind:value={newLabelName}
+									placeholder={$t('issue.newLabelName')}
+									maxlength={50}
+								/>
 								<div class="flex gap-2">
 									<input
 										type="color"
 										bind:value={newLabelColor}
 										class="h-9 w-12 rounded border border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800"
 									/>
-									<Button size="sm" variant="ghost" onclick={handleCreateLabel} loading={creatingLabel}>
+									<Button
+										size="sm"
+										variant="ghost"
+										onclick={handleCreateLabel}
+										loading={creatingLabel}
+									>
 										{$t('issue.createLabel')}
 									</Button>
 								</div>
@@ -1249,8 +1363,12 @@
 						</div>
 					</div>
 
-					<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
-						<h3 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">{$t('issue.activity')}</h3>
+					<div
+						class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+					>
+						<h3 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+							{$t('issue.activity')}
+						</h3>
 						<div class="space-y-3">
 							{#if activities.length === 0}
 								<p class="text-xs text-slate-500 dark:text-slate-400">{$t('issue.noActivity')}</p>
@@ -1259,7 +1377,10 @@
 									<div class="flex items-start gap-3 py-2">
 										<div class="flex min-h-10 flex-col items-center">
 											<div class="h-2 w-2 rounded-full bg-blue-500"></div>
-											<div class="w-0.5 flex-1 bg-slate-200 dark:bg-slate-700" class:opacity-0={index === activities.length - 1}></div>
+											<div
+												class="w-0.5 flex-1 bg-slate-200 dark:bg-slate-700"
+												class:opacity-0={index === activities.length - 1}
+											></div>
 										</div>
 										<div>
 											<p class="text-sm text-slate-700 dark:text-slate-300">
@@ -1267,7 +1388,9 @@
 												{' '}
 												{formatActivity(activity)}
 											</p>
-											<p class="text-xs text-slate-400 dark:text-slate-400">{formatDate(activity.created_at)}</p>
+											<p class="text-xs text-slate-400 dark:text-slate-400">
+												{formatDate(activity.created_at)}
+											</p>
 										</div>
 									</div>
 								{/each}
@@ -1277,10 +1400,16 @@
 				</div>
 			</div>
 
-			<div class="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 p-3 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 md:static md:z-auto md:border-0 md:bg-transparent md:p-0">
-				<div class="relative mx-auto max-w-7xl rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-800 md:p-4">
+			<div
+				class="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 p-3 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 md:static md:z-auto md:border-0 md:bg-transparent md:p-0"
+			>
+				<div
+					class="relative mx-auto max-w-7xl rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-800 md:p-4"
+				>
 					{#if showMentionDropdown && filteredMentionMembers.length > 0}
-						<div class="absolute bottom-full left-3 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-800">
+						<div
+							class="absolute bottom-full left-3 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-800"
+						>
 							{#each filteredMentionMembers as member (member.user_id)}
 								<button
 									class="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700"
@@ -1288,7 +1417,10 @@
 								>
 									<span class="font-medium inline-flex items-center gap-1">
 										{#if isBotMember(member)}
-											<BotIcon class="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-300" title={$t('admin.botBadge')} />
+											<BotIcon
+												class="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-300"
+												title={$t('admin.botBadge')}
+											/>
 										{/if}
 										<span>{member.name}</span>
 									</span>
@@ -1314,7 +1446,7 @@
 								accept={ISSUE_ATTACHMENT_ACCEPT}
 								maxSize={ISSUE_ATTACHMENT_MAX_SIZE_BYTES}
 								multiple
-								on:upload={handleCommentUpload}
+								onupload={handleCommentUpload}
 							/>
 						</div>
 						<Button

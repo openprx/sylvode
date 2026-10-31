@@ -23,11 +23,15 @@ export const ALLOWED_UPLOAD_MIME_TYPES = [
 export const UPLOAD_ACCEPT_ATTR = ALLOWED_UPLOAD_MIME_TYPES.join(',');
 
 export function isAllowedUploadMime(type: string): boolean {
-	return ALLOWED_UPLOAD_MIME_TYPES.includes(type.toLowerCase() as (typeof ALLOWED_UPLOAD_MIME_TYPES)[number]);
+	return ALLOWED_UPLOAD_MIME_TYPES.includes(
+		type.toLowerCase() as (typeof ALLOWED_UPLOAD_MIME_TYPES)[number]
+	);
 }
 
 export function isImageUploadMime(type: string): boolean {
-	return IMAGE_UPLOAD_MIME_TYPES.includes(type.toLowerCase() as (typeof IMAGE_UPLOAD_MIME_TYPES)[number]);
+	return IMAGE_UPLOAD_MIME_TYPES.includes(
+		type.toLowerCase() as (typeof IMAGE_UPLOAD_MIME_TYPES)[number]
+	);
 }
 
 export function mediaMarkdown(url: string, mimeType: string): string {

@@ -2,12 +2,12 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { myApi, type MyIssue } from '$lib/api/my';
-	import { toast } from '$lib/stores/toast';
+	import { myApi, type MyIssue } from '#lib/api/my.js';
+	import { toast } from '#lib/stores/toast.js';
 	import { goto } from '$app/navigation';
-	import Card from '$lib/components/Card.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import { timeAgo } from '$lib/utils/timeago';
+	import Card from '#lib/components/Card.svelte';
+	import EmptyState from '#lib/components/EmptyState.svelte';
+	import { timeAgo } from '#lib/utils/timeago.js';
 
 	let loading = $state(true);
 	let myIssues = $state<MyIssue[]>([]);
@@ -94,19 +94,25 @@
 
 	function getStatusIcon(status: string): string {
 		const map: Record<string, string> = {
-			backlog: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
+			backlog:
+				'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
 			todo: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2',
 			in_progress: 'M13 10V3L4 14h7v7l9-11h-7z',
 			done: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'
 		};
-		return map[status] || 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z';
+		return (
+			map[status] ||
+			'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'
+		);
 	}
 </script>
 
 <div class="mx-auto max-w-7xl">
 	<!-- Header -->
 	<div class="mb-8">
-		<h1 class="mb-2 text-3xl font-bold text-slate-900 dark:text-slate-100">{$t('workspace.myWork')}</h1>
+		<h1 class="mb-2 text-3xl font-bold text-slate-900 dark:text-slate-100">
+			{$t('workspace.myWork')}
+		</h1>
 		<p class="text-slate-600 dark:text-slate-400">{$t('workspace.myWorkDesc')}</p>
 	</div>
 
@@ -116,31 +122,50 @@
 			<div class="text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
 		</div>
 
-	<!-- Empty State -->
+		<!-- Empty State -->
 	{:else if myIssues.length === 0}
-		<EmptyState icon="clipboard" title={$t('workspace.noWork')} description={$t('workspace.noWorkDesc')}>
-		</EmptyState>
+		<EmptyState
+			icon="clipboard"
+			title={$t('workspace.noWork')}
+			description={$t('workspace.noWorkDesc')}
+		></EmptyState>
 
-	<!-- Issues by Status -->
+		<!-- Issues by Status -->
 	{:else}
 		<div class="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-4">
 			{#each ['backlog', 'todo', 'in_progress', 'done'] as status}
 				{@const issues = groupedIssues[status]}
 				<Card>
 					<div class="mb-4 flex items-center justify-between">
-						<h3 class="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
-							<svg class="h-5 w-5 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={getStatusIcon(status)}></path>
+						<h3
+							class="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100"
+						>
+							<svg
+								class="h-5 w-5 text-slate-500 dark:text-slate-400"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d={getStatusIcon(status)}
+								></path>
 							</svg>
 							{formatStatus(status)}
 						</h3>
-						<span class="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+						<span
+							class="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+						>
 							{issues.length}
 						</span>
 					</div>
 
 					{#if issues.length === 0}
-						<div class="py-8 text-center text-sm text-slate-500 dark:text-slate-400">{$t('common.noItems')}</div>
+						<div class="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+							{$t('common.noItems')}
+						</div>
 					{:else}
 						<div class="space-y-3">
 							{#each issues as issue (issue.id)}
@@ -149,13 +174,17 @@
 									onclick={() => goToIssue(issue.workspace_id, issue.project_id, issue.id)}
 								>
 									<div class="mb-2 flex items-start justify-between gap-2">
-										<p class="line-clamp-2 text-sm font-medium text-slate-900 dark:text-slate-100">{issue.title}</p>
+										<p class="line-clamp-2 text-sm font-medium text-slate-900 dark:text-slate-100">
+											{issue.title}
+										</p>
 									</div>
 									<div class="mb-2 text-xs text-slate-500 dark:text-slate-400">
 										{issue.project_name}
 									</div>
 									<div class="flex flex-wrap items-center gap-2">
-										<span class={`rounded-full px-2 py-1 text-xs ${getPriorityClass(issue.priority)}`}>
+										<span
+											class={`rounded-full px-2 py-1 text-xs ${getPriorityClass(issue.priority)}`}
+										>
 											{formatPriority(issue.priority)}
 										</span>
 										<span class="text-xs text-slate-500 dark:text-slate-400">
@@ -181,8 +210,12 @@
 			{#each ['backlog', 'todo', 'in_progress', 'done'] as status}
 				<Card>
 					<div class="text-center">
-						<div class="text-3xl font-bold text-slate-900 dark:text-slate-100">{groupedIssues[status].length}</div>
-						<div class="mt-1 text-sm text-slate-600 dark:text-slate-400">{formatStatus(status)}</div>
+						<div class="text-3xl font-bold text-slate-900 dark:text-slate-100">
+							{groupedIssues[status].length}
+						</div>
+						<div class="mt-1 text-sm text-slate-600 dark:text-slate-400">
+							{formatStatus(status)}
+						</div>
 					</div>
 				</Card>
 			{/each}

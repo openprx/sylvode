@@ -6,25 +6,29 @@
 
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import { requireRouteParam } from '$lib/utils/route-params';
-	import type { FlowObjectRepository, OpenFlowObjectResult } from '$lib/flow/object-repository';
-	import { FLOW_REPOSITORY_CONTEXT } from '$lib/flow/context-keys';
-	import { registryObjectType, resolveRenderer } from '$lib/flow/renderer-registry';
-	import { toast } from '$lib/stores/toast';
-	import FlowCanvas from '$lib/components/flow/FlowCanvas.svelte';
-	import FlowContextPanel from '$lib/components/flow/FlowContextPanel.svelte';
-	import FlowSyncIndicator from '$lib/components/flow/FlowSyncIndicator.svelte';
-	import FlowRecoveryDraftPanel from '$lib/components/flow/FlowRecoveryDraftPanel.svelte';
-	import CollectionRenderer from '$lib/components/flow/collection/CollectionRenderer.svelte';
-	import type { FlowError, SyncState } from '$lib/flow/types';
-	import { flowErrorDetailKey, flowErrorI18nKey, invalidUpdateDisposition } from '$lib/flow/errors';
-	import type { RecoveryDraftEntry } from '$lib/flow/outbox';
-	import { presenceColor, type PresenceCursor } from '$lib/flow/presence';
-	import { authStore } from '$lib/stores/auth';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
+	import type { FlowObjectRepository, OpenFlowObjectResult } from '#lib/flow/object-repository.js';
+	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
+	import { registryObjectType, resolveRenderer } from '#lib/flow/renderer-registry.js';
+	import { toast } from '#lib/stores/toast.js';
+	import FlowCanvas from '#lib/components/flow/FlowCanvas.svelte';
+	import FlowContextPanel from '#lib/components/flow/FlowContextPanel.svelte';
+	import FlowSyncIndicator from '#lib/components/flow/FlowSyncIndicator.svelte';
+	import FlowRecoveryDraftPanel from '#lib/components/flow/FlowRecoveryDraftPanel.svelte';
+	import CollectionRenderer from '#lib/components/flow/collection/CollectionRenderer.svelte';
+	import type { FlowError, SyncState } from '#lib/flow/types.js';
+	import {
+		flowErrorDetailKey,
+		flowErrorI18nKey,
+		invalidUpdateDisposition
+	} from '#lib/flow/errors.js';
+	import type { RecoveryDraftEntry } from '#lib/flow/outbox.js';
+	import { presenceColor, type PresenceCursor } from '#lib/flow/presence.js';
+	import { authStore } from '#lib/stores/auth.js';
 	import { get } from 'svelte/store';
-	import type { FlowObjectView } from '$lib/api/flow';
+	import type { FlowObjectView } from '#lib/api/flow.js';
 
 	const repository = getContext<FlowObjectRepository>(FLOW_REPOSITORY_CONTEXT);
 
@@ -72,8 +76,8 @@
 	}
 
 	async function openCurrent(): Promise<void> {
-		const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
-		const objectId = requireRouteParam($page.params.objectId, 'objectId');
+		const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
+		const objectId = requireRouteParam(page.params.objectId, 'objectId');
 		if (openedObjectId === objectId) return;
 
 		teardownSubscriptions();
@@ -94,12 +98,14 @@
 		const object = read.code === 0 && read.data ? read.data : null;
 		if (object && (object.object_type === 'collection' || object.object_type === 'record')) {
 			const kind = registryObjectType(object.object_type);
+
 			const registered =
 				kind === 'collection'
 					? (resolveRenderer('collection', 'table') ?? resolveRenderer('collection', 'board'))
 					: kind === 'record'
 						? resolveRenderer('record', 'panel')
 						: null;
+
 			if (registered && (object.object_type === 'collection' || object.parent_id)) {
 				collectionObject = object;
 			} else {
@@ -157,7 +163,7 @@
 	});
 
 	$effect(() => {
-		void $page.params.objectId;
+		void page.params.objectId;
 		void openCurrent();
 	});
 
@@ -187,6 +193,7 @@
 	const integrityRepair = $derived(
 		runtimeError !== null && invalidUpdateDisposition(runtimeError)?.action === 'integrity_repair'
 	);
+
 	const permanentFailure = $derived(
 		syncState === 'error' && runtimeError?.code === 'server_rejected'
 	);
@@ -289,7 +296,7 @@
 		</p>
 	</div>
 {:else if collectionObject}
-	{@const routeWorkspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId')}
+	{@const routeWorkspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId')}
 	<div
 		class="flex items-center justify-between border-b border-slate-200 px-6 py-3 dark:border-slate-800"
 	>
@@ -363,7 +370,7 @@
 			class="flex flex-wrap items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
 			role="alert"
 		>
-			<!-- Key selection lives in `$lib/flow/errors`, not in this template: the inline
+			<!-- Key selection lives in `#lib/flow/errors.js`, not in this template: the inline
 				 `reason === 'drain' ? drain : contention` ternary this replaced silently rendered a
 				 `server_draining` with a MISSING required discriminator as an ordinary contention
 				 retry, which `error-mapping-v1.md` forbids ("缺失/未知 reason 违反协议"). -->

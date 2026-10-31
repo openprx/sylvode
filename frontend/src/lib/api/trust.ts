@@ -54,7 +54,12 @@ export interface Appeal {
 
 function asTrustLevel(value: unknown): TrustLevel {
 	const normalized = String(value ?? 'observer').toLowerCase();
-	if (normalized === 'advisor' || normalized === 'voter' || normalized === 'vetoer' || normalized === 'autonomous') {
+	if (
+		normalized === 'advisor' ||
+		normalized === 'voter' ||
+		normalized === 'vetoer' ||
+		normalized === 'autonomous'
+	) {
 		return normalized;
 	}
 	return 'observer';
@@ -77,7 +82,8 @@ function mapTrustScoreRank(raw: Record<string, unknown>): TrustScoreRank {
 
 function mapAppeal(raw: Record<string, unknown>): Appeal {
 	const statusRaw = String(raw.status ?? 'pending').toLowerCase();
-	const status: AppealStatus = statusRaw === 'accepted' || statusRaw === 'rejected' ? statusRaw : 'pending';
+	const status: AppealStatus =
+		statusRaw === 'accepted' || statusRaw === 'rejected' ? statusRaw : 'pending';
 	return {
 		id: Number(raw.id ?? 0),
 		log_id: Number(raw.log_id ?? 0),
@@ -107,10 +113,16 @@ export const trustApi = {
 		if (params?.page) query.set('page', String(params.page));
 		if (params?.per_page) query.set('per_page', String(params.per_page));
 
-		const endpoint = query.size ? `/api/v1/trust-scores?${query.toString()}` : '/api/v1/trust-scores';
+		const endpoint = query.size
+			? `/api/v1/trust-scores?${query.toString()}`
+			: '/api/v1/trust-scores';
 		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(endpoint);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.loadTrustScoresFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.loadTrustScoresFailed'),
+				data: null
+			};
 		}
 
 		return {
@@ -125,12 +137,20 @@ export const trustApi = {
 
 	async getUserTrust(userId: string, projectId?: string): Promise<ApiResult<UserTrustProfile>> {
 		const suffix = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
-		const res = await apiClient.get<Record<string, unknown>>(`/api/v1/users/${userId}/trust${suffix}`);
+		const res = await apiClient.get<Record<string, unknown>>(
+			`/api/v1/users/${userId}/trust${suffix}`
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.loadUserTrustFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.loadUserTrustFailed'),
+				data: null
+			};
 		}
 
-		const rawScores = Array.isArray(res.data.scores) ? (res.data.scores as Array<Record<string, unknown>>) : [];
+		const rawScores = Array.isArray(res.data.scores)
+			? (res.data.scores as Array<Record<string, unknown>>)
+			: [];
 		return {
 			code: 0,
 			message: res.message,
@@ -152,7 +172,10 @@ export const trustApi = {
 		};
 	},
 
-	async listAppeals(params?: { status?: AppealStatus | 'all'; mine?: boolean }): Promise<ApiResult<PaginatedData<Appeal>>> {
+	async listAppeals(params?: {
+		status?: AppealStatus | 'all';
+		mine?: boolean;
+	}): Promise<ApiResult<PaginatedData<Appeal>>> {
 		const query = new URLSearchParams();
 		if (params?.status && params.status !== 'all') query.set('status', params.status);
 		if (typeof params?.mine === 'boolean') query.set('mine', String(params.mine));
@@ -162,7 +185,11 @@ export const trustApi = {
 
 		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(endpoint);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.loadAppealsFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.loadAppealsFailed'),
+				data: null
+			};
 		}
 
 		return {
@@ -177,18 +204,39 @@ export const trustApi = {
 		};
 	},
 
-	async createAppeal(payload: { log_id: number; reason: string; evidence?: unknown }): Promise<ApiResult<Appeal>> {
-		const res = await apiClient.post<Record<string, unknown>>('/api/v1/trust-scores/appeals', payload);
+	async createAppeal(payload: {
+		log_id: number;
+		reason: string;
+		evidence?: unknown;
+	}): Promise<ApiResult<Appeal>> {
+		const res = await apiClient.post<Record<string, unknown>>(
+			'/api/v1/trust-scores/appeals',
+			payload
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.createAppealFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.createAppealFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: res.message, data: mapAppeal(res.data) };
 	},
 
-	async updateAppeal(id: number, payload: { status: 'accepted' | 'rejected'; review_note?: string }): Promise<ApiResult<Appeal>> {
-		const res = await apiClient.patch<Record<string, unknown>>(`/api/v1/trust-scores/appeals/${id}`, payload);
+	async updateAppeal(
+		id: number,
+		payload: { status: 'accepted' | 'rejected'; review_note?: string }
+	): Promise<ApiResult<Appeal>> {
+		const res = await apiClient.patch<Record<string, unknown>>(
+			`/api/v1/trust-scores/appeals/${id}`,
+			payload
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.updateAppealFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.updateAppealFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: res.message, data: mapAppeal(res.data) };
 	},

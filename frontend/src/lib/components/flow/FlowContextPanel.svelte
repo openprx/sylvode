@@ -10,18 +10,18 @@
 		FlowHistoryEntry,
 		FlowObjectExportFormat,
 		FlowObjectView
-	} from '$lib/api/flow';
-	import { FlowCommandService } from '$lib/flow/command-service';
-	import { HistoryDiffLoader } from '$lib/flow/history-diff';
+	} from '#lib/api/flow.js';
+	import { FlowCommandService } from '#lib/flow/command-service.js';
+	import { HistoryDiffLoader } from '#lib/flow/history-diff.js';
 	import {
 		OBJECT_EXPORT_FORMAT_KEYS,
 		ObjectExportController,
 		exportJobErrorKey,
 		objectExportFormats,
 		type ObjectExportSnapshot
-	} from '$lib/flow/object-export';
-	import { EXPORT_STATUS_KEYS } from '$lib/flow/package-export';
-	import { toast } from '$lib/stores/toast';
+	} from '#lib/flow/object-export.js';
+	import { EXPORT_STATUS_KEYS } from '#lib/flow/package-export.js';
+	import { toast } from '#lib/stores/toast.js';
 	import FlowSharePanel from './FlowSharePanel.svelte';
 	import FlowRelationsPanel from './FlowRelationsPanel.svelte';
 	import FlowHistoryDiff from './FlowHistoryDiff.svelte';

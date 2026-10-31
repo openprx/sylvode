@@ -702,15 +702,15 @@ export const formsApi = {
 		return apiClient.delete<null>(`/api/v1/form-views/${viewId}`);
 	},
 
-		exportRecords(
-			formId: string,
-			params?: {
-				view_id?: string;
-				columns?: string[];
-				format?: 'csv' | 'json';
-				scope?: 'view' | 'all_accessible';
-				include_archived?: boolean;
-				limit?: number;
+	exportRecords(
+		formId: string,
+		params?: {
+			view_id?: string;
+			columns?: string[];
+			format?: 'csv' | 'json';
+			scope?: 'view' | 'all_accessible';
+			include_archived?: boolean;
+			limit?: number;
 		}
 	): Promise<ApiResult<FormRecordsExport>> {
 		const query = new URLSearchParams();
@@ -724,116 +724,128 @@ export const formsApi = {
 		if (params?.columns && params.columns.length > 0) {
 			query.append('columns', params.columns.join(','));
 		}
-			const endpoint = query.size
-				? `/api/v1/forms/${formId}/records/export?${query.toString()}`
-					: `/api/v1/forms/${formId}/records/export`;
-				return apiClient.get<FormRecordsExport>(endpoint);
-			},
+		const endpoint = query.size
+			? `/api/v1/forms/${formId}/records/export?${query.toString()}`
+			: `/api/v1/forms/${formId}/records/export`;
+		return apiClient.get<FormRecordsExport>(endpoint);
+	},
 
-			listExportJobs(formId: string): Promise<ApiResult<FormExportJob[]>> {
-				return apiClient.get<FormExportJob[]>(`/api/v1/forms/${formId}/records/export-jobs`);
-			},
+	listExportJobs(formId: string): Promise<ApiResult<FormExportJob[]>> {
+		return apiClient.get<FormExportJob[]>(`/api/v1/forms/${formId}/records/export-jobs`);
+	},
 
-			createExportJob(formId: string, request: CreateFormExportJobRequest): Promise<ApiResult<FormExportJob>> {
-				return apiClient.post<FormExportJob>(`/api/v1/forms/${formId}/records/export-jobs`, request);
-			},
+	createExportJob(
+		formId: string,
+		request: CreateFormExportJobRequest
+	): Promise<ApiResult<FormExportJob>> {
+		return apiClient.post<FormExportJob>(`/api/v1/forms/${formId}/records/export-jobs`, request);
+	},
 
-			getExportJob(jobId: string): Promise<ApiResult<FormExportJob>> {
-				return apiClient.get<FormExportJob>(`/api/v1/form-export-jobs/${jobId}`);
-			},
+	getExportJob(jobId: string): Promise<ApiResult<FormExportJob>> {
+		return apiClient.get<FormExportJob>(`/api/v1/form-export-jobs/${jobId}`);
+	},
 
-			listAttachmentPackageJobs(formId: string): Promise<ApiResult<FormAttachmentPackageJob[]>> {
-				return apiClient.get<FormAttachmentPackageJob[]>(
-					`/api/v1/forms/${formId}/attachments/package-jobs`
-				);
-			},
+	listAttachmentPackageJobs(formId: string): Promise<ApiResult<FormAttachmentPackageJob[]>> {
+		return apiClient.get<FormAttachmentPackageJob[]>(
+			`/api/v1/forms/${formId}/attachments/package-jobs`
+		);
+	},
 
-			createAttachmentPackageJob(
-				formId: string,
-				request: CreateFormAttachmentPackageJobRequest
-			): Promise<ApiResult<FormAttachmentPackageJob>> {
-				return apiClient.post<FormAttachmentPackageJob>(
-					`/api/v1/forms/${formId}/attachments/package-jobs`,
-					request
-				);
-			},
+	createAttachmentPackageJob(
+		formId: string,
+		request: CreateFormAttachmentPackageJobRequest
+	): Promise<ApiResult<FormAttachmentPackageJob>> {
+		return apiClient.post<FormAttachmentPackageJob>(
+			`/api/v1/forms/${formId}/attachments/package-jobs`,
+			request
+		);
+	},
 
-			getAttachmentPackageJob(jobId: string): Promise<ApiResult<FormAttachmentPackageJob>> {
-				return apiClient.get<FormAttachmentPackageJob>(`/api/v1/form-attachment-package-jobs/${jobId}`);
-			},
+	getAttachmentPackageJob(jobId: string): Promise<ApiResult<FormAttachmentPackageJob>> {
+		return apiClient.get<FormAttachmentPackageJob>(`/api/v1/form-attachment-package-jobs/${jobId}`);
+	},
 
-			previewImportRecords(
-				formId: string,
-				rows: FormRecordImportRow[]
-			): Promise<ApiResult<FormRecordImportPreview>> {
-			return apiClient.post<FormRecordImportPreview>(
-				`/api/v1/forms/${formId}/records/import-preview`,
-				{ rows }
-			);
-		},
+	previewImportRecords(
+		formId: string,
+		rows: FormRecordImportRow[]
+	): Promise<ApiResult<FormRecordImportPreview>> {
+		return apiClient.post<FormRecordImportPreview>(
+			`/api/v1/forms/${formId}/records/import-preview`,
+			{ rows }
+		);
+	},
 
-		importRecords(formId: string, rows: FormRecordImportRow[]): Promise<ApiResult<FormRecordImportResult>> {
-			return apiClient.post<FormRecordImportResult>(`/api/v1/forms/${formId}/records/import`, {
-				rows
-			});
-		},
+	importRecords(
+		formId: string,
+		rows: FormRecordImportRow[]
+	): Promise<ApiResult<FormRecordImportResult>> {
+		return apiClient.post<FormRecordImportResult>(`/api/v1/forms/${formId}/records/import`, {
+			rows
+		});
+	},
 
-		previewImportFile(
-			formId: string,
-			request: FormRecordImportFileRequest
-		): Promise<ApiResult<FormRecordImportPreview>> {
-			return apiClient.post<FormRecordImportPreview>(
-				`/api/v1/forms/${formId}/records/import-file-preview`,
-				request
-			);
-		},
+	previewImportFile(
+		formId: string,
+		request: FormRecordImportFileRequest
+	): Promise<ApiResult<FormRecordImportPreview>> {
+		return apiClient.post<FormRecordImportPreview>(
+			`/api/v1/forms/${formId}/records/import-file-preview`,
+			request
+		);
+	},
 
-		importFile(
-			formId: string,
-			request: FormRecordImportFileRequest
-		): Promise<ApiResult<FormRecordImportResult>> {
-			return apiClient.post<FormRecordImportResult>(`/api/v1/forms/${formId}/records/import-file`, request);
-		},
+	importFile(
+		formId: string,
+		request: FormRecordImportFileRequest
+	): Promise<ApiResult<FormRecordImportResult>> {
+		return apiClient.post<FormRecordImportResult>(
+			`/api/v1/forms/${formId}/records/import-file`,
+			request
+		);
+	},
 
-		listImportJobs(formId: string): Promise<ApiResult<FormImportJob[]>> {
-			return apiClient.get<FormImportJob[]>(`/api/v1/forms/${formId}/records/import-jobs`);
-		},
+	listImportJobs(formId: string): Promise<ApiResult<FormImportJob[]>> {
+		return apiClient.get<FormImportJob[]>(`/api/v1/forms/${formId}/records/import-jobs`);
+	},
 
-		createImportJob(formId: string, request: CreateFormImportJobRequest): Promise<ApiResult<FormImportJob>> {
-			return apiClient.post<FormImportJob>(`/api/v1/forms/${formId}/records/import-jobs`, request);
-		},
+	createImportJob(
+		formId: string,
+		request: CreateFormImportJobRequest
+	): Promise<ApiResult<FormImportJob>> {
+		return apiClient.post<FormImportJob>(`/api/v1/forms/${formId}/records/import-jobs`, request);
+	},
 
-		getImportJob(jobId: string): Promise<ApiResult<FormImportJob>> {
-			return apiClient.get<FormImportJob>(`/api/v1/form-import-jobs/${jobId}`);
-		},
+	getImportJob(jobId: string): Promise<ApiResult<FormImportJob>> {
+		return apiClient.get<FormImportJob>(`/api/v1/form-import-jobs/${jobId}`);
+	},
 
-		listImportMappingTemplates(
-			formId: string,
-			params?: { header_signature?: string }
-		): Promise<ApiResult<FormImportMappingTemplate[]>> {
-			const query = new URLSearchParams();
-			if (params?.header_signature) query.append('header_signature', params.header_signature);
-			const endpoint = query.size
-				? `/api/v1/forms/${formId}/import-mapping-templates?${query.toString()}`
-				: `/api/v1/forms/${formId}/import-mapping-templates`;
-			return apiClient.get<FormImportMappingTemplate[]>(endpoint);
-		},
+	listImportMappingTemplates(
+		formId: string,
+		params?: { header_signature?: string }
+	): Promise<ApiResult<FormImportMappingTemplate[]>> {
+		const query = new URLSearchParams();
+		if (params?.header_signature) query.append('header_signature', params.header_signature);
+		const endpoint = query.size
+			? `/api/v1/forms/${formId}/import-mapping-templates?${query.toString()}`
+			: `/api/v1/forms/${formId}/import-mapping-templates`;
+		return apiClient.get<FormImportMappingTemplate[]>(endpoint);
+	},
 
-		saveImportMappingTemplate(
-			formId: string,
-			request: SaveFormImportMappingTemplateRequest
-		): Promise<ApiResult<FormImportMappingTemplate>> {
-			return apiClient.post<FormImportMappingTemplate>(
-				`/api/v1/forms/${formId}/import-mapping-templates`,
-				request
-			);
-		},
+	saveImportMappingTemplate(
+		formId: string,
+		request: SaveFormImportMappingTemplateRequest
+	): Promise<ApiResult<FormImportMappingTemplate>> {
+		return apiClient.post<FormImportMappingTemplate>(
+			`/api/v1/forms/${formId}/import-mapping-templates`,
+			request
+		);
+	},
 
-		deleteImportMappingTemplate(templateId: string): Promise<ApiResult<{ id: string }>> {
-			return apiClient.delete<{ id: string }>(`/api/v1/form-import-mapping-templates/${templateId}`);
-		},
+	deleteImportMappingTemplate(templateId: string): Promise<ApiResult<{ id: string }>> {
+		return apiClient.delete<{ id: string }>(`/api/v1/form-import-mapping-templates/${templateId}`);
+	},
 
-		listRecords(
+	listRecords(
 		formId: string,
 		params?: {
 			page?: number;
@@ -841,7 +853,16 @@ export const formsApi = {
 			view_id?: string;
 			sort?: string;
 			filter_field?: string;
-			filter_op?: 'eq' | 'neq' | 'not_equals' | 'contains' | 'gt' | 'gte' | 'lt' | 'lte' | 'not_empty';
+			filter_op?:
+				| 'eq'
+				| 'neq'
+				| 'not_equals'
+				| 'contains'
+				| 'gt'
+				| 'gte'
+				| 'lt'
+				| 'lte'
+				| 'not_empty';
 			filter_value?: string;
 		}
 	): Promise<ApiResult<PaginatedData<FormRecord>>> {
@@ -917,9 +938,7 @@ export const formsApi = {
 	},
 
 	getFieldDependencies(formId: string): Promise<ApiResult<FormFieldDependenciesResult>> {
-		return apiClient.get<FormFieldDependenciesResult>(
-			`/api/v1/forms/${formId}/field-dependencies`
-		);
+		return apiClient.get<FormFieldDependenciesResult>(`/api/v1/forms/${formId}/field-dependencies`);
 	},
 
 	listRelationTargets(
@@ -992,8 +1011,12 @@ export const formsApi = {
 		return apiClient.post<FormAttachment>(`/api/v1/form-attachments/${attachmentId}/restore`, {});
 	},
 
-	getAttachmentSignedDownload(attachmentId: string): Promise<ApiResult<FormAttachmentSignedDownload>> {
-		return apiClient.get<FormAttachmentSignedDownload>(`/api/v1/form-attachments/${attachmentId}/signed-url`);
+	getAttachmentSignedDownload(
+		attachmentId: string
+	): Promise<ApiResult<FormAttachmentSignedDownload>> {
+		return apiClient.get<FormAttachmentSignedDownload>(
+			`/api/v1/form-attachments/${attachmentId}/signed-url`
+		);
 	},
 
 	listEvents(formId: string): Promise<ApiResult<PaginatedData<BusinessEvent>>> {

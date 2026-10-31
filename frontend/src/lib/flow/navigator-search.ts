@@ -14,8 +14,8 @@
 //   error is shown as such and the request is NOT silently repeated with `allow_stale`;
 // - errors are classified by `error_code` only, never `message`.
 
-import type { ApiResult } from '$lib/api/client';
-import type { FlowSearchHit, FlowSearchQuery, FlowSearchResponse } from '$lib/api/flow';
+import type { ApiResult } from '#lib/api/client.js';
+import type { FlowSearchHit, FlowSearchQuery, FlowSearchResponse } from '#lib/api/flow.js';
 import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
 
 export const SEARCH_DEBOUNCE_MS = 200;

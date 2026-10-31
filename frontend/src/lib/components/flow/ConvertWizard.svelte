@@ -6,9 +6,9 @@
 	import { t } from 'svelte-i18n';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import Card from '$lib/components/Card.svelte';
-	import type { FlowCommandService } from '$lib/flow/command-service';
-	import type { FlowObjectRepository } from '$lib/flow/object-repository';
+	import Card from '#lib/components/Card.svelte';
+	import type { FlowCommandService } from '#lib/flow/command-service.js';
+	import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
 	import {
 		CONVERT_STEPS,
 		ConvertWizard,
@@ -19,7 +19,7 @@
 		type ConvertSnapshot,
 		type ConvertStep,
 		type MappingField
-	} from '$lib/flow/convert-wizard';
+	} from '#lib/flow/convert-wizard.js';
 
 	interface Props {
 		workspaceId: string;
@@ -470,8 +470,7 @@
 																aria-invalid={problem ? 'true' : undefined}
 																aria-describedby={problem ? hintId : undefined}
 																oninput={(event) =>
-																	wizard.setValue(field.key, event.currentTarget.value)}
-															></textarea>
+																	wizard.setValue(field.key, event.currentTarget.value)}></textarea>
 														{:else}
 															<input
 																id={inputId}

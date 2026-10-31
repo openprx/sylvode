@@ -2,10 +2,10 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { governanceApi } from '$lib/api/governance';
-	import { toast } from '$lib/stores/toast';
-	import { projectOptionsStore } from '$lib/stores/project-options';
-	import { groupProjectOptionsByWorkspace } from '$lib/utils/project-options';
+	import { governanceApi } from '#lib/api/governance.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { projectOptionsStore } from '#lib/stores/project-options.js';
+	import { groupProjectOptionsByWorkspace } from '#lib/utils/project-options.js';
 
 	const projects = $derived($projectOptionsStore.items);
 	const groupedProjects = $derived.by(() => groupProjectOptionsByWorkspace(projects));
@@ -101,19 +101,32 @@
 </svelte:head>
 
 <div class="mx-auto max-w-4xl space-y-4">
-	<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
-		<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">{$t('governanceConfig.title')}</h1>
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+	>
+		<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+			{$t('governanceConfig.title')}
+		</h1>
 		<p class="mt-1 text-sm text-slate-500">{$t('governanceConfig.subtitle')}</p>
 	</div>
 
-	<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+	>
 		{#if loading}
 			<p class="text-sm text-slate-500">{$t('common.loading')}</p>
 		{:else}
 			<div class="space-y-4">
 				<div>
-					<label for="governance-config-project" class="mb-1 block text-sm text-slate-600">{$t('impactReview.project')}</label>
-					<select id="governance-config-project" bind:value={selectedProjectId} onchange={onProjectChange} class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900">
+					<label for="governance-config-project" class="mb-1 block text-sm text-slate-600"
+						>{$t('impactReview.project')}</label
+					>
+					<select
+						id="governance-config-project"
+						bind:value={selectedProjectId}
+						onchange={onProjectChange}
+						class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+					>
 						{#each groupedProjects as group}
 							<optgroup label={group.workspaceName}>
 								{#each group.items as project}
@@ -126,34 +139,88 @@
 
 				<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
 					<label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
-						<input id="governance-config-review-required" type="checkbox" bind:checked={reviewRequired} />
+						<input
+							id="governance-config-review-required"
+							type="checkbox"
+							bind:checked={reviewRequired}
+						/>
 						{$t('governanceConfig.reviewRequired')}
 					</label>
 					<div>
-						<label for="governance-config-auto-review-days" class="mb-1 block text-sm text-slate-600">{$t('governanceConfig.autoReviewDays')}</label>
-						<input id="governance-config-auto-review-days" bind:value={autoReviewDays} type="number" min="0" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900" />
+						<label
+							for="governance-config-auto-review-days"
+							class="mb-1 block text-sm text-slate-600"
+							>{$t('governanceConfig.autoReviewDays')}</label
+						>
+						<input
+							id="governance-config-auto-review-days"
+							bind:value={autoReviewDays}
+							type="number"
+							min="0"
+							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						/>
 					</div>
 					<div>
-						<label for="governance-config-review-reminder-days" class="mb-1 block text-sm text-slate-600">{$t('governanceConfig.reviewReminderDays')}</label>
-						<input id="governance-config-review-reminder-days" bind:value={reviewReminderDays} type="number" min="0" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900" />
+						<label
+							for="governance-config-review-reminder-days"
+							class="mb-1 block text-sm text-slate-600"
+							>{$t('governanceConfig.reviewReminderDays')}</label
+						>
+						<input
+							id="governance-config-review-reminder-days"
+							bind:value={reviewReminderDays}
+							type="number"
+							min="0"
+							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						/>
 					</div>
 					<div>
-						<label for="governance-config-audit-report-cron" class="mb-1 block text-sm text-slate-600">{$t('governanceConfig.auditReportCron')}</label>
-						<input id="governance-config-audit-report-cron" bind:value={auditReportCron} type="text" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900" />
+						<label
+							for="governance-config-audit-report-cron"
+							class="mb-1 block text-sm text-slate-600"
+							>{$t('governanceConfig.auditReportCron')}</label
+						>
+						<input
+							id="governance-config-audit-report-cron"
+							bind:value={auditReportCron}
+							type="text"
+							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						/>
 					</div>
 					<div class="md:col-span-2">
-						<label for="governance-config-trust-update-mode" class="mb-1 block text-sm text-slate-600">{$t('governanceConfig.trustUpdateMode')}</label>
-						<input id="governance-config-trust-update-mode" bind:value={trustUpdateMode} type="text" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900" />
+						<label
+							for="governance-config-trust-update-mode"
+							class="mb-1 block text-sm text-slate-600"
+							>{$t('governanceConfig.trustUpdateMode')}</label
+						>
+						<input
+							id="governance-config-trust-update-mode"
+							bind:value={trustUpdateMode}
+							type="text"
+							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						/>
 					</div>
 				</div>
 
 				<div>
-					<label for="governance-config-json" class="mb-1 block text-sm text-slate-600">{$t('governanceConfig.configJson')}</label>
-					<textarea id="governance-config-json" bind:value={configText} rows="10" class="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-600 dark:bg-slate-900"></textarea>
+					<label for="governance-config-json" class="mb-1 block text-sm text-slate-600"
+						>{$t('governanceConfig.configJson')}</label
+					>
+					<textarea
+						id="governance-config-json"
+						bind:value={configText}
+						rows="10"
+						class="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-600 dark:bg-slate-900"
+					></textarea>
 				</div>
 
 				<div class="flex justify-end">
-					<button type="button" onclick={saveConfig} class="rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700" disabled={saving}>
+					<button
+						type="button"
+						onclick={saveConfig}
+						class="rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
+						disabled={saving}
+					>
 						{saving ? $t('common.saving') : $t('common.save')}
 					</button>
 				</div>

@@ -22,7 +22,7 @@
 //   know) is a permanent failure: no retry is offered and the operation is closed.
 // - `delivery_cancelled` is a normal cancellation and is never counted as dead-letter.
 
-import type { ApiResult } from '$lib/api/client';
+import type { ApiResult } from '#lib/api/client.js';
 import type {
 	FlowAdminHealth,
 	FlowAdminIntegrity,
@@ -36,7 +36,7 @@ import type {
 	FlowReplayResponse,
 	FlowReplayWindow,
 	ReplayDeliveriesInput
-} from '$lib/api/flow';
+} from '#lib/api/flow.js';
 import { FlowCommandService } from './command-service';
 import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
 import { resolveWorkspaceAdmin } from './flow-settings';

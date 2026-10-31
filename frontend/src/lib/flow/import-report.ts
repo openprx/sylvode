@@ -6,8 +6,8 @@
 // not completed"), which is treated as "keep polling". A missing or foreign import (legacy
 // `NotFound`/`Forbidden`) lands on one not-found-safe state so the page does not reveal which.
 
-import type { ApiResult } from '$lib/api/client';
-import type { FlowPackageImportReport } from '$lib/api/flow';
+import type { ApiResult } from '#lib/api/client.js';
+import type { FlowPackageImportReport } from '#lib/api/flow.js';
 import { FlowObjectRepository } from './object-repository';
 import { exportPollDelay } from './package-export';
 import { classifyPackageFailure, type FlowPackageFailure } from './package-import';

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { toast, type Toast } from '$lib/stores/toast';
+	import { toast, type Toast } from '#lib/stores/toast.js';
 	import { t } from 'svelte-i18n';
 
 	let toasts = $state<Toast[]>([]);
@@ -19,7 +19,9 @@
 	}
 </script>
 
-<div class="fixed left-1/2 top-20 z-50 flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 flex-col gap-2">
+<div
+	class="fixed left-1/2 top-20 z-50 flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 flex-col gap-2"
+>
 	{#each toasts as item (item.id)}
 		<div
 			class="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-white shadow-lg dark:shadow-slate-900/50 {getToastColor(

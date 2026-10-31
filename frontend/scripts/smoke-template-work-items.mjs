@@ -26,7 +26,12 @@ const templatePlans = [
 		fieldSchema: [
 			{ key: 'repo', label: 'Repository', type: 'text', required: true },
 			{ key: 'branch', label: 'Branch', type: 'text' },
-			{ key: 'ci_status', label: 'CI status', type: 'select', options: ['unknown', 'passing', 'failing'] }
+			{
+				key: 'ci_status',
+				label: 'CI status',
+				type: 'select',
+				options: ['unknown', 'passing', 'failing']
+			}
 		]
 	},
 	{
@@ -43,7 +48,13 @@ const templatePlans = [
 		fieldSchema: [
 			{ key: 'counterparty', label: 'Counterparty', type: 'text', required: true },
 			{ key: 'amount', label: 'Amount', type: 'number' },
-			{ key: 'risk_level', label: 'Risk level', type: 'select', options: ['low', 'medium', 'high'], required: true }
+			{
+				key: 'risk_level',
+				label: 'Risk level',
+				type: 'select',
+				options: ['low', 'medium', 'high'],
+				required: true
+			}
 		]
 	},
 	{
@@ -56,11 +67,20 @@ const templatePlans = [
 		workflowStates: ['reported', 'triage', 'closed'],
 		title: 'Inspect pump A17 alarm',
 		attachment: { filename: 'pump-a17-photo.png', mime: 'image/png' },
-		fields: { equipment_id: 'PUMP-A17', fault_type: 'Bearing temperature alarm', downtime_impact: 'major' },
+		fields: {
+			equipment_id: 'PUMP-A17',
+			fault_type: 'Bearing temperature alarm',
+			downtime_impact: 'major'
+		},
 		fieldSchema: [
 			{ key: 'equipment_id', label: 'Equipment ID', type: 'text', required: true },
 			{ key: 'fault_type', label: 'Fault type', type: 'text', required: true },
-			{ key: 'downtime_impact', label: 'Downtime impact', type: 'select', options: ['none', 'minor', 'major'] }
+			{
+				key: 'downtime_impact',
+				label: 'Downtime impact',
+				type: 'select',
+				options: ['none', 'minor', 'major']
+			}
 		]
 	},
 	{
@@ -73,7 +93,11 @@ const templatePlans = [
 		workflowStates: ['detected', 'root_cause', 'closed'],
 		title: 'Investigate batch Q2026 paint defect',
 		attachment: { filename: 'quality-defect-photo.png', mime: 'image/png' },
-		fields: { defect_type: 'Paint adhesion defect', batch: 'Q2026-05', root_cause: 'Surface preparation variance' },
+		fields: {
+			defect_type: 'Paint adhesion defect',
+			batch: 'Q2026-05',
+			root_cause: 'Surface preparation variance'
+		},
 		fieldSchema: [
 			{ key: 'defect_type', label: 'Defect type', type: 'text', required: true },
 			{ key: 'batch', label: 'Batch or order', type: 'text' },
@@ -89,11 +113,20 @@ const templatePlans = [
 		firstState: 'planned',
 		workflowStates: ['planned', 'acceptance', 'delivered'],
 		title: 'Prepare ACME milestone acceptance',
-		fields: { customer: 'ACME Manufacturing', milestone: 'Milestone 2 acceptance', delivery_risk: 'medium' },
+		fields: {
+			customer: 'ACME Manufacturing',
+			milestone: 'Milestone 2 acceptance',
+			delivery_risk: 'medium'
+		},
 		fieldSchema: [
 			{ key: 'customer', label: 'Customer', type: 'text', required: true },
 			{ key: 'milestone', label: 'Milestone', type: 'text', required: true },
-			{ key: 'delivery_risk', label: 'Delivery risk', type: 'select', options: ['low', 'medium', 'high'] }
+			{
+				key: 'delivery_risk',
+				label: 'Delivery risk',
+				type: 'select',
+				options: ['low', 'medium', 'high']
+			}
 		]
 	}
 ];
@@ -160,7 +193,9 @@ function projectForPlan(plan) {
 				name: plan.projectName,
 				project_type_key: plan.projectType,
 				field_schema: { fields: plan.fieldSchema },
-				workflow_template: { states: plan.workflowStates.map((key, index) => ({ key, initial: index === 0 })) },
+				workflow_template: {
+					states: plan.workflowStates.map((key, index) => ({ key, initial: index === 0 }))
+				},
 				resource_schema: { resources: [] },
 				ai_roles: [],
 				governance_policy: {},
@@ -285,7 +320,13 @@ location.replace('/workspace/${workspaceId}/projects/${plan.projectId}/issues?te
 	}
 
 	if (pathname === '/api/v1/auth/me') {
-		json(res, 200, apiResult({ user: { id: 'user-smoke', email: 'smoke@example.com', name: 'Smoke Admin', role: 'admin' } }));
+		json(
+			res,
+			200,
+			apiResult({
+				user: { id: 'user-smoke', email: 'smoke@example.com', name: 'Smoke Admin', role: 'admin' }
+			})
+		);
 		return;
 	}
 	if (pathname === '/api/v1/notifications/unread-count') {
@@ -293,15 +334,48 @@ location.replace('/workspace/${workspaceId}/projects/${plan.projectId}/issues?te
 		return;
 	}
 	if (pathname === '/api/v1/workspaces') {
-		json(res, 200, apiResult(paginated([{ id: workspaceId, slug: 'template-work-items', name: 'Template Work Items', created_at: now, updated_at: now }])));
+		json(
+			res,
+			200,
+			apiResult(
+				paginated([
+					{
+						id: workspaceId,
+						slug: 'template-work-items',
+						name: 'Template Work Items',
+						created_at: now,
+						updated_at: now
+					}
+				])
+			)
+		);
 		return;
 	}
 	if (pathname === `/api/v1/workspaces/${workspaceId}`) {
-		json(res, 200, apiResult({ id: workspaceId, slug: 'template-work-items', name: 'Template Work Items', role: 'owner', created_at: now, updated_at: now }));
+		json(
+			res,
+			200,
+			apiResult({
+				id: workspaceId,
+				slug: 'template-work-items',
+				name: 'Template Work Items',
+				role: 'owner',
+				created_at: now,
+				updated_at: now
+			})
+		);
 		return;
 	}
 	if (pathname === `/api/v1/workspaces/${workspaceId}/members`) {
-		json(res, 200, apiResult(paginated([{ user_id: 'user-smoke', name: 'Smoke Admin', email: 'smoke@example.com', role: 'owner' }])));
+		json(
+			res,
+			200,
+			apiResult(
+				paginated([
+					{ user_id: 'user-smoke', name: 'Smoke Admin', email: 'smoke@example.com', role: 'owner' }
+				])
+			)
+		);
 		return;
 	}
 	if (pathname === `/api/v1/workspaces/${workspaceId}/labels`) {
@@ -313,7 +387,14 @@ location.replace('/workspace/${workspaceId}/projects/${plan.projectId}/issues?te
 			// Drain request body so XMLHttpRequest observes a completed upload.
 		}
 		uploadCount += 1;
-		json(res, 200, apiResult({ url: `/api/v1/uploads/smoke-attachment-${uploadCount}.png`, filename: `smoke-attachment-${uploadCount}.png` }));
+		json(
+			res,
+			200,
+			apiResult({
+				url: `/api/v1/uploads/smoke-attachment-${uploadCount}.png`,
+				filename: `smoke-attachment-${uploadCount}.png`
+			})
+		);
 		return;
 	}
 
@@ -345,7 +426,10 @@ location.replace('/workspace/${workspaceId}/projects/${plan.projectId}/issues?te
 		const projectId = issuesMatch[1];
 		const plan = planByProjectId(projectId);
 		const payload = await readBody(req);
-		createdIssuePayloads = [...createdIssuePayloads, { template_key: plan.key, project_id: projectId, payload }];
+		createdIssuePayloads = [
+			...createdIssuePayloads,
+			{ template_key: plan.key, project_id: projectId, payload }
+		];
 		const existing = createdIssuesByProject[projectId] ?? [];
 		const issue = {
 			id: `issue-${projectId}-${existing.length + 1}`,
@@ -423,8 +507,12 @@ server.listen(0, '127.0.0.1', async () => {
 	const address = server.address();
 	const port = typeof address === 'object' && address ? address.port : 0;
 	if (screenshotDir) await mkdir(screenshotDir, { recursive: true });
-	const desktopScreenshot = screenshotDir ? join(screenshotDir, 'template-work-items-desktop.png') : null;
-	const mobileScreenshot = screenshotDir ? join(screenshotDir, 'template-work-items-mobile.png') : null;
+	const desktopScreenshot = screenshotDir
+		? join(screenshotDir, 'template-work-items-desktop.png')
+		: null;
+	const mobileScreenshot = screenshotDir
+		? join(screenshotDir, 'template-work-items-mobile.png')
+		: null;
 	try {
 		for (const plan of templatePlans) {
 			const url = `http://127.0.0.1:${port}/smoke-template-work-item-seed?template=${plan.key}`;
@@ -437,7 +525,9 @@ server.listen(0, '127.0.0.1', async () => {
 				throw new Error(`Chromium exited with ${result.code} for ${plan.key}\\n${result.stderr}`);
 			}
 			if (!result.stdout.includes(`data-template-work-item-smoke="${plan.key}"`)) {
-				const errorAttr = result.stdout.match(/data-template-work-item-smoke-error="[^"]+"/)?.[0] ?? 'no smoke error attribute';
+				const errorAttr =
+					result.stdout.match(/data-template-work-item-smoke-error="[^"]+"/)?.[0] ??
+					'no smoke error attribute';
 				throw new Error(`Template work-item smoke failed for ${plan.key}: ${errorAttr}`);
 			}
 		}
@@ -446,11 +536,17 @@ server.listen(0, '127.0.0.1', async () => {
 			const mobileUrl = `http://127.0.0.1:${port}/smoke-template-work-item-seed?template=${mobilePlan.key}`;
 			const mobileResult = await runChromium(mobileUrl, '390,844', mobileScreenshot);
 			if (mobileResult.code !== 0) {
-				throw new Error(`Mobile Chromium exited with ${mobileResult.code} for ${mobilePlan.key}\\n${mobileResult.stderr}`);
+				throw new Error(
+					`Mobile Chromium exited with ${mobileResult.code} for ${mobilePlan.key}\\n${mobileResult.stderr}`
+				);
 			}
 			if (!mobileResult.stdout.includes(`data-template-work-item-smoke="${mobilePlan.key}"`)) {
-				const errorAttr = mobileResult.stdout.match(/data-template-work-item-smoke-error="[^"]+"/)?.[0] ?? 'no smoke error attribute';
-				throw new Error(`Mobile template work-item smoke failed for ${mobilePlan.key}: ${errorAttr}`);
+				const errorAttr =
+					mobileResult.stdout.match(/data-template-work-item-smoke-error="[^"]+"/)?.[0] ??
+					'no smoke error attribute';
+				throw new Error(
+					`Mobile template work-item smoke failed for ${mobilePlan.key}: ${errorAttr}`
+				);
 			}
 		}
 	} finally {
@@ -464,11 +560,18 @@ server.listen(0, '127.0.0.1', async () => {
 		}
 		for (const [fieldKey, fieldValue] of Object.entries(plan.fields)) {
 			if (!entry.payload.description?.includes(String(fieldValue))) {
-				throw new Error(`Issue payload for ${plan.key} missing ${fieldKey}: ${entry.payload.description}`);
+				throw new Error(
+					`Issue payload for ${plan.key} missing ${fieldKey}: ${entry.payload.description}`
+				);
 			}
 		}
-		if (plan.attachment && !entry.payload.description?.includes('/api/v1/uploads/smoke-attachment-')) {
-			throw new Error(`Issue payload for ${plan.key} missing uploaded attachment: ${entry.payload.description}`);
+		if (
+			plan.attachment &&
+			!entry.payload.description?.includes('/api/v1/uploads/smoke-attachment-')
+		) {
+			throw new Error(
+				`Issue payload for ${plan.key} missing uploaded attachment: ${entry.payload.description}`
+			);
 		}
 	}
 

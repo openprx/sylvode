@@ -82,7 +82,10 @@ function serverSurfaces(): string[] {
 	const list = impl.match(
 		/pub const BOT_CREDENTIAL_SURFACES:\s*\[Self;\s*(\d+)\]\s*=\s*\[([^\]]*)\];/
 	);
-	assert(list, `${EVENT_ORIGIN} no longer defines EventSurface::BOT_CREDENTIAL_SURFACES as [Self; N]`);
+	assert(
+		list,
+		`${EVENT_ORIGIN} no longer defines EventSurface::BOT_CREDENTIAL_SURFACES as [Self; N]`
+	);
 	const declared = Number(list[1]);
 	const items = list[2]
 		.split(',')
@@ -94,9 +97,15 @@ function serverSurfaces(): string[] {
 	);
 	return items.map((item) => {
 		const variant = item.match(/^Self::([A-Za-z0-9]+)$/);
-		assert(variant, `${EVENT_ORIGIN}: BOT_CREDENTIAL_SURFACES entry "${item}" is not Self::<Variant>`);
+		assert(
+			variant,
+			`${EVENT_ORIGIN}: BOT_CREDENTIAL_SURFACES entry "${item}" is not Self::<Variant>`
+		);
 		const spelled = wire.get(variant[1]);
-		assert(spelled, `${EVENT_ORIGIN}: BOT_CREDENTIAL_SURFACES entry ${item} has no as_wire spelling`);
+		assert(
+			spelled,
+			`${EVENT_ORIGIN}: BOT_CREDENTIAL_SURFACES entry ${item} has no as_wire spelling`
+		);
 		return spelled;
 	});
 }
@@ -118,42 +127,52 @@ suite.check('the form offers exactly the surfaces the API accepts, in the same o
 	);
 });
 
-suite.check('the API validates transport_surface against that one list, not a copy of its own', () => {
-	const code = rustCode(BOT_ROUTE);
-	const body = code.match(/fn normalize_transport_surface\([\s\S]*?\n\}/);
-	assert(body, `${BOT_ROUTE} no longer defines normalize_transport_surface`);
-	assert(
-		/EventSurface::from_bot_credential_label\(/.test(body[0]),
-		'normalize_transport_surface must accept exactly what EventSurface::from_bot_credential_label accepts'
-	);
-	assert(
-		!/"(?:rest|mcp_http|mcp_sse|mcp_stdio|cli|cli_tools_call|web|worker|system)"\s*[,\]]/.test(body[0]),
-		'normalize_transport_surface must not carry its own list of surfaces'
-	);
-	const parse = rustCode(EVENT_ORIGIN).match(/fn from_bot_credential_label\([\s\S]*?\n\s{4}\}/);
-	assert(parse, `${EVENT_ORIGIN} no longer defines EventSurface::from_bot_credential_label`);
-	assert(
-		/Self::BOT_CREDENTIAL_SURFACES/.test(parse[0]),
-		'from_bot_credential_label must parse against Self::BOT_CREDENTIAL_SURFACES'
-	);
-});
+suite.check(
+	'the API validates transport_surface against that one list, not a copy of its own',
+	() => {
+		const code = rustCode(BOT_ROUTE);
+		const body = code.match(/fn normalize_transport_surface\([\s\S]*?\n\}/);
+		assert(body, `${BOT_ROUTE} no longer defines normalize_transport_surface`);
+		assert(
+			/EventSurface::from_bot_credential_label\(/.test(body[0]),
+			'normalize_transport_surface must accept exactly what EventSurface::from_bot_credential_label accepts'
+		);
+		assert(
+			!/"(?:rest|mcp_http|mcp_sse|mcp_stdio|cli|cli_tools_call|web|worker|system)"\s*[,\]]/.test(
+				body[0]
+			),
+			'normalize_transport_surface must not carry its own list of surfaces'
+		);
+		const parse = rustCode(EVENT_ORIGIN).match(/fn from_bot_credential_label\([\s\S]*?\n\s{4}\}/);
+		assert(parse, `${EVENT_ORIGIN} no longer defines EventSurface::from_bot_credential_label`);
+		assert(
+			/Self::BOT_CREDENTIAL_SURFACES/.test(parse[0]),
+			'from_bot_credential_label must parse against Self::BOT_CREDENTIAL_SURFACES'
+		);
+	}
+);
 
-suite.check('the API default for an omitted surface is still rest, which the form never relies on', () => {
-	const source = readFileSync(join(REPO, 'apps/api/src/routes/bot.rs'), 'utf8');
-	assert(
-		/value\.unwrap_or_else\(\|\| "rest"\.to_string\(\)\)/.test(source),
-		'normalize_transport_surface changed its default; re-check the README and this form'
-	);
-	const api = readFileSync(join(FRONTEND, 'src/lib/api/bots.ts'), 'utf8');
-	assert(
-		/transport_surface: BotTransportSurface;/.test(api),
-		'CreateBotData.transport_surface must be required so every create names its surface'
-	);
-});
+suite.check(
+	'the API default for an omitted surface is still rest, which the form never relies on',
+	() => {
+		const source = readFileSync(join(REPO, 'apps/api/src/routes/bot.rs'), 'utf8');
+		assert(
+			/value\.unwrap_or_else\(\|\| "rest"\.to_string\(\)\)/.test(source),
+			'normalize_transport_surface changed its default; re-check the README and this form'
+		);
+		const api = readFileSync(join(FRONTEND, 'src/lib/api/bots.ts'), 'utf8');
+		assert(
+			/transport_surface: BotTransportSurface;/.test(api),
+			'CreateBotData.transport_surface must be required so every create names its surface'
+		);
+	}
+);
 
 for (const locale of LOCALES) {
 	suite.check(`${locale}: every surface has a non-empty label and description`, () => {
-		const messages = JSON.parse(readFileSync(join(FRONTEND, `src/lib/i18n/${locale}.json`), 'utf8'));
+		const messages = JSON.parse(
+			readFileSync(join(FRONTEND, `src/lib/i18n/${locale}.json`), 'utf8')
+		);
 		const missing: string[] = [];
 		for (const surface of BOT_TRANSPORT_SURFACES) {
 			for (const key of [surfaceLabelKey(surface), surfaceDescriptionKey(surface)]) {
@@ -211,40 +230,61 @@ suite.check('the create request carries exactly the chosen surface, for every su
 
 suite.check('the create request is refused without a surface or a name, never defaulted', () => {
 	const noSurface = createBotRequest({ name: 'ci bot', permissions: [], surface: '' });
-	assert(!noSurface.ok && noSurface.errorKey === 'members.transportSurfaceRequired', 'no surface chosen');
+	assert(
+		!noSurface.ok && noSurface.errorKey === 'members.transportSurfaceRequired',
+		'no surface chosen'
+	);
 	const noName = createBotRequest({ name: '   ', permissions: [], surface: 'cli' });
 	assert(!noName.ok && noName.errorKey === 'members.tokenNameRequired', 'blank name');
 });
 
-suite.check('the members page sends the request createBotRequest builds from the chosen surface', () => {
-	const code = withoutComments(readFileSync(MEMBERS_PAGE, 'utf8'));
-	assert(
-		/createBotRequest\(\{[\s\S]{0,200}surface: tokenSurface[\s\S]{0,200}\}\)/.test(code),
-		'createToken must build its request from the selected tokenSurface'
-	);
-	assert(/botsApi\.create\(workspaceId, built\.request\)/.test(code), 'createToken must send the built request');
-	assert(!/transport_surface\s*:/.test(code), 'the page must not set transport_surface itself');
-	assert(/bind:group=\{tokenSurface\}/.test(code), 'the radio group must bind to tokenSurface');
-});
+suite.check(
+	'the members page sends the request createBotRequest builds from the chosen surface',
+	() => {
+		const code = withoutComments(readFileSync(MEMBERS_PAGE, 'utf8'));
+		assert(
+			/createBotRequest\(\{[\s\S]{0,200}surface: tokenSurface[\s\S]{0,200}\}\)/.test(code),
+			'createToken must build its request from the selected tokenSurface'
+		);
+		assert(
+			/botsApi\.create\(workspaceId, built\.request\)/.test(code),
+			'createToken must send the built request'
+		);
+		assert(!/transport_surface\s*:/.test(code), 'the page must not set transport_surface itself');
+		assert(/bind:group=\{tokenSurface\}/.test(code), 'the radio group must bind to tokenSurface');
+	}
+);
 
-suite.check('the members page asks for the surface, sends it, lists it and shows it on reveal', () => {
-	const page = withoutComments(readFileSync(MEMBERS_PAGE, 'utf8'));
-	assert(/\{#each BOT_TRANSPORT_SURFACES as surface/.test(page), 'create form does not list the surfaces');
-	assert(
-		/type="radio"[\s\S]{0,120}name="tokenSurface"[\s\S]{0,200}required/.test(page),
-		'the surface choice must be a required, labelled radio group'
-	);
-	assert(/<legend[^>]*>[\s\S]{0,80}members\.transportSurface'/.test(page), 'the radio group needs a legend');
-	assert(
-		/let tokenSurface = \$state<BotTransportSurface \| ''>\(''\)/.test(page),
-		'the surface must start unselected so the user has to choose'
-	);
-	assert(/getSurfaceLabel\(bot\.transport_surface\)/.test(page), 'the bot list does not show each surface');
-	assert(
-		/members\.tokenWorksOn'[\s\S]{0,120}createdToken\.transport_surface/.test(page),
-		'the token-reveal dialog does not say where the token works'
-	);
-});
+suite.check(
+	'the members page asks for the surface, sends it, lists it and shows it on reveal',
+	() => {
+		const page = withoutComments(readFileSync(MEMBERS_PAGE, 'utf8'));
+		assert(
+			/\{#each BOT_TRANSPORT_SURFACES as surface/.test(page),
+			'create form does not list the surfaces'
+		);
+		assert(
+			/type="radio"[\s\S]{0,120}name="tokenSurface"[\s\S]{0,200}required/.test(page),
+			'the surface choice must be a required, labelled radio group'
+		);
+		assert(
+			/<legend[^>]*>[\s\S]{0,80}members\.transportSurface'/.test(page),
+			'the radio group needs a legend'
+		);
+		assert(
+			/let tokenSurface = \$state<BotTransportSurface \| ''>\(''\)/.test(page),
+			'the surface must start unselected so the user has to choose'
+		);
+		assert(
+			/getSurfaceLabel\(bot\.transport_surface\)/.test(page),
+			'the bot list does not show each surface'
+		);
+		assert(
+			/members\.tokenWorksOn'[\s\S]{0,120}createdToken\.transport_surface/.test(page),
+			'the token-reveal dialog does not say where the token works'
+		);
+	}
+);
 
 export const result = suite.result();
 

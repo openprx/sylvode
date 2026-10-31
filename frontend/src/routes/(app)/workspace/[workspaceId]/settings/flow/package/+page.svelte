@@ -4,16 +4,16 @@
 	// guard, this only hides the controls from everyone else.
 	import { onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import PackageExportCard from '$lib/components/flow/PackageExportCard.svelte';
-	import PackageImportWizard from '$lib/components/flow/PackageImportWizard.svelte';
-	import { resolveWorkspaceAdmin } from '$lib/flow/flow-settings';
-	import { listWorkspaceProjects, type WorkspaceProjectOption } from '$lib/flow/package-export';
-	import { requireRouteParam } from '$lib/utils/route-params';
+	import EmptyState from '#lib/components/EmptyState.svelte';
+	import PackageExportCard from '#lib/components/flow/PackageExportCard.svelte';
+	import PackageImportWizard from '#lib/components/flow/PackageImportWizard.svelte';
+	import { resolveWorkspaceAdmin } from '#lib/flow/flow-settings.js';
+	import { listWorkspaceProjects, type WorkspaceProjectOption } from '#lib/flow/package-export.js';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
 
-	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
+	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 
 	let view = $state<'loading' | 'ready' | 'forbidden'>('loading');
 	let projects = $state.raw<WorkspaceProjectOption[]>([]);
@@ -60,6 +60,7 @@
 		</div>
 	{:else}
 		<PackageExportCard {workspaceId} workspaceLabel={workspaceId} {projects} />
+
 		<PackageImportWizard {workspaceId} {projects} />
 	{/if}
 </div>

@@ -3,8 +3,13 @@
 	import { goto } from '$app/navigation';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { proposalsApi, type Proposal, type ProposalStatus, type ProposalType } from '$lib/api/proposals';
-	import { toast } from '$lib/stores/toast';
+	import {
+		proposalsApi,
+		type Proposal,
+		type ProposalStatus,
+		type ProposalType
+	} from '#lib/api/proposals.js';
+	import { toast } from '#lib/stores/toast.js';
 
 	let loading = $state(true);
 	let items = $state<Proposal[]>([]);
@@ -107,10 +112,14 @@
 </script>
 
 <div class="mx-auto max-w-6xl space-y-4">
-	<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+	>
 		<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">{$t('governance.title')}</h1>
+				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+					{$t('governance.title')}
+				</h1>
 				<p class="text-sm text-slate-500">{$t('governance.subtitle')}</p>
 			</div>
 			<a
@@ -122,7 +131,11 @@
 		</div>
 
 		<div class="mb-4 grid grid-cols-1 gap-2 md:grid-cols-5">
-			<select bind:value={statusFilter} onchange={applyFilters} class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+			<select
+				bind:value={statusFilter}
+				onchange={applyFilters}
+				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+			>
 				<option value="all">{$t('governance.status.all')}</option>
 				<option value="draft">{$t('governance.status.draft')}</option>
 				<option value="open">{$t('governance.status.open')}</option>
@@ -132,7 +145,11 @@
 				<option value="vetoed">{$t('governance.status.vetoed')}</option>
 				<option value="archived">{$t('governance.status.archived')}</option>
 			</select>
-			<select bind:value={typeFilter} onchange={applyFilters} class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+			<select
+				bind:value={typeFilter}
+				onchange={applyFilters}
+				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+			>
 				<option value="all">{$t('governance.type.all')}</option>
 				<option value="feature">{$t('governance.type.feature')}</option>
 				<option value="architecture">{$t('governance.type.architecture')}</option>
@@ -141,8 +158,17 @@
 				<option value="governance">{$t('governance.type.governance')}</option>
 				<option value="bugfix">{$t('governance.type.bugfix')}</option>
 			</select>
-			<input bind:value={domainFilter} onkeydown={(e) => e.key === 'Enter' && applyFilters()} placeholder={$t('governance.domainPlaceholder')} class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100" />
-			<select bind:value={sort} onchange={applyFilters} class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+			<input
+				bind:value={domainFilter}
+				onkeydown={(e) => e.key === 'Enter' && applyFilters()}
+				placeholder={$t('governance.domainPlaceholder')}
+				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+			/>
+			<select
+				bind:value={sort}
+				onchange={applyFilters}
+				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+			>
 				<option value="created_at:desc">{$t('governance.sort.createdDesc')}</option>
 				<option value="created_at:asc">{$t('governance.sort.createdAsc')}</option>
 				<option value="title:asc">{$t('governance.sort.titleAsc')}</option>
@@ -150,7 +176,12 @@
 				<option value="status:asc">{$t('governance.sort.statusAsc')}</option>
 				<option value="status:desc">{$t('governance.sort.statusDesc')}</option>
 			</select>
-			<button type="button" onclick={applyFilters} class="rounded-md bg-slate-800 px-3 py-2 text-sm text-white hover:bg-slate-900">{$t('governance.filter')}</button>
+			<button
+				type="button"
+				onclick={applyFilters}
+				class="rounded-md bg-slate-800 px-3 py-2 text-sm text-white hover:bg-slate-900"
+				>{$t('governance.filter')}</button
+			>
 		</div>
 
 		{#if loading}
@@ -166,15 +197,21 @@
 						class="rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:shadow-md dark:border-slate-700 dark:bg-slate-900"
 					>
 						<div class="mb-2 flex items-start justify-between gap-2">
-							<h2 class="line-clamp-2 text-base font-semibold text-slate-900 dark:text-slate-100">{item.title}</h2>
-							<span class={`rounded px-2 py-0.5 text-xs font-medium ${statusTone(item.status)}`}>{statusLabel(item.status)}</span>
+							<h2 class="line-clamp-2 text-base font-semibold text-slate-900 dark:text-slate-100">
+								{item.title}
+							</h2>
+							<span class={`rounded px-2 py-0.5 text-xs font-medium ${statusTone(item.status)}`}
+								>{statusLabel(item.status)}</span
+							>
 						</div>
 						<div class="space-y-1 text-xs text-slate-500">
 							<p>{$t('governance.typeLabel')}: {typeLabel(item.proposal_type)}</p>
 							<p>{$t('governance.authorLabel')}: {item.author_id}</p>
 							<p>{$t('governance.domainLabel')}: {item.domains.join(', ') || '-'}</p>
 							{#if item.status === 'voting'}
-								<p>{$t('governance.votingDeadlineLabel')}: {formatCountdown(item.voting_ended_at)}</p>
+								<p>
+									{$t('governance.votingDeadlineLabel')}: {formatCountdown(item.voting_ended_at)}
+								</p>
 							{/if}
 							<p>{$t('governance.createdAtLabel')}: {new Date(item.created_at).toLocaleString()}</p>
 						</div>
@@ -183,11 +220,27 @@
 			</div>
 		{/if}
 
-		<div class="flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700">
-			<p class="text-slate-500">{$t('governance.pagination', { values: { total, page, pages: totalPages } })}</p>
+		<div
+			class="flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"
+		>
+			<p class="text-slate-500">
+				{$t('governance.pagination', { values: { total, page, pages: totalPages } })}
+			</p>
 			<div class="flex gap-2">
-				<button type="button" onclick={() => goPage(page - 1)} disabled={page <= 1 || loading} class="rounded-md border border-slate-300 px-3 py-1 text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200">{$t('governance.prevPage')}</button>
-				<button type="button" onclick={() => goPage(page + 1)} disabled={page >= totalPages || loading} class="rounded-md border border-slate-300 px-3 py-1 text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200">{$t('governance.nextPage')}</button>
+				<button
+					type="button"
+					onclick={() => goPage(page - 1)}
+					disabled={page <= 1 || loading}
+					class="rounded-md border border-slate-300 px-3 py-1 text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200"
+					>{$t('governance.prevPage')}</button
+				>
+				<button
+					type="button"
+					onclick={() => goPage(page + 1)}
+					disabled={page >= totalPages || loading}
+					class="rounded-md border border-slate-300 px-3 py-1 text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200"
+					>{$t('governance.nextPage')}</button
+				>
 			</div>
 		</div>
 	</div>

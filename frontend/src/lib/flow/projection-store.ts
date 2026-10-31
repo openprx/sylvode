@@ -17,7 +17,11 @@ import type {
 export class LiveProjectionStore implements ProjectionStoreContract {
 	private readonly objectStore;
 	private readonly blocksStore = writable<ReadonlyArray<BlockProjection>>([]);
-	private readonly selectionStore = writable<SelectionProjection>({ blockId: null, anchor: 0, head: 0 });
+	private readonly selectionStore = writable<SelectionProjection>({
+		blockId: null,
+		anchor: 0,
+		head: 0
+	});
 	private highestKnownSeq = 0;
 
 	constructor(initial: ObjectProjection) {
