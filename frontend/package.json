@@ -1,7 +1,7 @@
 {
 	"name": "frontend",
 	"private": true,
-	"version": "0.2.525",
+	"version": "0.2.526",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
@@ -25,6 +25,7 @@
 		"test:bot-transport-surfaces": "bun tests/bot-transport-surfaces.test.ts",
 		"test:webhook-events": "bun tests/webhook-events.test.ts",
 		"test:flow-navigator-equivalence": "bun tests/flow-navigator-equivalence.test.ts",
+		"test:flow-cross-parent-move": "bun tests/flow-cross-parent-move.test.ts",
 		"test:flow-ui-state": "bun tests/flow-ui-state.test.ts",
 		"test:flow-static-build": "bun tests/flow-static-build-deep-route.test.ts",
 		"test:flow-bridge": "bun tests/flow-bridge.test.ts",

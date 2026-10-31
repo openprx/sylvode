@@ -27,6 +27,7 @@ pub mod bridge;
 pub mod collab;
 pub mod collections;
 pub mod command;
+pub mod comments;
 pub mod event_origin;
 pub mod event_policy;
 pub mod export;
@@ -45,6 +46,7 @@ pub mod relations;
 pub mod repository;
 pub mod rollback;
 pub mod search;
+pub mod shares;
 
 /// `retry_after_ms` for a request whose identical twin (same idempotency key, same body) is still
 /// being executed: retrying after this delay returns the first run's stored result. Reported as

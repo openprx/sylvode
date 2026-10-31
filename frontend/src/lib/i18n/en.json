@@ -2409,7 +2409,9 @@
 				"outdented": "{title} outdented",
 				"dropped": "{title} dropped",
 				"cancelled": "Move cancelled",
-				"reorderFailed": "Reorder failed, reverted"
+				"reorderFailed": "Reorder failed, reverted",
+				"movedUnder": "{title} moved under a new parent",
+				"moveFailed": "Could not move that page"
 			},
 			"expand": "Expand",
 			"collapse": "Collapse",
@@ -2417,8 +2419,13 @@
 				"label": "Move actions",
 				"moveBefore": "Move before previous",
 				"moveAfter": "Move after next",
-				"moveInside": "Move inside (not available this version)",
-				"moveOutside": "Move outside (not available this version)"
+				"moveInside": "Move inside",
+				"moveOutside": "Move outside"
+			},
+			"move": {
+				"title": "Move inside",
+				"empty": "No page can hold this item.",
+				"choose": "Move under {title}"
 			},
 			"newMenu": "New",
 			"collectionBadge": "Collection",
@@ -2492,6 +2499,27 @@
 				"open": "Open"
 			},
 			"readOnlyNotice": "You can view this page but not edit it."
+		},
+		"comments": {
+			"title": "Comments",
+			"loading": "Loading comments…",
+			"empty": "No comments yet",
+			"body": "Comment",
+			"submit": "Comment",
+			"reply": "Reply",
+			"edit": "Edit",
+			"save": "Save",
+			"delete": "Delete",
+			"resolve": "Resolve",
+			"reopen": "Reopen",
+			"resolved": "Resolved",
+			"mentions": "Mention user ids, separated by commas",
+			"truncated": "Older comments are not shown."
+		},
+		"publicShare": {
+			"loading": "Loading shared page…",
+			"missing": "This link is unavailable.",
+			"untitled": "Untitled"
 		},
 		"block": {
 			"handleLabel": "Drag handle",
@@ -2583,6 +2611,7 @@
 			"tabs": {
 				"label": "Page panel sections",
 				"info": "Info",
+				"comments": "Comments",
 				"share": "Share",
 				"relations": "Relations",
 				"history": "History"
@@ -3508,6 +3537,19 @@
 		},
 		"share": {
 			"title": "Sharing",
+			"public": {
+				"title": "Public link",
+				"help": "Anyone with the link can read this page only. Child pages stay private.",
+				"expiry": "Expiry (optional)",
+				"create": "Create link",
+				"creating": "Creating…",
+				"revoke": "Revoke",
+				"empty": "No active public link.",
+				"tokenOnce": "Copy this link now. It will not be shown again.",
+				"copy": "Copy link",
+				"copied": "Copied",
+				"loading": "Loading links…"
+			},
 			"yourAccess": "Your access",
 			"loading": "Loading sharing…",
 			"level": {

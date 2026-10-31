@@ -653,6 +653,7 @@ export type FlowCommandType =
 	| 'move_block'
 	| 'archive'
 	| 'restore'
+	| 'move_object'
 	| FlowCollectionCommandType;
 
 export type FlowCollectionCommandType =
@@ -789,6 +790,57 @@ export interface CreateCollectionRecordInput {
 	body?: string;
 	idempotency_key: string;
 	message?: string;
+}
+
+export interface FlowComment {
+	id: string;
+	object_id: string;
+	block_id?: string | null;
+	parent_id?: string | null;
+	author_id?: string | null;
+	body: string;
+	mentions: string[];
+	created_at: string;
+	updated_at: string;
+	resolved_at?: string | null;
+	resolved_by?: string | null;
+}
+
+export interface FlowCommentList {
+	items: FlowComment[];
+	truncated: boolean;
+}
+
+export interface CreateFlowCommentInput {
+	body: string;
+	block_id?: string | null;
+	parent_id?: string | null;
+	mentions?: string[];
+}
+
+export interface FlowShareLink {
+	id: string;
+	token_prefix: string;
+	expires_at?: string | null;
+	revoked_at?: string | null;
+	created_at: string;
+	created_by?: string | null;
+}
+
+export interface FlowShareLinkList {
+	items: FlowShareLink[];
+}
+
+export interface CreatedFlowShareLink {
+	link: FlowShareLink;
+	token: string;
+}
+
+export interface FlowPublicShare {
+	object_id: string;
+	title: string;
+	plain_text: string;
+	expires_at?: string | null;
 }
 
 export interface FlowCommandInput {
@@ -1434,5 +1486,66 @@ export const flowApi = {
 			`/api/v1/flow/collections/${collectionId}/records`,
 			input
 		);
+	},
+
+	listComments(objectId: string): Promise<ApiResult<FlowCommentList>> {
+		return apiClient.get<FlowCommentList>(`/api/v1/flow/objects/${objectId}/comments`);
+	},
+
+	createComment(objectId: string, input: CreateFlowCommentInput): Promise<ApiResult<FlowComment>> {
+		return apiClient.post<FlowComment>(`/api/v1/flow/objects/${objectId}/comments`, input);
+	},
+
+	updateComment(
+		objectId: string,
+		commentId: string,
+		input: { body: string; mentions?: string[] }
+	): Promise<ApiResult<FlowComment>> {
+		return apiClient.patch<FlowComment>(
+			`/api/v1/flow/objects/${objectId}/comments/${commentId}`,
+			input
+		);
+	},
+
+	deleteComment(objectId: string, commentId: string): Promise<ApiResult<{ deleted: boolean }>> {
+		return apiClient.delete<{ deleted: boolean }>(
+			`/api/v1/flow/objects/${objectId}/comments/${commentId}`
+		);
+	},
+
+	resolveComment(
+		objectId: string,
+		commentId: string,
+		resolved: boolean
+	): Promise<ApiResult<FlowComment>> {
+		return apiClient.post<FlowComment>(
+			`/api/v1/flow/objects/${objectId}/comments/${commentId}/resolve`,
+			{ resolved }
+		);
+	},
+
+	listShareLinks(objectId: string): Promise<ApiResult<FlowShareLinkList>> {
+		return apiClient.get<FlowShareLinkList>(`/api/v1/flow/objects/${objectId}/share-links`);
+	},
+
+	createShareLink(
+		objectId: string,
+		input: { expires_at?: string | null }
+	): Promise<ApiResult<CreatedFlowShareLink>> {
+		return apiClient.post<CreatedFlowShareLink>(
+			`/api/v1/flow/objects/${objectId}/share-links`,
+			input
+		);
+	},
+
+	revokeShareLink(objectId: string, linkId: string): Promise<ApiResult<FlowShareLink>> {
+		return apiClient.post<FlowShareLink>(
+			`/api/v1/flow/objects/${objectId}/share-links/${linkId}/revoke`,
+			{}
+		);
+	},
+
+	getPublicShare(token: string): Promise<ApiResult<FlowPublicShare>> {
+		return apiClient.get<FlowPublicShare>(`/api/v1/flow/public-shares/${encodeURIComponent(token)}`);
 	}
 };

@@ -13,6 +13,7 @@
 		type ShareSnapshot
 	} from '#lib/flow/share-panel.js';
 	import type { FlowGrantLevel, FlowPrincipalKind } from '#lib/api/flow.js';
+	import FlowPublicLinks from './FlowPublicLinks.svelte';
 
 	interface Props {
 		objectId: string;
@@ -344,6 +345,7 @@
 			{/if}
 		{/if}
 	{/if}
+	<FlowPublicLinks {objectId} />
 </div>
 
 <Modal open={dialogOpen} title={$t('flow.share.confirm.title')} onclose={cancelChange}>

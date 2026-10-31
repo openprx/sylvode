@@ -1,8 +1,8 @@
 {
   "schema_version": "openpr.mcp-tool-registry-baseline.v1",
   "source": "mcp_server::get_all_tool_definitions",
-  "count": 140,
-  "names_sha256": "49ccb59b1b92dfd681f49152ceadf91c311272115958caa8f25a65c4eb141830",
+  "count": 148,
+  "names_sha256": "fa2083da218206709400bc36d34b86b52fb0a38933208e7f298a37b0c573c062",
   "v0_4_rebase": {
     "before_count": 107,
     "added": 15,
@@ -20,5 +20,11 @@
     "added": 12,
     "removed": 0,
     "after_count": 140
+  },
+  "flow_social": {
+    "before_count": 140,
+    "added": 8,
+    "removed": 0,
+    "after_count": 148
   }
 }

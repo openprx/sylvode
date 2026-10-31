@@ -63,6 +63,25 @@ impl AuthorizedFlowObject {
     }
 
     #[must_use]
+    pub const fn actor_id(&self) -> Uuid {
+        self.context.actor_id
+    }
+
+    #[must_use]
+    pub const fn role(&self) -> &str {
+        self.context.role.as_str()
+    }
+
+    /// Wire spelling stored in `flow_object_grants.principal_kind`.
+    #[must_use]
+    pub const fn principal_kind_wire(&self) -> &'static str {
+        match self.context.principal_kind {
+            PrincipalKind::User => "user",
+            PrincipalKind::Bot => "bot",
+        }
+    }
+
+    #[must_use]
     pub(super) const fn context(&self) -> &FlowReadContext {
         &self.context
     }
