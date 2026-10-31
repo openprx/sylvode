@@ -6,6 +6,31 @@ use sha2::{Digest, Sha256};
 
 use crate::operation::{NodeId, NodeKind};
 
+/// An inline mark on a block's plain text. Offsets are UTF-8 bytes into [`SemanticNode::text`],
+/// half-open, and on character boundaries. Absent `spans` (the historical plain-text documents)
+/// deserialize as an empty list and are omitted when the node is written back, so an unmarked
+/// document keeps its previous canonical JSON.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineMark {
+    Bold,
+    Italic,
+    Code,
+    Strike,
+    Link,
+}
+
+/// One inclusive-start exclusive-end range of [`InlineMark`] on a block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InlineSpan {
+    pub start: u32,
+    pub end: u32,
+    pub kind: InlineMark,
+    /// Set only for [`InlineMark::Link`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub href: Option<String>,
+}
+
 /// One node's fully-merged, engine-independent state. Both adapters export their internal engine
 /// state into this shape so a semantic hash can be compared across candidates.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,6 +41,9 @@ pub struct SemanticNode {
     pub text: String,
     pub properties: BTreeMap<String, String>,
     pub deleted: bool,
+    /// Inline formatting. Empty for every document written before marks existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spans: Vec<InlineSpan>,
 }
 
 /// The canonical, engine-independent snapshot of a merged document.
@@ -174,7 +202,20 @@ mod tests {
             text: String::new(),
             properties: BTreeMap::new(),
             deleted: false,
+            spans: Vec::new(),
         }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    fn a_plain_text_node_without_spans_still_deserializes_and_omits_the_field() {
+        let json =
+            r#"{"parent":null,"order_key":"00000000","kind":"block","text":"hi","properties":{},"deleted":false}"#;
+        let node: SemanticNode = serde_json::from_str(json).expect("legacy node");
+        assert_eq!(node.text, "hi");
+        assert!(node.spans.is_empty());
+        let encoded = serde_json::to_string(&node).expect("encode");
+        assert!(!encoded.contains("spans"), "{encoded}");
     }
 
     #[test]

@@ -58,6 +58,33 @@ pub enum Operation {
         key: String,
         value: String,
     },
+    /// Applies or clears one inline mark. `index` and `len` are UTF-8 byte offsets, the same
+    /// unit as [`Self::InsertText`]. `value: null` (or JSON `false`) clears the mark; `true` or
+    /// `"true"` sets a toggle mark (`bold`, `italic`, `code`, `strike`); a string sets a `link`
+    /// href.
+    MarkText {
+        id: NodeId,
+        index: u32,
+        len: u32,
+        mark: String,
+        #[serde(default, deserialize_with = "deserialize_mark_value")]
+        value: Option<String>,
+    },
+}
+
+fn deserialize_mark_value<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) | Some(serde_json::Value::Bool(false)) => Ok(None),
+        Some(serde_json::Value::Bool(true)) => Ok(Some("true".to_string())),
+        Some(serde_json::Value::String(text)) => Ok(Some(text)),
+        Some(_) => Err(serde::de::Error::custom(
+            "mark value must be a string, a boolean, or null",
+        )),
+    }
 }
 
 impl Operation {
@@ -69,7 +96,8 @@ impl Operation {
             | Self::DeleteNode { id }
             | Self::InsertText { id, .. }
             | Self::DeleteText { id, .. }
-            | Self::SetProperty { id, .. } => id,
+            | Self::SetProperty { id, .. }
+            | Self::MarkText { id, .. } => id,
         }
     }
 }

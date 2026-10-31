@@ -1506,6 +1506,15 @@ struct SetTitlePayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct InlineSpanPayload {
+    start: u32,
+    end: u32,
+    mark: String,
+    #[serde(default)]
+    href: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct InsertBlockPayload {
     block_id: String,
     #[serde(default)]
@@ -1514,6 +1523,9 @@ struct InsertBlockPayload {
     index: u32,
     #[serde(default)]
     text: Option<String>,
+    /// Marks applied after `text` is inserted. Offsets are UTF-8 bytes into that text.
+    #[serde(default)]
+    spans: Vec<InlineSpanPayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1523,6 +1535,9 @@ struct UpdateBlockPayload {
     text: Option<String>,
     #[serde(default)]
     properties: std::collections::BTreeMap<String, String>,
+    /// `None` leaves existing marks. `Some` replaces them after any text replacement.
+    #[serde(default)]
+    spans: Option<Vec<InlineSpanPayload>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1572,6 +1587,42 @@ fn parse_node_id(raw: &str, field: &str) -> Result<NodeId, ApiError> {
         )));
     }
     Ok(NodeId::from(trimmed))
+}
+
+fn span_operations(id: &NodeId, text_len: u32, spans: &[InlineSpanPayload]) -> Result<Vec<Operation>, ApiError> {
+    let mut ops = Vec::with_capacity(spans.len());
+    for span in spans {
+        let Some(len) = span.end.checked_sub(span.start).filter(|len| *len > 0) else {
+            return Err(ApiError::invalid_update(
+                "span end must be greater than start".to_string(),
+            ));
+        };
+        if span.end > text_len {
+            return Err(ApiError::invalid_update("span extends past the block text".to_string()));
+        }
+        let value = match span.mark.as_str() {
+            "bold" | "italic" | "code" | "strike" => Some("true".to_string()),
+            "link" => Some(
+                span.href
+                    .clone()
+                    .filter(|href| !href.is_empty())
+                    .ok_or_else(|| ApiError::invalid_update("link span requires href".to_string()))?,
+            ),
+            _ => {
+                return Err(ApiError::invalid_update(
+                    "span mark must be bold, italic, code, strike, or link".to_string(),
+                ));
+            }
+        };
+        ops.push(Operation::MarkText {
+            id: id.clone(),
+            index: span.start,
+            len,
+            mark: span.mark.clone(),
+            value,
+        });
+    }
+    Ok(ops)
 }
 
 fn parse_payload<T: serde::de::DeserializeOwned>(command_type: &str, payload: &Value) -> Result<T, ApiError> {
@@ -1682,19 +1733,35 @@ fn apply_content_command(
                 kind: NodeKind::Block,
             }];
             if let Some(text) = payload.text.filter(|text| !text.is_empty()) {
-                ops.push(Operation::InsertText { id, index: 0, text });
+                let text_len = u32::try_from(text.len())
+                    .map_err(|_| ApiError::invalid_update("block text too large to insert".to_string()))?;
+                ops.push(Operation::InsertText {
+                    id: id.clone(),
+                    index: 0,
+                    text,
+                });
+                ops.extend(span_operations(&id, text_len, &payload.spans)?);
+            } else if !payload.spans.is_empty() {
+                return Err(ApiError::invalid_update("insert_block spans require text".to_string()));
             }
             ops
         }
         ContentCommandType::UpdateBlock => {
             let payload: UpdateBlockPayload = parse_payload("update_block", payload)?;
             let id = parse_node_id(&payload.block_id, "block_id")?;
-            if payload.text.is_none() && payload.properties.is_empty() {
+            if payload.text.is_none() && payload.properties.is_empty() && payload.spans.is_none() {
                 return Err(ApiError::invalid_update(
-                    "update_block requires at least one of text or properties".to_string(),
+                    "update_block requires at least one of text, properties, or spans".to_string(),
                 ));
             }
             let mut ops = Vec::new();
+            let replacement_len = match payload.text.as_deref() {
+                Some(text) => Some(
+                    u32::try_from(text.len())
+                        .map_err(|_| ApiError::invalid_update("block text too large to update".to_string()))?,
+                ),
+                None => None,
+            };
             if let Some(text) = payload.text {
                 let existing = engine.semantic_snapshot().map_err(|err| map_collab_error(&err))?;
                 let node = existing
@@ -1724,6 +1791,33 @@ fn apply_content_command(
                     key,
                     value,
                 });
+            }
+            if let Some(spans) = payload.spans.as_ref() {
+                let text_len = if let Some(len) = replacement_len {
+                    len
+                } else {
+                    let existing = engine.semantic_snapshot().map_err(|err| map_collab_error(&err))?;
+                    let node = existing
+                        .nodes
+                        .get(&id)
+                        .ok_or_else(|| ApiError::invalid_update(format!("unknown node id '{id}'")))?;
+                    u32::try_from(node.text.len())
+                        .map_err(|_| ApiError::invalid_update("block text too large to update".to_string()))?
+                };
+                // Replacing the text can still leave an expanded mark on the new characters, so
+                // a spans payload always starts from a clean range and then applies the given marks.
+                if text_len > 0 {
+                    for mark in ["bold", "italic", "code", "strike", "link"] {
+                        ops.push(Operation::MarkText {
+                            id: id.clone(),
+                            index: 0,
+                            len: text_len,
+                            mark: mark.to_string(),
+                            value: None,
+                        });
+                    }
+                }
+                ops.extend(span_operations(&id, text_len, spans)?);
             }
             ops
         }
@@ -5140,5 +5234,69 @@ mod idempotency_race_database_tests {
         );
 
         scratch.drop_self().await;
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod inline_span_commands {
+    use super::{ContentCommandType, apply_content_command};
+    use collab_core::{InlineMark, LoroCollabEngine};
+    use serde_json::json;
+
+    #[test]
+    fn semantic_patch_and_insert_block_keep_plain_text_and_record_spans() {
+        let mut engine = LoroCollabEngine::new_empty(9);
+        apply_content_command(
+            &mut engine,
+            ContentCommandType::SemanticPatch,
+            &json!({
+                "operations": [
+                    {"op": "create_node", "id": "b1", "parent": null, "index": 0, "kind": "block"},
+                    {"op": "insert_text", "id": "b1", "index": 0, "text": "Hello bold"},
+                    {"op": "mark_text", "id": "b1", "index": 6, "len": 4, "mark": "bold", "value": true},
+                    {"op": "set_property", "id": "b1", "key": "block_type", "value": "paragraph"}
+                ]
+            }),
+        )
+        .expect("semantic_patch");
+        let snapshot = engine.semantic_snapshot().expect("snapshot");
+        let node = snapshot.nodes.values().next().expect("node");
+        assert_eq!(node.text, "Hello bold");
+        assert!(node.spans.iter().any(|span| span.kind == InlineMark::Bold));
+        assert_eq!(crate::flow::projection::plain_text(&snapshot), "Hello bold");
+        assert!(
+            crate::flow::projection::render_markdown("T", &snapshot).contains("**bold**"),
+            "markdown should wrap the marked word"
+        );
+
+        let mut inserted = LoroCollabEngine::new_empty(10);
+        apply_content_command(
+            &mut inserted,
+            ContentCommandType::InsertBlock,
+            &json!({
+                "block_id": "b2",
+                "text": "link me",
+                "spans": [{"start": 0, "end": 4, "mark": "link", "href": "https://example.com"}]
+            }),
+        )
+        .expect("insert_block");
+        let created = inserted.semantic_snapshot().expect("snapshot");
+        let link = created.nodes.values().next().expect("node");
+        assert_eq!(link.text, "link me");
+        assert_eq!(
+            link.spans.first().and_then(|span| span.href.as_deref()),
+            Some("https://example.com")
+        );
+
+        let rejected = apply_content_command(
+            &mut inserted,
+            ContentCommandType::UpdateBlock,
+            &json!({
+                "block_id": "b2",
+                "spans": [{"start": 0, "end": 4, "mark": "link", "href": "javascript:alert(1)"}]
+            }),
+        );
+        assert!(rejected.is_err(), "a javascript href must be refused");
     }
 }

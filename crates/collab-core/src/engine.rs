@@ -26,6 +26,7 @@ use loro::{
 use crate::error::{CollabError, InputLimits};
 use crate::frontier::Frontier;
 use crate::operation::{NodeId, NodeKind, Operation};
+use crate::richtext;
 use crate::semantic::{SemanticNode, SemanticSnapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -430,6 +431,28 @@ impl LoroCollabEngine {
                 self.doc.commit();
                 Ok(())
             }
+            Operation::MarkText {
+                id,
+                index,
+                len,
+                mark,
+                value,
+            } => {
+                let tree_id = self.require_tree_id(id)?;
+                let handler = self.text_handler(tree_id)?;
+                let start = usize::try_from(*index).map_err(|_| CollabError::OperationFailed {
+                    reason: "mark index does not fit this process".to_string(),
+                })?;
+                let length = usize::try_from(*len).map_err(|_| CollabError::OperationFailed {
+                    reason: "mark length does not fit this process".to_string(),
+                })?;
+                let end = start.checked_add(length).ok_or_else(|| CollabError::OperationFailed {
+                    reason: "mark range overflows".to_string(),
+                })?;
+                richtext::apply_mark(&handler, start, end, mark, value.as_deref())?;
+                self.doc.commit();
+                Ok(())
+            }
         }
     }
 
@@ -487,9 +510,11 @@ impl LoroCollabEngine {
                 .get(META_KIND)
                 .and_then(|v| read_string_value(&v))
                 .map_or(NodeKind::Block, |s| str_to_kind(&s));
-            let text = match meta.get(META_TEXT) {
-                Some(ValueOrContainer::Container(Container::Text(text_container))) => text_container.to_string(),
-                _ => String::new(),
+            let (text, spans) = match meta.get(META_TEXT) {
+                Some(ValueOrContainer::Container(Container::Text(text_container))) => {
+                    richtext::read_rich_text(&text_container)
+                }
+                _ => (String::new(), Vec::new()),
             };
             let mut properties = BTreeMap::new();
             for key in meta.keys() {
@@ -511,8 +536,19 @@ impl LoroCollabEngine {
                     text,
                     properties,
                     deleted,
+                    spans,
                 },
             );
+        }
+        // Editor blocks sort after tree nodes (`e` > digit) so an API block and the page body
+        // both remain visible without sharing an order key.
+        for block in richtext::editor_blocks(&self.doc) {
+            if snapshot.nodes.contains_key(&block.id) {
+                continue;
+            }
+            let mut node = block.node;
+            node.order_key = format!("e{}", zero_padded_order_key(block.index));
+            snapshot.nodes.insert(block.id, node);
         }
         Ok(snapshot)
     }
@@ -772,5 +808,198 @@ mod tests {
             .import_update_causally_complete(&dependent)
             .expect("the dependent update now imports");
         assert_eq!(complete.title().expect("title reads"), "second");
+    }
+
+    #[test]
+    fn mark_text_round_trips_into_spans_and_plain_text_stays_unmarked() {
+        let mut engine = LoroCollabEngine::new_empty(3);
+        let block = NodeId::from("blk");
+        engine
+            .apply_operation(&Operation::CreateNode {
+                id: block.clone(),
+                parent: None,
+                index: 0,
+                kind: NodeKind::Block,
+            })
+            .expect("create");
+        engine
+            .apply_operation(&Operation::InsertText {
+                id: block.clone(),
+                index: 0,
+                text: "Hello bold".to_string(),
+            })
+            .expect("insert");
+        engine
+            .apply_operation(&Operation::MarkText {
+                id: block.clone(),
+                index: 6,
+                len: 4,
+                mark: "bold".to_string(),
+                value: Some("true".to_string()),
+            })
+            .expect("bold");
+        engine
+            .apply_operation(&Operation::MarkText {
+                id: block.clone(),
+                index: 0,
+                len: 5,
+                mark: "link".to_string(),
+                value: Some("https://example.com/a".to_string()),
+            })
+            .expect("link");
+
+        let snapshot = engine.semantic_snapshot().expect("snapshot");
+        let node = snapshot.nodes.get(&block).expect("node");
+        assert_eq!(node.text, "Hello bold");
+        assert!(
+            node.spans.iter().any(|span| {
+                span.kind == crate::InlineMark::Bold && span.start == 6 && span.end == 10 && span.href.is_none()
+            }),
+            "{:?}",
+            node.spans
+        );
+        assert!(
+            node.spans.iter().any(|span| {
+                span.kind == crate::InlineMark::Link && span.href.as_deref() == Some("https://example.com/a")
+            }),
+            "{:?}",
+            node.spans
+        );
+        let encoded = snapshot.canonical_json().expect("json");
+        assert!(!encoded.windows(2).any(|pair| pair == b"**"));
+
+        engine
+            .apply_operation(&Operation::MarkText {
+                id: block.clone(),
+                index: 6,
+                len: 4,
+                mark: "bold".to_string(),
+                value: None,
+            })
+            .expect("unmark");
+        let cleared = engine.semantic_snapshot().expect("snapshot");
+        let cleared_node = cleared.nodes.get(&block).expect("node");
+        assert!(
+            cleared_node
+                .spans
+                .iter()
+                .all(|span| span.kind != crate::InlineMark::Bold),
+            "{:?}",
+            cleared_node.spans
+        );
+    }
+
+    #[test]
+    fn javascript_links_and_unknown_marks_are_rejected() {
+        let mut engine = LoroCollabEngine::new_empty(4);
+        let block = NodeId::from("blk");
+        engine
+            .apply_operation(&Operation::CreateNode {
+                id: block.clone(),
+                parent: None,
+                index: 0,
+                kind: NodeKind::Block,
+            })
+            .expect("create");
+        engine
+            .apply_operation(&Operation::InsertText {
+                id: block.clone(),
+                index: 0,
+                text: "click".to_string(),
+            })
+            .expect("insert");
+        let rejected = engine.apply_operation(&Operation::MarkText {
+            id: block.clone(),
+            index: 0,
+            len: 5,
+            mark: "link".to_string(),
+            value: Some("javascript:alert(1)".to_string()),
+        });
+        assert!(rejected.is_err(), "javascript href must be refused");
+        let unknown = engine.apply_operation(&Operation::MarkText {
+            id: block,
+            index: 0,
+            len: 5,
+            mark: "color".to_string(),
+            value: Some("true".to_string()),
+        });
+        assert!(unknown.is_err(), "unknown marks must be refused");
+    }
+
+    #[test]
+    fn an_unmarked_tree_document_omits_spans_and_an_editor_doc_projects_its_marks() {
+        let mut engine = LoroCollabEngine::new_empty(5);
+        engine
+            .apply_operation(&Operation::CreateNode {
+                id: NodeId::from("plain"),
+                parent: None,
+                index: 0,
+                kind: NodeKind::Block,
+            })
+            .expect("create");
+        engine
+            .apply_operation(&Operation::InsertText {
+                id: NodeId::from("plain"),
+                index: 0,
+                text: "plain".to_string(),
+            })
+            .expect("insert");
+        let plain = engine.semantic_snapshot().expect("snapshot");
+        let json = plain.canonical_json().expect("json");
+        assert!(
+            !json.windows(7).any(|window| window == b"\"spans\""),
+            "unmarked documents keep the historical canonical JSON"
+        );
+
+        let doc = LoroDoc::new();
+        let root = doc.get_map("doc");
+        root.insert("nodeName", "doc").expect("node name");
+        let children = root
+            .insert_container("children", loro::LoroList::new())
+            .expect("children");
+        let block = children.insert_container(0, loro::LoroMap::new()).expect("block");
+        block.insert("nodeName", "paragraph").expect("paragraph");
+        let attrs = block
+            .insert_container("attributes", loro::LoroMap::new())
+            .expect("attrs");
+        attrs.insert("indent", 1_i64).expect("indent");
+        let block_children = block
+            .insert_container("children", loro::LoroList::new())
+            .expect("block children");
+        let text = block_children.insert_container(0, loro::LoroText::new()).expect("text");
+        text.insert(0, "Hello bold").expect("text insert");
+        text.mark_utf8(6..10, "bold", true).expect("mark");
+        doc.commit();
+        let bytes = doc.export(loro::ExportMode::Snapshot).expect("export");
+        let loaded = LoroCollabEngine::load(&bytes).expect("load");
+        let projected = loaded.semantic_snapshot().expect("project");
+        let editor = projected
+            .nodes
+            .values()
+            .find(|node| node.properties.get("block_type").map(String::as_str) == Some("paragraph"))
+            .expect("editor paragraph");
+        assert_eq!(editor.text, "Hello bold");
+        assert_eq!(editor.properties.get("indent").map(String::as_str), Some("1"));
+        assert!(
+            editor
+                .spans
+                .iter()
+                .any(|span| span.kind == crate::InlineMark::Bold && span.start == 6 && span.end == 10),
+            "{:?}",
+            editor.spans
+        );
+    }
+
+    #[test]
+    fn mark_text_json_accepts_a_boolean_value() {
+        let raw = r#"{"op":"mark_text","id":"b","index":0,"len":1,"mark":"bold","value":true}"#;
+        let operation: Operation = serde_json::from_str(raw).expect("decode");
+        match operation {
+            Operation::MarkText { value, mark, .. } => {
+                assert_eq!(mark, "bold");
+                assert_eq!(value.as_deref(), Some("true"));
+            }
+            other => panic!("expected mark_text, got {other:?}"),
+        }
     }
 }

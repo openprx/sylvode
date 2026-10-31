@@ -1315,12 +1315,36 @@ pub async fn create_flow_object(client: &OpenPrClient, args: Value) -> CallToolR
 pub fn patch_flow_object_tool() -> ToolDefinition {
     ToolDefinition {
         name: "objects.patch".to_string(),
-        description: "Atomically apply one to 100 semantic operations to a Flow object.".to_string(),
+        description: "Atomically apply one to 100 semantic operations to a Flow object. Operations are create_node, move_node, delete_node, insert_text, delete_text, set_property, and mark_text (bold, italic, code, strike, link). mark_text index and len are UTF-8 byte offsets; value true sets a toggle mark, a string sets a link href, and null clears the mark. Existing plain-text blocks stay valid when mark_text is omitted.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "object_id": { "type": "string" },
-                "operations": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "object" } },
+                "operations": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "op": {
+                                "type": "string",
+                                "enum": ["create_node", "move_node", "delete_node", "insert_text", "delete_text", "set_property", "mark_text"]
+                            },
+                            "id": { "type": "string" },
+                            "parent": { "type": ["string", "null"] },
+                            "new_parent": { "type": ["string", "null"] },
+                            "index": { "type": "integer", "minimum": 0 },
+                            "len": { "type": "integer", "minimum": 1 },
+                            "kind": { "type": "string" },
+                            "text": { "type": "string" },
+                            "key": { "type": "string" },
+                            "value": { "type": ["string", "boolean", "null"] },
+                            "mark": { "type": "string", "enum": ["bold", "italic", "code", "strike", "link"] }
+                        },
+                        "required": ["op", "id"]
+                    }
+                },
                 "expected_frontier": { "type": "string" },
                 "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 128 },
                 "message": { "type": "string" }

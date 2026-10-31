@@ -45,6 +45,7 @@ import {
 	type FlowHistoryResponse,
 	type FlowNavigatorResponse,
 	type FlowObjectListResponse,
+	type FlowObjectView,
 	type FlowOperationReceipt,
 	type FlowPackageArtifactReceipt,
 	type FlowPackageImportJobReceipt,
@@ -166,6 +167,10 @@ export class FlowCommandService {
 	 */
 	async createTicket(input: CreateTicketInput): Promise<ApiResult<CollabTicket>> {
 		return flowApi.createTicket(input);
+	}
+
+	async getObject(objectId: string): Promise<ApiResult<FlowObjectView>> {
+		return flowApi.getObject(objectId);
 	}
 
 	async listObjects(
