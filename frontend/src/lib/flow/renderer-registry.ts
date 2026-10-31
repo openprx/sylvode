@@ -36,24 +36,27 @@ const REGISTRY: Partial<Record<RendererKey, ViewRendererRegistration>> = {
 		capabilities: ['edit', 'view'],
 		fallback: 'unsupported',
 		load: async () =>
-			(await import('$lib/components/flow/collection/CollectionTable.svelte')).default
+			(await import('#lib/components/flow/collection/CollectionTable.svelte')).default
 	},
 	'collection:board': {
 		key: 'collection:board',
 		capabilities: ['edit', 'view'],
 		fallback: 'unsupported',
 		load: async () =>
-			(await import('$lib/components/flow/collection/CollectionBoard.svelte')).default
+			(await import('#lib/components/flow/collection/CollectionBoard.svelte')).default
 	},
 	'record:panel': {
 		key: 'record:panel',
 		capabilities: ['edit', 'view'],
 		fallback: 'unsupported',
-		load: async () => (await import('$lib/components/flow/collection/RecordPanel.svelte')).default
+		load: async () => (await import('#lib/components/flow/collection/RecordPanel.svelte')).default
 	}
 };
 
-export function resolveRenderer(objectType: ObjectType, viewType: ViewType): ViewRendererRegistration | null {
+export function resolveRenderer(
+	objectType: ObjectType,
+	viewType: ViewType
+): ViewRendererRegistration | null {
 	return REGISTRY[`${objectType}:${viewType}`] ?? null;
 }
 

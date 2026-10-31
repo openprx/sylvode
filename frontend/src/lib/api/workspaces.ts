@@ -25,11 +25,18 @@ export const workspacesApi = {
 		return apiClient.get<Workspace>(`/api/v1/workspaces/${workspaceId}`);
 	},
 
-	create(data: { slug: string; name: string; description?: string }): Promise<ApiResult<Workspace>> {
+	create(data: {
+		slug: string;
+		name: string;
+		description?: string;
+	}): Promise<ApiResult<Workspace>> {
 		return apiClient.post<Workspace>('/api/v1/workspaces', data);
 	},
 
-	update(workspaceId: string, data: { name?: string; description?: string }): Promise<ApiResult<Workspace>> {
+	update(
+		workspaceId: string,
+		data: { name?: string; description?: string }
+	): Promise<ApiResult<Workspace>> {
 		return apiClient.put<Workspace>(`/api/v1/workspaces/${workspaceId}`, data);
 	},
 
@@ -38,6 +45,8 @@ export const workspacesApi = {
 	},
 
 	getMembers(workspaceId: string): Promise<ApiResult<PaginatedData<WorkspaceMember>>> {
-		return apiClient.get<PaginatedData<WorkspaceMember>>(`/api/v1/workspaces/${workspaceId}/members`);
+		return apiClient.get<PaginatedData<WorkspaceMember>>(
+			`/api/v1/workspaces/${workspaceId}/members`
+		);
 	}
 };

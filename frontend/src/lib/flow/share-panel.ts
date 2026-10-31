@@ -21,7 +21,7 @@
 // Errors are classified only by `error_code` (and the typed `details.action` discriminator);
 // `message` is never read.
 
-import type { ApiResult } from '$lib/api/client';
+import type { ApiResult } from '#lib/api/client.js';
 import type {
 	FlowEffectiveLevel,
 	FlowGrantInput,
@@ -31,9 +31,9 @@ import type {
 	FlowPrincipalKind,
 	SetFlowGrantsInput,
 	SetFlowInheritanceInput
-} from '$lib/api/flow';
-import { botsApi, type Bot } from '$lib/api/bots';
-import { membersApi } from '$lib/api/members';
+} from '#lib/api/flow.js';
+import { botsApi, type Bot } from '#lib/api/bots.js';
+import { membersApi } from '#lib/api/members.js';
 import { FlowCommandService } from './command-service';
 import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
 import { FlowObjectRepository } from './object-repository';

@@ -148,29 +148,6 @@ function thirdPartyChunkFiles(): Map<string, string> {
 	return byFile;
 }
 
-/**
- * The ONE tolerated eval-family occurrence, declared explicitly rather than by loosening the
- * pattern above.
- *
- * `__wbg_newnoargs_*` is wasm-bindgen's standard import shim for `js_sys::Function::new_no_args`.
- * It is emitted into every wasm-bindgen bundle that links `js_sys`, whether or not the Rust side
- * ever calls it, and `js_sys`'s own `global()` only reaches it after `globalThis`/`self`/`window`
- * /`global` have all failed -- which they do not in a browser.
- *
- * This is a KNOWN DEVIATION from `ui-surface-v1.md`'s literal "不得使用 ... `new Function`", not a
- * proof of absence: static presence is certain, and non-reachability is evidenced only by the
- * browser layer below instantiating the engine, creating a document and exporting a snapshot with
- * ZERO `securitypolicyviolation` events under the real production policy. `engineExercisedCleanly`
- * gates this exception on that evidence actually having been produced in THIS run.
- */
-const DECLARED_EVAL_EXCEPTIONS = [
-	{
-		module: 'node_modules/loro-crdt/browser/index.js',
-		construct: 'new Function',
-		binding: '__wbg_newnoargs_'
-	}
-] as const;
-
 /** Set by the browser layer once it has instantiated the engine with no CSP violation. */
 let engineExercisedCleanly = false;
 
@@ -497,39 +474,23 @@ if (!chrome) {
 
 // ---- the declared third-party exception, gated on this run's own evidence -------------------
 
-suite.check('every third-party eval-family occurrence is declared AND provably unreached', () => {
+suite.check('no third-party eval-family occurrence remains in the build', () => {
+	// Vite 8 + the current loro-crdt browser build no longer emit wasm-bindgen's
+	// `__wbg_newnoargs_` / `new Function` shim. The previous declared exception is gone;
+	// any new occurrence has to be named explicitly again, with CSP evidence.
 	const thirdParty = thirdPartyChunkFiles();
-	const undeclared: string[] = [];
-	let declaredHits = 0;
-	for (const site of evalFamilySites()) {
-		const chunkFile = site.file.replace(/^build\//, '');
-		const module = thirdParty.get(chunkFile);
-		const source = readFileSync(join(ROOT, site.file), 'utf8');
-		const declared = DECLARED_EVAL_EXCEPTIONS.find(
-			(exception) =>
-				exception.module === module &&
-				exception.construct === site.construct &&
-				source.includes(exception.binding)
-		);
-		if (declared) declaredHits += 1;
-		else
-			undeclared.push(
-				`${site.file} (${site.construct}) from ${module ?? 'an unmapped chunk'}: ${site.excerpt}`
-			);
-	}
-	assert(
-		undeclared.length === 0,
-		`undeclared eval-family constructs in the build output:\n  ${undeclared.join('\n  ')}\nAdd them to DECLARED_EVAL_EXCEPTIONS with evidence, or remove them.`
+	const hits = evalFamilySites().filter((site) =>
+		thirdParty.has(site.file.replace(/^build\//, ''))
 	);
 	assert(
-		declaredHits > 0,
-		'the declared exception matched nothing -- it is stale and must be removed'
+		hits.length === 0,
+		`third-party eval-family constructs in the build output:\n  ${hits
+			.map((site) => `${site.file} (${site.construct}): ${site.excerpt}`)
+			.join('\n  ')}`
 	);
 	assert(
 		engineExercisedCleanly,
-		'the declared eval exception is only tolerable while this run has actually instantiated the ' +
-			'engine under the production CSP with zero securitypolicyviolation events; that evidence ' +
-			'was not produced, so the exception does not hold'
+		'the production CSP check did not instantiate the engine in this run'
 	);
 });
 

@@ -125,10 +125,28 @@ const orderLineForm = {
 	schema: {
 		version: 'openpr.form.schema.v1',
 		fields: [
-			{ field_id: 'fld_order_id', key: 'order_id', label: 'Order', type: 'relation', required: true },
+			{
+				field_id: 'fld_order_id',
+				key: 'order_id',
+				label: 'Order',
+				type: 'relation',
+				required: true
+			},
 			{ field_id: 'fld_sku_id', key: 'sku_id', label: 'SKU', type: 'relation', required: true },
-			{ field_id: 'fld_sku_name', key: 'sku_name', label: 'SKU Name', type: 'text', required: true },
-			{ field_id: 'fld_quantity', key: 'quantity', label: 'Quantity', type: 'integer', required: true },
+			{
+				field_id: 'fld_sku_name',
+				key: 'sku_name',
+				label: 'SKU Name',
+				type: 'text',
+				required: true
+			},
+			{
+				field_id: 'fld_quantity',
+				key: 'quantity',
+				label: 'Quantity',
+				type: 'integer',
+				required: true
+			},
 			{
 				field_id: 'fld_unit_price',
 				key: 'unit_price',
@@ -163,7 +181,11 @@ const orderLineForm = {
 	},
 	detail_layout: {
 		sections: [
-			{ key: 'handoff', title: 'Kitchen Handoff', fields: ['sku_name', 'quantity', 'seat_no', 'status'] },
+			{
+				key: 'handoff',
+				title: 'Kitchen Handoff',
+				fields: ['sku_name', 'quantity', 'seat_no', 'status']
+			},
 			{ key: 'pricing', title: 'Pricing', fields: ['unit_price', 'line_total'] }
 		]
 	},
@@ -184,7 +206,15 @@ const orderLineViews = [
 		name: 'Default Grid',
 		view_type: 'grid',
 		config: {
-			columns: ['order_id', 'sku_name', 'quantity', 'unit_price', 'line_total', 'seat_no', 'status'],
+			columns: [
+				'order_id',
+				'sku_name',
+				'quantity',
+				'unit_price',
+				'line_total',
+				'seat_no',
+				'status'
+			],
 			is_default: false
 		},
 		created_by: 'user-smoke',
@@ -533,7 +563,9 @@ function viewById(viewId) {
 }
 
 function filterNodeDisabled(node) {
-	return Boolean(node && typeof node === 'object' && (node.disabled === true || node.enabled === false));
+	return Boolean(
+		node && typeof node === 'object' && (node.disabled === true || node.enabled === false)
+	);
 }
 
 function recordMatchesFilter(record, filter) {
@@ -569,7 +601,8 @@ function recordMatchesFilterNode(record, filter) {
 function recordMatchesFilterExpression(record, expression) {
 	if (!expression || typeof expression !== 'object') return true;
 	if (filterNodeDisabled(expression)) return null;
-	const filter = expression.filter && typeof expression.filter === 'object' ? expression.filter : expression;
+	const filter =
+		expression.filter && typeof expression.filter === 'object' ? expression.filter : expression;
 	if (typeof filter.field === 'string') return recordMatchesFilterNode(record, filter);
 	const rawChildren = Array.isArray(expression.children)
 		? expression.children
@@ -590,17 +623,17 @@ function orderLineRecordsForUrl(url) {
 		records = records.filter((record) => record.created_by === 'user-smoke');
 	}
 	if (view?.config?.filter_expression) {
-		records = records.filter((record) =>
-			recordMatchesFilterExpression(record, view.config.filter_expression) !== false
+		records = records.filter(
+			(record) => recordMatchesFilterExpression(record, view.config.filter_expression) !== false
 		);
 	} else {
 		const filterGroups = Array.isArray(view?.config?.filter_groups)
-		? view.config.filter_groups
-		: Array.isArray(view?.config?.filters)
-			? [{ logic: 'all', filters: view.config.filters }]
-			: view?.config?.filter
-				? [{ logic: 'all', filters: [view.config.filter] }]
-				: [];
+			? view.config.filter_groups
+			: Array.isArray(view?.config?.filters)
+				? [{ logic: 'all', filters: view.config.filters }]
+				: view?.config?.filter
+					? [{ logic: 'all', filters: [view.config.filter] }]
+					: [];
 		for (const group of filterGroups) {
 			if (filterNodeDisabled(group)) continue;
 			const filters = Array.isArray(group.filters) ? group.filters : [];
@@ -3808,7 +3841,8 @@ async function handler(req, res) {
 	if (pathname === '/smoke-auth-seed') {
 		const mode = url.searchParams.get('mode') ?? 'desktop';
 		if (mode === 'durable-detail') applyMemberPermissionSmokePolicy();
-		const extra = mode === 'detail-url' ? '&form=form-order-line&record=record-order-line-created' : '';
+		const extra =
+			mode === 'detail-url' ? '&form=form-order-line&record=record-order-line-created' : '';
 		const target =
 			mode === 'durable-detail'
 				? `/workspace/${workspaceId}/projects/${projectId}/forms/records/record-order-line-created?record_detail_smoke=${mode}`
@@ -3883,25 +3917,21 @@ location.replace(${JSON.stringify(target)});
 		return;
 	}
 	if (pathname === `/api/v1/projects//forms`) {
-			json(res, 200, apiResult(paginated([orderLineForm, printJobForm])));
-			return;
-		}
-		if (pathname === `/api/v1/forms/${orderLineForm.id}/views`) {
-			const visibleViews = orderLineViews
-				.filter((view) => view.config?.visibility !== 'private' || view.created_by === 'user-smoke')
-				.sort((left, right) => {
-					if (Boolean(left.config?.is_default) === Boolean(right.config?.is_default)) return 0;
-					return left.config?.is_default ? -1 : 1;
-				});
-			listedOrderLineViewIds = visibleViews.map((view) => view.id);
-			json(
-				res,
-				200,
-				apiResult(visibleViews)
-			);
-			return;
-		}
-		if (pathname === `/api/v1/forms/${orderLineForm.id}/field-usage`) {
+		json(res, 200, apiResult(paginated([orderLineForm, printJobForm])));
+		return;
+	}
+	if (pathname === `/api/v1/forms/${orderLineForm.id}/views`) {
+		const visibleViews = orderLineViews
+			.filter((view) => view.config?.visibility !== 'private' || view.created_by === 'user-smoke')
+			.sort((left, right) => {
+				if (Boolean(left.config?.is_default) === Boolean(right.config?.is_default)) return 0;
+				return left.config?.is_default ? -1 : 1;
+			});
+		listedOrderLineViewIds = visibleViews.map((view) => view.id);
+		json(res, 200, apiResult(visibleViews));
+		return;
+	}
+	if (pathname === `/api/v1/forms/${orderLineForm.id}/field-usage`) {
 		const fields = orderLineForm.schema.fields.map((field) => ({
 			field_id: field.field_id ?? `fld_${field.key}`,
 			field_key: field.key,
@@ -3910,11 +3940,17 @@ location.replace(${JSON.stringify(target)});
 			indexed_count: field.field_id === 'fld_order_id' || field.field_id === 'fld_sku_name' ? 1 : 0,
 			dependency_count: field.field_id === 'fld_order_id' ? 1 : 0
 		}));
-		json(res, 200, apiResult({ form_id: orderLineForm.id, schema_version: orderLineForm.schema_version, fields }));
+		json(
+			res,
+			200,
+			apiResult({ form_id: orderLineForm.id, schema_version: orderLineForm.schema_version, fields })
+		);
 		return;
 	}
 	if (pathname === `/api/v1/forms/${orderLineForm.id}/field-dependencies`) {
-		const orderField = orderLineForm.schema.fields.find((field) => field.field_id === 'fld_order_id');
+		const orderField = orderLineForm.schema.fields.find(
+			(field) => field.field_id === 'fld_order_id'
+		);
 		json(
 			res,
 			200,
@@ -3969,7 +4005,13 @@ location.replace(${JSON.stringify(target)});
 		json(
 			res,
 			200,
-			apiResult(paginated(formRecordComments.filter((comment) => comment.record_id === recordId && !comment.archived_at)))
+			apiResult(
+				paginated(
+					formRecordComments.filter(
+						(comment) => comment.record_id === recordId && !comment.archived_at
+					)
+				)
+			)
 		);
 		return;
 	}
@@ -4040,7 +4082,9 @@ location.replace(${JSON.stringify(target)});
 		res.end(Buffer.from('server-counter-ticket'));
 		return;
 	}
-	const attachmentSignedUrlMatch = pathname.match(/^\/api\/v1\/form-attachments\/([^/]+)\/signed-url$/);
+	const attachmentSignedUrlMatch = pathname.match(
+		/^\/api\/v1\/form-attachments\/([^/]+)\/signed-url$/
+	);
 	if (attachmentSignedUrlMatch && req.method === 'GET') {
 		const attachmentId = attachmentSignedUrlMatch[1];
 		json(
@@ -4053,7 +4097,9 @@ location.replace(${JSON.stringify(target)});
 		);
 		return;
 	}
-	const attachmentDownloadMatch = pathname.match(/^\/api\/v1\/form-attachments\/([^/]+)\/download$/);
+	const attachmentDownloadMatch = pathname.match(
+		/^\/api\/v1\/form-attachments\/([^/]+)\/download$/
+	);
 	if (attachmentDownloadMatch && req.method === 'GET') {
 		const attachmentId = attachmentDownloadMatch[1];
 		const attachment = formAttachments.find((item) => item.id === attachmentId);
@@ -4070,7 +4116,9 @@ location.replace(${JSON.stringify(target)});
 		const attachmentId = attachmentDeleteMatch[1];
 		deletedAttachmentIds.push(attachmentId);
 		formAttachments = formAttachments.map((attachment) =>
-			attachment.id === attachmentId ? { ...attachment, archived_at: now, updated_at: now } : attachment
+			attachment.id === attachmentId
+				? { ...attachment, archived_at: now, updated_at: now }
+				: attachment
 		);
 		json(res, 200, apiResult(null));
 		return;
@@ -4156,52 +4204,54 @@ location.replace(${JSON.stringify(target)});
 		json(res, 200, apiResult(printJobForm));
 		return;
 	}
-		if (pathname === `/api/v1/forms/${orderLineForm.id}/records/export` && req.method === 'GET') {
-			const records = orderLineRecordsForUrl(url);
-			const view = viewById(url.searchParams.get('view_id'));
-			const exportFormat = url.searchParams.get('format') === 'json' ? 'json' : 'csv';
-			const hidden = new Set(readableFieldKeys());
-			const columns = (view?.config?.columns ?? ['sku_name', 'quantity', 'status'])
-				.filter((key) => !hidden.has(key))
-				.map((key) => ({
-					key,
-					label: orderLineForm.schema.fields.find((field) => field.key === key)?.label ?? key
-				}));
-			orderLineExportRequests.push({
-				view_id: url.searchParams.get('view_id'),
-				format: exportFormat,
-				rows: records.map((record) => record.id),
-				columns: columns.map((column) => column.key)
-			});
-			const rows = records.map((record) => ({
-				record_id: record.id,
-				title: record.title,
-				values: Object.fromEntries(columns.map((column) => [column.key, String(record.values[column.key] ?? '')]))
+	if (pathname === `/api/v1/forms/${orderLineForm.id}/records/export` && req.method === 'GET') {
+		const records = orderLineRecordsForUrl(url);
+		const view = viewById(url.searchParams.get('view_id'));
+		const exportFormat = url.searchParams.get('format') === 'json' ? 'json' : 'csv';
+		const hidden = new Set(readableFieldKeys());
+		const columns = (view?.config?.columns ?? ['sku_name', 'quantity', 'status'])
+			.filter((key) => !hidden.has(key))
+			.map((key) => ({
+				key,
+				label: orderLineForm.schema.fields.find((field) => field.key === key)?.label ?? key
 			}));
-			json(
-				res,
-				200,
-				apiResult({
-					form_id: orderLineForm.id,
-					format: exportFormat,
-					file_name: `order_line_records.${exportFormat}`,
-					columns,
-					rows,
-					...(exportFormat === 'csv'
-						? { csv: ['title', ...records.map((record) => record.title)].join('\\n') }
-						: {})
-				})
-			);
-			return;
-		}
-		if (pathname === `/api/v1/forms/${orderLineForm.id}/records` && req.method === 'GET') {
-			orderLineRecordListRequests.push({
-				view_id: url.searchParams.get('view_id'),
-				rows: orderLineRecordsForUrl(url).map((record) => record.id)
-			});
-			json(res, 200, apiResult(paginated(orderLineRecordsForUrl(url))));
-			return;
-		}
+		orderLineExportRequests.push({
+			view_id: url.searchParams.get('view_id'),
+			format: exportFormat,
+			rows: records.map((record) => record.id),
+			columns: columns.map((column) => column.key)
+		});
+		const rows = records.map((record) => ({
+			record_id: record.id,
+			title: record.title,
+			values: Object.fromEntries(
+				columns.map((column) => [column.key, String(record.values[column.key] ?? '')])
+			)
+		}));
+		json(
+			res,
+			200,
+			apiResult({
+				form_id: orderLineForm.id,
+				format: exportFormat,
+				file_name: `order_line_records.${exportFormat}`,
+				columns,
+				rows,
+				...(exportFormat === 'csv'
+					? { csv: ['title', ...records.map((record) => record.title)].join('\\n') }
+					: {})
+			})
+		);
+		return;
+	}
+	if (pathname === `/api/v1/forms/${orderLineForm.id}/records` && req.method === 'GET') {
+		orderLineRecordListRequests.push({
+			view_id: url.searchParams.get('view_id'),
+			rows: orderLineRecordsForUrl(url).map((record) => record.id)
+		});
+		json(res, 200, apiResult(paginated(orderLineRecordsForUrl(url))));
+		return;
+	}
 	if (pathname === `/api/v1/forms/${orderLineForm.id}/records` && req.method === 'POST') {
 		createdRecordPayload = await readBody(req);
 		createdRecord = {
@@ -4223,33 +4273,34 @@ location.replace(${JSON.stringify(target)});
 			created_at: now,
 			updated_at: now
 		};
-			json(res, 200, apiResult(createdRecord));
+		json(res, 200, apiResult(createdRecord));
+		return;
+	}
+	if (pathname.startsWith('/api/v1/form-views/') && req.method === 'PATCH') {
+		const viewId = pathname.slice('/api/v1/form-views/'.length);
+		const view = orderLineViews.find((item) => item.id === viewId);
+		if (!view) {
+			json(res, 404, { code: 404, message: 'view not found', data: null });
 			return;
 		}
-		if (pathname.startsWith('/api/v1/form-views/') && req.method === 'PATCH') {
-			const viewId = pathname.slice('/api/v1/form-views/'.length);
-			const view = orderLineViews.find((item) => item.id === viewId);
-			if (!view) {
-				json(res, 404, { code: 404, message: 'view not found', data: null });
-				return;
-			}
-			updatedViewPayload = await readBody(req);
-			updatedViewPayloads.push(updatedViewPayload);
-			if (updatedViewPayload.expected_updated_at !== view.updated_at) {
-				json(res, 200, { code: 409, message: 'view update conflict', data: null });
-				return;
-			}
-			if (typeof updatedViewPayload.name === 'string') view.name = updatedViewPayload.name;
-			if (typeof updatedViewPayload.view_type === 'string') view.view_type = updatedViewPayload.view_type;
-			if (updatedViewPayload.config && typeof updatedViewPayload.config === 'object') {
-				view.config = updatedViewPayload.config;
-				if (view.config.is_default === true) {
-					for (const item of orderLineViews) {
-						if (item.id !== view.id) item.config = { ...item.config, is_default: false };
-					}
+		updatedViewPayload = await readBody(req);
+		updatedViewPayloads.push(updatedViewPayload);
+		if (updatedViewPayload.expected_updated_at !== view.updated_at) {
+			json(res, 200, { code: 409, message: 'view update conflict', data: null });
+			return;
+		}
+		if (typeof updatedViewPayload.name === 'string') view.name = updatedViewPayload.name;
+		if (typeof updatedViewPayload.view_type === 'string')
+			view.view_type = updatedViewPayload.view_type;
+		if (updatedViewPayload.config && typeof updatedViewPayload.config === 'object') {
+			view.config = updatedViewPayload.config;
+			if (view.config.is_default === true) {
+				for (const item of orderLineViews) {
+					if (item.id !== view.id) item.config = { ...item.config, is_default: false };
 				}
 			}
-			view.updated_at = nextUpdatedAt();
+		}
+		view.updated_at = nextUpdatedAt();
 		json(res, 200, apiResult(view));
 		return;
 	}
@@ -4257,7 +4308,11 @@ location.replace(${JSON.stringify(target)});
 		updatedRecordPayload = await readBody(req);
 		updatedRecordPayloads.push(updatedRecordPayload);
 		if (memberPermissionPolicy.record_scope === 'owned') {
-			json(res, 403, { code: 403, message: 'form record ownership policy denied access', data: null });
+			json(res, 403, {
+				code: 403,
+				message: 'form record ownership policy denied access',
+				data: null
+			});
 			return;
 		}
 		comparisonRecord.values = updatedRecordPayload.values || comparisonRecord.values;
@@ -4278,7 +4333,11 @@ location.replace(${JSON.stringify(target)});
 			(fieldKey) => memberPermissionPolicy.fields?.[fieldKey]?.write === false
 		);
 		if (lockedField) {
-			json(res, 403, { code: 403, message: 'form field write permission denied: ' + lockedField, data: null });
+			json(res, 403, {
+				code: 403,
+				message: 'form field write permission denied: ' + lockedField,
+				data: null
+			});
 			return;
 		}
 		createdRecord = {
@@ -4371,7 +4430,10 @@ location.replace(${JSON.stringify(target)});
 		);
 		return;
 	}
-	if (pathname === '/api/v1/form-records/record-order-line-created/children' && req.method === 'GET') {
+	if (
+		pathname === '/api/v1/form-records/record-order-line-created/children' &&
+		req.method === 'GET'
+	) {
 		json(
 			res,
 			200,
@@ -4414,7 +4476,12 @@ location.replace(${JSON.stringify(target)});
 	await serveStatic(req, res, url.searchParams.get('forms_smoke'));
 }
 
-function runChromium(url, windowSize = '1366,900', screenshotPath = null, virtualTimeBudget = 60000) {
+function runChromium(
+	url,
+	windowSize = '1366,900',
+	screenshotPath = null,
+	virtualTimeBudget = 60000
+) {
 	return new Promise((resolve, reject) => {
 		const args = [
 			'--headless=new',
@@ -4497,23 +4564,36 @@ function assertDetailPageWidgetPayloads() {
 		const widgets = payload?.detail_layout?.widgets;
 		return (
 			Array.isArray(widgets) &&
-			widgets.map((widget) => widget.key).join('|').startsWith('children|comments|links') &&
+			widgets
+				.map((widget) => widget.key)
+				.join('|')
+				.startsWith('children|comments|links') &&
 			widgets.some((widget) => widget?.key === 'comments') &&
 			widgets.some((widget) => widget?.key === 'events' && widget?.enabled === false)
 		);
 	});
 	const widgets = widgetPayload?.detail_layout?.widgets ?? [];
 	const order = widgets.map((widget) => widget.key).join('|');
-	if (!widgetPayload || !order.startsWith('children|comments|links') || !widgets.some((widget) => widget.key === 'events' && widget.enabled === false)) {
-		throw new Error(`Expected detail page widget layout payload, got ${JSON.stringify(updatedFormPayloads)}`);
+	if (
+		!widgetPayload ||
+		!order.startsWith('children|comments|links') ||
+		!widgets.some((widget) => widget.key === 'events' && widget.enabled === false)
+	) {
+		throw new Error(
+			`Expected detail page widget layout payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailLayoutSectionPayloads() {
 	const sectionPayload = updatedFormPayloads.find((payload) => {
 		const sections = payload?.detail_layout?.sections;
-		const handoff = Array.isArray(sections) ? sections.find((section) => section?.key === 'handoff') : null;
-		const pricing = Array.isArray(sections) ? sections.find((section) => section?.key === 'pricing') : null;
+		const handoff = Array.isArray(sections)
+			? sections.find((section) => section?.key === 'handoff')
+			: null;
+		const pricing = Array.isArray(sections)
+			? sections.find((section) => section?.key === 'pricing')
+			: null;
 		return (
 			handoff?.title === 'Service Snapshot' &&
 			Array.isArray(handoff.fields) &&
@@ -4523,62 +4603,84 @@ function assertDetailLayoutSectionPayloads() {
 		);
 	});
 	if (!sectionPayload) {
-		throw new Error(`Expected detail layout section payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail layout section payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailLayoutSectionDescriptionPayloads() {
 	const sectionDescriptionPayload = updatedFormPayloads.find((payload) => {
 		const sections = payload?.detail_layout?.sections;
-		const handoff = Array.isArray(sections) ? sections.find((section) => section?.key === 'handoff') : null;
+		const handoff = Array.isArray(sections)
+			? sections.find((section) => section?.key === 'handoff')
+			: null;
 		return handoff?.description === 'Review service notes before closing the line.';
 	});
 	if (!sectionDescriptionPayload) {
-		throw new Error(`Expected detail layout section description payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail layout section description payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailLayoutSectionHideEmptyFieldsPayloads() {
 	const sectionHideEmptyPayload = updatedFormPayloads.find((payload) => {
 		const sections = payload?.detail_layout?.sections;
-		const handoff = Array.isArray(sections) ? sections.find((section) => section?.key === 'handoff') : null;
+		const handoff = Array.isArray(sections)
+			? sections.find((section) => section?.key === 'handoff')
+			: null;
 		return handoff?.hide_empty_fields === true;
 	});
 	if (!sectionHideEmptyPayload) {
-		throw new Error(`Expected detail layout section hide empty fields payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail layout section hide empty fields payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailLayoutSectionColumnsPayloads() {
 	const sectionColumnsPayload = updatedFormPayloads.find((payload) => {
 		const sections = payload?.detail_layout?.sections;
-		const handoff = Array.isArray(sections) ? sections.find((section) => section?.key === 'handoff') : null;
+		const handoff = Array.isArray(sections)
+			? sections.find((section) => section?.key === 'handoff')
+			: null;
 		return handoff?.columns === 3;
 	});
 	if (!sectionColumnsPayload) {
-		throw new Error(`Expected detail layout section columns payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail layout section columns payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailLayoutSectionDensityPayloads() {
 	const sectionDensityPayload = updatedFormPayloads.find((payload) => {
 		const sections = payload?.detail_layout?.sections;
-		const handoff = Array.isArray(sections) ? sections.find((section) => section?.key === 'handoff') : null;
+		const handoff = Array.isArray(sections)
+			? sections.find((section) => section?.key === 'handoff')
+			: null;
 		return handoff?.density === 'compact';
 	});
 	if (!sectionDensityPayload) {
-		throw new Error(`Expected detail layout section density payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail layout section density payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailLayoutSectionCollapsiblePayloads() {
 	const sectionCollapsiblePayload = updatedFormPayloads.find((payload) => {
 		const sections = payload?.detail_layout?.sections;
-		const handoff = Array.isArray(sections) ? sections.find((section) => section?.key === 'handoff') : null;
+		const handoff = Array.isArray(sections)
+			? sections.find((section) => section?.key === 'handoff')
+			: null;
 		return handoff?.collapsible === true && handoff?.default_collapsed === true;
 	});
 	if (!sectionCollapsiblePayload) {
-		throw new Error(`Expected detail layout section collapsible payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail layout section collapsible payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
@@ -4601,7 +4703,9 @@ function assertAttachmentServerUploadPayloads() {
 }
 
 function assertAttachmentStoragePolicyPayloads() {
-	const attachmentField = orderLineForm.schema.fields.find((field) => field.key === 'attachment_12');
+	const attachmentField = orderLineForm.schema.fields.find(
+		(field) => field.key === 'attachment_12'
+	);
 	if (
 		attachmentField?.attachment?.storage_policy !== 'private' ||
 		attachmentField?.attachment?.retention_days !== 30 ||
@@ -4619,7 +4723,9 @@ function assertAttachmentStoragePolicyPayloads() {
 		!Array.isArray(attachmentField?.attachment?.accept) ||
 		attachmentField.attachment.accept.join('|') !== 'application/pdf|image/png'
 	) {
-		throw new Error(`Expected attachment storage policy metadata, got ${JSON.stringify(attachmentField)}`);
+		throw new Error(
+			`Expected attachment storage policy metadata, got ${JSON.stringify(attachmentField)}`
+		);
 	}
 }
 
@@ -4639,7 +4745,9 @@ function assertDetailHighlightPayloads() {
 		return Array.isArray(highlights) && highlights.join('|') === 'line_total|quantity';
 	});
 	if (!highlightPayload) {
-		throw new Error(`Expected detail highlight payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail highlight payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
@@ -4649,7 +4757,9 @@ function assertDetailPageCompositionPayloads() {
 		return page?.widget_region === 'below';
 	});
 	if (!compositionPayload) {
-		throw new Error(`Expected detail page composition payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail page composition payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
@@ -4659,75 +4769,118 @@ function assertDetailFieldColumnsPayloads() {
 		return page?.field_columns === 1;
 	});
 	if (!fieldColumnsPayload) {
-		throw new Error(`Expected detail field columns payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail field columns payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailWidgetTitlePayloads() {
 	const widgetTitlePayload = updatedFormPayloads.find((payload) => {
 		const widgets = payload?.detail_layout?.widgets;
-		return Array.isArray(widgets) && widgets.some((widget) => widget?.key === 'comments' && widget?.title === 'Ops Notes');
+		return (
+			Array.isArray(widgets) &&
+			widgets.some((widget) => widget?.key === 'comments' && widget?.title === 'Ops Notes')
+		);
 	});
 	if (!widgetTitlePayload) {
-		throw new Error(`Expected detail widget title payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail widget title payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailWidgetDescriptionPayloads() {
 	const widgetDescriptionPayload = updatedFormPayloads.find((payload) => {
 		const widgets = payload?.detail_layout?.widgets;
-		return Array.isArray(widgets) && widgets.some((widget) => widget?.key === 'comments' && widget?.description === 'Track kitchen follow-ups before service.');
+		return (
+			Array.isArray(widgets) &&
+			widgets.some(
+				(widget) =>
+					widget?.key === 'comments' &&
+					widget?.description === 'Track kitchen follow-ups before service.'
+			)
+		);
 	});
 	if (!widgetDescriptionPayload) {
-		throw new Error(`Expected detail widget description payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail widget description payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailWidgetEmptyTextPayloads() {
 	const widgetEmptyTextPayload = updatedFormPayloads.find((payload) => {
 		const widgets = payload?.detail_layout?.widgets;
-		return Array.isArray(widgets) && widgets.some((widget) => widget?.key === 'links' && widget?.empty_text === 'No linked service records yet.');
+		return (
+			Array.isArray(widgets) &&
+			widgets.some(
+				(widget) =>
+					widget?.key === 'links' && widget?.empty_text === 'No linked service records yet.'
+			)
+		);
 	});
 	if (!widgetEmptyTextPayload) {
-		throw new Error(`Expected detail widget empty text payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail widget empty text payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailWidgetCountPayloads() {
 	const widgetCountPayload = updatedFormPayloads.find((payload) => {
 		const widgets = payload?.detail_layout?.widgets;
-		return Array.isArray(widgets) && widgets.some((widget) => widget?.key === 'comments' && widget?.show_count === true);
+		return (
+			Array.isArray(widgets) &&
+			widgets.some((widget) => widget?.key === 'comments' && widget?.show_count === true)
+		);
 	});
 	if (!widgetCountPayload) {
-		throw new Error(`Expected detail widget count payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail widget count payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailWidgetDensityPayloads() {
 	const widgetDensityPayload = updatedFormPayloads.find((payload) => {
 		const widgets = payload?.detail_layout?.widgets;
-		return Array.isArray(widgets) && widgets.some((widget) => widget?.key === 'comments' && widget?.density === 'compact');
+		return (
+			Array.isArray(widgets) &&
+			widgets.some((widget) => widget?.key === 'comments' && widget?.density === 'compact')
+		);
 	});
 	if (!widgetDensityPayload) {
-		throw new Error(`Expected detail widget density payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail widget density payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailWidgetHideEmptyPayloads() {
 	const widgetHideEmptyPayload = updatedFormPayloads.find((payload) => {
 		const widgets = payload?.detail_layout?.widgets;
-		return Array.isArray(widgets) && widgets.some((widget) => widget?.key === 'links' && widget?.hide_empty === true);
+		return (
+			Array.isArray(widgets) &&
+			widgets.some((widget) => widget?.key === 'links' && widget?.hide_empty === true)
+		);
 	});
 	if (!widgetHideEmptyPayload) {
-		throw new Error(`Expected detail widget hide empty payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail widget hide empty payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailWidgetCollapsiblePayloads() {
 	const widgetCollapsiblePayload = updatedFormPayloads.find((payload) => {
 		const widgets = payload?.detail_layout?.widgets;
-		const comments = Array.isArray(widgets) ? widgets.find((widget) => widget?.key === 'comments') : null;
-		const children = Array.isArray(widgets) ? widgets.find((widget) => widget?.key === 'children') : null;
+		const comments = Array.isArray(widgets)
+			? widgets.find((widget) => widget?.key === 'comments')
+			: null;
+		const children = Array.isArray(widgets)
+			? widgets.find((widget) => widget?.key === 'children')
+			: null;
 		return (
 			Array.isArray(widgets) &&
 			comments?.collapsible === true &&
@@ -4737,17 +4890,24 @@ function assertDetailWidgetCollapsiblePayloads() {
 		);
 	});
 	if (!widgetCollapsiblePayload) {
-		throw new Error(`Expected detail widget collapsible payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail widget collapsible payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
 function assertDetailWidgetLimitPayloads() {
 	const widgetLimitPayload = updatedFormPayloads.find((payload) => {
 		const widgets = payload?.detail_layout?.widgets;
-		return Array.isArray(widgets) && widgets.some((widget) => widget?.key === 'comments' && widget?.limit === 1);
+		return (
+			Array.isArray(widgets) &&
+			widgets.some((widget) => widget?.key === 'comments' && widget?.limit === 1)
+		);
 	});
 	if (!widgetLimitPayload) {
-		throw new Error(`Expected detail widget limit payload, got ${JSON.stringify(updatedFormPayloads)}`);
+		throw new Error(
+			`Expected detail widget limit payload, got ${JSON.stringify(updatedFormPayloads)}`
+		);
 	}
 }
 
@@ -4766,700 +4926,738 @@ const server = createServer((req, res) => {
 const port = 19580 + Math.floor(Math.random() * 1000);
 await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 
-	try {
-		if (screenshotDir) await mkdir(screenshotDir, { recursive: true });
-		const desktopScreenshot = screenshotDir ? join(screenshotDir, 'forms-ui-desktop.png') : null;
-		const mobileScreenshot = screenshotDir ? join(screenshotDir, 'forms-ui-mobile.png') : null;
-			if (requestedSmokeMode === 'detail-widget-hide-empty-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-hide-empty-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+try {
+	if (screenshotDir) await mkdir(screenshotDir, { recursive: true });
+	const desktopScreenshot = screenshotDir ? join(screenshotDir, 'forms-ui-desktop.png') : null;
+	const mobileScreenshot = screenshotDir ? join(screenshotDir, 'forms-ui-mobile.png') : null;
+	if (requestedSmokeMode === 'detail-widget-hide-empty-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-hide-empty-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-widget-hide-empty-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-widget-hide-empty-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-widget-hide-empty-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-widget-hide-empty-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailWidgetHideEmptyPayloads();
-			const durableWidgetHideEmptyDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
-			);
-			const requiredFragments = [
-				'data-durable-record-detail-route="record-order-line-created"',
-				'data-durable-record-detail-comments="record-order-line-created"',
-				'data-durable-record-detail-widget-order="children|links|comments|attachments|events"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableWidgetHideEmptyDom.includes(fragment));
-			if (
-				missing.length > 0 ||
-				durableWidgetHideEmptyDom.includes('data-durable-record-detail-links="record-order-line-created"')
-			) {
-				throw new Error(
-					`Forms UI detail-widget-hide-empty-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetHideEmptyDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-widget-hide-empty-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-widget-count-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-count-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
-			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-widget-count-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-widget-count-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailWidgetCountPayloads();
-			const durableWidgetCountDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
-			);
-			const badgePattern = /<span[^>]*data-durable-record-detail-widget-count-badge="comments:record-order-line-created"[^>]*>\s*1\s*<\/span>/;
-			const requiredFragments = [
-				'data-durable-record-detail-comments="record-order-line-created"',
-				'data-durable-record-detail-comment-count="1"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableWidgetCountDom.includes(fragment));
-			if (missing.length > 0 || !badgePattern.test(durableWidgetCountDom)) {
-				throw new Error(
-					`Forms UI detail-widget-count-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetCountDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-widget-count-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-widget-density-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-density-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
-			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-widget-density-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-widget-density-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailWidgetDensityPayloads();
-			const durableWidgetDensityDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
-			);
-			const requiredFragments = [
-				'data-durable-record-detail-comments="record-order-line-created"',
-				'data-durable-record-detail-widget-density="comments:record-order-line-created:compact"',
-				'data-durable-record-detail-widget-density="children:record-order-line-created:comfortable"',
-				'data-durable-record-detail-widget-density="attachments:record-order-line-created:comfortable"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableWidgetDensityDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-widget-density-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetDensityDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-widget-density-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-widget-collapsible-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-collapsible-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
-			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-widget-collapsible-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-widget-collapsible-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailWidgetCollapsiblePayloads();
-			const durableWidgetCollapsibleDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
-			);
-			const requiredFragments = [
-				'data-durable-record-detail-children="record-order-line-created"',
-				'data-durable-record-detail-widget-collapsible="children:record-order-line-created:true:true"',
-				'data-durable-record-detail-widget-open="children:record-order-line-created:false"',
-				'data-durable-record-detail-comments="record-order-line-created"',
-				'data-durable-record-detail-widget-collapsible="comments:record-order-line-created:true:true"',
-				'data-durable-record-detail-widget-open="comments:record-order-line-created:false"',
-				'data-durable-record-detail-widget-collapsible="links:record-order-line-created:false:false"',
-				'data-durable-record-detail-widget-collapsible="attachments:record-order-line-created:false:false"',
-				'data-durable-record-detail-widget-collapsible="events:record-order-line-created:false:false"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableWidgetCollapsibleDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-widget-collapsible-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetCollapsibleDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-widget-collapsible-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-widget-empty-text-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-empty-text-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
-			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-widget-empty-text-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-widget-empty-text-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailWidgetEmptyTextPayloads();
-			const durableWidgetEmptyTextDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
-			);
-			const requiredFragments = [
-				'data-durable-record-detail-widget-empty="links:record-order-line-created"',
-				'No linked service records yet.',
+		}
+		assertDetailWidgetHideEmptyPayloads();
+		const durableWidgetHideEmptyDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-route="record-order-line-created"',
+			'data-durable-record-detail-comments="record-order-line-created"',
+			'data-durable-record-detail-widget-order="children|links|comments|attachments|events"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableWidgetHideEmptyDom.includes(fragment)
+		);
+		if (
+			missing.length > 0 ||
+			durableWidgetHideEmptyDom.includes(
 				'data-durable-record-detail-links="record-order-line-created"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableWidgetEmptyTextDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-widget-empty-text-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetEmptyTextDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-widget-empty-text-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-widget-description-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-description-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+			)
+		) {
+			throw new Error(
+				`Forms UI detail-widget-hide-empty-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetHideEmptyDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-widget-description-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-widget-description-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailWidgetDescriptionPayloads();
-			const durableWidgetDescriptionDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-widget-hide-empty-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-widget-count-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-count-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-widget-count-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-widget-count-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-widget-description="comments:record-order-line-created"',
-				'Track kitchen follow-ups before service.',
-				'data-durable-record-detail-comments="record-order-line-created"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableWidgetDescriptionDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-widget-description-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetDescriptionDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-widget-description-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-widget-limit-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-limit-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailWidgetCountPayloads();
+		const durableWidgetCountDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const badgePattern =
+			/<span[^>]*data-durable-record-detail-widget-count-badge="comments:record-order-line-created"[^>]*>\s*1\s*<\/span>/;
+		const requiredFragments = [
+			'data-durable-record-detail-comments="record-order-line-created"',
+			'data-durable-record-detail-comment-count="1"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableWidgetCountDom.includes(fragment)
+		);
+		if (missing.length > 0 || !badgePattern.test(durableWidgetCountDom)) {
+			throw new Error(
+				`Forms UI detail-widget-count-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetCountDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-widget-limit-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-widget-limit-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailWidgetLimitPayloads();
-			const durableWidgetLimitDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-widget-count-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-widget-density-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-density-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-widget-density-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-widget-density-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-comments="record-order-line-created"',
-				'data-durable-record-detail-comment-count="2"',
-				'data-durable-record-detail-widget-limit="comments:1"',
-				'data-durable-record-detail-comment="comment-record-created-1"',
-				'Limit smoke follow-up.'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableWidgetLimitDom.includes(fragment));
-			if (missing.length > 0 || durableWidgetLimitDom.includes('data-durable-record-detail-comment="comment-record-existing"')) {
-				throw new Error(
-					`Forms UI detail-widget-limit-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetLimitDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-widget-limit-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-widget-title-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-title-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailWidgetDensityPayloads();
+		const durableWidgetDensityDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-comments="record-order-line-created"',
+			'data-durable-record-detail-widget-density="comments:record-order-line-created:compact"',
+			'data-durable-record-detail-widget-density="children:record-order-line-created:comfortable"',
+			'data-durable-record-detail-widget-density="attachments:record-order-line-created:comfortable"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableWidgetDensityDom.includes(fragment)
+		);
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-widget-density-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetDensityDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-widget-title-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-widget-title-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailWidgetTitlePayloads();
-			const durableWidgetTitleDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-widget-density-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-widget-collapsible-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-collapsible-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-widget-collapsible-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-widget-collapsible-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-widget-title="comments:record-order-line-created"',
-				'Ops Notes',
-				'data-durable-record-detail-comments="record-order-line-created"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableWidgetTitleDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-widget-title-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetTitleDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-widget-title-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-page-composition-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-page-composition-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailWidgetCollapsiblePayloads();
+		const durableWidgetCollapsibleDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-children="record-order-line-created"',
+			'data-durable-record-detail-widget-collapsible="children:record-order-line-created:true:true"',
+			'data-durable-record-detail-widget-open="children:record-order-line-created:false"',
+			'data-durable-record-detail-comments="record-order-line-created"',
+			'data-durable-record-detail-widget-collapsible="comments:record-order-line-created:true:true"',
+			'data-durable-record-detail-widget-open="comments:record-order-line-created:false"',
+			'data-durable-record-detail-widget-collapsible="links:record-order-line-created:false:false"',
+			'data-durable-record-detail-widget-collapsible="attachments:record-order-line-created:false:false"',
+			'data-durable-record-detail-widget-collapsible="events:record-order-line-created:false:false"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableWidgetCollapsibleDom.includes(fragment)
+		);
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-widget-collapsible-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetCollapsibleDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-page-composition-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-page-composition-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailPageCompositionPayloads();
-			const durableCompositionDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-widget-collapsible-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-widget-empty-text-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-empty-text-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-widget-empty-text-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-widget-empty-text-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-page-composition="record-order-line-created:below"',
-				'data-durable-record-detail-widget-region="below"',
-				'data-durable-record-detail-widget-order="children|links|comments|attachments|events"',
-				'data-durable-record-detail-comments="record-order-line-created"',
-				'data-durable-record-detail-events="record-order-line-created"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableCompositionDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-page-composition-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableCompositionDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-page-composition-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-field-columns-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-field-columns-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailWidgetEmptyTextPayloads();
+		const durableWidgetEmptyTextDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-widget-empty="links:record-order-line-created"',
+			'No linked service records yet.',
+			'data-durable-record-detail-links="record-order-line-created"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableWidgetEmptyTextDom.includes(fragment)
+		);
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-widget-empty-text-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetEmptyTextDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-field-columns-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-field-columns-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailFieldColumnsPayloads();
-			const durableFieldColumnsDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-widget-empty-text-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-widget-description-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-description-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-widget-description-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-widget-description-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-field-columns="record-order-line-created:1"',
-				'data-durable-record-detail-section="record-order-line-created:handoff"',
-				'data-durable-record-detail-field="record-order-line-created:sku_name"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableFieldColumnsDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-field-columns-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableFieldColumnsDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-field-columns-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-highlights-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-highlights-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailWidgetDescriptionPayloads();
+		const durableWidgetDescriptionDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-widget-description="comments:record-order-line-created"',
+			'Track kitchen follow-ups before service.',
+			'data-durable-record-detail-comments="record-order-line-created"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableWidgetDescriptionDom.includes(fragment)
+		);
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-widget-description-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetDescriptionDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-highlights-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-highlights-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailHighlightPayloads();
-			const durableHighlightDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-widget-description-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-widget-limit-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-limit-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-widget-limit-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-widget-limit-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-highlights="record-order-line-created"',
-				'data-durable-record-detail-highlight-order="line_total|quantity"',
-				'data-durable-record-detail-highlight="record-order-line-created:line_total"',
-				'data-durable-record-detail-highlight="record-order-line-created:quantity"',
-				'19.98 CNY',
-				'2'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableHighlightDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-highlights-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableHighlightDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-highlights-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-header-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-header-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailWidgetLimitPayloads();
+		const durableWidgetLimitDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-comments="record-order-line-created"',
+			'data-durable-record-detail-comment-count="2"',
+			'data-durable-record-detail-widget-limit="comments:1"',
+			'data-durable-record-detail-comment="comment-record-created-1"',
+			'Limit smoke follow-up.'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableWidgetLimitDom.includes(fragment)
+		);
+		if (
+			missing.length > 0 ||
+			durableWidgetLimitDom.includes('data-durable-record-detail-comment="comment-record-existing"')
+		) {
+			throw new Error(
+				`Forms UI detail-widget-limit-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetLimitDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-header-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-header-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailHeaderPayloads();
-			const durableHeaderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-widget-limit-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-widget-title-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-widget-title-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-widget-title-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-widget-title-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-header-subtitle="seat_no:record-order-line-created"',
-				'data-durable-record-detail-header-badge="status:record-order-line-created"',
-				'Seat',
-				'sent_to_kitchen'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableHeaderDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-header-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableHeaderDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-header-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-section-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailWidgetTitlePayloads();
+		const durableWidgetTitleDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-widget-title="comments:record-order-line-created"',
+			'Ops Notes',
+			'data-durable-record-detail-comments="record-order-line-created"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableWidgetTitleDom.includes(fragment)
+		);
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-widget-title-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetTitleDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-layout-section-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-section-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailLayoutSectionPayloads();
-			const durableSectionDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-widget-title-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-page-composition-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-page-composition-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-page-composition-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-page-composition-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-section="record-order-line-created:handoff"',
-				'Service Snapshot',
-				'data-durable-record-detail-field="record-order-line-created:unit_price"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableSectionDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-section-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-section-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-section-description-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-description-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailPageCompositionPayloads();
+		const durableCompositionDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-page-composition="record-order-line-created:below"',
+			'data-durable-record-detail-widget-region="below"',
+			'data-durable-record-detail-widget-order="children|links|comments|attachments|events"',
+			'data-durable-record-detail-comments="record-order-line-created"',
+			'data-durable-record-detail-events="record-order-line-created"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableCompositionDom.includes(fragment)
+		);
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-page-composition-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableCompositionDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-section-description-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-section-description-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailLayoutSectionDescriptionPayloads();
-			const durableSectionDescriptionDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-page-composition-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-field-columns-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-field-columns-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-field-columns-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-field-columns-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-section-description="record-order-line-created:handoff"',
-				'Review service notes before closing the line.',
-				'data-durable-record-detail-section="record-order-line-created:handoff"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableSectionDescriptionDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-section-description-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionDescriptionDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-section-description-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-section-hide-empty-fields-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-hide-empty-fields-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailFieldColumnsPayloads();
+		const durableFieldColumnsDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-field-columns="record-order-line-created:1"',
+			'data-durable-record-detail-section="record-order-line-created:handoff"',
+			'data-durable-record-detail-field="record-order-line-created:sku_name"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableFieldColumnsDom.includes(fragment)
+		);
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-field-columns-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableFieldColumnsDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-section-hide-empty-fields-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-section-hide-empty-fields-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailLayoutSectionHideEmptyFieldsPayloads();
-			const durableSectionHideEmptyDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-field-columns-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-highlights-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-highlights-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-highlights-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-highlights-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-section="record-order-line-created:handoff"',
-				'data-durable-record-detail-field="record-order-line-created:sku_name"',
-				'data-durable-record-detail-field="record-order-line-created:status"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableSectionHideEmptyDom.includes(fragment));
-			if (
-				missing.length > 0 ||
-				durableSectionHideEmptyDom.includes('data-durable-record-detail-field="record-order-line-created:seat_no"')
-			) {
-				throw new Error(
-					`Forms UI detail-section-hide-empty-fields-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionHideEmptyDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-section-hide-empty-fields-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-section-columns-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-columns-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailHighlightPayloads();
+		const durableHighlightDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-highlights="record-order-line-created"',
+			'data-durable-record-detail-highlight-order="line_total|quantity"',
+			'data-durable-record-detail-highlight="record-order-line-created:line_total"',
+			'data-durable-record-detail-highlight="record-order-line-created:quantity"',
+			'19.98 CNY',
+			'2'
+		];
+		const missing = requiredFragments.filter((fragment) => !durableHighlightDom.includes(fragment));
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-highlights-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableHighlightDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-section-columns-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-section-columns-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailLayoutSectionColumnsPayloads();
-			const durableSectionColumnsDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-highlights-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-header-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-header-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-header-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-header-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-section-columns="record-order-line-created:handoff:3"',
-				'data-durable-record-detail-field-columns="record-order-line-created:3"',
-				'data-durable-record-detail-field="record-order-line-created:sku_name"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableSectionColumnsDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-section-columns-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionColumnsDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-section-columns-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-section-density-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-density-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailHeaderPayloads();
+		const durableHeaderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-header-subtitle="seat_no:record-order-line-created"',
+			'data-durable-record-detail-header-badge="status:record-order-line-created"',
+			'Seat',
+			'sent_to_kitchen'
+		];
+		const missing = requiredFragments.filter((fragment) => !durableHeaderDom.includes(fragment));
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-header-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableHeaderDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-section-density-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-section-density-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailLayoutSectionDensityPayloads();
-			const durableSectionDensityDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-header-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-section-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-layout-section-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-section-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-section-density="record-order-line-created:handoff:compact"',
-				'data-durable-record-detail-section-density="record-order-line-created:pricing:comfortable"',
-				'data-durable-record-detail-section="record-order-line-created:handoff"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableSectionDensityDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-section-density-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionDensityDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-section-density-builder smoke passed');
-		} else if (requestedSmokeMode === 'detail-section-collapsible-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-collapsible-builder`,
-				'1366,900',
-				desktopScreenshot,
-				60000
+		}
+		assertDetailLayoutSectionPayloads();
+		const durableSectionDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-section="record-order-line-created:handoff"',
+			'Service Snapshot',
+			'data-durable-record-detail-field="record-order-line-created:unit_price"'
+		];
+		const missing = requiredFragments.filter((fragment) => !durableSectionDom.includes(fragment));
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-section-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionDom.slice(-12000)}`
 			);
-			if (
-				!builderDom.includes('data-forms-ui-smoke="done"') ||
-				!builderDom.includes('data-form-detail-section-collapsible-builder="done"')
-			) {
-				const smokeError = extractSmokeError(builderDom);
-				throw new Error(
-					`Forms UI detail-section-collapsible-builder smoke failed.${
-						smokeError ? `\nSmoke error:\n${smokeError}` : ''
-					}\nDOM excerpt:\n${builderDom.slice(-12000)}`
-				);
-			}
-			assertDetailLayoutSectionCollapsiblePayloads();
-			const durableSectionCollapsibleDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
-				'1366,900',
-				null,
-				30000
+		}
+		console.log('Forms UI detail-section-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-section-description-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-description-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-section-description-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-section-description-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
 			);
-			const requiredFragments = [
-				'data-durable-record-detail-section="record-order-line-created:handoff"',
-				'data-durable-record-detail-section-collapsible="record-order-line-created:handoff:true:true"',
-				'data-durable-record-detail-section-open="record-order-line-created:handoff:false"'
-			];
-			const missing = requiredFragments.filter((fragment) => !durableSectionCollapsibleDom.includes(fragment));
-			if (missing.length > 0) {
-				throw new Error(
-					`Forms UI detail-section-collapsible-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionCollapsibleDom.slice(-12000)}`
-				);
-			}
-			console.log('Forms UI detail-section-collapsible-builder smoke passed');
-		} else if (requestedSmokeMode === 'page-widget-builder') {
-			const builderDom = await runChromium(
-				`http://127.0.0.1:${port}/smoke-auth-seed?mode=page-widget-builder`,
+		}
+		assertDetailLayoutSectionDescriptionPayloads();
+		const durableSectionDescriptionDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-section-description="record-order-line-created:handoff"',
+			'Review service notes before closing the line.',
+			'data-durable-record-detail-section="record-order-line-created:handoff"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableSectionDescriptionDom.includes(fragment)
+		);
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-section-description-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionDescriptionDom.slice(-12000)}`
+			);
+		}
+		console.log('Forms UI detail-section-description-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-section-hide-empty-fields-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-hide-empty-fields-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-section-hide-empty-fields-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-section-hide-empty-fields-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
+			);
+		}
+		assertDetailLayoutSectionHideEmptyFieldsPayloads();
+		const durableSectionHideEmptyDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-section="record-order-line-created:handoff"',
+			'data-durable-record-detail-field="record-order-line-created:sku_name"',
+			'data-durable-record-detail-field="record-order-line-created:status"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableSectionHideEmptyDom.includes(fragment)
+		);
+		if (
+			missing.length > 0 ||
+			durableSectionHideEmptyDom.includes(
+				'data-durable-record-detail-field="record-order-line-created:seat_no"'
+			)
+		) {
+			throw new Error(
+				`Forms UI detail-section-hide-empty-fields-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionHideEmptyDom.slice(-12000)}`
+			);
+		}
+		console.log('Forms UI detail-section-hide-empty-fields-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-section-columns-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-columns-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-section-columns-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-section-columns-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
+			);
+		}
+		assertDetailLayoutSectionColumnsPayloads();
+		const durableSectionColumnsDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-section-columns="record-order-line-created:handoff:3"',
+			'data-durable-record-detail-field-columns="record-order-line-created:3"',
+			'data-durable-record-detail-field="record-order-line-created:sku_name"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableSectionColumnsDom.includes(fragment)
+		);
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-section-columns-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionColumnsDom.slice(-12000)}`
+			);
+		}
+		console.log('Forms UI detail-section-columns-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-section-density-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-density-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-section-density-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-section-density-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
+			);
+		}
+		assertDetailLayoutSectionDensityPayloads();
+		const durableSectionDensityDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-section-density="record-order-line-created:handoff:compact"',
+			'data-durable-record-detail-section-density="record-order-line-created:pricing:comfortable"',
+			'data-durable-record-detail-section="record-order-line-created:handoff"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableSectionDensityDom.includes(fragment)
+		);
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-section-density-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionDensityDom.slice(-12000)}`
+			);
+		}
+		console.log('Forms UI detail-section-density-builder smoke passed');
+	} else if (requestedSmokeMode === 'detail-section-collapsible-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-section-collapsible-builder`,
+			'1366,900',
+			desktopScreenshot,
+			60000
+		);
+		if (
+			!builderDom.includes('data-forms-ui-smoke="done"') ||
+			!builderDom.includes('data-form-detail-section-collapsible-builder="done"')
+		) {
+			const smokeError = extractSmokeError(builderDom);
+			throw new Error(
+				`Forms UI detail-section-collapsible-builder smoke failed.${
+					smokeError ? `\nSmoke error:\n${smokeError}` : ''
+				}\nDOM excerpt:\n${builderDom.slice(-12000)}`
+			);
+		}
+		assertDetailLayoutSectionCollapsiblePayloads();
+		const durableSectionCollapsibleDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=durable-detail`,
+			'1366,900',
+			null,
+			30000
+		);
+		const requiredFragments = [
+			'data-durable-record-detail-section="record-order-line-created:handoff"',
+			'data-durable-record-detail-section-collapsible="record-order-line-created:handoff:true:true"',
+			'data-durable-record-detail-section-open="record-order-line-created:handoff:false"'
+		];
+		const missing = requiredFragments.filter(
+			(fragment) => !durableSectionCollapsibleDom.includes(fragment)
+		);
+		if (missing.length > 0) {
+			throw new Error(
+				`Forms UI detail-section-collapsible-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableSectionCollapsibleDom.slice(-12000)}`
+			);
+		}
+		console.log('Forms UI detail-section-collapsible-builder smoke passed');
+	} else if (requestedSmokeMode === 'page-widget-builder') {
+		const builderDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=page-widget-builder`,
 			'1366,900',
 			desktopScreenshot,
 			60000
@@ -5490,7 +5688,10 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 			'data-durable-record-detail-attachments="record-order-line-created"'
 		];
 		const missing = requiredFragments.filter((fragment) => !durableWidgetDom.includes(fragment));
-		if (missing.length > 0 || durableWidgetDom.includes('data-durable-record-detail-events="record-order-line-created"')) {
+		if (
+			missing.length > 0 ||
+			durableWidgetDom.includes('data-durable-record-detail-events="record-order-line-created"')
+		) {
 			throw new Error(
 				`Forms UI page-widget-builder durable consumption failed. Missing ${JSON.stringify(missing)}\nDOM excerpt:\n${durableWidgetDom.slice(-12000)}`
 			);
@@ -5616,9 +5817,10 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 			desktopScreenshot,
 			60000
 		);
-		const requiredMarker = requestedSmokeMode === 'comments-detail'
-			? 'data-form-record-detail-comments-widget="done"'
-			: 'data-form-record-detail-attachment-widget="done"';
+		const requiredMarker =
+			requestedSmokeMode === 'comments-detail'
+				? 'data-form-record-detail-comments-widget="done"'
+				: 'data-form-record-detail-attachment-widget="done"';
 		if (
 			!detailWidgetDom.includes('data-forms-ui-smoke="done"') ||
 			!detailWidgetDom.includes(requiredMarker)
@@ -5644,12 +5846,12 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 	} else if (requestedSmokeMode !== 'full') {
 		throw new Error(`Unsupported OPENPR_FORMS_UI_SMOKE_MODE: ${requestedSmokeMode}`);
 	} else {
-	const desktopDom = await runChromium(
-		`http://127.0.0.1:${port}/smoke-auth-seed?mode=desktop`,
-		'1366,900',
-		desktopScreenshot,
-		50000
-	);
+		const desktopDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=desktop`,
+			'1366,900',
+			desktopScreenshot,
+			50000
+		);
 		if (!desktopDom.includes('data-forms-ui-smoke="done"')) {
 			const smokeError = extractSmokeError(desktopDom);
 			throw new Error(
@@ -5657,22 +5859,24 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 					createdRecordPayload,
 					createdRecord: Boolean(createdRecord),
 					updatedViewPayload,
-					serviceStatusField: orderLineForm.schema.fields.find((field) => field.key === 'service_status')
+					serviceStatusField: orderLineForm.schema.fields.find(
+						(field) => field.key === 'service_status'
+					)
 				})}${smokeError ? `\nSmoke error:\n${smokeError}` : ''}\nDOM excerpt:\n${desktopDom.slice(-12000)}`
 			);
 		}
-	const detailUrlDom = await runChromium(
-		`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-url`,
-		'1366,900',
-		null,
-		10000
-	);
-	if (!detailUrlDom.includes('data-forms-detail-url-smoke="done"')) {
-		const smokeError = extractSmokeError(detailUrlDom);
-		throw new Error(
-			`Forms UI detail URL smoke failed.${smokeError ? `\nSmoke error:\n${smokeError}` : ''}\nDOM excerpt:\n${detailUrlDom.slice(-12000)}`
+		const detailUrlDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=detail-url`,
+			'1366,900',
+			null,
+			10000
 		);
-	}
+		if (!detailUrlDom.includes('data-forms-detail-url-smoke="done"')) {
+			const smokeError = extractSmokeError(detailUrlDom);
+			throw new Error(
+				`Forms UI detail URL smoke failed.${smokeError ? `\nSmoke error:\n${smokeError}` : ''}\nDOM excerpt:\n${detailUrlDom.slice(-12000)}`
+			);
+		}
 		if (!createdRecordPayload || createdRecordPayload.values.unit_price !== '9.99') {
 			throw new Error('Expected created record payload with decimal string amount');
 		}
@@ -5680,7 +5884,9 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 			throw new Error('Expected autonumber field to be omitted from user-created record payload');
 		}
 		if (Object.prototype.hasOwnProperty.call(createdRecordPayload.values, 'vip_note')) {
-			throw new Error('Expected conditionally hidden field to be omitted from user-created record payload');
+			throw new Error(
+				'Expected conditionally hidden field to be omitted from user-created record payload'
+			);
 		}
 		if (Object.prototype.hasOwnProperty.call(createdRecordPayload.values, 'print_jobs')) {
 			throw new Error('Expected child_table field to be omitted from user-created record payload');
@@ -5734,393 +5940,391 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 				payload.config.filter_expression.children[1].children[1].filter.operator === 'not_equals' &&
 				payload.config.filter_expression.children[1].children[1].filter.value === 'sent_to_kitchen'
 		);
-			const kanbanWipViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'kanban' &&
-					payload?.config?.wip_limits?.served === 1 &&
-					payload?.config?.swimlane_by === 'seat_no'
-			);
-			const pivotViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'pivot' &&
-					payload?.config?.pivot_row_field === 'seat_no' &&
-					payload?.config?.pivot_column_field === 'status' &&
-					payload?.config?.pivot_value_field === 'line_total' &&
-					payload?.config?.pivot_aggregate === 'count'
-			);
-			const pivotSortViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'pivot' &&
-					payload?.config?.pivot_row_field === 'seat_no' &&
-					payload?.config?.pivot_column_field === 'status' &&
-					payload?.config?.pivot_value_field === 'line_total' &&
-					payload?.config?.pivot_sort === 'row_total_asc'
-			);
-			const pivotSwapAxesViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'pivot' &&
-					payload?.config?.pivot_row_field === 'status' &&
-					payload?.config?.pivot_column_field === 'seat_no' &&
-					payload?.config?.pivot_value_field === 'line_total' &&
-					payload?.config?.pivot_aggregate === 'count'
-			);
-			const pivotTotalsViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'pivot' &&
-					payload?.config?.pivot_row_field === 'status' &&
-					payload?.config?.pivot_column_field === 'seat_no' &&
-					payload?.config?.pivot_value_field === 'line_total' &&
-					payload?.config?.pivot_aggregate === 'count' &&
-					payload?.config?.pivot_totals === 'none'
-			);
-			const pivotValueDisplayViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'pivot' &&
-					payload?.config?.pivot_row_field === 'status' &&
-					payload?.config?.pivot_column_field === 'seat_no' &&
-					payload?.config?.pivot_value_field === 'line_total' &&
-					payload?.config?.pivot_aggregate === 'count' &&
-					payload?.config?.pivot_value_display === 'percent_total'
-			);
-			const pivotEmptyBucketsViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'pivot' &&
-					payload?.config?.pivot_row_field === 'status' &&
-					payload?.config?.pivot_column_field === 'seat_no' &&
-					payload?.config?.pivot_value_field === 'line_total' &&
-					payload?.config?.pivot_aggregate === 'count' &&
-					payload?.config?.pivot_value_display === 'percent_total' &&
-					payload?.config?.pivot_empty_buckets === true
-			);
-			const pivotShowCountsViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'pivot' &&
-					payload?.config?.pivot_row_field === 'status' &&
-					payload?.config?.pivot_column_field === 'seat_no' &&
-					payload?.config?.pivot_value_field === 'line_total' &&
-					payload?.config?.pivot_aggregate === 'count' &&
-					payload?.config?.pivot_value_display === 'percent_total' &&
-					payload?.config?.pivot_empty_buckets === true &&
-					payload?.config?.pivot_show_counts === true
-			);
-			const pivotHeatmapViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'pivot' &&
-					payload?.config?.pivot_row_field === 'status' &&
-					payload?.config?.pivot_column_field === 'seat_no' &&
-					payload?.config?.pivot_value_field === 'line_total' &&
-					payload?.config?.pivot_aggregate === 'count' &&
-					payload?.config?.pivot_value_display === 'percent_total' &&
-					payload?.config?.pivot_empty_buckets === true &&
-					payload?.config?.pivot_show_counts === true &&
-					payload?.config?.pivot_heatmap === true
-			);
-			const pivotHideZeroBucketsViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'pivot' &&
-					payload?.config?.pivot_row_field === 'status' &&
-					payload?.config?.pivot_column_field === 'seat_no' &&
-					payload?.config?.pivot_value_field === 'line_total' &&
-					payload?.config?.pivot_aggregate === 'count' &&
-					payload?.config?.pivot_value_display === 'percent_total' &&
-					payload?.config?.pivot_empty_buckets === true &&
-					payload?.config?.pivot_show_counts === true &&
-					payload?.config?.pivot_heatmap === true &&
-					payload?.config?.pivot_hide_zero_buckets === true
-			);
-			const pivotRowLimitViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'pivot' &&
-					payload?.config?.pivot_row_field === 'status' &&
-					payload?.config?.pivot_column_field === 'seat_no' &&
-					payload?.config?.pivot_value_field === 'line_total' &&
-					payload?.config?.pivot_aggregate === 'count' &&
-					payload?.config?.pivot_sort === 'row_total_desc' &&
-					payload?.config?.pivot_empty_buckets === true &&
-					payload?.config?.pivot_row_limit === 2
-			);
-			const pivotColumnLimitViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'pivot' &&
-					payload?.config?.pivot_row_field === 'seat_no' &&
-					payload?.config?.pivot_column_field === 'status' &&
-					payload?.config?.pivot_value_field === 'line_total' &&
-					payload?.config?.pivot_aggregate === 'count' &&
-					payload?.config?.pivot_sort === 'column_total_desc' &&
-					payload?.config?.pivot_empty_buckets === true &&
-					payload?.config?.pivot_column_limit === 2
-			);
-			const ganttViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'gantt' &&
-					payload?.config?.gantt_start_field === 'service_date' &&
-					payload?.config?.gantt_end_field === 'service_end_date' &&
-					payload?.config?.gantt_group_by === 'status' &&
-					payload?.config?.gantt_dependency_field === 'order_ref' &&
-					payload?.config?.gantt_scale === 'week'
-			);
-			const ganttRecordPayload = updatedRecordPayloads.find(
-				(payload) =>
-					payload?.source?.origin === 'gantt' &&
-					payload?.values?.service_date === '2026-05-30'
-			);
-			const ganttResizeRecordPayload = updatedRecordPayloads.find(
-				(payload) =>
-					payload?.source?.origin === 'gantt_resize' &&
-					payload?.values?.service_end_date === '2026-05-31'
-			);
-			const calendarEndResizeRecordPayload = updatedRecordPayloads.find(
-				(payload) =>
-					payload?.source?.origin === 'calendar_end_resize' &&
-					payload?.values?.service_end_date === '2026-05-31'
-			);
-				const calendarRangeViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'calendar' &&
-					payload?.config?.calendar_range === 'month' &&
-					payload?.config?.calendar_recurrence === 'daily' &&
-					payload?.config?.calendar_end_field === 'service_end_date' &&
-					payload?.config?.calendar_resource_by === 'quantity'
-			);
-				const calendarExceptionViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'calendar' &&
-						payload?.config?.calendar_exception_dates?.['record-order-line-created']?.includes(
-							'2026-05-30'
-						)
-				);
-				const calendarWeeklyViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'calendar' &&
-						payload?.config?.calendar_recurrence === 'weekly'
-				);
-				const calendarMonthlyViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'calendar' &&
-						payload?.config?.calendar_recurrence === 'monthly'
-				);
-				const calendarFocusNextViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'calendar' &&
-						payload?.config?.calendar_recurrence === 'monthly' &&
-						payload?.config?.calendar_focus_date === '2026-06-01'
-				);
-				const calendarFocusPreviousViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'calendar' &&
-						payload?.config?.calendar_recurrence === 'monthly' &&
-						payload?.config?.calendar_focus_date === '2026-05-01'
-				);
-				const calendarWorkweekViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'calendar' &&
-						payload?.config?.calendar_recurrence === 'monthly' &&
-						payload?.config?.calendar_focus_date === '2026-05-01' &&
-						payload?.config?.calendar_day_scope === 'workweek'
-				);
-					const calendarAgendaViewPayload = updatedViewPayloads.find(
-						(payload) =>
-							payload?.view_type === 'calendar' &&
-							payload?.config?.calendar_recurrence === 'monthly' &&
-							payload?.config?.calendar_day_scope === 'all' &&
-							payload?.config?.calendar_layout === 'agenda'
-					);
-					const calendarHideEmptyDaysViewPayload = updatedViewPayloads.find(
-						(payload) =>
-							payload?.view_type === 'calendar' &&
-							payload?.config?.calendar_recurrence === 'monthly' &&
-							payload?.config?.calendar_day_scope === 'all' &&
-							payload?.config?.calendar_layout === 'grid' &&
-							payload?.config?.calendar_hide_empty_days === true
-					);
-					const calendarSeriesRecordPayload = updatedRecordPayloads.find(
-					(payload) =>
-						payload?.source?.origin === 'calendar_series' &&
-						payload?.values?.service_date === '2026-05-17' &&
-						payload?.values?.service_end_date === '2026-05-19'
-				);
-				const cardLayoutViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'card' &&
-							payload?.config?.card_title_field === 'sku_name' &&
-							payload?.config?.card_subtitle_field === 'seat_no' &&
-							payload?.config?.card_badge_field === 'status' &&
-							payload?.config?.card_cover_field === 'dish_photo' &&
-							payload?.config?.card_layout === 'gallery'
-					);
-				const cardCoverAspectViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'card' &&
-						payload?.config?.card_title_field === 'sku_name' &&
-						payload?.config?.card_subtitle_field === 'seat_no' &&
-						payload?.config?.card_badge_field === 'status' &&
-						payload?.config?.card_cover_field === 'dish_photo' &&
-						payload?.config?.card_layout === 'gallery' &&
-						payload?.config?.card_cover_aspect === 'portrait'
-				);
-				const cardCoverFitViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'card' &&
-						payload?.config?.card_title_field === 'sku_name' &&
-						payload?.config?.card_subtitle_field === 'seat_no' &&
-						payload?.config?.card_badge_field === 'status' &&
-						payload?.config?.card_cover_field === 'dish_photo' &&
-						payload?.config?.card_layout === 'gallery' &&
-						payload?.config?.card_cover_aspect === 'portrait' &&
-						payload?.config?.card_cover_fit === 'contain'
-				);
-				const cardCoverPositionViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'card' &&
-						payload?.config?.card_title_field === 'sku_name' &&
-						payload?.config?.card_subtitle_field === 'seat_no' &&
-						payload?.config?.card_badge_field === 'status' &&
-						payload?.config?.card_cover_field === 'dish_photo' &&
-						payload?.config?.card_layout === 'gallery' &&
-						payload?.config?.card_cover_aspect === 'portrait' &&
-						payload?.config?.card_cover_fit === 'contain' &&
-						payload?.config?.card_cover_position === 'left'
-				);
-				const cardCompactLayoutViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'card' &&
-						payload?.config?.card_title_field === 'sku_name' &&
-						payload?.config?.card_subtitle_field === 'seat_no' &&
-						payload?.config?.card_badge_field === 'status' &&
-						payload?.config?.card_cover_field === 'dish_photo' &&
-						payload?.config?.card_layout === 'compact'
-				);
-				const cardListLayoutViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'card' &&
-						payload?.config?.card_title_field === 'sku_name' &&
-						payload?.config?.card_subtitle_field === 'seat_no' &&
-						payload?.config?.card_badge_field === 'status' &&
-						payload?.config?.card_cover_field === 'dish_photo' &&
-						payload?.config?.card_layout === 'list'
-				);
-						const cardHideEmptyFieldsViewPayload = updatedViewPayloads.find(
-							(payload) =>
-								payload?.view_type === 'card' &&
-								payload?.config?.card_layout === 'list' &&
-								payload?.config?.card_field_limit === 99 &&
-								payload?.config?.card_hide_empty_fields === true &&
-								Array.isArray(payload?.config?.columns) &&
-								payload.config.columns.includes('dish_photo')
-						);
-							const cardShowTimestampsViewPayload = updatedViewPayloads.find(
-								(payload) =>
-									payload?.view_type === 'card' &&
-									payload?.config?.card_layout === 'list' &&
-									payload?.config?.card_field_limit === 99 &&
-									payload?.config?.card_hide_empty_fields === true &&
-									payload?.config?.card_show_timestamps === true
-							);
-							const cardShowRecordIdViewPayload = updatedViewPayloads.find(
-								(payload) =>
-									payload?.view_type === 'card' &&
-									payload?.config?.card_layout === 'list' &&
-									payload?.config?.card_field_limit === 99 &&
-									payload?.config?.card_hide_empty_fields === true &&
-									payload?.config?.card_show_timestamps === true &&
-									payload?.config?.card_show_record_id === true
-							);
-							const cardGroupViewPayload = updatedViewPayloads.find(
-							(payload) => payload?.view_type === 'card' && payload?.config?.group_by === 'status'
-						);
-						const cardGroupFilterViewPayload = updatedViewPayloads.find(
-							(payload) =>
-								payload?.view_type === 'card' &&
-								payload?.config?.group_by === 'seat_no' &&
-								payload?.config?.filter_expression?.children?.[0]?.children?.[0]?.filter?.field === 'seat_no' &&
-								payload.config.filter_expression.children[0].children[0].filter.value === '1'
-						);
-					const cardFieldOrderViewPayload = updatedViewPayloads.find(
-						(payload) =>
-							payload?.view_type === 'card' &&
-						payload?.config?.card_layout === 'compact' &&
-						Array.isArray(payload?.config?.card_fields) &&
-						payload.config.card_fields[0] === 'quantity' &&
-						payload.config.card_fields[1] === 'sku_name'
-				);
-				const cardFieldLimitViewPayload = updatedViewPayloads.find(
-					(payload) =>
-						payload?.view_type === 'card' &&
-						payload?.config?.card_title_field === 'sku_name' &&
-						payload?.config?.card_subtitle_field === 'seat_no' &&
-						payload?.config?.card_badge_field === 'status' &&
-						payload?.config?.card_cover_field === 'dish_photo' &&
-						payload?.config?.card_layout === 'compact' &&
-						Array.isArray(payload?.config?.card_fields) &&
-						payload.config.card_fields[0] === 'quantity' &&
-						payload?.config?.card_field_limit === 3
-				);
-			const timelineLayoutViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'timeline' &&
-					payload?.config?.timeline_title_field === 'sku_name' &&
-					payload?.config?.timeline_subtitle_field === 'seat_no'
-			);
-			const timelineEventSourceViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'timeline' &&
-					payload?.config?.timeline_source === 'events' &&
-					payload?.config?.timeline_event_layout === 'detailed' &&
-					payload?.config?.timeline_event_type === 'form.record.created' &&
-					!payload?.config?.timeline_title_field &&
-					!payload?.config?.timeline_subtitle_field
-			);
-			const timelineEventActorViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'timeline' &&
-					payload?.config?.timeline_source === 'events' &&
-					payload?.config?.timeline_event_layout === 'detailed' &&
-					payload?.config?.timeline_event_actor === 'user-smoke' &&
-					!payload?.config?.timeline_event_type &&
-					!payload?.config?.timeline_event_aggregate
-			);
-			const timelineEventAggregateViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'timeline' &&
-					payload?.config?.timeline_source === 'events' &&
-					payload?.config?.timeline_event_layout === 'detailed' &&
-					payload?.config?.timeline_event_type === 'form.record.created' &&
-					payload?.config?.timeline_event_aggregate === 'form_record:record-order-line-created'
-			);
-			const timelineEventSearchViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'timeline' &&
-					payload?.config?.timeline_source === 'events' &&
-					payload?.config?.timeline_event_layout === 'detailed' &&
-					payload?.config?.timeline_event_query === 'Green Tea' &&
-					!payload?.config?.timeline_event_type &&
-					!payload?.config?.timeline_event_actor &&
-					!payload?.config?.timeline_event_aggregate
-			);
-			const timelineEventDateWindowViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'timeline' &&
-					payload?.config?.timeline_source === 'events' &&
-					payload?.config?.timeline_event_layout === 'detailed' &&
-					payload?.config?.timeline_event_from === timelineEventWindowFrom &&
-					payload?.config?.timeline_event_to === timelineEventWindowTo &&
-					!payload?.config?.timeline_event_type &&
-					!payload?.config?.timeline_event_actor &&
-					!payload?.config?.timeline_event_aggregate &&
-					!payload?.config?.timeline_event_query
-			);
-			const timelineEventDayQuickFilterViewPayload = updatedViewPayloads.find(
-				(payload) =>
-					payload?.view_type === 'timeline' &&
-					payload?.config?.timeline_source === 'events' &&
-					payload?.config?.timeline_event_layout === 'detailed' &&
-					payload?.config?.timeline_event_from === timelineEventDayWindowFrom &&
-					payload?.config?.timeline_event_to === timelineEventDayWindowTo &&
-					!payload?.config?.timeline_event_type &&
-					!payload?.config?.timeline_event_actor &&
-					!payload?.config?.timeline_event_aggregate &&
-					!payload?.config?.timeline_event_query
-			);
+		const kanbanWipViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'kanban' &&
+				payload?.config?.wip_limits?.served === 1 &&
+				payload?.config?.swimlane_by === 'seat_no'
+		);
+		const pivotViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'pivot' &&
+				payload?.config?.pivot_row_field === 'seat_no' &&
+				payload?.config?.pivot_column_field === 'status' &&
+				payload?.config?.pivot_value_field === 'line_total' &&
+				payload?.config?.pivot_aggregate === 'count'
+		);
+		const pivotSortViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'pivot' &&
+				payload?.config?.pivot_row_field === 'seat_no' &&
+				payload?.config?.pivot_column_field === 'status' &&
+				payload?.config?.pivot_value_field === 'line_total' &&
+				payload?.config?.pivot_sort === 'row_total_asc'
+		);
+		const pivotSwapAxesViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'pivot' &&
+				payload?.config?.pivot_row_field === 'status' &&
+				payload?.config?.pivot_column_field === 'seat_no' &&
+				payload?.config?.pivot_value_field === 'line_total' &&
+				payload?.config?.pivot_aggregate === 'count'
+		);
+		const pivotTotalsViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'pivot' &&
+				payload?.config?.pivot_row_field === 'status' &&
+				payload?.config?.pivot_column_field === 'seat_no' &&
+				payload?.config?.pivot_value_field === 'line_total' &&
+				payload?.config?.pivot_aggregate === 'count' &&
+				payload?.config?.pivot_totals === 'none'
+		);
+		const pivotValueDisplayViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'pivot' &&
+				payload?.config?.pivot_row_field === 'status' &&
+				payload?.config?.pivot_column_field === 'seat_no' &&
+				payload?.config?.pivot_value_field === 'line_total' &&
+				payload?.config?.pivot_aggregate === 'count' &&
+				payload?.config?.pivot_value_display === 'percent_total'
+		);
+		const pivotEmptyBucketsViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'pivot' &&
+				payload?.config?.pivot_row_field === 'status' &&
+				payload?.config?.pivot_column_field === 'seat_no' &&
+				payload?.config?.pivot_value_field === 'line_total' &&
+				payload?.config?.pivot_aggregate === 'count' &&
+				payload?.config?.pivot_value_display === 'percent_total' &&
+				payload?.config?.pivot_empty_buckets === true
+		);
+		const pivotShowCountsViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'pivot' &&
+				payload?.config?.pivot_row_field === 'status' &&
+				payload?.config?.pivot_column_field === 'seat_no' &&
+				payload?.config?.pivot_value_field === 'line_total' &&
+				payload?.config?.pivot_aggregate === 'count' &&
+				payload?.config?.pivot_value_display === 'percent_total' &&
+				payload?.config?.pivot_empty_buckets === true &&
+				payload?.config?.pivot_show_counts === true
+		);
+		const pivotHeatmapViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'pivot' &&
+				payload?.config?.pivot_row_field === 'status' &&
+				payload?.config?.pivot_column_field === 'seat_no' &&
+				payload?.config?.pivot_value_field === 'line_total' &&
+				payload?.config?.pivot_aggregate === 'count' &&
+				payload?.config?.pivot_value_display === 'percent_total' &&
+				payload?.config?.pivot_empty_buckets === true &&
+				payload?.config?.pivot_show_counts === true &&
+				payload?.config?.pivot_heatmap === true
+		);
+		const pivotHideZeroBucketsViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'pivot' &&
+				payload?.config?.pivot_row_field === 'status' &&
+				payload?.config?.pivot_column_field === 'seat_no' &&
+				payload?.config?.pivot_value_field === 'line_total' &&
+				payload?.config?.pivot_aggregate === 'count' &&
+				payload?.config?.pivot_value_display === 'percent_total' &&
+				payload?.config?.pivot_empty_buckets === true &&
+				payload?.config?.pivot_show_counts === true &&
+				payload?.config?.pivot_heatmap === true &&
+				payload?.config?.pivot_hide_zero_buckets === true
+		);
+		const pivotRowLimitViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'pivot' &&
+				payload?.config?.pivot_row_field === 'status' &&
+				payload?.config?.pivot_column_field === 'seat_no' &&
+				payload?.config?.pivot_value_field === 'line_total' &&
+				payload?.config?.pivot_aggregate === 'count' &&
+				payload?.config?.pivot_sort === 'row_total_desc' &&
+				payload?.config?.pivot_empty_buckets === true &&
+				payload?.config?.pivot_row_limit === 2
+		);
+		const pivotColumnLimitViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'pivot' &&
+				payload?.config?.pivot_row_field === 'seat_no' &&
+				payload?.config?.pivot_column_field === 'status' &&
+				payload?.config?.pivot_value_field === 'line_total' &&
+				payload?.config?.pivot_aggregate === 'count' &&
+				payload?.config?.pivot_sort === 'column_total_desc' &&
+				payload?.config?.pivot_empty_buckets === true &&
+				payload?.config?.pivot_column_limit === 2
+		);
+		const ganttViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'gantt' &&
+				payload?.config?.gantt_start_field === 'service_date' &&
+				payload?.config?.gantt_end_field === 'service_end_date' &&
+				payload?.config?.gantt_group_by === 'status' &&
+				payload?.config?.gantt_dependency_field === 'order_ref' &&
+				payload?.config?.gantt_scale === 'week'
+		);
+		const ganttRecordPayload = updatedRecordPayloads.find(
+			(payload) =>
+				payload?.source?.origin === 'gantt' && payload?.values?.service_date === '2026-05-30'
+		);
+		const ganttResizeRecordPayload = updatedRecordPayloads.find(
+			(payload) =>
+				payload?.source?.origin === 'gantt_resize' &&
+				payload?.values?.service_end_date === '2026-05-31'
+		);
+		const calendarEndResizeRecordPayload = updatedRecordPayloads.find(
+			(payload) =>
+				payload?.source?.origin === 'calendar_end_resize' &&
+				payload?.values?.service_end_date === '2026-05-31'
+		);
+		const calendarRangeViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'calendar' &&
+				payload?.config?.calendar_range === 'month' &&
+				payload?.config?.calendar_recurrence === 'daily' &&
+				payload?.config?.calendar_end_field === 'service_end_date' &&
+				payload?.config?.calendar_resource_by === 'quantity'
+		);
+		const calendarExceptionViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'calendar' &&
+				payload?.config?.calendar_exception_dates?.['record-order-line-created']?.includes(
+					'2026-05-30'
+				)
+		);
+		const calendarWeeklyViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'calendar' && payload?.config?.calendar_recurrence === 'weekly'
+		);
+		const calendarMonthlyViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'calendar' && payload?.config?.calendar_recurrence === 'monthly'
+		);
+		const calendarFocusNextViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'calendar' &&
+				payload?.config?.calendar_recurrence === 'monthly' &&
+				payload?.config?.calendar_focus_date === '2026-06-01'
+		);
+		const calendarFocusPreviousViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'calendar' &&
+				payload?.config?.calendar_recurrence === 'monthly' &&
+				payload?.config?.calendar_focus_date === '2026-05-01'
+		);
+		const calendarWorkweekViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'calendar' &&
+				payload?.config?.calendar_recurrence === 'monthly' &&
+				payload?.config?.calendar_focus_date === '2026-05-01' &&
+				payload?.config?.calendar_day_scope === 'workweek'
+		);
+		const calendarAgendaViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'calendar' &&
+				payload?.config?.calendar_recurrence === 'monthly' &&
+				payload?.config?.calendar_day_scope === 'all' &&
+				payload?.config?.calendar_layout === 'agenda'
+		);
+		const calendarHideEmptyDaysViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'calendar' &&
+				payload?.config?.calendar_recurrence === 'monthly' &&
+				payload?.config?.calendar_day_scope === 'all' &&
+				payload?.config?.calendar_layout === 'grid' &&
+				payload?.config?.calendar_hide_empty_days === true
+		);
+		const calendarSeriesRecordPayload = updatedRecordPayloads.find(
+			(payload) =>
+				payload?.source?.origin === 'calendar_series' &&
+				payload?.values?.service_date === '2026-05-17' &&
+				payload?.values?.service_end_date === '2026-05-19'
+		);
+		const cardLayoutViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.card_title_field === 'sku_name' &&
+				payload?.config?.card_subtitle_field === 'seat_no' &&
+				payload?.config?.card_badge_field === 'status' &&
+				payload?.config?.card_cover_field === 'dish_photo' &&
+				payload?.config?.card_layout === 'gallery'
+		);
+		const cardCoverAspectViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.card_title_field === 'sku_name' &&
+				payload?.config?.card_subtitle_field === 'seat_no' &&
+				payload?.config?.card_badge_field === 'status' &&
+				payload?.config?.card_cover_field === 'dish_photo' &&
+				payload?.config?.card_layout === 'gallery' &&
+				payload?.config?.card_cover_aspect === 'portrait'
+		);
+		const cardCoverFitViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.card_title_field === 'sku_name' &&
+				payload?.config?.card_subtitle_field === 'seat_no' &&
+				payload?.config?.card_badge_field === 'status' &&
+				payload?.config?.card_cover_field === 'dish_photo' &&
+				payload?.config?.card_layout === 'gallery' &&
+				payload?.config?.card_cover_aspect === 'portrait' &&
+				payload?.config?.card_cover_fit === 'contain'
+		);
+		const cardCoverPositionViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.card_title_field === 'sku_name' &&
+				payload?.config?.card_subtitle_field === 'seat_no' &&
+				payload?.config?.card_badge_field === 'status' &&
+				payload?.config?.card_cover_field === 'dish_photo' &&
+				payload?.config?.card_layout === 'gallery' &&
+				payload?.config?.card_cover_aspect === 'portrait' &&
+				payload?.config?.card_cover_fit === 'contain' &&
+				payload?.config?.card_cover_position === 'left'
+		);
+		const cardCompactLayoutViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.card_title_field === 'sku_name' &&
+				payload?.config?.card_subtitle_field === 'seat_no' &&
+				payload?.config?.card_badge_field === 'status' &&
+				payload?.config?.card_cover_field === 'dish_photo' &&
+				payload?.config?.card_layout === 'compact'
+		);
+		const cardListLayoutViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.card_title_field === 'sku_name' &&
+				payload?.config?.card_subtitle_field === 'seat_no' &&
+				payload?.config?.card_badge_field === 'status' &&
+				payload?.config?.card_cover_field === 'dish_photo' &&
+				payload?.config?.card_layout === 'list'
+		);
+		const cardHideEmptyFieldsViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.card_layout === 'list' &&
+				payload?.config?.card_field_limit === 99 &&
+				payload?.config?.card_hide_empty_fields === true &&
+				Array.isArray(payload?.config?.columns) &&
+				payload.config.columns.includes('dish_photo')
+		);
+		const cardShowTimestampsViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.card_layout === 'list' &&
+				payload?.config?.card_field_limit === 99 &&
+				payload?.config?.card_hide_empty_fields === true &&
+				payload?.config?.card_show_timestamps === true
+		);
+		const cardShowRecordIdViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.card_layout === 'list' &&
+				payload?.config?.card_field_limit === 99 &&
+				payload?.config?.card_hide_empty_fields === true &&
+				payload?.config?.card_show_timestamps === true &&
+				payload?.config?.card_show_record_id === true
+		);
+		const cardGroupViewPayload = updatedViewPayloads.find(
+			(payload) => payload?.view_type === 'card' && payload?.config?.group_by === 'status'
+		);
+		const cardGroupFilterViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.group_by === 'seat_no' &&
+				payload?.config?.filter_expression?.children?.[0]?.children?.[0]?.filter?.field ===
+					'seat_no' &&
+				payload.config.filter_expression.children[0].children[0].filter.value === '1'
+		);
+		const cardFieldOrderViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.card_layout === 'compact' &&
+				Array.isArray(payload?.config?.card_fields) &&
+				payload.config.card_fields[0] === 'quantity' &&
+				payload.config.card_fields[1] === 'sku_name'
+		);
+		const cardFieldLimitViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'card' &&
+				payload?.config?.card_title_field === 'sku_name' &&
+				payload?.config?.card_subtitle_field === 'seat_no' &&
+				payload?.config?.card_badge_field === 'status' &&
+				payload?.config?.card_cover_field === 'dish_photo' &&
+				payload?.config?.card_layout === 'compact' &&
+				Array.isArray(payload?.config?.card_fields) &&
+				payload.config.card_fields[0] === 'quantity' &&
+				payload?.config?.card_field_limit === 3
+		);
+		const timelineLayoutViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'timeline' &&
+				payload?.config?.timeline_title_field === 'sku_name' &&
+				payload?.config?.timeline_subtitle_field === 'seat_no'
+		);
+		const timelineEventSourceViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'timeline' &&
+				payload?.config?.timeline_source === 'events' &&
+				payload?.config?.timeline_event_layout === 'detailed' &&
+				payload?.config?.timeline_event_type === 'form.record.created' &&
+				!payload?.config?.timeline_title_field &&
+				!payload?.config?.timeline_subtitle_field
+		);
+		const timelineEventActorViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'timeline' &&
+				payload?.config?.timeline_source === 'events' &&
+				payload?.config?.timeline_event_layout === 'detailed' &&
+				payload?.config?.timeline_event_actor === 'user-smoke' &&
+				!payload?.config?.timeline_event_type &&
+				!payload?.config?.timeline_event_aggregate
+		);
+		const timelineEventAggregateViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'timeline' &&
+				payload?.config?.timeline_source === 'events' &&
+				payload?.config?.timeline_event_layout === 'detailed' &&
+				payload?.config?.timeline_event_type === 'form.record.created' &&
+				payload?.config?.timeline_event_aggregate === 'form_record:record-order-line-created'
+		);
+		const timelineEventSearchViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'timeline' &&
+				payload?.config?.timeline_source === 'events' &&
+				payload?.config?.timeline_event_layout === 'detailed' &&
+				payload?.config?.timeline_event_query === 'Green Tea' &&
+				!payload?.config?.timeline_event_type &&
+				!payload?.config?.timeline_event_actor &&
+				!payload?.config?.timeline_event_aggregate
+		);
+		const timelineEventDateWindowViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'timeline' &&
+				payload?.config?.timeline_source === 'events' &&
+				payload?.config?.timeline_event_layout === 'detailed' &&
+				payload?.config?.timeline_event_from === timelineEventWindowFrom &&
+				payload?.config?.timeline_event_to === timelineEventWindowTo &&
+				!payload?.config?.timeline_event_type &&
+				!payload?.config?.timeline_event_actor &&
+				!payload?.config?.timeline_event_aggregate &&
+				!payload?.config?.timeline_event_query
+		);
+		const timelineEventDayQuickFilterViewPayload = updatedViewPayloads.find(
+			(payload) =>
+				payload?.view_type === 'timeline' &&
+				payload?.config?.timeline_source === 'events' &&
+				payload?.config?.timeline_event_layout === 'detailed' &&
+				payload?.config?.timeline_event_from === timelineEventDayWindowFrom &&
+				payload?.config?.timeline_event_to === timelineEventDayWindowTo &&
+				!payload?.config?.timeline_event_type &&
+				!payload?.config?.timeline_event_actor &&
+				!payload?.config?.timeline_event_aggregate &&
+				!payload?.config?.timeline_event_query
+		);
 		if (
 			listedOrderLineViewIds.includes('view-order-line-private-other') ||
 			!listedOrderLineViewIds.includes('view-order-line-default')
@@ -6151,138 +6355,138 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 		) {
 			throw new Error('Expected saved view nested filter expression config to be persisted');
 		}
-			if (!kanbanWipViewPayload?.config) {
-				throw new Error('Expected kanban WIP policy and swimlane config to be persisted');
-			}
-			if (!pivotViewPayload?.config) {
-				throw new Error('Expected pivot config to be persisted');
-			}
-			if (!pivotSortViewPayload?.config) {
-				throw new Error('Expected pivot sort config to be persisted');
-			}
-			if (!pivotSwapAxesViewPayload?.config) {
-				throw new Error('Expected pivot swap axes config to be persisted');
-			}
-			if (!pivotTotalsViewPayload?.config) {
-				throw new Error('Expected pivot totals config to be persisted');
-			}
-			if (!pivotValueDisplayViewPayload?.config) {
-				throw new Error('Expected pivot value display config to be persisted');
-			}
-			if (!pivotEmptyBucketsViewPayload?.config) {
-				throw new Error('Expected pivot empty buckets config to be persisted');
-			}
-			if (!pivotShowCountsViewPayload?.config) {
-				throw new Error('Expected pivot show counts config to be persisted');
-			}
-			if (!pivotHeatmapViewPayload?.config) {
-				throw new Error('Expected pivot heatmap config to be persisted');
-			}
-			if (!pivotHideZeroBucketsViewPayload?.config) {
-				throw new Error('Expected pivot hide zero buckets config to be persisted');
-			}
-			if (!pivotRowLimitViewPayload?.config) {
-				throw new Error('Expected pivot row limit config to be persisted');
-			}
-			if (!pivotColumnLimitViewPayload?.config) {
-				throw new Error('Expected pivot column limit config to be persisted');
-			}
-			if (!ganttViewPayload?.config) {
-				throw new Error('Expected gantt config to be persisted');
-			}
-			if (!ganttRecordPayload) {
-				throw new Error('Expected gantt record date update payload');
-			}
-			if (!ganttResizeRecordPayload) {
-				throw new Error('Expected gantt resize record update payload');
-			}
-			if (!calendarEndResizeRecordPayload) {
-				throw new Error('Expected calendar end date resize update payload');
-			}
-			if (!calendarRangeViewPayload?.config) {
-				throw new Error('Expected calendar range and resource config to be persisted');
-			}
-				if (!calendarExceptionViewPayload?.config) {
-					throw new Error('Expected calendar exception config to be persisted');
-				}
-				if (!calendarWeeklyViewPayload?.config || !calendarMonthlyViewPayload?.config) {
-					throw new Error('Expected calendar weekly and monthly recurrence configs to be persisted');
-				}
-				if (!calendarFocusNextViewPayload?.config || !calendarFocusPreviousViewPayload?.config) {
-					throw new Error('Expected calendar focus date navigation configs to be persisted');
-				}
-				if (!calendarWorkweekViewPayload?.config) {
-					throw new Error('Expected calendar workweek config to be persisted');
-				}
-					if (!calendarAgendaViewPayload?.config) {
-						throw new Error('Expected calendar agenda layout config to be persisted');
-					}
-					if (!calendarHideEmptyDaysViewPayload?.config) {
-						throw new Error('Expected calendar hide empty days config to be persisted');
-					}
-					if (!calendarSeriesRecordPayload) {
-					throw new Error('Expected calendar recurring series update payload');
-				}
-			if (!cardLayoutViewPayload?.config) {
-				throw new Error('Expected card layout config to be persisted');
-			}
-			if (!cardCoverAspectViewPayload?.config) {
-				throw new Error('Expected card cover aspect config to be persisted');
-			}
-			if (!cardCoverFitViewPayload?.config) {
-				throw new Error('Expected card cover fit config to be persisted');
-			}
-			if (!cardCoverPositionViewPayload?.config) {
-				throw new Error('Expected card cover position config to be persisted');
-			}
-			if (!cardCompactLayoutViewPayload?.config) {
-				throw new Error('Expected card compact layout config to be persisted');
-			}
-			if (!cardListLayoutViewPayload?.config) {
-				throw new Error('Expected card list layout config to be persisted');
-			}
-				if (!cardHideEmptyFieldsViewPayload?.config) {
-					throw new Error('Expected card hide empty fields config to be persisted');
-				}
-					if (!cardShowTimestampsViewPayload?.config) {
-						throw new Error('Expected card show timestamps config to be persisted');
-					}
-					if (!cardShowRecordIdViewPayload?.config) {
-						throw new Error('Expected card show record ID config to be persisted');
-					}
-					if (!cardFieldOrderViewPayload?.config) {
-				throw new Error('Expected card field order config to be persisted');
-			}
-			if (!cardFieldLimitViewPayload?.config) {
-				throw new Error('Expected card field limit config to be persisted');
-			}
-			if (!timelineLayoutViewPayload?.config) {
-				throw new Error('Expected timeline layout config to be persisted');
-			}
-			if (!timelineEventSourceViewPayload?.config) {
-				throw new Error('Expected timeline event source config to be persisted');
-			}
-			if (!timelineEventActorViewPayload?.config) {
-				throw new Error('Expected timeline event actor filter config to be persisted');
-			}
-			if (!timelineEventAggregateViewPayload?.config) {
-				throw new Error('Expected timeline event aggregate filter config to be persisted');
-			}
-			if (!timelineEventSearchViewPayload?.config) {
-				throw new Error('Expected timeline event search config to be persisted');
-			}
-			if (!timelineEventDateWindowViewPayload?.config) {
-				throw new Error('Expected timeline event date window config to be persisted');
-			}
-			if (!timelineEventDayQuickFilterViewPayload?.config) {
-				throw new Error('Expected timeline event day quick filter config to be persisted');
-			}
-			if (!cardGroupViewPayload?.config) {
-				throw new Error('Expected card group_by config to be persisted');
-			}
-			if (!cardGroupFilterViewPayload?.config) {
-				throw new Error('Expected card group filter config to be persisted');
-			}
+		if (!kanbanWipViewPayload?.config) {
+			throw new Error('Expected kanban WIP policy and swimlane config to be persisted');
+		}
+		if (!pivotViewPayload?.config) {
+			throw new Error('Expected pivot config to be persisted');
+		}
+		if (!pivotSortViewPayload?.config) {
+			throw new Error('Expected pivot sort config to be persisted');
+		}
+		if (!pivotSwapAxesViewPayload?.config) {
+			throw new Error('Expected pivot swap axes config to be persisted');
+		}
+		if (!pivotTotalsViewPayload?.config) {
+			throw new Error('Expected pivot totals config to be persisted');
+		}
+		if (!pivotValueDisplayViewPayload?.config) {
+			throw new Error('Expected pivot value display config to be persisted');
+		}
+		if (!pivotEmptyBucketsViewPayload?.config) {
+			throw new Error('Expected pivot empty buckets config to be persisted');
+		}
+		if (!pivotShowCountsViewPayload?.config) {
+			throw new Error('Expected pivot show counts config to be persisted');
+		}
+		if (!pivotHeatmapViewPayload?.config) {
+			throw new Error('Expected pivot heatmap config to be persisted');
+		}
+		if (!pivotHideZeroBucketsViewPayload?.config) {
+			throw new Error('Expected pivot hide zero buckets config to be persisted');
+		}
+		if (!pivotRowLimitViewPayload?.config) {
+			throw new Error('Expected pivot row limit config to be persisted');
+		}
+		if (!pivotColumnLimitViewPayload?.config) {
+			throw new Error('Expected pivot column limit config to be persisted');
+		}
+		if (!ganttViewPayload?.config) {
+			throw new Error('Expected gantt config to be persisted');
+		}
+		if (!ganttRecordPayload) {
+			throw new Error('Expected gantt record date update payload');
+		}
+		if (!ganttResizeRecordPayload) {
+			throw new Error('Expected gantt resize record update payload');
+		}
+		if (!calendarEndResizeRecordPayload) {
+			throw new Error('Expected calendar end date resize update payload');
+		}
+		if (!calendarRangeViewPayload?.config) {
+			throw new Error('Expected calendar range and resource config to be persisted');
+		}
+		if (!calendarExceptionViewPayload?.config) {
+			throw new Error('Expected calendar exception config to be persisted');
+		}
+		if (!calendarWeeklyViewPayload?.config || !calendarMonthlyViewPayload?.config) {
+			throw new Error('Expected calendar weekly and monthly recurrence configs to be persisted');
+		}
+		if (!calendarFocusNextViewPayload?.config || !calendarFocusPreviousViewPayload?.config) {
+			throw new Error('Expected calendar focus date navigation configs to be persisted');
+		}
+		if (!calendarWorkweekViewPayload?.config) {
+			throw new Error('Expected calendar workweek config to be persisted');
+		}
+		if (!calendarAgendaViewPayload?.config) {
+			throw new Error('Expected calendar agenda layout config to be persisted');
+		}
+		if (!calendarHideEmptyDaysViewPayload?.config) {
+			throw new Error('Expected calendar hide empty days config to be persisted');
+		}
+		if (!calendarSeriesRecordPayload) {
+			throw new Error('Expected calendar recurring series update payload');
+		}
+		if (!cardLayoutViewPayload?.config) {
+			throw new Error('Expected card layout config to be persisted');
+		}
+		if (!cardCoverAspectViewPayload?.config) {
+			throw new Error('Expected card cover aspect config to be persisted');
+		}
+		if (!cardCoverFitViewPayload?.config) {
+			throw new Error('Expected card cover fit config to be persisted');
+		}
+		if (!cardCoverPositionViewPayload?.config) {
+			throw new Error('Expected card cover position config to be persisted');
+		}
+		if (!cardCompactLayoutViewPayload?.config) {
+			throw new Error('Expected card compact layout config to be persisted');
+		}
+		if (!cardListLayoutViewPayload?.config) {
+			throw new Error('Expected card list layout config to be persisted');
+		}
+		if (!cardHideEmptyFieldsViewPayload?.config) {
+			throw new Error('Expected card hide empty fields config to be persisted');
+		}
+		if (!cardShowTimestampsViewPayload?.config) {
+			throw new Error('Expected card show timestamps config to be persisted');
+		}
+		if (!cardShowRecordIdViewPayload?.config) {
+			throw new Error('Expected card show record ID config to be persisted');
+		}
+		if (!cardFieldOrderViewPayload?.config) {
+			throw new Error('Expected card field order config to be persisted');
+		}
+		if (!cardFieldLimitViewPayload?.config) {
+			throw new Error('Expected card field limit config to be persisted');
+		}
+		if (!timelineLayoutViewPayload?.config) {
+			throw new Error('Expected timeline layout config to be persisted');
+		}
+		if (!timelineEventSourceViewPayload?.config) {
+			throw new Error('Expected timeline event source config to be persisted');
+		}
+		if (!timelineEventActorViewPayload?.config) {
+			throw new Error('Expected timeline event actor filter config to be persisted');
+		}
+		if (!timelineEventAggregateViewPayload?.config) {
+			throw new Error('Expected timeline event aggregate filter config to be persisted');
+		}
+		if (!timelineEventSearchViewPayload?.config) {
+			throw new Error('Expected timeline event search config to be persisted');
+		}
+		if (!timelineEventDateWindowViewPayload?.config) {
+			throw new Error('Expected timeline event date window config to be persisted');
+		}
+		if (!timelineEventDayQuickFilterViewPayload?.config) {
+			throw new Error('Expected timeline event day quick filter config to be persisted');
+		}
+		if (!cardGroupViewPayload?.config) {
+			throw new Error('Expected card group_by config to be persisted');
+		}
+		if (!cardGroupFilterViewPayload?.config) {
+			throw new Error('Expected card group filter config to be persisted');
+		}
 		if (
 			updatedViewPayloads.length < 2 ||
 			updatedViewPayloads[1].expected_updated_at !== new Date(Date.parse(now) + 1000).toISOString()
@@ -6298,7 +6502,9 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 					request.rows.includes('record-order-line-comparison')
 			)
 		) {
-			throw new Error('Expected record list to use saved view nested filter expression on the server mock');
+			throw new Error(
+				'Expected record list to use saved view nested filter expression on the server mock'
+			);
 		}
 		if (
 			!orderLineExportRequests.some(
@@ -6310,7 +6516,9 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 					request.rows.includes('record-order-line-comparison')
 			)
 		) {
-			throw new Error('Expected current view JSON export to use API format=json with saved view rules');
+			throw new Error(
+				'Expected current view JSON export to use API format=json with saved view rules'
+			);
 		}
 		if (
 			!orderLineExportRequests.some(
@@ -6322,7 +6530,9 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 					!request.rows.includes('record-order-line-comparison')
 			)
 		) {
-			throw new Error('Expected current view export to use saved view nested filter expression on the server mock');
+			throw new Error(
+				'Expected current view export to use saved view nested filter expression on the server mock'
+			);
 		}
 		if (memberPermissionPolicy.record_scope !== 'owned') {
 			throw new Error('Expected member record ownership scope to be persisted');
@@ -6369,136 +6579,175 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 		) {
 			throw new Error('Expected calendar shift payloads to move and restore the record date range');
 		}
-		if (!updatedRecordPayloads.some((payload) => payload?.source?.origin === 'card' && payload?.values?.status === 'served')) {
+		if (
+			!updatedRecordPayloads.some(
+				(payload) => payload?.source?.origin === 'card' && payload?.values?.status === 'served'
+			)
+		) {
 			throw new Error('Expected card payload to update the record status');
 		}
-		if (!updatedRecordPayloads.some((payload) => payload?.source?.origin === 'timeline' && payload?.values?.status === 'sent_to_kitchen')) {
+		if (
+			!updatedRecordPayloads.some(
+				(payload) =>
+					payload?.source?.origin === 'timeline' && payload?.values?.status === 'sent_to_kitchen'
+			)
+		) {
 			throw new Error('Expected timeline payload to update the record status');
 		}
 		if (!createdLinkPayload || createdLinkPayload.relation_type !== 'parent_child') {
 			throw new Error('Expected child link payload');
 		}
-			if (
-				createdRecordPayload?.values?.guest_email !== 'guest@example.test' ||
-					createdRecordPayload?.values?.guest_phone !== '+1 555 0100' ||
-					createdRecordPayload?.values?.delivery_address !== '123 Test Ave' ||
-						createdRecordPayload?.values?.delivery_location !== '40.7128,-74.0060' ||
-						createdRecordPayload?.values?.service_rating !== '4' ||
-						createdRecordPayload?.values?.prep_progress !== '75' ||
-						createdRecordPayload?.values?.scan_code !== 'SKU-2026-0001' ||
-						typeof createdRecordPayload?.values?.guest_signature !== 'string' ||
-						!createdRecordPayload.values.guest_signature.startsWith('data:image/png') ||
-						createdRecordPayload?.values?.service_status !== 'normal' ||
-						createdRecordPayload?.values?.assignee?.user_id !== 'user-smoke' ||
-						createdRecordPayload?.values?.assignee?.name !== 'Smoke Admin' ||
-						createdRecordPayload?.values?.assignee?.email !== 'smoke@example.com'
-					) {
-						throw new Error('Expected contact, location, rating, progress, scan, signature, option config, and member field values in created record payload');
-					}
-	const relationField = orderLineForm.schema.fields.find((field) => field.field_id === 'fld_order_id');
-	if (
-		!relationField?.relation ||
-		relationField.relation.form_key !== 'order' ||
-		relationField.relation.relation_type !== 'parent_child' ||
-		relationField.relation.relation_key !== 'order_lines'
-	) {
-		throw new Error('Expected relation metadata to be saved');
-	}
-	const formulaField = orderLineForm.schema.fields.find((field) => field.key === 'formula_11');
-	if (
-		!formulaField?.formula ||
-		formulaField.formula.op !== 'multiply' ||
-		!Array.isArray(formulaField.formula.args) ||
-		formulaField.formula.args.join(',') !== 'quantity,unit_price'
-	) {
-		throw new Error('Expected formula metadata to be saved');
-	}
-	const unitPriceField = orderLineForm.schema.fields.find((field) => field.field_id === 'fld_unit_price');
-	if (unitPriceField?.formula) {
-		throw new Error('Expected ordinary amount field to stay free of default formula metadata');
-	}
-	const statusField = orderLineForm.schema.fields.find((field) => field.key === 'status');
-	if (
-		statusField?.option_colors?.draft !== '#64748b' ||
-		statusField?.option_colors?.sent_to_kitchen !== '#f59e0b' ||
-		statusField?.option_colors?.served !== '#16a34a' ||
-		statusField?.option_colors?.cancelled !== '#dc2626'
-	) {
-		throw new Error('Expected option color metadata to be saved');
-	}
-	const optionColorField = orderLineForm.schema.fields.find((field) => field.key === 'service_status');
-	if (
-		optionColorField?.option_colors?.normal !== '#2563eb' ||
-		optionColorField?.option_colors?.priority !== '#dc2626' ||
-		optionColorField?.option_colors?.legacy !== '#64748b'
-	) {
-		throw new Error('Expected designer option color metadata to be saved');
-	}
-	if (optionColorField.default_value !== 'normal') {
-		throw new Error('Expected designer default option metadata to be saved');
-	}
-	if (!Array.isArray(optionColorField?.option_disabled) || !optionColorField.option_disabled.includes('legacy')) {
-		throw new Error('Expected designer disabled option metadata to be saved');
-	}
-	if (!Array.isArray(optionColorField?.option_archived) || !optionColorField.option_archived.includes('priority')) {
-		throw new Error('Expected designer archived option metadata to be saved');
-	}
-	if (
-		optionColorField?.option_descriptions?.normal !== 'Standard guest service' ||
-		optionColorField?.option_descriptions?.priority !== 'Requires manager approval' ||
-		optionColorField?.option_groups?.normal !== 'Service' ||
-		optionColorField?.option_groups?.priority !== 'Escalated'
-	) {
-		throw new Error('Expected designer option description/group metadata to be saved');
-	}
-	const conditionalSignatureField = orderLineForm.schema.fields.find((field) => field.key === 'guest_signature');
-	if (
-		conditionalSignatureField?.conditional?.read_only_when?.logic !== 'all' ||
-		!Array.isArray(conditionalSignatureField.conditional.read_only_when.conditions) ||
-		conditionalSignatureField.conditional.read_only_when.conditions.length !== 2 ||
-		conditionalSignatureField.conditional.read_only_when.conditions[0]?.field !== 'service_status' ||
-		conditionalSignatureField.conditional.read_only_when.conditions[0]?.operator !== 'not_equals' ||
-		conditionalSignatureField.conditional.read_only_when.conditions[0]?.value !== 'priority' ||
-		conditionalSignatureField.conditional.read_only_when.conditions[1]?.field !== 'scan_code' ||
-		conditionalSignatureField.conditional.read_only_when.conditions[1]?.operator !== 'contains' ||
-		conditionalSignatureField.conditional.read_only_when.conditions[1]?.value !== 'SKU-2026'
-	) {
-		throw new Error('Expected conditional read-only multi-condition operator metadata to be saved');
-	}
-	const conditionalHiddenField = orderLineForm.schema.fields.find((field) => field.key === 'vip_note');
-	if (
-		conditionalHiddenField?.conditional?.hidden_when?.logic !== 'any' ||
-		!Array.isArray(conditionalHiddenField.conditional.hidden_when.conditions) ||
-		conditionalHiddenField.conditional.hidden_when.conditions.length !== 2 ||
-		conditionalHiddenField.conditional.hidden_when.conditions[0]?.field !== 'service_status' ||
-		conditionalHiddenField.conditional.hidden_when.conditions[0]?.equals !== 'normal' ||
-		conditionalHiddenField.conditional.hidden_when.conditions[1]?.field !== 'service_rating' ||
-		conditionalHiddenField.conditional.hidden_when.conditions[1]?.operator !== 'gte' ||
-		conditionalHiddenField.conditional.hidden_when.conditions[1]?.value !== '4'
-	) {
-		throw new Error('Expected conditional hidden multi-condition operator metadata to be saved');
-	}
-	const childTableField = orderLineForm.schema.fields.find((field) => field.key === 'print_jobs');
-	if (
-		childTableField?.type !== 'child_table' ||
-		childTableField?.relation?.target_type !== 'form_record' ||
-		childTableField.relation.form_key !== 'print_job' ||
-		childTableField.relation.relation_key !== 'line_print_jobs' ||
-		childTableField.relation.relation_type !== 'parent_child' ||
-		childTableField.relation.display_field !== 'job_type'
-	) {
-		throw new Error('Expected child_table relation metadata to be saved');
-	}
+		if (
+			createdRecordPayload?.values?.guest_email !== 'guest@example.test' ||
+			createdRecordPayload?.values?.guest_phone !== '+1 555 0100' ||
+			createdRecordPayload?.values?.delivery_address !== '123 Test Ave' ||
+			createdRecordPayload?.values?.delivery_location !== '40.7128,-74.0060' ||
+			createdRecordPayload?.values?.service_rating !== '4' ||
+			createdRecordPayload?.values?.prep_progress !== '75' ||
+			createdRecordPayload?.values?.scan_code !== 'SKU-2026-0001' ||
+			typeof createdRecordPayload?.values?.guest_signature !== 'string' ||
+			!createdRecordPayload.values.guest_signature.startsWith('data:image/png') ||
+			createdRecordPayload?.values?.service_status !== 'normal' ||
+			createdRecordPayload?.values?.assignee?.user_id !== 'user-smoke' ||
+			createdRecordPayload?.values?.assignee?.name !== 'Smoke Admin' ||
+			createdRecordPayload?.values?.assignee?.email !== 'smoke@example.com'
+		) {
+			throw new Error(
+				'Expected contact, location, rating, progress, scan, signature, option config, and member field values in created record payload'
+			);
+		}
+		const relationField = orderLineForm.schema.fields.find(
+			(field) => field.field_id === 'fld_order_id'
+		);
+		if (
+			!relationField?.relation ||
+			relationField.relation.form_key !== 'order' ||
+			relationField.relation.relation_type !== 'parent_child' ||
+			relationField.relation.relation_key !== 'order_lines'
+		) {
+			throw new Error('Expected relation metadata to be saved');
+		}
+		const formulaField = orderLineForm.schema.fields.find((field) => field.key === 'formula_11');
+		if (
+			!formulaField?.formula ||
+			formulaField.formula.op !== 'multiply' ||
+			!Array.isArray(formulaField.formula.args) ||
+			formulaField.formula.args.join(',') !== 'quantity,unit_price'
+		) {
+			throw new Error('Expected formula metadata to be saved');
+		}
+		const unitPriceField = orderLineForm.schema.fields.find(
+			(field) => field.field_id === 'fld_unit_price'
+		);
+		if (unitPriceField?.formula) {
+			throw new Error('Expected ordinary amount field to stay free of default formula metadata');
+		}
+		const statusField = orderLineForm.schema.fields.find((field) => field.key === 'status');
+		if (
+			statusField?.option_colors?.draft !== '#64748b' ||
+			statusField?.option_colors?.sent_to_kitchen !== '#f59e0b' ||
+			statusField?.option_colors?.served !== '#16a34a' ||
+			statusField?.option_colors?.cancelled !== '#dc2626'
+		) {
+			throw new Error('Expected option color metadata to be saved');
+		}
+		const optionColorField = orderLineForm.schema.fields.find(
+			(field) => field.key === 'service_status'
+		);
+		if (
+			optionColorField?.option_colors?.normal !== '#2563eb' ||
+			optionColorField?.option_colors?.priority !== '#dc2626' ||
+			optionColorField?.option_colors?.legacy !== '#64748b'
+		) {
+			throw new Error('Expected designer option color metadata to be saved');
+		}
+		if (optionColorField.default_value !== 'normal') {
+			throw new Error('Expected designer default option metadata to be saved');
+		}
+		if (
+			!Array.isArray(optionColorField?.option_disabled) ||
+			!optionColorField.option_disabled.includes('legacy')
+		) {
+			throw new Error('Expected designer disabled option metadata to be saved');
+		}
+		if (
+			!Array.isArray(optionColorField?.option_archived) ||
+			!optionColorField.option_archived.includes('priority')
+		) {
+			throw new Error('Expected designer archived option metadata to be saved');
+		}
+		if (
+			optionColorField?.option_descriptions?.normal !== 'Standard guest service' ||
+			optionColorField?.option_descriptions?.priority !== 'Requires manager approval' ||
+			optionColorField?.option_groups?.normal !== 'Service' ||
+			optionColorField?.option_groups?.priority !== 'Escalated'
+		) {
+			throw new Error('Expected designer option description/group metadata to be saved');
+		}
+		const conditionalSignatureField = orderLineForm.schema.fields.find(
+			(field) => field.key === 'guest_signature'
+		);
+		if (
+			conditionalSignatureField?.conditional?.read_only_when?.logic !== 'all' ||
+			!Array.isArray(conditionalSignatureField.conditional.read_only_when.conditions) ||
+			conditionalSignatureField.conditional.read_only_when.conditions.length !== 2 ||
+			conditionalSignatureField.conditional.read_only_when.conditions[0]?.field !==
+				'service_status' ||
+			conditionalSignatureField.conditional.read_only_when.conditions[0]?.operator !==
+				'not_equals' ||
+			conditionalSignatureField.conditional.read_only_when.conditions[0]?.value !== 'priority' ||
+			conditionalSignatureField.conditional.read_only_when.conditions[1]?.field !== 'scan_code' ||
+			conditionalSignatureField.conditional.read_only_when.conditions[1]?.operator !== 'contains' ||
+			conditionalSignatureField.conditional.read_only_when.conditions[1]?.value !== 'SKU-2026'
+		) {
+			throw new Error(
+				'Expected conditional read-only multi-condition operator metadata to be saved'
+			);
+		}
+		const conditionalHiddenField = orderLineForm.schema.fields.find(
+			(field) => field.key === 'vip_note'
+		);
+		if (
+			conditionalHiddenField?.conditional?.hidden_when?.logic !== 'any' ||
+			!Array.isArray(conditionalHiddenField.conditional.hidden_when.conditions) ||
+			conditionalHiddenField.conditional.hidden_when.conditions.length !== 2 ||
+			conditionalHiddenField.conditional.hidden_when.conditions[0]?.field !== 'service_status' ||
+			conditionalHiddenField.conditional.hidden_when.conditions[0]?.equals !== 'normal' ||
+			conditionalHiddenField.conditional.hidden_when.conditions[1]?.field !== 'service_rating' ||
+			conditionalHiddenField.conditional.hidden_when.conditions[1]?.operator !== 'gte' ||
+			conditionalHiddenField.conditional.hidden_when.conditions[1]?.value !== '4'
+		) {
+			throw new Error('Expected conditional hidden multi-condition operator metadata to be saved');
+		}
+		const childTableField = orderLineForm.schema.fields.find((field) => field.key === 'print_jobs');
+		if (
+			childTableField?.type !== 'child_table' ||
+			childTableField?.relation?.target_type !== 'form_record' ||
+			childTableField.relation.form_key !== 'print_job' ||
+			childTableField.relation.relation_key !== 'line_print_jobs' ||
+			childTableField.relation.relation_type !== 'parent_child' ||
+			childTableField.relation.display_field !== 'job_type'
+		) {
+			throw new Error('Expected child_table relation metadata to be saved');
+		}
 		const emailField = orderLineForm.schema.fields.find((field) => field.key === 'guest_email');
 		const phoneField = orderLineForm.schema.fields.find((field) => field.key === 'guest_phone');
-		const addressField = orderLineForm.schema.fields.find((field) => field.key === 'delivery_address');
-			const locationField = orderLineForm.schema.fields.find((field) => field.key === 'delivery_location');
-			const ratingField = orderLineForm.schema.fields.find((field) => field.key === 'service_rating');
-				const progressField = orderLineForm.schema.fields.find((field) => field.key === 'prep_progress');
-				const scanField = orderLineForm.schema.fields.find((field) => field.key === 'scan_code');
-				const signatureField = orderLineForm.schema.fields.find((field) => field.key === 'guest_signature');
-				const autonumberField = orderLineForm.schema.fields.find((field) => field.key === 'ticket_no');
-				const memberField = orderLineForm.schema.fields.find((field) => field.key === 'assignee');
+		const addressField = orderLineForm.schema.fields.find(
+			(field) => field.key === 'delivery_address'
+		);
+		const locationField = orderLineForm.schema.fields.find(
+			(field) => field.key === 'delivery_location'
+		);
+		const ratingField = orderLineForm.schema.fields.find((field) => field.key === 'service_rating');
+		const progressField = orderLineForm.schema.fields.find(
+			(field) => field.key === 'prep_progress'
+		);
+		const scanField = orderLineForm.schema.fields.find((field) => field.key === 'scan_code');
+		const signatureField = orderLineForm.schema.fields.find(
+			(field) => field.key === 'guest_signature'
+		);
+		const autonumberField = orderLineForm.schema.fields.find((field) => field.key === 'ticket_no');
+		const memberField = orderLineForm.schema.fields.find((field) => field.key === 'assignee');
 		if (emailField?.type !== 'email' || phoneField?.type !== 'phone') {
 			throw new Error('Expected phone/email field metadata to be saved');
 		}
@@ -6520,28 +6769,30 @@ await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 		if (memberField?.type !== 'member') {
 			throw new Error('Expected member field metadata to be saved');
 		}
-	const attachmentField = orderLineForm.schema.fields.find((field) => field.key === 'attachment_12');
-	if (
-		!attachmentField?.attachment ||
-		attachmentField.attachment.max_size_mb !== 12 ||
-		!Array.isArray(attachmentField.attachment.accept) ||
-		attachmentField.attachment.accept.join(',') !== 'application/pdf,image/png'
-	) {
-		throw new Error('Expected attachment metadata to be saved');
-	}
-	const mobileDom = await runChromium(
-		`http://127.0.0.1:${port}/smoke-auth-seed?mode=mobile`,
-		'390,844',
-		mobileScreenshot,
-		10000
-	);
+		const attachmentField = orderLineForm.schema.fields.find(
+			(field) => field.key === 'attachment_12'
+		);
+		if (
+			!attachmentField?.attachment ||
+			attachmentField.attachment.max_size_mb !== 12 ||
+			!Array.isArray(attachmentField.attachment.accept) ||
+			attachmentField.attachment.accept.join(',') !== 'application/pdf,image/png'
+		) {
+			throw new Error('Expected attachment metadata to be saved');
+		}
+		const mobileDom = await runChromium(
+			`http://127.0.0.1:${port}/smoke-auth-seed?mode=mobile`,
+			'390,844',
+			mobileScreenshot,
+			10000
+		);
 		if (!mobileDom.includes('data-forms-mobile-smoke="done"')) {
 			throw new Error(`Forms UI mobile smoke failed. DOM excerpt:\n${mobileDom.slice(-12000)}`);
 		}
-	console.log('Forms UI browser smoke passed');
-	if (screenshotDir) {
-		console.log(`Forms UI screenshots: ${desktopScreenshot}, ${mobileScreenshot}`);
-	}
+		console.log('Forms UI browser smoke passed');
+		if (screenshotDir) {
+			console.log(`Forms UI screenshots: ${desktopScreenshot}, ${mobileScreenshot}`);
+		}
 	}
 } finally {
 	server.close();

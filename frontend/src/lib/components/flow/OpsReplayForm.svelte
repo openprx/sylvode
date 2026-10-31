@@ -12,8 +12,8 @@
 		type ReplayForm,
 		type ReplayOutcomeView,
 		type ReplaySnapshot
-	} from '$lib/flow/operations-service';
-	import type { FlowReplayMode } from '$lib/api/flow';
+	} from '#lib/flow/operations-service.js';
+	import type { FlowReplayMode } from '#lib/api/flow.js';
 
 	interface Props {
 		replay: DeliveryReplay;

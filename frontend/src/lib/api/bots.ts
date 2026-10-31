@@ -1,5 +1,5 @@
 import { apiClient, type ApiResult } from './client';
-import type { BotTransportSurface } from '$lib/bots/transport-surfaces';
+import type { BotTransportSurface } from '#lib/bots/transport-surfaces.js';
 
 export interface Bot {
 	id: string;

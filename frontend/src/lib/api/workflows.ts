@@ -59,10 +59,15 @@ export const workflowsApi = {
 	},
 
 	listByWorkspace(workspaceId: string): Promise<ApiResult<PaginatedData<WorkflowSummary>>> {
-		return apiClient.get<PaginatedData<WorkflowSummary>>(`/api/v1/workspaces/${workspaceId}/workflows`);
+		return apiClient.get<PaginatedData<WorkflowSummary>>(
+			`/api/v1/workspaces/${workspaceId}/workflows`
+		);
 	},
 
-	create(workspaceId: string, data: { name: string; description?: string }): Promise<ApiResult<WorkflowDetail>> {
+	create(
+		workspaceId: string,
+		data: { name: string; description?: string }
+	): Promise<ApiResult<WorkflowDetail>> {
 		return apiClient.post<WorkflowDetail>(`/api/v1/workspaces/${workspaceId}/workflows`, data);
 	},
 
@@ -70,7 +75,10 @@ export const workflowsApi = {
 		return apiClient.get<WorkflowDetail>(`/api/v1/workflows/${workflowId}`);
 	},
 
-	update(workflowId: string, data: { name?: string; description?: string }): Promise<ApiResult<WorkflowDetail>> {
+	update(
+		workflowId: string,
+		data: { name?: string; description?: string }
+	): Promise<ApiResult<WorkflowDetail>> {
 		return apiClient.put<WorkflowDetail>(`/api/v1/workflows/${workflowId}`, data);
 	},
 
@@ -80,14 +88,27 @@ export const workflowsApi = {
 
 	createState(
 		workflowId: string,
-		data: { key: string; display_name: string; category: string; color?: string; is_initial?: boolean; is_terminal?: boolean }
+		data: {
+			key: string;
+			display_name: string;
+			category: string;
+			color?: string;
+			is_initial?: boolean;
+			is_terminal?: boolean;
+		}
 	): Promise<ApiResult<WorkflowStateResponse>> {
 		return apiClient.post<WorkflowStateResponse>(`/api/v1/workflows/${workflowId}/states`, data);
 	},
 
 	updateState(
 		stateId: string,
-		data: { display_name?: string; category?: string; color?: string; is_initial?: boolean; is_terminal?: boolean }
+		data: {
+			display_name?: string;
+			category?: string;
+			color?: string;
+			is_initial?: boolean;
+			is_terminal?: boolean;
+		}
 	): Promise<ApiResult<WorkflowStateResponse>> {
 		return apiClient.put<WorkflowStateResponse>(`/api/v1/workflow-states/${stateId}`, data);
 	},
@@ -97,10 +118,14 @@ export const workflowsApi = {
 	},
 
 	reorderStates(workflowId: string, stateIds: string[]): Promise<ApiResult<null>> {
-		return apiClient.put<null>(`/api/v1/workflows/${workflowId}/states/reorder`, { state_ids: stateIds });
+		return apiClient.put<null>(`/api/v1/workflows/${workflowId}/states/reorder`, {
+			state_ids: stateIds
+		});
 	},
 
 	setProjectWorkflow(projectId: string, workflowId: string | null): Promise<ApiResult<null>> {
-		return apiClient.put<null>(`/api/v1/projects/${projectId}/workflow`, { workflow_id: workflowId });
+		return apiClient.put<null>(`/api/v1/projects/${projectId}/workflow`, {
+			workflow_id: workflowId
+		});
 	}
 };

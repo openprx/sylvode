@@ -11,7 +11,13 @@
 export const WEBHOOK_EVENT_GROUPS = [
 	{
 		group: 'issue',
-		events: ['issue.created', 'issue.updated', 'issue.assigned', 'issue.deleted', 'issue.state_changed']
+		events: [
+			'issue.created',
+			'issue.updated',
+			'issue.assigned',
+			'issue.deleted',
+			'issue.state_changed'
+		]
 	},
 	{ group: 'comment', events: ['comment.created', 'comment.updated', 'comment.deleted'] },
 	{ group: 'label', events: ['label.added', 'label.removed'] },
@@ -23,7 +29,9 @@ export type WebhookEventGroup = (typeof WEBHOOK_EVENT_GROUPS)[number]['group'];
 export type WebhookEvent = (typeof WEBHOOK_EVENT_GROUPS)[number]['events'][number];
 
 /** Every subscribable event, in the API's order. */
-export const WEBHOOK_EVENTS: readonly WebhookEvent[] = WEBHOOK_EVENT_GROUPS.flatMap((entry) => entry.events);
+export const WEBHOOK_EVENTS: readonly WebhookEvent[] = WEBHOOK_EVENT_GROUPS.flatMap(
+	(entry) => entry.events
+);
 
 export function isWebhookEvent(value: string): value is WebhookEvent {
 	return (WEBHOOK_EVENTS as readonly string[]).includes(value);
@@ -43,5 +51,7 @@ export function webhookEventGroupKey(group: WebhookEventGroup): string {
  * exactly this (`tests/webhook-events.test.ts`).
  */
 export function toggleWebhookEvent(selected: readonly string[], event: string): string[] {
-	return selected.includes(event) ? selected.filter((value) => value !== event) : [...selected, event];
+	return selected.includes(event)
+		? selected.filter((value) => value !== event)
+		: [...selected, event];
 }

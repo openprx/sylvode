@@ -1,23 +1,23 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
-	import { issuesApi, type Issue } from '$lib/api/issues';
+	import { issuesApi, type Issue } from '#lib/api/issues.js';
 	import {
 		sprintsApi,
 		type CreateSprintData,
 		type Sprint,
 		type SprintStatus,
 		type UpdateSprintData
-	} from '$lib/api/sprints';
-	import ProgressBar from '$lib/components/ProgressBar.svelte';
-	import { toast } from '$lib/stores/toast';
-	import { requireRouteParam } from '$lib/utils/route-params';
+	} from '#lib/api/sprints.js';
+	import ProgressBar from '#lib/components/ProgressBar.svelte';
+	import { toast } from '#lib/stores/toast.js';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
 
-	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
-	const projectId = requireRouteParam($page.params.projectId, 'projectId');
+	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
+	const projectId = requireRouteParam(page.params.projectId, 'projectId');
 
 	let loading = $state(true);
 	let saving = $state(false);
@@ -242,7 +242,9 @@
 	}
 
 	async function removeSprint(sprint: Sprint) {
-		const confirmed = window.confirm(get(t)('cycles.deleteConfirm', { values: { name: sprint.name } }));
+		const confirmed = window.confirm(
+			get(t)('cycles.deleteConfirm', { values: { name: sprint.name } })
+		);
 		if (!confirmed) return;
 
 		const response = await sprintsApi.delete(sprint.id);
@@ -271,13 +273,19 @@
 </script>
 
 <div class="mx-auto max-w-7xl space-y-6">
-	<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5">
+	<div
+		class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5"
+	>
 		<div class="mb-4 text-sm text-slate-600 dark:text-slate-300">
 			<a href="/workspace" class="hover:text-blue-600">{$t('nav.myWorkspace')}</a>
 			<span class="mx-1 text-slate-400">/</span>
-			<a href="/workspace/{workspaceId}/projects" class="hover:text-blue-600">{$t('project.title')}</a>
+			<a href="/workspace/{workspaceId}/projects" class="hover:text-blue-600"
+				>{$t('project.title')}</a
+			>
 			<span class="mx-1 text-slate-400">/</span>
-			<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:text-blue-600">{$t('project.detail')}</a>
+			<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:text-blue-600"
+				>{$t('project.detail')}</a
+			>
 			<span class="mx-1 text-slate-400">/</span>
 			<span class="font-medium text-slate-900 dark:text-slate-100">{$t('cycles.title')}</span>
 		</div>
@@ -297,52 +305,88 @@
 	</div>
 
 	{#if loading}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-8 text-center text-slate-500 dark:text-slate-400">
-			<div class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"></div>
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-8 text-center text-slate-500 dark:text-slate-400"
+		>
+			<div
+				class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"
+			></div>
 			{$t('cycles.loading')}
 		</div>
 	{:else if errorMessage}
 		<div class="rounded-lg border border-red-200 bg-red-50 p-6 text-center">
 			<p class="mb-3 text-sm text-red-700">{errorMessage}</p>
-			<button onclick={loadData} class="rounded-md bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700">
+			<button
+				onclick={loadData}
+				class="rounded-md bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
+			>
 				{$t('common.retry')}
 			</button>
 		</div>
 	{:else}
 		<section class="space-y-3">
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">{$t('cycles.current')}</h2>
+			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+				{$t('cycles.current')}
+			</h2>
 			{#if activeSprints.length === 0}
-				<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-sm text-slate-500 dark:text-slate-400">{$t('cycles.noActive')}</div>
+				<div
+					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-sm text-slate-500 dark:text-slate-400"
+				>
+					{$t('cycles.noActive')}
+				</div>
 			{:else}
 				<div class="space-y-3">
 					{#each activeSprints as sprint (sprint.id)}
-						<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5">
+						<div
+							class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5"
+						>
 							<div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
 								<div>
-									<h3 class="text-lg font-semibold text-slate-900 dark:text-slate-100">{sprint.name}</h3>
+									<h3 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+										{sprint.name}
+									</h3>
 									<p class="text-sm text-slate-600 dark:text-slate-300">
 										{formatDate(sprint.start_date)} ~ {formatDate(sprint.end_date)}
 									</p>
 								</div>
-								<span class="inline-flex w-fit rounded px-2 py-1 text-xs font-medium {getStatusClass(sprint.status)}">
+								<span
+									class="inline-flex w-fit rounded px-2 py-1 text-xs font-medium {getStatusClass(
+										sprint.status
+									)}"
+								>
 									{getStatusLabel(sprint.status)}
 								</span>
 							</div>
 
 							{#if sprint.goal}
-								<p class="mb-3 text-sm text-slate-700 dark:text-slate-300">{$t('cycles.goal')}: {sprint.goal}</p>
+								<p class="mb-3 text-sm text-slate-700 dark:text-slate-300">
+									{$t('cycles.goal')}: {sprint.goal}
+								</p>
 							{/if}
 
 							<ProgressBar
 								value={sprintProgress[sprint.id]?.percent ?? 0}
-								label={$t('cycles.progressLabel', { values: { done: sprintProgress[sprint.id]?.done ?? 0, total: sprintProgress[sprint.id]?.total ?? 0 } })}
+								label={$t('cycles.progressLabel', {
+									values: {
+										done: sprintProgress[sprint.id]?.done ?? 0,
+										total: sprintProgress[sprint.id]?.total ?? 0
+									}
+								})}
 							/>
-							<div class="mt-4 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3">
-								<p class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-									{$t('cycles.linkedIssues', { values: { count: sprintIssues[sprint.id]?.length ?? 0 } })}
+							<div
+								class="mt-4 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3"
+							>
+								<p
+									class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400"
+								>
+									{$t('cycles.linkedIssues', {
+										values: { count: sprintIssues[sprint.id]?.length ?? 0 }
+									})}
 								</p>
 								{#if (sprintIssues[sprint.id]?.length ?? 0) === 0}
-									<p class="text-sm text-slate-500 dark:text-slate-400">{$t('cycles.noLinkedIssue')}</p>
+									<p class="text-sm text-slate-500 dark:text-slate-400">
+										{$t('cycles.noLinkedIssue')}
+									</p>
 								{:else}
 									<div class="space-y-2">
 										{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
@@ -351,7 +395,9 @@
 												class="block rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm hover:border-blue-200 hover:bg-blue-50"
 											>
 												<p class="font-medium text-slate-900 dark:text-slate-100">{issue.title}</p>
-												<p class="font-mono text-xs text-slate-500 dark:text-slate-400">{formatIssueCode(issue)}</p>
+												<p class="font-mono text-xs text-slate-500 dark:text-slate-400">
+													{formatIssueCode(issue)}
+												</p>
 											</a>
 										{/each}
 									</div>
@@ -379,50 +425,76 @@
 		</section>
 
 		<section class="space-y-3">
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">{$t('cycles.planned')}</h2>
+			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+				{$t('cycles.planned')}
+			</h2>
 			{#if plannedSprints.length === 0}
-				<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-sm text-slate-500 dark:text-slate-400">{$t('cycles.noPlanned')}</div>
+				<div
+					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-sm text-slate-500 dark:text-slate-400"
+				>
+					{$t('cycles.noPlanned')}
+				</div>
 			{:else}
 				<div class="space-y-3">
 					{#each plannedSprints as sprint (sprint.id)}
-						<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5">
+						<div
+							class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5"
+						>
 							<div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
 								<div>
-									<h3 class="text-lg font-semibold text-slate-900 dark:text-slate-100">{sprint.name}</h3>
+									<h3 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+										{sprint.name}
+									</h3>
 									<p class="text-sm text-slate-600 dark:text-slate-300">
 										{formatDate(sprint.start_date)} ~ {formatDate(sprint.end_date)}
 									</p>
 								</div>
-								<span class="inline-flex w-fit rounded px-2 py-1 text-xs font-medium {getStatusClass(sprint.status)}">
+								<span
+									class="inline-flex w-fit rounded px-2 py-1 text-xs font-medium {getStatusClass(
+										sprint.status
+									)}"
+								>
 									{getStatusLabel(sprint.status)}
 								</span>
 							</div>
 
-								{#if sprint.goal}
-									<p class="mb-3 text-sm text-slate-700 dark:text-slate-300">{$t('cycles.goal')}: {sprint.goal}</p>
-								{/if}
-								<div class="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3">
-									<p class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-										{$t('cycles.linkedIssues', { values: { count: sprintIssues[sprint.id]?.length ?? 0 } })}
+							{#if sprint.goal}
+								<p class="mb-3 text-sm text-slate-700 dark:text-slate-300">
+									{$t('cycles.goal')}: {sprint.goal}
+								</p>
+							{/if}
+							<div
+								class="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3"
+							>
+								<p
+									class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400"
+								>
+									{$t('cycles.linkedIssues', {
+										values: { count: sprintIssues[sprint.id]?.length ?? 0 }
+									})}
+								</p>
+								{#if (sprintIssues[sprint.id]?.length ?? 0) === 0}
+									<p class="text-sm text-slate-500 dark:text-slate-400">
+										{$t('cycles.noLinkedIssue')}
 									</p>
-									{#if (sprintIssues[sprint.id]?.length ?? 0) === 0}
-										<p class="text-sm text-slate-500 dark:text-slate-400">{$t('cycles.noLinkedIssue')}</p>
-									{:else}
-										<div class="space-y-2">
-											{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
-												<a
-													href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
-													class="block rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm hover:border-blue-200 hover:bg-blue-50"
-												>
-													<p class="font-medium text-slate-900 dark:text-slate-100">{issue.title}</p>
-													<p class="font-mono text-xs text-slate-500 dark:text-slate-400">{formatIssueCode(issue)}</p>
-												</a>
-											{/each}
-										</div>
-									{/if}
-								</div>
+								{:else}
+									<div class="space-y-2">
+										{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
+											<a
+												href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
+												class="block rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm hover:border-blue-200 hover:bg-blue-50"
+											>
+												<p class="font-medium text-slate-900 dark:text-slate-100">{issue.title}</p>
+												<p class="font-mono text-xs text-slate-500 dark:text-slate-400">
+													{formatIssueCode(issue)}
+												</p>
+											</a>
+										{/each}
+									</div>
+								{/if}
+							</div>
 
-								<div class="mt-4 flex flex-wrap gap-2">
+							<div class="mt-4 flex flex-wrap gap-2">
 								<button
 									onclick={() => openEditModal(sprint)}
 									class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
@@ -448,10 +520,19 @@
 			{/if}
 		</section>
 
-		<section class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5">
+		<section
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5"
+		>
 			<details>
-				<summary class="cursor-pointer list-none text-lg font-semibold text-slate-900 dark:text-slate-100">
-					<span class="inline-flex items-center gap-2">{$t('cycles.completedList')} <span class="text-sm text-slate-500 dark:text-slate-400">({completedSprints.length})</span></span>
+				<summary
+					class="cursor-pointer list-none text-lg font-semibold text-slate-900 dark:text-slate-100"
+				>
+					<span class="inline-flex items-center gap-2"
+						>{$t('cycles.completedList')}
+						<span class="text-sm text-slate-500 dark:text-slate-400"
+							>({completedSprints.length})</span
+						></span
+					>
 				</summary>
 				<div class="mt-4 space-y-3">
 					{#if completedSprints.length === 0}
@@ -466,20 +547,37 @@
 											{formatDate(sprint.start_date)} ~ {formatDate(sprint.end_date)}
 										</p>
 									</div>
-									<span class="inline-flex rounded px-2 py-1 text-xs font-medium {getStatusClass(sprint.status)}">
+									<span
+										class="inline-flex rounded px-2 py-1 text-xs font-medium {getStatusClass(
+											sprint.status
+										)}"
+									>
 										{getStatusLabel(sprint.status)}
 									</span>
 								</div>
 								<ProgressBar
 									value={sprintProgress[sprint.id]?.percent ?? 0}
-									label={$t('cycles.completedLabel', { values: { done: sprintProgress[sprint.id]?.done ?? 0, total: sprintProgress[sprint.id]?.total ?? 0 } })}
+									label={$t('cycles.completedLabel', {
+										values: {
+											done: sprintProgress[sprint.id]?.done ?? 0,
+											total: sprintProgress[sprint.id]?.total ?? 0
+										}
+									})}
 								/>
-								<div class="mt-3 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3">
-									<p class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-										{$t('cycles.linkedIssues', { values: { count: sprintIssues[sprint.id]?.length ?? 0 } })}
+								<div
+									class="mt-3 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3"
+								>
+									<p
+										class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400"
+									>
+										{$t('cycles.linkedIssues', {
+											values: { count: sprintIssues[sprint.id]?.length ?? 0 }
+										})}
 									</p>
 									{#if (sprintIssues[sprint.id]?.length ?? 0) === 0}
-										<p class="text-sm text-slate-500 dark:text-slate-400">{$t('cycles.noLinkedIssue')}</p>
+										<p class="text-sm text-slate-500 dark:text-slate-400">
+											{$t('cycles.noLinkedIssue')}
+										</p>
 									{:else}
 										<div class="space-y-2">
 											{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
@@ -487,8 +585,12 @@
 													href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
 													class="block rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm hover:border-blue-200 hover:bg-blue-50"
 												>
-													<p class="font-medium text-slate-900 dark:text-slate-100">{issue.title}</p>
-													<p class="font-mono text-xs text-slate-500 dark:text-slate-400">{formatIssueCode(issue)}</p>
+													<p class="font-medium text-slate-900 dark:text-slate-100">
+														{issue.title}
+													</p>
+													<p class="font-mono text-xs text-slate-500 dark:text-slate-400">
+														{formatIssueCode(issue)}
+													</p>
 												</a>
 											{/each}
 										</div>
@@ -505,21 +607,33 @@
 
 {#if showCreateModal}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-		<div class="w-full max-w-lg rounded-lg bg-white dark:bg-slate-900 p-6 shadow-xl dark:shadow-slate-900/50">
-			<h2 class="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-100">{$t('cycles.create')}</h2>
+		<div
+			class="w-full max-w-lg rounded-lg bg-white dark:bg-slate-900 p-6 shadow-xl dark:shadow-slate-900/50"
+		>
+			<h2 class="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-100">
+				{$t('cycles.create')}
+			</h2>
 			<div class="space-y-4">
 				<div>
-					<label for="create-name" class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('cycles.name')}</label>
-						<input
-							id="create-name"
-							type="text"
-							bind:value={createForm.name}
-							placeholder={$t('cycles.namePlaceholder')}
-							class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-						/>
+					<label
+						for="create-name"
+						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						>{$t('cycles.name')}</label
+					>
+					<input
+						id="create-name"
+						type="text"
+						bind:value={createForm.name}
+						placeholder={$t('cycles.namePlaceholder')}
+						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+					/>
 				</div>
 				<div>
-					<label for="create-goal" class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('cycles.goal')}</label>
+					<label
+						for="create-goal"
+						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						>{$t('cycles.goal')}</label
+					>
 					<textarea
 						id="create-goal"
 						bind:value={createForm.goal}
@@ -530,7 +644,11 @@
 				</div>
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 					<div>
-						<label for="create-start-date" class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('cycles.startDate')}</label>
+						<label
+							for="create-start-date"
+							class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+							>{$t('cycles.startDate')}</label
+						>
 						<input
 							id="create-start-date"
 							type="date"
@@ -539,7 +657,11 @@
 						/>
 					</div>
 					<div>
-						<label for="create-end-date" class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('cycles.endDate')}</label>
+						<label
+							for="create-end-date"
+							class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+							>{$t('cycles.endDate')}</label
+						>
 						<input
 							id="create-end-date"
 							type="date"
@@ -570,11 +692,19 @@
 
 {#if showEditModal}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-		<div class="w-full max-w-lg rounded-lg bg-white dark:bg-slate-900 p-6 shadow-xl dark:shadow-slate-900/50">
-			<h2 class="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-100">{$t('cycles.edit')}</h2>
+		<div
+			class="w-full max-w-lg rounded-lg bg-white dark:bg-slate-900 p-6 shadow-xl dark:shadow-slate-900/50"
+		>
+			<h2 class="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-100">
+				{$t('cycles.edit')}
+			</h2>
 			<div class="space-y-4">
 				<div>
-					<label for="edit-name" class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('cycles.name')}</label>
+					<label
+						for="edit-name"
+						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						>{$t('cycles.name')}</label
+					>
 					<input
 						id="edit-name"
 						type="text"
@@ -583,7 +713,11 @@
 					/>
 				</div>
 				<div>
-					<label for="edit-goal" class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('cycles.goal')}</label>
+					<label
+						for="edit-goal"
+						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						>{$t('cycles.goal')}</label
+					>
 					<textarea
 						id="edit-goal"
 						bind:value={editForm.goal}
@@ -593,7 +727,11 @@
 				</div>
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 					<div>
-						<label for="edit-start-date" class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('cycles.startDate')}</label>
+						<label
+							for="edit-start-date"
+							class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+							>{$t('cycles.startDate')}</label
+						>
 						<input
 							id="edit-start-date"
 							type="date"
@@ -602,7 +740,11 @@
 						/>
 					</div>
 					<div>
-						<label for="edit-end-date" class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('cycles.endDate')}</label>
+						<label
+							for="edit-end-date"
+							class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+							>{$t('cycles.endDate')}</label
+						>
 						<input
 							id="edit-end-date"
 							type="date"

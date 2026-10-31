@@ -8,8 +8,8 @@
 // is `null` -- links hidden -- from the moment of the change until the new read lands. A slow
 // read for a workspace the user already left is dropped.
 
-import type { ApiResult, PaginatedData } from '$lib/api/client';
-import type { WorkspaceMember } from '$lib/api/workspaces';
+import type { ApiResult, PaginatedData } from '#lib/api/client.js';
+import type { WorkspaceMember } from '#lib/api/workspaces.js';
 import { isWorkspaceAdminRole, type WorkspaceRole } from './home';
 
 export interface SidebarViewer {

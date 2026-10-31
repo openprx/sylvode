@@ -2,28 +2,28 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
-	import { page } from '$app/stores';
-	import { membersApi, type WorkspaceMember } from '$lib/api/members';
+	import { page } from '$app/state';
+	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
 	import {
 		webhooksApi,
 		type Webhook,
 		type CreateWebhookData,
 		type WebhookDelivery
-	} from '$lib/api/webhooks';
-	import { toast } from '$lib/stores/toast';
-	import { requireRouteParam } from '$lib/utils/route-params';
-	import Button from '$lib/components/Button.svelte';
-	import BotIcon from '$lib/components/BotIcon.svelte';
-	import Input from '$lib/components/Input.svelte';
-	import Modal from '$lib/components/Modal.svelte';
+	} from '#lib/api/webhooks.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
+	import Button from '#lib/components/Button.svelte';
+	import BotIcon from '#lib/components/BotIcon.svelte';
+	import Input from '#lib/components/Input.svelte';
+	import Modal from '#lib/components/Modal.svelte';
 	import {
 		WEBHOOK_EVENT_GROUPS,
 		toggleWebhookEvent,
 		webhookEventGroupKey,
 		webhookEventLabelKey
-	} from '$lib/webhooks/events';
+	} from '#lib/webhooks/events.js';
 
-	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
+	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 
 	let loading = $state(true);
 	let submitting = $state(false);
@@ -360,54 +360,98 @@
 	</div>
 
 	{#if loading}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
+		>
+			{$t('common.loading')}
+		</div>
 	{:else if webhooks.length === 0}
-		<div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400">{$t('webhook.empty')}</div>
+		<div
+			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
+		>
+			{$t('webhook.empty')}
+		</div>
 	{:else}
-		<div class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+		<div
+			class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+		>
 			<div class="overflow-x-auto">
 				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
 					<thead class="bg-slate-50 dark:bg-slate-950">
 						<tr>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('webhook.url')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('webhook.events')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('webhook.linkedBot')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.status')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.createdAt')}</th>
-							<th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.actions')}</th>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('webhook.url')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('webhook.events')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('webhook.linkedBot')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.status')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.createdAt')}</th
+							>
+							<th
+								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.actions')}</th
+							>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-900">
 						{#each webhooks as webhook (webhook.id)}
 							<tr>
-								<td class="max-w-xs px-4 py-3 text-sm text-slate-900 dark:text-slate-100">{webhook.url}</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{webhook.events.join(', ')}</td>
+								<td class="max-w-xs px-4 py-3 text-sm text-slate-900 dark:text-slate-100"
+									>{webhook.url}</td
+								>
+								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+									>{webhook.events.join(', ')}</td
+								>
 								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
 									{#if webhook.bot_user_id}
-										<div class="inline-flex items-center gap-1.5 rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
+										<div
+											class="inline-flex items-center gap-1.5 rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300"
+										>
 											<BotIcon class="h-3.5 w-3.5" title={$t('admin.botBadge')} />
-											<span>{getBotName(webhook.bot_user_id)} ({getBotType(webhook.bot_user_id)})</span>
+											<span
+												>{getBotName(webhook.bot_user_id)} ({getBotType(webhook.bot_user_id)})</span
+											>
 										</div>
 									{:else}
 										<span class="text-slate-400">{$t('webhook.noBot')}</span>
 									{/if}
 								</td>
 								<td class="px-4 py-3 text-sm">
-									<span class="inline-flex rounded-full px-2.5 py-1 text-xs font-medium {(webhook.is_active ?? webhook.active)
-										? 'bg-green-100 text-green-700'
-										: 'bg-slate-200 text-slate-700 dark:text-slate-300'}">
-										{(webhook.is_active ?? webhook.active) ? 'active' : 'inactive'}
-									</span>
+									<span
+										class="inline-flex rounded-full px-2.5 py-1 text-xs font-medium {(webhook.is_active ??
+										webhook.active)
+											? 'bg-green-100 text-green-700'
+											: 'bg-slate-200 text-slate-700 dark:text-slate-300'}"
+										>{(webhook.is_active ?? webhook.active) ? 'active' : 'inactive'}</span
+									>
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{formatDate(webhook.created_at)}</td>
+								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+									>{formatDate(webhook.created_at)}</td
+								>
 								<td class="px-4 py-3 text-right">
 									<div class="flex items-center justify-end gap-3">
-										<button class="text-sm text-slate-500 hover:text-blue-600 transition-colors" onclick={() => viewDeliveries(webhook)}>
-											{$t('webhook.records')}
-										</button>
-										<button class="text-sm text-slate-500 hover:text-blue-600 transition-colors" onclick={() => editWebhook(webhook)}>
-											{$t('common.edit')}
-										</button>
+										<button
+											class="text-sm text-slate-500 hover:text-blue-600 transition-colors"
+											onclick={() => viewDeliveries(webhook)}>{$t('webhook.records')}</button
+										>
+
+										<button
+											class="text-sm text-slate-500 hover:text-blue-600 transition-colors"
+											onclick={() => editWebhook(webhook)}>{$t('common.edit')}</button
+										>
+
 										<button
 											class="text-sm text-slate-500 hover:text-red-600 transition-colors disabled:opacity-60"
 											disabled={deletingId === webhook.id}
@@ -426,7 +470,11 @@
 	{/if}
 </div>
 
-<Modal bind:open={showModal} title={editingWebhook ? $t('webhook.edit') : $t('webhook.create')} maxWidthClass="max-w-2xl">
+<Modal
+	bind:open={showModal}
+	title={editingWebhook ? $t('webhook.edit') : $t('webhook.create')}
+	maxWidthClass="max-w-2xl"
+>
 	<form
 		onsubmit={(event) => {
 			event.preventDefault();
@@ -434,10 +482,19 @@
 		}}
 		class="space-y-4"
 	>
-		<Input type="url" label={$t('webhook.url')} bind:value={form.url} required placeholder={$t('placeholders.webhookUrl')} />
+		<Input
+			type="url"
+			label={$t('webhook.url')}
+			bind:value={form.url}
+			required
+			placeholder={$t('placeholders.webhookUrl')}
+		/>
 		<Input label={$t('webhook.secretOptional')} bind:value={form.secret} />
 		<div>
-			<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="botUserId">{$t('webhook.linkedBot')}</label>
+			<label
+				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				for="botUserId">{$t('webhook.linkedBot')}</label
+			>
 			<select
 				id="botUserId"
 				bind:value={botUserId}
@@ -450,16 +507,24 @@
 			</select>
 		</div>
 		<label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-			<input type="checkbox" class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800" bind:checked={form.is_active} />
+			<input
+				type="checkbox"
+				class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800"
+				bind:checked={form.is_active}
+			/>
 			{$t('webhook.enable')}
 		</label>
 
 		<fieldset>
-			<legend class="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">{$t('webhook.eventTypes')}</legend>
+			<legend class="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300"
+				>{$t('webhook.eventTypes')}</legend
+			>
 			<div class="space-y-3">
 				{#each WEBHOOK_EVENT_GROUPS as entry (entry.group)}
 					<fieldset data-testid="webhook-event-group" data-group={entry.group}>
-						<legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+						<legend
+							class="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400"
+						>
 							{$t(webhookEventGroupKey(entry.group))}
 						</legend>
 						<div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
@@ -484,14 +549,19 @@
 
 		<div class="flex justify-end gap-2 pt-2">
 			<Button variant="secondary" onclick={() => (showModal = false)}>{$t('common.cancel')}</Button>
-			<Button type="submit" loading={submitting}>{editingWebhook ? $t('common.save') : $t('common.create')}</Button>
+
+			<Button type="submit" loading={submitting}
+				>{editingWebhook ? $t('common.save') : $t('common.create')}</Button
+			>
 		</div>
 	</form>
 </Modal>
 
 <Modal
 	bind:open={showDeliveriesModal}
-	title={selectedWebhook ? `${$t('webhook.deliveries')} · ${selectedWebhook.url}` : $t('webhook.deliveries')}
+	title={selectedWebhook
+		? `${$t('webhook.deliveries')} · ${selectedWebhook.url}`
+		: $t('webhook.deliveries')}
 	maxWidthClass="max-w-4xl"
 	onclose={() => {
 		showDeliveryDetailModal = false;
@@ -500,30 +570,62 @@
 >
 	<div class="space-y-4">
 		{#if deliveriesLoading}
-			<div class="rounded-md border border-slate-200 dark:border-slate-700 p-4 text-sm text-slate-500 dark:text-slate-400">{$t('webhook.loadingDeliveries')}</div>
+			<div
+				class="rounded-md border border-slate-200 dark:border-slate-700 p-4 text-sm text-slate-500 dark:text-slate-400"
+			>
+				{$t('webhook.loadingDeliveries')}
+			</div>
 		{:else if deliveries.length === 0}
-			<div class="rounded-md border border-slate-200 dark:border-slate-700 p-4 text-sm text-slate-500 dark:text-slate-400">{$t('webhook.noDeliveries')}</div>
+			<div
+				class="rounded-md border border-slate-200 dark:border-slate-700 p-4 text-sm text-slate-500 dark:text-slate-400"
+			>
+				{$t('webhook.noDeliveries')}
+			</div>
 		{:else}
 			<div class="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
 				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700 text-sm">
 					<thead class="bg-slate-50 dark:bg-slate-950">
 						<tr>
-							<th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('webhook.deliveryTime')}</th>
-							<th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('webhook.deliveryEvent')}</th>
-							<th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('webhook.deliveryStatus')}</th>
-							<th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('webhook.deliveryDuration')}</th>
-							<th class="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.actions')}</th>
+							<th
+								class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('webhook.deliveryTime')}</th
+							>
+							<th
+								class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('webhook.deliveryEvent')}</th
+							>
+							<th
+								class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('webhook.deliveryStatus')}</th
+							>
+							<th
+								class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('webhook.deliveryDuration')}</th
+							>
+							<th
+								class="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.actions')}</th
+							>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-900">
 						{#each deliveries as delivery (delivery.id)}
 							<tr>
-								<td class="px-3 py-2 text-slate-700 dark:text-slate-300">{formatDate(delivery.created_at)}</td>
+								<td class="px-3 py-2 text-slate-700 dark:text-slate-300"
+									>{formatDate(delivery.created_at)}</td
+								>
 								<td class="px-3 py-2 text-slate-700 dark:text-slate-300">{delivery.event_type}</td>
-								<td class={`px-3 py-2 font-medium ${getDeliveryStatus(delivery).className}`}>{getDeliveryStatus(delivery).label}</td>
-								<td class="px-3 py-2 text-slate-700 dark:text-slate-300">{formatDuration(delivery.duration_ms)}</td>
+								<td class={`px-3 py-2 font-medium ${getDeliveryStatus(delivery).className}`}
+									>{getDeliveryStatus(delivery).label}</td
+								>
+								<td class="px-3 py-2 text-slate-700 dark:text-slate-300"
+									>{formatDuration(delivery.duration_ms)}</td
+								>
 								<td class="px-3 py-2 text-right">
-									<button class="text-sm text-slate-500 hover:text-blue-600 transition-colors" onclick={() => openDeliveryDetail(delivery)}>
+									<button
+										class="text-sm text-slate-500 hover:text-blue-600 transition-colors"
+										onclick={() => openDeliveryDetail(delivery)}
+									>
 										{$t('webhook.deliveryDetail')}
 									</button>
 								</td>
@@ -535,7 +637,9 @@
 
 			<div class="flex items-center justify-between text-sm">
 				<div class="text-slate-500 dark:text-slate-400">
-					{$t('webhook.deliveryPagination', { values: { total: deliveriesTotal, page: deliveriesPage, pages: deliveriesTotalPages } })}
+					{$t('webhook.deliveryPagination', {
+						values: { total: deliveriesTotal, page: deliveriesPage, pages: deliveriesTotalPages }
+					})}
 				</div>
 				<div class="flex items-center gap-1">
 					<button
@@ -550,9 +654,11 @@
 							<span class="px-2 py-1 text-slate-400">...</span>
 						{:else}
 							<button
-								class={`rounded px-2 py-1 ${pageNum === deliveriesPage
-									? 'bg-blue-600 text-white'
-									: 'border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}`}
+								class={`rounded px-2 py-1 ${
+									pageNum === deliveriesPage
+										? 'bg-blue-600 text-white'
+										: 'border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'
+								}`}
 								onclick={() => goToDeliveriesPage(pageNum)}
 							>
 								{pageNum}
@@ -574,7 +680,9 @@
 
 <Modal
 	bind:open={showDeliveryDetailModal}
-	title={selectedDelivery ? `${$t('webhook.deliveryDetailTitle')} · ${selectedDelivery.id.slice(0, 8)}` : $t('webhook.deliveryDetailTitle')}
+	title={selectedDelivery
+		? `${$t('webhook.deliveryDetailTitle')} · ${selectedDelivery.id.slice(0, 8)}`
+		: $t('webhook.deliveryDetailTitle')}
 	maxWidthClass="max-w-4xl"
 >
 	{#if deliveryDetailLoading}
@@ -583,27 +691,34 @@
 		<div class="space-y-4">
 			<div class="flex items-center gap-2 border-b border-slate-200 dark:border-slate-700 pb-2">
 				<button
-					class={`px-3 py-1 text-sm rounded-md transition-colors ${deliveryTab === 'request'
-						? 'bg-blue-600 text-white'
-						: 'text-slate-500 hover:text-blue-600'}`}
-					onclick={() => (deliveryTab = 'request')}
+					class={`px-3 py-1 text-sm rounded-md transition-colors ${
+						deliveryTab === 'request'
+							? 'bg-blue-600 text-white'
+							: 'text-slate-500 hover:text-blue-600'
+					}`}
+					onclick={() => (deliveryTab = 'request')}>{$t('webhook.request')}</button
 				>
-					{$t('webhook.request')}
-				</button>
+
 				<button
-					class={`px-3 py-1 text-sm rounded-md transition-colors ${deliveryTab === 'response'
-						? 'bg-blue-600 text-white'
-						: 'text-slate-500 hover:text-blue-600'}`}
-					onclick={() => (deliveryTab = 'response')}
+					class={`px-3 py-1 text-sm rounded-md transition-colors ${
+						deliveryTab === 'response'
+							? 'bg-blue-600 text-white'
+							: 'text-slate-500 hover:text-blue-600'
+					}`}
+					onclick={() => (deliveryTab = 'response')}>{$t('webhook.response')}</button
 				>
-					{$t('webhook.response')}
-				</button>
 			</div>
 
 			{#if deliveryTab === 'request'}
-				<pre class="max-h-[480px] overflow-auto rounded-lg bg-slate-900 p-4 text-green-400 font-mono text-xs sm:text-sm whitespace-pre-wrap">{buildRequestText(selectedDelivery)}</pre>
+				<pre
+					class="max-h-[480px] overflow-auto rounded-lg bg-slate-900 p-4 text-green-400 font-mono text-xs sm:text-sm whitespace-pre-wrap">{buildRequestText(
+						selectedDelivery
+					)}</pre>
 			{:else}
-				<pre class="max-h-[480px] overflow-auto rounded-lg bg-slate-900 p-4 text-green-400 font-mono text-xs sm:text-sm whitespace-pre-wrap">{buildResponseText(selectedDelivery)}</pre>
+				<pre
+					class="max-h-[480px] overflow-auto rounded-lg bg-slate-900 p-4 text-green-400 font-mono text-xs sm:text-sm whitespace-pre-wrap">{buildResponseText(
+						selectedDelivery
+					)}</pre>
 			{/if}
 		</div>
 	{/if}

@@ -101,7 +101,10 @@ export interface ProjectContext {
 }
 
 export const projectsApi = {
-	list(workspaceId: string, params?: { page?: number; per_page?: number }): Promise<ApiResult<PaginatedData<Project>>> {
+	list(
+		workspaceId: string,
+		params?: { page?: number; per_page?: number }
+	): Promise<ApiResult<PaginatedData<Project>>> {
 		const query = new URLSearchParams();
 		if (params?.page) query.append('page', params.page.toString());
 		if (params?.per_page) query.append('per_page', params.per_page.toString());
@@ -139,7 +142,15 @@ export const projectsApi = {
 		return apiClient.post<Project>(`/api/v1/workspaces/${workspaceId}/projects`, data);
 	},
 
-	update(projectId: string, data: { name?: string; description?: string; type_key?: string; type_settings?: Record<string, unknown> }): Promise<ApiResult<Project>> {
+	update(
+		projectId: string,
+		data: {
+			name?: string;
+			description?: string;
+			type_key?: string;
+			type_settings?: Record<string, unknown>;
+		}
+	): Promise<ApiResult<Project>> {
 		return apiClient.put<Project>(`/api/v1/projects/${projectId}`, data);
 	},
 
@@ -148,7 +159,9 @@ export const projectsApi = {
 	},
 
 	listTypes(workspaceId: string): Promise<ApiResult<PaginatedData<ProjectType>>> {
-		return apiClient.get<PaginatedData<ProjectType>>(`/api/v1/workspaces/${workspaceId}/project-types`);
+		return apiClient.get<PaginatedData<ProjectType>>(
+			`/api/v1/workspaces/${workspaceId}/project-types`
+		);
 	},
 
 	createType(
@@ -174,11 +187,16 @@ export const projectsApi = {
 		return apiClient.patch<ProjectType>(`/api/v1/project-types/${key}`, data);
 	},
 
-	listScenarioTemplates(params?: { project_type_key?: string; industry?: string }): Promise<ApiResult<PaginatedData<ScenarioTemplate>>> {
+	listScenarioTemplates(params?: {
+		project_type_key?: string;
+		industry?: string;
+	}): Promise<ApiResult<PaginatedData<ScenarioTemplate>>> {
 		const query = new URLSearchParams();
 		if (params?.project_type_key) query.append('project_type_key', params.project_type_key);
 		if (params?.industry) query.append('industry', params.industry);
-		const endpoint = query.size ? `/api/v1/scenario-templates?${query.toString()}` : '/api/v1/scenario-templates';
+		const endpoint = query.size
+			? `/api/v1/scenario-templates?${query.toString()}`
+			: '/api/v1/scenario-templates';
 		return apiClient.get<PaginatedData<ScenarioTemplate>>(endpoint);
 	},
 
@@ -214,7 +232,10 @@ export const projectsApi = {
 			sync_status?: string;
 		}
 	): Promise<ApiResult<ProjectResource>> {
-		return apiClient.patch<ProjectResource>(`/api/v1/projects/${projectId}/resources/${resourceId}`, data);
+		return apiClient.patch<ProjectResource>(
+			`/api/v1/projects/${projectId}/resources/${resourceId}`,
+			data
+		);
 	},
 
 	deleteResource(projectId: string, resourceId: string): Promise<ApiResult<null>> {

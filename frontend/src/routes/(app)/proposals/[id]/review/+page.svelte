@@ -1,18 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { proposalsApi, type Proposal } from '$lib/api/proposals';
+	import { proposalsApi, type Proposal } from '#lib/api/proposals.js';
 	import {
 		impactReviewsApi,
 		type ImpactReviewDetail,
 		type ReviewRating,
 		type ReviewStatus
-	} from '$lib/api/impact-reviews';
-	import { toast } from '$lib/stores/toast';
+	} from '#lib/api/impact-reviews.js';
+	import { toast } from '#lib/stores/toast.js';
 
-	const proposalId = $derived($page.params.id || '');
+	const proposalId = $derived(page.params.id || '');
 
 	let loading = $state(true);
 	let proposal = $state<Proposal | null>(null);
@@ -27,7 +27,9 @@
 
 	const pageTitle = $derived.by(() => {
 		if (proposal?.title?.trim()) {
-			return $t('pageTitle.proposalImpactReviewWithTitle', { values: { title: proposal.title.trim() } });
+			return $t('pageTitle.proposalImpactReviewWithTitle', {
+				values: { title: proposal.title.trim() }
+			});
 		}
 		return $t('pageTitle.proposalImpactReview');
 	});
@@ -60,7 +62,11 @@
 		impactStatus = impactReviewDetail?.review.status || 'collecting';
 		impactAchievements = impactReviewDetail?.review.achievements || '';
 		impactLessons = impactReviewDetail?.review.lessons || '';
-		impactGoalAchievementsText = JSON.stringify(impactReviewDetail?.review.goal_achievements || [], null, 2);
+		impactGoalAchievementsText = JSON.stringify(
+			impactReviewDetail?.review.goal_achievements || [],
+			null,
+			2
+		);
 	}
 
 	async function loadImpactReview() {
@@ -124,15 +130,23 @@
 </svelte:head>
 
 <div class="mx-auto max-w-4xl space-y-4">
-	<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+	>
 		<div class="mb-2 flex items-center justify-between gap-3">
-			<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">{$t('impactReview.title')}</h1>
-			<a href={`/proposals/${proposalId}`} class="text-sm text-blue-600 hover:underline">{$t('impactReview.backToProposal')}</a>
+			<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+				{$t('impactReview.title')}
+			</h1>
+			<a href={`/proposals/${proposalId}`} class="text-sm text-blue-600 hover:underline"
+				>{$t('impactReview.backToProposal')}</a
+			>
 		</div>
 		<p class="text-sm text-slate-500">{$t('impactReview.detailSubtitle')}</p>
 	</div>
 
-	<div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+	>
 		{#if loading}
 			<p class="text-sm text-slate-500">{$t('common.loading')}</p>
 		{:else if !proposal}
@@ -148,22 +162,44 @@
 			{:else if !impactReviewDetail}
 				<p class="text-sm text-slate-500">{$t('impactReview.notCreated')}</p>
 				{#if proposal.status === 'approved'}
-					<button type="button" onclick={createImpactReview} class="mt-3 rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700">
+					<button
+						type="button"
+						onclick={createImpactReview}
+						class="mt-3 rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+					>
 						{$t('impactReview.create')}
 					</button>
 				{/if}
 			{:else}
 				<div class="mb-3 grid grid-cols-1 gap-2 text-xs text-slate-500 md:grid-cols-4">
 					<p>{$t('impactReview.reviewId')}: {impactReviewDetail.review.id}</p>
-					<p>{$t('impactReview.scheduledAt')}: {impactReviewDetail.review.scheduled_at ? new Date(impactReviewDetail.review.scheduled_at).toLocaleString() : '-'}</p>
-					<p>{$t('impactReview.conductedAt')}: {impactReviewDetail.review.conducted_at ? new Date(impactReviewDetail.review.conducted_at).toLocaleString() : '-'}</p>
-					<p>{$t('impactReview.trustApplied')}: {impactReviewDetail.review.trust_score_applied ? $t('impactReview.yes') : $t('impactReview.no')}</p>
+					<p>
+						{$t('impactReview.scheduledAt')}: {impactReviewDetail.review.scheduled_at
+							? new Date(impactReviewDetail.review.scheduled_at).toLocaleString()
+							: '-'}
+					</p>
+					<p>
+						{$t('impactReview.conductedAt')}: {impactReviewDetail.review.conducted_at
+							? new Date(impactReviewDetail.review.conducted_at).toLocaleString()
+							: '-'}
+					</p>
+					<p>
+						{$t('impactReview.trustApplied')}: {impactReviewDetail.review.trust_score_applied
+							? $t('impactReview.yes')
+							: $t('impactReview.no')}
+					</p>
 				</div>
 				<div class="space-y-3">
 					<div class="grid grid-cols-1 gap-3 md:grid-cols-2">
 						<div>
-							<label for="proposal-review-status" class="mb-1 block text-sm text-slate-600">{$t('common.status')}</label>
-							<select id="proposal-review-status" bind:value={impactStatus} class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900">
+							<label for="proposal-review-status" class="mb-1 block text-sm text-slate-600"
+								>{$t('common.status')}</label
+							>
+							<select
+								id="proposal-review-status"
+								bind:value={impactStatus}
+								class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+							>
 								<option value="pending">{$t('impactReview.status.pending')}</option>
 								<option value="collecting">{$t('impactReview.status.collecting')}</option>
 								<option value="completed">{$t('impactReview.status.completed')}</option>
@@ -171,8 +207,14 @@
 							</select>
 						</div>
 						<div>
-							<label for="proposal-review-rating" class="mb-1 block text-sm text-slate-600">{$t('impactReview.rating')}</label>
-							<select id="proposal-review-rating" bind:value={impactRating} class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900">
+							<label for="proposal-review-rating" class="mb-1 block text-sm text-slate-600"
+								>{$t('impactReview.rating')}</label
+							>
+							<select
+								id="proposal-review-rating"
+								bind:value={impactRating}
+								class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+							>
 								<option value="">{`- ${$t('impactReview.ratingAll')} -`}</option>
 								<option value="S">S</option>
 								<option value="A">A</option>
@@ -183,19 +225,45 @@
 						</div>
 					</div>
 					<div>
-						<label for="proposal-review-goals" class="mb-1 block text-sm text-slate-600">{$t('impactReview.goalAchievements')}</label>
-						<textarea id="proposal-review-goals" bind:value={impactGoalAchievementsText} rows="6" class="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-600 dark:bg-slate-900"></textarea>
+						<label for="proposal-review-goals" class="mb-1 block text-sm text-slate-600"
+							>{$t('impactReview.goalAchievements')}</label
+						>
+						<textarea
+							id="proposal-review-goals"
+							bind:value={impactGoalAchievementsText}
+							rows="6"
+							class="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-600 dark:bg-slate-900"
+						></textarea>
 					</div>
 					<div>
-						<label for="proposal-review-achievements" class="mb-1 block text-sm text-slate-600">{$t('impactReview.achievements')}</label>
-						<textarea id="proposal-review-achievements" bind:value={impactAchievements} rows="4" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"></textarea>
+						<label for="proposal-review-achievements" class="mb-1 block text-sm text-slate-600"
+							>{$t('impactReview.achievements')}</label
+						>
+						<textarea
+							id="proposal-review-achievements"
+							bind:value={impactAchievements}
+							rows="4"
+							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						></textarea>
 					</div>
 					<div>
-						<label for="proposal-review-lessons" class="mb-1 block text-sm text-slate-600">{$t('impactReview.lessons')}</label>
-						<textarea id="proposal-review-lessons" bind:value={impactLessons} rows="4" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"></textarea>
+						<label for="proposal-review-lessons" class="mb-1 block text-sm text-slate-600"
+							>{$t('impactReview.lessons')}</label
+						>
+						<textarea
+							id="proposal-review-lessons"
+							bind:value={impactLessons}
+							rows="4"
+							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						></textarea>
 					</div>
 					<div class="flex justify-end">
-						<button type="button" onclick={saveImpactReview} class="rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700" disabled={impactSaving}>
+						<button
+							type="button"
+							onclick={saveImpactReview}
+							class="rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+							disabled={impactSaving}
+						>
 							{impactSaving ? $t('common.saving') : $t('common.save')}
 						</button>
 					</div>

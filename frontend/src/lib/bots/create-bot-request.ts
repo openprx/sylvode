@@ -6,7 +6,7 @@
  * refuses it on any other), the form refuses to submit without a choice instead of letting the
  * API fall back to `rest`, and a token needs a name. `tests/create-bot-request.test.ts` covers it.
  */
-import type { CreateBotData } from '$lib/api/bots';
+import type { CreateBotData } from '#lib/api/bots.js';
 import type { BotTransportSurface } from './transport-surfaces';
 
 export interface CreateBotForm {

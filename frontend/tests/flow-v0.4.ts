@@ -127,9 +127,7 @@ const evidence = {
 	gates
 };
 
-const outputPath =
-	process.env.FLOW_V04_RESULT_PATH ??
-	`${SCRATCH}/flow-v0.4-ui-result.json`;
+const outputPath = process.env.FLOW_V04_RESULT_PATH ?? `${SCRATCH}/flow-v0.4-ui-result.json`;
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
 

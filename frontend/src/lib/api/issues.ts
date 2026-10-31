@@ -96,8 +96,9 @@ function mapIssue(raw: Record<string, unknown>): Issue {
 
 	return {
 		...(raw as unknown as Issue),
-		status: ((raw.status ?? raw.state ?? 'todo') as IssueStatus),
-		sprint_id: sprintId === null || sprintId === undefined || sprintId === '' ? undefined : String(sprintId),
+		status: (raw.status ?? raw.state ?? 'todo') as IssueStatus,
+		sprint_id:
+			sprintId === null || sprintId === undefined || sprintId === '' ? undefined : String(sprintId),
 		proposal_id:
 			raw.proposal_id === null || raw.proposal_id === undefined || raw.proposal_id === ''
 				? undefined
@@ -123,7 +124,10 @@ function mapComment(raw: Record<string, unknown>): Comment {
 }
 
 export const issuesApi = {
-	async list(projectId: string, params?: ListIssuesParams): Promise<ApiResult<PaginatedData<Issue>>> {
+	async list(
+		projectId: string,
+		params?: ListIssuesParams
+	): Promise<ApiResult<PaginatedData<Issue>>> {
 		const query = new URLSearchParams();
 		if (params?.page) query.set('page', String(params.page));
 		if (params?.per_page) query.set('per_page', String(params.per_page));
@@ -142,7 +146,11 @@ export const issuesApi = {
 			: `/api/v1/projects/${projectId}/issues`;
 		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(endpoint);
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.loadIssueFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.loadIssueFailed'),
+				data: null
+			};
 		}
 		return {
 			code: 0,
@@ -157,22 +165,33 @@ export const issuesApi = {
 	async get(id: string): Promise<ApiResult<Issue>> {
 		const result = await apiClient.get<Record<string, unknown>>(`/api/v1/issues/${id}`);
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.loadIssueFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.loadIssueFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: result.message, data: mapIssue(result.data) };
 	},
 
 	async create(projectId: string, data: CreateIssueInput): Promise<ApiResult<Issue>> {
-		const result = await apiClient.post<Record<string, unknown>>(`/api/v1/projects/${projectId}/issues`, {
-			title: data.title,
-			description: data.description,
-			state: data.status,
-			priority: data.priority,
-			assignee_id: data.assignee_id,
-			sprint_id: data.sprint_id
-		});
+		const result = await apiClient.post<Record<string, unknown>>(
+			`/api/v1/projects/${projectId}/issues`,
+			{
+				title: data.title,
+				description: data.description,
+				state: data.status,
+				priority: data.priority,
+				assignee_id: data.assignee_id,
+				sprint_id: data.sprint_id
+			}
+		);
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.createIssueFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.createIssueFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: result.message, data: mapIssue(result.data) };
 	},
@@ -187,7 +206,11 @@ export const issuesApi = {
 			sprint_id: data.sprint_id
 		});
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.updateIssueFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.updateIssueFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: result.message, data: mapIssue(result.data) };
 	},
@@ -197,9 +220,15 @@ export const issuesApi = {
 	},
 
 	async getComments(issueId: string): Promise<ApiResult<PaginatedData<Comment>>> {
-		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(`/api/v1/issues/${issueId}/comments`);
+		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(
+			`/api/v1/issues/${issueId}/comments`
+		);
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.loadCommentFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.loadCommentFailed'),
+				data: null
+			};
 		}
 		return {
 			code: 0,
@@ -212,11 +241,18 @@ export const issuesApi = {
 	},
 
 	async createComment(issueId: string, content: string): Promise<ApiResult<Comment>> {
-		const result = await apiClient.post<Record<string, unknown>>(`/api/v1/issues/${issueId}/comments`, {
-			body: content
-		});
+		const result = await apiClient.post<Record<string, unknown>>(
+			`/api/v1/issues/${issueId}/comments`,
+			{
+				body: content
+			}
+		);
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.createCommentFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.createCommentFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: result.message, data: mapComment(result.data) };
 	},

@@ -1,7 +1,7 @@
 import { goto } from '$app/navigation';
-import { browser } from '$app/environment';
-import { isAdminUser } from '$lib/utils/auth';
-import type { User } from '$lib/api/auth';
+import { browser } from '$app/env';
+import { isAdminUser } from '#lib/utils/auth.js';
+import type { User } from '#lib/api/auth.js';
 
 export const ssr = false;
 

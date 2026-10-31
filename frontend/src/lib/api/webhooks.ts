@@ -51,8 +51,15 @@ export const webhooksApi = {
 		return apiClient.post<Webhook>(`/api/v1/workspaces/${workspaceId}/webhooks`, data);
 	},
 
-	update(workspaceId: string, webhookId: string, data: Partial<Webhook>): Promise<ApiResult<Webhook>> {
-		return apiClient.patch<Webhook>(`/api/v1/workspaces/${workspaceId}/webhooks/${webhookId}`, data);
+	update(
+		workspaceId: string,
+		webhookId: string,
+		data: Partial<Webhook>
+	): Promise<ApiResult<Webhook>> {
+		return apiClient.patch<Webhook>(
+			`/api/v1/workspaces/${workspaceId}/webhooks/${webhookId}`,
+			data
+		);
 	},
 
 	delete(workspaceId: string, webhookId: string): Promise<ApiResult<null>> {

@@ -4,17 +4,17 @@
 	// Rendered only while the mode is `schema`, and the controller refuses every `field_*` /
 	// `view_*` command outside it anyway.
 	import { t } from 'svelte-i18n';
-	import type { FlowCollectionFieldType } from '$lib/api/flow';
+	import type { FlowCollectionFieldType } from '#lib/api/flow.js';
 	import {
 		CollectionViewController,
 		type CollectionViewState,
 		type SchemaOutcome
-	} from '$lib/flow/collection-view';
+	} from '#lib/flow/collection-view.js';
 	import {
 		COLLECTION_FIELD_TYPES,
 		CREATABLE_FIELD_TYPES,
 		type CollectionField
-	} from '$lib/flow/collection-values';
+	} from '#lib/flow/collection-values.js';
 
 	interface Props {
 		controller: CollectionViewController;

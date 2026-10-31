@@ -1,7 +1,7 @@
 // `CommandService`: object create, ticket issuance, and all other server-governed/high-risk
 // actions; never performs a direct CRDT mutation (`contracts/ui-surface-v1.md` "职责边界").
 // Components -- and `ObjectSession`, for ticket issuance -- never build a REST URL themselves;
-// they always go through this, which is the only thing that imports `$lib/api/flow` outside that
+// they always go through this, which is the only thing that imports `#lib/api/flow.js` outside that
 // module's own tests. Read-only listing/history calls used by components are exposed here too
 // (`listObjects`/`getHistory`) even though `ui-surface-v1.md`'s frozen `CommandService` interface
 // sketch does not list them, so `FlowNavigator`/`FlowContextPanel` have exactly one adapter entry
@@ -61,8 +61,8 @@ import {
 	type SetFlowInheritanceInput,
 	type UploadProgress,
 	type VerifyDocumentInput
-} from '$lib/api/flow';
-import type { ApiResult } from '$lib/api/client';
+} from '#lib/api/flow.js';
+import type { ApiResult } from '#lib/api/client.js';
 import { clientError, flowErrorFromEnvelope } from './errors';
 import type { FlowError } from './types';
 
@@ -168,7 +168,10 @@ export class FlowCommandService {
 		return flowApi.createTicket(input);
 	}
 
-	async listObjects(workspaceId: string, query: ListFlowObjectsQuery = {}): Promise<ApiResult<FlowObjectListResponse>> {
+	async listObjects(
+		workspaceId: string,
+		query: ListFlowObjectsQuery = {}
+	): Promise<ApiResult<FlowObjectListResponse>> {
 		return flowApi.listObjects(workspaceId, query);
 	}
 

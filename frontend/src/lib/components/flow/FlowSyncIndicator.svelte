@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
-	import type { SyncState } from '$lib/flow/types';
+	import type { SyncState } from '#lib/flow/types.js';
 
 	interface Props {
 		state: SyncState;

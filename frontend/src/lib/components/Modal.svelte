@@ -32,7 +32,7 @@
 	}
 </script>
 
-<svelte:window on:keydown={handleEscape} />
+<svelte:window onkeydown={handleEscape} />
 
 {#if open}
 	<div
@@ -44,10 +44,16 @@
 		aria-modal="true"
 		aria-labelledby="modal-title"
 	>
-		<div class={`w-full max-h-[90vh] overflow-y-auto rounded-lg bg-white shadow-xl dark:bg-slate-800 dark:shadow-slate-900/50 ${maxWidthClass}`}>
+		<div
+			class={`w-full max-h-[90vh] overflow-y-auto rounded-lg bg-white shadow-xl dark:bg-slate-800 dark:shadow-slate-900/50 ${maxWidthClass}`}
+		>
 			<!-- Header -->
-			<div class="flex items-center justify-between border-b border-slate-200 p-6 dark:border-slate-700">
-				<h2 id="modal-title" class="text-xl font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
+			<div
+				class="flex items-center justify-between border-b border-slate-200 p-6 dark:border-slate-700"
+			>
+				<h2 id="modal-title" class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+					{title}
+				</h2>
 				<button
 					onclick={close}
 					class="text-slate-400 hover:text-slate-600 dark:text-slate-300 focus:outline-none dark:hover:text-slate-200"
@@ -73,7 +79,9 @@
 
 			<!-- Footer -->
 			{#if footer}
-				<div class="flex items-center justify-end gap-3 border-t border-slate-200 p-6 dark:border-slate-700">
+				<div
+					class="flex items-center justify-end gap-3 border-t border-slate-200 p-6 dark:border-slate-700"
+				>
 					{@render footer()}
 				</div>
 			{/if}

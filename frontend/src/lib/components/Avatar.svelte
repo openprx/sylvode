@@ -8,7 +8,14 @@
 	let { name, userId, size = 'sm' }: Props = $props();
 
 	const source = $derived((name?.trim() || userId?.trim() || '?').toUpperCase());
-	const initials = $derived(source.split(/\s+/).filter(Boolean).slice(0, 2).map((item) => item[0]).join(''));
+	const initials = $derived(
+		source
+			.split(/\s+/)
+			.filter(Boolean)
+			.slice(0, 2)
+			.map((item) => item[0])
+			.join('')
+	);
 	const sizeClass = $derived(size === 'md' ? 'h-8 w-8 text-xs' : 'h-6 w-6 text-[10px]');
 </script>
 

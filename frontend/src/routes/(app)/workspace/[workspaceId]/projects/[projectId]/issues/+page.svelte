@@ -2,24 +2,24 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { membersApi } from '$lib/api/members';
-	import { projectsApi, type Project } from '$lib/api/projects';
-	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '$lib/api/issues';
-	import { workflowsApi, type WorkflowStateDef } from '$lib/api/workflows';
-	import { labelsApi, type Label } from '$lib/api/labels';
-	import { sprintsApi, type Sprint } from '$lib/api/sprints';
-	import { toast } from '$lib/stores/toast';
-	import { requireRouteParam } from '$lib/utils/route-params';
-	import Badge from '$lib/components/Badge.svelte';
-	import Avatar from '$lib/components/Avatar.svelte';
-	import BotIcon from '$lib/components/BotIcon.svelte';
-	import IssueCreateModal from '$lib/components/IssueCreateModal.svelte';
-	import { getProjectScenarioTemplate } from '$lib/utils/scenario-template';
+	import { membersApi } from '#lib/api/members.js';
+	import { projectsApi, type Project } from '#lib/api/projects.js';
+	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
+	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
+	import { labelsApi, type Label } from '#lib/api/labels.js';
+	import { sprintsApi, type Sprint } from '#lib/api/sprints.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
+	import Badge from '#lib/components/Badge.svelte';
+	import Avatar from '#lib/components/Avatar.svelte';
+	import BotIcon from '#lib/components/BotIcon.svelte';
+	import IssueCreateModal from '#lib/components/IssueCreateModal.svelte';
+	import { getProjectScenarioTemplate } from '#lib/utils/scenario-template.js';
 
-	const workspaceId = $derived(requireRouteParam($page.params.workspaceId, 'workspaceId'));
-	const projectId = $derived(requireRouteParam($page.params.projectId, 'projectId'));
+	const workspaceId = $derived(requireRouteParam(page.params.workspaceId, 'workspaceId'));
+	const projectId = $derived(requireRouteParam(page.params.projectId, 'projectId'));
 
 	let issues = $state<Issue[]>([]);
 	let project = $state<Project | null>(null);
@@ -55,7 +55,13 @@
 
 		document.addEventListener('click', handleDocumentClick);
 		void (async () => {
-			await Promise.all([loadProject(), loadWorkflow(), loadSprints(), loadMembers(), loadLabels()]);
+			await Promise.all([
+				loadProject(),
+				loadWorkflow(),
+				loadSprints(),
+				loadMembers(),
+				loadLabels()
+			]);
 			await loadIssues(1);
 		})();
 
@@ -270,29 +276,36 @@
 </script>
 
 <div class="mx-auto max-w-7xl space-y-6">
-	<div class="rounded-lg border border-slate-200 bg-white p-4 sm:p-5 dark:border-slate-700 dark:bg-slate-800">
+	<div
+		class="rounded-lg border border-slate-200 bg-white p-4 sm:p-5 dark:border-slate-700 dark:bg-slate-800"
+	>
 		<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 			<div class="text-sm text-slate-600 dark:text-slate-400">
 				<a href="/workspace" class="hover:text-blue-600">{$t('nav.myWorkspace')}</a>
 				<span class="mx-1 text-slate-400">/</span>
-				<a href="/workspace/{workspaceId}/projects" class="hover:text-blue-600">{$t('project.title')}</a>
+				<a href="/workspace/{workspaceId}/projects" class="hover:text-blue-600"
+					>{$t('project.title')}</a
+				>
 				<span class="mx-1 text-slate-400">/</span>
-				<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:text-blue-600">{$t('project.detail')}</a>
+				<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:text-blue-600"
+					>{$t('project.detail')}</a
+				>
 				<span class="mx-1 text-slate-400">/</span>
 				<span class="font-medium text-slate-900 dark:text-slate-100">{$t('issue.list')}</span>
 			</div>
 			<button
 				type="button"
 				class="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm dark:shadow-slate-900/50 transition hover:bg-blue-700"
-				onclick={() => (showCreateModal = true)}
+				onclick={() => (showCreateModal = true)}>+ {$t('issue.create')}</button
 			>
-				+ {$t('issue.create')}
-			</button>
 		</div>
 
 		<div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
 			<div class="xl:col-span-2">
-				<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="keyword">{$t('common.search')}</label>
+				<label
+					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					for="keyword">{$t('common.search')}</label
+				>
 				<input
 					id="keyword"
 					type="search"
@@ -303,7 +316,10 @@
 				/>
 			</div>
 			<div>
-				<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="statusFilter">{$t('common.status')}</label>
+				<label
+					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					for="statusFilter">{$t('common.status')}</label
+				>
 				<select
 					id="statusFilter"
 					bind:value={statusFilter}
@@ -324,7 +340,10 @@
 				</select>
 			</div>
 			<div>
-				<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="priorityFilter">{$t('common.priority')}</label>
+				<label
+					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					for="priorityFilter">{$t('common.priority')}</label
+				>
 				<select
 					id="priorityFilter"
 					bind:value={priorityFilter}
@@ -339,7 +358,10 @@
 				</select>
 			</div>
 			<div>
-				<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="assigneeFilter">{$t('common.assignee')}</label>
+				<label
+					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					for="assigneeFilter">{$t('common.assignee')}</label
+				>
 				<select
 					id="assigneeFilter"
 					bind:value={assigneeFilter}
@@ -353,7 +375,11 @@
 				</select>
 			</div>
 			<div class="relative" bind:this={labelFilterContainer}>
-				<span id={labelFilterLabelId} class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('common.label')}</span>
+				<span
+					id={labelFilterLabelId}
+					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					>{$t('common.label')}</span
+				>
 				<button
 					type="button"
 					aria-expanded={showLabelFilterDropdown}
@@ -366,15 +392,27 @@
 					}}
 				>
 					<span class="truncate text-left">{getLabelFilterText()}</span>
-					<svg class="ml-2 h-4 w-4 shrink-0 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+					<svg
+						class="ml-2 h-4 w-4 shrink-0 text-slate-500"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"
+						></path>
 					</svg>
 				</button>
 				{#if showLabelFilterDropdown}
-					<div class="absolute z-20 mt-1 w-full rounded-md border border-slate-200 bg-white p-2 shadow-lg dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-800">
-						<p class="mb-2 px-2 text-xs font-medium text-slate-500 dark:text-slate-400">{$t('common.label')}</p>
+					<div
+						class="absolute z-20 mt-1 w-full rounded-md border border-slate-200 bg-white p-2 shadow-lg dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-800"
+					>
+						<p class="mb-2 px-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+							{$t('common.label')}
+						</p>
 						{#if workspaceLabels.length === 0}
-							<p class="px-2 py-1 text-xs text-slate-500 dark:text-slate-400">{$t('issue.noWorkspaceLabels')}</p>
+							<p class="px-2 py-1 text-xs text-slate-500 dark:text-slate-400">
+								{$t('issue.noWorkspaceLabels')}
+							</p>
 						{:else}
 							<div class="max-h-52 space-y-1 overflow-y-auto">
 								{#each workspaceLabels as label (label.id)}
@@ -384,7 +422,11 @@
 										onclick={() => toggleLabelSelection(label.id)}
 									>
 										<div class="flex min-w-0 items-center gap-2">
-											<input type="checkbox" checked={selectedLabelIds.includes(label.id)} readonly />
+											<input
+												type="checkbox"
+												checked={selectedLabelIds.includes(label.id)}
+												readonly
+											/>
 											<span
 												class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
 												style={`background-color: ${label.color}20; color: ${label.color}; border: 1px solid ${label.color}40;`}
@@ -403,7 +445,10 @@
 				{/if}
 			</div>
 			<div>
-				<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="sortBy">{$t('issue.sortBy')}</label>
+				<label
+					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					for="sortBy">{$t('issue.sortBy')}</label
+				>
 				<div class="flex gap-2">
 					<select
 						id="sortBy"
@@ -430,7 +475,9 @@
 	</div>
 
 	{#if loading}
-		<div class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+		<div
+			class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+		>
 			<div class="space-y-3">
 				{#each Array(5) as _, index (`skeleton-${index}`)}
 					<div class="h-12 animate-pulse rounded bg-slate-100 dark:bg-slate-700"></div>
@@ -438,27 +485,55 @@
 			</div>
 		</div>
 	{:else if issues.length === 0}
-		<div class="rounded-lg border border-slate-200 bg-white p-12 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">{$t('issue.noMatched')}</div>
+		<div
+			class="rounded-lg border border-slate-200 bg-white p-12 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+		>
+			{$t('issue.noMatched')}
+		</div>
 	{:else}
-		<div class="overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800">
+		<div
+			class="overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800"
+		>
 			<div class="hidden overflow-x-auto md:block">
 				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
 					<thead class="bg-slate-50 dark:bg-slate-900">
 						<tr>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('issue.title')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.status')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.priority')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.assignee')}</th>
-							<th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{$t('common.updatedAt')}</th>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('issue.title')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.status')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.priority')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.assignee')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								>{$t('common.updatedAt')}</th
+							>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-slate-200 bg-white dark:divide-slate-700 dark:bg-slate-800">
 						{#each issues as issue (issue.id)}
-							<tr class="cursor-pointer hover:bg-slate-50 dark:bg-slate-950 dark:hover:bg-slate-700" onclick={() => goToIssue(issue.id)}>
+							<tr
+								class="cursor-pointer hover:bg-slate-50 dark:bg-slate-950 dark:hover:bg-slate-700"
+								onclick={() => goToIssue(issue.id)}
+							>
 								<td class="px-4 py-3">
 									<div class="space-y-1">
-										<p class="text-sm font-medium text-slate-900 dark:text-slate-100">{issue.title}</p>
-										<p class="font-mono text-xs text-slate-500 dark:text-slate-400">{formatIssueCode(issue)}</p>
+										<p class="text-sm font-medium text-slate-900 dark:text-slate-100">
+											{issue.title}
+										</p>
+										<p class="font-mono text-xs text-slate-500 dark:text-slate-400">
+											{formatIssueCode(issue)}
+										</p>
 										{#if issue.labels?.length}
 											<div class="mt-1 flex flex-wrap gap-1">
 												{#each issue.labels as label}
@@ -472,9 +547,21 @@
 											</div>
 										{/if}
 										{#if issue.sprint_id}
-											<span class="inline-flex w-fit items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
-												<svg class="mr-1 h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-													<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 4v16m0-14h10l-2 4 2 4H5"></path>
+											<span
+												class="inline-flex w-fit items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700"
+											>
+												<svg
+													class="mr-1 h-3.5 w-3.5"
+													fill="none"
+													stroke="currentColor"
+													viewBox="0 0 24 24"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width="2"
+														d="M5 4v16m0-14h10l-2 4 2 4H5"
+													></path>
 												</svg>
 												{sprintNameMap[issue.sprint_id] ?? $t('issue.sprint')}
 											</span>
@@ -488,15 +575,23 @@
 										<div class="flex items-center gap-2">
 											<Avatar userId={issue.assignee_id} />
 											{#if isBotAssignee(issue.assignee_id)}
-												<BotIcon class="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-300" title={$t('admin.botBadge')} />
+												<BotIcon
+													class="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-300"
+													title={$t('admin.botBadge')}
+												/>
 											{/if}
-											<span class="text-xs text-slate-600 dark:text-slate-400">{memberNameMap[issue.assignee_id] || issue.assignee_id.substring(0, 8)}</span>
+											<span class="text-xs text-slate-600 dark:text-slate-400"
+												>{memberNameMap[issue.assignee_id] ||
+													issue.assignee_id.substring(0, 8)}</span
+											>
 										</div>
 									{:else}
 										<span class="text-xs text-slate-400">{$t('common.unassigned')}</span>
 									{/if}
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-400">{formatDate(issue.updated_at)}</td>
+								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-400"
+									>{formatDate(issue.updated_at)}</td
+								>
 							</tr>
 						{/each}
 					</tbody>
@@ -505,13 +600,18 @@
 
 			<div class="divide-y divide-slate-200 dark:divide-slate-700 md:hidden">
 				{#each issues as issue (issue.id)}
-					<button class="w-full space-y-2 p-4 text-left hover:bg-slate-50 dark:bg-slate-950 dark:hover:bg-slate-700" onclick={() => goToIssue(issue.id)}>
+					<button
+						class="w-full space-y-2 p-4 text-left hover:bg-slate-50 dark:bg-slate-950 dark:hover:bg-slate-700"
+						onclick={() => goToIssue(issue.id)}
+					>
 						<div class="flex items-start justify-between gap-3">
 							<div>
 								<p class="text-sm font-medium text-slate-900 dark:text-slate-100">{issue.title}</p>
-								<p class="font-mono text-xs text-slate-500 dark:text-slate-400">{formatIssueCode(issue)}</p>
-									{#if issue.labels?.length}
-										<div class="mt-1 flex flex-wrap gap-1">
+								<p class="font-mono text-xs text-slate-500 dark:text-slate-400">
+									{formatIssueCode(issue)}
+								</p>
+								{#if issue.labels?.length}
+									<div class="mt-1 flex flex-wrap gap-1">
 										{#each issue.labels as label}
 											<span
 												class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
@@ -519,18 +619,30 @@
 											>
 												{label.name}
 											</span>
-											{/each}
-										</div>
-									{/if}
-									{#if issue.sprint_id}
-										<span class="inline-flex w-fit items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
-											<svg class="mr-1 h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 4v16m0-14h10l-2 4 2 4H5"></path>
-											</svg>
-											{sprintNameMap[issue.sprint_id] ?? $t('issue.sprint')}
-										</span>
-									{/if}
-								</div>
+										{/each}
+									</div>
+								{/if}
+								{#if issue.sprint_id}
+									<span
+										class="inline-flex w-fit items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700"
+									>
+										<svg
+											class="mr-1 h-3.5 w-3.5"
+											fill="none"
+											stroke="currentColor"
+											viewBox="0 0 24 24"
+										>
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width="2"
+												d="M5 4v16m0-14h10l-2 4 2 4H5"
+											></path>
+										</svg>
+										{sprintNameMap[issue.sprint_id] ?? $t('issue.sprint')}
+									</span>
+								{/if}
+							</div>
 							<Badge kind="priority" value={issue.priority} />
 						</div>
 						<div class="flex items-center justify-between">
@@ -539,15 +651,23 @@
 								<div class="flex items-center gap-2">
 									<Avatar userId={issue.assignee_id} />
 									{#if isBotAssignee(issue.assignee_id)}
-										<BotIcon class="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-300" title={$t('admin.botBadge')} />
+										<BotIcon
+											class="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-300"
+											title={$t('admin.botBadge')}
+										/>
 									{/if}
-									<span class="text-xs text-slate-600 dark:text-slate-400">{memberNameMap[issue.assignee_id] || issue.assignee_id.substring(0, 8)}</span>
+									<span class="text-xs text-slate-600 dark:text-slate-400"
+										>{memberNameMap[issue.assignee_id] || issue.assignee_id.substring(0, 8)}</span
+									>
 								</div>
 							{:else}
 								<span class="text-xs text-slate-400">{$t('common.unassigned')}</span>
 							{/if}
 						</div>
-						<p class="text-xs text-slate-500 dark:text-slate-400">{$t('project.updatedAt')} {formatDate(issue.updated_at)}</p>
+						<p class="text-xs text-slate-500 dark:text-slate-400">
+							{$t('project.updatedAt')}
+							{formatDate(issue.updated_at)}
+						</p>
 					</button>
 				{/each}
 			</div>
@@ -555,10 +675,16 @@
 
 		{#if totalPages > 1}
 			<div class="mt-6 flex items-center justify-between px-2">
-				<span class="text-sm text-slate-500 dark:text-slate-400">{$t('issue.pagination', { values: { total, current: currentPage, pages: totalPages } })}</span>
+				<span class="text-sm text-slate-500 dark:text-slate-400"
+					>{$t('issue.pagination', {
+						values: { total, current: currentPage, pages: totalPages }
+					})}</span
+				>
 				<div class="flex items-center gap-1">
 					<button
-						class="rounded border px-3 py-1 text-sm {currentPage === 1 ? 'cursor-not-allowed text-slate-300' : 'hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800'}"
+						class="rounded border px-3 py-1 text-sm {currentPage === 1
+							? 'cursor-not-allowed text-slate-300'
+							: 'hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800'}"
 						onclick={() => goToPage(currentPage - 1)}
 						disabled={currentPage === 1}
 					>
@@ -569,7 +695,9 @@
 							<span class="px-2 text-slate-400">...</span>
 						{:else}
 							<button
-								class="rounded px-3 py-1 text-sm {p === currentPage ? 'bg-blue-600 text-white' : 'border hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800'}"
+								class="rounded px-3 py-1 text-sm {p === currentPage
+									? 'bg-blue-600 text-white'
+									: 'border hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800'}"
 								onclick={() => goToPage(p)}
 							>
 								{p}
@@ -577,7 +705,9 @@
 						{/if}
 					{/each}
 					<button
-						class="rounded border px-3 py-1 text-sm {currentPage === totalPages ? 'cursor-not-allowed text-slate-300' : 'hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800'}"
+						class="rounded border px-3 py-1 text-sm {currentPage === totalPages
+							? 'cursor-not-allowed text-slate-300'
+							: 'hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800'}"
 						onclick={() => goToPage(currentPage + 1)}
 						disabled={currentPage === totalPages}
 					>
@@ -593,8 +723,10 @@
 	bind:open={showCreateModal}
 	{workspaceId}
 	{projectId}
-	initialStatus={(workflowStates.find((s) => s.is_initial)?.key || workflowStates[0]?.key || 'backlog') as IssueStatus}
-	workflowStates={workflowStates}
+	initialStatus={(workflowStates.find((s) => s.is_initial)?.key ||
+		workflowStates[0]?.key ||
+		'backlog') as IssueStatus}
+	{workflowStates}
 	{scenarioTemplate}
 	onCreated={handleIssueCreated}
 />

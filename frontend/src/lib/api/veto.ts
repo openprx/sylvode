@@ -67,7 +67,9 @@ function mapVetoEvent(raw: Record<string, unknown>): VetoEvent {
 		domain: String(raw.domain ?? ''),
 		reason: String(raw.reason ?? ''),
 		status,
-		escalation_started_at: raw.escalation_started_at ? String(raw.escalation_started_at) : undefined,
+		escalation_started_at: raw.escalation_started_at
+			? String(raw.escalation_started_at)
+			: undefined,
 		escalation_result: raw.escalation_result ? String(raw.escalation_result) : undefined,
 		escalation_votes: mapEscalationVotes(raw.escalation_votes),
 		created_at: String(raw.created_at ?? '')
@@ -76,7 +78,9 @@ function mapVetoEvent(raw: Record<string, unknown>): VetoEvent {
 
 export const vetoApi = {
 	async get(proposalId: string): Promise<ApiResult<VetoEvent>> {
-		const res = await apiClient.get<Record<string, unknown>>(`/api/v1/proposals/${proposalId}/veto`);
+		const res = await apiClient.get<Record<string, unknown>>(
+			`/api/v1/proposals/${proposalId}/veto`
+		);
 		if (res.code !== 0 || !res.data) {
 			return { code: res.code, message: res.message || get(t)('api.loadVetoFailed'), data: null };
 		}
@@ -84,32 +88,54 @@ export const vetoApi = {
 	},
 
 	async startEscalation(proposalId: string): Promise<ApiResult<VetoEvent>> {
-		const res = await apiClient.post<Record<string, unknown>>(`/api/v1/proposals/${proposalId}/veto/escalation`);
+		const res = await apiClient.post<Record<string, unknown>>(
+			`/api/v1/proposals/${proposalId}/veto/escalation`
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.startEscalationFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.startEscalationFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: res.message, data: mapVetoEvent(res.data) };
 	},
 
 	async voteEscalation(proposalId: string, overturn: boolean): Promise<ApiResult<VetoEvent>> {
-		const res = await apiClient.post<Record<string, unknown>>(`/api/v1/proposals/${proposalId}/veto/escalation/vote`, {
-			overturn
-		});
+		const res = await apiClient.post<Record<string, unknown>>(
+			`/api/v1/proposals/${proposalId}/veto/escalation/vote`,
+			{
+				overturn
+			}
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.voteEscalationFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.voteEscalationFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: res.message, data: mapVetoEvent(res.data) };
 	},
 
 	async withdraw(proposalId: string): Promise<ApiResult<VetoEvent>> {
-		const res = await apiClient.delete<Record<string, unknown>>(`/api/v1/proposals/${proposalId}/veto`);
+		const res = await apiClient.delete<Record<string, unknown>>(
+			`/api/v1/proposals/${proposalId}/veto`
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.withdrawVetoFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('api.withdrawVetoFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: res.message, data: mapVetoEvent(res.data) };
 	},
 
-	listVetoers(params?: { project_id?: string; domain?: string }): Promise<ApiResult<PaginatedData<VetoerScope>>> {
+	listVetoers(params?: {
+		project_id?: string;
+		domain?: string;
+	}): Promise<ApiResult<PaginatedData<VetoerScope>>> {
 		const query = new URLSearchParams();
 		if (params?.project_id) query.set('project_id', params.project_id);
 		if (params?.domain) query.set('domain', params.domain);

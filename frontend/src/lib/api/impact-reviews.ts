@@ -66,7 +66,10 @@ function mapImpactReview(raw: Record<string, unknown>): ImpactReview {
 		project_id: String(raw.project_id ?? ''),
 		status: (raw.status ?? 'pending') as ReviewStatus,
 		rating: raw.rating ? (String(raw.rating) as ReviewRating) : undefined,
-		metrics: raw.metrics && typeof raw.metrics === 'object' ? (raw.metrics as Record<string, unknown>) : undefined,
+		metrics:
+			raw.metrics && typeof raw.metrics === 'object'
+				? (raw.metrics as Record<string, unknown>)
+				: undefined,
 		goal_achievements: raw.goal_achievements,
 		achievements: raw.achievements ? String(raw.achievements) : undefined,
 		lessons: raw.lessons ? String(raw.lessons) : undefined,
@@ -123,7 +126,9 @@ function mapDetail(raw: Record<string, unknown>): ImpactReviewDetail {
 
 export const impactReviewsApi = {
 	async getByProposal(proposalId: string): Promise<ApiResult<ImpactReviewDetail>> {
-		const res = await apiClient.get<Record<string, unknown>>(`/api/v1/proposals/${proposalId}/impact-review`);
+		const res = await apiClient.get<Record<string, unknown>>(
+			`/api/v1/proposals/${proposalId}/impact-review`
+		);
 		if (res.code !== 0 || !res.data) {
 			return {
 				code: res.code,
@@ -178,7 +183,9 @@ export const impactReviewsApi = {
 		if (params.rating) query.set('rating', params.rating);
 		if (params.page) query.set('page', String(params.page));
 		if (params.per_page) query.set('per_page', String(params.per_page));
-		const endpoint = query.size ? `/api/v1/impact-reviews?${query.toString()}` : '/api/v1/impact-reviews';
+		const endpoint = query.size
+			? `/api/v1/impact-reviews?${query.toString()}`
+			: '/api/v1/impact-reviews';
 		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(endpoint);
 		if (res.code !== 0 || !res.data) {
 			return {

@@ -1,4 +1,4 @@
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { init, locale, register } from 'svelte-i18n';
 
 register('zh', () => import('./zh.json'));
@@ -16,9 +16,10 @@ function syncDocumentLang(lang: string): void {
 	}
 }
 
-const savedLocale = browser && supportedLocales.has(localStorage.getItem('locale') ?? '')
-	? normalizeLocale(localStorage.getItem('locale'))
-	: 'zh';
+const savedLocale =
+	browser && supportedLocales.has(localStorage.getItem('locale') ?? '')
+		? normalizeLocale(localStorage.getItem('locale'))
+		: 'zh';
 
 init({
 	fallbackLocale: 'zh',

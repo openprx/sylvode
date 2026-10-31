@@ -29,7 +29,7 @@ import type {
 	FlowPackageExternalReferencePolicy,
 	FlowPackageImportPreview,
 	UploadProgress
-} from '$lib/api/flow';
+} from '#lib/api/flow.js';
 import { DEFAULT_FLOW_LIMITS } from './limits';
 import { newIdempotencyKey } from './package-export';
 import {

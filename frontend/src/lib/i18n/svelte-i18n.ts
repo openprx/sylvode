@@ -44,9 +44,10 @@ async function loadLocale(lang: string): Promise<void> {
 	}
 
 	const module = await loader();
-	const dict = isObject(module) && 'default' in module && isObject(module.default)
-		? (module.default as Dictionary)
-		: ((module as Dictionary) ?? {});
+	const dict =
+		isObject(module) && 'default' in module && isObject(module.default)
+			? (module.default as Dictionary)
+			: ((module as Dictionary) ?? {});
 
 	dictionaries.update((prev) => ({ ...prev, [lang]: dict }));
 }
@@ -79,14 +80,12 @@ export const locale = {
 	update: currentLocale.update
 };
 
-export const t: Readable<(key: string, options?: { values?: Record<string, unknown> }) => string> = derived(
-	[currentLocale, dictionaries],
-	([$locale, $dicts]) => {
+export const t: Readable<(key: string, options?: { values?: Record<string, unknown> }) => string> =
+	derived([currentLocale, dictionaries], ([$locale, $dicts]) => {
 		return (key: string, options?: { values?: Record<string, unknown> }) => {
 			const primary = $dicts[$locale] ?? {};
 			const fallback = $dicts[fallbackLocale] ?? {};
 			const raw = getValue(primary, key) ?? getValue(fallback, key) ?? key;
 			return interpolate(String(raw), options?.values);
 		};
-	}
-);
+	});

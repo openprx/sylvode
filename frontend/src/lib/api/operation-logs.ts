@@ -34,7 +34,10 @@ export interface BotOperationLogQuery {
 }
 
 export const operationLogsApi = {
-	list(workspaceId: string, query: BotOperationLogQuery = {}): Promise<ApiResult<BotOperationLogPage>> {
+	list(
+		workspaceId: string,
+		query: BotOperationLogQuery = {}
+	): Promise<ApiResult<BotOperationLogPage>> {
 		const params = new URLSearchParams();
 		if (query.bot_id) params.set('bot_id', query.bot_id);
 		if (query.tool_name) params.set('tool_name', query.tool_name);

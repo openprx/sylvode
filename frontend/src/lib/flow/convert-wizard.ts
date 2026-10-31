@@ -31,14 +31,14 @@
 // - preview and job `warnings[]` are `<code>:<field_key>` strings; each is shown on its own line,
 //   worded by its code (an unknown code gets a generic line, never the raw string as prose).
 
-import type { ApiResult, PaginatedData } from '$lib/api/client';
+import type { ApiResult, PaginatedData } from '#lib/api/client.js';
 import type {
 	BridgePermissionState,
 	FlowConversionJob,
 	FlowConversionPreview,
 	FlowObjectView
-} from '$lib/api/flow';
-import { formsApi, type FormField, type UniversalForm } from '$lib/api/forms';
+} from '#lib/api/flow.js';
+import { formsApi, type FormField, type UniversalForm } from '#lib/api/forms.js';
 import type { FlowCommandService } from './command-service';
 import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
 import type { FlowObjectRepository } from './object-repository';

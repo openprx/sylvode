@@ -13,17 +13,17 @@
 // - errors branch on `error_code` (and, for the legacy string-typed envelope that carries no
 //   `error_code`, on the numeric business code) -- never on `message`.
 
-import { authApi } from '$lib/api/auth';
-import type { ApiResult } from '$lib/api/client';
+import { authApi } from '#lib/api/auth.js';
+import type { ApiResult } from '#lib/api/client.js';
 import {
 	FLOW_MEMBER_LEVELS,
 	type FlowFeatureFlags,
 	type FlowFeatureUpdate,
 	type FlowMemberLevel,
 	type SetFlowFeatureInput
-} from '$lib/api/flow';
-import { workspacesApi } from '$lib/api/workspaces';
-import { flowFeatureStore, type FlowFeatureStore } from '$lib/stores/flow-feature';
+} from '#lib/api/flow.js';
+import { workspacesApi } from '#lib/api/workspaces.js';
+import { flowFeatureStore, type FlowFeatureStore } from '#lib/stores/flow-feature.js';
 import { FlowCommandService } from './command-service';
 import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
 

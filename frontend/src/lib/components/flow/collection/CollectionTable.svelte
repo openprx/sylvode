@@ -14,13 +14,13 @@
 		virtualWindow,
 		type CollectionViewState,
 		type RecordRow
-	} from '$lib/flow/collection-view';
+	} from '#lib/flow/collection-view.js';
 	import {
 		COLUMN_WIDTH_DEFAULT,
 		editorValue,
 		isEditableField,
 		type CollectionField
-	} from '$lib/flow/collection-values';
+	} from '#lib/flow/collection-values.js';
 	import CollectionCellValue from './CollectionCellValue.svelte';
 	import CollectionValueEditor from './CollectionValueEditor.svelte';
 

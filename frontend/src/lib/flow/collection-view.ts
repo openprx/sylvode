@@ -40,8 +40,8 @@ import type {
 	FlowObjectView,
 	FlowRecordFilter,
 	FlowRecordSort
-} from '$lib/api/flow';
-import type { ApiResult } from '$lib/api/client';
+} from '#lib/api/flow.js';
+import type { ApiResult } from '#lib/api/client.js';
 import {
 	flowErrorDetailKey,
 	flowErrorFromEnvelope,

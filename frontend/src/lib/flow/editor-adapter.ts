@@ -94,7 +94,12 @@ function buildSchema(pm: PmModule): InstanceType<PmModule['Schema']> {
 				content: 'text*',
 				attrs: { indent: indentAttr },
 				toDOM: (node) => ['p', { 'data-indent': node.attrs.indent }, 0],
-				parseDOM: [{ tag: 'p', getAttrs: (dom) => ({ indent: Number((dom as HTMLElement).dataset.indent ?? 0) }) }]
+				parseDOM: [
+					{
+						tag: 'p',
+						getAttrs: (dom) => ({ indent: Number((dom as HTMLElement).dataset.indent ?? 0) })
+					}
+				]
 			},
 			heading: {
 				group: 'block',
@@ -110,7 +115,11 @@ function buildSchema(pm: PmModule): InstanceType<PmModule['Schema']> {
 				group: 'block',
 				content: 'text*',
 				attrs: { indent: indentAttr },
-				toDOM: (node) => ['div', { class: 'flow-bullet-item', 'data-indent': node.attrs.indent }, 0],
+				toDOM: (node) => [
+					'div',
+					{ class: 'flow-bullet-item', 'data-indent': node.attrs.indent },
+					0
+				],
 				parseDOM: [{ tag: 'div.flow-bullet-item' }]
 			},
 			codeBlock: {
@@ -300,7 +309,9 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 					const meta = tr.getMeta(key) as { peers: ReadonlyArray<RemotePresence> } | undefined;
 					if (meta) return decorate(newState, meta.peers);
 					// Remote/local content changes move blocks: recompute from the same peers.
-					return tr.docChanged ? decorate(newState, this.remotePeers) : previous.map(tr.mapping, tr.doc);
+					return tr.docChanged
+						? decorate(newState, this.remotePeers)
+						: previous.map(tr.mapping, tr.doc);
 				}
 			},
 			props: {
@@ -316,17 +327,19 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 		const schema = buildSchema(pm);
 		this.schema = schema;
 
-		const nestOutdent = (delta: number): import('prosemirror-state').Command => (state, dispatch) => {
-			const { $from } = state.selection;
-			const depth = $from.parent.attrs.indent as number;
-			const next = Math.max(0, Math.min(MAX_INDENT, depth + delta));
-			if (next === depth) return false;
-			if (dispatch) {
-				const pos = $from.before($from.depth);
-				dispatch(state.tr.setNodeAttribute(pos, 'indent', next));
-			}
-			return true;
-		};
+		const nestOutdent =
+			(delta: number): import('prosemirror-state').Command =>
+			(state, dispatch) => {
+				const { $from } = state.selection;
+				const depth = $from.parent.attrs.indent as number;
+				const next = Math.max(0, Math.min(MAX_INDENT, depth + delta));
+				if (next === depth) return false;
+				if (dispatch) {
+					const pos = $from.before($from.depth);
+					dispatch(state.tr.setNodeAttribute(pos, 'indent', next));
+				}
+				return true;
+			};
 
 		const customKeymap = pmKeymap.keymap({
 			'Mod-z': loroPm.undo,
@@ -366,7 +379,12 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 				const hadFocus = this.view.hasFocus();
 				const newState = this.view.state.apply(tr);
 				this.view.updateState(newState);
-				if (hadFocus && !this.view.hasFocus() && typeof document !== 'undefined' && document.activeElement === document.body) {
+				if (
+					hadFocus &&
+					!this.view.hasFocus() &&
+					typeof document !== 'undefined' &&
+					document.activeElement === document.body
+				) {
 					this.view.focus();
 				}
 				this.detectSlashMenu(newState);
@@ -399,7 +417,11 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 		const match = /(?:^|\s)\/(\w*)$/.exec(textBefore);
 		if (match) {
 			const coords = this.view.coordsAtPos($from.pos);
-			this.hooks.onSlashMenu({ active: true, query: match[1], coords: { left: coords.left, top: coords.bottom } });
+			this.hooks.onSlashMenu({
+				active: true,
+				query: match[1],
+				coords: { left: coords.left, top: coords.bottom }
+			});
 		} else {
 			this.hooks.onSlashMenu({ active: false, query: '', coords: null });
 		}
@@ -486,7 +508,9 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 		const size = this.view.state.doc.content.size;
 		const anchor = Math.min(value.anchor, size);
 		const head = Math.min(value.head, size);
-		const tr = this.view.state.tr.setSelection(pmState.TextSelection.create(this.view.state.doc, anchor, head));
+		const tr = this.view.state.tr.setSelection(
+			pmState.TextSelection.create(this.view.state.doc, anchor, head)
+		);
 		this.view.dispatch(tr);
 	}
 

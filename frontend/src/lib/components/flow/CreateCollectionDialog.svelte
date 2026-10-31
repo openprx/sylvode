@@ -1,12 +1,12 @@
 <script lang="ts">
 	// Standalone Collection create dialog (`ui-surface-v1.md` v0.6: "Navigator 的 standalone
 	// Collection 创建走通用 object create"). Intent, key and id handling live in
-	// `$lib/flow/create-collection`; this component only holds the form fields.
+	// `#lib/flow/create-collection.js`; this component only holds the form fields.
 	import { t } from 'svelte-i18n';
 	import { get } from 'svelte/store';
-	import Modal from '$lib/components/Modal.svelte';
-	import type { AcceptedChange } from '$lib/api/flow';
-	import { FlowCommandService } from '$lib/flow/command-service';
+	import Modal from '#lib/components/Modal.svelte';
+	import type { AcceptedChange } from '#lib/api/flow.js';
+	import { FlowCommandService } from '#lib/flow/command-service.js';
 	import {
 		COLLECTION_TITLE_MAX_CHARS,
 		COLLECTION_VIEW_NAME_KEYS,
@@ -14,7 +14,7 @@
 		CreateCollectionSession,
 		type CollectionDraft,
 		type CollectionViewType
-	} from '$lib/flow/create-collection';
+	} from '#lib/flow/create-collection.js';
 
 	interface Props {
 		open: boolean;

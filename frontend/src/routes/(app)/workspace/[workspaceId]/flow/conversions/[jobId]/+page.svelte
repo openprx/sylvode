@@ -4,18 +4,18 @@
 	// layout, so the navigator and the `flow_enabled` guard still apply. The static `conversions`
 	// segment wins over the sibling `[objectId]` route for `/flow/conversions/{job_id}`.
 	import { getContext } from 'svelte';
-	import { page } from '$app/stores';
-	import ConversionJobView from '$lib/components/flow/ConversionJobView.svelte';
-	import { FlowCommandService } from '$lib/flow/command-service';
-	import { FLOW_REPOSITORY_CONTEXT } from '$lib/flow/context-keys';
-	import type { FlowObjectRepository } from '$lib/flow/object-repository';
-	import { requireRouteParam } from '$lib/utils/route-params';
+	import { page } from '$app/state';
+	import ConversionJobView from '#lib/components/flow/ConversionJobView.svelte';
+	import { FlowCommandService } from '#lib/flow/command-service.js';
+	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
+	import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
 
 	const repository = getContext<FlowObjectRepository>(FLOW_REPOSITORY_CONTEXT);
 	const commands = new FlowCommandService();
 
-	const workspaceId = $derived(requireRouteParam($page.params.workspaceId, 'workspaceId'));
-	const jobId = $derived(requireRouteParam($page.params.jobId, 'jobId'));
+	const workspaceId = $derived(requireRouteParam(page.params.workspaceId, 'workspaceId'));
+	const jobId = $derived(requireRouteParam(page.params.jobId, 'jobId'));
 </script>
 
 <div class="flex-1 overflow-y-auto p-4 md:p-6">

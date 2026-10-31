@@ -7,7 +7,7 @@
 // display lines that carry node kind, text and property changes only: node ids, frontiers and
 // anything byte-shaped are never copied into a line.
 
-import type { FlowDiffResponse } from '$lib/api/flow';
+import type { FlowDiffResponse } from '#lib/api/flow.js';
 import { FlowCommandService } from './command-service';
 import { flowErrorI18nKey } from './errors';
 import type { FlowError } from './types';

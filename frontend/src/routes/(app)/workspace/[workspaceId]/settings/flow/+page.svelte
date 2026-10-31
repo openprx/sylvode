@@ -5,13 +5,13 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import Card from '$lib/components/Card.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import { toast } from '$lib/stores/toast';
-	import type { FlowFeatureFlags } from '$lib/api/flow';
+	import Card from '#lib/components/Card.svelte';
+	import EmptyState from '#lib/components/EmptyState.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import { toast } from '#lib/stores/toast.js';
+	import type { FlowFeatureFlags } from '#lib/api/flow.js';
 	import {
 		FLOW_MEMBER_LEVELS,
 		FLOW_MEMBER_LEVEL_KEYS,
@@ -20,10 +20,10 @@
 		type FlowMemberLevel,
 		type FlowSettingsIntent,
 		type FlowSettingsSubmitOutcome
-	} from '$lib/flow/flow-settings';
-	import { requireRouteParam } from '$lib/utils/route-params';
+	} from '#lib/flow/flow-settings.js';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
 
-	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
+	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 	const controller = new FlowSettingsController(workspaceId);
 
 	let view = $state<'loading' | 'ready' | 'forbidden' | 'failed'>('loading');

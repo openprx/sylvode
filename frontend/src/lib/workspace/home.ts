@@ -4,10 +4,10 @@
 // component keeps only ephemeral UI state, so everything here runs under bun without a browser.
 
 import { writable } from 'svelte/store';
-import { authApi } from '$lib/api/auth';
-import type { ApiResult, PaginatedData } from '$lib/api/client';
-import { projectsApi, type Project } from '$lib/api/projects';
-import { workspacesApi, type Workspace, type WorkspaceMember } from '$lib/api/workspaces';
+import { authApi } from '#lib/api/auth.js';
+import type { ApiResult, PaginatedData } from '#lib/api/client.js';
+import { projectsApi, type Project } from '#lib/api/projects.js';
+import { workspacesApi, type Workspace, type WorkspaceMember } from '#lib/api/workspaces.js';
 
 export type WorkspaceRole = WorkspaceMember['role'];
 

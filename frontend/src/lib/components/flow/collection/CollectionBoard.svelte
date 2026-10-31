@@ -11,7 +11,7 @@
 		boardGroupFieldIn,
 		type BoardColumn,
 		type CollectionViewState
-	} from '$lib/flow/collection-view';
+	} from '#lib/flow/collection-view.js';
 	import CollectionCellValue from './CollectionCellValue.svelte';
 
 	interface Props {
