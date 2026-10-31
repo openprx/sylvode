@@ -1,7 +1,7 @@
 {
 	"name": "frontend",
 	"private": true,
-	"version": "0.2.524",
+	"version": "0.2.530",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
@@ -16,6 +16,7 @@
 		"smoke:template-work-items": "node scripts/smoke-template-work-items.mjs",
 		"smoke:forms-ui": "node scripts/smoke-forms-ui.mjs",
 		"test:record-values": "bun tests/record-values-roundtrip.test.ts",
+		"test:markdown-sanitize": "bun tests/markdown-sanitize.test.ts",
 		"test:forms-flow-lineage": "bun tests/forms-flow-lineage.test.ts",
 		"test:flow-limits": "bun tests/flow-limits-negotiation.test.ts",
 		"test:flow-v0.4": "bun tests/flow-v0.4.ts",

@@ -10,10 +10,39 @@ name.
 
 ## [Unreleased]
 
+### Security
+
+- Patched RustSec findings in the lockfile: rustls 0.23.46, rustls-webpki 0.103.16,
+  webpki-roots 1.0.11, wasmtime 49.0.5, zip 9.2, tokio 1.54.1 (RUSTSEC-2026-0386),
+  and quinn-proto 0.11.19 (RUSTSEC-2026-0338 through 0342). The unused wasmtime
+  compilation cache is no longer enabled, which drops the unfixed zstd 0.13 stack
+  (no published wasmtime release depends on zstd 0.14).
+- User access and refresh tokens now carry `users.session_version`. Deactivating an account,
+  deleting it, or changing its password increments that version, and login, refresh and the
+  authentication middleware reject inactive accounts and tokens whose version no longer matches.
+- Markdown rendering no longer re-inserts raw `<video>` HTML. The default frontend nginx config
+  sends the same Content-Security-Policy as the reference Caddy file.
+- `GET /api/v1/workspaces/{id}/users` returns the whole instance directory only to instance
+  admins. Workspace admins see members of that workspace.
+- The first registration becomes the instance admin under a transaction advisory lock, so two
+  concurrent registrations cannot both observe an empty user table.
+- Flow collaboration diagnostics and shallow verify require object `view`, not only workspace
+  membership.
+
 This release renames the product from OpenPR to Sylvode and adds Sylvode Flow. Read
 **Breaking and behaviour changes** before upgrading, then follow the upgrade sequence in the
 [v1.0 compatibility matrix](docs/sylvode-v1.0-compatibility.md#upgrade-sequence). Every legacy
 OpenPR name keeps working; see **Deprecated**.
+
+### Fixed
+
+- Package export accepts a git committer date written with a `Z` UTC suffix. GitHub's
+  git prints `%cI` that way; the build used to discard the commit as unknown and every
+  package export then failed closed.
+- The depth-32 lock-hold sample check accepts an extra sample when a lock timeout is
+  resubmitted. The parallel suite was failing with 31 samples against the exact count of 30.
+- A cancelled plugin invocation is allowed 60 seconds to land its row. A loaded CI
+  runner was still writing it after the previous 20 second wait.
 
 ### Breaking and behaviour changes
 

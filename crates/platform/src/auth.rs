@@ -17,6 +17,10 @@ pub struct JwtClaims {
     pub token_type: TokenType,
     pub iat: usize,
     pub exp: usize,
+    /// `users.session_version` at issue time. Absent claims (tokens issued before the column
+    /// existed) deserialize as 0, which matches the column default.
+    #[serde(default)]
+    pub sv: i64,
 }
 
 #[derive(Debug, Error)]
@@ -48,11 +52,25 @@ impl JwtManager {
     }
 
     pub fn issue_access_token(&self, sub: &str, email: &str) -> AuthResult<String> {
-        self.issue_token(sub, email, TokenType::Access, self.access_ttl_seconds)
+        self.issue_access_token_at_session(sub, email, 0)
     }
 
     pub fn issue_refresh_token(&self, sub: &str, email: &str) -> AuthResult<String> {
-        self.issue_token(sub, email, TokenType::Refresh, self.refresh_ttl_seconds)
+        self.issue_refresh_token_at_session(sub, email, 0)
+    }
+
+    pub fn issue_access_token_at_session(&self, sub: &str, email: &str, session_version: i64) -> AuthResult<String> {
+        self.issue_token(sub, email, session_version, TokenType::Access, self.access_ttl_seconds)
+    }
+
+    pub fn issue_refresh_token_at_session(&self, sub: &str, email: &str, session_version: i64) -> AuthResult<String> {
+        self.issue_token(
+            sub,
+            email,
+            session_version,
+            TokenType::Refresh,
+            self.refresh_ttl_seconds,
+        )
     }
 
     pub fn verify_access_token(&self, token: &str) -> AuthResult<JwtClaims> {
@@ -63,7 +81,14 @@ impl JwtManager {
         self.verify_token(token, TokenType::Refresh)
     }
 
-    fn issue_token(&self, sub: &str, email: &str, token_type: TokenType, ttl_seconds: i64) -> AuthResult<String> {
+    fn issue_token(
+        &self,
+        sub: &str,
+        email: &str,
+        session_version: i64,
+        token_type: TokenType,
+        ttl_seconds: i64,
+    ) -> AuthResult<String> {
         let now = Utc::now().timestamp();
         let iat = usize::try_from(now).unwrap_or(0);
         let exp = usize::try_from(now + ttl_seconds).unwrap_or(0);
@@ -73,6 +98,7 @@ impl JwtManager {
             token_type,
             iat,
             exp,
+            sv: session_version,
         };
 
         Ok(encode(&Header::default(), &claims, &self.encoding_key)?)
@@ -275,6 +301,20 @@ mod tests {
     }
 
     // ── Unicode / 特殊字符 round-trip ─────────────────────────────────────────
+
+    #[test]
+    fn test_session_version_round_trip() {
+        let mgr = make_manager();
+        let token = mgr
+            .issue_access_token_at_session("user-1", "user@example.com", 7)
+            .expect("签发失败");
+        let claims = mgr.verify_access_token(&token).expect("验证失败");
+        assert_eq!(claims.sv, 7);
+
+        let legacy = mgr.issue_access_token("user-1", "user@example.com").expect("签发失败");
+        let legacy_claims = mgr.verify_access_token(&legacy).expect("验证失败");
+        assert_eq!(legacy_claims.sv, 0);
+    }
 
     #[test]
     fn test_unicode_sub_email() {

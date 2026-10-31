@@ -15,7 +15,7 @@ members = [
 authors = ["g1e2x87"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-version = "0.2.524"
+version = "0.2.530"
 description = "Sylvode open-source project management platform"
 repository = "https://github.com/openprx/sylvode"
 homepage = "https://openprx.dev/sylvode"
@@ -53,12 +53,43 @@ jsonwebtoken = "9"
 ring = "0.17"
 parking_lot = "0.12"
 bcrypt = "0.16"
-wasmtime = "49"
+# The on-disk compilation cache is unused: the plugin engine never loads a cache
+# config. It is also the only edge to zstd 0.13, which is vulnerable
+# (RUSTSEC-2026-0391, RUSTSEC-2026-0398, RUSTSEC-2026-0403, RUSTSEC-2026-0410)
+# and which every published wasmtime release through 50.0.1 still requires.
+# Every other wasmtime 49 default feature stays on.
+wasmtime = { version = "49", default-features = false, features = [
+    "anyhow",
+    "async",
+    "backtrace",
+    "gc",
+    "gc-copying",
+    "gc-drc",
+    "gc-null",
+    "wat",
+    "profiling",
+    "parallel-compilation",
+    "cranelift",
+    "pooling-allocator",
+    "demangle",
+    "addr2line",
+    "coredump",
+    "debug-builtins",
+    "runtime",
+    "component-model",
+    "component-model-async",
+    "threads",
+    "stack-switching",
+    "std",
+    "debug",
+    "compile-time-builtins",
+    "wit-parser",
+] }
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 serde_jcs = "0.2"
 unicode-casefold = "0.2"
 unicode-normalization = "0.1"
-zip = { version = "8.6", default-features = false, features = ["deflate"] }
+zip = { version = "9.2", default-features = false, features = ["deflate"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

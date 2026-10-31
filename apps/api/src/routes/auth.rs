@@ -12,7 +12,7 @@ use platform::{
     app::AppState,
     auth::{JwtClaims, JwtManager},
 };
-use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -101,6 +101,10 @@ pub struct PreferencesResponse {
     notification_prefs: NotificationPreferences,
 }
 
+/// Serializes the empty-database bootstrap. Two concurrent first registrations must not both
+/// observe `COUNT(*) = 0` and both become instance admins.
+const USER_BOOTSTRAP_LOCK_KEY: i64 = 7_483_926_150_234;
+
 pub async fn register(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -119,9 +123,16 @@ pub async fn register(
     }
 
     let normalized_email = req.email.trim().to_lowercase();
+    let password_hash = hash_password(req.password).await?;
 
-    let user_count_row = state
-        .db
+    let tx = state.db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT pg_advisory_xact_lock($1)",
+        vec![USER_BOOTSTRAP_LOCK_KEY.into()],
+    ))
+    .await?;
+    let user_count_row = tx
         .query_one(Statement::from_string(
             DbBackend::Postgres,
             "SELECT COUNT(*)::bigint as total FROM users".to_string(),
@@ -141,12 +152,14 @@ pub async fn register(
         let claims = jwt_manager(&state)
             .verify_access_token(&access_token)
             .map_err(|_| ApiError::Forbidden("admin access required".to_string()))?;
+        load_live_user_session(&state, &claims)
+            .await
+            .map_err(|_| ApiError::Forbidden("admin access required".to_string()))?;
         ensure_admin_user(&state, &claims.sub).await?;
         "user".to_string()
     };
 
-    let existing = state
-        .db
+    let existing = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT id FROM users WHERE email = $1".to_string(),
@@ -157,37 +170,36 @@ pub async fn register(
         return Err(ApiError::Conflict("email already registered".to_string()));
     }
 
-    let password_hash = hash(req.password, DEFAULT_COST).map_err(|_| ApiError::Internal)?;
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "INSERT INTO users (email, password_hash, name, role, is_active, created_at, updated_at) VALUES ($1, $2, $3, $4, true, now(), now())"
-                .to_string(),
-            vec![
-                normalized_email.clone().into(),
-                password_hash.into(),
-                req.name.trim().to_string().into(),
-                role.into(),
-            ],
-        ))
-        .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO users (email, password_hash, name, role, is_active, created_at, updated_at) VALUES ($1, $2, $3, $4, true, now(), now())"
+            .to_string(),
+        vec![
+            normalized_email.clone().into(),
+            password_hash.into(),
+            req.name.trim().to_string().into(),
+            role.into(),
+        ],
+    ))
+    .await?;
 
-    let row = state
-        .db
+    let row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT id::text as id, email, name, role, avatar_url, created_at, updated_at FROM users WHERE email = $1"
+            "SELECT id::text as id, email, name, role, avatar_url, session_version, created_at, updated_at FROM users WHERE email = $1"
                 .to_string(),
             vec![normalized_email.into()],
         ))
         .await?
         .ok_or(ApiError::Internal)?;
-
+    let session_version = row
+        .try_get::<i64>("", "session_version")
+        .map_err(|_| ApiError::Internal)?;
     let user = user_response_from_row(&row)?;
+    tx.commit().await?;
 
     let jwt = jwt_manager(&state);
-    let (tokens, cookies) = build_auth_response(&jwt, &state, &user)?;
+    let (tokens, cookies) = build_auth_response(&jwt, &state, &user, session_version)?;
     let mut resp = ApiResponse::success(AuthResponse { user, tokens }).into_response();
     resp.headers_mut().append(header::SET_COOKIE, cookies.0);
     resp.headers_mut().append(header::SET_COOKIE, cookies.1);
@@ -201,7 +213,7 @@ pub async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>)
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT id::text as id, email, password_hash, name, role, entity_type, avatar_url, created_at, updated_at FROM users WHERE email = $1"
+            "SELECT id::text as id, email, password_hash, name, role, entity_type, is_active, session_version, avatar_url, created_at, updated_at FROM users WHERE email = $1"
                 .to_string(),
             vec![normalized_email.into()],
         ))
@@ -223,16 +235,22 @@ pub async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>)
     if password_hash.is_empty() {
         return Err(ApiError::Unauthorized("invalid email or password".to_string()));
     }
-    let verified = verify(req.password, &password_hash)
-        .map_err(|_| ApiError::Unauthorized("invalid email or password".to_string()))?;
+    let verified = verify_password(req.password, password_hash, "invalid email or password").await?;
     if !verified {
         return Err(ApiError::Unauthorized("invalid email or password".to_string()));
     }
+    let is_active = row.try_get::<bool>("", "is_active").map_err(|_| ApiError::Internal)?;
+    if !is_active {
+        return Err(ApiError::Unauthorized("invalid email or password".to_string()));
+    }
+    let session_version = row
+        .try_get::<i64>("", "session_version")
+        .map_err(|_| ApiError::Internal)?;
 
     let user = user_response_from_row(&row)?;
 
     let jwt = jwt_manager(&state);
-    let (tokens, response) = build_auth_response(&jwt, &state, &user)?;
+    let (tokens, response) = build_auth_response(&jwt, &state, &user, session_version)?;
 
     let mut resp = ApiResponse::success(AuthResponse { user, tokens }).into_response();
     resp.headers_mut().append(header::SET_COOKIE, response.0);
@@ -260,16 +278,24 @@ pub async fn refresh(
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT id::text as id, email, name, role, avatar_url, created_at, updated_at FROM users WHERE id = $1::uuid"
+            "SELECT id::text as id, email, name, role, is_active, session_version, avatar_url, created_at, updated_at FROM users WHERE id = $1::uuid"
                 .to_string(),
             vec![claims.sub.clone().into()],
         ))
         .await?
         .ok_or_else(|| ApiError::Unauthorized("user not found".to_string()))?;
 
+    let is_active = row.try_get::<bool>("", "is_active").map_err(|_| ApiError::Internal)?;
+    let session_version = row
+        .try_get::<i64>("", "session_version")
+        .map_err(|_| ApiError::Internal)?;
+    if !is_active || session_version != claims.sv {
+        return Err(ApiError::Unauthorized("invalid refresh token".to_string()));
+    }
+
     let user = user_response_from_row(&row)?;
 
-    let (tokens, cookies) = build_auth_response(&jwt, &state, &user)?;
+    let (tokens, cookies) = build_auth_response(&jwt, &state, &user, session_version)?;
     let mut resp = ApiResponse::success(AuthResponse { user, tokens }).into_response();
     resp.headers_mut().append(header::SET_COOKIE, cookies.0);
     resp.headers_mut().append(header::SET_COOKIE, cookies.1);
@@ -407,18 +433,18 @@ pub async fn update_password(
     let password_hash = row
         .try_get::<String>("", "password_hash")
         .map_err(|_| ApiError::Internal)?;
-    let current_ok = verify(req.current_password, &password_hash)
-        .map_err(|_| ApiError::Unauthorized("invalid current password".to_string()))?;
+    let current_ok = verify_password(req.current_password, password_hash, "invalid current password").await?;
     if !current_ok {
         return Err(ApiError::Unauthorized("invalid current password".to_string()));
     }
 
-    let new_hash = hash(req.new_password, DEFAULT_COST).map_err(|_| ApiError::Internal)?;
+    let new_hash = hash_password(req.new_password).await?;
     state
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2::uuid".to_string(),
+            "UPDATE users SET password_hash = $1, session_version = session_version + 1, updated_at = now() WHERE id = $2::uuid"
+                .to_string(),
             vec![new_hash.into(), claims.sub.into()],
         ))
         .await?;
@@ -457,6 +483,23 @@ pub async fn update_preferences(
     Ok(ApiResponse::success(PreferencesResponse {
         notification_prefs: req.notification_prefs,
     }))
+}
+
+/// bcrypt is CPU-bound. Running it on the async worker would stall other requests for the
+/// duration of `DEFAULT_COST`.
+pub(crate) async fn hash_password(password: String) -> Result<String, ApiError> {
+    tokio::task::spawn_blocking(move || hash(password, DEFAULT_COST))
+        .await
+        .map_err(|_| ApiError::Internal)?
+        .map_err(|_| ApiError::Internal)
+}
+
+async fn verify_password(password: String, password_hash: String, failure: &'static str) -> Result<bool, ApiError> {
+    match tokio::task::spawn_blocking(move || verify(password, &password_hash)).await {
+        Ok(Ok(matched)) => Ok(matched),
+        Ok(Err(_)) => Err(ApiError::Unauthorized(failure.to_string())),
+        Err(_) => Err(ApiError::Internal),
+    }
 }
 
 fn jwt_manager(state: &AppState) -> JwtManager {
@@ -522,12 +565,13 @@ fn build_auth_response(
     jwt: &JwtManager,
     state: &AppState,
     user: &UserResponse,
+    session_version: i64,
 ) -> Result<(AuthTokens, (HeaderValue, HeaderValue)), ApiError> {
     let access_token = jwt
-        .issue_access_token(&user.id, &user.email)
+        .issue_access_token_at_session(&user.id, &user.email, session_version)
         .map_err(|_| ApiError::Internal)?;
     let refresh_token = jwt
-        .issue_refresh_token(&user.id, &user.email)
+        .issue_refresh_token_at_session(&user.id, &user.email, session_version)
         .map_err(|_| ApiError::Internal)?;
 
     let tokens = AuthTokens {
@@ -590,6 +634,37 @@ pub fn extract_cookie_token(headers: &HeaderMap, key: &str) -> Option<String> {
         let (k, v) = cookie.trim().split_once('=')?;
         if k == key { Some(v.to_string()) } else { None }
     })
+}
+
+pub(crate) struct LiveUserSession {
+    pub role: String,
+}
+
+/// Rejects a user access token whose session was revoked or whose account is inactive.
+///
+/// `sv` is the `users.session_version` baked into the token. Deactivation and password changes
+/// increment that column, so a still-unexpired refresh token cannot mint a new access token and
+/// an access token cannot keep calling the API.
+pub(crate) async fn load_live_user_session(state: &AppState, claims: &JwtClaims) -> Result<LiveUserSession, ApiError> {
+    let row = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT role, is_active, session_version FROM users WHERE id = $1::uuid".to_string(),
+            vec![claims.sub.clone().into()],
+        ))
+        .await?
+        .ok_or_else(|| ApiError::Unauthorized("invalid access token".to_string()))?;
+
+    let role = row.try_get::<String>("", "role").map_err(|_| ApiError::Internal)?;
+    let is_active = row.try_get::<bool>("", "is_active").map_err(|_| ApiError::Internal)?;
+    let session_version = row
+        .try_get::<i64>("", "session_version")
+        .map_err(|_| ApiError::Internal)?;
+    if !is_active || session_version != claims.sv {
+        return Err(ApiError::Unauthorized("invalid access token".to_string()));
+    }
+    Ok(LiveUserSession { role })
 }
 
 async fn ensure_admin_user(state: &AppState, user_id: &str) -> Result<(), ApiError> {

@@ -933,7 +933,7 @@ mod tests {
         let mut entries = Vec::new();
         for index in 0..archive.len() {
             let mut file = archive.by_index(index).unwrap();
-            let path = file.name().to_string();
+            let path = file.name().expect("zip entry name is utf-8").into_owned();
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes).unwrap();
             if path == target {
@@ -1083,7 +1083,7 @@ mod tests {
         let file = archive.by_index(0).unwrap();
         let local = usize::try_from(file.header_start()).unwrap();
         let central = usize::try_from(file.central_header_start()).unwrap();
-        let path = file.name().to_string();
+        let path = file.name().expect("zip entry name is utf-8").into_owned();
 
         let mut unequal = built.bytes.clone();
         unequal[local + 6..local + 8].copy_from_slice(&(1u16 << 2).to_le_bytes());
