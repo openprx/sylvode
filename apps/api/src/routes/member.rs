@@ -423,17 +423,49 @@ pub async fn search_users(
 
     let limit = query.limit.unwrap_or(20).clamp(1, 50);
     let search = query.search.unwrap_or_default().trim().to_lowercase();
+    let instance_admin = is_instance_admin(&state.db, user_id).await?;
 
-    let users = if search.is_empty() {
+    let users = if instance_admin {
+        if search.is_empty() {
+            SearchUserResponse::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                r"
+                    SELECT id, email, name
+                    FROM users
+                    ORDER BY created_at DESC
+                    LIMIT $1
+                ",
+                vec![limit.into()],
+            ))
+            .all(&state.db)
+            .await?
+        } else {
+            SearchUserResponse::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                r"
+                    SELECT id, email, name
+                    FROM users
+                    WHERE LOWER(name) LIKE $1 OR LOWER(email) LIKE $1
+                    ORDER BY created_at DESC
+                    LIMIT $2
+                ",
+                vec![format!("%{search}%").into(), limit.into()],
+            ))
+            .all(&state.db)
+            .await?
+        }
+    } else if search.is_empty() {
         SearchUserResponse::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r"
-                SELECT id, email, name
-                FROM users
-                ORDER BY created_at DESC
-                LIMIT $1
+                SELECT u.id, u.email, u.name
+                FROM users u
+                INNER JOIN workspace_members wm ON wm.user_id = u.id
+                WHERE wm.workspace_id = $1
+                ORDER BY u.created_at DESC
+                LIMIT $2
             ",
-            vec![limit.into()],
+            vec![workspace_id.into(), limit.into()],
         ))
         .all(&state.db)
         .await?
@@ -441,19 +473,44 @@ pub async fn search_users(
         SearchUserResponse::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r"
-                SELECT id, email, name
-                FROM users
-                WHERE LOWER(name) LIKE $1 OR LOWER(email) LIKE $1
-                ORDER BY created_at DESC
-                LIMIT $2
+                SELECT u.id, u.email, u.name
+                FROM users u
+                INNER JOIN workspace_members wm ON wm.user_id = u.id
+                WHERE wm.workspace_id = $1
+                  AND (LOWER(u.name) LIKE $2 OR LOWER(u.email) LIKE $2)
+                ORDER BY u.created_at DESC
+                LIMIT $3
             ",
-            vec![format!("%{search}%").into(), limit.into()],
+            vec![workspace_id.into(), format!("%{search}%").into(), limit.into()],
         ))
         .all(&state.db)
         .await?
     };
 
     Ok(ApiResponse::success(PaginatedData::from_items(users)))
+}
+
+/// Instance `users.role`, not the workspace membership role. Only an active instance admin or
+/// owner may search accounts outside the workspace they are administering.
+async fn is_instance_admin<C: ConnectionTrait>(conn: &C, user_id: Uuid) -> Result<bool, ApiError> {
+    #[derive(Debug, sea_orm::FromQueryResult)]
+    struct AdminRow {
+        role: String,
+        is_active: bool,
+    }
+
+    let Some(row) = AdminRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT role, is_active FROM users WHERE id = $1",
+        vec![user_id.into()],
+    ))
+    .one(conn)
+    .await?
+    else {
+        return Ok(false);
+    };
+    let role = row.role.trim().to_lowercase();
+    Ok(row.is_active && (role == "admin" || role == "owner"))
 }
 
 /// Helper: Get user's role in workspace

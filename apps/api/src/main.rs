@@ -2529,6 +2529,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0072_flow_conversion_job_started_at.sql",
         include_str!("../../../migrations/0072_flow_conversion_job_started_at.sql"),
     ),
+    (
+        "0073_user_session_version.sql",
+        include_str!("../../../migrations/0073_user_session_version.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -2906,6 +2910,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0072_flow_conversion_job_started_at.sql",
         SchemaProbe::Column("flow_conversion_jobs", "started_at"),
+    ),
+    (
+        "0073_user_session_version.sql",
+        SchemaProbe::Column("users", "session_version"),
     ),
 ];
 
@@ -3432,7 +3440,8 @@ mod tests {
                 "0069_flow_v08_rollback_control.sql",
                 "0070_bot_operation_logs_surface_check.sql",
                 "0071_flow_conversion_job_error_reason.sql",
-                "0072_flow_conversion_job_started_at.sql"
+                "0072_flow_conversion_job_started_at.sql",
+                "0073_user_session_version.sql"
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -4729,6 +4738,7 @@ mod proposal_scope_database_tests {
             token_type: TokenType::Access,
             iat: 0,
             exp: 0,
+            sv: 0,
         }
     }
 

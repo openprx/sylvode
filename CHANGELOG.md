@@ -10,6 +10,20 @@ name.
 
 ## [Unreleased]
 
+### Security
+
+- User access and refresh tokens now carry `users.session_version`. Deactivating an account,
+  deleting it, or changing its password increments that version, and login, refresh and the
+  authentication middleware reject inactive accounts and tokens whose version no longer matches.
+- Markdown rendering no longer re-inserts raw `<video>` HTML. The default frontend nginx config
+  sends the same Content-Security-Policy as the reference Caddy file.
+- `GET /api/v1/workspaces/{id}/users` returns the whole instance directory only to instance
+  admins. Workspace admins see members of that workspace.
+- The first registration becomes the instance admin under a transaction advisory lock, so two
+  concurrent registrations cannot both observe an empty user table.
+- Flow collaboration diagnostics and shallow verify require object `view`, not only workspace
+  membership.
+
 This release renames the product from OpenPR to Sylvode and adds Sylvode Flow. Read
 **Breaking and behaviour changes** before upgrading, then follow the upgrade sequence in the
 [v1.0 compatibility matrix](docs/sylvode-v1.0-compatibility.md#upgrade-sequence). Every legacy

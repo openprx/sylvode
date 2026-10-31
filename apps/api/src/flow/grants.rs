@@ -2329,6 +2329,7 @@ mod database_tests {
             token_type: TokenType::Access,
             iat: 0,
             exp: 0,
+            sv: 0,
         });
         extensions.insert(BotAuthContext {
             bot_id: fx.bot_id,

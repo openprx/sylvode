@@ -547,9 +547,10 @@ pub async fn bot_or_user_auth_middleware(
             token_type: TokenType::Access,
             iat: 0,
             exp: 0,
+            sv: 0,
         });
     } else {
-        // ── JWT path (unchanged behaviour) ──
+        // ── JWT path. Live sessions are re-checked against users.session_version. ──
         let jwt = JwtManager::new(
             state.cfg.jwt_secret.expose(),
             state.cfg.jwt_access_ttl_seconds,
@@ -558,6 +559,7 @@ pub async fn bot_or_user_auth_middleware(
         let claims: JwtClaims = jwt
             .verify_access_token(&token)
             .map_err(|_| ApiError::Unauthorized("invalid access token".to_string()))?;
+        crate::routes::auth::load_live_user_session(&state, &claims).await?;
 
         req.extensions_mut().insert(claims);
     }

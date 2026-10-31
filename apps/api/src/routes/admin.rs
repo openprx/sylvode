@@ -6,7 +6,6 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use bcrypt::{DEFAULT_COST, hash};
 use platform::app::AppState;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -216,7 +215,7 @@ pub async fn create_user(
                 "password must be at least 8 characters".to_string(),
             ));
         }
-        hash(password, DEFAULT_COST).map_err(|_| ApiError::Internal)?
+        crate::routes::auth::hash_password(password).await?
     };
 
     let existing = state
@@ -434,7 +433,7 @@ pub async fn toggle_user_status(
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "UPDATE users SET is_active = $1, updated_at = now() WHERE id = $2".to_string(),
+            "UPDATE users SET is_active = $1, session_version = CASE WHEN $1 THEN session_version ELSE session_version + 1 END, updated_at = now() WHERE id = $2".to_string(),
             vec![is_active.into(), user_id.into()],
         ))
         .await?;
@@ -458,12 +457,12 @@ pub async fn reset_user_password(
         ));
     }
 
-    let password_hash = hash(req.new_password, DEFAULT_COST).map_err(|_| ApiError::Internal)?;
+    let password_hash = crate::routes::auth::hash_password(req.new_password).await?;
     let result = state
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2".to_string(),
+            "UPDATE users SET password_hash = $1, session_version = session_version + 1, updated_at = now() WHERE id = $2".to_string(),
             vec![password_hash.into(), user_id.into()],
         ))
         .await?;
@@ -483,7 +482,7 @@ pub async fn delete_user(
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "UPDATE users SET is_active = false, updated_at = now() WHERE id = $1".to_string(),
+            "UPDATE users SET is_active = false, session_version = session_version + 1, updated_at = now() WHERE id = $1".to_string(),
             vec![user_id.into()],
         ))
         .await?;
