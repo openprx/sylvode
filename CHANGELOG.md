@@ -40,6 +40,8 @@ OpenPR name keeps working; see **Deprecated**.
   `.svelte-kit/generated/build/client-optimized`.
 - The eight Flow comment and share MCP tools are recorded as `v0_9_rebase` in the
   tool-registry baseline, so the rebase chain still ends at the live tool count.
+- MCP guides state the live registry size of 148 tools. The object panel keyboard
+  test moves Info to Comments, then to Share.
 - Package export accepts a git committer date written with a `Z` UTC suffix. GitHub's
   git prints `%cI` that way; the build used to discard the commit as unknown and every
   package export then failed closed.
