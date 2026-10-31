@@ -36,6 +36,8 @@ OpenPR name keeps working; see **Deprecated**.
 
 ### Fixed
 
+- The static-build gate looks for SvelteKit 3's optimized client manifest under
+  `.svelte-kit/generated/build/client-optimized`.
 - Package export accepts a git committer date written with a `Z` UTC suffix. GitHub's
   git prints `%cI` that way; the build used to discard the commit as unknown and every
   package export then failed closed.

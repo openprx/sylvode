@@ -9,14 +9,14 @@
 		boardGroupFieldIn,
 		effectiveQueryIn,
 		type CollectionViewState
-	} from '$lib/flow/collection-view';
+	} from '#lib/flow/collection-view.js';
 	import {
 		ENCODE_FAILURE_KEYS,
 		emptyDraft,
 		encodeFilterValue,
 		filterOperators,
 		type DraftValue
-	} from '$lib/flow/collection-values';
+	} from '#lib/flow/collection-values.js';
 	import CollectionValueEditor from './CollectionValueEditor.svelte';
 
 	interface Props {

@@ -47,7 +47,8 @@ function mapIssue(raw: Record<string, unknown>): MyIssue {
 
 function mapActivity(raw: Record<string, unknown>): MyActivity {
 	const detailRaw = raw.detail ?? raw.details ?? raw.payload;
-	const detail = detailRaw && typeof detailRaw === 'object' ? (detailRaw as Record<string, unknown>) : {};
+	const detail =
+		detailRaw && typeof detailRaw === 'object' ? (detailRaw as Record<string, unknown>) : {};
 	return {
 		id: String(raw.id ?? ''),
 		issue_id: String(raw.issue_id ?? raw.resource_id ?? ''),
@@ -64,16 +65,23 @@ function mapActivity(raw: Record<string, unknown>): MyActivity {
 }
 
 export const myApi = {
-	async getMyIssues(params?: { page?: number; per_page?: number }): Promise<ApiResult<PaginatedData<MyIssue>>> {
+	async getMyIssues(params?: {
+		page?: number;
+		per_page?: number;
+	}): Promise<ApiResult<PaginatedData<MyIssue>>> {
 		const queryParams = new URLSearchParams();
 		if (params?.page) queryParams.set('page', String(params.page));
 		if (params?.per_page) queryParams.set('per_page', String(params.per_page));
 		const queryString = queryParams.toString();
 		const endpoint = queryString ? `/api/v1/my/issues?${queryString}` : '/api/v1/my/issues';
-		
+
 		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(endpoint);
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.loadMyIssuesFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.loadMyIssuesFailed'),
+				data: null
+			};
 		}
 		return {
 			code: 0,
@@ -85,16 +93,23 @@ export const myApi = {
 		};
 	},
 
-	async getMyActivities(params?: { page?: number; per_page?: number }): Promise<ApiResult<PaginatedData<MyActivity>>> {
+	async getMyActivities(params?: {
+		page?: number;
+		per_page?: number;
+	}): Promise<ApiResult<PaginatedData<MyActivity>>> {
 		const queryParams = new URLSearchParams();
 		if (params?.page) queryParams.set('page', String(params.page));
 		if (params?.per_page) queryParams.set('per_page', String(params.per_page));
 		const queryString = queryParams.toString();
 		const endpoint = queryString ? `/api/v1/my/activities?${queryString}` : '/api/v1/my/activities';
-		
+
 		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(endpoint);
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.loadRecentActivityFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.loadRecentActivityFailed'),
+				data: null
+			};
 		}
 		return {
 			code: 0,

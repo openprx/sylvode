@@ -7,7 +7,7 @@
 		CELL_PLACEHOLDER_KEYS,
 		displayValue,
 		type CollectionField
-	} from '$lib/flow/collection-values';
+	} from '#lib/flow/collection-values.js';
 
 	interface Props {
 		field: CollectionField;

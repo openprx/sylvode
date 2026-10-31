@@ -4,9 +4,9 @@
 // a missing `data`, a rejected promise, or a workspace that was never read.
 
 import { writable, type Readable } from 'svelte/store';
-import type { ApiResult } from '$lib/api/client';
-import type { FlowFeatureFlags } from '$lib/api/flow';
-import { FlowCommandService } from '$lib/flow/command-service';
+import type { ApiResult } from '#lib/api/client.js';
+import type { FlowFeatureFlags } from '#lib/api/flow.js';
+import { FlowCommandService } from '#lib/flow/command-service.js';
 
 export type FlowFeatureFetcher = (workspaceId: string) => Promise<ApiResult<FlowFeatureFlags>>;
 

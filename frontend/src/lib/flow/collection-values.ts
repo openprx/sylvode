@@ -25,7 +25,7 @@ import type {
 	FlowCollectionViewView,
 	FlowRecordFilter,
 	FlowRecordSort
-} from '$lib/api/flow';
+} from '#lib/api/flow.js';
 
 export const COLLECTION_FIELD_TYPES = [
 	'text',

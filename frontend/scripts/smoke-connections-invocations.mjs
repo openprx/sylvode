@@ -37,7 +37,8 @@ async function serveStatic(req, res, injectSmoke = false) {
 	let pathname = decodeURIComponent(url.pathname);
 	if (pathname === '/') pathname = '/index.html';
 	let filePath = normalize(join(buildDir, pathname));
-	if (!filePath.startsWith(buildDir) || !existsSync(filePath)) filePath = join(buildDir, 'index.html');
+	if (!filePath.startsWith(buildDir) || !existsSync(filePath))
+		filePath = join(buildDir, 'index.html');
 	try {
 		let data = await readFile(filePath, 'utf8');
 		if (injectSmoke && basename(filePath) === 'index.html') {
@@ -126,7 +127,12 @@ location.replace('/workspace/${workspaceId}/connections?operation_log_smoke=1');
 		return;
 	}
 	if (pathname === '/api/v1/auth/me') {
-		json(res, apiResult({ user: { id: 'user-smoke', email: 'smoke@example.com', name: 'Smoke Admin', role: 'admin' } }));
+		json(
+			res,
+			apiResult({
+				user: { id: 'user-smoke', email: 'smoke@example.com', name: 'Smoke Admin', role: 'admin' }
+			})
+		);
 		return;
 	}
 	if (pathname === '/api/v1/notifications/unread-count') {
@@ -134,7 +140,24 @@ location.replace('/workspace/${workspaceId}/connections?operation_log_smoke=1');
 		return;
 	}
 	if (pathname === '/api/v1/workspaces') {
-		json(res, apiResult({ items: [{ id: workspaceId, slug: 'operation-smoke', name: 'Operation Smoke', created_at: now, updated_at: now }], total: 1, page: 1, per_page: 20, total_pages: 1 }));
+		json(
+			res,
+			apiResult({
+				items: [
+					{
+						id: workspaceId,
+						slug: 'operation-smoke',
+						name: 'Operation Smoke',
+						created_at: now,
+						updated_at: now
+					}
+				],
+				total: 1,
+				page: 1,
+				per_page: 20,
+				total_pages: 1
+			})
+		);
 		return;
 	}
 	if (pathname === `/api/v1/workspaces/${workspaceId}/bot-operation-logs`) {
@@ -144,8 +167,18 @@ location.replace('/workspace/${workspaceId}/connections?operation_log_smoke=1');
 		const item = cursor
 			? operation('55555555-5555-4555-8555-555555555555', 'second_page_bot', 'forms.get', 'cli')
 			: filtered
-				? operation('44444444-4444-4444-8444-444444444444', 'filtered_bot', 'forms.list', 'mcp_http')
-				: operation('66666666-6666-4666-8666-666666666666', 'release_bot', 'forms.list', 'mcp_http');
+				? operation(
+						'44444444-4444-4444-8444-444444444444',
+						'filtered_bot',
+						'forms.list',
+						'mcp_http'
+					)
+				: operation(
+						'66666666-6666-4666-8666-666666666666',
+						'release_bot',
+						'forms.list',
+						'mcp_http'
+					);
 		json(res, apiResult({ items: [item], next_cursor: cursor ? null : 'next-page-cursor' }));
 		return;
 	}
@@ -154,17 +187,36 @@ location.replace('/workspace/${workspaceId}/connections?operation_log_smoke=1');
 
 async function runChromium(url) {
 	return new Promise((resolve, reject) => {
-		const child = spawn(chromium, ['--headless=new', '--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage', '--virtual-time-budget=18000', '--dump-dom', url], { stdio: ['ignore', 'pipe', 'pipe'] });
+		const child = spawn(
+			chromium,
+			[
+				'--headless=new',
+				'--disable-gpu',
+				'--no-sandbox',
+				'--disable-dev-shm-usage',
+				'--virtual-time-budget=18000',
+				'--dump-dom',
+				url
+			],
+			{ stdio: ['ignore', 'pipe', 'pipe'] }
+		);
 		let stdout = '';
 		let stderr = '';
-		child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-		child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+		child.stdout.on('data', (chunk) => {
+			stdout += chunk.toString();
+		});
+		child.stderr.on('data', (chunk) => {
+			stderr += chunk.toString();
+		});
 		child.on('error', reject);
-		child.on('close', (code) => code === 0 ? resolve(stdout) : reject(new Error(`Chromium exited with ${code}: ${stderr}`)));
+		child.on('close', (code) =>
+			code === 0 ? resolve(stdout) : reject(new Error(`Chromium exited with ${code}: ${stderr}`))
+		);
 	});
 }
 
-if (!existsSync(buildDir)) throw new Error(`Missing build directory: ${buildDir}. Run bun run build first.`);
+if (!existsSync(buildDir))
+	throw new Error(`Missing build directory: ${buildDir}. Run bun run build first.`);
 if (!existsSync(chromium)) throw new Error(`Chromium binary not found: ${chromium}`);
 
 const server = createServer((req, res) => {
@@ -178,7 +230,14 @@ try {
 	if (!dom.includes('data-operation-log-smoke="done"')) {
 		throw new Error(`Operation records browser smoke failed. DOM excerpt:\n${dom.slice(-4000)}`);
 	}
-	if (!observedQueries.some((query) => query.includes(`bot_id=${botId}`) && query.includes('tool_name=forms.list') && query.includes('outcome=ok'))) {
+	if (
+		!observedQueries.some(
+			(query) =>
+				query.includes(`bot_id=${botId}`) &&
+				query.includes('tool_name=forms.list') &&
+				query.includes('outcome=ok')
+		)
+	) {
 		throw new Error('Expected bot, tool and outcome filters');
 	}
 	if (!observedQueries.some((query) => query.includes('cursor=next-page-cursor'))) {

@@ -1,8 +1,25 @@
+import adapter from '@sveltejs/adapter-static';
+import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-	plugins: [sveltekit()],
+	plugins: [
+		tailwindcss(),
+		sveltekit({
+			adapter: adapter({
+				pages: 'build',
+				assets: 'build',
+				fallback: 'index.html',
+				precompress: false,
+				strict: true
+			}),
+			// Local stand-in for the `svelte-i18n` import used across the app. Kit marks
+			// `alias` deprecated in favor of package.json imports; this name is not a `#lib`
+			// path, and both the typechecker and Vite still resolve it from here.
+			alias: { 'svelte-i18n': 'src/lib/i18n/svelte-i18n.ts' }
+		})
+	],
 	resolve: {
 		alias: {
 			'svelte-i18n': '/src/lib/i18n/svelte-i18n.ts',

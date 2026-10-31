@@ -4,33 +4,33 @@
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import {
 		projectsApi,
 		type Project,
 		type ProjectResource,
 		type ProjectResourceKind
-	} from '$lib/api/projects';
-	import { issuesApi, type Issue } from '$lib/api/issues';
-	import { aiAgentsApi, type AiAgent } from '$lib/api/ai-agents';
-	import { importExportApi } from '$lib/api/import-export';
-	import { toast } from '$lib/stores/toast';
-	import Button from '$lib/components/Button.svelte';
-	import { requireRouteParam } from '$lib/utils/route-params';
+	} from '#lib/api/projects.js';
+	import { issuesApi, type Issue } from '#lib/api/issues.js';
+	import { aiAgentsApi, type AiAgent } from '#lib/api/ai-agents.js';
+	import { importExportApi } from '#lib/api/import-export.js';
+	import { toast } from '#lib/stores/toast.js';
+	import Button from '#lib/components/Button.svelte';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import {
 		getProjectScenarioTemplate,
 		getScenarioFields,
 		scenarioItemLabel,
 		templateArray
-	} from '$lib/utils/scenario-template';
+	} from '#lib/utils/scenario-template.js';
 	import {
 		scenarioTemplateAudience,
 		scenarioTemplateIndustry,
 		scenarioTemplateName
-	} from '$lib/utils/project-type-i18n';
+	} from '#lib/utils/project-type-i18n.js';
 
-	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
-	const projectId = requireRouteParam($page.params.projectId, 'projectId');
+	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
+	const projectId = requireRouteParam(page.params.projectId, 'projectId');
 	const locatorPlaceholder = 'Locator, e.g. {"url":"https://..."} or /path/to/repo';
 
 	let project = $state<Project | null>(null);
@@ -453,7 +453,9 @@
 		</div>
 
 		<div class="mb-8 grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-			<section class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+			<section
+				class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900"
+			>
 				<div class="mb-4">
 					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
 						{$t('project.projectManagement')}
@@ -470,7 +472,9 @@
 						<h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
 							{$t('project.workItems')}
 						</h3>
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('project.workItemsDesc')}</p>
+						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+							{$t('project.workItemsDesc')}
+						</p>
 					</a>
 					<a
 						href={`/workspace/${workspaceId}/projects/${projectId}/board`}
@@ -479,7 +483,9 @@
 						<h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
 							{$t('project.boardView')}
 						</h3>
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('project.boardViewDesc')}</p>
+						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+							{$t('project.boardViewDesc')}
+						</p>
 					</a>
 					<a
 						href={`/workspace/${workspaceId}/projects/${projectId}/cycles`}
@@ -488,12 +494,16 @@
 						<h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
 							{$t('project.sprintPlan')}
 						</h3>
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('project.sprintPlanDesc')}</p>
+						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+							{$t('project.sprintPlanDesc')}
+						</p>
 					</a>
 				</div>
 			</section>
 
-			<section class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+			<section
+				class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900"
+			>
 				<div class="mb-4">
 					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
 						{$t('project.businessData')}
@@ -746,7 +756,6 @@
 							</div>
 						{/if}
 					</div>
-
 				</div>
 			</div>
 		{/if}
@@ -790,7 +799,9 @@
 					placeholder={locatorPlaceholder}
 					class="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
 				/>
-				<Button loading={resourceSubmitting} onclick={handleCreateResource}>{$t('resources.add')}</Button>
+				<Button loading={resourceSubmitting} onclick={handleCreateResource}
+					>{$t('resources.add')}</Button
+				>
 			</div>
 
 			{#if resources.length === 0}
@@ -837,7 +848,9 @@
 											>
 												<option value="repo">{$t('resources.kindRepo')}</option>
 												<option value="directory">{$t('resources.kindDirectory')}</option>
-												<option value="document_library">{$t('resources.kindDocumentLibrary')}</option>
+												<option value="document_library"
+													>{$t('resources.kindDocumentLibrary')}</option
+												>
 												<option value="crm_account">{$t('resources.kindCrmAccount')}</option>
 												<option value="erp_order">{$t('resources.kindErpOrder')}</option>
 												<option value="equipment">{$t('resources.kindEquipment')}</option>
@@ -934,9 +947,11 @@
 									<span class="font-mono text-sm text-slate-500 dark:text-slate-400"
 										>{issue.key}</span
 									>
+
 									<span class="text-sm font-medium text-slate-900 dark:text-slate-100"
 										>{issue.title}</span
 									>
+
 									<span
 										class="ml-auto rounded px-2 py-1 text-xs {issue.status === 'done'
 											? 'bg-green-100 text-green-700'

@@ -307,10 +307,20 @@ const scenarioTemplates = [
 		industry: 'software',
 		project_type_key: 'code_project',
 		audience_label: 'AI coding assistant',
-		workflow_template: { states: [{ key: 'backlog' }, { key: 'done' }], default_labels: ['review'] },
+		workflow_template: {
+			states: [{ key: 'backlog' }, { key: 'done' }],
+			default_labels: ['review']
+		},
 		field_schema: { fields: [{ key: 'repo', label: 'Repository', type: 'text', required: true }] },
 		resource_schema: { resources: [{ kind: 'repo', label: 'Repository', required: true }] },
-		ai_roles: [{ key: 'coding_assistant', label: 'AI coding assistant', agent_type: 'cli', capabilities: ['code.task_context.get'] }],
+		ai_roles: [
+			{
+				key: 'coding_assistant',
+				label: 'AI coding assistant',
+				agent_type: 'cli',
+				capabilities: ['code.task_context.get']
+			}
+		],
 		governance_policy: {},
 		sample_data: {},
 		created_at: now,
@@ -333,13 +343,37 @@ const scenarioTemplates = [
 			fields: [
 				{ key: 'counterparty', label: 'Counterparty', type: 'text', required: true },
 				{ key: 'amount', label: 'Amount', type: 'number' },
-				{ key: 'risk_level', label: 'Risk level', type: 'select', options: ['low', 'medium', 'high'], required: true }
+				{
+					key: 'risk_level',
+					label: 'Risk level',
+					type: 'select',
+					options: ['low', 'medium', 'high'],
+					required: true
+				}
 			]
 		},
-		resource_schema: { resources: [{ kind: 'document_library', label: 'Contract documents', required: true }] },
+		resource_schema: {
+			resources: [{ kind: 'document_library', label: 'Contract documents', required: true }]
+		},
 		ai_roles: [
-			{ key: 'document_assistant', label: 'Document review assistant', agent_type: 'mcp', provider: 'openpr-mcp', model: 'mcp-agent', capabilities: ['documents.extract_summary', 'documents.review_risk'], writes_require_approval: true },
-			{ key: 'approval_assistant', label: 'Approval assistant', agent_type: 'webhook', provider: 'openpr-webhook', model: 'external-agent', capabilities: ['approval.request'], writes_require_approval: true }
+			{
+				key: 'document_assistant',
+				label: 'Document review assistant',
+				agent_type: 'mcp',
+				provider: 'openpr-mcp',
+				model: 'mcp-agent',
+				capabilities: ['documents.extract_summary', 'documents.review_risk'],
+				writes_require_approval: true
+			},
+			{
+				key: 'approval_assistant',
+				label: 'Approval assistant',
+				agent_type: 'webhook',
+				provider: 'openpr-webhook',
+				model: 'external-agent',
+				capabilities: ['approval.request'],
+				writes_require_approval: true
+			}
 		],
 		governance_policy: {},
 		sample_data: {},
@@ -355,16 +389,33 @@ const scenarioTemplates = [
 		industry: 'operations',
 		project_type_key: 'equipment_maintenance',
 		audience_label: 'Maintenance assistant',
-		workflow_template: { states: [{ key: 'reported' }, { key: 'triage' }, { key: 'closed' }], default_labels: ['safety', 'inspection-needed'] },
+		workflow_template: {
+			states: [{ key: 'reported' }, { key: 'triage' }, { key: 'closed' }],
+			default_labels: ['safety', 'inspection-needed']
+		},
 		field_schema: {
 			fields: [
 				{ key: 'equipment_id', label: 'Equipment ID', type: 'text', required: true },
 				{ key: 'fault_type', label: 'Fault type', type: 'text', required: true },
-				{ key: 'downtime_impact', label: 'Downtime impact', type: 'select', options: ['none', 'minor', 'major', 'critical'] }
+				{
+					key: 'downtime_impact',
+					label: 'Downtime impact',
+					type: 'select',
+					options: ['none', 'minor', 'major', 'critical']
+				}
 			]
 		},
-		resource_schema: { resources: [{ kind: 'equipment', label: 'Equipment record', required: true }] },
-		ai_roles: [{ key: 'maintenance_assistant', label: 'Maintenance assistant', agent_type: 'webhook', capabilities: ['inspection.report'] }],
+		resource_schema: {
+			resources: [{ kind: 'equipment', label: 'Equipment record', required: true }]
+		},
+		ai_roles: [
+			{
+				key: 'maintenance_assistant',
+				label: 'Maintenance assistant',
+				agent_type: 'webhook',
+				capabilities: ['inspection.report']
+			}
+		],
 		governance_policy: {},
 		sample_data: {},
 		created_at: now,
@@ -379,7 +430,10 @@ const scenarioTemplates = [
 		industry: 'quality',
 		project_type_key: 'quality_corrective_action',
 		audience_label: 'Quality audit assistant',
-		workflow_template: { states: [{ key: 'detected' }, { key: 'root_cause' }, { key: 'closed' }], default_labels: ['defect', 'corrective-action'] },
+		workflow_template: {
+			states: [{ key: 'detected' }, { key: 'root_cause' }, { key: 'closed' }],
+			default_labels: ['defect', 'corrective-action']
+		},
 		field_schema: {
 			fields: [
 				{ key: 'defect_type', label: 'Defect type', type: 'text', required: true },
@@ -388,7 +442,14 @@ const scenarioTemplates = [
 			]
 		},
 		resource_schema: { resources: [{ kind: 'document_library', label: 'Quality documents' }] },
-		ai_roles: [{ key: 'quality_audit_assistant', label: 'Quality audit assistant', agent_type: 'mcp', capabilities: ['corrective_action.propose'] }],
+		ai_roles: [
+			{
+				key: 'quality_audit_assistant',
+				label: 'Quality audit assistant',
+				agent_type: 'mcp',
+				capabilities: ['corrective_action.propose']
+			}
+		],
 		governance_policy: {},
 		sample_data: {},
 		created_at: now,
@@ -403,16 +464,33 @@ const scenarioTemplates = [
 		industry: 'delivery',
 		project_type_key: 'custom_form',
 		audience_label: 'Delivery assistant',
-		workflow_template: { states: [{ key: 'planned' }, { key: 'acceptance' }, { key: 'delivered' }], default_labels: ['milestone', 'acceptance'] },
+		workflow_template: {
+			states: [{ key: 'planned' }, { key: 'acceptance' }, { key: 'delivered' }],
+			default_labels: ['milestone', 'acceptance']
+		},
 		field_schema: {
 			fields: [
 				{ key: 'customer', label: 'Customer', type: 'text', required: true },
 				{ key: 'milestone', label: 'Milestone', type: 'text', required: true },
-				{ key: 'delivery_risk', label: 'Delivery risk', type: 'select', options: ['low', 'medium', 'high'] }
+				{
+					key: 'delivery_risk',
+					label: 'Delivery risk',
+					type: 'select',
+					options: ['low', 'medium', 'high']
+				}
 			]
 		},
-		resource_schema: { resources: [{ kind: 'crm_account', label: 'Customer account', required: true }] },
-		ai_roles: [{ key: 'delivery_assistant', label: 'Delivery assistant', agent_type: 'mcp', capabilities: ['approval.request'] }],
+		resource_schema: {
+			resources: [{ kind: 'crm_account', label: 'Customer account', required: true }]
+		},
+		ai_roles: [
+			{
+				key: 'delivery_assistant',
+				label: 'Delivery assistant',
+				agent_type: 'mcp',
+				capabilities: ['approval.request']
+			}
+		],
 		governance_policy: {},
 		sample_data: {},
 		created_at: now,
@@ -466,13 +544,16 @@ function templateForProjectId(projectId) {
 }
 
 function workflowForTemplate(template) {
-	const states = Array.isArray(template.workflow_template?.states) ? template.workflow_template.states : [];
+	const states = Array.isArray(template.workflow_template?.states)
+		? template.workflow_template.states
+		: [];
 	return {
 		id: `workflow-${template.key}`,
 		name: `${template.name} workflow`,
 		states: states.map((state, index) => {
 			const key = String(state.key ?? `state_${index + 1}`);
-			const isTerminal = Boolean(state.terminal) || ['done', 'closed', 'signed', 'delivered'].includes(key);
+			const isTerminal =
+				Boolean(state.terminal) || ['done', 'closed', 'signed', 'delivered'].includes(key);
 			return {
 				key,
 				display_name: String(state.name ?? key.replaceAll('_', ' ')),
@@ -516,7 +597,13 @@ location.replace('/workspace/${workspaceId}/projects?template_wizard_capture=1')
 	}
 
 	if (pathname === '/api/v1/auth/me') {
-		json(res, 200, apiResult({ user: { id: 'user-smoke', email: 'smoke@example.com', name: 'Smoke Admin', role: 'admin' } }));
+		json(
+			res,
+			200,
+			apiResult({
+				user: { id: 'user-smoke', email: 'smoke@example.com', name: 'Smoke Admin', role: 'admin' }
+			})
+		);
 		return;
 	}
 
@@ -526,12 +613,37 @@ location.replace('/workspace/${workspaceId}/projects?template_wizard_capture=1')
 	}
 
 	if (pathname === '/api/v1/workspaces') {
-		json(res, 200, apiResult(paginated([{ id: workspaceId, slug: 'template-smoke', name: 'Template Smoke', created_at: now, updated_at: now }])));
+		json(
+			res,
+			200,
+			apiResult(
+				paginated([
+					{
+						id: workspaceId,
+						slug: 'template-smoke',
+						name: 'Template Smoke',
+						created_at: now,
+						updated_at: now
+					}
+				])
+			)
+		);
 		return;
 	}
 
 	if (pathname === `/api/v1/workspaces/${workspaceId}`) {
-		json(res, 200, apiResult({ id: workspaceId, slug: 'template-smoke', name: 'Template Smoke', role: 'owner', created_at: now, updated_at: now }));
+		json(
+			res,
+			200,
+			apiResult({
+				id: workspaceId,
+				slug: 'template-smoke',
+				name: 'Template Smoke',
+				role: 'owner',
+				created_at: now,
+				updated_at: now
+			})
+		);
 		return;
 	}
 
@@ -553,7 +665,9 @@ location.replace('/workspace/${workspaceId}/projects?template_wizard_capture=1')
 	if (pathname === `/api/v1/workspaces/${workspaceId}/projects` && req.method === 'POST') {
 		createdProjectPayload = await readBody(req);
 		createdProjectPayloads = [...createdProjectPayloads, createdProjectPayload];
-		const template = scenarioTemplates.find((item) => item.key === createdProjectPayload.scenario_template_key) ?? scenarioTemplates[1];
+		const template =
+			scenarioTemplates.find((item) => item.key === createdProjectPayload.scenario_template_key) ??
+			scenarioTemplates[1];
 		const projectId = projectIdForTemplate(template.key);
 		const project = {
 			id: projectId,
@@ -607,16 +721,16 @@ location.replace('/workspace/${workspaceId}/projects?template_wizard_capture=1')
 				}
 			];
 		}
-		json(
-			res,
-			200,
-			apiResult(project)
-		);
+		json(res, 200, apiResult(project));
 		return;
 	}
 
 	if (pathname === '/api/v1/projects/project-created-smoke') {
-		json(res, 200, apiResult(createdProjects.find((project) => project.id === 'project-created-smoke')));
+		json(
+			res,
+			200,
+			apiResult(createdProjects.find((project) => project.id === 'project-created-smoke'))
+		);
 		return;
 	}
 
@@ -625,19 +739,30 @@ location.replace('/workspace/${workspaceId}/projects?template_wizard_capture=1')
 		return;
 	}
 
-	if (pathname === '/api/v1/projects/project-created-smoke/ai-participants' && req.method === 'GET') {
+	if (
+		pathname === '/api/v1/projects/project-created-smoke/ai-participants' &&
+		req.method === 'GET'
+	) {
 		json(res, 200, apiResult(paginated(aiAgents)));
 		return;
 	}
 
-	if (pathname === '/api/v1/projects/project-created-smoke/ai-participants/tpl-smoke-document_assistant' && req.method === 'PATCH') {
+	if (
+		pathname ===
+			'/api/v1/projects/project-created-smoke/ai-participants/tpl-smoke-document_assistant' &&
+		req.method === 'PATCH'
+	) {
 		assistantPatchPayload = await readBody(req);
 		aiAgents = aiAgents.map((agent) =>
 			agent.id === 'tpl-smoke-document_assistant'
 				? { ...agent, ...assistantPatchPayload, updated_at: now }
 				: agent
 		);
-		json(res, 200, apiResult(aiAgents.find((agent) => agent.id === 'tpl-smoke-document_assistant')));
+		json(
+			res,
+			200,
+			apiResult(aiAgents.find((agent) => agent.id === 'tpl-smoke-document_assistant'))
+		);
 		return;
 	}
 
@@ -649,9 +774,30 @@ location.replace('/workspace/${workspaceId}/projects?template_wizard_capture=1')
 				id: 'workflow-contract-smoke',
 				name: 'Contract workflow',
 				states: [
-					{ key: 'intake', display_name: 'Intake', category: 'active', position: 1, is_initial: true, is_terminal: false },
-					{ key: 'risk_review', display_name: 'Risk Review', category: 'active', position: 2, is_initial: false, is_terminal: false },
-					{ key: 'approval', display_name: 'Approval', category: 'done', position: 3, is_initial: false, is_terminal: true }
+					{
+						key: 'intake',
+						display_name: 'Intake',
+						category: 'active',
+						position: 1,
+						is_initial: true,
+						is_terminal: false
+					},
+					{
+						key: 'risk_review',
+						display_name: 'Risk Review',
+						category: 'active',
+						position: 2,
+						is_initial: false,
+						is_terminal: false
+					},
+					{
+						key: 'approval',
+						display_name: 'Approval',
+						category: 'done',
+						position: 3,
+						is_initial: false,
+						is_terminal: true
+					}
 				]
 			})
 		);
@@ -659,7 +805,15 @@ location.replace('/workspace/${workspaceId}/projects?template_wizard_capture=1')
 	}
 
 	if (pathname === `/api/v1/workspaces/${workspaceId}/members`) {
-		json(res, 200, apiResult(paginated([{ user_id: 'user-smoke', name: 'Smoke Admin', email: 'smoke@example.com', role: 'owner' }])));
+		json(
+			res,
+			200,
+			apiResult(
+				paginated([
+					{ user_id: 'user-smoke', name: 'Smoke Admin', email: 'smoke@example.com', role: 'owner' }
+				])
+			)
+		);
 		return;
 	}
 
@@ -682,7 +836,11 @@ location.replace('/workspace/${workspaceId}/projects?template_wizard_capture=1')
 		createdIssuePayload = await readBody(req);
 		createdIssuePayloads = [
 			...createdIssuePayloads,
-			{ project_id: 'project-created-smoke', template_key: 'contract_review_default', payload: createdIssuePayload }
+			{
+				project_id: 'project-created-smoke',
+				template_key: 'contract_review_default',
+				payload: createdIssuePayload
+			}
 		];
 		const issue = {
 			id: 'issue-created-smoke',
@@ -715,7 +873,9 @@ location.replace('/workspace/${workspaceId}/projects?template_wizard_capture=1')
 		return;
 	}
 
-	const projectWorkflowMatch = pathname.match(/^\/api\/v1\/projects\/([^/]+)\/workflow\/effective$/);
+	const projectWorkflowMatch = pathname.match(
+		/^\/api\/v1\/projects\/([^/]+)\/workflow\/effective$/
+	);
 	if (projectWorkflowMatch && req.method === 'GET') {
 		json(res, 200, apiResult(workflowForTemplate(templateForProjectId(projectWorkflowMatch[1]))));
 		return;
@@ -828,12 +988,20 @@ server.listen(0, '127.0.0.1', async () => {
 	const address = server.address();
 	const port = typeof address === 'object' && address ? address.port : 0;
 	if (screenshotDir) await mkdir(screenshotDir, { recursive: true });
-	const desktopScreenshot = screenshotDir ? join(screenshotDir, 'project-template-wizard-desktop.png') : null;
-	const mobileScreenshot = screenshotDir ? join(screenshotDir, 'project-template-wizard-mobile.png') : null;
+	const desktopScreenshot = screenshotDir
+		? join(screenshotDir, 'project-template-wizard-desktop.png')
+		: null;
+	const mobileScreenshot = screenshotDir
+		? join(screenshotDir, 'project-template-wizard-mobile.png')
+		: null;
 	const smokeUrl = `http://127.0.0.1:${port}/smoke-auth-seed`;
 	const result = await runChromium(smokeUrl, '1366,900', desktopScreenshot);
 	const mobileResult = screenshotDir
-		? await runChromium(`http://127.0.0.1:${port}/smoke-template-mobile-capture-seed`, '390,844', mobileScreenshot)
+		? await runChromium(
+				`http://127.0.0.1:${port}/smoke-template-mobile-capture-seed`,
+				'390,844',
+				mobileScreenshot
+			)
 		: { code: 0, stdout: 'data-template-mobile-capture="skipped"', stderr: '' };
 	server.close();
 
@@ -847,7 +1015,9 @@ server.listen(0, '127.0.0.1', async () => {
 	const dom = result.stdout;
 	if (!dom.includes('data-template-smoke="done"')) {
 		console.error(dom.match(/data-template-smoke[^\\s>]*/g)?.join('\n') ?? 'no smoke attribute');
-		console.error(dom.match(/data-template-smoke-error="[^"]+"/)?.[0] ?? 'no smoke error attribute');
+		console.error(
+			dom.match(/data-template-smoke-error="[^"]+"/)?.[0] ?? 'no smoke error attribute'
+		);
 		console.error(`createdIssuePayload=${JSON.stringify(createdIssuePayload)}`);
 		console.error(`createdIssues=${JSON.stringify(createdIssues)}`);
 		console.error(dom.slice(-4000));
@@ -884,7 +1054,9 @@ server.listen(0, '127.0.0.1', async () => {
 			throw new Error(`Missing project creation payload for ${templateKey}`);
 		}
 	}
-	const contractPayload = createdProjectPayloads.find((payload) => payload.scenario_template_key === 'contract_review_default');
+	const contractPayload = createdProjectPayloads.find(
+		(payload) => payload.scenario_template_key === 'contract_review_default'
+	);
 	if (!contractPayload) {
 		throw new Error('Missing contract project creation payload');
 	}
@@ -895,23 +1067,38 @@ server.listen(0, '127.0.0.1', async () => {
 		throw new Error(`Unexpected contract project key: ${contractPayload.key}`);
 	}
 	if (!assistantPatchPayload?.is_active) {
-		throw new Error(`Expected assistant activation patch, got ${JSON.stringify(assistantPatchPayload)}`);
+		throw new Error(
+			`Expected assistant activation patch, got ${JSON.stringify(assistantPatchPayload)}`
+		);
 	}
-	if (assistantPatchPayload.provider !== 'openpr-mcp' || assistantPatchPayload.model !== 'mcp-agent-smoke' || assistantPatchPayload.api_endpoint !== 'http://127.0.0.1:8090/mcp/rpc') {
-		throw new Error(`Expected assistant provider/model/endpoint patch, got ${JSON.stringify(assistantPatchPayload)}`);
+	if (
+		assistantPatchPayload.provider !== 'openpr-mcp' ||
+		assistantPatchPayload.model !== 'mcp-agent-smoke' ||
+		assistantPatchPayload.api_endpoint !== 'http://127.0.0.1:8090/mcp/rpc'
+	) {
+		throw new Error(
+			`Expected assistant provider/model/endpoint patch, got ${JSON.stringify(assistantPatchPayload)}`
+		);
 	}
-	const contractIssuePayload = createdIssuePayloads.find((entry) => entry.template_key === 'contract_review_default')?.payload;
+	const contractIssuePayload = createdIssuePayloads.find(
+		(entry) => entry.template_key === 'contract_review_default'
+	)?.payload;
 	if (!contractIssuePayload) {
 		throw new Error('Expected contract issue creation POST payload');
 	}
 	if (!contractIssuePayload.description?.includes('## Scenario Fields')) {
 		throw new Error('Expected scenario fields markdown in issue description');
 	}
-	if (!contractIssuePayload.description.includes('ACME Manufacturing') || !contractIssuePayload.description.includes('Risk level')) {
+	if (
+		!contractIssuePayload.description.includes('ACME Manufacturing') ||
+		!contractIssuePayload.description.includes('Risk level')
+	) {
 		throw new Error(`Unexpected scenario field description: ${contractIssuePayload.description}`);
 	}
 	if (!contractIssuePayload.description.includes('high')) {
-		throw new Error(`Expected selected risk level in issue description: ${contractIssuePayload.description}`);
+		throw new Error(
+			`Expected selected risk level in issue description: ${contractIssuePayload.description}`
+		);
 	}
 
 	if (screenshotDir) {

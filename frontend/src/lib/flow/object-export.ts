@@ -11,7 +11,11 @@
 // `json|markdown|csv|package`, and `include_history` is only accepted with `package`. The panel
 // offers `csv` only for a Collection.
 
-import type { CreateObjectExportInput, FlowExportJob, FlowObjectExportFormat } from '$lib/api/flow';
+import type {
+	CreateObjectExportInput,
+	FlowExportJob,
+	FlowObjectExportFormat
+} from '#lib/api/flow.js';
 import { FlowCommandService } from './command-service';
 import { FlowObjectRepository } from './object-repository';
 import {

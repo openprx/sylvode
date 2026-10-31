@@ -2,19 +2,19 @@
 	// The Page's non-text blocks under the editor: embedded Collections (server-written
 	// `embed_type=collection` blocks), Forms Bridge Reference / Embed cards, and the single
 	// provisional block of a Collection embed in flight. Also hosts the slash-menu dialogs for those
-	// entries. All intent, key and classification logic lives in `$lib/flow/slash-bridge`; this
+	// entries. All intent, key and classification logic lives in `#lib/flow/slash-bridge.js`; this
 	// component only keeps dialog state.
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import Modal from '$lib/components/Modal.svelte';
+	import Modal from '#lib/components/Modal.svelte';
 	import type { LoroDocType } from 'loro-prosemirror';
-	import type { FlowReferenceItem } from '$lib/api/flow';
-	import type { FlowObjectRepository } from '$lib/flow/object-repository';
-	import { FLOW_REPOSITORY_CONTEXT } from '$lib/flow/context-keys';
-	import { FlowCommandService } from '$lib/flow/command-service';
+	import type { FlowReferenceItem } from '#lib/api/flow.js';
+	import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
+	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
+	import { FlowCommandService } from '#lib/flow/command-service.js';
 	import {
 		BridgeReferenceSession,
 		CollectionEmbedSession,
@@ -31,7 +31,7 @@
 		type ReferenceMode,
 		type SlashBridgeAction,
 		type SlashFailure
-	} from '$lib/flow/slash-bridge';
+	} from '#lib/flow/slash-bridge.js';
 	import EmbeddedCollection from './collection/EmbeddedCollection.svelte';
 	import BridgeReferenceCard from './bridge/BridgeReferenceCard.svelte';
 

@@ -40,16 +40,24 @@ function mapActivity(raw: Record<string, unknown>, issueId: string): Activity {
 
 export const activityApi = {
 	async list(issueId: string): Promise<ApiResult<PaginatedData<Activity>>> {
-		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(`/api/v1/issues/${issueId}/activities`);
+		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(
+			`/api/v1/issues/${issueId}/activities`
+		);
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.loadActivityFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.loadActivityFailed'),
+				data: null
+			};
 		}
 		return {
 			code: 0,
 			message: result.message,
 			data: {
 				...result.data,
-				items: Array.isArray(result.data.items) ? result.data.items.map((item) => mapActivity(item, issueId)) : []
+				items: Array.isArray(result.data.items)
+					? result.data.items.map((item) => mapActivity(item, issueId))
+					: []
 			}
 		};
 	}

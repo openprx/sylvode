@@ -41,9 +41,9 @@
 // - a refused retry re-reads the job once, so its new stored `error` is shown;
 // - errors branch on `error_code` first and the numeric code second, never on `message`.
 
-import type { ApiResult } from '$lib/api/client';
-import type { FlowConversionJob, FlowObjectView } from '$lib/api/flow';
-import { formsApi, type FormRecord } from '$lib/api/forms';
+import type { ApiResult } from '#lib/api/client.js';
+import type { FlowConversionJob, FlowObjectView } from '#lib/api/flow.js';
+import { formsApi, type FormRecord } from '#lib/api/forms.js';
 import type { FlowCommandService } from './command-service';
 import { POLICY_REJECTED_REASONS, type PolicyRejectedReason } from './convert-wizard';
 import {

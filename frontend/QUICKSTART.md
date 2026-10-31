@@ -16,17 +16,17 @@ There is no preconfigured account: on first run, register an account at http://l
 
 ## Core page routes
 
-| Page | Route | Description |
-|------|------|------|
-| Login | `/auth/login` | Email and password login |
-| Workspace home | `/workspace` | Workspace selection |
-| Project list | `/workspace/:id/projects` | Project management |
-| Project detail | `/workspace/:id/projects/:pid` | Project overview |
-| Issue list | `/workspace/:id/projects/:pid/issues` | Work item management |
-| Issue detail | `/workspace/:id/projects/:pid/issues/:iid` | Work item detail |
-| Board view | `/workspace/:id/projects/:pid/board` | Kanban board |
-| Cycles | `/workspace/:id/projects/:pid/cycles` | Sprint management |
-| Notification center | `/inbox` | Notifications |
+| Page                | Route                                      | Description              |
+| ------------------- | ------------------------------------------ | ------------------------ |
+| Login               | `/auth/login`                              | Email and password login |
+| Workspace home      | `/workspace`                               | Workspace selection      |
+| Project list        | `/workspace/:id/projects`                  | Project management       |
+| Project detail      | `/workspace/:id/projects/:pid`             | Project overview         |
+| Issue list          | `/workspace/:id/projects/:pid/issues`      | Work item management     |
+| Issue detail        | `/workspace/:id/projects/:pid/issues/:iid` | Work item detail         |
+| Board view          | `/workspace/:id/projects/:pid/board`       | Kanban board             |
+| Cycles              | `/workspace/:id/projects/:pid/cycles`      | Sprint management        |
+| Notification center | `/inbox`                                   | Notifications            |
 
 ## Environment Variables
 

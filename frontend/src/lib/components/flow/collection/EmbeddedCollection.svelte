@@ -8,11 +8,11 @@
 	import { t } from 'svelte-i18n';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
-	import type { FlowObjectRepository } from '$lib/flow/object-repository';
-	import { FLOW_REPOSITORY_CONTEXT } from '$lib/flow/context-keys';
-	import { FlowCommandService } from '$lib/flow/command-service';
-	import { CollectionViewController } from '$lib/flow/collection-view';
-	import { resolveRenderer } from '$lib/flow/renderer-registry';
+	import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
+	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
+	import { FlowCommandService } from '#lib/flow/command-service.js';
+	import { CollectionViewController } from '#lib/flow/collection-view.js';
+	import { resolveRenderer } from '#lib/flow/renderer-registry.js';
 
 	interface Props {
 		workspaceId: string;

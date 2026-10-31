@@ -9,10 +9,7 @@ function escapeHtml(input: string): string {
 
 function renderInline(input: string): string {
 	let text = escapeHtml(input);
-	text = text.replace(
-		/!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^\s)]+)\)/g,
-		'<img src="$2" alt="$1" />'
-	);
+	text = text.replace(/!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^\s)]+)\)/g, '<img src="$2" alt="$1" />');
 	text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
 	text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 	text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');

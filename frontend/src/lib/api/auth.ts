@@ -79,15 +79,20 @@ export const authApi = {
 	},
 
 	getPreferences(): Promise<ApiResult<{ notification_prefs: NotificationPreferences }>> {
-		return apiClient.get<{ notification_prefs: NotificationPreferences }>('/api/v1/auth/me/preferences');
+		return apiClient.get<{ notification_prefs: NotificationPreferences }>(
+			'/api/v1/auth/me/preferences'
+		);
 	},
 
 	updatePreferences(
 		notification_prefs: NotificationPreferences
 	): Promise<ApiResult<{ notification_prefs: NotificationPreferences }>> {
-		return apiClient.put<{ notification_prefs: NotificationPreferences }>('/api/v1/auth/me/preferences', {
-			notification_prefs
-		});
+		return apiClient.put<{ notification_prefs: NotificationPreferences }>(
+			'/api/v1/auth/me/preferences',
+			{
+				notification_prefs
+			}
+		);
 	},
 
 	async logout(): Promise<ApiResult<null>> {

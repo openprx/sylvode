@@ -1,13 +1,13 @@
 <script lang="ts">
-	import { apiClient } from '$lib/api/client';
-	import { toast } from '$lib/stores/toast';
+	import { apiClient } from '#lib/api/client.js';
+	import { toast } from '#lib/stores/toast.js';
 	import { t } from 'svelte-i18n';
 	import {
 		isAllowedUploadMime,
 		isImageUploadMime,
 		MAX_UPLOAD_SIZE_BYTES,
 		UPLOAD_ACCEPT_ATTR
-	} from '$lib/utils/upload';
+	} from '#lib/utils/upload.js';
 
 	interface Props {
 		onUploaded: (url: string, mimeType: string) => void;
@@ -106,10 +106,17 @@
 </script>
 
 <div class="space-y-2">
-	<label class="inline-flex cursor-pointer items-center gap-1 text-sm text-blue-600 hover:text-blue-800">
+	<label
+		class="inline-flex cursor-pointer items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
+	>
 		<span class="inline-flex items-center gap-1">
 			<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21.44 11.05l-8.49 8.49a5 5 0 01-7.07-7.07l8.49-8.49a3 3 0 114.24 4.24l-8.49 8.49a1 1 0 01-1.41-1.41l7.78-7.78"></path>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					stroke-width="2"
+					d="M21.44 11.05l-8.49 8.49a5 5 0 01-7.07-7.07l8.49-8.49a3 3 0 114.24 4.24l-8.49 8.49a1 1 0 01-1.41-1.41l7.78-7.78"
+				></path>
 			</svg>
 			{$t('issue.uploadImage')}
 		</span>
@@ -129,9 +136,15 @@
 	{/if}
 
 	{#if previewUrl}
-		<div class="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-2">
+		<div
+			class="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-2"
+		>
 			{#if isImageUploadMime(previewMimeType)}
-				<img src={previewUrl} alt={$t('issue.previewMode')} class="max-h-32 rounded object-contain" />
+				<img
+					src={previewUrl}
+					alt={$t('issue.previewMode')}
+					class="max-h-32 rounded object-contain"
+				/>
 			{:else}
 				<!-- svelte-ignore a11y_media_has_caption: uploaded video previews do not have caption tracks available. -->
 				<video src={previewUrl} controls class="max-h-48 rounded object-contain"></video>

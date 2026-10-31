@@ -10,7 +10,7 @@ import type {
 	FlowPackageImportJobReceipt,
 	FlowPackageImportPreview,
 	UploadProgress
-} from '$lib/api/flow';
+} from '#lib/api/flow.js';
 import { FlowCommandService } from './command-service';
 import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
 

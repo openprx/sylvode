@@ -11,14 +11,18 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import type { Readable } from 'svelte/store';
-	import { FlowEditorAdapter, type FlowBlockType, type SlashMenuState } from '$lib/flow/editor-adapter';
+	import {
+		FlowEditorAdapter,
+		type FlowBlockType,
+		type SlashMenuState
+	} from '#lib/flow/editor-adapter.js';
 	import type { LoroDocType } from 'loro-prosemirror';
-	import { SLASH_BRIDGE_OPTIONS, type SlashBridgeOption } from '$lib/flow/slash-bridge';
+	import { SLASH_BRIDGE_OPTIONS, type SlashBridgeOption } from '#lib/flow/slash-bridge.js';
 	import {
 		safePresenceColor,
 		type PresenceCursor,
 		type RemotePresence
-	} from '$lib/flow/presence';
+	} from '#lib/flow/presence.js';
 	import FlowPageBlocks from './FlowPageBlocks.svelte';
 
 	interface Props {
@@ -33,7 +37,14 @@
 		onPresenceCursor?: (cursor: PresenceCursor | null) => void;
 	}
 
-	let { doc, workspaceId, objectId, readOnly = false, presence, onPresenceCursor }: Props = $props();
+	let {
+		doc,
+		workspaceId,
+		objectId,
+		readOnly = false,
+		presence,
+		onPresenceCursor
+	}: Props = $props();
 	let peers = $state<ReadonlyArray<RemotePresence>>([]);
 
 	let pageBlocks: FlowPageBlocks | undefined = $state();
@@ -53,7 +64,11 @@
 	];
 
 	const filteredOptions = $derived(
-		SLASH_OPTIONS.filter((option) => option.labelKey.toLowerCase().includes(slashMenu.query.toLowerCase()) || slashMenu.query === '')
+		SLASH_OPTIONS.filter(
+			(option) =>
+				option.labelKey.toLowerCase().includes(slashMenu.query.toLowerCase()) ||
+				slashMenu.query === ''
+		)
 	);
 	// Entries whose result is not a text block: a server-created Collection embed, a Forms
 	// Bridge Reference / Embed, and the conversion wizard. Each carries its ownership note.
@@ -194,7 +209,10 @@
 			>
 				⇥
 			</button>
-			<span class="cursor-grab select-none px-1 text-slate-300 dark:text-slate-600" aria-label={$t('flow.block.handleLabel')}>
+			<span
+				class="cursor-grab select-none px-1 text-slate-300 dark:text-slate-600"
+				aria-label={$t('flow.block.handleLabel')}
+			>
 				⋮⋮
 			</span>
 		</div>
@@ -230,7 +248,10 @@
 					</button>
 				{/each}
 				{#if filteredBridgeOptions.length > 0}
-					<div class="my-1 border-t border-slate-200 dark:border-slate-700" role="presentation"></div>
+					<div
+						class="my-1 border-t border-slate-200 dark:border-slate-700"
+						role="presentation"
+					></div>
 					{#each filteredBridgeOptions as option (option.action)}
 						<button
 							type="button"
@@ -241,7 +262,9 @@
 							data-testid={`flow-slash-${option.action}`}
 						>
 							<span class="block">{$t(option.labelKey)}</span>
-							<span class="block text-xs text-slate-500 dark:text-slate-400">{$t(option.noteKey)}</span>
+							<span class="block text-xs text-slate-500 dark:text-slate-400"
+								>{$t(option.noteKey)}</span
+							>
 						</button>
 					{/each}
 				{/if}
@@ -257,7 +280,7 @@
 	}
 	:global(.flow-canvas .ProseMirror p:first-child:last-child:empty::before) {
 		content: attr(data-placeholder);
-		color: theme('colors.slate.400');
+		color: var(--color-slate-400);
 		pointer-events: none;
 	}
 	:global(.flow-canvas [data-indent]) {
@@ -273,13 +296,13 @@
 		left: 0.25rem;
 	}
 	:global(.flow-canvas pre) {
-		background: theme('colors.slate.100');
+		background: var(--color-slate-100);
 		border-radius: 0.375rem;
 		padding: 0.75rem;
 		overflow-x: auto;
 	}
 	:global(.dark .flow-canvas pre) {
-		background: theme('colors.slate.900');
+		background: var(--color-slate-900);
 	}
 	:global(.flow-canvas .flow-presence-caret) {
 		position: relative;

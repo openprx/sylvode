@@ -6,13 +6,13 @@
 	// dynamic imports. For a Record object (`recordId`) it shows that record's panel standalone.
 	import { getContext, onDestroy, onMount, type Component } from 'svelte';
 	import { t } from 'svelte-i18n';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import type { FlowObjectRepository } from '$lib/flow/object-repository';
-	import { FLOW_REPOSITORY_CONTEXT } from '$lib/flow/context-keys';
-	import { FlowCommandService } from '$lib/flow/command-service';
-	import { CollectionViewController, activeViewIn } from '$lib/flow/collection-view';
-	import { resolveRenderer } from '$lib/flow/renderer-registry';
+	import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
+	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
+	import { FlowCommandService } from '#lib/flow/command-service.js';
+	import { CollectionViewController, activeViewIn } from '#lib/flow/collection-view.js';
+	import { resolveRenderer } from '#lib/flow/renderer-registry.js';
 	import CollectionQueryBar from './CollectionQueryBar.svelte';
 	import CollectionSchemaEditor from './CollectionSchemaEditor.svelte';
 
@@ -42,7 +42,7 @@
 	let panelComponent = $state<AnyComponent | null>(null);
 	let missingRecord = $state(false);
 
-	const schemaMode = $derived($page.url.searchParams.get('mode') === 'schema');
+	const schemaMode = $derived(page.url.searchParams.get('mode') === 'schema');
 	const activeView = $derived(activeViewIn($viewState));
 	const activeKind = $derived(activeView?.kind ?? 'table');
 	const viewComponent = $derived(activeKind === 'board' ? boardComponent : tableComponent);
@@ -85,14 +85,15 @@
 	onDestroy(() => controller.dispose());
 
 	async function toggleSchemaMode(): Promise<void> {
-		const url = new URL($page.url);
+		const url = new URL(page.url.href);
+
 		if (schemaMode) url.searchParams.delete('mode');
 		else url.searchParams.set('mode', 'schema');
+
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- same route, query only
 		await goto(`${url.pathname}${url.search}`, {
 			replaceState: true,
-			keepFocus: true,
-			noScroll: true
+			reset: false
 		});
 	}
 
@@ -125,6 +126,7 @@
 		<p class="p-8 text-center text-sm text-slate-500" role="alert">{$t('flow.record.notFound')}</p>
 	{:else if panelComponent}
 		{@const Panel = panelComponent}
+
 		<Panel {controller} snapshot={$viewState} {workspaceId} standalone />
 	{/if}
 {:else}
@@ -216,6 +218,7 @@
 
 			{#if viewComponent}
 				{@const View = viewComponent}
+
 				<View {controller} snapshot={$viewState} {workspaceId} />
 			{:else}
 				<p class="p-4 text-sm text-slate-500" aria-live="polite">{$t('common.loading')}</p>
@@ -224,6 +227,7 @@
 
 		{#if $viewState.panel && panelComponent}
 			{@const Panel = panelComponent}
+
 			<Panel {controller} snapshot={$viewState} {workspaceId} />
 		{/if}
 	</div>

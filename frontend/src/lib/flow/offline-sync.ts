@@ -27,7 +27,7 @@
 //    epoch in place, so a refusal means the level really is below `edit`.
 
 import { writable, type Readable } from 'svelte/store';
-import type { FlowBootstrap } from '$lib/api/flow';
+import type { FlowBootstrap } from '#lib/api/flow.js';
 import type { OutboxEntry, OutboxStore, RecoveryDraftEntry, RecoveryDraftReason } from './outbox';
 import type { EngineUpdate, FlowError, SemanticIntent } from './types';
 

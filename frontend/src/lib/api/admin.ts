@@ -11,12 +11,14 @@ export interface AdminUser extends Omit<User, 'role' | 'status'> {
 }
 
 export const adminApi = {
-	async listUsers(params: {
-		search?: string;
-		page?: number;
-		limit?: number;
-		entity_type?: string;
-	} = {}): Promise<ApiResult<PaginatedData<AdminUser>>> {
+	async listUsers(
+		params: {
+			search?: string;
+			page?: number;
+			limit?: number;
+			entity_type?: string;
+		} = {}
+	): Promise<ApiResult<PaginatedData<AdminUser>>> {
 		const query = new URLSearchParams();
 		if (params.search?.trim()) query.set('search', params.search.trim());
 		if (typeof params.page === 'number') query.set('page', String(params.page));

@@ -10,7 +10,9 @@
 	let { label, color = '#64748b', removable = false, onremove }: Props = $props();
 </script>
 
-<span class="inline-flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300">
+<span
+	class="inline-flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300"
+>
 	<span class="h-2 w-2 rounded-full" style={`background-color: ${color};`}></span>
 	<span>{label}</span>
 	{#if removable}

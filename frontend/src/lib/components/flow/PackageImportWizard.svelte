@@ -7,7 +7,7 @@
 	import { t } from 'svelte-i18n';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import Card from '$lib/components/Card.svelte';
+	import Card from '#lib/components/Card.svelte';
 	import {
 		CONFLICT_POLICY_KEYS,
 		ESTIMATE_KIND_KEYS,
@@ -24,8 +24,8 @@
 		type ProjectMappingRow,
 		type WizardSnapshot,
 		type WizardStep
-	} from '$lib/flow/package-wizard';
-	import type { WorkspaceProjectOption } from '$lib/flow/package-export';
+	} from '#lib/flow/package-wizard.js';
+	import type { WorkspaceProjectOption } from '#lib/flow/package-export.js';
 
 	interface Props {
 		workspaceId: string;

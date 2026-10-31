@@ -27,7 +27,8 @@ const CHROME_CANDIDATES = [
  * that a Chromium profile plus a build cache can exhaust: the default is the checkout's ignored
  * `.flow-gate/cache/frontend`. `FLOW_V04_SCRATCH` overrides it. */
 export const SCRATCH =
-	process.env.FLOW_V04_SCRATCH ?? fileURLToPath(new URL('../../../.flow-gate/cache/frontend', import.meta.url));
+	process.env.FLOW_V04_SCRATCH ??
+	fileURLToPath(new URL('../../../.flow-gate/cache/frontend', import.meta.url));
 
 export function findChrome(): string | null {
 	return CHROME_CANDIDATES.find((candidate) => existsSync(candidate)) ?? null;

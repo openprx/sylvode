@@ -4,7 +4,7 @@
 	// workspace-wide (`total` included); `documents[]` is paged by cursor (the panel offers a page
 	// size of at most 100), with failed documents listed and worded by their `failure` code.
 	import { t } from 'svelte-i18n';
-	import type { FlowAdminIntegrity } from '$lib/api/flow';
+	import type { FlowAdminIntegrity } from '#lib/api/flow.js';
 	import {
 		INTEGRITY_STATUS_KEYS,
 		OPS_INTEGRITY_LIMITS,
@@ -13,7 +13,7 @@
 		statusKey,
 		type MaintenanceKind,
 		type OpsIntegrityLimit
-	} from '$lib/flow/operations-service';
+	} from '#lib/flow/operations-service.js';
 
 	interface Props {
 		integrity: FlowAdminIntegrity | null;

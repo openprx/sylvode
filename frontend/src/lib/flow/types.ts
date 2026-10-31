@@ -4,7 +4,7 @@
 // only ever from inside a dynamic `import()` so the engine chunk stays out of every non-Flow
 // route bundle (`contracts/ui-surface-v1.md` "engine chunk 只从 `(app)/flow` 动态 import").
 
-import type { FlowBootstrap, FlowObjectView, FlowReadableObjectType } from '$lib/api/flow';
+import type { FlowBootstrap, FlowObjectView, FlowReadableObjectType } from '#lib/api/flow.js';
 import type { Readable } from 'svelte/store';
 
 /** One raw CRDT update, produced locally by an `EditorAdapter` or a navigator reorder. */

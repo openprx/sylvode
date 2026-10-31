@@ -1,7 +1,7 @@
 // 应用路由布局（需要认证）
 import { goto } from '$app/navigation';
-import { browser } from '$app/environment';
-import { apiClient } from '$lib/api/client';
+import { browser } from '$app/env';
+import { apiClient } from '#lib/api/client.js';
 
 export const ssr = false;
 

@@ -7,8 +7,8 @@
 // Refreshed every 30s while mounted. A rejected read hides the numbers rather than showing a
 // stale "synced": the badge must never claim a state it did not observe.
 
-import type { ApiResult } from '$lib/api/client';
-import type { FlowProjectionLag } from '$lib/api/flow';
+import type { ApiResult } from '#lib/api/client.js';
+import type { FlowProjectionLag } from '#lib/api/flow.js';
 import { flowErrorFromEnvelope } from './errors';
 
 export const LAG_REFRESH_MS = 30_000;

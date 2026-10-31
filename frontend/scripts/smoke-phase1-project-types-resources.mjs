@@ -239,7 +239,13 @@ location.replace('/workspace/${workspaceId}/projects?phase1_project_types_smoke=
 	}
 
 	if (pathname === '/api/v1/auth/me') {
-		json(res, 200, apiResult({ user: { id: 'user-smoke', email: 'smoke@example.com', name: 'Smoke Admin', role: 'admin' } }));
+		json(
+			res,
+			200,
+			apiResult({
+				user: { id: 'user-smoke', email: 'smoke@example.com', name: 'Smoke Admin', role: 'admin' }
+			})
+		);
 		return;
 	}
 
@@ -249,12 +255,37 @@ location.replace('/workspace/${workspaceId}/projects?phase1_project_types_smoke=
 	}
 
 	if (pathname === '/api/v1/workspaces') {
-		json(res, 200, apiResult(paginated([{ id: workspaceId, slug: 'phase1-smoke', name: 'Phase 1 Smoke', created_at: now, updated_at: now }])));
+		json(
+			res,
+			200,
+			apiResult(
+				paginated([
+					{
+						id: workspaceId,
+						slug: 'phase1-smoke',
+						name: 'Phase 1 Smoke',
+						created_at: now,
+						updated_at: now
+					}
+				])
+			)
+		);
 		return;
 	}
 
 	if (pathname === `/api/v1/workspaces/${workspaceId}`) {
-		json(res, 200, apiResult({ id: workspaceId, slug: 'phase1-smoke', name: 'Phase 1 Smoke', role: 'owner', created_at: now, updated_at: now }));
+		json(
+			res,
+			200,
+			apiResult({
+				id: workspaceId,
+				slug: 'phase1-smoke',
+				name: 'Phase 1 Smoke',
+				role: 'owner',
+				created_at: now,
+				updated_at: now
+			})
+		);
 		return;
 	}
 
@@ -317,7 +348,6 @@ location.replace('/workspace/${workspaceId}/projects?phase1_project_types_smoke=
 		return;
 	}
 
-
 	if (pathname === `/api/v1/projects/${projectId}/resources` && req.method === 'GET') {
 		json(res, 200, apiResult(paginated(resources)));
 		return;
@@ -342,16 +372,24 @@ location.replace('/workspace/${workspaceId}/projects?phase1_project_types_smoke=
 		return;
 	}
 
-	if (pathname === `/api/v1/projects/${projectId}/resources/resource-phase1-smoke` && req.method === 'PATCH') {
+	if (
+		pathname === `/api/v1/projects/${projectId}/resources/resource-phase1-smoke` &&
+		req.method === 'PATCH'
+	) {
 		updatedResourcePayload = await readBody(req);
 		resources = resources.map((item) =>
-			item.id === 'resource-phase1-smoke' ? { ...item, ...updatedResourcePayload, updated_at: now } : item
+			item.id === 'resource-phase1-smoke'
+				? { ...item, ...updatedResourcePayload, updated_at: now }
+				: item
 		);
 		json(res, 200, apiResult(resources.find((item) => item.id === 'resource-phase1-smoke')));
 		return;
 	}
 
-	if (pathname === `/api/v1/projects/${projectId}/resources/resource-phase1-smoke` && req.method === 'DELETE') {
+	if (
+		pathname === `/api/v1/projects/${projectId}/resources/resource-phase1-smoke` &&
+		req.method === 'DELETE'
+	) {
 		deletedResourceId = 'resource-phase1-smoke';
 		resources = [];
 		json(res, 200, apiResult(null));

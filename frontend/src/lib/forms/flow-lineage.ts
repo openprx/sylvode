@@ -26,7 +26,7 @@ import type {
 	FormRecordFlowLineage,
 	FormRecordLineageConversion,
 	FormRecordLineageReference
-} from '$lib/api/forms';
+} from '#lib/api/forms.js';
 
 export type LineageDisplayMode = 'reference' | 'embed' | 'unknown';
 export type LineageJobStatus = 'started' | 'completed' | 'failed' | 'unknown';

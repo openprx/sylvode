@@ -3,7 +3,7 @@
 	// editor-side `DraftValue` only; encoding to the wire type and committing are the
 	// controller's job. Enter commits, Escape cancels (both reported to the parent).
 	import { t } from 'svelte-i18n';
-	import type { CollectionField, DraftValue } from '$lib/flow/collection-values';
+	import type { CollectionField, DraftValue } from '#lib/flow/collection-values.js';
 
 	interface Props {
 		field: CollectionField;

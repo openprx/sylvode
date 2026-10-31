@@ -189,7 +189,8 @@ function mapAuditReport(raw: Record<string, unknown>): AuditReport {
 		rejected_proposals: Number(raw.rejected_proposals ?? 0),
 		vetoed_proposals: Number(raw.vetoed_proposals ?? 0),
 		reviewed_proposals: Number(raw.reviewed_proposals ?? 0),
-		avg_review_rating: raw.avg_review_rating === null ? undefined : Number(raw.avg_review_rating ?? 0),
+		avg_review_rating:
+			raw.avg_review_rating === null ? undefined : Number(raw.avg_review_rating ?? 0),
 		rating_distribution: {
 			S: Number(rating.S ?? 0),
 			A: Number(rating.A ?? 0),
@@ -219,22 +220,32 @@ function mapLearning(raw: Record<string, unknown>): AiLearningRecord {
 		outcome_alignment: String(raw.outcome_alignment ?? ''),
 		lesson_learned: raw.lesson_learned ? String(raw.lesson_learned) : undefined,
 		will_change: raw.will_change ? String(raw.will_change) : undefined,
-		follow_up_improvement: raw.follow_up_improvement ? String(raw.follow_up_improvement) : undefined,
+		follow_up_improvement: raw.follow_up_improvement
+			? String(raw.follow_up_improvement)
+			: undefined,
 		created_at: String(raw.created_at ?? '')
 	};
 }
 
 export const governanceExtApi = {
 	async getProposalChain(proposalId: string): Promise<ApiResult<ProposalChain>> {
-		const res = await apiClient.get<Record<string, unknown>>(`/api/v1/proposals/${proposalId}/chain`);
+		const res = await apiClient.get<Record<string, unknown>>(
+			`/api/v1/proposals/${proposalId}/chain`
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('governanceExt.loadFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('governanceExt.loadFailed'),
+				data: null
+			};
 		}
 
 		const proposal = asRecord(res.data.proposal);
 		const decisionRaw = res.data.decision ? asRecord(res.data.decision) : null;
 		const reviewRaw = res.data.impact_review ? asRecord(res.data.impact_review) : null;
-		const feedbackRaw = Array.isArray(res.data.feedback_proposals) ? res.data.feedback_proposals : [];
+		const feedbackRaw = Array.isArray(res.data.feedback_proposals)
+			? res.data.feedback_proposals
+			: [];
 
 		return {
 			code: 0,
@@ -249,62 +260,67 @@ export const governanceExtApi = {
 					author_type: String(proposal.author_type ?? ''),
 					created_at: String(proposal.created_at ?? ''),
 					submitted_at: proposal.submitted_at ? String(proposal.submitted_at) : undefined,
-					voting_started_at: proposal.voting_started_at ? String(proposal.voting_started_at) : undefined,
+					voting_started_at: proposal.voting_started_at
+						? String(proposal.voting_started_at)
+						: undefined,
 					voting_ended_at: proposal.voting_ended_at ? String(proposal.voting_ended_at) : undefined,
 					archived_at: proposal.archived_at ? String(proposal.archived_at) : undefined
 				},
 				issues: Array.isArray(res.data.issues)
 					? res.data.issues.map((item) => {
-						const value = asRecord(item);
-						return {
-							issue_id: String(value.issue_id ?? ''),
-							issue_title: String(value.issue_title ?? ''),
-							issue_state: String(value.issue_state ?? ''),
-							created_at: String(value.created_at ?? '')
-						};
-					})
+							const value = asRecord(item);
+							return {
+								issue_id: String(value.issue_id ?? ''),
+								issue_title: String(value.issue_title ?? ''),
+								issue_state: String(value.issue_state ?? ''),
+								created_at: String(value.created_at ?? '')
+							};
+						})
 					: [],
 				link_status: String(res.data.link_status ?? ''),
 				decision: decisionRaw
 					? {
-						id: String(decisionRaw.id ?? ''),
-						result: String(decisionRaw.result ?? ''),
-						approval_rate: decisionRaw.approval_rate === null ? undefined : Number(decisionRaw.approval_rate ?? 0),
-						total_votes: Number(decisionRaw.total_votes ?? 0),
-						yes_votes: Number(decisionRaw.yes_votes ?? 0),
-						no_votes: Number(decisionRaw.no_votes ?? 0),
-						abstain_votes: Number(decisionRaw.abstain_votes ?? 0),
-						decided_at: String(decisionRaw.decided_at ?? '')
-					}
+							id: String(decisionRaw.id ?? ''),
+							result: String(decisionRaw.result ?? ''),
+							approval_rate:
+								decisionRaw.approval_rate === null
+									? undefined
+									: Number(decisionRaw.approval_rate ?? 0),
+							total_votes: Number(decisionRaw.total_votes ?? 0),
+							yes_votes: Number(decisionRaw.yes_votes ?? 0),
+							no_votes: Number(decisionRaw.no_votes ?? 0),
+							abstain_votes: Number(decisionRaw.abstain_votes ?? 0),
+							decided_at: String(decisionRaw.decided_at ?? '')
+						}
 					: undefined,
 				votes: Array.isArray(res.data.votes)
 					? res.data.votes.map((item) => {
-						const value = asRecord(item);
-						return {
-							voter_id: String(value.voter_id ?? ''),
-							voter_type: String(value.voter_type ?? ''),
-							choice: String(value.choice ?? ''),
-							weight: Number(value.weight ?? 0),
-							reason: value.reason ? String(value.reason) : undefined,
-							voted_at: String(value.voted_at ?? ''),
-							trust_delta: value.trust_delta === null ? undefined : Number(value.trust_delta ?? 0)
-						};
-					})
+							const value = asRecord(item);
+							return {
+								voter_id: String(value.voter_id ?? ''),
+								voter_type: String(value.voter_type ?? ''),
+								choice: String(value.choice ?? ''),
+								weight: Number(value.weight ?? 0),
+								reason: value.reason ? String(value.reason) : undefined,
+								voted_at: String(value.voted_at ?? ''),
+								trust_delta: value.trust_delta === null ? undefined : Number(value.trust_delta ?? 0)
+							};
+						})
 					: [],
 				timeline: Array.isArray(res.data.timeline)
 					? res.data.timeline.map((item) => mapTimelineEvent(asRecord(item)))
 					: [],
 				impact_review: reviewRaw
 					? {
-						id: String(reviewRaw.id ?? ''),
-						status: String(reviewRaw.status ?? ''),
-						rating: reviewRaw.rating ? String(reviewRaw.rating) : undefined,
-						reviewer_id: reviewRaw.reviewer_id ? String(reviewRaw.reviewer_id) : undefined,
-						trust_score_applied: Boolean(reviewRaw.trust_score_applied ?? false),
-						scheduled_at: reviewRaw.scheduled_at ? String(reviewRaw.scheduled_at) : undefined,
-						conducted_at: reviewRaw.conducted_at ? String(reviewRaw.conducted_at) : undefined,
-						created_at: String(reviewRaw.created_at ?? '')
-					}
+							id: String(reviewRaw.id ?? ''),
+							status: String(reviewRaw.status ?? ''),
+							rating: reviewRaw.rating ? String(reviewRaw.rating) : undefined,
+							reviewer_id: reviewRaw.reviewer_id ? String(reviewRaw.reviewer_id) : undefined,
+							trust_score_applied: Boolean(reviewRaw.trust_score_applied ?? false),
+							scheduled_at: reviewRaw.scheduled_at ? String(reviewRaw.scheduled_at) : undefined,
+							conducted_at: reviewRaw.conducted_at ? String(reviewRaw.conducted_at) : undefined,
+							created_at: String(reviewRaw.created_at ?? '')
+						}
 					: undefined,
 				feedback_proposals: feedbackRaw.map((item) => {
 					const value = asRecord(item);
@@ -321,9 +337,15 @@ export const governanceExtApi = {
 	},
 
 	async getProposalTimeline(proposalId: string): Promise<ApiResult<ProposalTimeline>> {
-		const res = await apiClient.get<Record<string, unknown>>(`/api/v1/proposals/${proposalId}/timeline`);
+		const res = await apiClient.get<Record<string, unknown>>(
+			`/api/v1/proposals/${proposalId}/timeline`
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('governanceExt.loadFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('governanceExt.loadFailed'),
+				data: null
+			};
 		}
 		return {
 			code: 0,
@@ -352,7 +374,11 @@ export const governanceExtApi = {
 
 		const res = await apiClient.get<Record<string, unknown>>(endpoint);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('governanceExt.analyticsLoadFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('governanceExt.analyticsLoadFailed'),
+				data: null
+			};
 		}
 
 		const overview = asRecord(res.data.overview);
@@ -372,35 +398,38 @@ export const governanceExtApi = {
 					rejected_count: Number(overview.rejected_count ?? 0),
 					vetoed_count: Number(overview.vetoed_count ?? 0),
 					pass_rate: Number(overview.pass_rate ?? 0),
-					avg_cycle_hours: overview.avg_cycle_hours === null ? undefined : Number(overview.avg_cycle_hours ?? 0)
+					avg_cycle_hours:
+						overview.avg_cycle_hours === null ? undefined : Number(overview.avg_cycle_hours ?? 0)
 				},
 				by_type: Array.isArray(res.data.by_type)
 					? res.data.by_type.map((item) => {
-						const row = asRecord(item);
-						return {
-							proposal_type: String(row.proposal_type ?? ''),
-							total_decisions: Number(row.total_decisions ?? 0),
-							approved_count: Number(row.approved_count ?? 0),
-							rejected_count: Number(row.rejected_count ?? 0),
-							vetoed_count: Number(row.vetoed_count ?? 0),
-							pass_rate: Number(row.pass_rate ?? 0),
-							avg_cycle_hours: row.avg_cycle_hours === null ? undefined : Number(row.avg_cycle_hours ?? 0)
-						};
-					})
+							const row = asRecord(item);
+							return {
+								proposal_type: String(row.proposal_type ?? ''),
+								total_decisions: Number(row.total_decisions ?? 0),
+								approved_count: Number(row.approved_count ?? 0),
+								rejected_count: Number(row.rejected_count ?? 0),
+								vetoed_count: Number(row.vetoed_count ?? 0),
+								pass_rate: Number(row.pass_rate ?? 0),
+								avg_cycle_hours:
+									row.avg_cycle_hours === null ? undefined : Number(row.avg_cycle_hours ?? 0)
+							};
+						})
 					: [],
 				by_domain: Array.isArray(res.data.by_domain)
 					? res.data.by_domain.map((item) => {
-						const row = asRecord(item);
-						return {
-							domain: String(row.domain ?? ''),
-							total_decisions: Number(row.total_decisions ?? 0),
-							approved_count: Number(row.approved_count ?? 0),
-							rejected_count: Number(row.rejected_count ?? 0),
-							vetoed_count: Number(row.vetoed_count ?? 0),
-							pass_rate: Number(row.pass_rate ?? 0),
-							avg_cycle_hours: row.avg_cycle_hours === null ? undefined : Number(row.avg_cycle_hours ?? 0)
-						};
-					})
+							const row = asRecord(item);
+							return {
+								domain: String(row.domain ?? ''),
+								total_decisions: Number(row.total_decisions ?? 0),
+								approved_count: Number(row.approved_count ?? 0),
+								rejected_count: Number(row.rejected_count ?? 0),
+								vetoed_count: Number(row.vetoed_count ?? 0),
+								pass_rate: Number(row.pass_rate ?? 0),
+								avg_cycle_hours:
+									row.avg_cycle_hours === null ? undefined : Number(row.avg_cycle_hours ?? 0)
+							};
+						})
 					: []
 			}
 		};
@@ -419,7 +448,11 @@ export const governanceExtApi = {
 
 		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(endpoint);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('governanceExt.auditLoadFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('governanceExt.auditLoadFailed'),
+				data: null
+			};
 		}
 
 		return {
@@ -436,31 +469,55 @@ export const governanceExtApi = {
 		projectId: string,
 		payload?: { period_start?: string; period_end?: string }
 	): Promise<ApiResult<AuditReport>> {
-		const res = await apiClient.post<Record<string, unknown>>(`/api/v1/projects/${projectId}/audit-reports`, payload);
+		const res = await apiClient.post<Record<string, unknown>>(
+			`/api/v1/projects/${projectId}/audit-reports`,
+			payload
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('governanceExt.auditGenerateFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('governanceExt.auditGenerateFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: res.message, data: mapAuditReport(res.data) };
 	},
 
-	async getProjectAuditReport(projectId: string, reportId: string): Promise<ApiResult<AuditReport>> {
-		const res = await apiClient.get<Record<string, unknown>>(`/api/v1/projects/${projectId}/audit-reports/${reportId}`);
+	async getProjectAuditReport(
+		projectId: string,
+		reportId: string
+	): Promise<ApiResult<AuditReport>> {
+		const res = await apiClient.get<Record<string, unknown>>(
+			`/api/v1/projects/${projectId}/audit-reports/${reportId}`
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('governanceExt.auditLoadFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('governanceExt.auditLoadFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: res.message, data: mapAuditReport(res.data) };
 	},
 
 	async getAiReviewFeedback(reviewId: string): Promise<ApiResult<{ items: AiLearningRecord[] }>> {
-		const res = await apiClient.get<Record<string, unknown>>(`/api/v1/ai-learning/${reviewId}/feedback`);
+		const res = await apiClient.get<Record<string, unknown>>(
+			`/api/v1/ai-learning/${reviewId}/feedback`
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('governanceExt.learningLoadFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('governanceExt.learningLoadFailed'),
+				data: null
+			};
 		}
 		return {
 			code: 0,
 			message: res.message,
 			data: {
-				items: Array.isArray(res.data.items) ? res.data.items.map((item) => mapLearning(asRecord(item))) : []
+				items: Array.isArray(res.data.items)
+					? res.data.items.map((item) => mapLearning(asRecord(item)))
+					: []
 			}
 		};
 	},
@@ -479,7 +536,11 @@ export const governanceExtApi = {
 
 		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(endpoint);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('governanceExt.learningLoadFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('governanceExt.learningLoadFailed'),
+				data: null
+			};
 		}
 
 		return {
@@ -492,10 +553,18 @@ export const governanceExtApi = {
 		};
 	},
 
-	async getAiParticipantAlignmentStats(aiParticipantId: string): Promise<ApiResult<AiAlignmentStats>> {
-		const res = await apiClient.get<Record<string, unknown>>(`/api/v1/ai-participants/${aiParticipantId}/alignment-stats`);
+	async getAiParticipantAlignmentStats(
+		aiParticipantId: string
+	): Promise<ApiResult<AiAlignmentStats>> {
+		const res = await apiClient.get<Record<string, unknown>>(
+			`/api/v1/ai-participants/${aiParticipantId}/alignment-stats`
+		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('governanceExt.learningLoadFailed'), data: null };
+			return {
+				code: res.code,
+				message: res.message || get(t)('governanceExt.learningLoadFailed'),
+				data: null
+			};
 		}
 
 		return {

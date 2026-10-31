@@ -6,14 +6,14 @@
 	// `require_flow_workspace_admin_access` is the real guard; this only hides the controls.
 	import { onDestroy, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import OpsHealthCard from '$lib/components/flow/OpsHealthCard.svelte';
-	import OpsLagTable from '$lib/components/flow/OpsLagTable.svelte';
-	import OpsIntegrityTable from '$lib/components/flow/OpsIntegrityTable.svelte';
-	import OpsOperationDrawer from '$lib/components/flow/OpsOperationDrawer.svelte';
-	import OpsReplayForm from '$lib/components/flow/OpsReplayForm.svelte';
+	import EmptyState from '#lib/components/EmptyState.svelte';
+	import OpsHealthCard from '#lib/components/flow/OpsHealthCard.svelte';
+	import OpsLagTable from '#lib/components/flow/OpsLagTable.svelte';
+	import OpsIntegrityTable from '#lib/components/flow/OpsIntegrityTable.svelte';
+	import OpsOperationDrawer from '#lib/components/flow/OpsOperationDrawer.svelte';
+	import OpsReplayForm from '#lib/components/flow/OpsReplayForm.svelte';
 	import {
 		FlowOperationsService,
 		OperationsPanelSession,
@@ -21,10 +21,10 @@
 		type MaintenanceOperation,
 		type OpsIntegrityLimit,
 		type OpsPanelState
-	} from '$lib/flow/operations-service';
-	import { requireRouteParam } from '$lib/utils/route-params';
+	} from '#lib/flow/operations-service.js';
+	import { requireRouteParam } from '#lib/utils/route-params.js';
 
-	const workspaceId = requireRouteParam($page.params.workspaceId, 'workspaceId');
+	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 	const service = new FlowOperationsService(workspaceId);
 	const replay = service.replay();
 

@@ -34,9 +34,15 @@ function mapComment(raw: Record<string, unknown>): Comment {
 
 export const commentsApi = {
 	async list(issueId: string): Promise<ApiResult<PaginatedData<Comment>>> {
-		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(`/api/v1/issues/${issueId}/comments`);
+		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(
+			`/api/v1/issues/${issueId}/comments`
+		);
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.loadCommentFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.loadCommentFailed'),
+				data: null
+			};
 		}
 		return {
 			code: 0,
@@ -49,12 +55,19 @@ export const commentsApi = {
 	},
 
 	async create(issueId: string, data: CreateCommentInput): Promise<ApiResult<Comment>> {
-		const result = await apiClient.post<Record<string, unknown>>(`/api/v1/issues/${issueId}/comments`, {
-			content: data.content,
-			mentions: data.mentions
-		});
+		const result = await apiClient.post<Record<string, unknown>>(
+			`/api/v1/issues/${issueId}/comments`,
+			{
+				content: data.content,
+				mentions: data.mentions
+			}
+		);
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.createCommentFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.createCommentFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: result.message, data: mapComment(result.data) };
 	},
@@ -65,7 +78,11 @@ export const commentsApi = {
 			mentions: data.mentions
 		});
 		if (result.code !== 0 || !result.data) {
-			return { code: result.code, message: result.message || get(t)('api.updateCommentFailed'), data: null };
+			return {
+				code: result.code,
+				message: result.message || get(t)('api.updateCommentFailed'),
+				data: null
+			};
 		}
 		return { code: 0, message: result.message, data: mapComment(result.data) };
 	},

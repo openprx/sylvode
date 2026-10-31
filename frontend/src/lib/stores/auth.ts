@@ -1,8 +1,8 @@
 // 认证状态管理
 import { derived, get, writable } from 'svelte/store';
-import type { User } from '$lib/api/auth';
-import { apiClient, type ApiResult } from '$lib/api/client';
-import { clearFlowLocalData } from '$lib/flow/local-data';
+import type { User } from '#lib/api/auth.js';
+import { apiClient, type ApiResult } from '#lib/api/client.js';
+import { clearFlowLocalData } from '#lib/flow/local-data.js';
 
 interface AuthState {
 	user: User | null;

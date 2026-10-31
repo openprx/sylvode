@@ -37,7 +37,10 @@ const keys = new Map<string, Set<string>>();
 suite.check('at least two locales are registered', () => {
 	assert(locales.length >= 2, `found ${JSON.stringify(locales)} in src/lib/i18n/index.ts`);
 	for (const locale of locales) {
-		keys.set(locale, new Set(leafKeys(JSON.parse(readFileSync(join(I18N, `${locale}.json`), 'utf8')))));
+		keys.set(
+			locale,
+			new Set(leafKeys(JSON.parse(readFileSync(join(I18N, `${locale}.json`), 'utf8'))))
+		);
 	}
 });
 

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import type { HTMLTextareaAttributes } from 'svelte/elements';
 
-type TextareaEventHandler = NonNullable<HTMLTextareaAttributes['oninput']>;
-type TextareaPasteEventHandler = NonNullable<HTMLTextareaAttributes['onpaste']>;
+	type TextareaEventHandler = NonNullable<HTMLTextareaAttributes['oninput']>;
+	type TextareaPasteEventHandler = NonNullable<HTMLTextareaAttributes['onpaste']>;
 
 	interface Props {
 		label?: string;

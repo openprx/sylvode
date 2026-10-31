@@ -1,9 +1,9 @@
 <script lang="ts">
-	import '$lib/i18n';
+	import '#lib/i18n/index.js';
 	import { goto } from '$app/navigation';
-	import { authApi } from '$lib/api/auth';
-	import { authStore } from '$lib/stores/auth';
-	import { toast } from '$lib/stores/toast';
+	import { authApi } from '#lib/api/auth.js';
+	import { authStore } from '#lib/stores/auth.js';
+	import { toast } from '#lib/stores/toast.js';
 	import { t } from 'svelte-i18n';
 
 	let email = '';
@@ -42,10 +42,15 @@
 			<p class="mt-2 text-sm text-slate-600 dark:text-slate-400">{$t('auth.subtitle')}</p>
 		</div>
 
-		<form class="mt-8 space-y-6 rounded-lg bg-white p-8 shadow dark:bg-slate-800" on:submit|preventDefault={handleLogin}>
+		<form
+			class="mt-8 space-y-6 rounded-lg bg-white p-8 shadow dark:bg-slate-800"
+			on:submit|preventDefault={handleLogin}
+		>
 			<div class="space-y-4">
 				<div>
-					<label for="email" class="block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('auth.email')}</label>
+					<label for="email" class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+						>{$t('auth.email')}</label
+					>
 					<input
 						id="email"
 						type="email"
@@ -57,7 +62,9 @@
 				</div>
 
 				<div>
-					<label for="password" class="block text-sm font-medium text-slate-700 dark:text-slate-300">{$t('auth.password')}</label>
+					<label for="password" class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+						>{$t('auth.password')}</label
+					>
 					<input
 						id="password"
 						type="password"
