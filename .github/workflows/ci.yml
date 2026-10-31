@@ -1,10 +1,12 @@
 name: CI
 
 on:
+  # Every branch. Tags stay on the Release workflow, so a release tag does not also run CI.
   push:
-    branches: [main, develop]
+    branches:
+      - "**"
+  # Any base branch, so a pull request is tested before it is retargeted onto main.
   pull_request:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
