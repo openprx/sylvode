@@ -557,9 +557,11 @@ async def fanout_session(ids: dict) -> dict:
     arrivals: dict[int, float] = {}
     errors: list[str] = []
 
+    # websockets 13 names this extra_headers. Passing additional_headers falls through to
+    # asyncio.create_connection and raises TypeError.
     async with websockets.connect(
         ws_url,
-        additional_headers={"Origin": collab_origin},
+        extra_headers={"Origin": collab_origin},
         max_size=16 * 1024 * 1024,
         open_timeout=20,
     ) as ws:
@@ -694,11 +696,11 @@ def run_fanout(ids_path: Path, out: Path) -> None:
 
 
 def psql_explain(database_url: str, sql: str, variables: dict[str, str]) -> dict:
-    command = ["psql", database_url, "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1"]
+    # psql does not interpolate :'variables' inside -c. -f - does.
+    command = ["psql", database_url, "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-f", "-"]
     for key, value in variables.items():
         command.extend(["-v", f"{key}={value}"])
-    command.extend(["-c", sql])
-    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    completed = subprocess.run(command, check=False, capture_output=True, text=True, input=sql)
     if completed.returncode != 0:
         return {"ok": False, "error": (completed.stderr or completed.stdout)[-800:]}
     try:

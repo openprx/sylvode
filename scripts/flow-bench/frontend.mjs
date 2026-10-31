@@ -81,7 +81,7 @@ async function readVitals(page) {
 }
 
 async function measurePage(page, label, objectId) {
-	const route = `/workspace/${ids.workspace_id}/flow/${objectId}`;
+	const route = new URL(`/workspace/${ids.workspace_id}/flow/${objectId}`, webOrigin).href;
 	const result = {
 		label,
 		object_id: objectId,
