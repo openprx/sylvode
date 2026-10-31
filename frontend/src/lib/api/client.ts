@@ -51,6 +51,12 @@ class ApiClient {
 
 	constructor(baseUrl: string = API_BASE_URL) {
 		this.baseUrl = baseUrl;
+		// Follow-up: stop persisting access/refresh tokens in localStorage. The API already
+		// sets HttpOnly cookies, but the documented dev server talks to the API on another
+		// origin (`VITE_API_BASE_URL`), and credentialed cross-origin cookies need an explicit
+		// CORS allow-list plus a non-HttpOnly CSRF cookie checked on cookie-authenticated
+		// mutations. Until that lands, Bearer tokens remain in localStorage and any XSS on
+		// this origin can read them. SameSite=Lax cookies are still set alongside.
 		if (typeof window !== 'undefined') {
 			this.token = localStorage.getItem('auth_token');
 			this.refreshTokenValue = localStorage.getItem('refresh_token');

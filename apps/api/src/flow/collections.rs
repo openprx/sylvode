@@ -3532,6 +3532,7 @@ mod database_tests {
             token_type: TokenType::Access,
             iat: 0,
             exp: usize::MAX,
+            sv: 0,
         };
         let mut extensions = axum::http::Extensions::new();
         extensions.insert(claims);
@@ -4287,6 +4288,7 @@ mod database_tests {
             token_type: TokenType::Access,
             iat: 0,
             exp: usize::MAX,
+            sv: 0,
         };
         let app = Router::new()
             .route(
@@ -5175,6 +5177,7 @@ mod database_tests {
             token_type: TokenType::Access,
             iat: 0,
             exp: usize::MAX,
+            sv: 0,
         };
         let mut extensions = axum::http::Extensions::new();
         extensions.insert(claims);

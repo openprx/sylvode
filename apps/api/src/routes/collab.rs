@@ -23,7 +23,9 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::error::ApiError;
+use crate::flow::collab::authz::PermissionLevel;
 use crate::flow::collab::{bootstrap, session, ticket};
+use crate::flow::policy;
 use crate::middleware::bot_auth::BotAuthContext;
 use crate::response::ApiResponse;
 
@@ -237,7 +239,19 @@ pub async fn get_collab_diagnostics(
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
         .await?
         .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
-    crate::flow::policy::require_flow_workspace_access(&state, &extensions, workspace_id).await?;
+    let mut authorized = false;
+    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
+        if policy::require_flow_object_access(&state, &extensions, workspace_id, object_id, PermissionLevel::View)
+            .await?
+            .is_some()
+        {
+            authorized = true;
+            break;
+        }
+    }
+    if !authorized {
+        return Err(policy::authorization_read_unstable());
+    }
 
     #[derive(sea_orm::FromQueryResult)]
     struct Row {
@@ -357,7 +371,19 @@ pub async fn verify_collab(
     let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
         .await?
         .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
-    crate::flow::policy::require_flow_workspace_access(&state, &extensions, workspace_id).await?;
+    let mut authorized = false;
+    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
+        if policy::require_flow_object_access(&state, &extensions, workspace_id, object_id, PermissionLevel::View)
+            .await?
+            .is_some()
+        {
+            authorized = true;
+            break;
+        }
+    }
+    if !authorized {
+        return Err(policy::authorization_read_unstable());
+    }
 
     if req.deep {
         return Err(ApiError::invalid_update(
@@ -1088,6 +1114,59 @@ mod collab_database_tests {
             .expect("request completes");
         let deep_body: Value = deep_response.json().await.expect("response is JSON");
         assert_eq!(deep_body["code"], 400, "{deep_body}");
+
+        scratch.drop_self().await;
+    }
+
+    /// A workspace member with no grant behind an inheritance boundary must not read collab
+    /// diagnostics for that object. Workspace membership alone used to be enough.
+    #[tokio::test]
+    async fn diagnostics_hide_an_object_the_caller_cannot_view() {
+        let scratch = scratch_or_skip!("diagnostics-object-authz");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state).await;
+        let (object_id, _document_id) = create_page(&state, workspace_id, owner_id).await;
+        let member_id = Uuid::new_v4();
+        exec(
+            &state,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active) \
+             VALUES ($1, $2, '!', 'member', 'user', true)",
+            vec![member_id.into(), format!("{member_id}@collab.test").into()],
+        )
+        .await;
+        exec(
+            &state,
+            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'member')",
+            vec![workspace_id.into(), member_id.into()],
+        )
+        .await;
+        exec(
+            &state,
+            "UPDATE flow_objects SET inherit_from_parent = false WHERE id = $1",
+            vec![object_id.into()],
+        )
+        .await;
+
+        let addr = spawn_server(state.clone()).await;
+        let client = reqwest::Client::new();
+        let hidden = client
+            .get(format!("http://{addr}/api/v1/flow/objects/{object_id}/collab"))
+            .bearer_auth(jwt_for(member_id))
+            .send()
+            .await
+            .expect("request completes");
+        let hidden_body: Value = hidden.json().await.expect("response is JSON");
+        assert_eq!(hidden_body["code"], 404, "{hidden_body}");
+        assert_eq!(hidden_body["error_code"], "not_found");
+
+        let visible = client
+            .get(format!("http://{addr}/api/v1/flow/objects/{object_id}/collab"))
+            .bearer_auth(jwt_for(owner_id))
+            .send()
+            .await
+            .expect("request completes");
+        let visible_body: Value = visible.json().await.expect("response is JSON");
+        assert_eq!(visible_body["code"], 0, "{visible_body}");
 
         scratch.drop_self().await;
     }

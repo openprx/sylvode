@@ -1392,7 +1392,7 @@ mod tests {
             zip::ZipArchive::new(Cursor::new(&package))
                 .unwrap()
                 .file_names()
-                .all(|name| !name.contains("/updates/")),
+                .all(|name| !name.expect("zip entry name is utf-8").contains("/updates/")),
             "history=false exports a compact head snapshot without tail members"
         );
 
