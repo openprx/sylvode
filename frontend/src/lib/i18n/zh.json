@@ -2514,12 +2514,22 @@
 			"reopen": "重新打开",
 			"resolved": "已解决",
 			"mentions": "提及的用户 ID，用逗号分隔",
+			"onBlock": "评论这个区块",
+			"page": "页面评论",
+			"mention": "提及某人",
+			"noPeople": "没有匹配的人",
+			"anchored": "这条评论挂在所选区块上。",
+			"clearAnchor": "改为评论整个页面",
+			"guest": "访客",
+			"member": "成员",
 			"truncated": "更早的评论未显示。"
 		},
 		"publicShare": {
 			"loading": "正在加载分享页面…",
 			"missing": "这个链接不可用。",
-			"untitled": "未命名"
+			"untitled": "未命名",
+			"readOnly": "只读",
+			"embed": "此链接不包含嵌入的内容。"
 		},
 		"block": {
 			"handleLabel": "拖动手柄",
@@ -2576,6 +2586,9 @@
 			"loadMore": "加载更多",
 			"entry": "{actor} 于 {time}",
 			"actorUnknown": "未知",
+			"restore": "恢复到这个版本",
+			"restoring": "正在恢复…",
+			"notRetained": "这个版本已经不再保留。",
 			"diff": {
 				"show": "查看变更",
 				"hide": "收起变更",
@@ -2644,6 +2657,29 @@
 			"notFoundBody": "该页面不存在，或你没有访问权限。"
 		},
 		"titlePlaceholder": "无标题",
+		"header": {
+			"breadcrumbs": "页面路径",
+			"addIcon": "添加图标",
+			"changeIcon": "更换图标",
+			"removeIcon": "移除图标",
+			"uploadIcon": "上传图片",
+			"addCover": "添加封面",
+			"changeCover": "更换封面",
+			"removeCover": "移除封面",
+			"uploadCover": "上传封面图片",
+			"reposition": "拖动以调整位置",
+			"gallery": "图库"
+		},
+		"trash": {
+			"title": "回收站",
+			"empty": "回收站是空的",
+			"restore": "恢复",
+			"delete": "删除",
+			"confirmDelete": "永久删除",
+			"archive": "移到回收站",
+			"archived": "已移到回收站",
+			"activeDescendant": "永久删除这一页之前，请先把所有子页面放进回收站。"
+		},
 		"relations": {
 			"title": "关联",
 			"direction": {

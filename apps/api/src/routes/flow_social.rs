@@ -228,7 +228,7 @@ pub async fn get_public_flow_share(
     Path(path): Path<TokenPath>,
     ShareClientIp(ip): ShareClientIp,
 ) -> Result<impl IntoResponse, ApiError> {
-    shares::enforce_public_share_rate_limit(ip)?;
+    shares::enforce_public_share_rate_limit(&state.db, ip).await?;
     let view = shares::read_public(&state.db, &path.token).await?;
     Ok(ApiResponse::success(view))
 }

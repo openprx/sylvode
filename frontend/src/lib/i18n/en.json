@@ -2514,12 +2514,22 @@
 			"reopen": "Reopen",
 			"resolved": "Resolved",
 			"mentions": "Mention user ids, separated by commas",
+			"onBlock": "Comment on this block",
+			"page": "Page comments",
+			"mention": "Mention someone",
+			"noPeople": "No matching people",
+			"anchored": "This comment is attached to the selected block.",
+			"clearAnchor": "Comment on the page",
+			"guest": "Guest",
+			"member": "Member",
 			"truncated": "Older comments are not shown."
 		},
 		"publicShare": {
 			"loading": "Loading shared page…",
 			"missing": "This link is unavailable.",
-			"untitled": "Untitled"
+			"untitled": "Untitled",
+			"readOnly": "Read-only",
+			"embed": "Embedded content is not included in this link."
 		},
 		"block": {
 			"handleLabel": "Drag handle",
@@ -2576,6 +2586,9 @@
 			"loadMore": "Load more",
 			"entry": "{actor} at {time}",
 			"actorUnknown": "Unknown",
+			"restore": "Restore this version",
+			"restoring": "Restoring…",
+			"notRetained": "That version is no longer kept.",
 			"diff": {
 				"show": "Show changes",
 				"hide": "Hide changes",
@@ -2644,6 +2657,29 @@
 			"notFoundBody": "This page does not exist, or you do not have access."
 		},
 		"titlePlaceholder": "Untitled",
+		"header": {
+			"breadcrumbs": "Page path",
+			"addIcon": "Add icon",
+			"changeIcon": "Change icon",
+			"removeIcon": "Remove icon",
+			"uploadIcon": "Upload an image",
+			"addCover": "Add cover",
+			"changeCover": "Change cover",
+			"removeCover": "Remove cover",
+			"uploadCover": "Upload a cover image",
+			"reposition": "Drag to reposition",
+			"gallery": "Gallery"
+		},
+		"trash": {
+			"title": "Trash",
+			"empty": "Trash is empty",
+			"restore": "Restore",
+			"delete": "Delete",
+			"confirmDelete": "Delete forever",
+			"archive": "Move to Trash",
+			"archived": "Moved to Trash",
+			"activeDescendant": "Archive every subpage before deleting this page forever."
+		},
 		"relations": {
 			"title": "Relations",
 			"direction": {

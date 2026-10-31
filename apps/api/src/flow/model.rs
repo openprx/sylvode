@@ -11,6 +11,7 @@ use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
+use super::appearance::PageAppearance;
 use super::collab::frame::TailUpdate;
 use super::collab::limits::FlowLimitsV1;
 
@@ -43,6 +44,9 @@ pub struct FlowObjectView {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<String>,
+    /// Icon and cover. Omitted when the page has neither, so older clients keep the same JSON.
+    #[serde(default, skip_serializing_if = "PageAppearance::is_empty")]
+    pub appearance: PageAppearance,
 }
 
 /// `AcceptedChange` from `rest-api-v1.md`. Returned by the create endpoint.
@@ -104,6 +108,8 @@ pub struct NavigatorNodeView {
     pub title: String,
     #[serde(rename = "type")]
     pub object_type: String,
+    #[serde(default, skip_serializing_if = "PageAppearance::is_empty")]
+    pub appearance: PageAppearance,
 }
 
 /// `GET /workspaces/{workspace_id}/flow/navigator`.

@@ -445,3 +445,130 @@ async fn actor_label(db: &DatabaseConnection, actor_id: Uuid) -> Result<String, 
         Ok(collapsed)
     }
 }
+
+const MENTION_CANDIDATE_CAP: i64 = 50;
+const MENTION_QUERY_CHARS_MAX: usize = 80;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MentionCandidate {
+    pub user_id: Uuid,
+    pub name: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MentionCandidateList {
+    pub items: Vec<MentionCandidate>,
+}
+
+/// Workspace members, plus users who are not members but hold a grant on this page or an
+/// ancestor it still inherits from. Notifications stay member-only; this list is only the picker.
+pub async fn list_mention_candidates(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    object_id: Uuid,
+    query: &str,
+) -> Result<MentionCandidateList, ApiError> {
+    let query = normalize_mention_query(query)?;
+    let members = candidate_rows(
+        db,
+        "SELECT u.id AS user_id, COALESCE(u.name, '') AS name, 'member' AS kind \
+         FROM workspace_members wm \
+         JOIN users u ON u.id = wm.user_id \
+         WHERE wm.workspace_id = $1 \
+           AND ($2 = '' OR strpos(lower(COALESCE(u.name, '')), lower($2)) > 0) \
+         ORDER BY name, u.id \
+         LIMIT $3",
+        vec![workspace_id.into(), query.clone().into(), MENTION_CANDIDATE_CAP.into()],
+    )
+    .await?;
+    let guests = candidate_rows(
+        db,
+        "WITH RECURSIVE chain AS ( \
+            SELECT id, parent_id, inherit_from_parent, 0 AS depth \
+            FROM flow_objects \
+            WHERE id = $1 AND workspace_id = $2 \
+            UNION ALL \
+            SELECT parent.id, parent.parent_id, parent.inherit_from_parent, chain.depth + 1 \
+            FROM chain \
+            JOIN flow_objects parent \
+              ON parent.id = chain.parent_id AND parent.workspace_id = $2 \
+            WHERE chain.inherit_from_parent AND chain.depth < 32 \
+         ) \
+         SELECT DISTINCT u.id AS user_id, COALESCE(u.name, '') AS name, 'guest' AS kind \
+         FROM flow_object_grants g \
+         JOIN chain ON chain.id = g.object_id \
+         JOIN users u ON u.id = g.principal_id \
+         WHERE g.principal_kind = 'user' \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM workspace_members wm \
+               WHERE wm.workspace_id = $2 AND wm.user_id = u.id \
+           ) \
+           AND ($3 = '' OR strpos(lower(COALESCE(u.name, '')), lower($3)) > 0) \
+         ORDER BY name, u.id \
+         LIMIT $4",
+        vec![
+            object_id.into(),
+            workspace_id.into(),
+            query.into(),
+            MENTION_CANDIDATE_CAP.into(),
+        ],
+    )
+    .await?;
+    let mut items = members;
+    for guest in guests {
+        if items.iter().any(|item| item.user_id == guest.user_id) {
+            continue;
+        }
+        items.push(guest);
+        if items.len() >= usize::try_from(MENTION_CANDIDATE_CAP).unwrap_or(50) {
+            break;
+        }
+    }
+    Ok(MentionCandidateList { items })
+}
+
+fn normalize_mention_query(query: &str) -> Result<String, ApiError> {
+    let trimmed = query.trim();
+    if trimmed.chars().count() > MENTION_QUERY_CHARS_MAX || trimmed.chars().any(|ch| ch.is_control()) {
+        return Err(ApiError::invalid_update(
+            "mention query must be at most 80 characters".to_string(),
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
+async fn candidate_rows(
+    db: &DatabaseConnection,
+    sql: &str,
+    values: Vec<sea_orm::Value>,
+) -> Result<Vec<MentionCandidate>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        user_id: Uuid,
+        name: String,
+        kind: String,
+    }
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
+        .all(db)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| MentionCandidate {
+            user_id: row.user_id,
+            name: row.name,
+            kind: row.kind,
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_mention_query;
+
+    #[test]
+    fn mention_query_rejects_control_characters() {
+        assert_eq!(normalize_mention_query("  Ada ").ok().as_deref(), Some("Ada"));
+        assert!(normalize_mention_query("ada\n").is_err());
+    }
+}
