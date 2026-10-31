@@ -39,6 +39,8 @@ OpenPR name keeps working; see **Deprecated**.
 - Package export accepts a git committer date written with a `Z` UTC suffix. GitHub's
   git prints `%cI` that way; the build used to discard the commit as unknown and every
   package export then failed closed.
+- The depth-32 lock-hold sample check accepts an extra sample when a lock timeout is
+  resubmitted. The parallel suite was failing with 31 samples against the exact count of 30.
 
 ### Breaking and behaviour changes
 
