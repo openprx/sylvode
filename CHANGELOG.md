@@ -42,6 +42,8 @@ OpenPR name keeps working; see **Deprecated**.
   tool-registry baseline, so the rebase chain still ends at the live tool count.
 - MCP guides state the live registry size of 148 tools. The object panel keyboard
   test moves Info to Comments, then to Share.
+- Public link create and revoke stay inside the share panel's manage gate, so a
+  view-only member does not see those controls.
 - Package export accepts a git committer date written with a `Z` UTC suffix. GitHub's
   git prints `%cI` that way; the build used to discard the commit as unknown and every
   package export then failed closed.
