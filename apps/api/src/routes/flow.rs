@@ -11595,7 +11595,7 @@ mod flow_database_tests {
                 let mut member = archive.by_index(index).expect("member opens");
                 let mut bytes = Vec::new();
                 member.read_to_end(&mut bytes).expect("member reads");
-                entries.push((member.name().to_string(), bytes));
+                entries.push((member.name().expect("zip entry name is utf-8").into_owned(), bytes));
             }
             let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
             for (path, bytes) in entries {
@@ -11628,7 +11628,11 @@ mod flow_database_tests {
             let mut archive = ZipArchive::new(Cursor::new(package)).expect("package opens");
             for index in 0..archive.len() {
                 let member = archive.by_index(index).expect("member opens");
-                if member.name().ends_with("/snapshot.bin") {
+                if member
+                    .name()
+                    .expect("zip entry name is utf-8")
+                    .ends_with("/snapshot.bin")
+                {
                     return member
                         .size()
                         .saturating_add(member.compressed_size().saturating_sub(1))

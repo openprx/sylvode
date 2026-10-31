@@ -13,9 +13,10 @@ name.
 ### Security
 
 - Patched RustSec findings in the lockfile: rustls 0.23.46, rustls-webpki 0.103.16,
-  webpki-roots 1.0.11, wasmtime 49.0.5, and zip 9.2. The unused wasmtime compilation
-  cache is no longer enabled, which drops the unfixed zstd 0.13 stack (no published
-  wasmtime release depends on zstd 0.14).
+  webpki-roots 1.0.11, wasmtime 49.0.5, zip 9.2, tokio 1.54.1 (RUSTSEC-2026-0386),
+  and quinn-proto 0.11.19 (RUSTSEC-2026-0338 through 0342). The unused wasmtime
+  compilation cache is no longer enabled, which drops the unfixed zstd 0.13 stack
+  (no published wasmtime release depends on zstd 0.14).
 - User access and refresh tokens now carry `users.session_version`. Deactivating an account,
   deleting it, or changing its password increments that version, and login, refresh and the
   authentication middleware reject inactive accounts and tokens whose version no longer matches.
