@@ -12,15 +12,10 @@
 	// the last committed order with zero writes, a `Space` while lifted commits (Drop). Every
 	// transition is announced through one `aria-live=polite` region.
 	//
-	// v0.4 scope note (disclosed, matches the pointer-drag scope): ArrowLeft/ArrowRight while
-	// lifted would mean "nest under a different parent", which is a `parent_id` change -- a
-	// governance command (`move_object`) that does not exist until v0.5
-	// (`ADR-0012` §4: "跨父级移动是治理命令"). Pointer drag in this component enforces the same
-	// same-parent-only rule (a drop target outside the source's parent is rejected). So
-	// ArrowLeft/ArrowRight while lifted are wired to the same live-region "not available this
-	// version" announcement pointer drag would hit, not silently ignored, and they do not touch
-	// state. Outside lift mode, ArrowLeft/ArrowRight are the ordinary WAI-ARIA treeitem
-	// collapse/expand-and-move gesture, unrelated to reordering.
+	// Same-parent reorder stays on the navigator order map. A parent change is `move_object`
+	// (`ADR-0012` §4): the context menu and a drop onto a different parent send it. ArrowLeft
+	// and ArrowRight while lifted stay sibling-only and announce that they cannot change parent.
+	// Outside lift mode they are the ordinary treeitem collapse and expand gesture.
 
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -45,6 +40,12 @@
 		type OrderedSibling
 	} from '#lib/flow/navigator-reorder.js';
 	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
+	import {
+		descendantIds,
+		moveInsideTargets,
+		moveObjectCommand,
+		moveOutsideTarget
+	} from '#lib/flow/cross-parent-move.js';
 	import { flowErrorDetailKey } from '#lib/flow/errors.js';
 	import type { FlowError } from '#lib/flow/types.js';
 	import { resolveRenderer } from '#lib/flow/renderer-registry.js';
@@ -558,10 +559,45 @@
 		);
 	}
 
-	function moveUnavailable(): void {
-		closeContextMenu();
-		announce('flow.nav.liveRegion.reorderFailed');
+	function moveNodes(): { id: string; parent_id: string | null }[] {
+		return objects.map((object) => ({ id: object.id, parent_id: object.parent_id ?? null }));
 	}
+
+	async function moveToParent(objectId: string, targetObjectId: string): Promise<void> {
+		try {
+			await commandService.execute(objectId, moveObjectCommand(targetObjectId));
+			await loadObjects();
+			const object = objects.find((candidate) => candidate.id === objectId);
+			announce('flow.nav.liveRegion.movedUnder', { title: object?.title ?? '' });
+		} catch (error) {
+			announce(flowErrorDetailKey(error as FlowError));
+		}
+	}
+
+	let moveInsideFor = $state<string | null>(null);
+
+	function openMoveInside(objectId: string): void {
+		closeContextMenu();
+		moveInsideFor = objectId;
+	}
+
+	function moveOutside(objectId: string): void {
+		closeContextMenu();
+		const target = moveOutsideTarget(moveNodes(), objectId);
+		if (!target) {
+			announce('flow.nav.liveRegion.moveFailed');
+			return;
+		}
+		void moveToParent(objectId, target);
+	}
+
+	const insideChoices = $derived.by(() => {
+		if (!moveInsideFor) return [];
+		return moveInsideTargets(moveNodes(), moveInsideFor).flatMap((id) => {
+			const object = objects.find((candidate) => candidate.id === id);
+			return object ? [{ id, title: object.title }] : [];
+		});
+	});
 
 	// Pointer drag: same-parent-only, matching the keyboard equivalent's scope exactly.
 	let dragSourceId: string | null = null;
@@ -574,17 +610,27 @@
 		if (!dragSourceId || dragSourceId === targetId) return;
 		const source = objects.find((o) => o.id === dragSourceId);
 		const target = objects.find((o) => o.id === targetId);
-		if (!source || !target || (source.parent_id ?? null) !== (target.parent_id ?? null)) return;
+		if (!source || !target) return;
+		if (descendantIds(moveNodes(), source.id).has(target.id)) return;
 		event.preventDefault();
 	}
 
 	async function onDrop(event: DragEvent, targetId: string): Promise<void> {
 		event.preventDefault();
-		if (!dragSourceId || !navEntry) return;
-		const source = objects.find((o) => o.id === dragSourceId);
-		const target = objects.find((o) => o.id === targetId);
+		const sourceId = dragSourceId;
 		dragSourceId = null;
-		if (!source || !target || (source.parent_id ?? null) !== (target.parent_id ?? null)) return;
+		if (!sourceId || !navEntry) return;
+		const source = objects.find((o) => o.id === sourceId);
+		const target = objects.find((o) => o.id === targetId);
+		if (!source || !target || sourceId === targetId) return;
+		if ((source.parent_id ?? null) !== (target.parent_id ?? null)) {
+			if (descendantIds(moveNodes(), source.id).has(target.id)) {
+				announce('flow.nav.liveRegion.moveFailed');
+				return;
+			}
+			await moveToParent(source.id, target.id);
+			return;
+		}
 
 		// Pointer drag resolves to the same destination-then-key pipeline the keyboard and context
 		// menu use, and produces the same live-region announcement: the a11y baseline treats them
@@ -989,23 +1035,59 @@
 		>
 			{$t('flow.nav.contextMenu.moveAfter')}
 		</button>
-		<!-- v0.4 scope note: "inside"/"outside" need the `move_object` governance command, which
-			 does not exist until v0.5 -- see the block comment above `contextMenuFor`'s declaration. -->
 		<button
 			type="button"
 			role="menuitem"
-			class="block w-full px-3 py-1.5 text-left text-slate-400 hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800"
-			onclick={moveUnavailable}
+			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			onclick={() => openMoveInside(contextMenuFor!)}
 		>
 			{$t('flow.nav.contextMenu.moveInside')}
 		</button>
 		<button
 			type="button"
 			role="menuitem"
-			class="block w-full px-3 py-1.5 text-left text-slate-400 hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800"
-			onclick={moveUnavailable}
+			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			onclick={() => moveOutside(contextMenuFor!)}
 		>
 			{$t('flow.nav.contextMenu.moveOutside')}
 		</button>
+	</div>
+{/if}
+
+{#if moveInsideFor}
+	<div class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4">
+		<div
+			class="w-full max-w-sm rounded-md border border-slate-200 bg-white p-4 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			role="dialog"
+			aria-labelledby="flow-move-inside-title"
+		>
+			<h2 id="flow-move-inside-title" class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+				{$t('flow.nav.move.title')}
+			</h2>
+			{#if insideChoices.length === 0}
+				<p class="text-sm text-slate-500">{$t('flow.nav.move.empty')}</p>
+			{:else}
+				<ul class="max-h-64 space-y-1 overflow-y-auto">
+					{#each insideChoices as choice (choice.id)}
+						<li>
+							<button
+								type="button"
+								class="w-full rounded-md px-2 py-1.5 text-left text-sm text-slate-800 hover:bg-slate-100 dark:text-slate-100 dark:hover:bg-slate-800"
+								onclick={() => {
+									const sourceId = moveInsideFor;
+									moveInsideFor = null;
+									if (sourceId) void moveToParent(sourceId, choice.id);
+								}}
+							>
+								{$t('flow.nav.move.choose', { values: { title: choice.title } })}
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			<button type="button" class="mt-3 text-sm text-slate-600" onclick={() => (moveInsideFor = null)}>
+				{$t('common.cancel')}
+			</button>
+		</div>
 	</div>
 {/if}

@@ -26,6 +26,14 @@
 //! there, not here — matching the split every other route module in this crate already uses
 //! between the axum handler and its backing service/repository code.
 
+#[path = "flow_social.rs"]
+mod flow_social;
+pub use flow_social::{
+    CommentPath, CreateCommentBody, CreateShareLinkBody, PatchCommentBody, ResolveCommentBody, ShareClientIp,
+    ShareLinkPath, TokenPath, delete_flow_comment, get_flow_comments, get_public_flow_share, list_flow_share_links,
+    patch_flow_comment, post_flow_comment, post_flow_share_link, resolve_flow_comment, revoke_flow_share_link,
+};
+
 use axum::{
     Extension, Json,
     extract::{FromRequest, Multipart, Path, Query, Request, State},

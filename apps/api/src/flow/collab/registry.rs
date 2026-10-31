@@ -581,12 +581,13 @@ impl SessionRegistry {
     /// Sends `frame` to every session with `document_id` open other than `exclude`, each through
     /// [`SessionHandle::deliver`]'s slow-consumer accounting.
     ///
-    /// Order note: this instance's write path only ever calls this once per document, strictly
-    /// after that write's transaction commits, and the per-document coordinator (`coordinator.rs`)
-    /// serializes writers for the same document within this instance — so commits (and therefore
-    /// these broadcasts) happen in commit order with no reordering possible to guard against here.
-    /// A multi-instance deployment would need the cross-instance ordered egress channel
-    /// `ADR-0010` defers past v0.4; this module's docs already flag that as not implemented.
+    /// Order note: this instance's write path calls this once per document, strictly after that
+    /// write's transaction commits, and the per-document coordinator (`coordinator.rs`) serializes
+    /// writers for the same document within this instance. Other instances learn about the commit
+    /// from `flow_fanout_notices` in notice-id order (`fanout::spawn_listener`): `LISTEN` wakes the
+    /// poller, the poller reconstructs frames from `collab_updates`, and a seq this process already
+    /// broadcast is not sent again. A dropped listener reconnects; the durable cursor stays put
+    /// when reconstruction fails.
     #[allow(clippy::significant_drop_tightening)] // the guard must outlive the loop it feeds
     pub fn broadcast(&self, document_id: Uuid, frame: &Frame, exclude: Option<Uuid>) {
         let Ok(encoded) = serde_json::to_string(frame) else {

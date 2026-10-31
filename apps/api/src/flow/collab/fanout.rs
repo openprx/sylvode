@@ -5,13 +5,16 @@
 //! reconstructs frames from the committed update rows, so duplicate, lost, or reordered notices
 //! cannot allocate a seq or make a subscription skip one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use parking_lot::Mutex;
 use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use platform::app::AppState;
@@ -23,7 +26,50 @@ use crate::error::ApiError;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const POLL_BATCH: i64 = 256;
+const FANOUT_CHANNEL: &str = "openpr_flow_fanout";
+const LOCAL_DELIVERY_CAP: usize = 16_384;
 static LISTENER_STARTED: AtomicBool = AtomicBool::new(false);
+
+struct LocalDeliveries {
+    order: VecDeque<(Uuid, i64)>,
+    seen: HashSet<(Uuid, i64)>,
+}
+
+/// Records that this process already broadcast `(document_id, seq)` from its own write path.
+///
+/// The durable poller skips that exact pair so the writer instance does not deliver the same
+/// committed update twice. The set is bounded; a seq that falls out of it can be delivered again,
+/// which the protocol treats as an idempotent duplicate.
+pub(crate) fn note_local_delivery(document_id: Uuid, seq: i64) {
+    if seq < 0 {
+        return;
+    }
+    let mut guard = local_deliveries().lock();
+    if !guard.seen.insert((document_id, seq)) {
+        return;
+    }
+    guard.order.push_back((document_id, seq));
+    while guard.order.len() > LOCAL_DELIVERY_CAP {
+        if let Some(old) = guard.order.pop_front() {
+            guard.seen.remove(&old);
+        }
+    }
+    drop(guard);
+}
+
+fn locally_delivered(document_id: Uuid, seq: i64) -> bool {
+    local_deliveries().lock().seen.contains(&(document_id, seq))
+}
+
+fn local_deliveries() -> &'static Mutex<LocalDeliveries> {
+    static LOCAL: OnceLock<Mutex<LocalDeliveries>> = OnceLock::new();
+    LOCAL.get_or_init(|| {
+        Mutex::new(LocalDeliveries {
+            order: VecDeque::new(),
+            seen: HashSet::new(),
+        })
+    })
+}
 
 #[derive(Debug, FromQueryResult)]
 struct NoticeId {
@@ -70,6 +116,7 @@ pub async fn publish_document_update(
          ) \
          SELECT inserted.id FROM inserted \
          CROSS JOIN LATERAL (SELECT pg_notify('openpr_flow_fanout', inserted.id::text)) AS notified",
+        // FANOUT_CHANNEL is the same literal. `pg_notify` takes it as a SQL string, not a bind.
         vec![workspace_id.into(), document_id.into(), document_seq.into()],
     ))
     .one(db)
@@ -148,6 +195,9 @@ async fn relay(registry: &SessionRegistry, db: &DatabaseConnection, notice: &Not
     let Some(seq) = notice.document_seq else {
         return Ok(());
     };
+    if locally_delivered(notice.document_id, seq) {
+        return Ok(());
+    }
     // A transient reconstruction failure must leave the durable cursor behind this notice so the
     // next poll retries it. Advancing here would turn a recoverable database outage into a silent
     // permanent gap for every session connected to this instance.
@@ -217,6 +267,12 @@ pub fn spawn_listener(state: AppState, registry: &'static SessionRegistry) {
     if LISTENER_STARTED.swap(true, Ordering::AcqRel) {
         return;
     }
+    let wake = std::sync::Arc::new(Notify::new());
+    let listen_state = state.clone();
+    let listen_wake = std::sync::Arc::clone(&wake);
+    tokio::spawn(async move {
+        listen_loop(listen_state, listen_wake).await;
+    });
     tokio::spawn(async move {
         let db = &state.db;
         let mut cursor = loop {
@@ -246,9 +302,47 @@ pub fn spawn_listener(state: AppState, registry: &'static SessionRegistry) {
                     }
                 }
             }
-            tokio::time::sleep(POLL_INTERVAL).await;
+            // LISTEN is a wake-up. Order stays `ORDER BY id` on the durable table. A dropped
+            // listener does not move this cursor; polling continues and the listener reconnects.
+            // Slow consumers are accounted for inside `SessionHandle::deliver` and never advance
+            // this cursor past a notice `relay` failed to reconstruct.
+            let notified = wake.notified();
+            tokio::pin!(notified);
+            tokio::select! {
+                () = notified => {}
+                () = tokio::time::sleep(POLL_INTERVAL) => {}
+            }
         }
     });
+}
+
+async fn listen_loop(state: AppState, wake: std::sync::Arc<Notify>) {
+    loop {
+        let connected =
+            sea_orm::sqlx::postgres::PgListener::connect_with(state.db.get_postgres_connection_pool()).await;
+        let mut listener = match connected {
+            Ok(listener) => listener,
+            Err(error) => {
+                tracing::warn!(%error, "flow fanout listener connect failed; polling continues");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+        if let Err(error) = listener.listen(FANOUT_CHANNEL).await {
+            tracing::warn!(%error, "flow fanout LISTEN failed; polling continues");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        }
+        loop {
+            match listener.recv().await {
+                Ok(_) => wake.notify_one(),
+                Err(error) => {
+                    tracing::warn!(%error, "flow fanout LISTEN dropped; reconnecting");
+                    break;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -273,5 +367,30 @@ mod tests {
         )
         .await;
         assert_eq!(cursor, 41, "a transient database failure must retry notice 42");
+    }
+
+    #[tokio::test]
+    async fn locally_delivered_notice_advances_then_a_failure_retains_the_next_cursor() {
+        let delivered = Uuid::new_v4();
+        super::note_local_delivery(delivered, 3);
+        let cursor = relay_batch(
+            &SessionRegistry::new(),
+            &DatabaseConnection::Disconnected,
+            vec![
+                Notice {
+                    id: 10,
+                    document_id: delivered,
+                    document_seq: Some(3),
+                },
+                Notice {
+                    id: 11,
+                    document_id: Uuid::new_v4(),
+                    document_seq: Some(1),
+                },
+            ],
+            9,
+        )
+        .await;
+        assert_eq!(cursor, 10, "a locally delivered seq is not relayed again");
     }
 }

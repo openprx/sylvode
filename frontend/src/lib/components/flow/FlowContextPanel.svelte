@@ -22,6 +22,7 @@
 	} from '#lib/flow/object-export.js';
 	import { EXPORT_STATUS_KEYS } from '#lib/flow/package-export.js';
 	import { toast } from '#lib/stores/toast.js';
+	import FlowCommentsPanel from './FlowCommentsPanel.svelte';
 	import FlowSharePanel from './FlowSharePanel.svelte';
 	import FlowRelationsPanel from './FlowRelationsPanel.svelte';
 	import FlowHistoryDiff from './FlowHistoryDiff.svelte';
@@ -34,10 +35,11 @@
 
 	let { object }: Props = $props();
 
-	const TABS = ['info', 'share', 'relations', 'history'] as const;
+	const TABS = ['info', 'comments', 'share', 'relations', 'history'] as const;
 	type Tab = (typeof TABS)[number];
 	const TAB_KEYS: Record<Tab, string> = {
 		info: 'flow.panel.tabs.info',
+		comments: 'flow.panel.tabs.comments',
 		share: 'flow.panel.tabs.share',
 		relations: 'flow.panel.tabs.relations',
 		history: 'flow.panel.tabs.history'
@@ -46,6 +48,7 @@
 	let activeTab = $state<Tab>('info');
 	let visited = $state<Record<Tab, boolean>>({
 		info: true,
+		comments: false,
 		share: false,
 		relations: false,
 		history: false
@@ -213,7 +216,7 @@
 	<div
 		role="tablist"
 		aria-label={$t('flow.panel.tabs.label')}
-		class="grid grid-cols-4 gap-1 border-b border-slate-200 dark:border-slate-700"
+		class="grid grid-cols-5 gap-1 border-b border-slate-200 dark:border-slate-700"
 	>
 		{#each TABS as tab (tab)}
 			<button
@@ -363,6 +366,20 @@
 				<p class="text-red-600 dark:text-red-400" role="alert">{$t(exportFailureKey)}</p>
 			{/if}
 		</div>
+	</div>
+
+	<div
+		id="flow-panel-comments"
+		role="tabpanel"
+		aria-labelledby="flow-panel-tab-comments"
+		hidden={activeTab !== 'comments'}
+	>
+		<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+			{$t('flow.comments.title')}
+		</h2>
+		{#if visited.comments}
+			<FlowCommentsPanel objectId={object.id} />
+		{/if}
 	</div>
 
 	<div

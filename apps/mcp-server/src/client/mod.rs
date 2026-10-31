@@ -1503,6 +1503,83 @@ impl OpenPrClient {
         .await
     }
 
+    pub async fn list_flow_comments(&self, object_id: &str) -> Result<Value, String> {
+        self.get(&format!(
+            "/api/v1/flow/objects/{}/comments",
+            urlencoding::encode(object_id)
+        ))
+        .await
+    }
+
+    pub async fn create_flow_comment(&self, object_id: &str, body: &Value) -> Result<Value, String> {
+        self.post(
+            &format!("/api/v1/flow/objects/{}/comments", urlencoding::encode(object_id)),
+            body,
+        )
+        .await
+    }
+
+    pub async fn update_flow_comment(&self, object_id: &str, comment_id: &str, body: &Value) -> Result<Value, String> {
+        self.patch(
+            &format!(
+                "/api/v1/flow/objects/{}/comments/{}",
+                urlencoding::encode(object_id),
+                urlencoding::encode(comment_id)
+            ),
+            body,
+        )
+        .await
+    }
+
+    pub async fn delete_flow_comment(&self, object_id: &str, comment_id: &str) -> Result<Value, String> {
+        self.delete(&format!(
+            "/api/v1/flow/objects/{}/comments/{}",
+            urlencoding::encode(object_id),
+            urlencoding::encode(comment_id)
+        ))
+        .await
+    }
+
+    pub async fn resolve_flow_comment(&self, object_id: &str, comment_id: &str, body: &Value) -> Result<Value, String> {
+        self.post(
+            &format!(
+                "/api/v1/flow/objects/{}/comments/{}/resolve",
+                urlencoding::encode(object_id),
+                urlencoding::encode(comment_id)
+            ),
+            body,
+        )
+        .await
+    }
+
+    pub async fn list_flow_share_links(&self, object_id: &str) -> Result<Value, String> {
+        self.get(&format!(
+            "/api/v1/flow/objects/{}/share-links",
+            urlencoding::encode(object_id)
+        ))
+        .await
+    }
+
+    pub async fn create_flow_share_link(&self, object_id: &str, body: &Value) -> Result<Value, String> {
+        self.post(
+            &format!("/api/v1/flow/objects/{}/share-links", urlencoding::encode(object_id)),
+            body,
+        )
+        .await
+    }
+
+    pub async fn revoke_flow_share_link(&self, object_id: &str, link_id: &str) -> Result<Value, String> {
+        self.post(
+            &format!(
+                "/api/v1/flow/objects/{}/share-links/{}/revoke",
+                urlencoding::encode(object_id),
+                urlencoding::encode(link_id)
+            ),
+            &json!({}),
+        )
+        .await
+    }
+
     pub async fn set_flow_feature(&self, workspace_id: &str, body: Value) -> Result<Value, String> {
         self.put(
             &format!("/api/v1/workspaces/{}/features/flow", urlencoding::encode(workspace_id)),
