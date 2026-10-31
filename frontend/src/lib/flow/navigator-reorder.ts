@@ -14,10 +14,9 @@
 // -- so equivalence is structural, and `tests/flow-navigator-equivalence.test.ts` can assert it
 // exhaustively over every (list size, source, target) triple rather than sampling.
 //
-// Scope (`ADR-0012` §4): v0.4 reorders within ONE parent only. Cross-parent moves need the
-// `move_object` governance command, which is v0.5. Nothing here can express a parent change --
-// callers pass a single parent's sibling list, and the result is always a new order key for a
-// member of that same list.
+// Scope (`ADR-0012` §4): this module reorders within ONE parent only. A parent change is the
+// `move_object` command in `cross-parent-move`, not a new order key. Callers pass a single
+// parent's sibling list, and the result is always a new order key for a member of that list.
 
 import { keyBetween } from './fractional-index';
 

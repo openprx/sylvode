@@ -13,6 +13,7 @@
 		type ShareSnapshot
 	} from '#lib/flow/share-panel.js';
 	import type { FlowGrantLevel, FlowPrincipalKind } from '#lib/api/flow.js';
+	import FlowPublicLinks from './FlowPublicLinks.svelte';
 
 	interface Props {
 		objectId: string;
@@ -342,6 +343,9 @@
 					})}
 				</p>
 			{/if}
+
+			<!-- Creating and revoking a public link is a manage action, same gate as grants. -->
+			<FlowPublicLinks {objectId} />
 		{/if}
 	{/if}
 </div>

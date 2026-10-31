@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 
 const SKILL_GUIDE_MD: &str = r"# Sylvode MCP Skill Guide
 
-## Tools (140)
+## Tools (148)
 
 ### Projects: projects.list, projects.get, projects.create, projects.update, projects.delete
 ### Project Types: project_types.list, project_types.get
@@ -27,7 +27,7 @@ const SKILL_GUIDE_MD: &str = r"# Sylvode MCP Skill Guide
 ### Code Scenarios: code.resources.list, code.directory.get, code.task_context.get, code.change_proposal.create
 ### Traditional Scenarios: documents.extract_summary, documents.review_risk, approval.request, inspection.report, corrective_action.propose
 ### Other: members.list, search.all, bot_operation_logs.list
-### Flow (v0.8): flow.feature_get, flow.feature_set, objects.get, objects.query, objects.history, objects.create, objects.patch, objects.move, objects.link, objects.unlink, objects.diff, objects.grants_get, objects.grants_set, objects.inheritance_set, objects.relations, objects.search, objects.reference, objects.unreference, objects.convert_preview, objects.convert_commit, objects.convert_status, objects.convert_retry, objects.export, objects.export_workspace, objects.import_artifact, objects.import_preview, objects.import_commit, objects.import_status, objects.integrity, collab.projection_lag, collab.status, collab.compact, collab.rebuild_projection, collab.repair_quarantine, deliveries.replay, collections.describe, collections.query, records.create, legacy_pages.inventory, legacy_pages.import_preview, legacy_pages.import_commit, legacy_pages.import_status
+### Flow (v0.8): flow.feature_get, flow.feature_set, objects.get, objects.query, objects.history, objects.create, objects.patch, objects.move, objects.link, objects.unlink, objects.diff, objects.grants_get, objects.grants_set, objects.inheritance_set, objects.relations, objects.search, objects.reference, objects.unreference, objects.convert_preview, objects.convert_commit, objects.convert_status, objects.convert_retry, objects.export, objects.export_workspace, objects.import_artifact, objects.import_preview, objects.import_commit, objects.import_status, objects.integrity, collab.projection_lag, collab.status, collab.compact, collab.rebuild_projection, collab.repair_quarantine, deliveries.replay, collections.describe, collections.query, records.create, legacy_pages.inventory, legacy_pages.import_preview, legacy_pages.import_commit, legacy_pages.import_status, flow.comments.list, flow.comments.create, flow.comments.update, flow.comments.delete, flow.comments.resolve, flow.shares.list, flow.shares.create, flow.shares.revoke
 
 ## Workflow: Bug Report
 1. files.upload -> upload log/screenshot
@@ -459,6 +459,14 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
     ("legacy_pages.import_preview", PolicyScope::WorkspaceWideAdmin),
     ("legacy_pages.import_commit", PolicyScope::WorkspaceWideAdmin),
     ("legacy_pages.import_status", PolicyScope::WorkspaceWideAdmin),
+    ("flow.comments.list", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
+    ("flow.comments.create", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
+    ("flow.comments.update", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
+    ("flow.comments.delete", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
+    ("flow.comments.resolve", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
+    ("flow.shares.list", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
+    ("flow.shares.create", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
+    ("flow.shares.revoke", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
 ];
 
 /// Scope of one registered tool. Unknown names fail closed as mandatory
@@ -924,6 +932,14 @@ impl McpServer {
             "legacy_pages.import_preview" => tools::legacy_pages::legacy_pages_import_preview(&self.client, args).await,
             "legacy_pages.import_commit" => tools::legacy_pages::legacy_pages_import_commit(&self.client, args).await,
             "legacy_pages.import_status" => tools::legacy_pages::legacy_pages_import_status(&self.client, args).await,
+            "flow.comments.list" => tools::flow_social::list_comments(&self.client, args).await,
+            "flow.comments.create" => tools::flow_social::create_comment(&self.client, args).await,
+            "flow.comments.update" => tools::flow_social::update_comment(&self.client, args).await,
+            "flow.comments.delete" => tools::flow_social::delete_comment(&self.client, args).await,
+            "flow.comments.resolve" => tools::flow_social::resolve_comment(&self.client, args).await,
+            "flow.shares.list" => tools::flow_social::list_share_links(&self.client, args).await,
+            "flow.shares.create" => tools::flow_social::create_share_link(&self.client, args).await,
+            "flow.shares.revoke" => tools::flow_social::revoke_share_link(&self.client, args).await,
 
             _ => CallToolResult::error(format!("Unknown tool: {name}")),
         }

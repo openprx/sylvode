@@ -2409,7 +2409,9 @@
 				"outdented": "{title} 已取消缩进",
 				"dropped": "{title} 已放下",
 				"cancelled": "移动已取消",
-				"reorderFailed": "重新排序失败，已还原"
+				"reorderFailed": "重新排序失败，已还原",
+				"movedUnder": "{title} 已移动到新的父级下",
+				"moveFailed": "无法移动该页面"
 			},
 			"expand": "展开",
 			"collapse": "折叠",
@@ -2417,8 +2419,13 @@
 				"label": "移动操作",
 				"moveBefore": "移动到前一个之前",
 				"moveAfter": "移动到后一个之后",
-				"moveInside": "移动到内部（此版本不可用）",
-				"moveOutside": "移动到外部（此版本不可用）"
+				"moveInside": "移动到内部",
+				"moveOutside": "移动到外部"
+			},
+			"move": {
+				"title": "移动到内部",
+				"empty": "没有可以放入此项的页面。",
+				"choose": "移动到 {title} 下"
 			},
 			"newMenu": "新建",
 			"collectionBadge": "集合",
@@ -2492,6 +2499,27 @@
 				"open": "打开"
 			},
 			"readOnlyNotice": "你可以查看此页，但无法编辑。"
+		},
+		"comments": {
+			"title": "评论",
+			"loading": "正在加载评论…",
+			"empty": "还没有评论",
+			"body": "评论",
+			"submit": "发表评论",
+			"reply": "回复",
+			"edit": "编辑",
+			"save": "保存",
+			"delete": "删除",
+			"resolve": "标为已解决",
+			"reopen": "重新打开",
+			"resolved": "已解决",
+			"mentions": "提及的用户 ID，用逗号分隔",
+			"truncated": "更早的评论未显示。"
+		},
+		"publicShare": {
+			"loading": "正在加载分享页面…",
+			"missing": "这个链接不可用。",
+			"untitled": "未命名"
 		},
 		"block": {
 			"handleLabel": "拖动手柄",
@@ -2583,6 +2611,7 @@
 			"tabs": {
 				"label": "页面面板分区",
 				"info": "信息",
+				"comments": "评论",
 				"share": "共享",
 				"relations": "关联",
 				"history": "历史"
@@ -3508,6 +3537,19 @@
 		},
 		"share": {
 			"title": "共享",
+			"public": {
+				"title": "公开链接",
+				"help": "拿到链接的人只能阅读这一页。子页面仍然是私有的。",
+				"expiry": "过期时间（可选）",
+				"create": "创建链接",
+				"creating": "正在创建…",
+				"revoke": "撤销",
+				"empty": "没有生效中的公开链接。",
+				"tokenOnce": "请现在复制这个链接。它不会再次显示。",
+				"copy": "复制链接",
+				"copied": "已复制",
+				"loading": "正在加载链接…"
+			},
 			"yourAccess": "你的权限",
 			"loading": "正在加载共享信息…",
 			"level": {

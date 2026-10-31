@@ -1487,6 +1487,7 @@ pub async fn accept_update(
         .await
         {
             LockedOutcome::Committed(accepted) => {
+                super::fanout::note_local_delivery(request.document_id, accepted.head_seq);
                 if let Err(error) = super::fanout::publish_document_update(
                     db,
                     request.workspace_id,
@@ -1524,6 +1525,7 @@ pub async fn accept_update(
                 // the committed path would, including the broadcast the lost `COMMIT` response
                 // never got to send.
                 if let Some(prior) = find_prior_update(db, request.document_id, request.update_id).await? {
+                    super::fanout::note_local_delivery(request.document_id, prior.head_seq);
                     if let Err(error) = super::fanout::publish_document_update(
                         db,
                         request.workspace_id,
@@ -1620,6 +1622,7 @@ fn broadcast_committed_update(
     request: &UpdateRequest,
     accepted: &Accepted,
 ) {
+    super::fanout::note_local_delivery(request.document_id, accepted.head_seq);
     let update_frame = Frame::Update {
         protocol_version: PROTOCOL_VERSION,
         document_id: request.document_id,

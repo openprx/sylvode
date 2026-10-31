@@ -125,7 +125,7 @@ jobs:
         run: |
           set -e
           for suite in record-values markdown-sanitize flow-limits flow-i18n-parity i18n-parity bot-transport-surfaces \
-                       webhook-events flow-navigator-equivalence flow-ui-state flow-bridge \
+                       webhook-events flow-navigator-equivalence flow-cross-parent-move flow-ui-state flow-bridge \
                        flow-package-import flow-v0.4 flow-static-build; do
             echo "::group::test:$suite"
             bun run "test:$suite"

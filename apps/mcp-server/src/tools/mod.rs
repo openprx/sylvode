@@ -3,6 +3,7 @@ pub mod comments;
 pub mod context;
 pub mod files;
 pub mod flow_features;
+pub mod flow_social;
 pub mod forms;
 pub mod labels;
 pub mod legacy_pages;
@@ -132,6 +133,7 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
     tools.extend(flow_v06_tool_definitions());
     tools.extend(flow_v07_tool_definitions());
     tools.extend(flow_v08_tool_definitions());
+    tools.extend(flow_social::tool_definitions());
     tools.extend([
         legacy_pages::legacy_pages_inventory_tool(),
         legacy_pages::legacy_pages_import_preview_tool(),

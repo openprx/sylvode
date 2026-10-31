@@ -116,9 +116,12 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(&cfg.bind_addr).await?;
     tracing::info!(bind_addr = %cfg.bind_addr, "api server started");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(drain_then_shutdown(reaper_stop))
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(drain_then_shutdown(reaper_stop))
+    .await?;
     Ok(())
 }
 
@@ -2113,6 +2116,53 @@ fn flow_surface_routes(auth_state: &AppState) -> Router<AppState> {
                 middleware::bot_auth::bot_or_user_auth_middleware,
             )),
         )
+        .route(
+            "/api/v1/flow/objects/{object_id}/comments",
+            get(routes::flow::get_flow_comments)
+                .post(routes::flow::post_flow_comment)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/comments/{comment_id}",
+            axum::routing::patch(routes::flow::patch_flow_comment)
+                .delete(routes::flow::delete_flow_comment)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/comments/{comment_id}/resolve",
+            post(routes::flow::resolve_flow_comment).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/share-links",
+            get(routes::flow::list_flow_share_links)
+                .post(routes::flow::post_flow_share_link)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/share-links/{link_id}/revoke",
+            post(routes::flow::revoke_flow_share_link).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        // Anonymous page link. The handler hashes the token, rejects revoked and expired links,
+        // returns only that page's sanitized projection, and rate-limits per client address.
+        .route(
+            "/api/v1/flow/public-shares/{token}",
+            get(routes::flow::get_public_flow_share),
+        )
 }
 
 fn write_build_info() -> anyhow::Result<()> {
@@ -2533,6 +2583,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0073_user_session_version.sql",
         include_str!("../../../migrations/0073_user_session_version.sql"),
     ),
+    (
+        "0074_flow_comments.sql",
+        include_str!("../../../migrations/0074_flow_comments.sql"),
+    ),
+    (
+        "0075_flow_share_links.sql",
+        include_str!("../../../migrations/0075_flow_share_links.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -2915,6 +2973,8 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0073_user_session_version.sql",
         SchemaProbe::Column("users", "session_version"),
     ),
+    ("0074_flow_comments.sql", SchemaProbe::Relation("flow_comments")),
+    ("0075_flow_share_links.sql", SchemaProbe::Relation("flow_share_links")),
 ];
 
 /// One recorded migration outcome.
@@ -3441,7 +3501,9 @@ mod tests {
                 "0070_bot_operation_logs_surface_check.sql",
                 "0071_flow_conversion_job_error_reason.sql",
                 "0072_flow_conversion_job_started_at.sql",
-                "0073_user_session_version.sql"
+                "0073_user_session_version.sql",
+                "0074_flow_comments.sql",
+                "0075_flow_share_links.sql"
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -3656,6 +3718,9 @@ mod tests {
             // cannot set an `Authorization` header, so this route deliberately carries no
             // `bot_or_user_auth_middleware` layer.
             "/api/v1/collab/ws",
+            // Anonymous Flow page link. The handler hashes the token, checks expiry and
+            // revocation, returns only that page's sanitized text, and rate-limits by address.
+            "/api/v1/flow/public-shares/{token}",
         ];
 
         let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))

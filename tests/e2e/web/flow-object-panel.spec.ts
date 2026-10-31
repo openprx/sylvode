@@ -198,6 +198,10 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	await expect(tabs.getByRole('tab', { name: 'Info' })).toHaveAttribute('aria-selected', 'true');
 	await tabs.getByRole('tab', { name: 'Info' }).focus();
 	await page.keyboard.press('ArrowRight');
+	const commentsTab = tabs.getByRole('tab', { name: 'Comments' });
+	await expect(commentsTab).toBeFocused();
+	await expect(commentsTab).toHaveAttribute('aria-selected', 'true');
+	await page.keyboard.press('ArrowRight');
 	const shareTab = tabs.getByRole('tab', { name: 'Share' });
 	await expect(shareTab).toBeFocused();
 	await expect(shareTab).toHaveAttribute('aria-selected', 'true');
