@@ -44,6 +44,9 @@ OpenPR name keeps working; see **Deprecated**.
   test moves Info to Comments, then to Share.
 - Public link create and revoke stay inside the share panel's manage gate, so a
   view-only member does not see those controls.
+- A cancelled plugin invoke or event-handler hook still writes its invocation row.
+  The recording task is scheduled before the handler waits on the database, so
+  dropping the request can no longer skip it.
 - Package export accepts a git committer date written with a `Z` UTC suffix. GitHub's
   git prints `%cI` that way; the build used to discard the commit as unknown and every
   package export then failed closed.

@@ -270,6 +270,27 @@ pub async fn invoke_plugin(
     Path(plugin_id): Path<Uuid>,
     Json(req): Json<InvokePluginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Schedule the run before this handler awaits anything. A client disconnect drops the
+    // handler; awaiting the database lookup first meant that drop happened before `spawn`, so
+    // no `plugin_invocations` row was ever written. Dropping the join handle detaches the task.
+    // The guest is then bounded by its own deadline, and the row is written when that task ends.
+    let plugin_id_for_log = plugin_id;
+    let invocation = tokio::spawn(invoke_plugin_detached(state, claims, bot, plugin_id, req))
+        .await
+        .map_err(|err| {
+            tracing::error!(plugin_id = %plugin_id_for_log, error = %err, "plugin invocation task failed");
+            ApiError::Internal
+        })??;
+    Ok(ApiResponse::success(invocation))
+}
+
+async fn invoke_plugin_detached(
+    state: AppState,
+    claims: JwtClaims,
+    bot: Option<Extension<BotAuthContext>>,
+    plugin_id: Uuid,
+    req: InvokePluginRequest,
+) -> Result<PluginInvocationResponse, ApiError> {
     let mut row = get_plugin_runtime_row(&state, plugin_id).await?;
     let (actor_id, _, is_bot) =
         require_workspace_access_from_auth(&state, &claims, bot.as_ref().map(|b| &b.0), row.workspace_id).await?;
@@ -311,7 +332,7 @@ pub async fn invoke_plugin(
         )
         .await?;
         tx.commit().await?;
-        return Ok(ApiResponse::success(invocation));
+        return Ok(invocation);
     };
 
     let input = json!({
@@ -319,35 +340,22 @@ pub async fn invoke_plugin(
         "plugin_key": row.key,
         "payload": req.input,
     });
-    // The run and its record happen on a task of their own, so a cancelled request (a client
-    // that disconnects) still leaves its `plugin_invocations` row and `plugin.invoked` event; the
-    // guest is then bounded by its own deadline rather than by the request.
-    let record_state = state.clone();
-    let recorded = tokio::spawn(async move {
-        let result = invoke_wasm_plugin(wasm_bytes, input.clone(), manifest.capabilities.runtime).await;
-        let tx = record_state.db.begin().await?;
-        let invocation = match result {
-            Ok(output) => insert_success_invocation(&tx, &row, &hook_kind, input, output).await?,
-            Err(err) => insert_failed_invocation(&tx, &row, &hook_kind, input, err).await?,
-        };
-        insert_plugin_invoked_event(
-            &tx,
-            &row,
-            &invocation,
-            if is_bot { None } else { Some(actor_id) },
-            json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
-        )
-        .await?;
-        tx.commit().await?;
-        Ok::<_, ApiError>(invocation)
-    })
-    .await
-    .map_err(|err| {
-        tracing::error!(%plugin_id, error = %err, "plugin invocation task failed");
-        ApiError::Internal
-    })??;
-
-    Ok(ApiResponse::success(recorded))
+    let result = invoke_wasm_plugin(wasm_bytes, input.clone(), manifest.capabilities.runtime).await;
+    let tx = state.db.begin().await?;
+    let invocation = match result {
+        Ok(output) => insert_success_invocation(&tx, &row, &hook_kind, input, output).await?,
+        Err(err) => insert_failed_invocation(&tx, &row, &hook_kind, input, err).await?,
+    };
+    insert_plugin_invoked_event(
+        &tx,
+        &row,
+        &invocation,
+        if is_bot { None } else { Some(actor_id) },
+        json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(invocation)
 }
 
 pub async fn list_plugin_invocations(
