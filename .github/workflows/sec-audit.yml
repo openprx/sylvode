@@ -2,7 +2,8 @@ name: Sec Audit
 
 on:
   push:
-    branches: [main]
+    branches:
+      - "**"
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
@@ -10,7 +11,6 @@ on:
       - "deny.toml"
       - '.cargo/audit.toml'
   pull_request:
-    branches: [main]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
@@ -26,6 +26,10 @@ concurrency:
 
 permissions:
   contents: read
+  # rustsec/audit-check publishes a commit check. Without this it answers
+  # "Resource not accessible by integration" and, on pull requests, treats that
+  # as a fork. Scheduled runs still open issues, which needs issues: write.
+  checks: write
   issues: write
 
 env:

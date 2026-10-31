@@ -1,10 +1,12 @@
 name: CI
 
 on:
+  # Every branch. Tags stay on the Release workflow, so a release tag does not also run CI.
   push:
-    branches: [main, develop]
+    branches:
+      - "**"
+  # Any base branch, so a pull request is tested before it is retargeted onto main.
   pull_request:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -123,7 +125,7 @@ jobs:
         run: |
           set -e
           for suite in record-values markdown-sanitize flow-limits flow-i18n-parity i18n-parity bot-transport-surfaces \
-                       webhook-events flow-navigator-equivalence flow-ui-state flow-bridge \
+                       webhook-events flow-navigator-equivalence flow-cross-parent-move flow-ui-state flow-bridge \
                        flow-package-import flow-v0.4 flow-static-build; do
             echo "::group::test:$suite"
             bun run "test:$suite"
