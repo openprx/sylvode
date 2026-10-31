@@ -29,15 +29,7 @@ export function renderMarkdown(content: string): string {
 		return '';
 	}
 
-	// Preserve <video> tags before processing
-	const videoPlaceholders: string[] = [];
-	let processed = source.replace(/<video\b[^>]*>[\s\S]*?<\/video>/gi, (match) => {
-		const idx = videoPlaceholders.length;
-		videoPlaceholders.push(match);
-		return `%%VIDEO_PLACEHOLDER_${idx}%%`;
-	});
-
-	const lines = processed.split(/\r?\n/);
+	const lines = source.split(/\r?\n/);
 	const output: string[] = [];
 	let inCodeBlock = false;
 	let listItems: string[] = [];
@@ -99,12 +91,5 @@ export function renderMarkdown(content: string): string {
 		output.push('</code></pre>');
 	}
 
-	let result = output.join('');
-
-	// Restore <video> tags
-	for (let i = 0; i < videoPlaceholders.length; i++) {
-		result = result.replace(`%%VIDEO_PLACEHOLDER_${i}%%`, videoPlaceholders[i]);
-	}
-
-	return result;
+	return output.join('');
 }

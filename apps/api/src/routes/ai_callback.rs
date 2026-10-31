@@ -817,6 +817,7 @@ mod reference_scope_database_tests {
             token_type: TokenType::Access,
             iat: 0,
             exp: 0,
+            sv: 0,
         };
         let request = |reference_id| CreateAiTaskRequest {
             ai_participant_id: Uuid::new_v4(),

@@ -1534,6 +1534,7 @@ mod database_tests {
             token_type: TokenType::Access,
             iat: 0,
             exp: 0,
+            sv: 0,
         }
     }
 

@@ -10,7 +10,7 @@ use platform::{
 
 use crate::{
     error::ApiError,
-    routes::auth::{extract_bearer_token, extract_cookie_token},
+    routes::auth::{extract_bearer_token, extract_cookie_token, load_live_user_session},
 };
 
 pub async fn jwt_auth_middleware(
@@ -30,6 +30,7 @@ pub async fn jwt_auth_middleware(
     let claims: JwtClaims = jwt
         .verify_access_token(&token)
         .map_err(|_| ApiError::Unauthorized("invalid access token".to_string()))?;
+    load_live_user_session(&state, &claims).await?;
 
     req.extensions_mut().insert(claims);
     Ok(next.run(req).await)
