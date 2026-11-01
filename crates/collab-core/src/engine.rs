@@ -176,7 +176,7 @@ fn loro_value_to_json(value: &LoroValue) -> Value {
         LoroValue::Map(entries) => {
             let mut object = JsonMap::new();
             for (key, child) in entries.iter() {
-                object.insert(key.to_string(), loro_value_to_json(child));
+                object.insert(key.clone(), loro_value_to_json(child));
             }
             Value::Object(object)
         }
