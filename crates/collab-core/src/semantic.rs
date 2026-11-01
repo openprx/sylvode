@@ -6,10 +6,11 @@ use sha2::{Digest, Sha256};
 
 use crate::operation::{NodeId, NodeKind};
 
-/// An inline mark on a block's plain text. Offsets are UTF-8 bytes into [`SemanticNode::text`],
-/// half-open, and on character boundaries. Absent `spans` (the historical plain-text documents)
-/// deserialize as an empty list and are omitted when the node is written back, so an unmarked
-/// document keeps its previous canonical JSON.
+/// An inline mark on a block's plain text.
+///
+/// Offsets are UTF-8 bytes into [`SemanticNode::text`], half-open, and on character boundaries.
+/// Absent `spans` (the historical plain-text documents) deserialize as an empty list and are
+/// omitted when the node is written back, so an unmarked document keeps its previous canonical JSON.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InlineMark {

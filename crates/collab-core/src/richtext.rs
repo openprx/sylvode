@@ -18,22 +18,22 @@ use crate::error::CollabError;
 use crate::operation::NodeId;
 use crate::semantic::{InlineMark, InlineSpan, SemanticNode};
 
-pub(crate) const MARK_BOLD: &str = "bold";
-pub(crate) const MARK_ITALIC: &str = "italic";
-pub(crate) const MARK_CODE: &str = "code";
-pub(crate) const MARK_STRIKE: &str = "strike";
-pub(crate) const MARK_LINK: &str = "link";
+const MARK_BOLD: &str = "bold";
+const MARK_ITALIC: &str = "italic";
+const MARK_CODE: &str = "code";
+const MARK_STRIKE: &str = "strike";
+const MARK_LINK: &str = "link";
 
 /// One block read from the editor's prosemirror container. `index` is its position among the
 /// editor's top-level blocks; the caller turns that into an `order_key`.
-pub(crate) struct EditorBlock {
+pub struct EditorBlock {
     pub id: NodeId,
     pub index: usize,
     pub node: SemanticNode,
 }
 
 /// Applies or clears one mark. `start`/`end` are UTF-8 byte offsets on a character boundary.
-pub(crate) fn apply_mark(
+pub fn apply_mark(
     text: &LoroText,
     start: usize,
     end: usize,
@@ -89,7 +89,7 @@ pub(crate) fn apply_mark(
 
 /// Visible characters plus the marks that cover them. Unknown attribute keys are ignored so a
 /// newer client cannot make an older reader drop the text.
-pub(crate) fn read_rich_text(text: &LoroText) -> (String, Vec<InlineSpan>) {
+pub fn read_rich_text(text: &LoroText) -> (String, Vec<InlineSpan>) {
     let mut plain = String::new();
     let mut spans = Vec::new();
     for delta in text.to_delta() {
@@ -123,7 +123,7 @@ pub(crate) fn read_rich_text(text: &LoroText) -> (String, Vec<InlineSpan>) {
 }
 
 /// Top-level blocks of a `loro-prosemirror` document, when one is stored on this doc.
-pub(crate) fn editor_blocks(doc: &LoroDoc) -> Vec<EditorBlock> {
+pub fn editor_blocks(doc: &LoroDoc) -> Vec<EditorBlock> {
     let Some(ValueOrContainer::Container(Container::Map(root))) = doc.get_by_str_path("doc") else {
         return Vec::new();
     };
@@ -261,7 +261,7 @@ fn span_from_attribute(key: &str, value: &LoroValue, start: u32, end: u32) -> Op
     }
 }
 
-fn toggle_span(kind: InlineMark, json: &serde_json::Value, start: u32, end: u32) -> Option<InlineSpan> {
+const fn toggle_span(kind: InlineMark, json: &serde_json::Value, start: u32, end: u32) -> Option<InlineSpan> {
     if matches!(json, serde_json::Value::Null | serde_json::Value::Bool(false)) {
         return None;
     }
@@ -292,7 +292,7 @@ fn normalize_spans(spans: &mut Vec<InlineSpan>) {
     spans.dedup();
 }
 
-fn mark_rank(kind: InlineMark) -> u8 {
+const fn mark_rank(kind: InlineMark) -> u8 {
     match kind {
         InlineMark::Code => 0,
         InlineMark::Italic => 1,
@@ -318,7 +318,7 @@ fn scalar_range(text: &str, start: usize, end: usize) -> Result<(usize, usize), 
 
 /// Addresses the editor and the public page will turn into a link. `javascript:` and `data:`
 /// are refused so a mark cannot become an active script in Markdown or HTML rendering.
-pub(crate) fn safe_href(href: &str) -> bool {
+fn safe_href(href: &str) -> bool {
     if href.is_empty() || href.len() > 2048 || href.chars().any(|ch| ch.is_control() || ch.is_whitespace()) {
         return false;
     }

@@ -183,7 +183,7 @@ fn render_inline(text: &str, spans: &[InlineSpan]) -> String {
             .count();
         while open.len() > prefix {
             if let Some(span) = open.pop() {
-                out.push_str(close_token(span));
+                out.push_str(&close_token(span));
             }
         }
         for span in desired.iter().skip(prefix) {
@@ -193,7 +193,7 @@ fn render_inline(text: &str, spans: &[InlineSpan]) -> String {
         out.push_str(&escape_markdown(slice));
     }
     while let Some(span) = open.pop() {
-        out.push_str(close_token(span));
+        out.push_str(&close_token(span));
     }
     out
 }
