@@ -1,0 +1,109 @@
+name: Flow benchmark
+
+# Measures Flow latency on a release API. Triggered by hand, every night on the
+# default branch, and on any push that touches Flow or this workflow. It does not
+# replace CI and it does not edit the other workflow files.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+  push:
+    paths:
+      - ".github/workflows/flow-bench.yml"
+      - "scripts/flow-bench/**"
+      - "benches/flow-loro/**"
+      - "apps/api/src/flow/**"
+      - "apps/api/src/routes/flow.rs"
+      - "apps/api/src/routes/flow_social.rs"
+      - "apps/api/src/routes/collab.rs"
+      - "crates/collab-core/**"
+      - "frontend/src/lib/flow/**"
+      - "frontend/src/lib/components/flow/**"
+      - "frontend/src/routes/**/flow/**"
+
+concurrency:
+  group: flow-bench-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  OPENPR_TEST_DATABASE_URL: postgres://sylvode_ci:sylvode_ci_local_only@127.0.0.1:5432/postgres
+
+jobs:
+  bench:
+    name: Measure
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sylvode_ci
+          POSTGRES_PASSWORD: sylvode_ci_local_only
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sylvode_ci -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Install measurement tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client python3-venv
+          npm ci
+          npx playwright install --with-deps chromium
+          echo "CHROMIUM_BIN=$(node -e "process.stdout.write(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
+
+      - name: Build release binaries
+        run: |
+          cargo build --release \
+            -p api \
+            -p worker \
+            -p collab-core \
+            -p flow-loro-bench
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Run Flow benchmark
+        id: bench
+        run: bash scripts/flow-bench/run.sh
+
+      - name: Publish job summary
+        if: always()
+        run: |
+          if [[ -f flow-bench-results/summary.md ]]; then
+            cat flow-bench-results/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Flow benchmark did not write flow-bench-results/summary.md." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: flow-bench-results
+          path: |
+            flow-bench-results/summary.json
+            flow-bench-results/summary.md
+            flow-bench-results/parts/
+            flow-bench-results/screenshots/
+            flow-bench-results/logs/
+          if-no-files-found: ignore
+          retention-days: 14

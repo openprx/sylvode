@@ -12,6 +12,9 @@
 /frontend/.env
 !/frontend/.env.example
 
+# Flow benchmark output (GitHub Actions uploads this; it is not source)
+/flow-bench-results/
+
 # Logs (project-level and frontend dev logs)
 *.log
 /log/
