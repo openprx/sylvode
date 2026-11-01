@@ -52,6 +52,12 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         list_share_links_tool(),
         create_share_link_tool(),
         revoke_share_link_tool(),
+        set_appearance_tool(),
+        upload_appearance_tool(),
+        restore_version_tool(),
+        list_trash_tool(),
+        purge_object_tool(),
+        list_mention_candidates_tool(),
     ]
 }
 
@@ -309,4 +315,183 @@ pub async fn revoke_share_link(client: &OpenPrClient, args: Value) -> CallToolRe
         Err(result) => return result,
     };
     respond_data(client.revoke_flow_share_link(&input.object_id, &input.link_id).await)
+}
+
+pub fn set_appearance_tool() -> ToolDefinition {
+    ToolDefinition {
+        name: "flow.appearance.set".to_string(),
+        description: "Set a Flow page icon and cover. Icon is {kind:emoji,emoji} or {kind:image,asset_id}. Cover is {kind:gallery,gallery_id,position} or {kind:upload,asset_id,position}. Position is 0 to 1. Requires edit access. Omit a field to clear it."
+            .to_string(),
+        input_schema: object_schema(
+            &[
+                ("icon", json!({ "type": "object" })),
+                ("cover", json!({ "type": "object" })),
+            ],
+            &[],
+        ),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AppearanceInput {
+    object_id: String,
+    icon: Option<Value>,
+    cover: Option<Value>,
+}
+
+pub async fn set_appearance(client: &OpenPrClient, args: Value) -> CallToolResult {
+    let input: AppearanceInput = match parse_input(args) {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let body = json!({ "icon": input.icon, "cover": input.cover });
+    respond_data(client.set_flow_appearance(&input.object_id, &body).await)
+}
+
+pub fn upload_appearance_tool() -> ToolDefinition {
+    ToolDefinition {
+        name: "flow.appearance.upload".to_string(),
+        description: "Upload a png, jpeg, webp, or gif (max 2 MiB, standard base64) for a Flow page icon or cover. Requires edit access. The returned asset_id is then passed to flow.appearance.set."
+            .to_string(),
+        input_schema: object_schema(
+            &[("data_base64", json!({ "type": "string", "minLength": 1 }))],
+            &["data_base64"],
+        ),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct UploadAppearanceInput {
+    object_id: String,
+    data_base64: String,
+}
+
+pub async fn upload_appearance(client: &OpenPrClient, args: Value) -> CallToolResult {
+    let input: UploadAppearanceInput = match parse_input(args) {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    respond_data(
+        client
+            .upload_flow_appearance(&input.object_id, &json!({ "data_base64": input.data_base64 }))
+            .await,
+    )
+}
+
+pub fn restore_version_tool() -> ToolDefinition {
+    ToolDefinition {
+        name: "objects.restore".to_string(),
+        description: "Restore a Flow page to an accepted history sequence as a new forward change. Concurrent edits are kept. Requires edit access."
+            .to_string(),
+        input_schema: object_schema(
+            &[
+                ("seq", json!({ "type": "integer", "minimum": 0 })),
+                ("idempotency_key", json!({ "type": "string", "minLength": 1, "maxLength": 128 })),
+                ("message", json!({ "type": "string", "maxLength": 500 })),
+            ],
+            &["seq", "idempotency_key"],
+        ),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RestoreInput {
+    object_id: String,
+    seq: i64,
+    idempotency_key: String,
+    message: Option<String>,
+}
+
+pub async fn restore_version(client: &OpenPrClient, args: Value) -> CallToolResult {
+    let input: RestoreInput = match parse_input(args) {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let mut body = json!({ "seq": input.seq, "idempotency_key": input.idempotency_key });
+    if let Some(object) = body.as_object_mut()
+        && let Some(message) = input.message
+    {
+        object.insert("message".to_string(), json!(message));
+    }
+    respond_data(client.restore_flow_version(&input.object_id, &body).await)
+}
+
+pub fn list_trash_tool() -> ToolDefinition {
+    ToolDefinition {
+        name: "flow.trash.list".to_string(),
+        description: "List archived Flow objects in a workspace that the caller can view.".to_string(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "workspace_id": { "type": "string" },
+                "cursor": { "type": "string" },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+            },
+            "required": ["workspace_id"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TrashInput {
+    workspace_id: String,
+    cursor: Option<String>,
+    limit: Option<u64>,
+}
+
+pub async fn list_trash(client: &OpenPrClient, args: Value) -> CallToolResult {
+    let input: TrashInput = match parse_input(args) {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    respond_data(
+        client
+            .list_flow_trash(&input.workspace_id, input.cursor.as_deref(), input.limit)
+            .await,
+    )
+}
+
+pub fn purge_object_tool() -> ToolDefinition {
+    ToolDefinition {
+        name: "objects.purge".to_string(),
+        description: "Permanently delete an archived Flow object and its archived descendants. Requires full access on every object in the subtree. Active subpages must be archived first."
+            .to_string(),
+        input_schema: object_schema(&[], &[]),
+    }
+}
+
+pub async fn purge_object(client: &OpenPrClient, args: Value) -> CallToolResult {
+    let input: ObjectInput = match parse_input(args) {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    respond_data(client.purge_flow_object(&input.object_id).await)
+}
+
+pub fn list_mention_candidates_tool() -> ToolDefinition {
+    ToolDefinition {
+        name: "flow.mentions.list".to_string(),
+        description: "List people who can be @mentioned on a Flow object: workspace members and guests who hold a grant. Requires comment access. Mention notifications are still sent only to workspace members."
+            .to_string(),
+        input_schema: object_schema(&[("q", json!({ "type": "string", "maxLength": 80 }))], &[]),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct MentionInput {
+    object_id: String,
+    q: Option<String>,
+}
+
+pub async fn list_mention_candidates(client: &OpenPrClient, args: Value) -> CallToolResult {
+    let input: MentionInput = match parse_input(args) {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    respond_data(
+        client
+            .list_flow_mention_candidates(&input.object_id, input.q.as_deref())
+            .await,
+    )
 }

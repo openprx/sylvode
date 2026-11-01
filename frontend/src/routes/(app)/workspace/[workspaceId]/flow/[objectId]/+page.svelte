@@ -15,7 +15,8 @@
 	import { toast } from '#lib/stores/toast.js';
 	import FlowCanvas from '#lib/components/flow/FlowCanvas.svelte';
 	import FlowContextPanel from '#lib/components/flow/FlowContextPanel.svelte';
-	import FlowSyncIndicator from '#lib/components/flow/FlowSyncIndicator.svelte';
+	import FlowPageHeader from '#lib/components/flow/FlowPageHeader.svelte';
+	import type { FlowAppearance } from '#lib/api/flow.js';
 	import FlowRecoveryDraftPanel from '#lib/components/flow/FlowRecoveryDraftPanel.svelte';
 	import CollectionRenderer from '#lib/components/flow/collection/CollectionRenderer.svelte';
 	import type { FlowError, SyncState } from '#lib/flow/types.js';
@@ -58,6 +59,9 @@
 	let readOnly = $state(false);
 	let docGeneration = $state(0);
 	let title = $state('');
+	let appearance = $state<FlowAppearance | null>(null);
+	let commentBlockId = $state<string | null>(null);
+	let commentNonce = $state(0);
 	let titleSaveTimer: ReturnType<typeof setTimeout> | null = null;
 	let reloading = $state(false);
 
@@ -123,6 +127,9 @@
 			if (openedObjectId !== objectId) return; // navigated away again before this resolved
 			entry = opened;
 			title = opened.handle.object.title;
+			appearance = opened.handle.object.appearance ?? null;
+			commentBlockId = null;
+			commentNonce = 0;
 			unsubscribeState = opened.session.state.subscribe((value) => (syncState = value));
 			unsubscribeFlowError = opened.flowError.subscribe((value) => {
 				if (value) runtimeError = value;
@@ -351,20 +358,8 @@
 		<p class="text-sm text-slate-500 dark:text-slate-400">{$t('common.loading')}</p>
 	</div>
 {:else}
-	<div
-		class="flex items-center justify-between border-b border-slate-200 px-6 py-3 dark:border-slate-800"
-	>
-		<input
-			bind:value={title}
-			oninput={onTitleInput}
-			readonly={readOnly}
-			placeholder={$t('flow.titlePlaceholder')}
-			aria-label={$t('flow.panel.title')}
-			class="flex-1 truncate border-none bg-transparent text-lg font-semibold text-slate-900 outline-none dark:text-slate-100"
-		/>
-		<FlowSyncIndicator state={syncState} {pending} />
-	</div>
-
+	<div class="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+		<div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-slate-950">
 	{#if runtimeError}
 		<div
 			class="flex flex-wrap items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
@@ -427,8 +422,20 @@
 		/>
 	{/if}
 
-	<!-- Below lg the context panel stacks under the canvas and the column scrolls (390px phones). -->
-	<div class="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+			<FlowPageHeader
+				workspaceId={entry.handle.workspaceId}
+				objectId={entry.handle.objectId}
+				{title}
+				{readOnly}
+				{appearance}
+				{syncState}
+				{pending}
+				onTitle={(value) => {
+					title = value;
+					onTitleInput();
+				}}
+				onAppearance={(value) => (appearance = value)}
+			/>
 		{#if canvasRenderer}
 			<!-- A rebuild from the accepted snapshot replaces the engine doc; remount on it. -->
 			{#key docGeneration}
@@ -439,6 +446,10 @@
 					{readOnly}
 					presence={entry.presence}
 					onPresenceCursor={reportPresence}
+					onCommentBlock={(blockId) => {
+						commentBlockId = blockId;
+						commentNonce += 1;
+					}}
 				/>
 			{/key}
 		{:else}
@@ -446,6 +457,11 @@
 				<p class="text-sm text-slate-500 dark:text-slate-400">{$t('flow.canvas.unsupported')}</p>
 			</div>
 		{/if}
-		<FlowContextPanel object={entry.handle.object} />
+		</div>
+		<FlowContextPanel
+			object={entry.handle.object}
+			{commentBlockId}
+			{commentNonce}
+		/>
 	</div>
 {/if}

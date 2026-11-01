@@ -11,7 +11,10 @@
 		FlowObjectExportFormat,
 		FlowObjectView
 	} from '#lib/api/flow.js';
+	import { flowApi } from '#lib/api/flow.js';
 	import { FlowCommandService } from '#lib/flow/command-service.js';
+	import { flowErrorFromResult } from '#lib/flow/command-service.js';
+	import { flowErrorDetailKey } from '#lib/flow/errors.js';
 	import { HistoryDiffLoader } from '#lib/flow/history-diff.js';
 	import {
 		OBJECT_EXPORT_FORMAT_KEYS,
@@ -31,9 +34,11 @@
 
 	interface Props {
 		object: FlowObjectView;
+		commentBlockId?: string | null;
+		commentNonce?: number;
 	}
 
-	let { object }: Props = $props();
+	let { object, commentBlockId = null, commentNonce = 0 }: Props = $props();
 
 	const TABS = ['info', 'comments', 'share', 'relations', 'history'] as const;
 	type Tab = (typeof TABS)[number];
@@ -54,6 +59,10 @@
 		history: false
 	});
 	const tabButtons: Record<string, HTMLButtonElement | undefined> = {};
+
+	$effect(() => {
+		if (commentNonce > 0) selectTab('comments');
+	});
 
 	function selectTab(tab: Tab, focus = false): void {
 		activeTab = tab;
@@ -78,6 +87,8 @@
 
 	let history = $state<FlowHistoryEntry[]>([]);
 	let historyLoading = $state(true);
+	let restoringSeq = $state<number | null>(null);
+	let restoreFailureKey = $state<string | null>(null);
 	let nextBeforeSeq = $state<number | undefined>(undefined);
 	let expanded = $state<Record<number, boolean>>({});
 	let diffLoader = $state(new HistoryDiffLoader(''));
@@ -90,6 +101,30 @@
 			nextBeforeSeq = result.data.next_before_seq;
 		}
 		historyLoading = false;
+	}
+
+	async function restoreVersion(seq: number): Promise<void> {
+		if (restoringSeq !== null) return;
+		restoringSeq = seq;
+		restoreFailureKey = null;
+		const result = await flowApi.restoreVersion(object.id, {
+			seq,
+			idempotency_key: crypto.randomUUID()
+		});
+		restoringSeq = null;
+		if (result.code !== 0) {
+			const details = result.details;
+			const reason =
+				typeof details === 'object' && details !== null && 'reason' in details
+					? (details as { reason?: unknown }).reason
+					: null;
+			restoreFailureKey =
+				reason === 'history_not_retained'
+					? 'flow.history.notRetained'
+					: flowErrorDetailKey(flowErrorFromResult(result));
+			return;
+		}
+		await loadHistory();
 	}
 
 	// ---- export -----------------------------------------------------------------------------
@@ -378,7 +413,7 @@
 			{$t('flow.comments.title')}
 		</h2>
 		{#if visited.comments}
-			<FlowCommentsPanel objectId={object.id} />
+			<FlowCommentsPanel objectId={object.id} blockId={commentBlockId} nonce={commentNonce} />
 		{/if}
 	</div>
 
@@ -444,6 +479,16 @@
 								}
 							})}
 						</p>
+						{#if object.object_type === 'page'}
+							<button
+								type="button"
+								class={linkButtonClass}
+								disabled={restoringSeq !== null}
+								onclick={() => restoreVersion(entry.seq)}
+							>
+								{restoringSeq === entry.seq ? $t('flow.history.restoring') : $t('flow.history.restore')}
+							</button>
+						{/if}
 						<button
 							type="button"
 							class={linkButtonClass}
@@ -461,6 +506,9 @@
 					</li>
 				{/each}
 			</ul>
+			{#if restoreFailureKey}
+				<p class="text-sm text-red-600 dark:text-red-400" role="alert">{$t(restoreFailureKey)}</p>
+			{/if}
 			{#if nextBeforeSeq}
 				<button
 					type="button"

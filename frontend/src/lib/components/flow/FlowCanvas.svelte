@@ -35,6 +35,8 @@
 		presence?: Readable<ReadonlyArray<RemotePresence>>;
 		/** Receives the local caret/selection for the session's presence frame. */
 		onPresenceCursor?: (cursor: PresenceCursor | null) => void;
+		/** Comment on the block under the pointer. Uses that block's existing id. */
+		onCommentBlock?: (blockId: string) => void;
 	}
 
 	let {
@@ -43,7 +45,8 @@
 		objectId,
 		readOnly = false,
 		presence,
-		onPresenceCursor
+		onPresenceCursor,
+		onCommentBlock
 	}: Props = $props();
 	let peers = $state<ReadonlyArray<RemotePresence>>([]);
 
@@ -128,8 +131,14 @@
 		pageBlocks?.open(option.action);
 	}
 
+	function commentOnHover(): void {
+		if (!adapter || hoverHandle === null || !onCommentBlock) return;
+		const blockId = adapter.blockIdAtPos(hoverHandle.pos);
+		if (blockId) onCommentBlock(blockId);
+	}
+
 	function onHostMouseMove(event: MouseEvent): void {
-		if (!adapter || !host || readOnly) return;
+		if (!adapter || !host || (readOnly && !onCommentBlock)) return;
 		const pos = adapter.posAtClientPoint(event.clientX, event.clientY);
 		if (pos === null) {
 			hoverHandle = null;
@@ -150,7 +159,7 @@
 </script>
 
 <div
-	class="relative min-h-[50vh] flex-1 overflow-y-auto bg-white px-16 py-10 lg:min-h-0 dark:bg-slate-950"
+	class="relative min-h-[40vh] px-16 pt-2 pb-16"
 	role="presentation"
 	onmousemove={onHostMouseMove}
 	onmouseleave={onHostMouseLeave}
@@ -186,11 +195,23 @@
 			{$t('flow.canvas.readOnlyNotice')}
 		</p>
 	{/if}
-	{#if hoverHandle && !readOnly}
+	{#if hoverHandle && (!readOnly || onCommentBlock)}
 		<div
 			class="absolute -left-1 flex -translate-x-full items-center gap-0.5 opacity-70 hover:opacity-100"
 			style={`top: ${hoverHandle.top}px`}
 		>
+			{#if onCommentBlock}
+				<button
+					type="button"
+					class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+					onclick={commentOnHover}
+					aria-label={$t('flow.comments.onBlock')}
+					title={$t('flow.comments.onBlock')}
+				>
+					💬
+				</button>
+			{/if}
+			{#if !readOnly}
 			<button
 				type="button"
 				class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
@@ -215,6 +236,7 @@
 			>
 				⋮⋮
 			</span>
+			{/if}
 		</div>
 	{/if}
 

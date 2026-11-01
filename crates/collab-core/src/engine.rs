@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use loro::{
     Container, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer, VersionVector,
 };
+use serde_json::{Map as JsonMap, Number, Value};
 
 use crate::error::{CollabError, InputLimits};
 use crate::frontier::Frontier;
@@ -162,6 +163,24 @@ fn zero_padded_order_key(position: usize) -> String {
     }
     key.push_str(&digits);
     key
+}
+
+fn loro_value_to_json(value: &LoroValue) -> Value {
+    match value {
+        LoroValue::Null | LoroValue::Binary(_) | LoroValue::Container(_) => Value::Null,
+        LoroValue::Bool(flag) => Value::Bool(*flag),
+        LoroValue::Double(number) => Number::from_f64(*number).map_or(Value::Null, Value::Number),
+        LoroValue::I64(number) => Value::Number((*number).into()),
+        LoroValue::String(text) => Value::String(text.to_string()),
+        LoroValue::List(items) => Value::Array(items.iter().map(loro_value_to_json).collect()),
+        LoroValue::Map(entries) => {
+            let mut object = JsonMap::new();
+            for (key, child) in entries.iter() {
+                object.insert(key.clone(), loro_value_to_json(child));
+            }
+            Value::Object(object)
+        }
+    }
 }
 
 fn read_string_value(value_or_container: &ValueOrContainer) -> Option<String> {
@@ -341,6 +360,43 @@ impl LoroCollabEngine {
         };
         fork.rebuild_id_cache()?;
         Ok(fork)
+    }
+
+    /// Reverts the visible document to `frontier` by appending inverse operations.
+    ///
+    /// Loro's `revert_to` records a new local change on the current head. History at `frontier`
+    /// stays reachable through [`Self::fork_at_frontier`], and a peer that already moved past
+    /// `frontier` imports the exported delta instead of rewinding its log.
+    ///
+    /// # Errors
+    /// `DecodeFailed` when `frontier` is not an encoded version vector, or `OperationFailed`
+    /// when that version is not in this document's retained history.
+    pub fn revert_to_frontier(&mut self, frontier: &Frontier) -> Result<(), CollabError> {
+        let vv = if frontier.is_empty() {
+            VersionVector::default()
+        } else {
+            VersionVector::decode(frontier.as_bytes()).map_err(|error| CollabError::DecodeFailed {
+                input: "frontier",
+                reason: error.to_string(),
+            })?
+        };
+        let frontiers = self.doc.vv_to_frontiers(&vv);
+        self.doc
+            .revert_to(&frontiers)
+            .map_err(|error| CollabError::OperationFailed {
+                reason: error.to_string(),
+            })?;
+        self.doc.commit();
+        self.rebuild_id_cache()?;
+        Ok(())
+    }
+
+    /// The whole document state as JSON, for callers that need the editor container as well as
+    /// the semantic tree. Binary values, non-finite numbers, and unresolved container ids become
+    /// JSON null so a peer id embedded in a container id cannot leave this process through the value.
+    #[must_use]
+    pub fn root_state_json(&self) -> Value {
+        loro_value_to_json(&self.doc.get_deep_value())
     }
 
     /// Sets the document-level title and commits the change.
@@ -681,6 +737,70 @@ mod tests {
             "the fork must not contain an operation that happened after its frontier"
         );
         assert_eq!(loaded.title().expect("source engine stays current"), "after");
+    }
+
+    #[test]
+    fn revert_to_frontier_appends_a_forward_change_and_keeps_the_later_version() {
+        let mut author = LoroCollabEngine::new_empty(3);
+        author.set_title("v1").expect("first title");
+        let v1 = author.frontier();
+        author.set_title("v2").expect("second title");
+        let v2 = author.frontier();
+        let snapshot = author.export_snapshot().expect("snapshot at v2");
+
+        author.revert_to_frontier(&v1).expect("revert appends inverse ops");
+        assert_eq!(author.title().expect("reverted title"), "v1");
+        assert_ne!(author.frontier(), v1, "revert must not rewind the head frontier");
+        assert_ne!(author.frontier(), v2);
+        let still_there = author.fork_at_frontier(&v2).expect("v2 stays in history");
+        assert_eq!(still_there.title().expect("historical title"), "v2");
+
+        let mut peer = LoroCollabEngine::load(&snapshot).expect("peer loads v2");
+        peer.apply_operation(&Operation::CreateNode {
+            id: NodeId::from("concurrent"),
+            parent: None,
+            index: 0,
+            kind: NodeKind::Block,
+        })
+        .expect("concurrent insert");
+        let peer_delta = peer.export_from(&v2).expect("peer delta");
+        let revert_delta = author.export_from(&v2).expect("revert delta");
+        peer.import_update(&revert_delta).expect("peer imports revert");
+        author
+            .import_update(&peer_delta)
+            .expect("author imports concurrent insert");
+
+        assert_eq!(peer.title().expect("merged peer title"), "v1");
+        assert_eq!(author.title().expect("merged author title"), "v1");
+        assert!(
+            peer.semantic_snapshot()
+                .expect("peer snapshot")
+                .nodes
+                .contains_key(&NodeId::from("concurrent")),
+            "a concurrent insert survives the imported revert"
+        );
+        assert!(
+            author
+                .semantic_snapshot()
+                .expect("author snapshot")
+                .nodes
+                .contains_key(&NodeId::from("concurrent")),
+            "both replicas converge on the concurrent insert"
+        );
+    }
+
+    #[test]
+    fn root_state_json_exposes_the_title_and_drops_binary_values() {
+        let mut engine = LoroCollabEngine::new_empty(4);
+        engine.set_title("Visible").expect("title");
+        let state = engine.root_state_json();
+        assert_eq!(
+            state
+                .get("meta")
+                .and_then(|meta| meta.get("title"))
+                .and_then(Value::as_str),
+            Some("Visible")
+        );
     }
 
     #[test]
