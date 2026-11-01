@@ -1604,18 +1604,12 @@ impl OpenPrClient {
         cursor: Option<&str>,
         limit: Option<u64>,
     ) -> Result<Value, String> {
-        let mut query = String::new();
-        if let Some(cursor) = cursor {
-            query.push_str(&format!("?cursor={}", urlencoding::encode(cursor)));
-        }
-        if let Some(limit) = limit {
-            if query.is_empty() {
-                query.push('?');
-            } else {
-                query.push('&');
-            }
-            query.push_str(&format!("limit={limit}"));
-        }
+        let query = match (cursor, limit) {
+            (Some(cursor), Some(limit)) => format!("?cursor={}&limit={limit}", urlencoding::encode(cursor)),
+            (Some(cursor), None) => format!("?cursor={}", urlencoding::encode(cursor)),
+            (None, Some(limit)) => format!("?limit={limit}"),
+            (None, None) => String::new(),
+        };
         self.get(&format!(
             "/api/v1/workspaces/{}/flow/trash{query}",
             urlencoding::encode(workspace_id)
