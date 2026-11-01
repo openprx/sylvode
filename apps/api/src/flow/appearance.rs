@@ -172,7 +172,8 @@ pub async fn upload_asset(
     ensure_active_page(db, workspace_id, object_id).await?;
     let (content_type, bytes) = decode_image(data_base64)?;
     let id = Uuid::new_v4();
-    let byte_size = i32::try_from(bytes.len()).map_err(|_| ApiError::internal())?;
+    let byte_len = bytes.len();
+    let byte_size = i32::try_from(byte_len).map_err(|_| ApiError::internal())?;
     let created_by = if actor_is_bot { None } else { Some(actor_id) };
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -193,7 +194,7 @@ pub async fn upload_asset(
     Ok(AppearanceAssetCreated {
         asset_id: id,
         content_type: content_type.to_string(),
-        byte_size: bytes.len(),
+        byte_size: byte_len,
     })
 }
 

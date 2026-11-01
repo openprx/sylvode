@@ -8,7 +8,7 @@ use std::net::IpAddr;
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rand::RngCore;
-use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};

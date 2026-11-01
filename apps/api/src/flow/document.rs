@@ -1,6 +1,6 @@
 //! Load the accepted head of one collaborative document into a private engine.
 
-use collab_core::LoroCollabEngine;
+use collab_core::{CollabEngine, LoroCollabEngine};
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
 

@@ -7,8 +7,8 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use collab_core::Frontier;
-use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
+use collab_core::{CollabEngine, Frontier};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -191,10 +191,12 @@ pub async fn restore_page_version(
     }
 
     let seq = request.target_seq;
-    let message = request
-        .message
-        .clone()
-        .unwrap_or_else(|| format!("Restore page to seq {seq}"));
+    let message = Some(
+        request
+            .message
+            .clone()
+            .unwrap_or_else(|| format!("Restore page to seq {seq}")),
+    );
     let collab = runtime::runtime();
     let outcome = write::accept_update(
         &state.db,

@@ -85,7 +85,7 @@ pub async fn list_trash(
 ) -> Result<Option<TrashPage>, ApiError> {
     let limit = match limit {
         None => 50,
-        Some(0) | Some(101..) => {
+        Some(0 | 101..) => {
             return Err(ApiError::invalid_update(format!(
                 "limit must be between 1 and {PAGE_MAX}"
             )));
