@@ -168,11 +168,24 @@ export class Browser {
 			],
 			{ stdio: ['ignore', 'ignore', 'pipe'] }
 		);
+		// stderr is a pipe. If nothing reads it, Chromium blocks once the buffer fills and the
+		// DevTools port never opens. Keep only the tail so a failed launch can still say why.
+		const stderrTail: string[] = [];
+		child.stderr?.setEncoding('utf8');
+		child.stderr?.on('data', (chunk) => {
+			stderrTail.push(typeof chunk === 'string' ? chunk : String(chunk));
+			const joined = stderrTail.join('');
+			if (joined.length > 4000) {
+				stderrTail.length = 0;
+				stderrTail.push(joined.slice(-4000));
+			}
+		});
 		const browser = new Browser(child, profileDir);
 
 		const deadline = Date.now() + 30_000;
 		let webSocketDebuggerUrl: string | null = null;
 		while (Date.now() < deadline && !webSocketDebuggerUrl) {
+			if (child.exitCode !== null || child.signalCode !== null) break;
 			try {
 				const response = await fetch(`http://127.0.0.1:${port}/json/version`);
 				const body = (await response.json()) as { webSocketDebuggerUrl?: string };
@@ -182,8 +195,17 @@ export class Browser {
 			}
 		}
 		if (!webSocketDebuggerUrl) {
+			const detail = stderrTail.join('').trim();
+			const fate =
+				child.exitCode !== null
+					? `chromium exited with code ${child.exitCode}`
+					: child.signalCode !== null
+						? `chromium received signal ${child.signalCode}`
+						: 'chromium stayed up';
 			browser.close();
-			throw new Error(`chromium never exposed a DevTools endpoint on port ${port}`);
+			throw new Error(
+				`chromium never exposed a DevTools endpoint on port ${port} (${fate})${detail ? `: ${detail}` : ''}`
+			);
 		}
 		await browser.connect(webSocketDebuggerUrl);
 		return browser;
