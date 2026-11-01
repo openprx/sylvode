@@ -126,30 +126,92 @@ fn validate_dirty(value: &str) -> Result<(), String> {
 }
 
 fn validate_committer_date(value: &str) -> Result<(), String> {
-    let bytes = value.as_bytes();
-    let digits =
-        |range: std::ops::Range<usize>| bytes.get(range).is_some_and(|part| part.iter().all(u8::is_ascii_digit));
-    let shape_ok = value.len() == 25
-        && digits(0..4)
-        && bytes.get(4) == Some(&b'-')
-        && digits(5..7)
-        && bytes.get(7) == Some(&b'-')
-        && digits(8..10)
-        && bytes.get(10) == Some(&b'T')
-        && digits(11..13)
-        && bytes.get(13) == Some(&b':')
-        && digits(14..16)
-        && bytes.get(16) == Some(&b':')
-        && digits(17..19)
-        && matches!(bytes.get(19), Some(b'+' | b'-'))
-        && digits(20..22)
-        && bytes.get(22) == Some(&b':')
-        && digits(23..25);
-    if shape_ok {
+    // git `%cI` is strict ISO 8601. Git 2.56 on GitHub Actions prints UTC as `Z`
+    // (`2026-10-31T12:05:33Z`); older git prints the same instant as `+00:00`.
+    // Rejecting `Z` made the build fall back to commit `unknown`, and package
+    // export then refused every job. Fractional seconds are accepted because the
+    // provenance verifier already allows them.
+    let Some((date, rest)) = value.split_once('T') else {
+        return Err(committer_date_error(value));
+    };
+    if !is_yyyy_mm_dd(date) {
+        return Err(committer_date_error(value));
+    }
+    let Some((clock, fraction_and_zone)) = split_clock(rest) else {
+        return Err(committer_date_error(value));
+    };
+    if !is_hh_mm_ss(clock) {
+        return Err(committer_date_error(value));
+    }
+    let zone = match fraction_and_zone.strip_prefix('.') {
+        Some(after_dot) => {
+            let Some((digits, zone)) = split_fraction(after_dot) else {
+                return Err(committer_date_error(value));
+            };
+            if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(committer_date_error(value));
+            }
+            zone
+        }
+        None => fraction_and_zone,
+    };
+    if is_zone(zone) {
         Ok(())
     } else {
-        Err(format!(
-            "{COMMITTER_DATE_ENV} must be git's strict ISO 8601 committer date (%cI), got {value:?}"
-        ))
+        Err(committer_date_error(value))
     }
+}
+
+fn committer_date_error(value: &str) -> String {
+    format!("{COMMITTER_DATE_ENV} must be git's strict ISO 8601 committer date (%cI), got {value:?}")
+}
+
+fn is_yyyy_mm_dd(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes.get(4) == Some(&b'-')
+        && bytes.get(7) == Some(&b'-')
+        && is_ascii_digits(bytes.get(..4))
+        && is_ascii_digits(bytes.get(5..7))
+        && is_ascii_digits(bytes.get(8..10))
+}
+
+fn is_hh_mm_ss(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 8
+        && bytes.get(2) == Some(&b':')
+        && bytes.get(5) == Some(&b':')
+        && is_ascii_digits(bytes.get(..2))
+        && is_ascii_digits(bytes.get(3..5))
+        && is_ascii_digits(bytes.get(6..8))
+}
+
+fn split_clock(value: &str) -> Option<(&str, &str)> {
+    if value.len() < 8 {
+        return None;
+    }
+    let (clock, rest) = value.split_at_checked(8)?;
+    Some((clock, rest))
+}
+
+fn split_fraction(value: &str) -> Option<(&str, &str)> {
+    let zone_at = value.find(['Z', '+', '-'])?;
+    let (digits, zone) = value.split_at_checked(zone_at)?;
+    Some((digits, zone))
+}
+
+fn is_zone(value: &str) -> bool {
+    if value == "Z" {
+        return true;
+    }
+    let bytes = value.as_bytes();
+    bytes.len() == 6
+        && matches!(bytes.first(), Some(b'+' | b'-'))
+        && bytes.get(3) == Some(&b':')
+        && is_ascii_digits(bytes.get(1..3))
+        && is_ascii_digits(bytes.get(4..6))
+}
+
+fn is_ascii_digits(bytes: Option<&[u8]>) -> bool {
+    bytes.is_some_and(|part| !part.is_empty() && part.iter().all(u8::is_ascii_digit))
 }
