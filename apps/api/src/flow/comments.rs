@@ -529,8 +529,9 @@ pub async fn list_mention_candidates(
 }
 
 fn normalize_mention_query(query: &str) -> Result<String, ApiError> {
+    // Check the raw query. `trim` deletes a trailing newline, which would hide the control character.
     let trimmed = query.trim();
-    if trimmed.chars().count() > MENTION_QUERY_CHARS_MAX || trimmed.chars().any(char::is_control) {
+    if query.chars().any(char::is_control) || trimmed.chars().count() > MENTION_QUERY_CHARS_MAX {
         return Err(ApiError::invalid_update(
             "mention query must be at most 80 characters".to_string(),
         ));

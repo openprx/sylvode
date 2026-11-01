@@ -76,7 +76,7 @@ struct PublicRow {
     title: Option<String>,
     plain_text: Option<String>,
     appearance: Value,
-    document_id: Uuid,
+    document_id: Option<Uuid>,
     expires_at: Option<DateTime<Utc>>,
 }
 
@@ -250,7 +250,7 @@ pub async fn read_public(db: &DatabaseConnection, token: &str) -> Result<PublicS
                 fo.appearance AS appearance, cd.id AS document_id, l.expires_at \
          FROM flow_share_links l \
          JOIN flow_objects fo ON fo.id = l.object_id AND fo.workspace_id = l.workspace_id \
-         JOIN collab_documents cd ON cd.object_id = fo.id \
+         LEFT JOIN collab_documents cd ON cd.object_id = fo.id \
          LEFT JOIN flow_object_projections p ON p.object_id = fo.id \
          WHERE l.token_hash = $1 \
            AND l.revoked_at IS NULL \
@@ -267,14 +267,19 @@ pub async fn read_public(db: &DatabaseConnection, token: &str) -> Result<PublicS
         return Err(missing());
     }
     let appearance = appearance::parse_stored(&row.appearance);
-    let engine = document::load_head_engine(db, row.document_id).await?;
-    let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;
-    let blocks = public_page::compose_public_document(&engine.root_state_json(), &semantic);
-    let plain_text = public_page::plain_text_of(&blocks);
-    let plain_text = if plain_text.is_empty() {
+    // A page can be shared before anyone opens it in the editor. The projection is the text then.
+    let (blocks, composed) = if let Some(document_id) = row.document_id {
+        let engine = document::load_head_engine(db, document_id).await?;
+        let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;
+        let blocks = public_page::compose_public_document(&engine.root_state_json(), &semantic);
+        (blocks, public_page::plain_text_of(&blocks))
+    } else {
+        (Vec::new(), String::new())
+    };
+    let plain_text = if composed.is_empty() {
         sanitize_share_text(row.plain_text.as_deref().unwrap_or(""))
     } else {
-        plain_text
+        composed
     };
     Ok(PublicShareView {
         object_id: row.object_id,

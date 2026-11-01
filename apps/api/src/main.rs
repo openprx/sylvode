@@ -3793,6 +3793,9 @@ mod tests {
             // Anonymous Flow page link. The handler hashes the token, checks expiry and
             // revocation, returns only that page's sanitized text, and rate-limits by address.
             "/api/v1/flow/public-shares/{token}",
+            // Icon or cover for that same link. The handler returns bytes only while the page's
+            // current appearance still references the asset.
+            "/api/v1/flow/public-shares/{token}/assets/{asset_id}",
         ];
 
         let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
