@@ -348,7 +348,6 @@
 			<FlowPublicLinks {objectId} />
 		{/if}
 	{/if}
-	<FlowPublicLinks {objectId} />
 </div>
 
 <Modal open={dialogOpen} title={$t('flow.share.confirm.title')} onclose={cancelChange}>
