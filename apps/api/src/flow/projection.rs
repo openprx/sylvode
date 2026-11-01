@@ -202,7 +202,7 @@ fn same_span(left: &InlineSpan, right: &InlineSpan) -> bool {
     left.kind == right.kind && left.href == right.href && left.start == right.start && left.end == right.end
 }
 
-fn mark_rank(kind: InlineMark) -> u8 {
+const fn mark_rank(kind: InlineMark) -> u8 {
     match kind {
         InlineMark::Code => 0,
         InlineMark::Italic => 1,
@@ -212,7 +212,7 @@ fn mark_rank(kind: InlineMark) -> u8 {
     }
 }
 
-fn open_token(span: &InlineSpan) -> &'static str {
+const fn open_token(span: &InlineSpan) -> &'static str {
     match span.kind {
         InlineMark::Code => "`",
         InlineMark::Italic => "*",
