@@ -343,6 +343,9 @@
 					})}
 				</p>
 			{/if}
+
+			<!-- Creating and revoking a public link is a manage action, same gate as grants. -->
+			<FlowPublicLinks {objectId} />
 		{/if}
 	{/if}
 	<FlowPublicLinks {objectId} />

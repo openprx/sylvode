@@ -16,7 +16,7 @@ The MCP Server provides AI models with tools to interact with Sylvode's project 
 
 ## Features
 
-- **140 MCP Tools**: Project, governance, universal forms, WASM plugin, operation records, release next actions, template, scenario toolkit, and Sylvode Flow
+- **148 MCP Tools**: Project, governance, universal forms, WASM plugin, operation records, release next actions, template, scenario toolkit, and Sylvode Flow
 - **Three Transport Modes**: stdio (for MCP clients), HTTP JSON-RPC, and SSE
 - **JSON Schema Validation**: All tool parameters are strongly typed
 - **Sylvode API Backend**: Calls the Sylvode API with workspace-scoped bot credentials
