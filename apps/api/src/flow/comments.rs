@@ -530,7 +530,7 @@ pub async fn list_mention_candidates(
 
 fn normalize_mention_query(query: &str) -> Result<String, ApiError> {
     let trimmed = query.trim();
-    if trimmed.chars().count() > MENTION_QUERY_CHARS_MAX || trimmed.chars().any(|ch| ch.is_control()) {
+    if trimmed.chars().count() > MENTION_QUERY_CHARS_MAX || trimmed.chars().any(char::is_control) {
         return Err(ApiError::invalid_update(
             "mention query must be at most 80 characters".to_string(),
         ));

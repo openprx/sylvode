@@ -55,7 +55,6 @@ pub struct PurgeOutcome {
 
 /// `nodes` includes the addressed object. Every node must be archived, and every node must be
 /// at full access, before the database cascade is allowed to remove the subtree.
-#[must_use]
 pub fn decide_purge(nodes: &[(bool, PermissionLevel)]) -> Result<(), PurgeRefusal> {
     let Some((root_archived, root_level)) = nodes.first() else {
         return Err(PurgeRefusal::NotArchived);
@@ -274,8 +273,7 @@ fn item_of(row: TrashRow) -> TrashItem {
         title: row.title,
         archived_at: row
             .archived_at
-            .map(|stamp| stamp.to_rfc3339())
-            .unwrap_or_else(|| Utc::now().to_rfc3339()),
+            .map_or_else(|| Utc::now().to_rfc3339(), |stamp| stamp.to_rfc3339()),
         appearance: appearance::parse_stored(&row.appearance),
     }
 }

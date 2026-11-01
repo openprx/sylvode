@@ -13,7 +13,7 @@ const PUBLIC_BLOCK_CAP: usize = 10_000;
 const PUBLIC_TEXT_CAP: usize = 100_000;
 const CHILD_PAGE_NAMES: &[&str] = &["childpage", "child_page", "subpage", "page"];
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PublicBlock {
     pub kind: String,
     pub text: String,

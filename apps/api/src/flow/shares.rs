@@ -80,6 +80,19 @@ struct PublicRow {
     expires_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, FromQueryResult)]
+struct HitRow {
+    hit_count: i32,
+    window_started: DateTime<Utc>,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct AssetPage {
+    object_id: Uuid,
+    workspace_id: Uuid,
+    appearance: Value,
+}
+
 /// The next hit in a fixed window. `allowed` is true while `count` is still within `limit`.
 #[must_use]
 pub fn advance_rate_window(previous_count: Option<u32>, window_open: bool, limit: u32) -> (u32, bool) {
@@ -94,11 +107,6 @@ pub fn advance_rate_window(previous_count: Option<u32>, window_open: bool, limit
 /// Shared across processes: one row per hashed client address, updated in a single statement.
 pub async fn enforce_public_share_rate_limit(db: &DatabaseConnection, ip: IpAddr) -> Result<(), ApiError> {
     let client_hash = hash_token(&ip.to_string());
-    #[derive(FromQueryResult)]
-    struct HitRow {
-        hit_count: i32,
-        window_started: DateTime<Utc>,
-    }
     let sql = format!(
         "INSERT INTO flow_public_share_hits AS hit (client_hash, window_started, hit_count) \
          VALUES ($1, now(), 1) \
@@ -287,12 +295,6 @@ pub async fn read_public_asset(
         return Err(missing());
     }
     let token_hash = hash_token(token);
-    #[derive(FromQueryResult)]
-    struct AssetPage {
-        object_id: Uuid,
-        workspace_id: Uuid,
-        appearance: Value,
-    }
     let page = AssetPage::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT fo.id AS object_id, fo.workspace_id, fo.appearance \

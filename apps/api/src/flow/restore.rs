@@ -60,7 +60,7 @@ pub struct RestoreVersionRequest {
 /// `target_update_present` is the `collab_updates` row at `target`. `first_update_present` is
 /// the row at sequence 1, used when the caller asks for the empty document at sequence 0.
 #[must_use]
-pub fn plan_page_restore(
+pub const fn plan_page_restore(
     target: i64,
     head_seq: i64,
     snapshot_seq: i64,

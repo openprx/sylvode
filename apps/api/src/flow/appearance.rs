@@ -29,7 +29,7 @@ pub struct PageAppearance {
 
 impl PageAppearance {
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.icon.is_none() && self.cover.is_none()
     }
 
@@ -41,7 +41,7 @@ impl PageAppearance {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PageIcon {
     Emoji { emoji: String },
@@ -368,7 +368,7 @@ mod tests {
                 emoji: "🌿".to_string(),
             }),
             cover: Some(PageCover::Gallery {
-                gallery_id: GALLERY_IDS[0].to_string(),
+                gallery_id: GALLERY_IDS.first().copied().unwrap_or("dawn").to_string(),
                 position: 0.25,
             }),
         };
