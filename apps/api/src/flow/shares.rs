@@ -272,7 +272,8 @@ pub async fn read_public(db: &DatabaseConnection, token: &str) -> Result<PublicS
         let engine = document::load_head_engine(db, document_id).await?;
         let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;
         let blocks = public_page::compose_public_document(&engine.root_state_json(), &semantic);
-        (blocks, public_page::plain_text_of(&blocks))
+        let composed = public_page::plain_text_of(&blocks);
+        (blocks, composed)
     } else {
         (Vec::new(), String::new())
     };
