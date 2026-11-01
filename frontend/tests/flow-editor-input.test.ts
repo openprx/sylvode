@@ -9,6 +9,7 @@ import {
 	acceptEditorInput,
 	decodeBlocks,
 	encodeBlocks,
+	completedBlockTrigger,
 	insertIndexAfterRemoval,
 	matchBlockShortcut,
 	matchInlineWrap,
@@ -77,6 +78,10 @@ suite.check('block triggers match only at the start and keep the remainder', () 
 	assertEqual(matchBlockShortcut('already ', '# ', ''), null, 'a trigger after text is typed');
 	assertEqual(matchBlockShortcut('# ', 'x', ''), null, 'a finished trigger is not matched again');
 	assertEqual(matchBlockShortcut('``', '`', 'more'), null, 'a fence with trailing text stays text');
+	assertEqual(completedBlockTrigger('# ')?.type, 'heading', 'completed heading trigger');
+	assertEqual(completedBlockTrigger('# ')?.level, 1, 'completed heading level');
+	assertEqual(completedBlockTrigger('```')?.type, 'codeBlock', 'completed code fence');
+	assertEqual(completedBlockTrigger('# Hello'), null, 'text after the trigger is not a completion');
 });
 
 suite.check('inline delimiters become marks and ignore empty or partial pairs', () => {

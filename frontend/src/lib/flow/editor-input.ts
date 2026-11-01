@@ -65,6 +65,12 @@ export function matchBlockShortcut(
 	return null;
 }
 
+/** A trigger the caret has just finished, with nothing typed after it yet. */
+export function completedBlockTrigger(beforeCaret: string): BlockShortcut | null {
+	if (beforeCaret.length === 0) return null;
+	return matchBlockShortcut(beforeCaret.slice(0, -1), beforeCaret.slice(-1), '');
+}
+
 export interface InlineWrap {
 	readonly mark: Exclude<FlowMarkName, 'link'>;
 	/** Index in `before` where the opening delimiter starts. */

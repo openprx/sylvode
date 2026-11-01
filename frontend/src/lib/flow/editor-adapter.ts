@@ -25,6 +25,7 @@ import {
 	decodeBlocks,
 	encodeBlocks,
 	insertIndexAfterRemoval,
+	completedBlockTrigger,
 	matchBlockShortcut,
 	matchInlineWrap,
 	safeHref,
@@ -549,19 +550,19 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 		const { state, dispatch } = this.view;
 		const { $from } = state.selection;
 		const pos = $from.before($from.depth);
+		const node = $from.parent;
 		const nodeType = this.schema.nodes[type];
-		const indent = $from.parent.attrs.indent as number;
+		if (!nodeType) return;
+		const indent = node.attrs.indent as number;
 		const attrs = type === 'heading' ? { indent, level: level ?? 1 } : { indent };
-		const tr = state.tr.setNodeMarkup(pos, nodeType, attrs);
-		// Strip the trailing "/query" the user typed to open the menu.
-		const parentEnd = $from.after($from.depth) - 1;
-		const parentStart = $from.before($from.depth) + 1;
-		const text = state.doc.textBetween(parentStart, parentEnd, undefined, '￼');
+		// Replace the node. `setNodeMarkup` keeps the same Loro map and the binding throws
+		// "node name mismatch" when the block type changes, so the browser keeps the old text.
+		const text = node.textContent;
 		const slashIndex = text.lastIndexOf('/');
-		if (slashIndex >= 0) {
-			tr.delete(parentStart + slashIndex, parentEnd);
-		}
-		dispatch(tr);
+		const nextText = slashIndex >= 0 ? text.slice(0, slashIndex) : text;
+		const textNode = nextText.length > 0 ? this.schema.text(nextText) : null;
+		const replacement = nodeType.create(attrs, textNode);
+		dispatch(state.tr.replaceWith(pos, pos + node.nodeSize, replacement));
 		this.view.focus();
 	}
 
@@ -762,12 +763,17 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 		if (!this.view || !this.schema || !isRegisteredBlockType(type)) return;
 		const blocks = this.topBlocks();
 		const tr = this.view.state.tr;
-		for (let index = start; index < end; index += 1) {
+		const nodeType = this.schema.nodes[type];
+		for (let index = end - 1; index >= start; index -= 1) {
 			const block = blocks[index];
 			if (!block) continue;
-			const indent = block.node.attrs.indent as number;
+			const pos = tr.mapping.map(block.pos);
+			const node = tr.doc.nodeAt(pos);
+			if (!node) continue;
+			const indent = node.attrs.indent as number;
 			const attrs = type === 'heading' ? { indent, level: level ?? 1 } : { indent };
-			tr.setNodeMarkup(block.pos, this.schema.nodes[type], attrs);
+			const textNode = node.textContent.length > 0 ? this.schema.text(node.textContent) : null;
+			tr.replaceWith(pos, pos + node.nodeSize, nodeType.create(attrs, textNode));
 		}
 		this.view.dispatch(tr);
 		this.view.focus();
@@ -960,6 +966,35 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 					return previous;
 				}
 			},
+			appendTransaction: (transactions, _old, state) => {
+				if (transactions.some((tr) => tr.getMeta('flowBlockShortcut'))) return null;
+				if (!transactions.some((tr) => tr.docChanged)) return null;
+				if (!adapter.view || adapter.view.composing || !adapter.schema) return null;
+				const { $from } = state.selection;
+				if (!state.selection.empty || $from.depth < 1) return null;
+				const parent = $from.parent;
+				if (parent.type.spec.code) return null;
+				const before = parent.textBetween(0, $from.parentOffset, undefined, '\ufffc');
+				const trigger = completedBlockTrigger(before);
+				if (!trigger || !isRegisteredBlockType(trigger.type)) return null;
+				const nodeType = adapter.schema.nodes[trigger.type];
+				if (!nodeType) return null;
+				const blockPos = $from.before($from.depth);
+				const rest = parent.textBetween($from.parentOffset, parent.content.size, undefined, '\ufffc');
+				const indent = (parent.attrs.indent as number) ?? 0;
+				const attrs =
+					trigger.type === 'heading' ? { indent, level: trigger.level ?? 1 } : { indent };
+				const textNode = rest.length > 0 ? adapter.schema.text(rest) : null;
+				const tr = state.tr.replaceWith(
+					blockPos,
+					$from.after($from.depth),
+					nodeType.create(attrs, textNode)
+				);
+				const caret = Math.min(blockPos + 1, tr.doc.content.size);
+				tr.setSelection(pmState.TextSelection.create(tr.doc, caret));
+				tr.setMeta('flowBlockShortcut', true);
+				return tr;
+			},
 			props: {
 				decorations: (state) => {
 					const selection = key.getState(state) as { anchor: number; head: number } | null;
@@ -1029,15 +1064,24 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 		const after = $from.parent.textBetween($from.parentOffset, $from.parent.content.size, undefined, '\ufffc');
 		const block = matchBlockShortcut(before, text, after);
 		if (block && isRegisteredBlockType(block.type)) {
-			const start = $from.start();
+			const nodeType = this.schema.nodes[block.type];
+			if (!nodeType) return false;
 			const blockPos = $from.before($from.depth);
-			const tr = view.state.tr;
-			if (block.deleteBefore > 0) tr.delete(start + before.length - block.deleteBefore, from);
-			const insertAt = tr.mapping.map(start + before.length - block.deleteBefore);
-			if (block.remainder) tr.insertText(block.remainder, insertAt);
-			const indent = $from.parent.attrs.indent as number;
+			const newText =
+				before.slice(0, before.length - block.deleteBefore) + block.remainder + after;
+			const indent = ($from.parent.attrs.indent as number) ?? 0;
 			const attrs = block.type === 'heading' ? { indent, level: block.level ?? 1 } : { indent };
-			tr.setNodeMarkup(tr.mapping.map(blockPos), this.schema.nodes[block.type], attrs);
+			const textNode = newText.length > 0 ? this.schema.text(newText) : null;
+			// A full node replacement, not setNodeMarkup: the Loro binding cannot rename the
+			// map that already stores this block.
+			const tr = view.state.tr.replaceWith(
+				blockPos,
+				$from.after($from.depth),
+				nodeType.create(attrs, textNode)
+			);
+			const caret = Math.min(blockPos + 1 + newText.length, tr.doc.content.size);
+			if (this.mods) tr.setSelection(this.mods.pmState.TextSelection.create(tr.doc, caret));
+			tr.setMeta('flowBlockShortcut', true);
 			view.dispatch(tr);
 			return true;
 		}
