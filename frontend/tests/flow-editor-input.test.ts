@@ -26,72 +26,108 @@ suite.check('IME composition suspends markdown and mark shortcuts', () => {
 });
 
 suite.check('block triggers match only at the start and keep the remainder', () => {
-	assertDeepEqual(matchBlockShortcut('#', ' Hello', ''), {
-		type: 'heading',
-		level: 1,
-		deleteBefore: 1,
-		remainder: 'Hello'
-	});
-	assertDeepEqual(matchBlockShortcut('', '## Title', ''), {
-		type: 'heading',
-		level: 2,
-		deleteBefore: 0,
-		remainder: 'Title'
-	});
-	assertDeepEqual(matchBlockShortcut('###', ' ', 'later'), {
-		type: 'heading',
-		level: 3,
-		deleteBefore: 3,
-		remainder: ''
-	});
-	assertDeepEqual(matchBlockShortcut('-', ' ', ''), {
-		type: 'bulletItem',
-		deleteBefore: 1,
-		remainder: ''
-	});
-	assertDeepEqual(matchBlockShortcut('', '```', ''), {
-		type: 'codeBlock',
-		deleteBefore: 0,
-		remainder: ''
-	});
+	assertDeepEqual(
+		matchBlockShortcut('#', ' Hello', ''),
+		{
+			type: 'heading',
+			level: 1,
+			deleteBefore: 1,
+			remainder: 'Hello'
+		},
+		'heading 1 keeps the remainder'
+	);
+	assertDeepEqual(
+		matchBlockShortcut('', '## Title', ''),
+		{
+			type: 'heading',
+			level: 2,
+			deleteBefore: 0,
+			remainder: 'Title'
+		},
+		'heading 2 from one insertion'
+	);
+	assertDeepEqual(
+		matchBlockShortcut('###', ' ', 'later'),
+		{
+			type: 'heading',
+			level: 3,
+			deleteBefore: 3,
+			remainder: ''
+		},
+		'heading 3'
+	);
+	assertDeepEqual(
+		matchBlockShortcut('-', ' ', ''),
+		{
+			type: 'bulletItem',
+			deleteBefore: 1,
+			remainder: ''
+		},
+		'bullet'
+	);
+	assertDeepEqual(
+		matchBlockShortcut('', '```', ''),
+		{
+			type: 'codeBlock',
+			deleteBefore: 0,
+			remainder: ''
+		},
+		'code fence'
+	);
 	assertEqual(matchBlockShortcut('already ', '# ', ''), null, 'a trigger after text is typed');
 	assertEqual(matchBlockShortcut('# ', 'x', ''), null, 'a finished trigger is not matched again');
 	assertEqual(matchBlockShortcut('``', '`', 'more'), null, 'a fence with trailing text stays text');
 });
 
 suite.check('inline delimiters become marks and ignore empty or partial pairs', () => {
-	assertDeepEqual(matchInlineWrap('**bold*', '*'), {
-		mark: 'bold',
-		openStart: 0,
-		openLength: 2,
-		contentStart: 2,
-		contentEnd: 6,
-		deleteTail: 1
-	});
-	assertDeepEqual(matchInlineWrap('*word', '*'), {
-		mark: 'italic',
-		openStart: 0,
-		openLength: 1,
-		contentStart: 1,
-		contentEnd: 5,
-		deleteTail: 0
-	});
-	assertDeepEqual(matchInlineWrap('~~no~', '~'), {
-		mark: 'strike',
-		openStart: 0,
-		openLength: 2,
-		contentStart: 2,
-		contentEnd: 4,
-		deleteTail: 1
-	});
-	assertDeepEqual(matchInlineWrap('`code', '`'), {
-		mark: 'code',
-		openStart: 0,
-		openLength: 1,
-		contentStart: 1,
-		contentEnd: 5,
-		deleteTail: 0
-	});
+	assertDeepEqual(
+		matchInlineWrap('**bold*', '*'),
+		{
+			mark: 'bold',
+			openStart: 0,
+			openLength: 2,
+			contentStart: 2,
+			contentEnd: 6,
+			deleteTail: 1
+		},
+		'bold'
+	);
+	assertDeepEqual(
+		matchInlineWrap('*word', '*'),
+		{
+			mark: 'italic',
+			openStart: 0,
+			openLength: 1,
+			contentStart: 1,
+			contentEnd: 5,
+			deleteTail: 0
+		},
+		'italic'
+	);
+	assertDeepEqual(
+		matchInlineWrap('~~no~', '~'),
+		{
+			mark: 'strike',
+			openStart: 0,
+			openLength: 2,
+			contentStart: 2,
+			contentEnd: 4,
+			deleteTail: 1
+		},
+		'strike'
+	);
+	assertDeepEqual(
+		matchInlineWrap('`code', '`'),
+		{
+			mark: 'code',
+			openStart: 0,
+			openLength: 1,
+			contentStart: 1,
+			contentEnd: 5,
+			deleteTail: 0
+		},
+		'code'
+	);
 	assertEqual(matchInlineWrap('**', '*'), null, 'empty bold');
 	assertEqual(matchInlineWrap('*', '*'), null, 'empty italic');
 	assertEqual(matchInlineWrap('**word', '*'), null, 'a single star does not close bold');

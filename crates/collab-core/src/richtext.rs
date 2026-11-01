@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use loro::{Container, LoroDoc, LoroMap, LoroText, LoroValue, TextDelta, ToJson, ValueOrContainer};
+use loro::{Container, ContainerTrait, LoroDoc, LoroMap, LoroText, LoroValue, TextDelta, ToJson, ValueOrContainer};
 use sha2::{Digest, Sha256};
 
 use crate::error::CollabError;
@@ -221,16 +221,18 @@ fn map_string(map: &LoroMap, key: &str) -> Option<String> {
     }
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn attr_small_int(map: &LoroMap, key: &str) -> Option<u32> {
     let ValueOrContainer::Value(value) = map.get(key)? else {
         return None;
     };
-    let number = value.to_json_value().as_f64()?;
-    if !number.is_finite() || !(0.0..=1024.0).contains(&number) || number.fract() != 0.0 {
-        return None;
-    }
-    Some(number as u32)
+    json_small_int(&value.to_json_value())
+}
+
+/// A non-negative integer up to 1024. `as_u64` accepts JSON integers and whole-number floats,
+/// which is how an editor number attribute arrives.
+fn json_small_int(json: &serde_json::Value) -> Option<u32> {
+    let whole = json.as_u64()?;
+    u32::try_from(whole).ok().filter(|value| *value <= 1024)
 }
 
 fn span_from_attribute(key: &str, value: &LoroValue, start: u32, end: u32) -> Option<InlineSpan> {

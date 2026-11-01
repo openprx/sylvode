@@ -78,7 +78,7 @@ where
 {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     match value {
-        None | Some(serde_json::Value::Null) | Some(serde_json::Value::Bool(false)) => Ok(None),
+        None | Some(serde_json::Value::Null | serde_json::Value::Bool(false)) => Ok(None),
         Some(serde_json::Value::Bool(true)) => Ok(Some("true".to_string())),
         Some(serde_json::Value::String(text)) => Ok(Some(text)),
         Some(_) => Err(serde::de::Error::custom(
