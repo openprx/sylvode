@@ -9,6 +9,7 @@ members = [
   "spikes/collab-shared",
   "spikes/collab-loro",
   "spikes/collab-yrs-yjs",
+  "benches/flow-loro",
 ]
 
 [workspace.package]

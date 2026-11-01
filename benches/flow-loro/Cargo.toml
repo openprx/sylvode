@@ -1,0 +1,15 @@
+[package]
+name = "flow-loro-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "In-process Loro load, apply, and snapshot timings for the Flow benchmark"
+
+[dependencies]
+anyhow.workspace = true
+collab-core = { path = "../../crates/collab-core" }
+serde_json.workspace = true
+
+[lints]
+workspace = true
