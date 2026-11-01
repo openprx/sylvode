@@ -186,7 +186,43 @@ pub async fn run_event_handler_hooks(
     event_type: &str,
     payload: Value,
 ) -> Result<(), ApiError> {
-    let plugins = load_active_plugins(state, workspace_id, project_id).await?;
+    // Same contract as `invoke_plugin`: the lookup, the guest, and the invocation row run on a
+    // task scheduled before this future awaits, so cancelling the request that triggered the
+    // hook cannot skip the row.
+    let state = state.clone();
+    let form_key = form_key.to_string();
+    let event_type = event_type.to_string();
+    tokio::spawn(async move {
+        run_event_handler_hooks_detached(
+            state,
+            workspace_id,
+            project_id,
+            form_id,
+            form_key,
+            record_id,
+            event_type,
+            payload,
+        )
+        .await
+    })
+    .await
+    .map_err(|err| {
+        tracing::error!(error = %err, "plugin event-handler task failed");
+        ApiError::Internal
+    })?
+}
+
+async fn run_event_handler_hooks_detached(
+    state: AppState,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    form_id: Uuid,
+    form_key: String,
+    record_id: Option<Uuid>,
+    event_type: String,
+    payload: Value,
+) -> Result<(), ApiError> {
+    let plugins = load_active_plugins(&state, workspace_id, project_id).await?;
 
     for plugin in plugins.into_iter().map(Arc::new) {
         let manifest = parse_manifest(&plugin.manifest).map_err(ApiError::BadRequest)?;
@@ -195,7 +231,7 @@ pub async fn run_event_handler_hooks(
             .hooks
             .iter()
             .filter(|hook| hook.kind == "event_handler")
-            .filter(|hook| hook_matches_form(hook, form_key))
+            .filter(|hook| hook_matches_form(hook, &form_key))
             .filter(|hook| hook.event_type.as_deref().is_none_or(|value| value == event_type))
             .collect::<Vec<_>>();
         if matching_hooks.is_empty() {
@@ -221,7 +257,7 @@ pub async fn run_event_handler_hooks(
             });
             // An event handler's outcome is recorded and does not affect the caller.
             let _recorded: HookRun = run_and_record_hook(
-                state,
+                &state,
                 &plugin,
                 "event_handler",
                 wasm_bytes.clone(),

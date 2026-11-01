@@ -34,7 +34,10 @@ const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const REPO = join(ROOT, '..');
 const BUILD = join(ROOT, 'build');
 const MANIFEST = join(ROOT, '.svelte-kit/output/client/.vite/manifest.json');
-const GENERATED_NODES = join(ROOT, '.svelte-kit/generated/client-optimized/nodes');
+// SvelteKit 3 writes the optimized client manifest under generated/build, not the
+// Kit 2 generated/client-optimized directory.
+const GENERATED_CLIENT = '.svelte-kit/generated/build/client-optimized';
+const GENERATED_NODES = join(ROOT, GENERATED_CLIENT, 'nodes');
 const CADDYFILE = join(REPO, 'deploy/caddy/Caddyfile');
 
 const suite = new Suite('vite_wasm_static_build_and_deep_route');
@@ -239,7 +242,7 @@ function nodeKeyForRoute(routeSuffix: string): string {
 	for (const entry of readdirSync(GENERATED_NODES)) {
 		const source = readFileSync(join(GENERATED_NODES, entry), 'utf8');
 		if (source.includes(routeSuffix))
-			return `.svelte-kit/generated/client-optimized/nodes/${entry}`;
+			return `${GENERATED_CLIENT}/nodes/${entry}`;
 	}
 	throw new Error(`no generated node imports a route matching ${routeSuffix}`);
 }
@@ -255,7 +258,7 @@ suite.check('the engine chunk is NOT in the login or app-entry static bundle', (
 	const loginKey = nodeKeyForRoute('(auth)/auth/login/+page.svelte');
 	for (const [label, key] of [
 		['the login route', loginKey],
-		['the app entry', '.svelte-kit/generated/client-optimized/app.js']
+		['the app entry', `${GENERATED_CLIENT}/app.js`]
 	] as const) {
 		const closure = staticClosure(key);
 		const leaked = ENGINE_KEYS.filter((engineKey) => closure.has(engineKey));
