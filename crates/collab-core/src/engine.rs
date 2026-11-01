@@ -795,7 +795,10 @@ mod tests {
         engine.set_title("Visible").expect("title");
         let state = engine.root_state_json();
         assert_eq!(
-            state.get("meta").and_then(|meta| meta.get("title")).and_then(Value::as_str),
+            state
+                .get("meta")
+                .and_then(|meta| meta.get("title"))
+                .and_then(Value::as_str),
             Some("Visible")
         );
     }
