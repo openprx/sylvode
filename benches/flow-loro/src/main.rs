@@ -68,7 +68,7 @@ fn measure(blocks: usize) -> anyhow::Result<serde_json::Value> {
         let started = Instant::now();
         let exported = base.export_snapshot().map_err(collab_err)?;
         snapshot_ms.push(elapsed_ms(started));
-        std::mem::drop(black_box(exported.len()));
+        let _ = black_box(exported.len());
 
         let started = Instant::now();
         let loaded = LoroCollabEngine::load(&full_snapshot).map_err(collab_err)?;
