@@ -14,6 +14,8 @@
 	import {
 		FlowEditorAdapter,
 		type FlowBlockType,
+		type MarkFlags,
+		type SelectionToolbarState,
 		type SlashMenuState
 	} from '#lib/flow/editor-adapter.js';
 	import type { LoroDocType } from 'loro-prosemirror';
@@ -49,10 +51,27 @@
 
 	let pageBlocks: FlowPageBlocks | undefined = $state();
 
+	let canvasEl: HTMLDivElement | undefined = $state();
 	let host: HTMLDivElement | undefined = $state();
 	let adapter: FlowEditorAdapter | null = null;
 	let slashMenu = $state<SlashMenuState>({ active: false, query: '', coords: null });
-	let hoverHandle = $state<{ top: number; pos: number } | null>(null);
+	let hoverHandle = $state<{ top: number; index: number } | null>(null);
+	let blockMenuOpen = $state(false);
+	let dropIndex = $state<number | null>(null);
+	let linkOpen = $state(false);
+	let linkDraft = $state('');
+	const emptyMarks: MarkFlags = {
+		bold: false,
+		italic: false,
+		code: false,
+		strike: false,
+		link: false
+	};
+	let toolbar = $state<SelectionToolbarState>({
+		active: false,
+		coords: null,
+		marks: emptyMarks
+	});
 
 	const SLASH_OPTIONS: ReadonlyArray<{ type: FlowBlockType; level?: number; labelKey: string }> = [
 		{ type: 'paragraph', labelKey: 'flow.canvas.slashMenu.paragraph' },
@@ -86,7 +105,14 @@
 			onSlashMenu: (state) => {
 				slashMenu = state;
 			},
-			onPresenceCursor: (cursor) => onPresenceCursor?.(cursor)
+			onPresenceCursor: (cursor) => onPresenceCursor?.(cursor),
+			onSelectionToolbar: (state) => {
+				toolbar = state;
+				if (!state.active) linkOpen = false;
+			},
+			onLinkRequest: () => {
+				linkOpen = true;
+			}
 		});
 		adapter.setEditable(!readOnly);
 		const mounted = adapter;
@@ -110,6 +136,9 @@
 		if (readOnly) {
 			slashMenu = { active: false, query: '', coords: null };
 			hoverHandle = null;
+			blockMenuOpen = false;
+			linkOpen = false;
+			toolbar = { active: false, coords: null, marks: emptyMarks };
 		}
 	});
 
@@ -129,33 +158,142 @@
 	}
 
 	function onHostMouseMove(event: MouseEvent): void {
-		if (!adapter || !host || readOnly) return;
+		if (!adapter || !canvasEl || readOnly || blockMenuOpen) return;
 		const pos = adapter.posAtClientPoint(event.clientX, event.clientY);
 		if (pos === null) {
 			hoverHandle = null;
 			return;
 		}
-		const hostRect = host.getBoundingClientRect();
-		hoverHandle = { pos, top: event.clientY - hostRect.top };
+		const index = adapter.blockIndexAt(pos);
+		if (index === null) {
+			hoverHandle = null;
+			return;
+		}
+		const block = (event.target as HTMLElement | null)?.closest?.('.ProseMirror > *');
+		const canvasRect = canvasEl.getBoundingClientRect();
+		const blockRect = block?.getBoundingClientRect();
+		const top = blockRect
+			? blockRect.top - canvasRect.top + canvasEl.scrollTop
+			: event.clientY - canvasRect.top + canvasEl.scrollTop;
+		hoverHandle = { index, top };
 	}
 
 	function onHostMouseLeave(): void {
+		if (!blockMenuOpen) hoverHandle = null;
+	}
+
+	function actedRange(): { start: number; end: number } | null {
+		return adapter?.selectedRange() ?? (hoverHandle ? { start: hoverHandle.index, end: hoverHandle.index + 1 } : null);
+	}
+
+	function onHandleClick(event: MouseEvent): void {
+		if (!adapter || !hoverHandle) return;
+		event.preventDefault();
+		adapter.selectBlock(hoverHandle.index, event.shiftKey);
+	}
+
+	function onHandleDragStart(event: DragEvent): void {
+		if (!adapter || !hoverHandle) return;
+		const selected = adapter.selectedRange();
+		const inside =
+			selected !== null && hoverHandle.index >= selected.start && hoverHandle.index < selected.end;
+		const start = inside && selected ? selected.start : hoverHandle.index;
+		const end = inside && selected ? selected.end : hoverHandle.index + 1;
+		event.dataTransfer?.setData('application/x-sylvode-flow-move', JSON.stringify({ start, end }));
+		if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+	}
+
+	function draggingBlocks(data: DataTransfer | null): boolean {
+		return !!data && Array.from(data.types).includes('application/x-sylvode-flow-move');
+	}
+
+	function onCanvasDragOver(event: DragEvent): void {
+		if (!draggingBlocks(event.dataTransfer) || !adapter) return;
+		event.preventDefault();
+		const pos = adapter.posAtClientPoint(event.clientX, event.clientY);
+		if (pos === null) return;
+		const index = adapter.blockIndexAt(pos);
+		if (index === null) return;
+		const block = (event.target as HTMLElement | null)?.closest?.('.ProseMirror > *');
+		const rect = block?.getBoundingClientRect();
+		dropIndex = rect && event.clientY > rect.top + rect.height / 2 ? index + 1 : index;
+	}
+
+	function onCanvasDrop(event: DragEvent): void {
+		event.preventDefault();
+		const raw = event.dataTransfer?.getData('application/x-sylvode-flow-move');
+		dropIndex = null;
+		if (!raw || !adapter) return;
+		let parsed: { start?: unknown; end?: unknown };
+		try {
+			parsed = JSON.parse(raw) as { start?: unknown; end?: unknown };
+		} catch {
+			return;
+		}
+		if (typeof parsed.start !== 'number' || typeof parsed.end !== 'number') return;
+		const pos = adapter.posAtClientPoint(event.clientX, event.clientY);
+		if (pos === null) return;
+		const index = adapter.blockIndexAt(pos);
+		if (index === null) return;
+		const block = (event.target as HTMLElement | null)?.closest?.('.ProseMirror > *');
+		const rect = block?.getBoundingClientRect();
+		const dest = rect && event.clientY > rect.top + rect.height / 2 ? index + 1 : index;
+		adapter.moveBlockRange(parsed.start, parsed.end, dest);
+	}
+
+	function turnHovered(type: FlowBlockType, level?: number): void {
+		const range = actedRange();
+		if (!range) return;
+		adapter?.setBlockTypeRange(range.start, range.end, type, level);
+		blockMenuOpen = false;
+	}
+
+	function indentHovered(delta: number): void {
+		const range = actedRange();
+		if (!range) return;
+		adapter?.adjustIndentRange(range.start, range.end, delta);
+	}
+
+	function duplicateHovered(): void {
+		const range = actedRange();
+		if (!range) return;
+		adapter?.duplicateBlockRange(range.start, range.end);
+		blockMenuOpen = false;
+	}
+
+	function deleteHovered(): void {
+		const range = actedRange();
+		if (!range) return;
+		adapter?.deleteBlockRange(range.start, range.end);
+		blockMenuOpen = false;
 		hoverHandle = null;
 	}
 
-	function adjustHoveredIndent(delta: number): void {
-		if (!adapter || hoverHandle === null) return;
-		adapter.adjustIndentAtPos(hoverHandle.pos, delta);
+	function applyLink(event: SubmitEvent): void {
+		event.preventDefault();
+		adapter?.setLink(linkDraft.trim());
+		linkOpen = false;
+		linkDraft = '';
+	}
+
+	function removeLink(): void {
+		adapter?.setLink(null);
+		linkOpen = false;
+		linkDraft = '';
 	}
 </script>
 
 <div
+	bind:this={canvasEl}
 	class="relative min-h-[50vh] flex-1 overflow-y-auto bg-white px-16 py-10 lg:min-h-0 dark:bg-slate-950"
 	role="presentation"
 	onmousemove={onHostMouseMove}
 	onmouseleave={onHostMouseLeave}
+	ondragover={onCanvasDragOver}
+	ondrop={onCanvasDrop}
 	data-testid="flow-canvas"
 	data-read-only={readOnly ? 'true' : 'false'}
+	data-drop-index={dropIndex === null ? '' : String(dropIndex)}
 >
 	{#if peers.length > 0}
 		<ul
@@ -188,34 +326,87 @@
 	{/if}
 	{#if hoverHandle && !readOnly}
 		<div
-			class="absolute -left-1 flex -translate-x-full items-center gap-0.5 opacity-70 hover:opacity-100"
+			class="absolute left-2 z-20 flex items-center gap-0.5"
 			style={`top: ${hoverHandle.top}px`}
+			data-testid="flow-block-handle"
 		>
 			<button
 				type="button"
-				class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-				onclick={() => adjustHoveredIndent(-1)}
-				aria-label={$t('flow.block.outdent')}
-				title={$t('flow.block.outdent')}
+				draggable="true"
+				class="cursor-grab rounded px-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:cursor-grabbing dark:hover:bg-slate-800 dark:hover:text-slate-200"
+				onclick={onHandleClick}
+				ondragstart={onHandleDragStart}
+				aria-label={$t('flow.block.dragLabel')}
+				title={$t('flow.block.dragLabel')}
 			>
-				⇤
+				⋮⋮
 			</button>
 			<button
 				type="button"
-				class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-				onclick={() => adjustHoveredIndent(1)}
-				aria-label={$t('flow.block.nest')}
-				title={$t('flow.block.nest')}
+				class="rounded px-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+				onclick={() => (blockMenuOpen = !blockMenuOpen)}
+				aria-haspopup="menu"
+				aria-expanded={blockMenuOpen}
+				aria-label={$t('flow.block.menuButton')}
+				data-testid="flow-block-menu-button"
 			>
-				⇥
+				+
 			</button>
-			<span
-				class="cursor-grab select-none px-1 text-slate-300 dark:text-slate-600"
-				aria-label={$t('flow.block.handleLabel')}
-			>
-				⋮⋮
-			</span>
 		</div>
+	{/if}
+	{#if blockMenuOpen && hoverHandle && !readOnly}
+		<div
+			class="absolute left-14 z-30 w-48 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			style={`top: ${hoverHandle.top}px`}
+			role="menu"
+			aria-label={$t('flow.block.menuLabel')}
+			data-testid="flow-block-menu"
+		>
+			<button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800" role="menuitem" onclick={() => turnHovered('paragraph')}>{$t('flow.block.paragraph')}</button>
+			<button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800" role="menuitem" onclick={() => turnHovered('heading', 1)}>{$t('flow.block.heading1')}</button>
+			<button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800" role="menuitem" onclick={() => turnHovered('heading', 2)}>{$t('flow.block.heading2')}</button>
+			<button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800" role="menuitem" onclick={() => turnHovered('heading', 3)}>{$t('flow.block.heading3')}</button>
+			<button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800" role="menuitem" onclick={() => turnHovered('bulletItem')}>{$t('flow.block.bullet')}</button>
+			<button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800" role="menuitem" onclick={() => turnHovered('codeBlock')}>{$t('flow.block.codeBlock')}</button>
+			<button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800" role="menuitem" onclick={() => indentHovered(-1)}>{$t('flow.block.outdent')}</button>
+			<button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800" role="menuitem" onclick={() => indentHovered(1)}>{$t('flow.block.nest')}</button>
+			<button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800" role="menuitem" data-testid="flow-block-duplicate" onclick={duplicateHovered}>{$t('flow.block.duplicate')}</button>
+			<button type="button" class="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-slate-100 dark:hover:bg-slate-800" role="menuitem" data-testid="flow-block-delete" onclick={deleteHovered}>{$t('flow.block.delete')}</button>
+		</div>
+	{/if}
+	{#if toolbar.active && toolbar.coords && !readOnly && !slashMenu.active}
+		<div
+			class="fixed z-50 flex items-center gap-0.5 rounded-md border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			style={`left: ${toolbar.coords.left}px; top: ${toolbar.coords.top - 40}px`}
+			role="toolbar"
+			aria-label={$t('flow.block.toolbar')}
+			data-testid="flow-selection-toolbar"
+		>
+			<button type="button" class={`rounded px-2 py-1 text-sm font-semibold ${toolbar.marks.bold ? 'bg-slate-200 dark:bg-slate-700' : ''}`} aria-pressed={toolbar.marks.bold} aria-label={$t('flow.block.bold')} data-testid="flow-mark-bold" onclick={() => adapter?.toggleMark('bold')}>B</button>
+			<button type="button" class={`rounded px-2 py-1 text-sm italic ${toolbar.marks.italic ? 'bg-slate-200 dark:bg-slate-700' : ''}`} aria-pressed={toolbar.marks.italic} aria-label={$t('flow.block.italic')} data-testid="flow-mark-italic" onclick={() => adapter?.toggleMark('italic')}>I</button>
+			<button type="button" class={`rounded px-2 py-1 text-sm line-through ${toolbar.marks.strike ? 'bg-slate-200 dark:bg-slate-700' : ''}`} aria-pressed={toolbar.marks.strike} aria-label={$t('flow.block.strike')} data-testid="flow-mark-strike" onclick={() => adapter?.toggleMark('strike')}>S</button>
+			<button type="button" class={`rounded px-2 py-1 font-mono text-sm ${toolbar.marks.code ? 'bg-slate-200 dark:bg-slate-700' : ''}`} aria-pressed={toolbar.marks.code} aria-label={$t('flow.block.code')} data-testid="flow-mark-code" onclick={() => adapter?.toggleMark('code')}>&lt;/&gt;</button>
+			<button type="button" class={`rounded px-2 py-1 text-sm ${toolbar.marks.link ? 'bg-slate-200 dark:bg-slate-700' : ''}`} aria-pressed={toolbar.marks.link} aria-label={$t('flow.block.link')} data-testid="flow-mark-link" onclick={() => (linkOpen = !linkOpen)}>↗</button>
+		</div>
+	{/if}
+	{#if linkOpen && toolbar.coords && !readOnly}
+		<form
+			class="fixed z-50 flex items-center gap-1 rounded-md border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			style={`left: ${toolbar.coords.left}px; top: ${toolbar.coords.top - 84}px`}
+			data-testid="flow-link-form"
+			onsubmit={applyLink}
+		>
+			<input
+				bind:value={linkDraft}
+				type="url"
+				class="w-56 rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-950"
+				placeholder="https://"
+				aria-label={$t('flow.block.linkUrl')}
+				data-testid="flow-link-input"
+			/>
+			<button type="submit" class="rounded bg-slate-900 px-2 py-1 text-sm text-white dark:bg-slate-100 dark:text-slate-900" data-testid="flow-link-apply">{$t('flow.block.linkApply')}</button>
+			<button type="button" class="rounded px-2 py-1 text-sm" data-testid="flow-link-remove" onclick={removeLink}>{$t('flow.block.linkRemove')}</button>
+		</form>
 	{/if}
 
 	<div
@@ -344,5 +535,29 @@
 	}
 	:global(.flow-canvas .ProseMirror > *) {
 		position: relative;
+	}
+	:global(.flow-canvas .ProseMirror strong) {
+		font-weight: 650;
+	}
+	:global(.flow-canvas .ProseMirror s) {
+		text-decoration: line-through;
+	}
+	:global(.flow-canvas .ProseMirror a) {
+		color: var(--color-blue-600);
+		text-decoration: underline;
+	}
+	:global(.flow-canvas .ProseMirror :not(pre) > code) {
+		border-radius: 0.25rem;
+		background: var(--color-slate-100);
+		padding: 0.05rem 0.25rem;
+		font-family: ui-monospace, monospace;
+		font-size: 0.9em;
+	}
+	:global(.dark .flow-canvas .ProseMirror :not(pre) > code) {
+		background: var(--color-slate-800);
+	}
+	:global(.flow-canvas .flow-block-selected) {
+		border-radius: 0.25rem;
+		background: color-mix(in srgb, var(--color-blue-500) 12%, transparent);
 	}
 </style>

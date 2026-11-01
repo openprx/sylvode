@@ -47,6 +47,11 @@
 		moveOutsideTarget
 	} from '#lib/flow/cross-parent-move.js';
 	import { flowErrorDetailKey } from '#lib/flow/errors.js';
+	import {
+		NAVIGATOR_PAGE_LIMIT,
+		mergeObjectPage,
+		shouldLoadMore
+	} from '#lib/flow/navigator-paging.js';
 	import type { FlowError } from '#lib/flow/types.js';
 	import { resolveRenderer } from '#lib/flow/renderer-registry.js';
 	import {
@@ -233,12 +238,85 @@
 		}
 	}
 
+	let nextCursor = $state<string | null>(null);
+	let loadingMore = $state(false);
+	let listError = $state(false);
+	let listEl: HTMLDivElement | undefined = $state();
+
+	function visibleObjects(items: FlowObjectView[]): FlowObjectView[] {
+		return items.filter((object) => object.object_type === 'page' || object.object_type === 'collection');
+	}
+
+	async function fetchObjectPage(
+		cursor: string | undefined
+	): Promise<{ items: FlowObjectView[]; next: string | null } | null> {
+		const result = await commandService.listObjects(workspaceId, {
+			limit: NAVIGATOR_PAGE_LIMIT,
+			cursor
+		});
+		if (result.code !== 0 || !result.data) return null;
+		return {
+			items: visibleObjects(result.data.items),
+			next: result.data.next_cursor ?? null
+		};
+	}
+
+	/** Re-reads pages until every object already on screen has been seen again, so a parent
+	 * change is visible without dropping a page the user had already loaded. */
+	async function reloadLoaded(): Promise<void> {
+		const wanted = new Set(objects.map((object) => object.id));
+		let cursor: string | undefined;
+		let collected: FlowObjectView[] = [];
+		let next: string | null = null;
+		let guard = 0;
+		do {
+			const page = await fetchObjectPage(cursor);
+			if (!page) {
+				listError = true;
+				return;
+			}
+			collected = mergeObjectPage(collected, page.items);
+			for (const item of page.items) wanted.delete(item.id);
+			next = page.next;
+			cursor = next ?? undefined;
+			guard += 1;
+		} while (cursor && wanted.size > 0 && guard < 50);
+		const missing = objects.filter((object) => wanted.has(object.id));
+		objects = mergeObjectPage(collected, missing);
+		nextCursor = next;
+		listError = false;
+	}
+
+	/** Replaces the tree with the first page. Further pages wait for scroll or the load-more control. */
 	async function loadObjects(): Promise<void> {
-		const result = await commandService.listObjects(workspaceId, { limit: 100 });
-		if (result.code === 0 && result.data) {
-			objects = result.data.items.filter(
-				(o) => o.object_type === 'page' || o.object_type === 'collection'
-			);
+		const page = await fetchObjectPage(undefined);
+		if (!page) {
+			listError = true;
+			return;
+		}
+		objects = page.items;
+		nextCursor = page.next;
+		listError = false;
+	}
+
+	async function loadMore(): Promise<void> {
+		if (!nextCursor || loadingMore) return;
+		loadingMore = true;
+		const page = await fetchObjectPage(nextCursor);
+		loadingMore = false;
+		if (!page) {
+			listError = true;
+			return;
+		}
+		objects = mergeObjectPage(objects, page.items);
+		nextCursor = page.next;
+		listError = false;
+	}
+
+	function onListScroll(): void {
+		if (!listEl || !nextCursor || loadingMore) return;
+		if (shouldLoadMore(listEl.scrollTop, listEl.clientHeight, listEl.scrollHeight)) {
+			void loadMore();
 		}
 	}
 
@@ -273,7 +351,14 @@
 		const unsubscribeCreated = repository.createdObjects.subscribe((created) => {
 			if (!created) return;
 			void (async () => {
-				await loadObjects();
+				const loaded = await commandService.getObject(created.objectId);
+				if (
+					loaded.code === 0 &&
+					loaded.data &&
+					(loaded.data.object_type === 'page' || loaded.data.object_type === 'collection')
+				) {
+					objects = mergeObjectPage(objects, [loaded.data]);
+				}
 				await ensureOrderEntries();
 				if (created.parentId) {
 					// eslint-disable-next-line svelte/prefer-svelte-reactivity -- replaced whole, like every other `expanded` write here
@@ -566,7 +651,7 @@
 	async function moveToParent(objectId: string, targetObjectId: string): Promise<void> {
 		try {
 			await commandService.execute(objectId, moveObjectCommand(targetObjectId));
-			await loadObjects();
+			await reloadLoaded();
 			const object = objects.find((candidate) => candidate.id === objectId);
 			announce('flow.nav.liveRegion.movedUnder', { title: object?.title ?? '' });
 		} catch (error) {
@@ -804,7 +889,7 @@
 		{/if}
 	</div>
 
-	<div class="flex-1 overflow-y-auto p-2">
+	<div bind:this={listEl} class="flex-1 overflow-y-auto p-2" onscroll={onListScroll}>
 		{#if searchOpen}
 			<div data-testid="flow-search-panel">
 				{#if searchState.status === 'pending' || searchState.status === 'loading'}
@@ -905,6 +990,9 @@
 			<p class="p-2 text-sm text-slate-500 dark:text-slate-400">{$t('flow.nav.loading')}</p>
 		{:else if tree.length === 0}
 			<div class="p-3 text-sm text-slate-500 dark:text-slate-400">
+				{#if listError}
+					<p class="mb-2 text-red-600 dark:text-red-400" role="alert">{$t('flow.nav.loadMoreFailed')}</p>
+				{/if}
 				<p class="mb-2">{$t('flow.nav.empty')}</p>
 				<button
 					type="button"
@@ -983,6 +1071,22 @@
 					{@render renderNode(node)}
 				{/each}
 			</div>
+			{#if nextCursor}
+				<button
+					type="button"
+					class="mt-2 min-h-11 w-full rounded px-2 text-left text-sm text-blue-600 hover:bg-slate-200 disabled:opacity-50 dark:text-blue-400 dark:hover:bg-slate-800"
+					onclick={() => void loadMore()}
+					disabled={loadingMore}
+					data-testid="flow-nav-load-more"
+				>
+					{loadingMore ? $t('flow.nav.loadingMore') : $t('flow.nav.loadMore')}
+				</button>
+			{/if}
+			{#if listError}
+				<p class="px-2 py-1 text-xs text-red-600 dark:text-red-400" role="alert">
+					{$t('flow.nav.loadMoreFailed')}
+				</p>
+			{/if}
 		{/if}
 	</div>
 

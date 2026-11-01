@@ -31,6 +31,19 @@ const EXPORT_ARTIFACT_TTL_MINUTES: i64 = 30;
 /// (`error-mapping-v1.md`, 2026-10-10).
 const FIELD_SECRECY_REASON: &str = "field_secrecy";
 
+/// Markdown bytes for one object. The projection state is the source so block types and inline
+/// spans are preserved. A state this process cannot decode falls back to the stored plain text
+/// and is logged: the export still completes, and the plain-text column never contains mark syntax.
+fn markdown_bytes(title: &str, state: &Value, plain_text: &str) -> Vec<u8> {
+    match serde_json::from_value::<collab_core::SemanticSnapshot>(state.clone()) {
+        Ok(snapshot) => super::projection::render_markdown(title, &snapshot).into_bytes(),
+        Err(error) => {
+            tracing::warn!(%error, "flow markdown export fell back to plain text");
+            format!("# {title}\n\n{plain_text}\n").into_bytes()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportScope {
     Object(Uuid),
@@ -350,7 +363,7 @@ async fn render_export(
                     "seq": object.head_seq,
                     "frontier": base64::engine::general_purpose::STANDARD.encode(&object.head_frontier),
                 }))?,
-                "markdown" => format!("# {}\n\n{}\n", object.title, plain_text).into_bytes(),
+                "markdown" => markdown_bytes(&object.title, &object.projection_state, plain_text),
                 "csv" => format!(
                     "object_id,object_type,title,plain_text\n{},{},{},{}\n",
                     csv_cell(&object.id.to_string()),

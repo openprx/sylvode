@@ -265,7 +265,10 @@ pub fn check_operation(
             }
             Ok(())
         }
-        Operation::DeleteNode { .. } | Operation::DeleteText { .. } | Operation::SetProperty { .. } => Ok(()),
+        Operation::DeleteNode { .. }
+        | Operation::DeleteText { .. }
+        | Operation::SetProperty { .. }
+        | Operation::MarkText { .. } => Ok(()),
     }
 }
 
@@ -381,6 +384,7 @@ mod tests {
             text: text.to_string(),
             properties: BTreeMap::new(),
             deleted: false,
+            spans: Vec::new(),
         }
     }
 

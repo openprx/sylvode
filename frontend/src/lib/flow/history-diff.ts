@@ -56,6 +56,7 @@ interface WireNode {
 	parent?: unknown;
 	order_key?: unknown;
 	deleted?: unknown;
+	spans?: unknown;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -70,6 +71,21 @@ function text(node: WireNode | null): string | null {
 
 function kind(node: WireNode | null): string | null {
 	return node && typeof node.kind === 'string' ? node.kind : null;
+}
+
+function spanSummary(node: WireNode): string | null {
+	if (!Array.isArray(node.spans) || node.spans.length === 0) return null;
+	const parts: string[] = [];
+	for (const span of node.spans) {
+		const record = asRecord(span);
+		if (!record) continue;
+		const kind = typeof record.kind === 'string' ? record.kind : '';
+		const start = typeof record.start === 'number' ? String(record.start) : '';
+		const end = typeof record.end === 'number' ? String(record.end) : '';
+		const href = typeof record.href === 'string' ? record.href : '';
+		parts.push(`${kind}:${start}-${end}:${href}`);
+	}
+	return parts.length > 0 ? parts.join(',') : null;
 }
 
 function propertyChanges(before: WireNode, after: WireNode): DiffPropertyChange[] {
@@ -121,6 +137,11 @@ export function semanticDiffLines(semanticDiff: unknown): DiffLine[] | null {
 		const before = (asRecord(change?.before) ?? {}) as WireNode;
 		const after = (asRecord(change?.after) ?? {}) as WireNode;
 		const properties = propertyChanges(before, after);
+		const beforeSpans = spanSummary(before);
+		const afterSpans = spanSummary(after);
+		if (beforeSpans !== afterSpans) {
+			properties.push({ key: 'spans', before: beforeSpans, after: afterSpans });
+		}
 		const sameText = text(before) === text(after);
 		lines.push({
 			op:

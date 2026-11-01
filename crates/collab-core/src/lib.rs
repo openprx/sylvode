@@ -41,6 +41,7 @@ pub mod frontier;
 pub mod isolation;
 pub mod limits;
 pub mod operation;
+mod richtext;
 pub mod semantic;
 
 pub use engine::{CollabEngine, Diff, EngineMetadata, LoroCollabEngine, metadata};
@@ -48,4 +49,4 @@ pub use error::{CollabError, InputLimits};
 pub use frontier::Frontier;
 pub use limits::{DocumentLimits, LimitViolation};
 pub use operation::{NodeId, NodeKind, Operation};
-pub use semantic::{SemanticDiff, SemanticNode, SemanticNodeChange, SemanticSnapshot};
+pub use semantic::{InlineMark, InlineSpan, SemanticDiff, SemanticNode, SemanticNodeChange, SemanticSnapshot};

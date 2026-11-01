@@ -79,7 +79,8 @@ const SUITE_MODULES = [
 	'./flow-i18n-parity.test',
 	'./flow-navigator-equivalence.test',
 	'./flow-ui-state.test',
-	'./flow-static-build-deep-route.test'
+	'./flow-static-build-deep-route.test',
+	'./flow-editor-input.test'
 ] as const;
 
 const results: SuiteResult[] = [];

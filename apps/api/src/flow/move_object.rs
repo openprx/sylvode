@@ -1948,6 +1948,7 @@ mod tests {
             text: String::new(),
             properties: std::collections::BTreeMap::new(),
             deleted: false,
+            spans: Vec::new(),
         }
     }
 
