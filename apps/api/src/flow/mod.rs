@@ -23,11 +23,13 @@
 //! module owns the domain rules (idempotency, workspace/project/parent validation, the CRDT
 //! document lifecycle, and the SQL).
 
+pub mod appearance;
 pub mod bridge;
 pub mod collab;
 pub mod collections;
 pub mod command;
 pub mod comments;
+pub mod document;
 pub mod event_origin;
 pub mod event_policy;
 pub mod export;
@@ -41,12 +43,15 @@ pub mod package;
 pub mod package_import;
 pub mod policy;
 pub mod projection;
+pub mod public_page;
 pub mod query;
 pub mod relations;
 pub mod repository;
+pub mod restore;
 pub mod rollback;
 pub mod search;
 pub mod shares;
+pub mod trash;
 
 /// `retry_after_ms` for a request whose identical twin (same idempotency key, same body) is still
 /// being executed: retrying after this delay returns the first run's stored result. Reported as

@@ -21,7 +21,7 @@
 	import { get } from 'svelte/store';
 	import { goto } from '$app/navigation';
 	import { t } from 'svelte-i18n';
-	import type { FlowObjectView } from '#lib/api/flow.js';
+	import { flowApi, type FlowObjectView, type FlowTrashItem } from '#lib/api/flow.js';
 	import { FlowCommandService } from '#lib/flow/command-service.js';
 	import {
 		getNamedMap,
@@ -57,6 +57,8 @@
 	import { FlowLagBadge, type LagBadgeState } from '#lib/flow/navigator-lag.js';
 	import type { AcceptedChange } from '#lib/api/flow.js';
 	import CreateCollectionDialog from './CreateCollectionDialog.svelte';
+	import FlowObjectIcon from './FlowObjectIcon.svelte';
+	import { flowErrorFromResult } from '#lib/flow/command-service.js';
 
 	// `contracts/ui-surface-v1.md` "Renderer registry": an unregistered `${objectType}:${viewType}`
 	// must fail to read-only/unsupported rather than the route always assuming a tree renders.
@@ -113,6 +115,68 @@
 	let newMenuButton = $state<HTMLButtonElement | null>(null);
 	let newMenuEl = $state<HTMLDivElement | null>(null);
 	let collectionDialogOpen = $state(false);
+	let trashOpen = $state(false);
+	let trashItems = $state<FlowTrashItem[]>([]);
+	let trashFailureKey = $state<string | null>(null);
+	let trashBusy = $state(false);
+	let confirmingDelete = $state<string | null>(null);
+
+	async function loadTrash(): Promise<void> {
+		const result = await flowApi.listTrash(workspaceId, { limit: 50 });
+		if (result.code === 0 && result.data) {
+			trashItems = result.data.items;
+			trashFailureKey = null;
+		} else {
+			trashFailureKey = flowErrorDetailKey(flowErrorFromResult(result));
+		}
+	}
+
+	async function archiveObject(objectId: string): Promise<void> {
+		closeContextMenu();
+		try {
+			await commandService.execute(objectId, { type: 'archive', payload: {} });
+			await loadObjects();
+			if (trashOpen) await loadTrash();
+			announce('flow.trash.archived');
+		} catch (error) {
+			trashFailureKey = flowErrorDetailKey(error as FlowError);
+		}
+	}
+
+	async function restoreArchived(objectId: string): Promise<void> {
+		if (trashBusy) return;
+		trashBusy = true;
+		try {
+			await commandService.execute(objectId, { type: 'restore', payload: {} });
+			await loadObjects();
+			await loadTrash();
+		} catch (error) {
+			trashFailureKey = flowErrorDetailKey(error as FlowError);
+		} finally {
+			trashBusy = false;
+		}
+	}
+
+	async function purgeArchived(objectId: string): Promise<void> {
+		if (trashBusy) return;
+		trashBusy = true;
+		const result = await flowApi.purgeObject(objectId);
+		trashBusy = false;
+		confirmingDelete = null;
+		if (result.code !== 0) {
+			const details = result.details;
+			const reason =
+				typeof details === 'object' && details !== null && 'reason' in details
+					? (details as { reason?: unknown }).reason
+					: null;
+			trashFailureKey =
+				reason === 'active_descendant'
+					? 'flow.trash.activeDescendant'
+					: flowErrorDetailKey(flowErrorFromResult(result));
+			return;
+		}
+		await loadTrash();
+	}
 
 	function orderOf(objectId: string): string {
 		if (!navEntry) return '';
@@ -960,6 +1024,7 @@
 						{:else}
 							<span class="w-4 shrink-0"></span>
 						{/if}
+						<FlowObjectIcon appearance={node.object.appearance} objectId={node.object.id} />
 						<span class="truncate">{node.object.title || $t('flow.nav.untitled')}</span>
 						{#if node.object.object_type === 'collection'}
 							<span
@@ -984,6 +1049,47 @@
 				{/each}
 			</div>
 		{/if}
+		<div class="mt-3 border-t border-slate-200 pt-2 dark:border-slate-800" data-testid="flow-trash">
+			<button
+				type="button"
+				class="flex min-h-11 w-full items-center px-2 text-left text-sm text-slate-600 dark:text-slate-300"
+				aria-expanded={trashOpen}
+				onclick={() => {
+					trashOpen = !trashOpen;
+					if (trashOpen) void loadTrash();
+				}}
+			>
+				{$t('flow.trash.title')}
+			</button>
+			{#if trashOpen}
+				{#if trashItems.length === 0}
+					<p class="px-2 py-1 text-xs text-slate-500">{$t('flow.trash.empty')}</p>
+				{/if}
+				<ul class="space-y-1">
+					{#each trashItems as item (item.id)}
+						<li class="flex items-center gap-1 px-2 py-1 text-sm">
+							<FlowObjectIcon appearance={item.appearance} objectId={item.id} />
+							<span class="min-w-0 flex-1 truncate">{item.title || $t('flow.nav.untitled')}</span>
+							<button type="button" class="text-xs underline" disabled={trashBusy} onclick={() => restoreArchived(item.id)}>
+								{$t('flow.trash.restore')}
+							</button>
+							{#if confirmingDelete === item.id}
+								<button type="button" class="text-xs text-red-600 underline" disabled={trashBusy} onclick={() => purgeArchived(item.id)}>
+									{$t('flow.trash.confirmDelete')}
+								</button>
+							{:else}
+								<button type="button" class="text-xs underline" disabled={trashBusy} onclick={() => (confirmingDelete = item.id)}>
+									{$t('flow.trash.delete')}
+								</button>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+				{#if trashFailureKey}
+					<p class="px-2 text-xs text-red-600" role="alert">{$t(trashFailureKey)}</p>
+				{/if}
+			{/if}
+		</div>
 	</div>
 
 	<div aria-live="polite" class="sr-only" role="status">{announcement}</div>
@@ -1050,6 +1156,14 @@
 			onclick={() => moveOutside(contextMenuFor!)}
 		>
 			{$t('flow.nav.contextMenu.moveOutside')}
+		</button>
+		<button
+			type="button"
+			class="block w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800"
+			role="menuitem"
+			onclick={() => archiveObject(contextMenuFor!)}
+		>
+			{$t('flow.trash.archive')}
 		</button>
 	</div>
 {/if}

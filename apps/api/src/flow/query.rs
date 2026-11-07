@@ -256,6 +256,7 @@ pub fn object_view_from_row(row: ObjectViewRow) -> FlowObjectView {
         created_at: row.created_at.to_rfc3339(),
         updated_at: row.updated_at.to_rfc3339(),
         archived_at: row.archived_at.map(|t| t.to_rfc3339()),
+        appearance: super::appearance::parse_stored(&row.appearance),
     }
 }
 
@@ -561,6 +562,7 @@ pub async fn get_navigator(
                 .unwrap_or_else(|| format!("{}:{}", row.created_at.timestamp_micros(), row.id)),
             title: row.title,
             object_type: row.object_type,
+            appearance: super::appearance::parse_stored(&row.appearance),
         })
         .collect();
 

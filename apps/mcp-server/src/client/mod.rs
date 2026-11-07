@@ -1568,6 +1568,75 @@ impl OpenPrClient {
         .await
     }
 
+    pub async fn set_flow_appearance(&self, object_id: &str, body: &Value) -> Result<Value, String> {
+        self.put(
+            &format!("/api/v1/flow/objects/{}/appearance", urlencoding::encode(object_id)),
+            body,
+        )
+        .await
+    }
+
+    pub async fn upload_flow_appearance(&self, object_id: &str, body: &Value) -> Result<Value, String> {
+        self.post(
+            &format!(
+                "/api/v1/flow/objects/{}/appearance/assets",
+                urlencoding::encode(object_id)
+            ),
+            body,
+        )
+        .await
+    }
+
+    pub async fn restore_flow_version(&self, object_id: &str, body: &Value) -> Result<Value, String> {
+        self.post(
+            &format!(
+                "/api/v1/flow/objects/{}/history/restore",
+                urlencoding::encode(object_id)
+            ),
+            body,
+        )
+        .await
+    }
+
+    pub async fn list_flow_trash(
+        &self,
+        workspace_id: &str,
+        cursor: Option<&str>,
+        limit: Option<u64>,
+    ) -> Result<Value, String> {
+        let query = match (cursor, limit) {
+            (Some(cursor), Some(limit)) => format!("?cursor={}&limit={limit}", urlencoding::encode(cursor)),
+            (Some(cursor), None) => format!("?cursor={}", urlencoding::encode(cursor)),
+            (None, Some(limit)) => format!("?limit={limit}"),
+            (None, None) => String::new(),
+        };
+        self.get(&format!(
+            "/api/v1/workspaces/{}/flow/trash{query}",
+            urlencoding::encode(workspace_id)
+        ))
+        .await
+    }
+
+    pub async fn purge_flow_object(&self, object_id: &str) -> Result<Value, String> {
+        self.post(
+            &format!("/api/v1/flow/objects/{}/purge", urlencoding::encode(object_id)),
+            &json!({}),
+        )
+        .await
+    }
+
+    pub async fn list_flow_mention_candidates(&self, object_id: &str, query: Option<&str>) -> Result<Value, String> {
+        let suffix = query
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("?q={}", urlencoding::encode(value)))
+            .unwrap_or_default();
+        self.get(&format!(
+            "/api/v1/flow/objects/{}/mention-candidates{suffix}",
+            urlencoding::encode(object_id)
+        ))
+        .await
+    }
+
     pub async fn revoke_flow_share_link(&self, object_id: &str, link_id: &str) -> Result<Value, String> {
         self.post(
             &format!(

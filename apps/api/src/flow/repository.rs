@@ -26,6 +26,7 @@ pub struct ObjectViewRow {
     pub object_type: String,
     pub lifecycle_status: String,
     pub governance_metadata: Value,
+    pub appearance: Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub archived_at: Option<DateTime<Utc>>,
@@ -40,7 +41,7 @@ pub struct ObjectViewRow {
 const OBJECT_VIEW_SELECT: &str = r"
     SELECT
         fo.id, fo.workspace_id, fo.project_id, fo.parent_id, fo.object_type, fo.lifecycle_status,
-        fo.governance_metadata, fo.created_at, fo.updated_at, fo.archived_at,
+        fo.governance_metadata, fo.appearance, fo.created_at, fo.updated_at, fo.archived_at,
         cd.id AS document_id, cd.head_seq AS document_seq, cd.head_frontier AS document_frontier,
         p.title AS projection_title, p.state AS projection_state,
         p.document_seq AS projection_document_seq
@@ -697,6 +698,7 @@ pub struct NavigatorNodeRow {
     pub object_type: String,
     pub title: String,
     pub created_at: DateTime<Utc>,
+    pub appearance: Value,
 }
 
 /// Loads the bounded PostgreSQL-authoritative subtree rooted at one navigator object. The query
@@ -715,13 +717,13 @@ pub async fn fetch_navigator_nodes<C: ConnectionTrait>(
         r"
             WITH RECURSIVE tree AS (
                 SELECT object_row.id, object_row.parent_id, object_row.object_type,
-                       object_row.lifecycle_status, object_row.created_at,
+                       object_row.lifecycle_status, object_row.created_at, object_row.appearance,
                        ARRAY[object_row.id]::uuid[] AS path, 1::bigint AS depth
                   FROM flow_objects object_row
                  WHERE object_row.workspace_id = $1 AND object_row.parent_id = $2
                 UNION ALL
                 SELECT child.id, child.parent_id, child.object_type,
-                       child.lifecycle_status, child.created_at,
+                       child.lifecycle_status, child.created_at, child.appearance,
                        tree.path || child.id, tree.depth + 1
                   FROM tree
                   JOIN flow_objects child
@@ -729,7 +731,7 @@ pub async fn fetch_navigator_nodes<C: ConnectionTrait>(
                  WHERE tree.depth < $3 AND NOT child.id = ANY(tree.path)
             )
             SELECT tree.id, tree.parent_id, tree.object_type, projection.title,
-                   tree.created_at
+                   tree.created_at, tree.appearance
               FROM tree
               JOIN flow_object_projections projection ON projection.object_id = tree.id
              WHERE $4 OR tree.lifecycle_status = 'active'

@@ -2,23 +2,22 @@
 //!
 //! Creating, listing, and revoking require `full_access` on that page. The raw token is returned
 //! once and only its SHA-256 hex is stored. A link never expands children, relations, or grants.
-//! Anonymous reads are rate limited per client address inside this process.
+//! Anonymous reads share one Postgres counter across API processes.
 
 use std::net::IpAddr;
-use std::sync::OnceLock;
-use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use parking_lot::Mutex;
 use rand::RngCore;
-use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::Serialize;
-use serde_json::json;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use uuid::Uuid;
 
+use super::appearance::{self, PageAppearance};
 use super::collab::authz::PermissionLevel;
+use super::document;
+use super::public_page::{self, PublicBlock, sanitize_share_text};
 use super::repository;
 use crate::error::ApiError;
 
@@ -26,9 +25,8 @@ const TOKEN_PREFIX: &str = "fsh_";
 const TOKEN_RANDOM_BYTES: usize = 32;
 const TOKEN_PREFIX_CHARS: usize = 12;
 const SHARE_EXPIRY_DAYS: i64 = 366;
-const READS_PER_WINDOW: u32 = 60;
-const READ_WINDOW: Duration = Duration::from_mins(1);
-const PUBLIC_TEXT_CAP: usize = 100_000;
+const READS_PER_WINDOW: i32 = 60;
+const READ_WINDOW_SECS: i64 = 60;
 
 #[derive(Debug, Serialize)]
 pub struct ShareLinkView {
@@ -56,6 +54,9 @@ pub struct PublicShareView {
     pub object_id: Uuid,
     pub title: String,
     pub plain_text: String,
+    pub blocks: Vec<PublicBlock>,
+    #[serde(skip_serializing_if = "PageAppearance::is_empty")]
+    pub appearance: PageAppearance,
     pub expires_at: Option<String>,
 }
 
@@ -74,40 +75,86 @@ struct PublicRow {
     object_id: Uuid,
     title: Option<String>,
     plain_text: Option<String>,
+    appearance: Value,
+    document_id: Option<Uuid>,
     expires_at: Option<DateTime<Utc>>,
 }
 
-struct HitWindow {
-    started: Instant,
-    count: u32,
+#[derive(Debug, FromQueryResult)]
+struct HitRow {
+    hit_count: i32,
+    window_started: DateTime<Utc>,
 }
 
-pub fn enforce_public_share_rate_limit(ip: IpAddr) -> Result<(), ApiError> {
-    let mut windows = limiter().lock();
-    if windows.len() > 10_000 {
-        windows.retain(|_, window| window.started.elapsed() < READ_WINDOW);
+#[derive(Debug, FromQueryResult)]
+struct AssetPage {
+    object_id: Uuid,
+    workspace_id: Uuid,
+    appearance: Value,
+}
+
+/// The next hit in a fixed window. `allowed` is true while `count` is still within `limit`.
+#[must_use]
+pub fn advance_rate_window(previous_count: Option<u32>, window_open: bool, limit: u32) -> (u32, bool) {
+    let count = if window_open {
+        previous_count.unwrap_or(0).saturating_add(1)
+    } else {
+        1
+    };
+    (count, count <= limit)
+}
+
+/// Shared across processes: one row per hashed client address, updated in a single statement.
+pub async fn enforce_public_share_rate_limit(db: &DatabaseConnection, ip: IpAddr) -> Result<(), ApiError> {
+    let client_hash = hash_token(&ip.to_string());
+    let sql = format!(
+        "INSERT INTO flow_public_share_hits AS hit (client_hash, window_started, hit_count) \
+         VALUES ($1, now(), 1) \
+         ON CONFLICT (client_hash) DO UPDATE \
+         SET window_started = CASE \
+               WHEN hit.window_started <= now() - interval '{READ_WINDOW_SECS} seconds' THEN now() \
+               ELSE hit.window_started \
+             END, \
+             hit_count = CASE \
+               WHEN hit.window_started <= now() - interval '{READ_WINDOW_SECS} seconds' THEN 1 \
+               ELSE hit.hit_count + 1 \
+             END \
+         RETURNING hit_count, window_started"
+    );
+    let row = HitRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        &sql,
+        vec![client_hash.into()],
+    ))
+    .one(db)
+    .await?
+    .ok_or_else(ApiError::internal)?;
+    if row.hit_count == 1
+        && let Err(error) = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM flow_public_share_hits WHERE window_started < now() - interval '1 day'",
+                vec![],
+            ))
+            .await
+    {
+        tracing::warn!(error = %error, "flow public share rate prune failed");
     }
-    let now = Instant::now();
-    let entry = windows.entry(ip).or_insert(HitWindow { started: now, count: 0 });
-    if now.saturating_duration_since(entry.started) >= READ_WINDOW {
-        entry.started = now;
-        entry.count = 0;
+    let observed = u32::try_from(row.hit_count).unwrap_or(u32::MAX);
+    let limit = u32::try_from(READS_PER_WINDOW).unwrap_or(u32::MAX);
+    if observed <= limit {
+        return Ok(());
     }
-    entry.count = entry.count.saturating_add(1);
-    let count = entry.count;
-    let retry = READ_WINDOW.saturating_sub(now.saturating_duration_since(entry.started));
-    let retry_after_ms = u64::try_from(retry.as_millis()).unwrap_or(u64::MAX);
-    drop(windows);
-    if count > READS_PER_WINDOW {
-        return Err(ApiError::limit_exceeded(
-            "public share read rate limit exceeded",
-            "flow_public_share_reads",
-            Some(json!(READS_PER_WINDOW)),
-            Some(json!(count)),
-            Some(retry_after_ms),
-        ));
-    }
-    Ok(())
+    let elapsed = Utc::now().signed_duration_since(row.window_started);
+    let remain = ChronoDuration::seconds(READ_WINDOW_SECS) - elapsed;
+    let retry_after_ms = u64::try_from(remain.num_milliseconds().max(0)).unwrap_or(0);
+    Err(ApiError::limit_exceeded(
+        "public share read rate limit exceeded",
+        "flow_public_share_reads",
+        Some(serde_json::json!(limit)),
+        Some(serde_json::json!(observed)),
+        Some(retry_after_ms),
+    ))
 }
 
 pub async fn list_links(
@@ -199,9 +246,11 @@ pub async fn read_public(db: &DatabaseConnection, token: &str) -> Result<PublicS
     let token_hash = hash_token(token);
     let row = PublicRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT fo.id AS object_id, p.title AS title, p.plain_text AS plain_text, l.expires_at \
+        "SELECT fo.id AS object_id, p.title AS title, p.plain_text AS plain_text, \
+                fo.appearance AS appearance, cd.id AS document_id, l.expires_at \
          FROM flow_share_links l \
          JOIN flow_objects fo ON fo.id = l.object_id AND fo.workspace_id = l.workspace_id \
+         LEFT JOIN collab_documents cd ON cd.object_id = fo.id \
          LEFT JOIN flow_object_projections p ON p.object_id = fo.id \
          WHERE l.token_hash = $1 \
            AND l.revoked_at IS NULL \
@@ -217,40 +266,64 @@ pub async fn read_public(db: &DatabaseConnection, token: &str) -> Result<PublicS
     if !repository::fetch_flow_enabled(db, workspace_id).await? {
         return Err(missing());
     }
+    let appearance = appearance::parse_stored(&row.appearance);
+    // A page can be shared before anyone opens it in the editor. The projection is the text then.
+    let (blocks, composed) = if let Some(document_id) = row.document_id {
+        let engine = document::load_head_engine(db, document_id).await?;
+        let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;
+        let blocks = public_page::compose_public_document(&engine.root_state_json(), &semantic);
+        let composed = public_page::plain_text_of(&blocks);
+        (blocks, composed)
+    } else {
+        (Vec::new(), String::new())
+    };
+    let plain_text = if composed.is_empty() {
+        sanitize_share_text(row.plain_text.as_deref().unwrap_or(""))
+    } else {
+        composed
+    };
     Ok(PublicShareView {
         object_id: row.object_id,
         title: sanitize_share_text(row.title.as_deref().unwrap_or("")),
-        plain_text: sanitize_share_text(row.plain_text.as_deref().unwrap_or("")),
+        plain_text,
+        blocks,
+        appearance,
         expires_at: row.expires_at.map(|stamp| stamp.to_rfc3339()),
     })
 }
 
-/// Tag-strips projection text before it is returned on an anonymous link.
-#[must_use]
-pub fn sanitize_share_text(input: &str) -> String {
-    let decoded = decode_entities(input);
-    let mut out = String::with_capacity(decoded.len());
-    let mut in_tag = false;
-    for ch in decoded.chars() {
-        if in_tag {
-            if ch == '>' {
-                in_tag = false;
-            }
-            continue;
-        }
-        if ch == '<' {
-            in_tag = true;
-            continue;
-        }
-        if ch.is_control() && ch != '\n' && ch != '\t' {
-            continue;
-        }
-        out.push(ch);
-        if out.chars().count() >= PUBLIC_TEXT_CAP {
-            break;
-        }
+pub async fn read_public_asset(
+    db: &DatabaseConnection,
+    token: &str,
+    asset_id: Uuid,
+) -> Result<appearance::AppearanceAssetBytes, ApiError> {
+    if !valid_token(token) {
+        return Err(missing());
     }
-    out
+    let token_hash = hash_token(token);
+    let page = AssetPage::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT fo.id AS object_id, fo.workspace_id, fo.appearance \
+         FROM flow_share_links l \
+         JOIN flow_objects fo ON fo.id = l.object_id AND fo.workspace_id = l.workspace_id \
+         WHERE l.token_hash = $1 \
+           AND l.revoked_at IS NULL \
+           AND (l.expires_at IS NULL OR l.expires_at > now()) \
+           AND fo.object_type = 'page' \
+           AND fo.lifecycle_status = 'active'",
+        vec![token_hash.into()],
+    ))
+    .one(db)
+    .await?
+    .ok_or_else(missing)?;
+    if !repository::fetch_flow_enabled(db, page.workspace_id).await? {
+        return Err(missing());
+    }
+    let appearance = appearance::parse_stored(&page.appearance);
+    if !appearance.references_asset(asset_id) {
+        return Err(missing());
+    }
+    appearance::read_asset(db, page.workspace_id, page.object_id, asset_id).await
 }
 
 fn require_manage(level: PermissionLevel) -> Result<(), ApiError> {
@@ -361,25 +434,9 @@ fn view_of(row: LinkRow) -> ShareLinkView {
     }
 }
 
-fn decode_entities(input: &str) -> String {
-    input
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&")
-}
-
-fn limiter() -> &'static Mutex<HashMap<IpAddr, HitWindow>> {
-    static LIMITER: OnceLock<Mutex<HashMap<IpAddr, HitWindow>>> = OnceLock::new();
-    LIMITER.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
-
-    use super::{enforce_public_share_rate_limit, sanitize_share_text};
+    use super::{advance_rate_window, sanitize_share_text};
 
     #[test]
     fn public_text_strips_tags_after_decoding_entities() {
@@ -389,17 +446,27 @@ mod tests {
 
     #[test]
     fn public_share_reads_stop_at_sixty_per_minute_for_one_address() {
-        let ip = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 23));
-        let mut failures = 0_u32;
-        for _ in 0..60 {
-            if enforce_public_share_rate_limit(ip).is_err() {
-                failures = failures.saturating_add(1);
-            }
+        let mut count = None;
+        for step in 1..=60 {
+            let (next, allowed) = advance_rate_window(count, true, 60);
+            assert!(allowed, "read {step} is inside the window");
+            assert_eq!(next, step);
+            count = Some(next);
         }
-        assert_eq!(failures, 0, "the first sixty reads in a window are allowed");
-        assert!(
-            enforce_public_share_rate_limit(ip).is_err(),
-            "the sixty-first read is limited"
-        );
+        let (next, allowed) = advance_rate_window(count, true, 60);
+        assert!(!allowed, "the sixty-first read is limited");
+        assert_eq!(next, 61);
+        let (reset, allowed) = advance_rate_window(Some(61), false, 60);
+        assert!(allowed, "a new window starts at one");
+        assert_eq!(reset, 1);
+    }
+
+    #[test]
+    fn rate_limit_sql_uses_the_shared_window() {
+        let sql = include_str!("shares.rs");
+        assert!(sql.contains("flow_public_share_hits"));
+        assert!(sql.contains("READ_WINDOW_SECS"));
+        assert_eq!(super::READ_WINDOW_SECS, 60);
+        assert_eq!(super::READS_PER_WINDOW, 60);
     }
 }

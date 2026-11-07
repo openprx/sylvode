@@ -178,6 +178,16 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 		this.view.dispatch(this.view.state.tr.setMeta(this.presenceKey, { peers }));
 	}
 
+	/** The Loro container id of the block containing `pos`, for a comment anchored to that block. */
+	blockIdAtPos(pos: number): string | null {
+		if (!this.view) return null;
+		const state = this.view.state;
+		const clamped = Math.max(0, Math.min(pos, state.doc.content.size));
+		const $pos = state.doc.resolve(clamped);
+		if ($pos.depth < 1) return null;
+		return this.cursorFor(state, $pos.node(1), 0, 0)?.blockId ?? null;
+	}
+
 	/** The position of the block whose Loro container id is `blockId`, or `null`. */
 	private blockPosById(
 		state: import('prosemirror-state').EditorState,

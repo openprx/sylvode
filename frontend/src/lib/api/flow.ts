@@ -45,6 +45,7 @@ export interface FlowObjectView {
 	updated_at: string;
 	archived_at: string | null;
 	parent_id?: string | null;
+	appearance?: FlowAppearance;
 }
 
 export interface AcceptedChange {
@@ -63,12 +64,26 @@ export interface FlowObjectListResponse {
 	next_cursor?: string;
 }
 
+export type FlowPageIcon =
+	| { kind: 'emoji'; emoji: string }
+	| { kind: 'image'; asset_id: string };
+
+export type FlowPageCover =
+	| { kind: 'gallery'; gallery_id: string; position: number }
+	| { kind: 'upload'; asset_id: string; position: number };
+
+export interface FlowAppearance {
+	icon?: FlowPageIcon | null;
+	cover?: FlowPageCover | null;
+}
+
 export interface FlowNavigatorNode {
 	object_id: string;
 	parent_id: string;
 	position: string;
 	title: string;
 	type: FlowObjectType;
+	appearance?: FlowAppearance;
 }
 
 export interface FlowNavigatorResponse {
@@ -836,11 +851,47 @@ export interface CreatedFlowShareLink {
 	token: string;
 }
 
+export interface FlowPublicBlock {
+	kind: string;
+	text: string;
+	level?: number | null;
+	indent: number;
+}
+
 export interface FlowPublicShare {
 	object_id: string;
 	title: string;
 	plain_text: string;
+	blocks: FlowPublicBlock[];
+	appearance?: FlowAppearance;
 	expires_at?: string | null;
+}
+
+export interface FlowMentionCandidate {
+	user_id: string;
+	name: string;
+	kind: 'member' | 'guest' | string;
+}
+
+export interface FlowTrashItem {
+	id: string;
+	parent_id?: string | null;
+	object_type: string;
+	title: string;
+	archived_at: string;
+	appearance?: FlowAppearance;
+}
+
+export interface FlowTrashPage {
+	items: FlowTrashItem[];
+	next_cursor?: string;
+}
+
+export interface FlowRestoreResult {
+	object: FlowObjectView;
+	target_seq: number;
+	head_seq: number;
+	changed: boolean;
 }
 
 export interface FlowCommandInput {
@@ -1547,5 +1598,78 @@ export const flowApi = {
 
 	getPublicShare(token: string): Promise<ApiResult<FlowPublicShare>> {
 		return apiClient.get<FlowPublicShare>(`/api/v1/flow/public-shares/${encodeURIComponent(token)}`);
+	},
+
+	setAppearance(objectId: string, appearance: FlowAppearance): Promise<ApiResult<FlowAppearance>> {
+		return apiClient.put<FlowAppearance>(`/api/v1/flow/objects/${objectId}/appearance`, appearance);
+	},
+
+	uploadAppearance(
+		objectId: string,
+		dataBase64: string
+	): Promise<ApiResult<{ asset_id: string; content_type: string; byte_size: number }>> {
+		return apiClient.post(`/api/v1/flow/objects/${objectId}/appearance/assets`, {
+			data_base64: dataBase64
+		});
+	},
+
+	appearanceAsset(objectId: string, assetId: string) {
+		return apiClient.getBinary(
+			`/api/v1/flow/objects/${objectId}/appearance/assets/${assetId}`
+		);
+	},
+
+	restoreVersion(
+		objectId: string,
+		input: { seq: number; idempotency_key: string; message?: string }
+	): Promise<ApiResult<FlowRestoreResult>> {
+		return apiClient.post<FlowRestoreResult>(
+			`/api/v1/flow/objects/${objectId}/history/restore`,
+			input
+		);
+	},
+
+	listTrash(
+		workspaceId: string,
+		query: { cursor?: string; limit?: number } = {}
+	): Promise<ApiResult<FlowTrashPage>> {
+		const params = new URLSearchParams();
+		if (query.cursor) params.set('cursor', query.cursor);
+		if (query.limit) params.set('limit', String(query.limit));
+		const encoded = params.toString();
+		const suffix = encoded ? `?${encoded}` : '';
+		return apiClient.get<FlowTrashPage>(`/api/v1/workspaces/${workspaceId}/flow/trash${suffix}`);
+	},
+
+	purgeObject(objectId: string): Promise<ApiResult<{ deleted_id: string; deleted_count: number }>> {
+		return apiClient.post(`/api/v1/flow/objects/${objectId}/purge`, {});
+	},
+
+	listMentionCandidates(
+		objectId: string,
+		q = ''
+	): Promise<ApiResult<{ items: FlowMentionCandidate[] }>> {
+		const suffix = q ? `?q=${encodeURIComponent(q)}` : '';
+		return apiClient.get(`/api/v1/flow/objects/${objectId}/mention-candidates${suffix}`);
 	}
 };
+
+const appearanceBlobs = new Map<string, Promise<string | null>>();
+
+/** Authenticated image URL for an icon or cover. Cached for the page session. */
+export function appearanceBlobUrl(objectId: string, assetId: string): Promise<string | null> {
+	const key = `${objectId}:${assetId}`;
+	const cached = appearanceBlobs.get(key);
+	if (cached) return cached;
+	const pending = flowApi.appearanceAsset(objectId, assetId).then((result) => {
+		if (result.code !== 0 || !result.data) return null;
+		return URL.createObjectURL(result.data.blob);
+	});
+	appearanceBlobs.set(key, pending);
+	return pending;
+}
+
+export function publicAppearanceUrl(token: string, assetId: string): string {
+	const base = import.meta.env.VITE_API_BASE_URL ?? '';
+	return `${base}/api/v1/flow/public-shares/${encodeURIComponent(token)}/assets/${encodeURIComponent(assetId)}`;
+}

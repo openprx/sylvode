@@ -2158,10 +2158,64 @@ fn flow_surface_routes(auth_state: &AppState) -> Router<AppState> {
             )),
         )
         // Anonymous page link. The handler hashes the token, rejects revoked and expired links,
-        // returns only that page's sanitized projection, and rate-limits per client address.
+        // returns the page's rich blocks without child pages, and rate-limits per client address
+        // in Postgres so every API process shares the counter.
         .route(
             "/api/v1/flow/public-shares/{token}",
             get(routes::flow::get_public_flow_share),
+        )
+        .route(
+            "/api/v1/flow/public-shares/{token}/assets/{asset_id}",
+            get(routes::flow::get_public_flow_appearance_asset),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/appearance",
+            put(routes::flow::put_flow_appearance).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/appearance/assets",
+            post(routes::flow::post_flow_appearance_asset).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/appearance/assets/{asset_id}",
+            get(routes::flow::get_flow_appearance_asset).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/history/restore",
+            post(routes::flow::post_flow_restore_version).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/purge",
+            post(routes::flow::post_flow_purge).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/flow/objects/{object_id}/mention-candidates",
+            get(routes::flow::get_flow_mention_candidates).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/flow/trash",
+            get(routes::flow::get_flow_trash).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
         )
 }
 
@@ -2591,6 +2645,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0075_flow_share_links.sql",
         include_str!("../../../migrations/0075_flow_share_links.sql"),
     ),
+    (
+        "0076_flow_page_appearance.sql",
+        include_str!("../../../migrations/0076_flow_page_appearance.sql"),
+    ),
+    (
+        "0077_flow_public_share_rate.sql",
+        include_str!("../../../migrations/0077_flow_public_share_rate.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -2975,6 +3037,14 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     ),
     ("0074_flow_comments.sql", SchemaProbe::Relation("flow_comments")),
     ("0075_flow_share_links.sql", SchemaProbe::Relation("flow_share_links")),
+    (
+        "0076_flow_page_appearance.sql",
+        SchemaProbe::Relation("flow_appearance_assets"),
+    ),
+    (
+        "0077_flow_public_share_rate.sql",
+        SchemaProbe::Relation("flow_public_share_hits"),
+    ),
 ];
 
 /// One recorded migration outcome.
@@ -3503,7 +3573,9 @@ mod tests {
                 "0072_flow_conversion_job_started_at.sql",
                 "0073_user_session_version.sql",
                 "0074_flow_comments.sql",
-                "0075_flow_share_links.sql"
+                "0075_flow_share_links.sql",
+                "0076_flow_page_appearance.sql",
+                "0077_flow_public_share_rate.sql"
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -3721,6 +3793,9 @@ mod tests {
             // Anonymous Flow page link. The handler hashes the token, checks expiry and
             // revocation, returns only that page's sanitized text, and rate-limits by address.
             "/api/v1/flow/public-shares/{token}",
+            // Icon or cover for that same link. The handler returns bytes only while the page's
+            // current appearance still references the asset.
+            "/api/v1/flow/public-shares/{token}/assets/{asset_id}",
         ];
 
         let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
