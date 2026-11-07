@@ -72,6 +72,11 @@ impl AuthorizedFlowObject {
         self.context.role.as_str()
     }
 
+    #[must_use]
+    pub const fn authz_epoch(&self) -> i64 {
+        self.context.authz_epoch
+    }
+
     /// Wire spelling stored in `flow_object_grants.principal_kind`.
     #[must_use]
     pub const fn principal_kind_wire(&self) -> &'static str {

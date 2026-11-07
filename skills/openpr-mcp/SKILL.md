@@ -23,7 +23,7 @@ Run these in order so a client can use the Sylvode MCP server immediately.
 
 ### 1. Capability line (verify connectivity)
 ```
-tools/list                          → enumerate all 148 tools
+tools/list                          → enumerate all 154 tools
 tools/list { project_id }           → enumerate tools enabled by the project capability registry
 members.list                       → verify auth + workspace access
 bot_operation_logs.list            → inspect metadata-only bot operation history
@@ -203,7 +203,7 @@ comments.create {
 
 ## Scripts
 
-- Regression test: `scripts/mcp-regression.py` — tests the core tool surface across 3 transports and checks the 148-tool registry includes universal forms, plugins, and Sylvode Flow. It reads `SYLVODE_MCP_REGRESSION_TOKEN`, `SYLVODE_MCP_REGRESSION_WORKSPACE_ID` and `SYLVODE_MCP_REGRESSION_PROJECT_ID` (and optionally `SYLVODE_MCP_REGRESSION_MCP_URL` / `SYLVODE_MCP_REGRESSION_API_URL`) from the environment and exits when one is missing.
+- Regression test: `scripts/mcp-regression.py` — tests the core tool surface across 3 transports and checks the 154-tool registry includes universal forms, plugins, and Sylvode Flow. It reads `SYLVODE_MCP_REGRESSION_TOKEN`, `SYLVODE_MCP_REGRESSION_WORKSPACE_ID` and `SYLVODE_MCP_REGRESSION_PROJECT_ID` (and optionally `SYLVODE_MCP_REGRESSION_MCP_URL` / `SYLVODE_MCP_REGRESSION_API_URL`) from the environment and exits when one is missing.
 - Validation: `scripts/validate-mcp.sh` — quick smoke test for connectivity
 
 ## References

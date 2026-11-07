@@ -708,6 +708,7 @@ async fn create_object_inner(
         created_at: chrono::Utc::now().to_rfc3339(),
         updated_at: chrono::Utc::now().to_rfc3339(),
         archived_at: None,
+        appearance: super::appearance::PageAppearance::default(),
     };
 
     Ok(AcceptedChange {
@@ -1586,7 +1587,7 @@ fn parse_payload<T: serde::de::DeserializeOwned>(command_type: &str, payload: &V
 /// internals — each arm produces a caller-safe message naming only the logical node id or limit
 /// kind, and `limit_exceeded` carries its `limit_kind`/`limit`/`observed` as structured `details`
 /// instead of interpolated into the message text.
-pub(super) fn map_collab_error(err: &CollabError) -> ApiError {
+pub(crate) fn map_collab_error(err: &CollabError) -> ApiError {
     match err {
         CollabError::UnknownNode { id } => ApiError::invalid_update(format!("unknown node id '{id}'")),
         CollabError::DuplicateNode { id } => ApiError::invalid_update(format!("duplicate node id '{id}'")),
@@ -1782,7 +1783,7 @@ fn apply_content_command(
 /// one `Conflict("server_draining")`). `rejected.details`' structured fields (`limit_kind`/
 /// `limit`/`observed`/`retry_after_ms`/`minimum_snapshot_seq`) are now carried through as typed
 /// `details` rather than interpolated into the message.
-pub(super) fn map_write_rejection(rejected: &write::Rejected) -> ApiError {
+pub(crate) fn map_write_rejection(rejected: &write::Rejected) -> ApiError {
     use super::collab::frame::RejectedCode;
 
     // Hoisted once so every arm below reads the same `Option<&Value>` instead of each
