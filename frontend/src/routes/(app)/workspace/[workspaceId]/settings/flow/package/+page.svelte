@@ -2,6 +2,7 @@
 	// Workspace package export and import (`ui-surface-v1.md` "Package round-trip UI (v0.8)").
 	// Workspace admins only; the server's admin checks on every package endpoint are the real
 	// guard, this only hides the controls from everyone else.
+	import { flowApi } from '#lib/api/flow.js';
 	import { onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
@@ -15,6 +16,7 @@
 
 	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 
+	let scopeId = $state<string | null>(null);
 	let view = $state<'loading' | 'ready' | 'forbidden'>('loading');
 	let projects = $state.raw<WorkspaceProjectOption[]>([]);
 
@@ -23,6 +25,12 @@
 			view = 'forbidden';
 			return;
 		}
+		const scope = await flowApi.getWorkspaceScope(workspaceId);
+		if (scope.code !== 0 || !scope.data) {
+			view = 'forbidden';
+			return;
+		}
+		scopeId = scope.data.scope.id;
 		projects = await listWorkspaceProjects(workspaceId);
 		view = 'ready';
 	});
@@ -58,9 +66,9 @@
 				description={$t('flow.error.forbidden')}
 			/>
 		</div>
-	{:else}
-		<PackageExportCard {workspaceId} workspaceLabel={workspaceId} {projects} />
+	{:else if scopeId}
+		<PackageExportCard {scopeId} workspaceLabel={workspaceId} {projects} />
 
-		<PackageImportWizard {workspaceId} {projects} />
+		<PackageImportWizard reportWorkspaceId={workspaceId} {scopeId} {projects} />
 	{/if}
 </div>

@@ -107,6 +107,7 @@ function page(): FlowObjectView {
 	return {
 		id: PAGE,
 		workspace_id: 'ws',
+		scope_id: 'scope-1',
 		project_id: null,
 		object_type: 'page',
 		title: 'Page',
@@ -169,7 +170,7 @@ await suite.checkAsync(
 		assertEqual(calls.length, 1, 'one request in total');
 		const [call] = calls;
 		assertEqual(call.method, 'POST', 'method');
-		assertEqual(call.path, `/api/v1/flow/objects/${PAGE}/commands`, 'Page command endpoint');
+		assertEqual(call.path, `/api/v2/flow/objects/${PAGE}/commands`, 'Page command endpoint');
 		const body = call.body as {
 			command: { type: string; payload: Record<string, unknown> };
 			idempotency_key: string;
@@ -393,7 +394,7 @@ await suite.checkAsync(
 		assertEqual(calls.length, 2, 'two requests');
 		for (const call of calls) {
 			assertEqual(call.method, 'POST', 'POST');
-			assertEqual(call.path, `/api/v1/flow/objects/${PAGE}/references`, 'references endpoint');
+			assertEqual(call.path, `/api/v2/flow/objects/${PAGE}/references`, 'references endpoint');
 		}
 		const [first, second] = calls.map((c) => c.body as Record<string, unknown>);
 		assertDeepEqual(
@@ -466,7 +467,7 @@ await suite.checkAsync(
 		assertEqual(calls[0].method, 'DELETE', 'DELETE');
 		assertEqual(
 			calls[0].path,
-			`/api/v1/flow/objects/${PAGE}/references/ref-1`,
+			`/api/v2/flow/objects/${PAGE}/references/ref-1`,
 			'the reference endpoint'
 		);
 		assert(calls[0].idempotencyKey, 'Idempotency-Key header');
@@ -748,7 +749,7 @@ suite.check('the menu offers Collection, Reference, Embed and Convert, each with
 	}
 	assertEqual(
 		convertWizardPath('ws', PAGE),
-		`/workspace/ws/flow/${PAGE}/convert`,
+		`/flow/${PAGE}/convert`,
 		'convert goes to the N4 wizard'
 	);
 });

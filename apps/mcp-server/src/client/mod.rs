@@ -58,8 +58,8 @@ fn check_response_envelope(payload: &Value, path: &str) -> Result<(), String> {
 const fn refusal_reason(code: i64) -> Option<&'static str> {
     match code {
         401 => Some(
-            "the Sylvode API rejected the credential this call was made with; check that the bot token presented is \
-             correct, enabled and not expired",
+            "the Sylvode API rejected the credential this call was made with; check that the caller bearer credential is \
+             correct and not expired",
         ),
         _ => None,
     }
@@ -162,6 +162,7 @@ pub struct OpenPrClient {
     pub workspace_id: String,
     transport_label: &'static str,
     operation_tool_name: Option<String>,
+    flow_only: bool,
 }
 
 fn join_query(params: &[String]) -> String {
@@ -257,7 +258,24 @@ impl OpenPrClient {
             workspace_id: config.workspace_id,
             transport_label: config.transport_label,
             operation_tool_name: None,
+            flow_only: false,
         })
+    }
+
+    #[must_use]
+    pub const fn flow_only(mut self) -> Self {
+        self.flow_only = true;
+        self
+    }
+    #[must_use]
+    pub const fn is_flow_only(&self) -> bool {
+        self.flow_only
+    }
+    /// Routing syntax only; the API, never this prefix, authenticates or authorizes it.
+    pub(crate) fn legacy_bot_token_shape(&self) -> bool {
+        self.credential
+            .as_ref()
+            .is_some_and(|value| value.expose().starts_with("opr_"))
     }
 
     /// The same client, speaking to the API as `credential` instead of as itself.
@@ -276,6 +294,7 @@ impl OpenPrClient {
             workspace_id: self.workspace_id.clone(),
             transport_label: self.transport_label,
             operation_tool_name: self.operation_tool_name.clone(),
+            flow_only: self.flow_only,
         }
     }
 
@@ -289,6 +308,7 @@ impl OpenPrClient {
             workspace_id: self.workspace_id.clone(),
             transport_label,
             operation_tool_name: self.operation_tool_name.clone(),
+            flow_only: self.flow_only,
         }
     }
 

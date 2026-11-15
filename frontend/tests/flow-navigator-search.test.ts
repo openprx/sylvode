@@ -145,8 +145,8 @@ await suite.checkAsync(
 		assertDeepEqual(
 			seen.map((s) => s.url),
 			[
-				`/api/v1/workspaces/${WS}/flow/search?q=needle+words&all_visible=true&freshness=require_current&limit=20`,
-				`/api/v1/workspaces/${WS}/flow/search?q=x&project_id=p-1&cursor=c1`
+				`/api/v2/flow/scopes/${WS}/search?q=needle+words&all_visible=true&freshness=require_current&limit=20`,
+				`/api/v2/flow/scopes/${WS}/search?q=x&project_id=p-1&cursor=c1`
 			],
 			'query string'
 		);
@@ -463,41 +463,44 @@ suite.check('lag badge state from the projection-lag read', () => {
 	);
 });
 
-await suite.checkAsync('lag badge reads limit=1 now and every 30s, and stops', async () => {
-	const queries: unknown[] = [];
-	const intervals: Array<{ callback: () => void; ms: number; cleared: boolean }> = [];
-	const states: string[] = [];
-	let lag = 2;
-	const badge = new FlowLagBadge(WS, (state) => states.push(state.kind), {
-		reads: {
-			getProjectionLag: async (workspaceId, query) => {
-				assertEqual(workspaceId, WS, 'workspace');
-				queries.push(query);
-				return ok({ max_lag: lag, p95_lag: lag, items: [] });
+await suite.checkAsync(
+	'lag badge uses the actual unpaged scope contract now and every 30s, and stops',
+	async () => {
+		const queries: unknown[] = [];
+		const intervals: Array<{ callback: () => void; ms: number; cleared: boolean }> = [];
+		const states: string[] = [];
+		let lag = 2;
+		const badge = new FlowLagBadge(WS, (state) => states.push(state.kind), {
+			reads: {
+				getProjectionLag: async (workspaceId) => {
+					assertEqual(workspaceId, WS, 'workspace');
+					queries.push(undefined);
+					return ok({ max_lag: lag, p95_lag: lag, items: [] });
+				}
+			},
+			setInterval: (callback, ms) => {
+				const handle = { callback, ms, cleared: false };
+				intervals.push(handle);
+				return handle;
+			},
+			clearInterval: (handle) => {
+				(handle as { cleared: boolean }).cleared = true;
 			}
-		},
-		setInterval: (callback, ms) => {
-			const handle = { callback, ms, cleared: false };
-			intervals.push(handle);
-			return handle;
-		},
-		clearInterval: (handle) => {
-			(handle as { cleared: boolean }).cleared = true;
-		}
-	});
-	badge.start();
-	await tick();
-	assertEqual(LAG_REFRESH_MS, 30_000, '30s');
-	assertEqual(intervals.length, 1, 'one interval');
-	assertEqual(intervals[0].ms, 30_000, 'every 30s');
-	assertDeepEqual(queries, [{ limit: 1 }], 'aggregate read');
-	lag = 0;
-	intervals[0].callback();
-	await tick();
-	assertDeepEqual(states, ['lagging', 'synced'], 'refreshed');
-	badge.stop();
-	assert(intervals[0].cleared, 'stop clears the interval');
-});
+		});
+		badge.start();
+		await tick();
+		assertEqual(LAG_REFRESH_MS, 30_000, '30s');
+		assertEqual(intervals.length, 1, 'one interval');
+		assertEqual(intervals[0].ms, 30_000, 'every 30s');
+		assertDeepEqual(queries, [undefined], 'actual scoped aggregate read has no ignored query hint');
+		lag = 0;
+		intervals[0].callback();
+		await tick();
+		assertDeepEqual(states, ['lagging', 'synced'], 'refreshed');
+		badge.stop();
+		assert(intervals[0].cleared, 'stop clears the interval');
+	}
+);
 
 // ---- Collection create ----------------------------------------------------------------------
 
@@ -653,8 +656,9 @@ await suite.checkAsync(
 			details: {}
 		};
 		globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-			assert(String(input).endsWith(`/api/v1/workspaces/${WS}/flow/objects`), 'endpoint');
+			assert(String(input).endsWith('/api/v2/flow/objects'), 'canonical create endpoint');
 			bodies.push(JSON.parse(String(init?.body)));
+ assertEqual(bodies.at(-1)?.scope_id,WS,'real selected scope in create body');
 			return new Response(JSON.stringify(reply), {
 				headers: { 'Content-Type': 'application/json' }
 			});

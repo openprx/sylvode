@@ -1,0 +1,42 @@
+{
+  "status": "source_candidate_with_explicit_limits_not_full_plan_acceptance",
+  "baseline_head": "d523d7c724b4122f7b83cb30e6614a36f51a1c65",
+  "schema_latest": "0091_flow_operation_scope_ownership.sql",
+  "client_contract_methods": 63,
+  "matrix": "external engineering report: sv-flow-decoupling-2026-11-14/BACKEND-SOURCE-CLOSEOUT.json",
+  "evidence": {
+    "strict_api_worker": "Final2 strict alltargets locked/offline -Dwarnings exit0,0compilerdiagnostics",
+    "scope_pg": "35/0/0 final2,12.67s,threads2,disposable realPG with explicitly mocked reader leases",
+    "private_promotion": "1/0 .68s,only isolated verification verdict mocked; actual codec/PG/gates/rollback/receipts; no production bypass",
+    "semantic_model": "1/0 .01s versioned v1/v2/v3 selection; no checksum relaxation",
+    "core_library": "48/0/0 .01s",
+    "core_worker_clippy": "strict lib+isolatedworker exit0 .89s",
+    "linux_cfg": "immutable final2 compile-only api+worker+core bins/lib exit0 5.97s; no link/runtime/tests",
+    "package_codec": "11/0 .02s, strict legacy archive hash and checksum/layout corpus",
+    "router_construction": "1/0 .01s, current canonical+legacy route construction with disconnected DB"
+  },
+  "explicit_limits": [
+    "Raw Collection/Record package generation/promotion and raw typed restore remain unsupported; rendered typed exports/CRUD supported.",
+    "Page/Nav packages with known inner Navigator/object/embed/child-page/reference identities require an unimplemented typed remapping adapter and fail closed; no generic UUID rewriting or silent omission.",
+    "History import replays to accepted head; no full imported target application history timeline promise. Raw Loro snapshots retain internal CRDT history.",
+    "Editor bridge supports characterized flat schema and bounded CID/alias operations; unsupported editor hierarchy/attrs/marks/nontrivial block moves refuse, never shadow-write.",
+    "Personal WS serverHello advertises no optional presence capability; Presence frames are not fanned out. Full personal v1 optional-presence/cancel/drain/egress/close-code parity is not claimed.",
+    "MCP client lane is a bounded explicit profile; not all51 Flow tools are personal-enabled."
+  ],
+  "held_acceptance": [
+    "Independent Terra stopped; no substitute independent run.",
+    "Latest-source Linux actual API/WS/frontend/MCP, changed-history restore, package promotion, mount recipient/revocation races, hard snapshot/fault/compaction/retention/performance and deployment-cohort readiness remain unverified or held.",
+    "Fresh full legacy-data upgrade/replay through0091 and mixed-version operational cutover/rollback/load acceptance not established by fresh native35 tests.",
+    "No deployment, push, release or protected user-runtime changes."
+  ],
+  "flags": {
+    "personal_provisioning": "defaultfalse; actualreader barrier",
+    "personal_writes": "defaultfalse; reads existing content preserved",
+    "external_mounts": "defaultfalse, mounted delivery acceptance held",
+    "personal_package_imports": "defaultfalse, actualisolated replay required before promotion",
+    "personal_scope_package_exports": "defaultfalse, object-type/inner-reference preflight",
+    "personal_forms_conversion": "defaultfalse, explicit actual destination",
+    "cross_workspace_forms_conversion": "defaultfalse, source/destination policies independently fenced"
+  },
+  "provenance": "Developer/mock/native/LINUX-cfg/historical-runtime remain separate. Previous checkpoint copied to runtime/coverage-before-final-candidate.json; no earlier failure erased."
+}

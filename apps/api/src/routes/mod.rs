@@ -41,3 +41,6 @@ pub mod veto;
 pub mod webhook;
 pub mod workflow;
 pub mod workspace;
+
+#[cfg(test)]
+mod tab_edit_conflict_tests;

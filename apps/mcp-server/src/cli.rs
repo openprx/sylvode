@@ -232,6 +232,15 @@ impl From<Transport> for McpTransport {
 // file's own fallbacks are `mcp.transport = stdio` and `DEFAULT_MCP_BIND_ADDR`.
 #[derive(Debug, Args)]
 pub struct ServeArgs {
+    /// Expose only bounded Flow tools; no default workspace or configured identity on HTTP/SSE.
+    #[arg(long)]
+    pub flow_only: bool,
+    /// Explicit global-user credential for Flow-only stdio (prefer --access-token-file).
+    #[arg(long, value_parser=crate::flow_runtime::parse_access_token, hide_default_value=true)]
+    pub access_token: Option<Secret>,
+    /// Private file containing the global-user bearer for Flow-only stdio.
+    #[arg(long)]
+    pub access_token_file: Option<PathBuf>,
     /// Transport protocol (overrides `mcp.transport`) [default: stdio]
     #[arg(long, value_enum)]
     pub transport: Option<Transport>,

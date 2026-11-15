@@ -54,6 +54,21 @@
 				</dd>
 			</div>
 			<div class="md:col-span-2">
+				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.package.sourceProvenance')}</dt>
+				<dd class="mt-1 break-all font-mono text-xs text-slate-900 dark:text-slate-100">
+					{#if report.source_scope_id}<span class="block"
+							>{$t('flow.package.sourceScope')}: {report.source_scope_id}</span
+						>{/if}
+					{#if report.source_workspace_id}<span class="block"
+							>{$t('flow.package.sourceWorkspace')}: {report.source_workspace_id}</span
+						>{/if}
+					<span class="block">{$t('flow.package.targetScope')}: {report.target_scope_id}</span>
+					{#if report.target_workspace_id}<span class="block"
+							>{$t('flow.package.targetWorkspace')}: {report.target_workspace_id}</span
+						>{/if}
+				</dd>
+			</div>
+			<div class="md:col-span-2">
 				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.import.packageSha256')}</dt>
 				<dd class="mt-1 break-all font-mono text-xs text-slate-900 dark:text-slate-100">
 					{report.package_sha256}

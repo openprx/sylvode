@@ -17,10 +17,10 @@
 	interface Props {
 		controller: CollectionViewController;
 		snapshot: CollectionViewState;
-		workspaceId: string;
+		scopeId: string;
 	}
 
-	let { controller, snapshot, workspaceId }: Props = $props();
+	let { controller, snapshot, scopeId }: Props = $props();
 
 	const groupField = $derived(boardGroupFieldIn(snapshot));
 	const columns = $derived(groupField ? boardColumns(snapshot.rows, groupField) : []);
@@ -160,7 +160,7 @@
 								{#each cardFields as field (field.fieldId)}
 									<span class="flex min-w-0 gap-1">
 										<span class="sr-only">{field.label}:</span>
-										<CollectionCellValue {field} values={row.values} {workspaceId} />
+										<CollectionCellValue {field} values={row.values} {scopeId} />
 									</span>
 								{:else}
 									<span>{$t('flow.collection.record.untitled')}</span>

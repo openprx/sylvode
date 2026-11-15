@@ -91,6 +91,7 @@ pub struct UpdateProjectResourceRequest {
     pub locator: Option<JsonValue>,
     pub permission_policy: Option<JsonValue>,
     pub sync_status: Option<String>,
+    pub expected_updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -632,24 +633,31 @@ pub async fn update_project_resource(
         return Err(ApiError::BadRequest("no fields to update".to_string()));
     }
 
-    updates.push(format!("updated_at = ${param_idx}"));
-    values.push(chrono::Utc::now().into());
-    param_idx += 1;
+    updates.push("updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')".into());
     values.push(project_id.into());
     param_idx += 1;
     values.push(resource_id.into());
 
-    let sql = format!(
+    let mut sql = format!(
         "UPDATE project_resources SET {} WHERE project_id = ${} AND id = ${}",
         updates.join(", "),
         param_idx - 1,
         param_idx
     );
+    if let Some(expected) = req.expected_updated_at {
+        param_idx += 1;
+        std::fmt::Write::write_fmt(&mut sql, format_args!(" AND updated_at=${param_idx}"))
+            .map_err(|_| ApiError::Internal)?;
+        values.push(expected.into());
+    }
     let tx = state.db.begin().await?;
     let result = tx
         .execute(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
         .await?;
     if result.rows_affected() == 0 {
+        if req.expected_updated_at.is_some() {
+            return Err(ApiError::VersionConflict("resource_version_conflict"));
+        }
         return Err(ApiError::NotFound("project resource not found".to_string()));
     }
     let row = find_project_resource_with_conn(&tx, resource_id).await?;

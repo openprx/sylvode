@@ -326,7 +326,13 @@ class ApiClient {
 				credentials: 'include'
 			});
 			const contentType = res.headers.get('Content-Type') ?? '';
-			if (contentType.startsWith('application/json')) {
+			// JSON is also a legitimate export format. Only the declared Flow artifact contract
+			// distinguishes those raw bytes from the platform's HTTP-200 error envelopes.
+			const declaredFlowArtifact =
+				/^\/api\/v[12]\/flow\/exports\/[^/?#]+\/artifact$/.test(endpoint) &&
+				/^attachment(?:;|$)/i.test(res.headers.get('Content-Disposition') ?? '') &&
+				/^[a-f0-9]{64}$/i.test(res.headers.get('x-flow-package-sha256') ?? '');
+			if (contentType.startsWith('application/json') && !declaredFlowArtifact) {
 				const result = normalizeEnvelope<{ blob: Blob; headers: Headers }>(
 					(await res.json()) as Partial<ApiResult<{ blob: Blob; headers: Headers }>>
 				);

@@ -357,7 +357,7 @@ pub(crate) struct ObservedHead {
 }
 
 impl ObservedHead {
-    const fn tail_stats(&self) -> snapshot::TailStats {
+    pub(crate) const fn tail_stats(&self) -> snapshot::TailStats {
         snapshot::TailStats {
             snapshot_seq: self.snapshot_seq,
             head_seq: self.head_seq,
@@ -1616,7 +1616,7 @@ pub(crate) fn finish_committed(
 /// REST path route through (via [`accept_update`]) — see this module's top doc comment for why
 /// this runs here, still inside the caller's coordinator permit, rather than after
 /// [`accept_update`] returns as earlier builds of this module did.
-fn broadcast_committed_update(
+pub(crate) fn broadcast_committed_update(
     registry: &SessionRegistry,
     exclude_session_id: Option<Uuid>,
     request: &UpdateRequest,

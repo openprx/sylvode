@@ -28,6 +28,21 @@ pub async fn run(cli: Cli) -> i32 {
     let request_id = Uuid::new_v4().to_string();
     let command_name = command_name(&cli.command);
 
+    if let Commands::Flow(command) = &cli.command {
+        let outcome = run_flow_only(&cli, command).await;
+        return render::render(cli.format, &command_name, outcome, &request_id);
+    }
+    if cli.access_token.is_some() || cli.access_token_file.is_some() {
+        return render::render(
+            cli.format,
+            &command_name,
+            Err(CliError::usage(
+                "Global-user credentials are only accepted by `sylvode flow call`; legacy bot configuration is unchanged",
+            )),
+            &request_id,
+        );
+    }
+
     let global = config::GlobalArgs {
         config: cli.config.clone(),
         api_url: cli.api_url.clone(),
@@ -44,6 +59,10 @@ pub async fn run(cli: Cli) -> i32 {
 
 fn command_name(command: &Commands) -> String {
     match command {
+        Commands::Flow(command) => match &command.action {
+            command::FlowOnlyAction::Tools => "flow.tools".into(),
+            command::FlowOnlyAction::Call { name, .. } => format!("flow.call.{name}"),
+        },
         Commands::Features(cmd) => match &cmd.action {
             FeaturesAction::Flow(flow) => match &flow.action {
                 FlowFeatureAction::Get { .. } => "features.flow.get".to_string(),
@@ -106,6 +125,9 @@ fn command_name(command: &Commands) -> String {
 
 async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, CliError> {
     match command {
+        Commands::Flow(_) => Err(CliError::usage(
+            "Flow-only calls use their explicit credential entry point",
+        )),
         Commands::Features(cmd) => match &cmd.action {
             FeaturesAction::Flow(flow) => match &flow.action {
                 FlowFeatureAction::Get { workspace } => {
@@ -1079,6 +1101,63 @@ fn query_suffix(params: &[String]) -> String {
     } else {
         format!("?{}", params.join("&"))
     }
+}
+
+async fn run_flow_only(cli: &Cli, command: &command::FlowOnlyCmd) -> Result<Value, CliError> {
+    let command::FlowOnlyAction::Call { name, args_json } = &command.action else {
+        return serde_json::to_value(crate::tools::flow_scope::definitions())
+            .map_err(|_| CliError::usage("Cannot serialize Flow schemas"));
+    };
+    if cli.bot_token.is_some() {
+        return Err(CliError::usage(
+            "flow call does not reinterpret --bot-token; use the current global user's --access-token or private token file",
+        ));
+    }
+    let args: Value =
+        serde_json::from_str(args_json).map_err(|_| CliError::usage("--args-json must be a JSON object"))?;
+    if !args.is_object() {
+        return Err(CliError::usage("--args-json must be a JSON object"));
+    }
+    let runtime = crate::flow_runtime::FlowRuntime::load(
+        cli.config.as_deref(),
+        cli.api_url.as_deref(),
+        cli.access_token.as_ref(),
+        cli.access_token_file.as_deref(),
+        Some(platform::config::McpTransport::Stdio),
+        None,
+    )
+    .map_err(CliError::usage)?;
+    let client = runtime
+        .client()
+        .map_err(CliError::usage)?
+        .with_transport_label(crate::client::TRANSPORT_LABEL_CLI);
+    let result = crate::server::McpServer::new(client).call_tool(name, args).await;
+    let text = result
+        .content
+        .iter()
+        .find_map(|content| match content {
+            crate::protocol::ToolContent::Text { text } => Some(text),
+            _ => None,
+        })
+        .ok_or_else(|| CliError::network("Flow tool returned no semantic result"))?;
+    let value: Value = serde_json::from_str(text).unwrap_or(Value::Null);
+    if result.is_error == Some(true) {
+        if let Some(error) = value.get("error") {
+            return Err(CliError::from_structured(api_client::StructuredApiError {
+                code: None,
+                message: error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Flow request failed")
+                    .to_owned(),
+                error_code: error.get("code").and_then(Value::as_str).map(str::to_owned),
+                details: error.get("details").cloned(),
+                local_input: false,
+            }));
+        }
+        return Err(CliError::usage(text.strip_prefix("Error: ").unwrap_or(text)));
+    }
+    Ok(value.get("data").cloned().unwrap_or(value))
 }
 
 #[cfg(test)]

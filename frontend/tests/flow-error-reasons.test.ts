@@ -345,7 +345,7 @@ function code(path: string): string {
 }
 
 suite.check('production call sites consume the named reasons', () => {
-	const route = code('src/routes/(app)/workspace/[workspaceId]/flow/[objectId]/+page.svelte');
+	const route = code('src/lib/components/flow/FlowObjectPage.svelte');
 	assert(
 		/invalidUpdateDisposition\(runtimeError\)\?\.action === 'integrity_repair'/.test(route),
 		'object page: integrity repair branch'

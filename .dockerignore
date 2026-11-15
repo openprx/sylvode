@@ -7,6 +7,7 @@
 !rust-toolchain.toml
 !apps/**
 !crates/**
+!benches/**
 !migrations/**
 !spikes/collab-shared/**
 !spikes/collab-loro/**

@@ -18,9 +18,9 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CHROME_CANDIDATES = [
+	'/Applications/Chromium.app/Contents/MacOS/Chromium',
 	'/usr/bin/chromium',
-	'/usr/bin/chromium-browser',
-	'/usr/bin/google-chrome'
+	'/usr/bin/chromium-browser'
 ];
 
 /** Scratch root for the browser profile. Deliberately NOT under /tmp, which is often a small tmpfs
@@ -31,6 +31,9 @@ export const SCRATCH =
 	fileURLToPath(new URL('../../../.flow-gate/cache/frontend', import.meta.url));
 
 export function findChrome(): string | null {
+	const configured = process.env.CHROMIUM_BIN;
+	if (configured)
+		return !/google[ -]?chrome/i.test(configured) && existsSync(configured) ? configured : null;
 	return CHROME_CANDIDATES.find((candidate) => existsSync(candidate)) ?? null;
 }
 

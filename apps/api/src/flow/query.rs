@@ -307,6 +307,15 @@ pub async fn get_object(
     }
 
     let mut view = object_view_from_row(row);
+    if matches!(view.object_type.as_str(), "page" | "navigator")
+        && let Some(engine) =
+            projection::refresh_editor_state(&state.db, view.document_id, &view.frontier, &mut view.semantic_content)
+                .await?
+    {
+        view.title = engine.title().map_err(|e| super::command::map_collab_error(&e))?;
+    }
+
+    super::collections::redact_secret_record_views(&state.db, std::slice::from_mut(&mut view)).await?;
     // `rest-api-v1.md` v0.6 / `ADR-0018` NR-7: the same redaction the records query applies, for
     // both renders (the Markdown rendering is derived from the same semantic content).
     let redacted = view.object_type == "record"
@@ -736,6 +745,7 @@ pub async fn get_object_diff(
         updates: replay_updates,
         from_frontier: from_frontier.as_bytes().to_vec(),
         to_frontier: to_frontier.as_bytes().to_vec(),
+        package_updates_base64: None,
     };
     let base_snapshot = rows.snapshot;
     let isolated = tokio::task::spawn_blocking(move || collab_core::isolation::isolated_diff(&base_snapshot, &request))
@@ -757,6 +767,7 @@ pub async fn get_object_diff(
     let redacted = !super::collections::secret_record_ids(&state.db, &[object_id])
         .await?
         .is_empty();
+    let redacted = redacted || super::collections::has_collection_secrecy(&state.db, object_id).await?;
     let rendered =
         (render == Render::Markdown && !redacted).then(|| projection::render_markdown(&to_title, &to_snapshot));
     let semantic_diff = if redacted {
@@ -790,7 +801,7 @@ pub async fn get_object_diff(
 /// matrix) is `server_rejected` carrying only the safe classification
 /// [`SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM`]: it is deterministic and permanent for this
 /// process, so it must not read as retryable.
-fn isolated_diff_error(
+pub(crate) fn isolated_diff_error(
     error: IsolatedApplyError,
     object_id: Uuid,
     history_invalid: impl FnOnce() -> ApiError,

@@ -865,6 +865,8 @@ export class ConvertWizard {
 			result = await this.deps.commands.convertPreview({
 				source_object_id: source.id,
 				source_frontier: source.frontier,
+				destination_workspace_id: this.workspaceId,
+				destination_project_id: this.projectId ?? undefined,
 				target_type: 'form_record',
 				mapping: { ...built.mapping },
 				idempotency_key: intent.key

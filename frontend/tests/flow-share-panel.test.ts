@@ -208,10 +208,10 @@ await suite.checkAsync(
 		assertDeepEqual(
 			seen,
 			[
-				{ method: 'GET', path: `/api/v1/flow/objects/${OBJECT}/grants`, body: null },
+				{ method: 'GET', path: `/api/v2/flow/objects/${OBJECT}/grants`, body: null },
 				{
 					method: 'PUT',
-					path: `/api/v1/flow/objects/${OBJECT}/grants`,
+					path: `/api/v2/flow/objects/${OBJECT}/grants`,
 					body: {
 						grants: [{ principal_kind: 'user', principal_id: ALICE, level: 'view' }],
 						confirm_self_lockout: false,
@@ -221,7 +221,7 @@ await suite.checkAsync(
 				},
 				{
 					method: 'PUT',
-					path: `/api/v1/flow/objects/${OBJECT}/inheritance`,
+					path: `/api/v2/flow/objects/${OBJECT}/inheritance`,
 					body: {
 						inherit_from_parent: false,
 						confirm_self_lockout: false,

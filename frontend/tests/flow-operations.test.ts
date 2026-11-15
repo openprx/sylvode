@@ -203,7 +203,7 @@ await suite.checkAsync(
 			await repo.getAdminHealth(WS);
 			await repo.getAdminLag(WS, { cursor: 'lc2', limit: 50 });
 			await repo.getAdminIntegrity(WS, { scope: 'documents', cursor: 'ic2', limit: 50 });
-			await repo.getProjectionLag(WS, { cursor: 'c1', limit: 20 });
+			await repo.getWorkspaceProjectionLag(WS, { cursor: 'c1', limit: 20 });
 			await commands.verifyDocument(DOC, { dry_run: true, deep: true, idempotency_key: 'k1' });
 			await commands.compactDocument(DOC, {
 				dry_run: false,
@@ -899,7 +899,7 @@ await suite.checkAsync('page reads map 403/404 to the forbidden-safe state', asy
 			getAdminHealth: () => Promise.resolve(err(404)),
 			getAdminLag: () => Promise.resolve(err(404)),
 			getAdminIntegrity: () => Promise.resolve(err(403)),
-			getProjectionLag: () => Promise.resolve(err(500))
+			getWorkspaceProjectionLag: () => Promise.resolve(err(500))
 		}
 	});
 	assertEqual((await service.adminLagPager().load()).status, 'forbidden', 'lag 404');
@@ -932,7 +932,7 @@ await suite.checkAsync(
 			}
 		];
 		const pager = new ProjectionLagPager(WS, {
-			getProjectionLag: (_ws: string, query: { cursor?: string }) => {
+			getWorkspaceProjectionLag: (_ws: string, query: { cursor?: string }) => {
 				seen.push(query.cursor);
 				return Promise.resolve(ok(pages.shift() as FlowProjectionLag));
 			}
@@ -960,7 +960,7 @@ await suite.checkAsync(
 		};
 		const seen: Array<string | undefined> = [];
 		const pager = new ProjectionLagPager(WS, {
-			getProjectionLag: (_ws: string, query: { cursor?: string }) => {
+			getWorkspaceProjectionLag: (_ws: string, query: { cursor?: string }) => {
 				seen.push(query.cursor);
 				return Promise.resolve(ok(byCursor[query.cursor ?? '']));
 			}
@@ -1076,7 +1076,7 @@ function panelHarness(options: {
 				calls.push('integrity');
 				return Promise.resolve(options.integrity ?? ok(ADMIN_INTEGRITY));
 			},
-			getProjectionLag: () => {
+			getWorkspaceProjectionLag: () => {
 				calls.push('projection-lag');
 				return Promise.resolve(
 					options.projection ?? ok({ max_lag: 0, p95_lag: 0, items: [] } as FlowProjectionLag)
@@ -1578,7 +1578,7 @@ await suite.checkAsync(
 					integrityQueries.push(query);
 					return Promise.resolve(ok(integrityPage(query.cursor)));
 				},
-				getProjectionLag: () =>
+				getWorkspaceProjectionLag: () =>
 					Promise.resolve(ok({ max_lag: 0, p95_lag: 0, items: [] } as FlowProjectionLag))
 			},
 			commands: fakeCommands({}).commands,

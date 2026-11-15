@@ -20,7 +20,7 @@
 
 use collab_core::{CollabEngine, CollabError, LoroCollabEngine, NodeId, NodeKind, Operation};
 use platform::app::AppState;
-use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
+use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -382,7 +382,9 @@ async fn replay_created_object(
 pub const CHILD_PROJECT_MUST_MATCH_PARENT: &str = "child_project_must_match_parent";
 
 pub async fn create_object(state: &AppState, input: CreateObjectInput) -> Result<AcceptedChange, ApiError> {
-    create_object_inner(state, input, None).await
+    let mut change = create_object_inner(state, input, None).await?;
+    super::collections::redact_secret_record_change(&state.db, &mut change).await?;
+    Ok(change)
 }
 
 pub async fn create_object_with_collection_schema(
@@ -390,7 +392,9 @@ pub async fn create_object_with_collection_schema(
     input: CreateObjectInput,
     initial_collection_schema: Value,
 ) -> Result<AcceptedChange, ApiError> {
-    create_object_inner(state, input, Some(initial_collection_schema)).await
+    let mut change = create_object_inner(state, input, Some(initial_collection_schema)).await?;
+    super::collections::redact_secret_record_change(&state.db, &mut change).await?;
+    Ok(change)
 }
 
 async fn create_object_inner(
@@ -544,6 +548,9 @@ async fn create_object_inner(
         tracing::error!(error = %err, "collab-core: set_title failed on a brand-new document");
         ApiError::internal()
     })?;
+    if input.object_type == "page" {
+        engine.initialize_page_editor().map_err(|e| map_collab_error(&e))?;
+    }
     if let Some(schema) = initial_collection_schema.as_ref() {
         super::collections::apply_initial_collection_schema(&mut engine, schema)?;
     }
@@ -564,6 +571,66 @@ async fn create_object_inner(
     let frontier_bytes = frontier.as_bytes().to_vec();
 
     let tx = state.db.begin().await?;
+
+    // Creation is a write to its parent's canonical hierarchy. The authority lock precedes
+    // both membership and effective ACL reads, and stays held through object/document/event
+    // commit; a revoke cannot commit between this check and creation.
+    let _creation_epoch = authz::lock_epoch_for_share(&tx, input.workspace_id).await?;
+    super::policy::require_flow_enabled_on(&tx, input.workspace_id).await?;
+    let role = if input.actor_is_bot {
+        #[derive(FromQueryResult)]
+        struct BotPermissions {
+            permissions: Value,
+        }
+        let bot = BotPermissions::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT permissions FROM workspace_bots WHERE id=$1 AND workspace_id=$2 AND is_active=true AND (expires_at IS NULL OR expires_at>now())",
+            vec![input.actor_id.into(), input.workspace_id.into()],
+        )).one(&tx).await?.ok_or_else(|| ApiError::policy_rejected("creation principal is no longer authorized"))?;
+        let permissions: Vec<String> = serde_json::from_value(bot.permissions).map_err(|_| ApiError::internal())?;
+        crate::middleware::bot_auth::bot_role_from_permissions(&permissions)
+    } else {
+        #[derive(FromQueryResult)]
+        struct MemberRole {
+            role: String,
+        }
+        MemberRole::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+            vec![input.workspace_id.into(), input.actor_id.into()],
+        ))
+        .one(&tx)
+        .await?
+        .map_or_else(|| "__flow_guest".to_string(), |row| row.role)
+    };
+    if let Some(parent_id) = effective_parent_id {
+        let level = authz::effective_permission(
+            &tx,
+            input.workspace_id,
+            parent_id,
+            if input.actor_is_bot { "bot" } else { "user" },
+            input.actor_id,
+            &role,
+        )
+        .await?;
+        if level < authz::PermissionLevel::Edit {
+            return Err(ApiError::policy_rejected(
+                "parent edit permission is required to create a child",
+            ));
+        }
+        // Revalidate parent lifecycle and depth after acquiring the authorization fence.
+        let parent = repository::fetch_parent_object(&tx, parent_id)
+            .await?
+            .ok_or_else(|| ApiError::not_found(PARENT_NOT_FOUND))?;
+        if parent.lifecycle_status != "active" {
+            return Err(ApiError::policy_rejected("parent is archived"));
+        }
+        authz::ensure_parent_can_adopt_child(&tx, input.workspace_id, parent_id).await?;
+    } else if !matches!(role.as_str(), "owner" | "admin") {
+        return Err(ApiError::policy_rejected(
+            "canonical root creation requires managed authority",
+        ));
+    }
 
     let governance_metadata = if input.object_type == "navigator" && effective_parent_id.is_none() {
         json!({ "system_role": repository::NAVIGATOR_ROOT_SYSTEM_ROLE })
@@ -1135,6 +1202,16 @@ fn lifecycle_required_permission_level(facts: LifecycleTierFacts<'_>) -> authz::
     }
 }
 
+pub(crate) fn scope_lifecycle_permission(object_type: &str, parent_id: Option<Uuid>) -> authz::PermissionLevel {
+    lifecycle_required_permission_level(LifecycleTierFacts {
+        object_type,
+        parent_id,
+        affected_count: 1,
+        has_shared_descendants: false,
+        durability: LifecycleDurability::Reversible,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandKind {
     Content(ContentCommandType),
@@ -1351,6 +1428,11 @@ async fn record_command_rejected(
 /// real object also records an audit-only `flow.command.rejected` event (see
 /// [`record_command_rejected`]).
 pub async fn execute_command(state: &AppState, input: ExecuteCommandInput) -> Result<AcceptedChange, ApiError> {
+    let mut change = execute_command_inner(state, input).await?;
+    super::collections::redact_secret_record_change(&state.db, &mut change).await?;
+    Ok(change)
+}
+async fn execute_command_inner(state: &AppState, input: ExecuteCommandInput) -> Result<AcceptedChange, ApiError> {
     validate_execute_command_input(&input)?;
 
     let kind = CommandKind::parse(&input.command_type).ok_or_else(|| {
@@ -1649,6 +1731,27 @@ pub(crate) fn map_collab_error(err: &CollabError) -> ApiError {
 /// `execute_content_command`) that is simply dropped on any `Err` return — a batch-count or
 /// per-operation rejection therefore never reaches `engine.export_from`/`write::accept_update`, so
 /// it can never advance a document head or produce a business event/`event_dispatch` row.
+/// Shared validated command vocabulary for scope-native and legacy transports.
+pub(crate) fn apply_scope_content_command(
+    engine: &mut LoroCollabEngine,
+    command: &str,
+    payload: &Value,
+) -> Result<(), ApiError> {
+    let kind = match command {
+        "set_title" => ContentCommandType::SetTitle,
+        "insert_block" => ContentCommandType::InsertBlock,
+        "update_block" => ContentCommandType::UpdateBlock,
+        "delete_block" => ContentCommandType::DeleteBlock,
+        "move_block" => ContentCommandType::MoveBlock,
+        "semantic_patch" => {
+            check_semantic_patch_json_bytes(payload)?;
+            ContentCommandType::SemanticPatch
+        }
+        _ => return Err(ApiError::invalid_update("unsupported content command")),
+    };
+    apply_content_command(engine, kind, payload)
+}
+
 fn apply_content_command(
     engine: &mut LoroCollabEngine,
     kind: ContentCommandType,
@@ -1698,9 +1801,10 @@ fn apply_content_command(
             let mut ops = Vec::new();
             if let Some(text) = payload.text {
                 let existing = engine.semantic_snapshot().map_err(|err| map_collab_error(&err))?;
+                let canonical_id = engine.resolve_content_node_id(&id);
                 let node = existing
                     .nodes
-                    .get(&id)
+                    .get(&canonical_id)
                     .ok_or_else(|| ApiError::invalid_update(format!("unknown node id '{id}'")))?;
                 let old_len = u32::try_from(node.text.len())
                     .map_err(|_| ApiError::invalid_update("block text too large to update".to_string()))?;
@@ -1766,7 +1870,9 @@ fn apply_content_command(
         let snapshot = engine.semantic_snapshot().map_err(|err| map_collab_error(&err))?;
         collab_core::limits::check_operation(&snapshot, &op, &limits)
             .map_err(|violation| map_collab_error(&CollabError::from(violation)))?;
-        engine.apply_operation(&op).map_err(|err| map_collab_error(&err))?;
+        engine
+            .apply_content_operation(&op)
+            .map_err(|err| map_collab_error(&err))?;
     }
     Ok(())
 }
@@ -1941,6 +2047,12 @@ async fn execute_content_command(
             .map_err(|err| map_collab_error(&err))?;
     }
     let base_frontier = engine.frontier();
+    let is_page = repository::fetch_object_view(&state.db, input.object_id)
+        .await?
+        .is_some_and(|row| row.object_type == "page");
+    if is_page && kind != ContentCommandType::SetTitle {
+        engine.initialize_page_editor().map_err(|e| map_collab_error(&e))?;
+    }
     if let Err(err) = apply_content_command(&mut engine, kind, &input.payload) {
         // The concurrent same-key double submit `rest-api-v1.md` registers as a known residual
         // window: this request's `find_idempotent_event` guard (in `execute_command_authorized`)
@@ -5141,5 +5253,84 @@ mod idempotency_race_database_tests {
         );
 
         scratch.drop_self().await;
+    }
+}
+
+#[cfg(test)]
+mod editor_command_interop_tests {
+    use super::*;
+    #[test]
+    fn prose_commands_create_and_update_explicit_alias_without_replacing_browser_blocks() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot"
+        ))
+        .unwrap();
+        let mut engine = LoroCollabEngine::load(&bytes).unwrap();
+        let original = engine.semantic_snapshot().unwrap();
+        apply_scope_content_command(
+            &mut engine,
+            "insert_block",
+            &json!({"block_id":"agent-block","index":1,"text":"Created by agent"}),
+        )
+        .unwrap();
+        apply_scope_content_command(&mut engine,"update_block",&json!({"block_id":"agent-block","text":"Updated 😀 by agent","properties":{"block_type":"heading","level":"2"}})).unwrap();
+        // Trusted tree/reference blocks and editor aliases share one business identity space.
+        assert!(
+            engine
+                .apply_operation(&Operation::CreateNode {
+                    id: "agent-block".into(),
+                    parent: None,
+                    index: 0,
+                    kind: NodeKind::Block
+                })
+                .is_err()
+        );
+        engine
+            .apply_operation(&Operation::CreateNode {
+                id: "tree-reference".into(),
+                parent: None,
+                index: 0,
+                kind: NodeKind::Block,
+            })
+            .unwrap();
+        engine
+            .apply_operation(&Operation::SetProperty {
+                id: "tree-reference".into(),
+                key: "embed_object_id".into(),
+                value: Uuid::new_v4().to_string(),
+            })
+            .unwrap();
+        assert!(
+            apply_scope_content_command(
+                &mut engine,
+                "insert_block",
+                &json!({"block_id":"tree-reference","text":"must not shadow reference"})
+            )
+            .is_err()
+        );
+        let after = engine.semantic_snapshot().unwrap();
+        let (canonical, node) = after
+            .nodes
+            .iter()
+            .find(|(_, node)| node.properties.get("logical_id").is_some_and(|id| id == "agent-block"))
+            .unwrap();
+        assert!(canonical.starts_with("cid:"));
+        assert_eq!(node.text, "Updated 😀 by agent");
+        assert_eq!(node.properties.get("block_type").unwrap(), "heading");
+        for (id, node) in original.nodes {
+            assert_eq!(after.nodes.get(&id).unwrap().text, node.text);
+        }
+        assert!(
+            apply_scope_content_command(
+                &mut engine,
+                "insert_block",
+                &json!({"block_id":"agent-block","text":"duplicate"})
+            )
+            .is_err()
+        );
+        if let Ok(output) = std::env::var("FLOW_EDITOR_BRIDGE_STRUCTURE_RUST_OUTPUT") {
+            std::fs::write(output, engine.export_snapshot().unwrap()).unwrap();
+        }
     }
 }

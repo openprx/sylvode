@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 #[derive(Debug)]
-struct StructuredApiError {
+pub(crate) struct StructuredApiError {
     message: String,
     error_code: Option<String>,
     details: Option<Value>,
@@ -39,7 +39,7 @@ impl StructuredApiError {
     }
 }
 
-const UNAUTHENTICATED_MESSAGE: &str = "the Sylvode API rejected the credential this call was made with; check that the bot token presented is correct, enabled and not expired";
+const UNAUTHENTICATED_MESSAGE: &str = "the Sylvode API rejected the credential this call was made with; check that the caller bearer credential is correct and not expired";
 
 /// Flow tools need the typed `{error_code,details}` fields the legacy String-returning client
 /// helpers intentionally collapse. Kept local to this allowed file so unrelated MCP tools retain
@@ -98,14 +98,35 @@ async fn send_structured(
     }
 }
 
-async fn get_structured(client: &OpenPrClient, path: &str) -> Result<Value, StructuredApiError> {
+pub(crate) async fn get_structured(client: &OpenPrClient, path: &str) -> Result<Value, StructuredApiError> {
     let url = format!("{}{path}", client.base_url);
     send_structured(client, client.client.get(&url), path).await
 }
 
-async fn post_structured(client: &OpenPrClient, path: &str, body: &Value) -> Result<Value, StructuredApiError> {
+pub(crate) async fn post_structured(
+    client: &OpenPrClient,
+    path: &str,
+    body: &Value,
+) -> Result<Value, StructuredApiError> {
     let url = format!("{}{path}", client.base_url);
     send_structured(client, client.client.post(&url).json(body), path).await
+}
+
+pub(crate) async fn request_structured(
+    client: &OpenPrClient,
+    path: &str,
+    method: reqwest::Method,
+    body: Option<&Value>,
+    idempotency_key: Option<&str>,
+) -> Result<Value, StructuredApiError> {
+    let mut request = client.client.request(method, format!("{}{path}", client.base_url));
+    if let Some(body) = body {
+        request = request.json(body);
+    }
+    if let Some(key) = idempotency_key {
+        request = request.header("Idempotency-Key", key);
+    }
+    send_structured(client, request, path).await
 }
 
 async fn post_package_bytes_structured(
@@ -166,7 +187,7 @@ fn recoverable_business_error(code: &str) -> bool {
     )
 }
 
-fn respond(result: Result<Value, StructuredApiError>) -> CallToolResult {
+pub(crate) fn respond(result: Result<Value, StructuredApiError>) -> CallToolResult {
     match result {
         Ok(value) => CallToolResult::success(serde_json::to_string_pretty(&value).unwrap_or_default()),
         Err(error) => {
@@ -183,7 +204,7 @@ fn respond(result: Result<Value, StructuredApiError>) -> CallToolResult {
     }
 }
 
-fn respond_data(result: Result<Value, StructuredApiError>) -> CallToolResult {
+pub(crate) fn respond_data(result: Result<Value, StructuredApiError>) -> CallToolResult {
     respond(result.and_then(|envelope| {
         envelope
             .get("data")

@@ -15,12 +15,12 @@
 	import { resolveRenderer } from '#lib/flow/renderer-registry.js';
 
 	interface Props {
-		workspaceId: string;
+		scopeId: string;
 		collectionId: string;
 		blockId: string;
 	}
 
-	let { workspaceId, collectionId, blockId }: Props = $props();
+	let { scopeId, collectionId, blockId }: Props = $props();
 
 	const repository = getContext<FlowObjectRepository>(FLOW_REPOSITORY_CONTEXT);
 	// svelte-ignore state_referenced_locally
@@ -51,9 +51,7 @@
 		const recordId = $viewState.panel?.recordId;
 		if (!recordId) return;
 		controller.closePanel();
-		void goto(
-			resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', { workspaceId, objectId: recordId })
-		);
+		void goto(resolve('/(app)/flow/[objectId]', { objectId: recordId }));
 	});
 
 	onDestroy(() => controller.dispose());
@@ -76,10 +74,7 @@
 		</h3>
 		<a
 			class="inline-flex min-h-11 items-center rounded px-3 text-sm font-medium text-blue-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-300"
-			href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
-				workspaceId,
-				objectId: collectionId
-			})}
+			href={resolve('/(app)/flow/[objectId]', { objectId: collectionId })}
 			data-testid="flow-embedded-collection-open"
 		>
 			{$t('flow.canvas.embed.open')}
@@ -94,7 +89,7 @@
 	{:else if tableComponent && $viewState.collection}
 		{@const Table = tableComponent}
 		<div class="max-h-[28rem] overflow-auto">
-			<Table {controller} snapshot={$viewState} {workspaceId} />
+			<Table {controller} snapshot={$viewState} {scopeId} />
 		</div>
 	{:else}
 		<p class="p-4 text-sm text-slate-500" aria-live="polite">{$t('common.loading')}</p>

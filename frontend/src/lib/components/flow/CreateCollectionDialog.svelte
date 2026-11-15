@@ -18,12 +18,12 @@
 
 	interface Props {
 		open: boolean;
-		workspaceId: string;
+		scopeId: string;
 		oncreated: (change: AcceptedChange) => void;
 		onclose: () => void;
 	}
 
-	let { open, workspaceId, oncreated, onclose }: Props = $props();
+	let { open, scopeId, oncreated, onclose }: Props = $props();
 
 	const VALIDATION_KEYS = {
 		title_required: 'flow.nav.createCollection.titleRequired',
@@ -43,7 +43,7 @@
 
 	$effect(() => {
 		if (open && !wasOpen) {
-			session = new CreateCollectionSession(workspaceId, new FlowCommandService());
+			session = new CreateCollectionSession(scopeId, new FlowCommandService());
 			title = '';
 			fieldLabels = [get(t)('flow.nav.createCollection.defaultFieldLabel')];
 			viewType = 'table';

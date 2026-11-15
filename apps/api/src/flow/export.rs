@@ -1,5 +1,6 @@
 //! Authorization-fenced Flow package export application service.
 
+use crate::flow::json_value::FlowJson;
 use std::collections::{BTreeMap, HashSet};
 use std::io::Cursor;
 
@@ -59,6 +60,7 @@ pub struct ExportPrincipal {
 
 #[derive(Debug, Clone)]
 pub struct CreateExportRequest {
+    pub object_types: Option<Vec<String>>,
     pub scope: ExportScope,
     pub format: String,
     pub at_seq: Option<i64>,
@@ -84,6 +86,7 @@ pub struct ExportJobReceipt {
     /// no artifact, so its `checksum` is empty and its `size` is 0.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -107,8 +110,6 @@ struct ExportObjectRow {
     projection_seq: i64,
     projection_frontier: Vec<u8>,
     title: String,
-    projection_state: Value,
-    plain_text: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     archived_at: Option<DateTime<Utc>>,
@@ -170,6 +171,7 @@ struct ExistingJob {
     size_bytes: Option<i64>,
     expires_at: Option<DateTime<Utc>>,
     error: Option<String>,
+    warnings: Value,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -186,6 +188,10 @@ struct ExportAccessRow {
     expires_at: Option<DateTime<Utc>>,
     error: Option<String>,
     package_bytes: Option<Vec<u8>>,
+    source_authz_revision: Option<i64>,
+    artifact_resource_ids: Vec<Uuid>,
+    artifact_schema_revisions: Value,
+    warnings: Value,
 }
 
 pub async fn create_package_export(
@@ -201,14 +207,25 @@ pub async fn create_package_export(
     }
 
     let mut authorized_workspace = None;
-    match render_export(db, request, &mut authorized_workspace).await {
-        Ok((workspace_id, bytes, checksum)) => {
-            persist_export(db, request, workspace_id, &request_hash, bytes, checksum).await
+    let mut recorded_warnings = Vec::new();
+    match render_export(db, request, &mut authorized_workspace, &mut recorded_warnings).await {
+        Ok((workspace_id, bytes, checksum, snapshot)) => {
+            persist_export(
+                db,
+                request,
+                workspace_id,
+                &request_hash,
+                bytes,
+                checksum,
+                snapshot,
+                recorded_warnings,
+            )
+            .await
         }
         Err(error) => match (authorized_workspace, export_failure_code(&error)) {
             (Some(workspace_id), Some(code)) => {
                 tracing::warn!(error = %error, code, "flow export job failed");
-                persist_failed_export(db, request, workspace_id, &request_hash, code).await
+                persist_failed_export(db, request, workspace_id, &request_hash, code, recorded_warnings).await
             }
             _ => Err(error),
         },
@@ -233,11 +250,12 @@ async fn render_export(
     db: &DatabaseConnection,
     request: &CreateExportRequest,
     authorized_workspace: &mut Option<Uuid>,
-) -> Result<(Uuid, Vec<u8>, String), ApiError> {
+    recorded_warnings: &mut Vec<String>,
+) -> Result<(Uuid, Vec<u8>, String, LegacyArtifactSnapshot), ApiError> {
     let tx = db
         .begin_with_config(Some(IsolationLevel::RepeatableRead), Some(AccessMode::ReadWrite))
         .await?;
-    let objects = load_scope(&tx, request.scope).await?;
+    let objects = load_scope(&tx, request.scope, request.object_types.as_deref()).await?;
     let first = objects
         .first()
         .ok_or_else(|| ApiError::not_found("Flow export scope is empty".to_string()))?;
@@ -252,11 +270,24 @@ async fn render_export(
     }
 
     lock_authorization_epoch(&tx, workspace_id).await?;
-    enforce_scope_principal(request, workspace_id)?;
+    let mut effective = request.clone();
+    effective.principal.role = legacy_principal_role(&tx, workspace_id, &request.principal).await?;
+    effective.principal.workspace_export_capability &= effective.principal.role == "admin";
+    enforce_scope_principal(&effective, workspace_id)?;
     let object_ids: Vec<Uuid> = objects.iter().map(|row| row.id).collect();
     authorize_all(&tx, workspace_id, &object_ids, &request.principal, "export").await?;
     if request.include_history {
         authorize_all(&tx, workspace_id, &object_ids, &request.principal, "history export").await?;
+    }
+    if request.format == "package" {
+        let unsupported = objects
+            .iter()
+            .filter(|o| matches!(o.object_type.as_str(), "collection" | "record"))
+            .map(|o| o.object_type.clone())
+            .collect::<Vec<_>>();
+        if !unsupported.is_empty() {
+            return Err(super::package::typed_raw_refusal(&unsupported));
+        }
     }
     *authorized_workspace = Some(workspace_id);
 
@@ -269,8 +300,13 @@ async fn render_export(
         .filter(|row| row.object_type == "record")
         .map(|row| row.id)
         .collect();
-    let secret = super::collections::secret_record_ids(&tx, &record_ids).await?;
-    let mut warnings = Vec::new();
+    let mut secret = super::collections::secret_record_ids(&tx, &record_ids).await?;
+    for object in &objects {
+        if object.object_type == "collection" && super::collections::has_collection_secrecy(&tx, object.id).await? {
+            secret.insert(object.id);
+        }
+    }
+    let mut warnings = selection_warnings(&tx, request).await?;
     let objects = if secret.is_empty() {
         objects
     } else if request.format == "package" {
@@ -288,6 +324,7 @@ async fn render_export(
     } else {
         objects
     };
+    recorded_warnings.clone_from(&warnings);
     let object_ids: Vec<Uuid> = objects.iter().map(|row| row.id).collect();
 
     let selected: HashSet<Uuid> = object_ids.iter().copied().collect();
@@ -305,6 +342,11 @@ async fn render_export(
         }
         let updates = load_updates(&tx, object).await?;
         let (full_snapshot, semantic_hash) = reconstruct_and_verify(object, &updates)?;
+        if request.format == "package" {
+            let engine = LoroCollabEngine::load(&full_snapshot)
+                .map_err(|_| ApiError::checksum_mismatch("package snapshot cannot be inspected"))?;
+            super::package::require_supported_snapshot(&engine)?;
+        }
         let exported_snapshot = if request.include_history {
             object.snapshot.clone()
         } else {
@@ -335,32 +377,30 @@ async fn render_export(
             // content and no plain text (decided here, not left to what the projection happens to
             // hold).
             let redacted = secret.contains(&object.id);
+            let canonical = collab_core::LoroCollabEngine::load(&exported_snapshot)
+                .map_err(|_| ApiError::checksum_mismatch("accepted export snapshot cannot be decoded"))?
+                .semantic_snapshot()
+                .map_err(|_| ApiError::checksum_mismatch("accepted export semantics cannot be decoded"))?;
             let semantic_content = if redacted {
                 super::collections::redacted_semantic_content()
             } else {
-                object.projection_state.clone()
+                super::projection::state_json(&canonical).map_err(|_| ApiError::internal())?
             };
-            let plain_text = if redacted { "" } else { object.plain_text.as_str() };
-            rendered_object = Some(match request.format.as_str() {
-                "json" => canonical_json(&json!({
-                    "object_id": object.id,
-                    "object_type": object.object_type,
-                    "title": object.title,
-                    "semantic_content": semantic_content,
-                    "seq": object.head_seq,
-                    "frontier": base64::engine::general_purpose::STANDARD.encode(&object.head_frontier),
-                }))?,
-                "markdown" => format!("# {}\n\n{}\n", object.title, plain_text).into_bytes(),
-                "csv" => format!(
-                    "object_id,object_type,title,plain_text\n{},{},{},{}\n",
-                    csv_cell(&object.id.to_string()),
-                    csv_cell(&object.object_type),
-                    csv_cell(&object.title),
-                    csv_cell(plain_text)
-                )
-                .into_bytes(),
-                "package" => Vec::new(),
-                _ => return Err(ApiError::unsupported_format("unsupported export format")),
+            let canonical_plain = super::projection::plain_text(&canonical);
+            let plain_text = if redacted { "" } else { canonical_plain.as_str() };
+            rendered_object = Some(if request.format == "package" {
+                Vec::new()
+            } else {
+                render_object_text_export(
+                    object.id,
+                    &object.object_type,
+                    &object.title,
+                    &semantic_content,
+                    object.head_seq,
+                    &base64::engine::general_purpose::STANDARD.encode(&object.head_frontier),
+                    plain_text,
+                    &request.format,
+                )?
             });
         }
         members.push(PackageMemberInput {
@@ -389,8 +429,9 @@ async fn render_export(
     if request.format != "package" {
         let bytes = rendered_object.ok_or_else(ApiError::internal)?;
         let checksum = sha256_hex(&bytes);
+        let snapshot = capture_legacy_artifact_snapshot(&tx, workspace_id, &object_ids).await?;
         tx.commit().await?;
-        return Ok((workspace_id, bytes, checksum));
+        return Ok((workspace_id, bytes, checksum, snapshot));
     }
 
     let relations = load_relations(&tx, workspace_id, &object_ids).await?;
@@ -484,7 +525,8 @@ async fn render_export(
             source_head: request.source_head.clone(),
         },
         source: PackageSource {
-            workspace_id: workspace_id.to_string(),
+            workspace_id: Some(workspace_id.to_string()),
+            scope_id: None,
             scope: match request.scope {
                 ExportScope::Object(_) => "object",
                 ExportScope::Workspace { .. } => "workspace",
@@ -497,9 +539,11 @@ async fn render_export(
             name: ENGINE_NAME.to_string(),
             crate_version: ENGINE_CRATE_VERSION.to_string(),
             wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
+            semantic_model: None,
         },
         history: PackageHistory {
             included: request.include_history,
+            snapshot_history: None,
             through_seq_by_document,
         },
         counts: PackageCounts {
@@ -520,9 +564,45 @@ async fn render_export(
     };
     let package = build_package(manifest, members)?;
     verify_package(Cursor::new(&package.bytes), Some(&package.package_sha256))?;
+    let mut resources = object_ids.clone();
+    resources.extend(external_ids);
+    resources.sort_unstable();
+    resources.dedup();
+    let snapshot = capture_legacy_artifact_snapshot(&tx, workspace_id, &resources).await?;
     tx.commit().await?;
 
-    Ok((workspace_id, package.bytes, package.package_sha256))
+    Ok((workspace_id, package.bytes, package.package_sha256, snapshot))
+}
+
+/// One accepted object serializer shared by legacy and scope-native textual exports.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_object_text_export(
+    id: Uuid,
+    kind: &str,
+    title: &str,
+    semantic: &Value,
+    seq: i64,
+    frontier: &str,
+    plain_text: &str,
+    format: &str,
+) -> Result<Vec<u8>, ApiError> {
+    match format {
+        "json" => canonical_json(
+            &json!({"object_id":id,"object_type":kind,"title":title,"semantic_content":semantic,"seq":seq,"frontier":frontier}),
+        ),
+        "markdown" => Ok(format!("# {title}\n\n{plain_text}\n").into_bytes()),
+        "csv" => Ok(format!(
+            "object_id,object_type,title,plain_text\n{},{},{},{}\n",
+            csv_cell(&id.to_string()),
+            csv_cell(kind),
+            csv_cell(title),
+            csv_cell(plain_text)
+        )
+        .into_bytes()),
+        _ => Err(ApiError::unsupported_format(
+            "object text export supports json,markdown,csv",
+        )),
+    }
 }
 
 pub async fn get_package_export(
@@ -556,7 +636,7 @@ pub async fn download_package_export(
 async fn export_access_row(db: &DatabaseConnection, job_id: Uuid) -> Result<ExportAccessRow, ApiError> {
     ExportAccessRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT j.id,j.workspace_id,j.object_id,j.format,j.actor_kind,j.actor_id,j.status,j.package_sha256,j.size_bytes,j.expires_at,j.error,a.package_bytes \
+        "SELECT j.id,j.workspace_id,j.object_id,j.format,j.actor_kind,j.actor_id,j.status,j.package_sha256,j.size_bytes,j.expires_at,j.error,j.warnings,a.package_bytes,j.source_authz_revision,j.artifact_resource_ids,j.artifact_schema_revisions \
          FROM flow_export_jobs j LEFT JOIN flow_package_artifacts a ON a.id=j.artifact_id WHERE j.id=$1",
         vec![job_id.into()],
     ))
@@ -571,20 +651,22 @@ async fn authorize_export_access(
     principal: &ExportPrincipal,
 ) -> Result<(), ApiError> {
     let initiating = row.actor_kind == principal.kind && row.actor_id == principal.id;
-    if !(initiating || principal.kind == "user" && matches!(principal.role.as_str(), "owner" | "admin")) {
-        return Err(ApiError::not_found("export job not found".to_string()));
-    }
     let tx = db.begin().await?;
     lock_authorization_epoch(&tx, row.workspace_id).await?;
+    let current_role = legacy_principal_role(&tx, row.workspace_id, principal).await?;
+    if !(initiating || principal.kind == "user" && matches!(current_role.as_str(), "owner" | "admin")) {
+        return Err(ApiError::not_found("export job not found"));
+    }
     if let Some(object_id) = row.object_id {
         authorize_all(&tx, row.workspace_id, &[object_id], principal, "export download").await?;
-    } else if !((principal.kind == "user" && matches!(principal.role.as_str(), "owner" | "admin"))
-        || (principal.kind == "bot" && principal.workspace_export_capability))
+    } else if !((principal.kind == "user" && matches!(current_role.as_str(), "owner" | "admin"))
+        || (principal.kind == "bot" && principal.workspace_export_capability && current_role == "admin"))
     {
         return Err(ApiError::forbidden(
             "workspace export permission is required".to_string(),
         ));
     }
+    validate_legacy_artifact_policy(&tx, row, principal).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -600,6 +682,7 @@ fn access_receipt(row: &ExportAccessRow) -> Result<ExportJobReceipt, ApiError> {
         size_bytes: row.size_bytes,
         expires_at: row.expires_at,
         error: row.error.as_deref(),
+        warnings: &row.warnings,
     })
 }
 
@@ -614,6 +697,7 @@ struct StoredJob<'a> {
     size_bytes: Option<i64>,
     expires_at: Option<DateTime<Utc>>,
     error: Option<&'a str>,
+    warnings: &'a Value,
 }
 
 /// One receipt shape for a stored job. A `completed` job must carry its artifact facts; a `failed`
@@ -644,10 +728,21 @@ fn stored_receipt(job: StoredJob<'_>) -> Result<ExportJobReceipt, ApiError> {
         size,
         expires_at: job.expires_at.ok_or_else(ApiError::internal)?.to_rfc3339(),
         error,
+        warnings: serde_json::from_value(job.warnings.clone()).map_err(|_| ApiError::internal())?,
     })
 }
 
 fn validate_request(request: &CreateExportRequest) -> Result<(), ApiError> {
+    if let Some(kinds) = request.object_types.as_ref()
+        && (!matches!(request.scope, ExportScope::Workspace { .. })
+            || kinds.is_empty()
+            || kinds.iter().any(|k| !matches!(k.as_str(), "page" | "navigator")))
+    {
+        return Err(ApiError::invalid_update_with_details(
+            "object_types must be a nonempty Page/Navigator scope selection",
+            json!({"reason":"invalid_package_object_types"}),
+        ));
+    }
     if request.idempotency_key.is_empty() || request.idempotency_key.len() > 128 {
         return Err(ApiError::invalid_update("idempotency_key must contain 1..128 bytes"));
     }
@@ -709,22 +804,20 @@ async fn authorize_all<C: ConnectionTrait>(
     principal: &ExportPrincipal,
     action: &str,
 ) -> Result<(), ApiError> {
-    let levels = authz::effective_permissions(
-        conn,
-        workspace_id,
-        object_ids,
-        &principal.kind,
-        principal.id,
-        &principal.role,
-    )
-    .await?;
+    let role = legacy_principal_role(conn, workspace_id, principal).await?;
+    let levels =
+        authz::effective_permissions(conn, workspace_id, object_ids, &principal.kind, principal.id, &role).await?;
     if levels.len() != object_ids.len() || levels.iter().any(|(_, level)| *level < PermissionLevel::View) {
         return Err(ApiError::forbidden(format!("{action} permission denied")));
     }
     Ok(())
 }
 
-async fn load_scope<C: ConnectionTrait>(conn: &C, scope: ExportScope) -> Result<Vec<ExportObjectRow>, ApiError> {
+async fn load_scope<C: ConnectionTrait>(
+    conn: &C,
+    scope: ExportScope,
+    object_types: Option<&[String]>,
+) -> Result<Vec<ExportObjectRow>, ApiError> {
     let base = "SELECT fo.id,fo.workspace_id,fo.project_id,fo.parent_id,fo.object_type,fo.lifecycle_status, \
         fo.governance_metadata,cd.id AS document_id,cd.engine,cd.format_version,cd.snapshot, \
         cd.snapshot_checksum,cd.snapshot_frontier,cd.snapshot_seq,cd.head_frontier,cd.head_seq, \
@@ -745,10 +838,14 @@ async fn load_scope<C: ConnectionTrait>(conn: &C, scope: ExportScope) -> Result<
             project_id,
         } => (
             format!(
-                "{base} WHERE fo.workspace_id=$1 AND ($2::uuid IS NULL OR fo.project_id=$2) \
+                "{base} WHERE fo.workspace_id=$1 AND ($2::uuid IS NULL OR fo.project_id=$2) AND ($3::text[] IS NULL OR fo.object_type=ANY($3)) \
                  AND NOT flow_is_system_navigator_root(fo.object_type,fo.parent_id,fo.governance_metadata) ORDER BY fo.id"
             ),
-            vec![workspace_id.into(), project_id.into()],
+            vec![
+                workspace_id.into(),
+                project_id.into(),
+                object_types.map(<[String]>::to_vec).into(),
+            ],
         ),
     };
     ExportObjectRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
@@ -828,7 +925,7 @@ fn reconstruct_and_verify(
         ));
     }
     let semantic_hash = engine
-        .semantic_snapshot()
+        .legacy_package_semantic_snapshot_v1()
         .map_err(|_| ApiError::checksum_mismatch("canonical semantic snapshot cannot be decoded"))?
         .semantic_hash();
     let snapshot = engine
@@ -955,12 +1052,19 @@ fn request_hash(request: &CreateExportRequest) -> Result<String, ApiError> {
             project_id,
         } => json!({"kind":"workspace","workspace_id":workspace_id,"project_id":project_id}),
     };
-    Ok(sha256_hex(&canonical_json(&json!({
+    let mut body = json!({
         "scope": scope,
         "format": request.format,
         "at_seq": request.at_seq,
         "include_history": request.include_history,
-    }))?))
+    });
+    if let Some(kinds) = request.object_types.as_ref() {
+        let mut kinds = kinds.clone();
+        kinds.sort();
+        kinds.dedup();
+        *body.field_mut("object_types")? = json!(kinds);
+    }
+    Ok(sha256_hex(&canonical_json(&body)?))
 }
 
 async fn find_existing_job(
@@ -971,7 +1075,7 @@ async fn find_existing_job(
 ) -> Result<Option<ExportJobReceipt>, ApiError> {
     let row = ExistingJob::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id,workspace_id,object_id,format,request_hash,status,package_sha256,size_bytes,expires_at,error \
+        "SELECT id,workspace_id,object_id,format,request_hash,status,package_sha256,size_bytes,expires_at,error,warnings \
          FROM flow_export_jobs WHERE workspace_id=$1 AND actor_kind=$2 AND actor_id=$3 AND idempotency_key=$4",
         vec![
             workspace_id.into(),
@@ -1001,6 +1105,7 @@ fn existing_receipt(row: &ExistingJob, request_hash: &str) -> Result<ExportJobRe
         size_bytes: row.size_bytes,
         expires_at: row.expires_at,
         error: row.error.as_deref(),
+        warnings: &row.warnings,
     })
 }
 
@@ -1011,8 +1116,15 @@ async fn persist_export(
     request_hash: &str,
     bytes: Vec<u8>,
     package_sha256: String,
+    snapshot: LegacyArtifactSnapshot,
+    warnings: Vec<String>,
 ) -> Result<ExportJobReceipt, ApiError> {
     let tx = db.begin().await?;
+    validate_legacy_snapshot(&tx, workspace_id, &request.principal, &snapshot).await?;
+    let mut effective = request.clone();
+    effective.principal.role = legacy_principal_role(&tx, workspace_id, &request.principal).await?;
+    effective.principal.workspace_export_capability &= effective.principal.role == "admin";
+    enforce_scope_principal(&effective, workspace_id)?;
     let job_id = Uuid::new_v4();
     let artifact_id = Uuid::new_v4();
     let expires_at = Utc::now() + Duration::minutes(EXPORT_ARTIFACT_TTL_MINUTES);
@@ -1080,6 +1192,17 @@ async fn persist_export(
             .await?
             .ok_or_else(ApiError::internal);
     }
+    tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_export_jobs SET source_authz_revision=$2,artifact_resource_ids=$3,artifact_schema_revisions=$4 WHERE id=$1",vec![job_id.into(),snapshot.epoch.into(),snapshot.resources.into(),snapshot.schemas.into()])).await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE flow_export_jobs SET warnings=$2,object_types=$3 WHERE id=$1",
+        vec![
+            job_id.into(),
+            json!(warnings).into(),
+            request.object_types.clone().into(),
+        ],
+    ))
+    .await?;
     tx.commit().await?;
     Ok(ExportJobReceipt {
         job_id,
@@ -1092,6 +1215,7 @@ async fn persist_export(
         size,
         expires_at: expires_at.to_rfc3339(),
         error: None,
+        warnings,
     })
 }
 
@@ -1104,6 +1228,7 @@ async fn persist_failed_export(
     workspace_id: Uuid,
     request_hash: &str,
     code: &'static str,
+    warnings: Vec<String>,
 ) -> Result<ExportJobReceipt, ApiError> {
     let job_id = Uuid::new_v4();
     let expires_at = Utc::now() + Duration::minutes(EXPORT_ARTIFACT_TTL_MINUTES);
@@ -1116,8 +1241,8 @@ async fn persist_failed_export(
             DbBackend::Postgres,
             "INSERT INTO flow_export_jobs \
              (id,workspace_id,object_id,project_id,scope_kind,format,at_seq,include_history,actor_kind,actor_id, \
-              idempotency_key,request_hash,status,error,expires_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'failed',$13,$14) \
+              idempotency_key,request_hash,status,error,expires_at,warnings,object_types) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'failed',$13,$14,$15,$16) \
              ON CONFLICT (workspace_id,actor_kind,actor_id,idempotency_key) DO NOTHING",
             vec![
                 job_id.into(),
@@ -1134,6 +1259,8 @@ async fn persist_failed_export(
                 request_hash.to_string().into(),
                 code.into(),
                 expires_at.into(),
+                json!(warnings).into(),
+                request.object_types.clone().into(),
             ],
         ))
         .await?;
@@ -1153,6 +1280,7 @@ async fn persist_failed_export(
         size: 0,
         expires_at: expires_at.to_rfc3339(),
         error: Some(code.to_string()),
+        warnings,
     })
 }
 
@@ -1160,8 +1288,178 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-fn csv_cell(value: &str) -> String {
+pub(crate) fn csv_cell(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+struct LegacyArtifactSnapshot {
+    epoch: i64,
+    resources: Vec<Uuid>,
+    schemas: Value,
+}
+async fn capture_legacy_artifact_snapshot<C: ConnectionTrait>(
+    db: &C,
+    workspace: Uuid,
+    resources: &[Uuid],
+) -> Result<LegacyArtifactSnapshot, ApiError> {
+    let epoch = authz::read_epoch(db, workspace).await?;
+    let rows=db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT c.collection_id,c.schema_seq FROM flow_collection_projections c WHERE c.collection_id=ANY($1) OR c.collection_id IN(SELECT r.collection_id FROM flow_record_projections r WHERE r.record_id=ANY($1)) ORDER BY c.collection_id",vec![resources.to_vec().into()])).await?;
+    let mut schemas = Vec::new();
+    for row in rows {
+        schemas.push(json!({"collection_id":row.try_get::<Uuid>("","collection_id")?,"schema_seq":row.try_get::<i64>("","schema_seq")?}));
+    }
+    Ok(LegacyArtifactSnapshot {
+        epoch,
+        resources: resources.to_vec(),
+        schemas: json!(schemas),
+    })
+}
+async fn legacy_principal_role<C: ConnectionTrait>(
+    db: &C,
+    workspace: Uuid,
+    principal: &ExportPrincipal,
+) -> Result<String, ApiError> {
+    if principal.kind == "user" {
+        return Ok(db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+                vec![workspace.into(), principal.id.into()],
+            ))
+            .await?
+            .and_then(|r| r.try_get::<String>("", "role").ok())
+            .unwrap_or_else(|| "__flow_guest".into()));
+    }
+    let row=db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT permissions FROM workspace_bots WHERE id=$1 AND workspace_id=$2 AND is_active AND (expires_at IS NULL OR expires_at>now())",vec![principal.id.into(),workspace.into()])).await?.ok_or_else(||ApiError::forbidden("export bot authorization is no longer active"))?;
+    let permissions: Vec<String> =
+        serde_json::from_value(row.try_get::<Value>("", "permissions")?).map_err(|_| ApiError::internal())?;
+    Ok(crate::middleware::bot_auth::bot_role_from_permissions(&permissions))
+}
+fn stale_artifact_authority() -> ApiError {
+    ApiError::policy_rejected_with_details(
+        "export authorization changed; create a new export request",
+        json!({"reason":"export_authority_changed","new_request_required":true,"action":"regenerate_export"}),
+    )
+}
+async fn validate_legacy_snapshot<C: ConnectionTrait>(
+    db: &C,
+    workspace: Uuid,
+    principal: &ExportPrincipal,
+    snapshot: &LegacyArtifactSnapshot,
+) -> Result<(), ApiError> {
+    authz::fence_epoch_for_share(db, workspace, snapshot.epoch)
+        .await
+        .map_err(|_| stale_artifact_authority())?;
+    let mut expected = BTreeMap::new();
+    for schema in snapshot.schemas.as_array().ok_or_else(stale_artifact_authority)? {
+        let id = schema
+            .get("collection_id")
+            .and_then(Value::as_str)
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .ok_or_else(stale_artifact_authority)?;
+        let seq = schema
+            .get("schema_seq")
+            .and_then(Value::as_i64)
+            .ok_or_else(stale_artifact_authority)?;
+        expected.insert(id, seq);
+    }
+    if !expected.is_empty() {
+        let rows=db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT collection_id,schema_seq FROM flow_collection_projections WHERE collection_id=ANY($1) ORDER BY collection_id FOR SHARE",vec![expected.keys().copied().collect::<Vec<_>>().into()])).await?;
+        if rows.len() != expected.len() {
+            return Err(stale_artifact_authority());
+        }
+        for row in rows {
+            if expected.get(&row.try_get::<Uuid>("", "collection_id")?) != Some(&row.try_get::<i64>("", "schema_seq")?)
+            {
+                return Err(stale_artifact_authority());
+            }
+        }
+    }
+    authorize_all(db, workspace, &snapshot.resources, principal, "export artifact")
+        .await
+        .map_err(|_| stale_artifact_authority())?;
+    Ok(())
+}
+async fn validate_legacy_artifact_policy<C: ConnectionTrait>(
+    db: &C,
+    row: &ExportAccessRow,
+    principal: &ExportPrincipal,
+) -> Result<(), ApiError> {
+    if row.status == "failed" {
+        return Ok(());
+    } // No bytes exist; historical failure metadata stays readable.
+    if let Some(epoch) = row.source_authz_revision {
+        return validate_legacy_snapshot(
+            db,
+            row.workspace_id,
+            principal,
+            &LegacyArtifactSnapshot {
+                epoch,
+                resources: row.artifact_resource_ids.clone(),
+                schemas: row.artifact_schema_revisions.clone(),
+            },
+        )
+        .await;
+    }
+    // The ONLY old-row exception is a single legacy Page's textual export. It never expands
+    // linked/child content or contains typed fields, so current Page ACL is the full data policy.
+    if matches!(row.format.as_str(), "json" | "markdown" | "csv")
+        && let Some(object) = row.object_id
+    {
+        let page = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT object_type='page' AS page FROM flow_objects WHERE id=$1 AND workspace_id=$2",
+                vec![object.into(), row.workspace_id.into()],
+            ))
+            .await?
+            .and_then(|r| r.try_get::<bool>("", "page").ok())
+            .unwrap_or(false);
+        if page {
+            authorize_all(db, row.workspace_id, &[object], principal, "legacy Page text export").await?;
+            return Ok(());
+        }
+    }
+    Err(stale_artifact_authority())
+}
+
+async fn selection_warnings<C: ConnectionTrait>(
+    db: &C,
+    request: &CreateExportRequest,
+) -> Result<Vec<String>, ApiError> {
+    let Some(kinds) = request.object_types.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let mut kinds = kinds.clone();
+    kinds.sort();
+    kinds.dedup();
+    let mut warnings = vec![format!("object_type_filter_applied:{}", kinds.join(","))];
+    if let ExportScope::Workspace {
+        workspace_id,
+        project_id,
+    } = request.scope
+    {
+        let rows=db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT DISTINCT o.object_type FROM flow_objects o JOIN collab_documents d ON d.object_id=o.id JOIN flow_object_projections p ON p.object_id=o.id WHERE o.workspace_id=$1 AND ($2::uuid IS NULL OR o.project_id=$2) AND NOT flow_is_system_navigator_root(o.object_type,o.parent_id,o.governance_metadata) AND NOT(o.object_type=ANY($3)) ORDER BY o.object_type",vec![workspace_id.into(),project_id.into(),kinds.into()])).await?;
+        let omitted = rows
+            .into_iter()
+            .map(|r| r.try_get::<String>("", "object_type").map_err(ApiError::from))
+            .collect::<Result<Vec<_>, _>>()?;
+        if !omitted.is_empty() {
+            warnings.push(format!("object_types_omitted:{}", omitted.join(",")));
+        }
+    }
+    Ok(warnings)
+}
+
+pub(crate) fn legacy_object_request_hash(
+    object: Uuid,
+    format: &str,
+    at_seq: Option<i64>,
+    include_history: bool,
+) -> Result<String, ApiError> {
+    Ok(sha256_hex(&canonical_json(
+        &json!({"scope":{"kind":"object","object_id":object},"format":format,"at_seq":at_seq,"include_history":include_history}),
+    )?))
 }
 
 #[cfg(test)]
@@ -1345,6 +1643,7 @@ mod tests {
         assert_eq!(page.head_seq, 1, "fixture must cross the snapshot/tail branch");
 
         let request = CreateExportRequest {
+            object_types: None,
             scope: ExportScope::Workspace {
                 workspace_id,
                 project_id: None,
@@ -1397,6 +1696,7 @@ mod tests {
         );
 
         let drift = CreateExportRequest {
+            object_types: None,
             include_history: true,
             ..request.clone()
         };
@@ -1406,6 +1706,7 @@ mod tests {
         ));
 
         let object_request = CreateExportRequest {
+            object_types: None,
             scope: ExportScope::Object(page.object_id),
             format: "package".to_string(),
             at_seq: None,
@@ -1434,6 +1735,7 @@ mod tests {
             ("csv", b"object_id,".as_slice()),
         ] {
             let request = CreateExportRequest {
+                object_types: None,
                 scope: ExportScope::Object(page.object_id),
                 format: format.to_string(),
                 at_seq: Some(page.head_seq),
@@ -1457,6 +1759,7 @@ mod tests {
         }
 
         let stale = CreateExportRequest {
+            object_types: None,
             scope: ExportScope::Object(page.object_id),
             format: "json".to_string(),
             at_seq: Some(page.head_seq + 1),
@@ -1493,6 +1796,7 @@ mod tests {
         .unwrap()
         .unwrap();
         let workspace_request = CreateExportRequest {
+            object_types: None,
             scope: ExportScope::Workspace {
                 workspace_id,
                 project_id: None,
@@ -1510,6 +1814,7 @@ mod tests {
         ));
 
         let guest_request = CreateExportRequest {
+            object_types: None,
             scope: ExportScope::Object(page.id),
             format: "package".to_string(),
             at_seq: None,

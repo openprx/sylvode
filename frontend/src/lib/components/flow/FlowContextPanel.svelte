@@ -4,6 +4,8 @@
 	// Share and Relations mount the first time their tab is opened and stay mounted afterwards, so
 	// their reads are lazy and are not repeated on every tab switch.
 	import { t } from 'svelte-i18n';
+	import PackageExportWarnings from './PackageExportWarnings.svelte';
+	import { conversionAvailability } from '#lib/flow/convert-availability.js';
 	import { resolve } from '$app/paths';
 	import type {
 		FlowExportJob,
@@ -26,20 +28,33 @@
 	import { EXPORT_STATUS_KEYS } from '#lib/flow/package-export.js';
 	import { toast } from '#lib/stores/toast.js';
 	import FlowCommentsPanel from './FlowCommentsPanel.svelte';
+	import FlowMountPanel from './FlowMountPanel.svelte';
 	import FlowSharePanel from './FlowSharePanel.svelte';
 	import FlowRelationsPanel from './FlowRelationsPanel.svelte';
 	import FlowHistoryDiff from './FlowHistoryDiff.svelte';
 
+	const panelId = $props.id();
 	const commandService = new FlowCommandService();
 
 	interface Props {
 		object: FlowObjectView;
+		permittedActions?: readonly string[] | null;
 		commentBlockId?: string | null;
 		commentNonce?: number;
+		selectedTool?: 'info' | 'comments' | 'share' | 'relations' | 'history';
+		onclose?: () => void;
 	}
 
-	let { object, commentBlockId = null, commentNonce = 0 }: Props = $props();
+	let {
+		object,
+		permittedActions = null,
+		commentBlockId = null,
+		commentNonce = 0,
+		selectedTool,
+		onclose
+	}: Props = $props();
 
+	const currentActions = $derived(permittedActions ?? object.permitted_actions);
 	const TABS = ['info', 'comments', 'share', 'relations', 'history'] as const;
 	type Tab = (typeof TABS)[number];
 	const TAB_KEYS: Record<Tab, string> = {
@@ -51,6 +66,9 @@
 	};
 
 	let activeTab = $state<Tab>('info');
+	$effect(() => {
+		if (selectedTool) selectTab(selectedTool);
+	});
 	let visited = $state<Record<Tab, boolean>>({
 		info: true,
 		comments: false,
@@ -135,27 +153,41 @@
 	let exportFailureKey = $state<string | null>(null);
 	let exporting = $state(false);
 	let downloading = $state(false);
+	let needsFreshExport = $state(false);
 	let liveMessage = $state('');
 	let exportController: ObjectExportController | null = null;
-	const formats = $derived(objectExportFormats(object.object_type));
+	const formats = $derived(
+		objectExportFormats(
+			object.object_type,
+			object.supported_export_formats ?? (object.workspace_id ? undefined : [])
+		)
+	);
+	const historyExportSupported = $derived(
+		object.history_export_supported ?? Boolean(object.workspace_id)
+	);
+	const exportUnavailableKey = $derived(
+		object.export_unavailable_reason === 'field_secrecy'
+			? 'flow.panel.export.fieldSecrecy'
+			: 'flow.personal.exportUnavailable'
+	);
 
 	$effect(() => {
 		// Re-initialise everything object-scoped whenever the panel is pointed at another object.
 		const objectId = object.id;
-		const workspaceId = object.workspace_id;
+		const scopeId = object.scope_id;
 		history = [];
 		nextBeforeSeq = undefined;
 		expanded = {};
 		diffLoader = new HistoryDiffLoader(objectId);
-		void loadHistory();
 		const controller = new ObjectExportController(
 			objectId,
-			workspaceId,
+			scopeId,
 			(value) => (exportState = value)
 		);
 		exportController = controller;
 		exportState = controller.snapshot;
 		exportFailureKey = null;
+		needsFreshExport = false;
 		return () => {
 			controller.dispose();
 			if (exportController === controller) exportController = null;
@@ -163,12 +195,15 @@
 	});
 
 	$effect(() => {
-		if (!formats.includes(exportFormat)) exportFormat = 'markdown';
-		if (exportFormat !== 'package') includeHistory = false;
+		if (!formats.includes(exportFormat)) exportFormat = formats[0] ?? 'markdown';
+		if (exportFormat !== 'package' || !historyExportSupported) includeHistory = false;
 	});
 
+	$effect(() => {
+		if (activeTab === 'history') void loadHistory();
+	});
 	async function startExport(): Promise<void> {
-		if (!exportController) return;
+		if (!exportController || !formats.includes(exportFormat)) return;
 		exporting = true;
 		exportFailureKey = null;
 		const outcome = await exportController.submit({ format: exportFormat, includeHistory });
@@ -177,6 +212,7 @@
 			exportFailureKey = outcome.failure.messageKey;
 			liveMessage = $t(outcome.failure.messageKey);
 		} else if (outcome.status === 'started') {
+			needsFreshExport = false;
 			liveMessage = $t('flow.panel.export.started');
 		}
 	}
@@ -189,6 +225,7 @@
 		downloading = false;
 		if (outcome.status === 'failed') {
 			exportFailureKey = outcome.failure.messageKey;
+			if (outcome.failure.cause === 'export_authority_changed') needsFreshExport = true;
 			return;
 		}
 		const url = URL.createObjectURL(outcome.blob);
@@ -244,41 +281,53 @@
 </script>
 
 <aside
-	class="flex w-full shrink-0 flex-col gap-4 border-t border-slate-200 bg-white p-4 lg:h-full lg:w-80 lg:overflow-y-auto lg:border-l lg:border-t-0 dark:border-slate-800 dark:bg-slate-900"
+	class="flex w-full shrink-0 flex-col gap-4 border-t border-slate-200 bg-white p-4 lg:w-full lg:border-l lg:border-t-0 dark:border-slate-800 dark:bg-slate-900"
 	aria-label={$t('flow.panel.title')}
 >
 	<p class="sr-only" aria-live="polite">{liveMessage}</p>
-	<div
-		role="tablist"
-		aria-label={$t('flow.panel.tabs.label')}
-		class="grid grid-cols-5 gap-1 border-b border-slate-200 dark:border-slate-700"
-	>
-		{#each TABS as tab (tab)}
+	{#if selectedTool}
+		<div class="flex items-center justify-between gap-3">
+			<h2 class="font-semibold">{$t(TAB_KEYS[selectedTool])}</h2>
 			<button
-				bind:this={tabButtons[tab]}
 				type="button"
-				role="tab"
-				id={`flow-panel-tab-${tab}`}
-				aria-selected={activeTab === tab}
-				aria-controls={`flow-panel-${tab}`}
-				tabindex={activeTab === tab ? 0 : -1}
-				class={`min-h-11 border-b-2 px-1 text-xs font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-					activeTab === tab
-						? 'border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-300'
-						: 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
-				}`}
-				onclick={() => selectTab(tab)}
-				onkeydown={onTabKeydown}
+				class="min-h-11 min-w-11 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+				aria-label={$t('common.close')}
+				onclick={onclose}>✕</button
 			>
-				{$t(TAB_KEYS[tab])}
-			</button>
-		{/each}
-	</div>
-
+		</div>
+	{:else}
+		<div
+			role="tablist"
+			aria-label={$t('flow.panel.tabs.label')}
+			class="grid grid-cols-5 gap-1 border-b border-slate-200 dark:border-slate-700"
+		>
+			{#each TABS as tab (tab)}
+				<button
+					bind:this={tabButtons[tab]}
+					type="button"
+					role="tab"
+					id={`${panelId}-tab-${tab}`}
+					aria-selected={activeTab === tab}
+					aria-controls={`${panelId}-${tab}`}
+					tabindex={activeTab === tab ? 0 : -1}
+					class={`min-h-11 border-b-2 px-1 text-xs font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+						activeTab === tab
+							? 'border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-300'
+							: 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+					}`}
+					onclick={() => selectTab(tab)}
+					onkeydown={onTabKeydown}
+				>
+					{$t(TAB_KEYS[tab])}
+				</button>
+			{/each}
+		</div>
+	{/if}
 	<div
-		id="flow-panel-info"
+		id={`${panelId}-info`}
 		role="tabpanel"
-		aria-labelledby="flow-panel-tab-info"
+		aria-label={$t(TAB_KEYS[activeTab])}
+		data-tab-label="flow-panel-tab-info"
 		hidden={activeTab !== 'info'}
 		class="space-y-6"
 	>
@@ -314,61 +363,90 @@
 		</div>
 
 		{#if object.object_type === 'page'}
-			<a
-				href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]/convert', {
-					workspaceId: object.workspace_id,
-					objectId: object.id
-				})}
-				class="flex min-h-11 items-center justify-center rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-				data-testid="flow-panel-convert"
-			>
-				{$t('flow.bridge.convert.panelAction')}
-			</a>
+			{#if conversionAvailability( { ...object, permitted_actions: currentActions ? [...currentActions] : undefined } ).mode !== 'unavailable'}
+				<a
+					href={resolve('/(app)/flow/[objectId]/convert', { objectId: object.id })}
+					class="flex min-h-11 items-center justify-center rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+					data-testid="flow-panel-convert"
+				>
+					{$t('flow.bridge.convert.panelAction')}
+				</a>
+			{:else}<p class="text-xs text-slate-500" role="status">
+					{$t('flow.personal.conversionUnavailable')}
+				</p>{/if}
 		{/if}
 
 		<div class="space-y-3 text-sm" data-testid="flow-panel-export">
 			<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
 				{$t('flow.panel.export.heading')}
 			</h2>
-			<label class="block">
-				<span class="mb-1 block text-xs text-slate-500 dark:text-slate-400"
-					>{$t('flow.panel.export.formatLabel')}</span
+			{#if formats.length > 0}
+				<label class="block">
+					<span class="mb-1 block text-xs text-slate-500 dark:text-slate-400"
+						>{$t('flow.panel.export.formatLabel')}</span
+					>
+					<select
+						aria-label={$t('flow.panel.export.formatLabel')}
+						class={selectClass}
+						bind:value={exportFormat}
+						disabled={exporting || formats.length === 0}
+					>
+						{#each formats as format (format)}
+							<option value={format}>{$t(OBJECT_EXPORT_FORMAT_KEYS[format])}</option>
+						{/each}
+					</select>
+				</label>
+				<label class="flex min-h-11 items-center gap-3 text-slate-700 dark:text-slate-200">
+					<input
+						type="checkbox"
+						class="h-5 w-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+						bind:checked={includeHistory}
+						disabled={exporting || exportFormat !== 'package' || !historyExportSupported}
+						aria-describedby="flow-panel-export-history-hint"
+					/>
+					<span>{$t('flow.panel.export.includeHistory')}</span>
+				</label>
+				<p id="flow-panel-export-history-hint" class="text-xs text-slate-500 dark:text-slate-400">
+					{$t(
+						historyExportSupported
+							? 'flow.panel.export.historyPackageOnly'
+							: 'flow.personal.historyUnavailable'
+					)}
+				</p>
+			{/if}
+			{#if exportFormat === 'package' && formats.includes('package')}
+				<p
+					class="my-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+					data-testid="flow-object-package-history-notice"
 				>
-				<select
-					aria-label={$t('flow.panel.export.formatLabel')}
-					class={selectClass}
-					bind:value={exportFormat}
-					disabled={exporting}
-				>
-					{#each formats as format (format)}
-						<option value={format}>{$t(OBJECT_EXPORT_FORMAT_KEYS[format])}</option>
-					{/each}
-				</select>
-			</label>
-			<label class="flex min-h-11 items-center gap-3 text-slate-700 dark:text-slate-200">
-				<input
-					type="checkbox"
-					class="h-5 w-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-					bind:checked={includeHistory}
-					disabled={exporting || exportFormat !== 'package'}
-					aria-describedby="flow-panel-export-history-hint"
-				/>
-				<span>{$t('flow.panel.export.includeHistory')}</span>
-			</label>
-			<p id="flow-panel-export-history-hint" class="text-xs text-slate-500 dark:text-slate-400">
-				{$t('flow.panel.export.historyPackageOnly')}
-			</p>
+					{$t('flow.package.snapshotHistoryNotice')}
+				</p>
+			{/if}
 			<button
 				type="button"
 				class="min-h-11 w-full rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50"
-				disabled={exporting || exportState.job?.polling === true}
+				disabled={exporting || formats.length === 0 || exportState.job?.polling === true}
+				aria-describedby={formats.length === 0 ? 'flow-panel-export-unavailable' : undefined}
 				onclick={startExport}
 			>
-				{exporting ? $t('flow.panel.export.exporting') : $t('flow.panel.export.start')}
+				{exporting
+					? $t('flow.panel.export.exporting')
+					: needsFreshExport
+						? $t('flow.personal.regenerateExport')
+						: $t('flow.panel.export.start')}
 			</button>
+			{#if formats.length === 0}
+				<p
+					id="flow-panel-export-unavailable"
+					class="text-xs text-slate-500 dark:text-slate-400"
+					role="status"
+				>
+					{$t(exportUnavailableKey)}
+				</p>
+			{/if}
 			{#if exportState.job}
 				{@const view = exportState.job}
-				<div class="space-y-1" data-testid="flow-panel-export-job">
+				<div class="space-y-1" data-testid="flow-panel-export-job" data-job-id={view.jobId}>
 					<p class="text-slate-700 dark:text-slate-200">
 						{$t('flow.export.status.label')}:
 						<span data-testid="flow-panel-export-status">
@@ -377,6 +455,9 @@
 								: $t('flow.export.status.loading')}
 						</span>
 					</p>
+					{#if view.job?.format === 'package' && view.job.status !== 'failed'}<PackageExportWarnings
+							warnings={view.job.warnings}
+						/>{/if}
 					{#if view.failure}
 						<p class="text-red-600 dark:text-red-400" role="alert">{$t(view.failure.messageKey)}</p>
 					{:else if exportJobErrorKey(view.job)}
@@ -389,7 +470,7 @@
 						<button
 							type="button"
 							class={linkButtonClass}
-							disabled={downloading}
+							disabled={downloading || needsFreshExport}
 							onclick={() => downloadJob(job)}
 						>
 							{downloading ? $t('flow.panel.export.downloading') : $t('flow.panel.export.download')}
@@ -404,51 +485,74 @@
 	</div>
 
 	<div
-		id="flow-panel-comments"
+		id={`${panelId}-comments`}
 		role="tabpanel"
-		aria-labelledby="flow-panel-tab-comments"
+		aria-label={$t(TAB_KEYS[activeTab])}
+		data-tab-label="flow-panel-tab-comments"
 		hidden={activeTab !== 'comments'}
 	>
 		<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
 			{$t('flow.comments.title')}
 		</h2>
 		{#if visited.comments}
-			<FlowCommentsPanel objectId={object.id} blockId={commentBlockId} nonce={commentNonce} />
+			<FlowCommentsPanel
+				canComment={currentActions?.includes('comment') ?? true}
+				canEdit={currentActions?.includes('edit') ?? false}
+				canManage={currentActions?.includes('manage') ?? false}
+				objectId={object.id}
+				blockId={commentBlockId}
+				nonce={commentNonce}
+			/>
 		{/if}
 	</div>
 
 	<div
-		id="flow-panel-share"
+		id={`${panelId}-share`}
 		role="tabpanel"
-		aria-labelledby="flow-panel-tab-share"
+		aria-label={$t(TAB_KEYS[activeTab])}
+		data-tab-label="flow-panel-tab-share"
 		hidden={activeTab !== 'share'}
 	>
 		<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
 			{$t('flow.share.title')}
 		</h2>
 		{#if visited.share}
-			<FlowSharePanel objectId={object.id} workspaceId={object.workspace_id} />
+			<FlowSharePanel
+				permittedActions={currentActions}
+				scopeId={object.scope_id}
+				objectId={object.id}
+				workspaceId={object.workspace_id ?? null}
+			/>
+			{#if !object.workspace_id && currentActions?.includes('manage')}
+				{#if object.object_type !== 'record' || object.record_context_supported === true}<FlowMountPanel
+						objectId={object.id}
+					/>{:else}<p class="text-sm text-slate-500">
+						{$t('flow.personal.recordContextUnavailable')}
+					</p>{/if}
+			{/if}
 		{/if}
 	</div>
 
 	<div
-		id="flow-panel-relations"
+		id={`${panelId}-relations`}
 		role="tabpanel"
-		aria-labelledby="flow-panel-tab-relations"
+		aria-label={$t(TAB_KEYS[activeTab])}
+		data-tab-label="flow-panel-tab-relations"
 		hidden={activeTab !== 'relations'}
 	>
 		<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
 			{$t('flow.relations.title')}
 		</h2>
 		{#if visited.relations}
-			<FlowRelationsPanel objectId={object.id} workspaceId={object.workspace_id} />
+			<FlowRelationsPanel objectId={object.id} scopeId={object.scope_id} />
 		{/if}
 	</div>
 
 	<div
-		id="flow-panel-history"
+		id={`${panelId}-history`}
 		role="tabpanel"
-		aria-labelledby="flow-panel-tab-history"
+		aria-label={$t(TAB_KEYS[activeTab])}
+		data-tab-label="flow-panel-tab-history"
 		hidden={activeTab !== 'history'}
 	>
 		<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
@@ -486,7 +590,9 @@
 								disabled={restoringSeq !== null}
 								onclick={() => restoreVersion(entry.seq)}
 							>
-								{restoringSeq === entry.seq ? $t('flow.history.restoring') : $t('flow.history.restore')}
+								{restoringSeq === entry.seq
+									? $t('flow.history.restoring')
+									: $t('flow.history.restore')}
 							</button>
 						{/if}
 						<button

@@ -177,7 +177,7 @@ await suite.checkAsync(
 		}
 		assertDeepEqual(
 			seen,
-			[`/api/v1/flow/objects/${OBJECT}/diff?from_seq=6&to_seq=7`],
+			[`/api/v2/flow/objects/${OBJECT}/diff?from_seq=6&to_seq=7`],
 			'diff query'
 		);
 	}
@@ -204,6 +204,22 @@ await suite.checkAsync('a successful diff is cached per seq', async () => {
 });
 
 suite.check('export formats and request body', () => {
+	assertDeepEqual(
+		objectExportFormats('collection', []),
+		[],
+		'unsupported typed export is not advertised'
+	);
+	assertDeepEqual(
+		objectExportFormats('collection', ['csv', 'json']),
+		['json', 'csv'],
+		'only actual server formats are offered'
+	);
+	assertDeepEqual(
+		objectExportFormats('page', ['csv', 'markdown']),
+		['markdown', 'csv'],
+		'recognized v2 formats follow actual per-object service capabilities'
+	);
+
 	assertDeepEqual(
 		objectExportFormats('page'),
 		['json', 'markdown', 'package'],
@@ -280,7 +296,7 @@ await suite.checkAsync(
 		];
 		const getReplies: Array<ApiResult<FlowExportJob>> = [
 			ok(job('running')),
-			ok(job('completed', { download_url: '/api/v1/flow/exports/job-12345678/artifact' }))
+			ok(job('completed', { download_url: '/api/v2/flow/exports/job-12345678/artifact' }))
 		];
 		const downloads: string[] = [];
 		let blobText = MD;
@@ -338,7 +354,7 @@ await suite.checkAsync(
 		const download = await controller.download(completed, 'Title');
 		assert(download.status === 'ready', 'download verified');
 		assertEqual(download.fileName, 'Title-job-1234.md', 'markdown file name');
-		assertDeepEqual(downloads, ['/api/v1/flow/exports/job-12345678/artifact'], 'download_url used');
+		assertDeepEqual(downloads, ['/api/v2/flow/exports/job-12345678/artifact'], 'download_url used');
 		blobText = '# Tampered';
 		const tampered = await controller.download(completed, 'Title');
 		assert(tampered.status === 'failed', 'bytes that do not hash to the checksum are refused');

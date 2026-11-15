@@ -134,6 +134,10 @@ pub struct ManifestSummary {
     pub document_count: u64,
     pub package_schema: String,
     pub engine: PackageEngine,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<super::package::PackageSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<Value>,
 }
 
 /// `invalid_update.details.reason` when a commit's frozen `project_map` leaves a package source
@@ -221,42 +225,45 @@ pub struct ImportReport {
 }
 
 #[derive(Debug, Deserialize)]
-struct PackageObject {
-    source_object_id: Uuid,
-    source_workspace_id: Uuid,
-    object_type: String,
-    lifecycle_status: String,
-    project_id: Option<Uuid>,
-    parent_object_id: Option<Uuid>,
-    governance_metadata: Value,
-    source_document_id: Uuid,
-    engine: String,
-    format_version: String,
-    accepted_seq: i64,
-    accepted_frontier: String,
-    semantic_hash: String,
+pub(crate) struct PackageObject {
+    pub(crate) source_object_id: Uuid,
+    #[serde(default)]
+    pub(crate) source_workspace_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) source_scope_id: Option<Uuid>,
+    pub(crate) object_type: String,
+    pub(crate) lifecycle_status: String,
+    pub(crate) project_id: Option<Uuid>,
+    pub(crate) parent_object_id: Option<Uuid>,
+    pub(crate) governance_metadata: Value,
+    pub(crate) source_document_id: Uuid,
+    pub(crate) engine: String,
+    pub(crate) format_version: String,
+    pub(crate) accepted_seq: i64,
+    pub(crate) accepted_frontier: String,
+    pub(crate) semantic_hash: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct RelationEndpoint {
-    kind: String,
-    source_object_id: Uuid,
+pub(crate) struct RelationEndpoint {
+    pub(crate) kind: String,
+    pub(crate) source_object_id: Uuid,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct PackageRelation {
-    source_relation_id: Uuid,
-    relation_type: String,
-    source: RelationEndpoint,
-    target: RelationEndpoint,
-    position_key: String,
-    properties: Value,
+pub(crate) struct PackageRelation {
+    pub(crate) source_relation_id: Uuid,
+    pub(crate) relation_type: String,
+    pub(crate) source: RelationEndpoint,
+    pub(crate) target: RelationEndpoint,
+    pub(crate) position_key: String,
+    pub(crate) properties: Value,
 }
 
-struct PackagePlan {
-    verified: VerifiedPackage,
-    objects: Vec<PackageObject>,
-    relations: Vec<PackageRelation>,
+pub(crate) struct PackagePlan {
+    pub(crate) verified: VerifiedPackage,
+    pub(crate) objects: Vec<PackageObject>,
+    pub(crate) relations: Vec<PackageRelation>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -460,7 +467,7 @@ pub async fn preview_package_import(
         DbBackend::Postgres,
         "INSERT INTO flow_import_previews \
          (id,workspace_id,artifact_id,actor_kind,actor_id,package_sha256,mapping_hash,mapping,request,manifest_summary,conflicts,warnings,estimated_changes,idempotency_key,request_hash,expires_at) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'[]'::jsonb,$12,$13,$14,$15)",
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'[\"inner_reference_validation_before_promotion\"]'::jsonb,$12,$13,$14,$15)",
         vec![
             preview_id.into(), request.workspace_id.into(), request.artifact_id.into(),
             request.principal.kind.clone().into(), request.principal.id.into(), artifact.package_sha256.clone().into(),
@@ -491,7 +498,7 @@ pub async fn preview_package_import(
         mapping,
         conflicts,
         conflict_details: details,
-        warnings: Vec::new(),
+        warnings: vec!["inner_reference_validation_before_promotion".into()],
         estimated_changes,
         expires_at,
     })
@@ -826,7 +833,7 @@ fn preview_receipt(row: ExistingPreviewRow, plan: &PackagePlan) -> Result<Import
     })
 }
 
-fn parse_plan(bytes: &[u8], expected_hash: &str) -> Result<PackagePlan, ApiError> {
+pub(crate) fn parse_plan(bytes: &[u8], expected_hash: &str) -> Result<PackagePlan, ApiError> {
     let verified = verify_package(Cursor::new(bytes), Some(expected_hash))?;
     let mut objects = Vec::new();
     for member in &verified.manifest.members {
@@ -835,11 +842,21 @@ fn parse_plan(bytes: &[u8], expected_hash: &str) -> Result<PackagePlan, ApiError
                 .map_err(|_| ApiError::unsupported_format("object metadata is invalid"))?;
             let expected_path = format!("objects/{}/object.json", object.source_object_id);
             if member.path != expected_path
-                || object.source_workspace_id.to_string() != verified.manifest.source.workspace_id
+                || object.source_workspace_id.map(|id| id.to_string()) != verified.manifest.source.workspace_id
             {
                 return Err(ApiError::unsupported_format(
                     "object metadata identity disagrees with its manifest path",
                 ));
+            }
+            if verified.manifest.schema == super::package::SCOPE_PACKAGE_SCHEMA
+                && object.source_scope_id.map(|id| id.to_string()) != verified.manifest.source.scope_id
+            {
+                return Err(ApiError::unsupported_format(
+                    "object scope provenance disagrees with its manifest",
+                ));
+            }
+            if matches!(object.object_type.as_str(), "collection" | "record") {
+                return Err(super::package::typed_raw_refusal(&[object.object_type]));
             }
             objects.push(object);
         }
@@ -880,7 +897,7 @@ fn parse_jsonl<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<Vec<T>, Api
         .collect()
 }
 
-fn member_bytes(bytes: &[u8], path: &str) -> Result<Vec<u8>, ApiError> {
+pub(crate) fn member_bytes(bytes: &[u8], path: &str) -> Result<Vec<u8>, ApiError> {
     let mut archive =
         zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| ApiError::unsupported_format("invalid ZIP archive"))?;
     let mut file = archive
@@ -1153,10 +1170,11 @@ async fn promote_objects<C: ConnectionTrait>(
             let snapshot = reconstruct_head(package, &plan.verified.manifest, object)?;
             let engine = LoroCollabEngine::load(&snapshot)
                 .map_err(|_| ApiError::checksum_mismatch("import snapshot cannot be decoded"))?;
+            super::package::require_supported_snapshot(&engine)?;
             let semantic = engine
                 .semantic_snapshot()
                 .map_err(|_| ApiError::checksum_mismatch("import semantic state cannot be decoded"))?;
-            if semantic.semantic_hash() != object.semantic_hash
+            if package_semantic_hash(&engine, &plan.verified.manifest)? != object.semantic_hash
                 || engine.frontier().as_bytes() != decode_frontier(&object.accepted_frontier)?
             {
                 return Err(ApiError::checksum_mismatch(
@@ -1189,11 +1207,7 @@ async fn promote_objects<C: ConnectionTrait>(
                     })?;
                     if existing.head_seq != object.accepted_seq
                         || existing.head_frontier != decode_frontier(&object.accepted_frontier)?
-                        || existing_engine
-                            .semantic_snapshot()
-                            .map_err(|_| ApiError::internal())?
-                            .semantic_hash()
-                            != object.semantic_hash
+                        || package_semantic_hash(&existing_engine, &plan.verified.manifest)? != object.semantic_hash
                     {
                         return Err(ApiError::stale_frontier(
                             "reused import lineage target has drifted",
@@ -1288,7 +1302,7 @@ async fn promote_objects<C: ConnectionTrait>(
     Ok((created, reused))
 }
 
-fn reconstruct_head(
+pub(crate) fn reconstruct_head(
     package: &[u8],
     manifest: &ExportPackageManifest,
     object: &PackageObject,
@@ -1427,7 +1441,7 @@ async fn insert_package_lineage<C: ConnectionTrait>(
     Ok(())
 }
 
-fn sanitize_governance(value: &Value) -> Result<Value, ApiError> {
+pub(crate) fn sanitize_governance(value: &Value) -> Result<Value, ApiError> {
     let mut object = value
         .as_object()
         .cloned()
@@ -1456,11 +1470,17 @@ fn parse_manifest_uuid(manifest: &ExportPackageManifest) -> Result<Uuid, ApiErro
 }
 
 fn parse_source_workspace(manifest: &ExportPackageManifest) -> Result<Uuid, ApiError> {
-    Uuid::parse_str(&manifest.source.workspace_id)
-        .map_err(|_| ApiError::unsupported_format("source workspace id is not a UUID"))
+    Uuid::parse_str(
+        manifest
+            .source
+            .workspace_id
+            .as_deref()
+            .ok_or_else(|| ApiError::unsupported_format("scope-native package requires scope-aware promotion"))?,
+    )
+    .map_err(|_| ApiError::unsupported_format("source workspace id is not a UUID"))
 }
 
-fn estimated_changes(plan: &PackagePlan) -> BTreeMap<String, u64> {
+pub(crate) fn estimated_changes(plan: &PackagePlan) -> BTreeMap<String, u64> {
     BTreeMap::from([
         (
             "objects".to_string(),
@@ -1477,7 +1497,7 @@ fn estimated_changes(plan: &PackagePlan) -> BTreeMap<String, u64> {
     ])
 }
 
-fn manifest_summary(plan: &PackagePlan) -> ManifestSummary {
+pub(crate) fn manifest_summary(plan: &PackagePlan) -> ManifestSummary {
     let manifest = &plan.verified.manifest;
     let titles: HashMap<&str, &str> = manifest
         .projects
@@ -1499,6 +1519,8 @@ fn manifest_summary(plan: &PackagePlan) -> ManifestSummary {
         document_count: manifest.counts.documents,
         package_schema: manifest.schema.clone(),
         engine: manifest.engine.clone(),
+        source: Some(manifest.source.clone()),
+        history: Some(json!({"included":manifest.history.included,"snapshot_history":"retained"})),
     }
 }
 
@@ -1508,7 +1530,7 @@ fn source_projects(plan: &PackagePlan) -> BTreeSet<Uuid> {
     plan.objects.iter().filter_map(|row| row.project_id).collect()
 }
 
-fn sha256_json(value: &Value) -> Result<String, ApiError> {
+pub(crate) fn sha256_json(value: &Value) -> Result<String, ApiError> {
     let bytes = serde_jcs::to_vec(value).map_err(|_| ApiError::internal())?;
     Ok(hex::encode(Sha256::digest(bytes)))
 }
@@ -1543,6 +1565,20 @@ fn import_event(
     }
 }
 
+pub(crate) fn package_semantic_hash(
+    engine: &LoroCollabEngine,
+    manifest: &ExportPackageManifest,
+) -> Result<String, ApiError> {
+    let semantic = match super::package::semantic_model(manifest)? {
+        super::package::PackageSemanticModel::V1 => engine.legacy_package_semantic_snapshot_v1(),
+        super::package::PackageSemanticModel::V2 => engine.legacy_package_semantic_snapshot_v2(),
+        super::package::PackageSemanticModel::V3 => engine.semantic_snapshot(),
+    };
+    Ok(semantic
+        .map_err(|_| ApiError::checksum_mismatch("package semantic fingerprint cannot be decoded"))?
+        .semantic_hash())
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -1565,6 +1601,158 @@ mod tests {
         app::AppState,
         config::{AppConfig, Secret},
     };
+
+    #[test]
+    fn owned_v1_browser_package_uses_exact_legacy_fingerprint_and_v2_does_not() {
+        use super::super::package::*;
+        const OLD_HASH: &str = "1c60df0b968bf3771931d029a3fe501f1e0b51f760012ea458f8bf46a1fc6026";
+        let path = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/flow-v2/legacy-browser-package-v1"
+        ));
+        if std::env::var_os("FLOW_WRITE_LEGACY_BROWSER_FIXTURE").is_some() {
+            let snapshot = std::fs::read(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot"
+            ))
+            .unwrap();
+            let engine = LoroCollabEngine::load(&snapshot).unwrap();
+            assert_eq!(
+                engine.legacy_package_semantic_snapshot_v1().unwrap().semantic_hash(),
+                OLD_HASH
+            );
+            let object = Uuid::from_u128(0x1111_1111_1111_4111_8111_1111_1111_1111);
+            let document = Uuid::from_u128(0x2222_2222_2222_4222_8222_2222_2222_2222);
+            let workspace = Uuid::from_u128(0x3333_3333_3333_4333_8333_3333_3333_3333);
+            let metadata = json!({"source_object_id":object,"source_workspace_id":workspace,"object_type":"page","lifecycle_status":"active","project_id":null,"parent_object_id":null,"governance_metadata":{},"source_document_id":document,"engine":"loro","format_version":"loro-1","accepted_seq":0,"accepted_frontier":base64::engine::general_purpose::STANDARD.encode(engine.frontier().as_bytes()),"semantic_hash":OLD_HASH});
+            let manifest = ExportPackageManifest {
+                schema: PACKAGE_SCHEMA.into(),
+                package_id: "44444444-4444-4444-8444-444444444444".into(),
+                created_at: "2026-11-15T00:00:00Z".into(),
+                producer: PackageProducer {
+                    product: "sylvode".into(),
+                    version: "0.2.536".into(),
+                    source_head: "d523d7c724b4122f7b83cb30e6614a36f51a1c65".into(),
+                },
+                source: PackageSource {
+                    workspace_id: Some(workspace.to_string()),
+                    scope_id: None,
+                    scope: "object".into(),
+                    root_object_ids: vec![object.to_string()],
+                },
+                flow_schema_version: 1,
+                engine: PackageEngine {
+                    name: ENGINE_NAME.into(),
+                    crate_version: ENGINE_CRATE_VERSION.into(),
+                    wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
+                    semantic_model: None,
+                },
+                history: PackageHistory {
+                    included: false,
+                    snapshot_history: None,
+                    through_seq_by_document: BTreeMap::from([(document.to_string(), 0)]),
+                },
+                counts: PackageCounts {
+                    objects: 1,
+                    documents: 1,
+                    ..PackageCounts::default()
+                },
+                members: Vec::new(),
+                export_policy: ExportPolicy {
+                    complete: true,
+                    permission_snapshot_at: "2026-11-15T00:00:00Z".into(),
+                },
+                projects: Vec::new(),
+                warnings: Vec::new(),
+            };
+            let built = build_package(
+                manifest,
+                vec![
+                    PackageMemberInput {
+                        path: format!("objects/{object}/object.json"),
+                        kind: "object".into(),
+                        bytes: serde_jcs::to_vec(&metadata).unwrap(),
+                    },
+                    PackageMemberInput {
+                        path: format!("documents/{document}/snapshot.bin"),
+                        kind: "snapshot".into(),
+                        bytes: snapshot.clone(),
+                    },
+                    PackageMemberInput {
+                        path: "relations/relations.jsonl".into(),
+                        kind: "relation".into(),
+                        bytes: Vec::new(),
+                    },
+                    PackageMemberInput {
+                        path: "lineage/lineage.jsonl".into(),
+                        kind: "lineage".into(),
+                        bytes: Vec::new(),
+                    },
+                ],
+            )
+            .unwrap();
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join("package.zip"), &built.bytes).unwrap();
+            std::fs::write(path.join("contract.json"),serde_json::to_vec_pretty(&json!({"fixture_kind":"synthetic_pre_change_v1_format","reader_source":"d523d7c724b4122f7b83cb30e6614a36f51a1c65:crates/collab-core/src/engine.rs semantic_snapshot (tree-only)","package_sha256":built.package_sha256,"snapshot_sha256":super::super::collab::bootstrap::content_hash(&snapshot),"legacy_semantic_hash":OLD_HASH,"canonical_semantic_hash":engine.semantic_snapshot().unwrap().semantic_hash()})).unwrap()).unwrap();
+        }
+        let bytes = std::fs::read(path.join("package.zip")).unwrap();
+        let contract: Value = serde_json::from_slice(&std::fs::read(path.join("contract.json")).unwrap()).unwrap();
+        let plan = parse_plan(&bytes, contract["package_sha256"].as_str().unwrap()).unwrap();
+        let snapshot = reconstruct_head(&bytes, &plan.verified.manifest, &plan.objects[0]).unwrap();
+        let engine = LoroCollabEngine::load(&snapshot).unwrap();
+        assert_eq!(
+            package_semantic_hash(&engine, &plan.verified.manifest).unwrap(),
+            OLD_HASH
+        );
+        assert_eq!(plan.objects[0].semantic_hash, OLD_HASH);
+        assert_ne!(engine.semantic_snapshot().unwrap().semantic_hash(), OLD_HASH);
+        let mut v2 = plan.verified.manifest.clone();
+        v2.schema = SCOPE_PACKAGE_SCHEMA.into();
+        v2.flow_schema_version = 2;
+        v2.source.scope_id = Some("55555555-5555-4555-8555-555555555555".into());
+        assert_eq!(
+            package_semantic_hash(&engine, &v2).unwrap(),
+            contract["canonical_semantic_hash"].as_str().unwrap()
+        );
+        assert_ne!(
+            package_semantic_hash(&engine, &v2).unwrap(),
+            plan.objects[0].semantic_hash
+        );
+    }
+
+    #[test]
+    fn navigator_packages_select_explicit_frozen_or_current_semantic_models() {
+        let snapshot =
+            include_bytes!("../../../../frontend/tests/fixtures/flow-navigator-order/browser-reedit.snapshot").to_vec();
+        let engine = LoroCollabEngine::load(&snapshot).unwrap();
+        let encoded_before = engine.export_snapshot().unwrap();
+        assert!(super::super::package::require_supported_snapshot(&engine).is_err());
+        let old_hash = engine.legacy_package_semantic_snapshot_v2().unwrap().semantic_hash();
+        let current_hash = engine.semantic_snapshot().unwrap().semantic_hash();
+        assert_ne!(old_hash, current_hash);
+        let prior = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/flow-v2/legacy-browser-package-v1/package.zip"
+        ))
+        .unwrap();
+        let verified = super::super::package::verify_package(std::io::Cursor::new(prior), None).unwrap();
+        let mut manifest = verified.manifest;
+        manifest.schema = super::super::package::SCOPE_PACKAGE_SCHEMA.into();
+        manifest.flow_schema_version = 2;
+        manifest.source.workspace_id = None;
+        manifest.source.scope_id = Some("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".into());
+        manifest.history.snapshot_history = Some("retained".into());
+        manifest.engine.semantic_model = None;
+        assert_eq!(package_semantic_hash(&engine, &manifest).unwrap(), old_hash);
+        manifest.engine.semantic_model = Some(super::super::package::SEMANTIC_MODEL_V2.into());
+        assert_eq!(package_semantic_hash(&engine, &manifest).unwrap(), old_hash);
+        manifest.engine.semantic_model = Some(super::super::package::SEMANTIC_MODEL_V3.into());
+        assert_eq!(package_semantic_hash(&engine, &manifest).unwrap(), current_hash);
+        manifest.engine.semantic_model = Some("unknown_future_model".into());
+        assert!(package_semantic_hash(&engine, &manifest).is_err());
+        // Binary members/frontiers are untouched; only the declared, versioned hash reader changes.
+        assert_eq!(engine.export_snapshot().unwrap(), encoded_before);
+    }
 
     fn state_for(db: DatabaseConnection) -> AppState {
         AppState {
@@ -1663,6 +1851,7 @@ mod tests {
         let receipt = create_package_export(
             &state.db,
             &CreateExportRequest {
+                object_types: None,
                 scope: ExportScope::Workspace {
                     workspace_id: source_workspace,
                     project_id: None,

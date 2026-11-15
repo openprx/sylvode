@@ -358,6 +358,18 @@ pub async fn run_tick(state: &AppState, client: &reqwest::Client, batch: usize) 
     let now = Utc::now();
     LAST_TICK_STARTED_AT_UNIX_MS.store(now.timestamp_millis(), Ordering::Relaxed);
     let mut report = DispatchTickReport::default();
+    for _ in 0..batch {
+        match expand_independent_source(&state.db).await {
+            Ok(Some(ExpansionOutcome::Expanded)) => report.expanded += 1,
+            Ok(Some(ExpansionOutcome::NoSubscribers)) => report.no_subscribers += 1,
+            Ok(Some(ExpansionOutcome::StaleLease)) => {}
+            Ok(None) => break,
+            Err(err) => {
+                tracing::warn!(%err,"dispatcher: independent source expansion failed");
+                break;
+            }
+        }
+    }
 
     match reclaim_expired_dispatch_leases(&state.db).await {
         Ok(n) => report.dispatch_leases_reclaimed = n,
@@ -571,7 +583,7 @@ async fn expand_one(db: &DatabaseConnection) -> Result<Option<ExpansionOutcome>,
                 WHERE id = (
                     SELECT d.id
                     FROM event_dispatch d
-                    WHERE d.status = 'pending'
+                    WHERE d.status = 'pending' AND d.workspace_id IS NOT NULL
                       AND d.next_attempt_at <= now()
                       AND (d.lease_token IS NULL OR d.lease_expires_at < now())
                       AND (
@@ -606,6 +618,83 @@ async fn expand_one(db: &DatabaseConnection) -> Result<Option<ExpansionOutcome>,
             Err(err)
         }
     }
+}
+
+/// Personal events use their real source scope. Existing fanout/delivery-source machinery is
+/// reused with an explicitly selected recipient workspace, never by rewriting source ownership.
+async fn expand_independent_source(db: &DatabaseConnection) -> Result<Option<ExpansionOutcome>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Source {
+        id: Uuid,
+        event_id: Uuid,
+        source_flow_scope_id: Uuid,
+        event_type: String,
+        document_id: Option<Uuid>,
+        accepted_seq: Option<i64>,
+        object_id: String,
+        target_object_id: Option<String>,
+    }
+    let tx = db.begin().await?;
+    let source=Source::find_by_statement(Statement::from_string(DbBackend::Postgres,
+        "SELECT d.id,d.event_id,d.source_flow_scope_id,d.event_type,d.document_id,d.accepted_seq,COALESCE(e.payload->>'object_id',e.aggregate_id) AS object_id,e.payload->>'target_object_id' AS target_object_id FROM event_dispatch d JOIN business_events e ON e.id=d.event_id WHERE d.source_flow_scope_id IS NOT NULL AND d.status='pending' AND d.next_attempt_at<=now() AND NOT EXISTS(SELECT 1 FROM event_dispatch p WHERE p.document_id=d.document_id AND p.status='pending' AND p.accepted_seq<d.accepted_seq) ORDER BY d.created_at,d.id FOR UPDATE OF d SKIP LOCKED LIMIT 1".to_string())).one(&tx).await?;
+    let Some(source) = source else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
+    #[derive(FromQueryResult)]
+    struct Audience {
+        workspace_id: Uuid,
+    }
+    let audiences=Audience::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT DISTINCT m.destination_workspace_id AS workspace_id FROM flow_mounts m JOIN flow_objects o ON o.id=m.source_object_id WHERE o.scope_id=$1 AND o.id IN(SELECT object_id FROM flow_mount_acl_ancestors($2::uuid,$1)) ORDER BY m.destination_workspace_id",vec![source.source_flow_scope_id.into(),source.object_id.clone().into()])).all(&tx).await?;
+    for audience in audiences {
+        crate::flow::collab::authz::lock_epoch_for_share(&tx, audience.workspace_id).await?;
+    }
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT scope_id FROM flow_scope_settings WHERE scope_id=$1 FOR SHARE",
+        vec![source.source_flow_scope_id.into()],
+    ))
+    .await?;
+    #[derive(FromQueryResult)]
+    struct Recipient {
+        id: Uuid,
+        workspace_id: Uuid,
+    }
+    let recipients=Recipient::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT DISTINCT w.id,w.workspace_id FROM webhooks w JOIN flow_mounts m ON m.destination_workspace_id=w.workspace_id JOIN flow_objects o ON o.id=m.source_object_id WHERE o.scope_id=$1 AND o.id IN(SELECT object_id FROM flow_mount_acl_ancestors($2::uuid,$1)) AND w.active AND w.events ? $3 AND (o.lifecycle_status='active' OR $3 IN ('flow.object.archived','flow.object.restored')) AND ($3 NOT IN ('flow.relation.linked','flow.relation.unlinked') OR EXISTS(SELECT 1 FROM flow_mounts dependency JOIN flow_objects dep_object ON dep_object.id=dependency.source_object_id WHERE dependency.destination_workspace_id=w.workspace_id AND dep_object.scope_id=$1 AND dep_object.lifecycle_status='active' AND dep_object.id IN(SELECT object_id FROM flow_mount_acl_ancestors($4::uuid,$1)))) ORDER BY w.workspace_id,w.id LIMIT 101",vec![source.source_flow_scope_id.into(),source.object_id.into(),source.event_type.clone().into(),source.target_object_id.into()])).all(&tx).await?;
+    if recipients.len() > 100 {
+        return Err(workspace_subscribers_limit_exceeded(
+            i64::try_from(recipients.len()).unwrap_or(i64::MAX),
+        ));
+    }
+    for recipient in &recipients {
+        let recipient_work = DispatchLeaseRow {
+            id: source.id,
+            event_id: source.event_id,
+            workspace_id: recipient.workspace_id,
+            event_type: source.event_type.clone(),
+            document_id: source.document_id,
+            accepted_seq: source.accepted_seq,
+        };
+        expand_one_subscriber(&tx, &recipient_work, recipient.id).await?;
+    }
+    let empty = recipients.is_empty();
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE event_dispatch SET status=$2,expanded_at=now(),lease_token=NULL,lease_expires_at=NULL WHERE id=$1",
+        vec![
+            source.id.into(),
+            if empty { "no_subscribers" } else { "expanded" }.into(),
+        ],
+    ))
+    .await?;
+    tx.commit().await?;
+    Ok(Some(if empty {
+        ExpansionOutcome::NoSubscribers
+    } else {
+        ExpansionOutcome::Expanded
+    }))
 }
 
 async fn record_expansion_failure(db: &DatabaseConnection, work: &DispatchLeaseRow, lease_token: &str) {
@@ -1011,6 +1100,26 @@ async fn attempt_delivery(
     delivery: &DeliveryLeaseRow,
     lease_token: &str,
 ) -> bool {
+    // Re-evaluate every independent source against the recipient's CURRENT mount before each
+    // network attempt. Revocation after an earlier failed attempt cancels later retries.
+    #[derive(FromQueryResult)]
+    struct Authorized {
+        allowed: bool,
+    }
+    let authorized=Authorized::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT NOT EXISTS(SELECT 1 FROM event_delivery_sources ds JOIN business_events e ON e.id=ds.source_event_id JOIN webhooks w ON w.id=ds.subscriber_id WHERE ds.delivery_id=$1 AND e.source_flow_scope_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM flow_mounts m JOIN flow_objects o ON o.id=m.source_object_id WHERE m.destination_workspace_id=w.workspace_id AND o.scope_id=e.source_flow_scope_id AND o.id IN(SELECT object_id FROM flow_mount_acl_ancestors(COALESCE(e.payload->>'object_id',e.aggregate_id)::uuid,e.source_flow_scope_id)) AND (o.lifecycle_status='active' OR e.event_type IN ('flow.object.archived','flow.object.restored')) AND (e.event_type NOT IN ('flow.relation.linked','flow.relation.unlinked') OR EXISTS(SELECT 1 FROM flow_mounts dependency JOIN flow_objects dep_object ON dep_object.id=dependency.source_object_id WHERE dependency.destination_workspace_id=w.workspace_id AND dep_object.scope_id=e.source_flow_scope_id AND dep_object.lifecycle_status='active' AND dep_object.id IN(SELECT object_id FROM flow_mount_acl_ancestors((e.payload->>'target_object_id')::uuid,e.source_flow_scope_id)))))) AS allowed",vec![delivery.id.into()])).one(&state.db).await;
+    match authorized {
+        Ok(Some(Authorized { allowed: true })) => {}
+        Ok(_) => {
+            cancel_delivery(&state.db, delivery.id, lease_token, "source_audience_revoked").await;
+            return false;
+        }
+        Err(err) => {
+            tracing::warn!(%err,delivery_id=%delivery.id,"source audience recheck failed");
+            retry_or_fail_delivery(&state.db, delivery, lease_token, "source_authorization_unavailable").await;
+            return false;
+        }
+    }
     // "发送前重新判定 active" (`events-v1.md` "订阅者在投递在飞时被改动"): read the current
     // endpoint/secret at send time, never a snapshot taken at expansion.
     let webhook = WebhookRow::find_by_statement(Statement::from_sql_and_values(
@@ -1178,7 +1287,8 @@ async fn retry_or_fail_delivery(db: &DatabaseConnection, delivery: &DeliveryLeas
 #[derive(Debug, FromQueryResult)]
 struct BusinessEventRow {
     id: Uuid,
-    workspace_id: Uuid,
+    workspace_id: Option<Uuid>,
+    source_flow_scope_id: Option<Uuid>,
     project_id: Option<Uuid>,
     event_type: String,
     aggregate_type: String,
@@ -1199,7 +1309,7 @@ async fn fetch_business_event<C: ConnectionTrait>(
     Ok(BusinessEventRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT id, workspace_id, project_id, event_type, aggregate_type, aggregate_id, actor_id,
+            SELECT id, workspace_id, source_flow_scope_id, project_id, event_type, aggregate_type, aggregate_id, actor_id,
                    source, payload, metadata, correlation_id, causation_id, created_at
             FROM business_events WHERE id = $1
         ",
@@ -1225,7 +1335,7 @@ fn envelope_json(
     let raw_payload = payload_override.unwrap_or_else(|| event.payload.clone());
     let payload = crate::flow::event_policy::redact_flow_event_payload_for_delivery(&event.event_type, &raw_payload);
     let metadata = crate::flow::event_policy::redact_flow_event_metadata_for_delivery(&event.metadata);
-    json!({
+    let mut envelope = json!({
         "version": "openpr.event.v1",
         "event_id": event_id_override.unwrap_or(event.id),
         "event_type": event.event_type,
@@ -1239,7 +1349,17 @@ fn envelope_json(
         "correlation_id": event.correlation_id,
         "causation_id": event.causation_id,
         "created_at": created_at_override.unwrap_or(event.created_at).to_rfc3339(),
-    })
+    });
+    if let Some(scope) = event.source_flow_scope_id {
+        if let Value::Object(fields) = &mut envelope {
+            fields.insert("version".into(), json!("openpr.event.v2"));
+            fields.insert("source_scope".into(), json!({"kind":"flow","id":scope}));
+        }
+        if let Some(object) = envelope.as_object_mut() {
+            object.remove("workspace_id");
+        }
+    }
+    envelope
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -1788,7 +1908,8 @@ mod dispatcher_database_tests {
     fn delivery_envelope_redacts_record_content_from_metadata() {
         let event = BusinessEventRow {
             id: Uuid::new_v4(),
-            workspace_id: Uuid::new_v4(),
+            workspace_id: Some(Uuid::new_v4()),
+            source_flow_scope_id: None,
             project_id: None,
             event_type: "flow.record.created".to_string(),
             aggregate_type: "flow_record".to_string(),

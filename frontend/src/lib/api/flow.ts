@@ -29,13 +29,33 @@ export type FlowReadableObjectType = FlowObjectType | 'record';
 
 export interface FlowObjectView {
 	id: string;
-	workspace_id: string;
+	scope_id: string;
+	workspace_id?: string;
+	permitted_actions?: string[];
+	supported_export_formats?: FlowObjectExportFormat[];
+	export_unavailable_reason?: string;
+	history_export_supported?: boolean;
+	package_snapshot_history_retained?: boolean;
+	editor_state?: 'ready' | 'migration_required' | 'unsupported';
+	editor_initialization_supported?: boolean;
+	record_context_supported?: boolean;
+	record_content_writable?: boolean;
+	record_archive_allowed?: boolean;
+	record_readonly_reason?:
+		| 'record_inactive'
+		| 'insufficient_access'
+		| 'scope_unavailable'
+		| 'container_inactive';
+	supported_forms_conversion?: boolean;
+	forms_conversion_destination_mode?: 'same_workspace' | 'explicit_workspace' | 'unavailable';
 	project_id: string | null;
 	object_type: FlowReadableObjectType;
 	lifecycle_status: string;
 	governance_metadata: Record<string, unknown>;
 	title: string;
 	semantic_content: unknown;
+	/** Present only for the explicit Markdown render query. */
+	rendered_markdown?: string;
 	document_id: string;
 	document_seq: number;
 	frontier: string;
@@ -64,9 +84,7 @@ export interface FlowObjectListResponse {
 	next_cursor?: string;
 }
 
-export type FlowPageIcon =
-	| { kind: 'emoji'; emoji: string }
-	| { kind: 'image'; asset_id: string };
+export type FlowPageIcon = { kind: 'emoji'; emoji: string } | { kind: 'image'; asset_id: string };
 
 export type FlowPageCover =
 	| { kind: 'gallery'; gallery_id: string; position: number }
@@ -78,11 +96,16 @@ export interface FlowAppearance {
 }
 
 export interface FlowNavigatorNode {
+	scope_id?: string;
+	mount_id?: string;
+	ownership?: 'external' | 'owned';
+	mount_status?: 'active' | 'source_archived';
+	can_remove?: boolean;
 	object_id: string;
 	parent_id: string;
 	position: string;
 	title: string;
-	type: FlowObjectType;
+	type: FlowReadableObjectType;
 	appearance?: FlowAppearance;
 }
 
@@ -194,22 +217,34 @@ export interface ListFlowObjectsQuery {
 }
 
 export interface CreateTicketInput {
-	workspace_id: string;
+	authorization_notifications?: boolean;
+	scope_id?: string;
+	object_id?: string;
+	workspace_id?: string;
 	document_id: string;
 	client_id: string;
 	origin: string;
 }
 
 export interface CollabTicket {
+	authorization_notifications?: boolean;
+	scope_id?: string;
+	object_id?: string;
+	document_id?: string;
+	authz_revision?: number;
+	websocket_path?: string;
 	ticket: string;
 	expires_at: string;
-	websocket_url: string;
+	websocket_url?: string;
+	limits?: unknown;
 }
 
 export interface CollabDiagnostics {
+	scope_id: string;
+	object_id: string;
 	document_id: string;
 	engine: string;
-	format_version: number;
+	format_version: string;
 	snapshot_seq: number;
 	head_seq: number;
 	frontier: string;
@@ -293,6 +328,8 @@ export interface FlowReferenceReceipt {
  * and `execute_conversion`): `form_record` reads `target_form_id` (required), `title` (optional,
  * defaults to the Page title) and `values` (constant field values keyed by form field key). */
 export interface FlowConversionPreviewInput {
+	destination_workspace_id?: string;
+	destination_project_id?: string;
 	source_object_id: string;
 	source_frontier: string;
 	target_type: 'form' | 'form_record';
@@ -358,6 +395,15 @@ export interface FlowPackageManifestProject {
 /** `imports/preview` `manifest_summary` (`rest-api-v1.md` v0.8, 2026-10-10;
  * `apps/api/src/flow/package_import.rs::ManifestSummary`). */
 export interface FlowPackageManifestSummary {
+	/** Verified archive provenance only. V1 has genuine workspace_id, not an inferred scope. */
+	source?: {
+		scope_id?: string;
+		workspace_id?: string;
+		scope: 'object' | 'workspace' | 'scope';
+		root_object_ids: string[];
+	};
+	/** included controls separate update/event members, never the snapshot's internal history. */
+	history?: { included: boolean; snapshot_history: 'retained' };
 	projects: FlowPackageManifestProject[];
 	object_count: number;
 	document_count: number;
@@ -387,7 +433,11 @@ export interface FlowPackageImportPreview {
 
 /** `POST /workspaces/{workspace_id}/flow/exports` body (`rest-api-v1.md` v0.8 table). The
  * workspace scope only accepts `format:"package"` at the accepted head (no `at_seq`). */
+export type FlowPackageObjectType = 'page' | 'navigator';
+
 export interface CreateWorkspaceExportInput {
+	/** Omitted preserves all-owned legacy selection; new UI sends an explicit supported-kind filter. */
+	object_types?: FlowPackageObjectType[];
 	format: 'package';
 	include_history: boolean;
 	project_id?: string;
@@ -400,15 +450,18 @@ export interface CreateWorkspaceExportInput {
  * still a success envelope with `status:"failed"` and `error` set to a stable code, with an empty
  * `checksum` and `size: 0` (`rest-api-v1.md` v0.8, 2026-10-10). */
 export interface FlowExportJob {
+	/** Persisted server selection/omission warning keys. Missing/empty older metadata does not prove a complete scope. */
+	warnings?: string[];
+	scope_id?: string;
 	job_id: string;
 	status: string;
 	format: string;
-	workspace_id?: string;
-	object_id?: string;
+	workspace_id?: string | null;
+	object_id?: string | null;
 	package_schema?: string;
-	checksum: string;
-	size: number;
-	expires_at: string;
+	checksum: string | null;
+	size: number | null;
+	expires_at: string | null;
 	download_url?: string;
 	error?: string | null;
 }
@@ -423,8 +476,11 @@ export interface FlowPackageImportReport {
 	import_id: string;
 	package_id: string;
 	package_sha256: string;
-	source_workspace_id: string;
-	target_workspace_id: string;
+	source_scope_id?: string | null;
+	target_scope_id: string;
+	/** Historical provenance and legacy integration only; never fabricated for personal jobs. */
+	source_workspace_id?: string | null;
+	target_workspace_id?: string | null;
 	status: string;
 	mapping_hash: string;
 	conflict_policy: FlowPackageConflictPolicy;
@@ -661,6 +717,9 @@ export interface FlowProjectionLag {
  * `record_query` are not sent here: records are created through the records endpoint and the
  * command form of a query is refused). */
 export type FlowCommandType =
+	| 'initialize_editor_doc'
+	| 'link'
+	| 'unlink'
 	| 'set_title'
 	| 'insert_block'
 	| 'update_block'
@@ -799,6 +858,23 @@ export interface FlowCollectionRecordsResponse {
 	schema_seq: number;
 }
 
+/** Bounded Record-only context; no parent identity/revision/views/count/siblings. */
+export interface FlowRecordFieldView {
+	field_id: string;
+	label: string;
+	type: string;
+	config: Record<string, unknown>;
+	position: number;
+	archived: boolean;
+}
+export interface FlowRecordContext {
+	record: FlowObjectView;
+	fields: FlowRecordFieldView[];
+	values_by_field_id: Record<string, unknown>;
+	field_secrecy_enabled: boolean;
+	schema_revision: string;
+}
+
 /** `POST /flow/collections/{id}/records` (`routes/flow.rs::CreateCollectionRecordRequest`). */
 export interface CreateCollectionRecordInput {
 	values_by_field_id: Record<string, unknown>;
@@ -917,6 +993,7 @@ export interface TailUpdateEntry {
 
 /** `GET .../bootstrap` response (`apps/api/src/flow/model.rs::Bootstrap`). */
 export interface FlowBootstrap {
+	scope_id?: string;
 	object_id: string;
 	document_id: string;
 	engine: string;
@@ -1025,6 +1102,27 @@ export interface FlowSetInheritanceResponse extends FlowSetGrantsResponse {
 	inherit_from_parent: boolean;
 }
 
+export interface FlowLinkPayload {
+	target_object_id: string;
+	relation_type: string;
+	properties?: Record<string, unknown>;
+	position_key?: string;
+}
+export interface FlowLinkCommandResult {
+	relation: {
+		relation_id: string;
+		relation_type: string;
+		source_object_id: string;
+		target_object_id: string;
+	};
+	existing_document_cardinality: 0;
+}
+export interface FlowUnlinkCommandResult {
+	removed: true;
+	event_id: string;
+	existing_document_cardinality: 0;
+}
+
 export type FlowRelationDirection = 'outgoing' | 'incoming' | 'both';
 
 /** `RelationView` (`apps/api/src/flow/model.rs`): a tagged union on `visibility`. The
@@ -1039,6 +1137,7 @@ export type FlowRelationView =
 			properties: unknown;
 			created_at: string;
 			other_object: {
+				scope_id?: string;
 				id: string;
 				object_type: string;
 				title: string;
@@ -1081,12 +1180,89 @@ function buildQuery(params: Record<string, string | number | boolean | undefined
 	return qs ? `?${qs}` : '';
 }
 
+export interface FlowCapabilities {
+	api_version: number;
+	schema_version: number;
+	scope_native_legacy: boolean;
+	personal_provisioning: boolean;
+	personal_writes: boolean;
+	/** Missing personal package capability flags are false; legacy services remain separate. */
+	personal_package_imports?: boolean;
+	personal_scope_package_exports?: boolean;
+	personal_package_history_imports?: boolean;
+	personal_package_history_exports?: boolean;
+	personal_package_object_types?: Array<'page' | 'navigator'>;
+	personal_package_export_selections?: Array<'object' | 'scope'>;
+	personal_package_import_history_mode?: 'replay_to_head';
+	personal_package_snapshot_history?: 'retained';
+	personal_package_typed_raw?: false;
+	external_mounts: boolean;
+	minimum_reader_version: number;
+}
+export interface FlowScopeHome {
+	scope: {
+		id: string;
+		kind: 'personal' | 'legacy_managed';
+		owner_user_id?: string;
+		lifecycle_status: string;
+	};
+	roots: Array<{ object_id: string; project_id?: string | null }>;
+	capabilities?: FlowCapabilities;
+}
+
+export interface FlowMount {
+	id: string;
+	source_object_id: string;
+	destination_workspace_id: string;
+	destination_project_id?: string | null;
+	level: 'view' | 'comment' | 'edit';
+	status: string;
+}
 export const flowApi = {
+	listSharePrincipals(
+		scopeId: string,
+		q: string
+	): Promise<
+		ApiResult<{ items: Array<{ principal_kind: 'user'; principal_id: string; label: string }> }>
+	> {
+		return apiClient.get(
+			`/api/v2/flow/scopes/${scopeId}/share-principals?q=${encodeURIComponent(q)}`
+		);
+	},
+	listMounts(objectId: string): Promise<ApiResult<{ items: FlowMount[] }>> {
+		return apiClient.get(`/api/v2/flow/objects/${objectId}/mounts`);
+	},
+	createMount(
+		objectId: string,
+		input: {
+			destination_workspace_id: string;
+			destination_project_id?: string;
+			level: 'view' | 'comment' | 'edit';
+			idempotency_key: string;
+		}
+	): Promise<ApiResult<FlowMount>> {
+		return apiClient.post(`/api/v2/flow/objects/${objectId}/mounts`, input);
+	},
+	removeMount(objectId: string, mountId: string): Promise<ApiResult<{ removed: boolean }>> {
+		return apiClient.delete(`/api/v2/flow/objects/${objectId}/mounts/${mountId}`);
+	},
+	getCapabilities(): Promise<ApiResult<FlowCapabilities>> {
+		return apiClient.get('/api/v2/flow/capabilities');
+	},
+	getHome(): Promise<ApiResult<FlowScopeHome>> {
+		return apiClient.get('/api/v2/flow/home');
+	},
+	getWorkspaceScope(workspaceId: string): Promise<ApiResult<FlowScopeHome>> {
+		return apiClient.get(`/api/v2/flow/workspaces/${workspaceId}/scope`);
+	},
 	createObject(
 		workspaceId: string,
 		input: CreateFlowObjectInput
 	): Promise<ApiResult<AcceptedChange>> {
-		return apiClient.post<AcceptedChange>(`/api/v1/workspaces/${workspaceId}/flow/objects`, input);
+		return apiClient.post<AcceptedChange>(`/api/v2/flow/objects`, {
+			...input,
+			scope_id: workspaceId
+		});
 	},
 
 	listObjects(
@@ -1103,9 +1279,7 @@ export const flowApi = {
 			limit: query.limit,
 			include_archived: query.include_archived
 		});
-		return apiClient.get<FlowObjectListResponse>(
-			`/api/v1/workspaces/${workspaceId}/flow/objects${qs}`
-		);
+		return apiClient.get<FlowObjectListResponse>(`/api/v2/flow/scopes/${workspaceId}/objects${qs}`);
 	},
 
 	getNavigator(
@@ -1118,7 +1292,7 @@ export const flowApi = {
 			include_archived: query.include_archived
 		});
 		return apiClient.get<FlowNavigatorResponse>(
-			`/api/v1/workspaces/${workspaceId}/flow/navigator${qs}`
+			`/api/v2/flow/scopes/${workspaceId}/navigator${qs}`
 		);
 	},
 
@@ -1127,7 +1301,7 @@ export const flowApi = {
 		query: { at_seq?: number; render?: 'semantic_json' | 'markdown' } = {}
 	): Promise<ApiResult<FlowObjectView>> {
 		const qs = buildQuery({ at_seq: query.at_seq, render: query.render });
-		return apiClient.get<FlowObjectView>(`/api/v1/flow/objects/${objectId}${qs}`);
+		return apiClient.get<FlowObjectView>(`/api/v2/flow/objects/${objectId}${qs}`);
 	},
 
 	getHistory(
@@ -1135,16 +1309,16 @@ export const flowApi = {
 		query: { before_seq?: number; limit?: number } = {}
 	): Promise<ApiResult<FlowHistoryResponse>> {
 		const qs = buildQuery({ before_seq: query.before_seq, limit: query.limit ?? 20 });
-		return apiClient.get<FlowHistoryResponse>(`/api/v1/flow/objects/${objectId}/history${qs}`);
+		return apiClient.get<FlowHistoryResponse>(`/api/v2/flow/objects/${objectId}/history${qs}`);
 	},
 
 	createTicket(input: CreateTicketInput): Promise<ApiResult<CollabTicket>> {
-		return apiClient.post<CollabTicket>('/api/v1/collab/tickets', input);
+		return apiClient.post<CollabTicket>('/api/v2/flow/collab/tickets', input);
 	},
 
 	getCollabDiagnostics(objectId: string): Promise<ApiResult<CollabDiagnostics>> {
 		return apiClient.get<CollabDiagnostics>(
-			`/api/v1/flow/objects/${objectId}/collab?include_sizes=true`
+			`/api/v2/flow/objects/${objectId}/collab?include_sizes=true`
 		);
 	},
 
@@ -1174,7 +1348,7 @@ export const flowApi = {
 		objectId: string,
 		input: ExecuteFlowCommandInput
 	): Promise<ApiResult<AcceptedChange>> {
-		return apiClient.post<AcceptedChange>(`/api/v1/flow/objects/${objectId}/commands`, input);
+		return apiClient.post<AcceptedChange>(`/api/v2/flow/objects/${objectId}/commands`, input);
 	},
 
 	referenceObject(
@@ -1187,13 +1361,13 @@ export const flowApi = {
 		}
 	): Promise<ApiResult<FlowReferenceReceipt>> {
 		return apiClient.post<FlowReferenceReceipt>(
-			`/api/v1/flow/objects/${objectId}/references`,
+			`/api/v2/flow/objects/${objectId}/references`,
 			input
 		);
 	},
 
 	listReferences(objectId: string): Promise<ApiResult<FlowReferenceList>> {
-		return apiClient.get<FlowReferenceList>(`/api/v1/flow/objects/${objectId}/references`);
+		return apiClient.get<FlowReferenceList>(`/api/v2/flow/objects/${objectId}/references`);
 	},
 
 	unreferenceObject(
@@ -1202,25 +1376,25 @@ export const flowApi = {
 		idempotencyKey: string
 	): Promise<ApiResult<{ removed: boolean; event_id: string }>> {
 		return apiClient.deleteWithHeaders<{ removed: boolean; event_id: string }>(
-			`/api/v1/flow/objects/${objectId}/references/${referenceId}`,
+			`/api/v2/flow/objects/${objectId}/references/${referenceId}`,
 			{ 'Idempotency-Key': idempotencyKey }
 		);
 	},
 
 	previewConversion(input: FlowConversionPreviewInput): Promise<ApiResult<FlowConversionPreview>> {
-		return apiClient.post<FlowConversionPreview>('/api/v1/flow/conversions/preview', input);
+		return apiClient.post<FlowConversionPreview>('/api/v2/flow/conversions/preview', input);
 	},
 
 	commitConversion(input: FlowConversionCommitInput): Promise<ApiResult<FlowConversionJob>> {
-		return apiClient.post<FlowConversionJob>('/api/v1/flow/conversions', input);
+		return apiClient.post<FlowConversionJob>('/api/v2/flow/conversions', input);
 	},
 
 	getConversion(jobId: string): Promise<ApiResult<FlowConversionJob>> {
-		return apiClient.get<FlowConversionJob>(`/api/v1/flow/conversions/${jobId}`);
+		return apiClient.get<FlowConversionJob>(`/api/v2/flow/conversions/${jobId}`);
 	},
 
 	retryConversion(jobId: string, idempotencyKey: string): Promise<ApiResult<FlowConversionJob>> {
-		return apiClient.post<FlowConversionJob>(`/api/v1/flow/conversions/${jobId}/retry`, {
+		return apiClient.post<FlowConversionJob>(`/api/v2/flow/conversions/${jobId}/retry`, {
 			idempotency_key: idempotencyKey,
 			confirm: true
 		});
@@ -1239,7 +1413,7 @@ export const flowApi = {
 		// XHR when the runtime has it (browser upload progress), `fetch` otherwise -- see
 		// `ApiClient.postFormDataWithProgress`.
 		return apiClient.postFormDataWithProgress<FlowPackageArtifactReceipt>(
-			`/api/v1/workspaces/${workspaceId}/flow/import-artifacts`,
+			`/api/v2/flow/scopes/${workspaceId}/import-artifacts`,
 			body,
 			{ 'Idempotency-Key': idempotencyKey },
 			signal,
@@ -1251,18 +1425,18 @@ export const flowApi = {
 		workspaceId: string,
 		input: CreateWorkspaceExportInput
 	): Promise<ApiResult<FlowExportJob>> {
-		return apiClient.post<FlowExportJob>(`/api/v1/workspaces/${workspaceId}/flow/exports`, input);
+		return apiClient.post<FlowExportJob>(`/api/v2/flow/scopes/${workspaceId}/exports`, input);
 	},
 
 	startObjectExport(
 		objectId: string,
 		input: CreateObjectExportInput
 	): Promise<ApiResult<FlowExportJob>> {
-		return apiClient.post<FlowExportJob>(`/api/v1/flow/objects/${objectId}/exports`, input);
+		return apiClient.post<FlowExportJob>(`/api/v2/flow/objects/${objectId}/exports`, input);
 	},
 
 	getExportJob(jobId: string): Promise<ApiResult<FlowExportJob>> {
-		return apiClient.get<FlowExportJob>(`/api/v1/flow/exports/${jobId}`);
+		return apiClient.get<FlowExportJob>(`/api/v2/flow/exports/${jobId}`);
 	},
 
 	/**
@@ -1274,7 +1448,7 @@ export const flowApi = {
 	async downloadExportArtifact(
 		downloadUrl: string
 	): Promise<ApiResult<{ blob: Blob; sha256: string | null }>> {
-		if (!/^\/api\/v1\/flow\/exports\/[^/?#]+\/artifact$/.test(downloadUrl)) {
+		if (!/^\/api\/v[12]\/flow\/exports\/[^/?#]+\/artifact$/.test(downloadUrl)) {
 			return { code: 400, message: 'Unsupported download URL', data: null };
 		}
 		const result = await apiClient.getBinary(downloadUrl);
@@ -1298,7 +1472,7 @@ export const flowApi = {
 		}
 	): Promise<ApiResult<FlowPackageImportPreview>> {
 		return apiClient.post<FlowPackageImportPreview>(
-			`/api/v1/workspaces/${workspaceId}/flow/imports/preview`,
+			`/api/v2/flow/scopes/${workspaceId}/imports/preview`,
 			input
 		);
 	},
@@ -1315,7 +1489,7 @@ export const flowApi = {
 		}
 	): Promise<ApiResult<FlowPackageImportJobReceipt>> {
 		return apiClient.post<FlowPackageImportJobReceipt>(
-			`/api/v1/workspaces/${workspaceId}/flow/imports/${importId}/commit`,
+			`/api/v2/flow/scopes/${workspaceId}/imports/${importId}/commit`,
 			input
 		);
 	},
@@ -1325,7 +1499,7 @@ export const flowApi = {
 		importId: string
 	): Promise<ApiResult<FlowPackageImportReport>> {
 		return apiClient.get<FlowPackageImportReport>(
-			`/api/v1/workspaces/${workspaceId}/flow/imports/${importId}`
+			`/api/v2/flow/scopes/${workspaceId}/imports/${importId}`
 		);
 	},
 
@@ -1348,7 +1522,7 @@ export const flowApi = {
 		});
 		return apiClient.request<FlowSearchResponse>(
 			'GET',
-			`/api/v1/workspaces/${workspaceId}/flow/search${qs}`,
+			`/api/v2/flow/scopes/${workspaceId}/search${qs}`,
 			undefined,
 			true,
 			{},
@@ -1356,22 +1530,26 @@ export const flowApi = {
 		);
 	},
 
-	getProjectionLag(
+	getWorkspaceProjectionLag(
 		workspaceId: string,
-		query: { project_id?: string; cursor?: string; limit?: number } = {}
+		query: { cursor?: string; limit?: number } = {}
 	): Promise<ApiResult<FlowProjectionLag>> {
-		const qs = buildQuery({
-			project_id: query.project_id,
-			cursor: query.cursor,
-			limit: query.limit
-		});
-		return apiClient.get<FlowProjectionLag>(
-			`/api/v1/workspaces/${workspaceId}/flow/projection-lag${qs}`
+		return apiClient.get(
+			`/api/v1/workspaces/${workspaceId}/flow/projection-lag${buildQuery(query)}`
 		);
 	},
 
 	getAdminHealth(workspaceId: string): Promise<ApiResult<FlowAdminHealth>> {
 		return apiClient.get<FlowAdminHealth>(`/api/v1/admin/workspaces/${workspaceId}/flow/health`);
+	},
+	/** Paginated policy-visible lag rows; aggregates cover the authorized scope before paging. */
+	getProjectionLag(
+		scopeId: string,
+		query: { project_id?: string; cursor?: string; limit?: number } = {}
+	): Promise<ApiResult<FlowProjectionLag>> {
+		return apiClient.get<FlowProjectionLag>(
+			`/api/v2/flow/scopes/${scopeId}/projection-lag${buildQuery(query)}`
+		);
 	},
 
 	/** One page of per-document lag rows (`cursor?`, `limit` 1..=100); the maxima are
@@ -1441,7 +1619,7 @@ export const flowApi = {
 		known: { known_seq?: number; known_frontier?: string } = {}
 	): Promise<ApiResult<FlowBootstrap>> {
 		const qs = buildQuery({ known_seq: known.known_seq, known_frontier: known.known_frontier });
-		return apiClient.get<FlowBootstrap>(`/api/v1/flow/objects/${objectId}/bootstrap${qs}`);
+		return apiClient.get<FlowBootstrap>(`/api/v2/flow/objects/${objectId}/bootstrap${qs}`);
 	},
 
 	getDiff(
@@ -1449,18 +1627,18 @@ export const flowApi = {
 		query: { from_seq: number; to_seq: number; render?: 'semantic_json' | 'markdown' }
 	): Promise<ApiResult<FlowDiffResponse>> {
 		const qs = buildQuery({ from_seq: query.from_seq, to_seq: query.to_seq, render: query.render });
-		return apiClient.get<FlowDiffResponse>(`/api/v1/flow/objects/${objectId}/diff${qs}`);
+		return apiClient.get<FlowDiffResponse>(`/api/v2/flow/objects/${objectId}/diff${qs}`);
 	},
 
 	getGrants(objectId: string): Promise<ApiResult<FlowGrantsView>> {
-		return apiClient.get<FlowGrantsView>(`/api/v1/flow/objects/${objectId}/grants`);
+		return apiClient.get<FlowGrantsView>(`/api/v2/flow/objects/${objectId}/grants`);
 	},
 
 	setGrants(
 		objectId: string,
 		input: SetFlowGrantsInput
 	): Promise<ApiResult<FlowSetGrantsResponse>> {
-		return apiClient.put<FlowSetGrantsResponse>(`/api/v1/flow/objects/${objectId}/grants`, input);
+		return apiClient.put<FlowSetGrantsResponse>(`/api/v2/flow/objects/${objectId}/grants`, input);
 	},
 
 	setInheritance(
@@ -1468,9 +1646,31 @@ export const flowApi = {
 		input: SetFlowInheritanceInput
 	): Promise<ApiResult<FlowSetInheritanceResponse>> {
 		return apiClient.put<FlowSetInheritanceResponse>(
-			`/api/v1/flow/objects/${objectId}/inheritance`,
+			`/api/v2/flow/objects/${objectId}/inheritance`,
 			input
 		);
+	},
+
+	/** Metadata-only relation commands echo the accepted source head; no new doc update. */
+	linkObjects(
+		objectId: string,
+		payload: FlowLinkPayload,
+		idempotencyKey: string
+	): Promise<ApiResult<AcceptedChange>> {
+		return apiClient.post<AcceptedChange>(`/api/v2/flow/objects/${objectId}/commands`, {
+			command: { type: 'link', payload },
+			idempotency_key: idempotencyKey
+		});
+	},
+	unlinkObject(
+		objectId: string,
+		relationId: string,
+		idempotencyKey: string
+	): Promise<ApiResult<AcceptedChange>> {
+		return apiClient.post<AcceptedChange>(`/api/v2/flow/objects/${objectId}/commands`, {
+			command: { type: 'unlink', payload: { relation_id: relationId } },
+			idempotency_key: idempotencyKey
+		});
 	},
 
 	getRelations(
@@ -1484,7 +1684,7 @@ export const flowApi = {
 			limit: query.limit
 		});
 		return apiClient.get<FlowRelationListResponse>(
-			`/api/v1/flow/objects/${objectId}/relations${qs}`
+			`/api/v2/flow/objects/${objectId}/relations${qs}`
 		);
 	},
 
@@ -1493,11 +1693,15 @@ export const flowApi = {
 	/** `GET /flow/objects/{id}/schema`. Served by the same handler as `getCollection`
 	 * (`main.rs` routes both to `get_flow_collection`), so a non-Collection id is `not_found`. */
 	getObjectSchema(objectId: string): Promise<ApiResult<FlowCollectionDescription>> {
-		return apiClient.get<FlowCollectionDescription>(`/api/v1/flow/objects/${objectId}/schema`);
+		return apiClient.get<FlowCollectionDescription>(`/api/v2/flow/objects/${objectId}/schema`);
+	},
+
+	getRecordContext(recordId: string): Promise<ApiResult<FlowRecordContext>> {
+		return apiClient.get<FlowRecordContext>(`/api/v2/flow/records/${recordId}/context`);
 	},
 
 	getCollection(collectionId: string): Promise<ApiResult<FlowCollectionDescription>> {
-		return apiClient.get<FlowCollectionDescription>(`/api/v1/flow/collections/${collectionId}`);
+		return apiClient.get<FlowCollectionDescription>(`/api/v2/flow/collections/${collectionId}`);
 	},
 
 	listCollectionRecords(
@@ -1515,7 +1719,7 @@ export const flowApi = {
 				query.field_ids && query.field_ids.length > 0 ? query.field_ids.join(',') : undefined
 		});
 		return apiClient.get<FlowCollectionRecordsResponse>(
-			`/api/v1/flow/collections/${collectionId}/records${qs}`
+			`/api/v2/flow/collections/${collectionId}/records${qs}`
 		);
 	},
 
@@ -1524,7 +1728,7 @@ export const flowApi = {
 		input: FlowCollectionQueryInput
 	): Promise<ApiResult<FlowCollectionRecordsResponse>> {
 		return apiClient.post<FlowCollectionRecordsResponse>(
-			`/api/v1/flow/collections/${collectionId}/query`,
+			`/api/v2/flow/collections/${collectionId}/query`,
 			input
 		);
 	},
@@ -1534,49 +1738,72 @@ export const flowApi = {
 		input: CreateCollectionRecordInput
 	): Promise<ApiResult<AcceptedChange>> {
 		return apiClient.post<AcceptedChange>(
-			`/api/v1/flow/collections/${collectionId}/records`,
+			`/api/v2/flow/collections/${collectionId}/records`,
 			input
 		);
 	},
 
 	listComments(objectId: string): Promise<ApiResult<FlowCommentList>> {
-		return apiClient.get<FlowCommentList>(`/api/v1/flow/objects/${objectId}/comments`);
+		return apiClient.get<FlowCommentList>(`/api/v2/flow/objects/${objectId}/comments`);
 	},
 
-	createComment(objectId: string, input: CreateFlowCommentInput): Promise<ApiResult<FlowComment>> {
-		return apiClient.post<FlowComment>(`/api/v1/flow/objects/${objectId}/comments`, input);
+	createComment(
+		objectId: string,
+		input: CreateFlowCommentInput,
+		idempotencyKey?: string
+	): Promise<ApiResult<FlowComment>> {
+		return apiClient.request<FlowComment>(
+			'POST',
+			`/api/v2/flow/objects/${objectId}/comments`,
+			input,
+			true,
+			idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}
+		);
 	},
 
 	updateComment(
 		objectId: string,
 		commentId: string,
-		input: { body: string; mentions?: string[] }
+		input: { body: string; mentions?: string[] },
+		idempotencyKey?: string
 	): Promise<ApiResult<FlowComment>> {
-		return apiClient.patch<FlowComment>(
-			`/api/v1/flow/objects/${objectId}/comments/${commentId}`,
-			input
+		return apiClient.request<FlowComment>(
+			'PATCH',
+			`/api/v2/flow/objects/${objectId}/comments/${commentId}`,
+			input,
+			true,
+			idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}
 		);
 	},
 
-	deleteComment(objectId: string, commentId: string): Promise<ApiResult<{ deleted: boolean }>> {
-		return apiClient.delete<{ deleted: boolean }>(
-			`/api/v1/flow/objects/${objectId}/comments/${commentId}`
+	deleteComment(
+		objectId: string,
+		commentId: string,
+		idempotencyKey?: string
+	): Promise<ApiResult<{ deleted: boolean }>> {
+		return apiClient.deleteWithHeaders<{ deleted: boolean }>(
+			`/api/v2/flow/objects/${objectId}/comments/${commentId}`,
+			idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}
 		);
 	},
 
 	resolveComment(
 		objectId: string,
 		commentId: string,
-		resolved: boolean
+		resolved: boolean,
+		idempotencyKey?: string
 	): Promise<ApiResult<FlowComment>> {
-		return apiClient.post<FlowComment>(
-			`/api/v1/flow/objects/${objectId}/comments/${commentId}/resolve`,
-			{ resolved }
+		return apiClient.request<FlowComment>(
+			'POST',
+			`/api/v2/flow/objects/${objectId}/comments/${commentId}/resolve`,
+			{ resolved },
+			true,
+			idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}
 		);
 	},
 
 	listShareLinks(objectId: string): Promise<ApiResult<FlowShareLinkList>> {
-		return apiClient.get<FlowShareLinkList>(`/api/v1/flow/objects/${objectId}/share-links`);
+		return apiClient.get<FlowShareLinkList>(`/api/v2/flow/objects/${objectId}/share-links`);
 	},
 
 	createShareLink(
@@ -1584,39 +1811,54 @@ export const flowApi = {
 		input: { expires_at?: string | null }
 	): Promise<ApiResult<CreatedFlowShareLink>> {
 		return apiClient.post<CreatedFlowShareLink>(
-			`/api/v1/flow/objects/${objectId}/share-links`,
+			`/api/v2/flow/objects/${objectId}/share-links`,
 			input
 		);
 	},
 
 	revokeShareLink(objectId: string, linkId: string): Promise<ApiResult<FlowShareLink>> {
 		return apiClient.post<FlowShareLink>(
-			`/api/v1/flow/objects/${objectId}/share-links/${linkId}/revoke`,
+			`/api/v2/flow/objects/${objectId}/share-links/${linkId}/revoke`,
 			{}
 		);
 	},
 
 	getPublicShare(token: string): Promise<ApiResult<FlowPublicShare>> {
-		return apiClient.get<FlowPublicShare>(`/api/v1/flow/public-shares/${encodeURIComponent(token)}`);
+		return apiClient.get<FlowPublicShare>(
+			`/api/v2/flow/public-shares/${encodeURIComponent(token)}`
+		);
 	},
 
-	setAppearance(objectId: string, appearance: FlowAppearance): Promise<ApiResult<FlowAppearance>> {
-		return apiClient.put<FlowAppearance>(`/api/v1/flow/objects/${objectId}/appearance`, appearance);
+	setAppearance(
+		objectId: string,
+		appearance: FlowAppearance,
+		idempotencyKey?: string
+	): Promise<ApiResult<FlowAppearance>> {
+		return apiClient.request<FlowAppearance>(
+			'PUT',
+			`/api/v2/flow/objects/${objectId}/appearance`,
+			appearance,
+			true,
+			idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}
+		);
 	},
 
 	uploadAppearance(
 		objectId: string,
-		dataBase64: string
+		dataBase64: string,
+		idempotencyKey?: string
 	): Promise<ApiResult<{ asset_id: string; content_type: string; byte_size: number }>> {
-		return apiClient.post(`/api/v1/flow/objects/${objectId}/appearance/assets`, {
-			data_base64: dataBase64
-		});
+		return apiClient.request(
+			'POST',
+			`/api/v2/flow/objects/${objectId}/appearance/assets`,
+			{ data_base64: dataBase64 },
+			true,
+			idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}
+		);
 	},
 
 	appearanceAsset(objectId: string, assetId: string) {
-		return apiClient.getBinary(
-			`/api/v1/flow/objects/${objectId}/appearance/assets/${assetId}`
-		);
+		return apiClient.getBinary(`/api/v2/flow/objects/${objectId}/appearance/assets/${assetId}`);
 	},
 
 	restoreVersion(
@@ -1624,25 +1866,29 @@ export const flowApi = {
 		input: { seq: number; idempotency_key: string; message?: string }
 	): Promise<ApiResult<FlowRestoreResult>> {
 		return apiClient.post<FlowRestoreResult>(
-			`/api/v1/flow/objects/${objectId}/history/restore`,
+			`/api/v2/flow/objects/${objectId}/history/restore`,
 			input
 		);
 	},
 
+	/** Archived policy-visible objects, with a stable cursor and limit1..100. */
 	listTrash(
+		scopeId: string,
+		query: { cursor?: string; limit?: number } = {}
+	): Promise<ApiResult<FlowTrashPage>> {
+		return apiClient.get<FlowTrashPage>(`/api/v2/flow/scopes/${scopeId}/trash${buildQuery(query)}`);
+	},
+	listWorkspaceTrash(
 		workspaceId: string,
 		query: { cursor?: string; limit?: number } = {}
 	): Promise<ApiResult<FlowTrashPage>> {
-		const params = new URLSearchParams();
-		if (query.cursor) params.set('cursor', query.cursor);
-		if (query.limit) params.set('limit', String(query.limit));
-		const encoded = params.toString();
-		const suffix = encoded ? `?${encoded}` : '';
-		return apiClient.get<FlowTrashPage>(`/api/v1/workspaces/${workspaceId}/flow/trash${suffix}`);
+		return apiClient.get<FlowTrashPage>(
+			`/api/v1/workspaces/${workspaceId}/flow/trash${buildQuery(query)}`
+		);
 	},
 
 	purgeObject(objectId: string): Promise<ApiResult<{ deleted_id: string; deleted_count: number }>> {
-		return apiClient.post(`/api/v1/flow/objects/${objectId}/purge`, {});
+		return apiClient.post(`/api/v2/flow/objects/${objectId}/purge`, {});
 	},
 
 	listMentionCandidates(
@@ -1650,14 +1896,31 @@ export const flowApi = {
 		q = ''
 	): Promise<ApiResult<{ items: FlowMentionCandidate[] }>> {
 		const suffix = q ? `?q=${encodeURIComponent(q)}` : '';
-		return apiClient.get(`/api/v1/flow/objects/${objectId}/mention-candidates${suffix}`);
+		return apiClient.get(`/api/v2/flow/objects/${objectId}/mention-candidates${suffix}`);
 	}
 };
 
+let appearanceCacheToken: string | null = null;
 const appearanceBlobs = new Map<string, Promise<string | null>>();
 
 /** Authenticated image URL for an icon or cover. Cached for the page session. */
+export function clearFlowAppearanceCache(objectId?: string): void {
+	for (const [key, promise] of appearanceBlobs) {
+		if (!objectId || key.startsWith(`${objectId}:`)) {
+			appearanceBlobs.delete(key);
+			void promise.then((url) => {
+				if (url) URL.revokeObjectURL(url);
+			});
+		}
+	}
+}
+
 export function appearanceBlobUrl(objectId: string, assetId: string): Promise<string | null> {
+	const token = apiClient.getToken();
+	if (token !== appearanceCacheToken) {
+		clearFlowAppearanceCache();
+		appearanceCacheToken = token;
+	}
 	const key = `${objectId}:${assetId}`;
 	const cached = appearanceBlobs.get(key);
 	if (cached) return cached;
@@ -1671,5 +1934,5 @@ export function appearanceBlobUrl(objectId: string, assetId: string): Promise<st
 
 export function publicAppearanceUrl(token: string, assetId: string): string {
 	const base = import.meta.env.VITE_API_BASE_URL ?? '';
-	return `${base}/api/v1/flow/public-shares/${encodeURIComponent(token)}/assets/${encodeURIComponent(assetId)}`;
+	return `${base}/api/v2/flow/public-shares/${encodeURIComponent(token)}/assets/${encodeURIComponent(assetId)}`;
 }

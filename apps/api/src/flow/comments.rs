@@ -3,11 +3,11 @@
 //! Listing needs `view`. Creating and replying need `comment`. An author with `comment` may edit
 //! or delete their own row. Resolving a top-level thread needs `edit`, and so does deleting
 //! someone else's row only when the caller has `full_access`. Replies are one level deep and stay
-//! on the same object. Mentions are an explicit user-id list; only workspace members are notified.
+//! on the same object. Mentions are an explicit user-id list; notifications require current object access and never create membership.
 
 use chrono::{DateTime, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -25,15 +25,16 @@ pub struct CommentActor {
     pub level: PermissionLevel,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewComment {
     pub body: String,
     pub block_id: Option<String>,
     pub parent_id: Option<Uuid>,
+    #[serde(default)]
     pub mentions: Vec<Uuid>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FlowCommentView {
     pub id: Uuid,
     pub object_id: Uuid,
@@ -55,14 +56,14 @@ pub struct FlowCommentList {
 }
 
 #[derive(Debug, FromQueryResult)]
-struct CommentRow {
+pub(crate) struct CommentRow {
     id: Uuid,
     object_id: Uuid,
     block_id: Option<String>,
     parent_id: Option<Uuid>,
     author_id: Option<Uuid>,
     body: String,
-    mentions: Value,
+    pub(crate) mentions: Value,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     resolved_at: Option<DateTime<Utc>>,
@@ -106,6 +107,51 @@ pub async fn list_comments(db: &DatabaseConnection, object_id: Uuid) -> Result<F
 pub async fn create_comment(
     db: &DatabaseConnection,
     workspace_id: Uuid,
+    object: Uuid,
+    actor: &CommentActor,
+    input: NewComment,
+) -> Result<FlowCommentView, ApiError> {
+    if super::scope::identity(db, object).await?.workspace_id != Some(workspace_id) {
+        return Err(ApiError::not_found("flow object not found"));
+    }
+    super::scope_social::create_comment(db, object, actor.user_id, input, None).await
+}
+pub async fn update_comment(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    object: Uuid,
+    comment: Uuid,
+    actor: &CommentActor,
+    body: &str,
+    mentions: Option<Vec<Uuid>>,
+) -> Result<FlowCommentView, ApiError> {
+    if super::scope::identity(db, object).await?.workspace_id != Some(workspace_id) {
+        return Err(ApiError::not_found("flow object not found"));
+    }
+    super::scope_social::update_comment(db, object, comment, actor.user_id, body, mentions, None).await
+}
+pub async fn delete_comment(
+    db: &DatabaseConnection,
+    object: Uuid,
+    comment: Uuid,
+    actor: &CommentActor,
+) -> Result<(), ApiError> {
+    super::scope_social::delete_comment(db, object, comment, actor.user_id, None).await
+}
+pub async fn set_resolved(
+    db: &DatabaseConnection,
+    object: Uuid,
+    comment: Uuid,
+    actor: &CommentActor,
+    resolved: bool,
+) -> Result<FlowCommentView, ApiError> {
+    super::scope_social::resolve_comment(db, object, comment, actor.user_id, resolved, None).await
+}
+
+pub(crate) async fn create_comment_on<C: ConnectionTrait>(
+    db: &C,
+    workspace_id: Option<Uuid>,
+    scope_id: Option<Uuid>,
     object_id: Uuid,
     actor: &CommentActor,
     input: NewComment,
@@ -134,8 +180,8 @@ pub async fn create_comment(
     let row = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "INSERT INTO flow_comments ( \
-            id, workspace_id, object_id, block_id, parent_id, author_id, body, mentions, created_at, updated_at \
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $9) \
+            id, workspace_id, object_id, block_id, parent_id, author_id, body, mentions, created_at, updated_at,scope_id \
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $9,$10) \
          RETURNING id, object_id, block_id, parent_id, author_id, body, mentions, \
                    created_at, updated_at, resolved_at, resolved_by",
         vec![
@@ -148,20 +194,17 @@ pub async fn create_comment(
             body.clone().into(),
             mentions_json.into(),
             now.into(),
+            scope_id.into(),
         ],
     ))
     .one(db)
     .await?
     .ok_or_else(ApiError::internal)?;
-    if let Err(error) = notify_mentions(db, workspace_id, object_id, actor.user_id, &mentions).await {
-        tracing::warn!(%error, %object_id, comment_id = %id, "flow comment mention notification failed");
-    }
     Ok(view_of(row))
 }
 
-pub async fn update_comment(
-    db: &DatabaseConnection,
-    workspace_id: Uuid,
+pub(crate) async fn update_comment_on<C: ConnectionTrait>(
+    db: &C,
     object_id: Uuid,
     comment_id: Uuid,
     actor: &CommentActor,
@@ -180,7 +223,6 @@ pub async fn update_comment(
         Some(ids) => normalize_mentions(&ids)?,
         None => parse_mentions(&existing.mentions),
     };
-    let previous = parse_mentions(&existing.mentions);
     let mentions_json = json!(next_mentions.iter().map(Uuid::to_string).collect::<Vec<_>>());
     let now = Utc::now();
     let row = CommentRow::find_by_statement(Statement::from_sql_and_values(
@@ -200,15 +242,11 @@ pub async fn update_comment(
     .one(db)
     .await?
     .ok_or_else(|| ApiError::not_found("flow comment not found".to_string()))?;
-    let fresh: Vec<Uuid> = next_mentions.into_iter().filter(|id| !previous.contains(id)).collect();
-    if let Err(error) = notify_mentions(db, workspace_id, object_id, actor.user_id, &fresh).await {
-        tracing::warn!(%error, %object_id, %comment_id, "flow comment mention notification failed");
-    }
     Ok(view_of(row))
 }
 
-pub async fn delete_comment(
-    db: &DatabaseConnection,
+pub(crate) async fn delete_comment_on<C: ConnectionTrait>(
+    db: &C,
     object_id: Uuid,
     comment_id: Uuid,
     actor: &CommentActor,
@@ -234,8 +272,8 @@ pub async fn delete_comment(
     Ok(())
 }
 
-pub async fn set_resolved(
-    db: &DatabaseConnection,
+pub(crate) async fn set_resolved_on<C: ConnectionTrait>(
+    db: &C,
     object_id: Uuid,
     comment_id: Uuid,
     actor: &CommentActor,
@@ -279,12 +317,16 @@ pub async fn set_resolved(
     Ok(view_of(row))
 }
 
-async fn load_visible(db: &DatabaseConnection, object_id: Uuid, comment_id: Uuid) -> Result<CommentRow, ApiError> {
+pub(crate) async fn load_visible<C: ConnectionTrait>(
+    db: &C,
+    object_id: Uuid,
+    comment_id: Uuid,
+) -> Result<CommentRow, ApiError> {
     CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT id, object_id, block_id, parent_id, author_id, body, mentions, \
          created_at, updated_at, resolved_at, resolved_by \
-         FROM flow_comments WHERE id = $1 AND object_id = $2 AND deleted_at IS NULL",
+         FROM flow_comments WHERE id = $1 AND object_id = $2 AND deleted_at IS NULL FOR UPDATE",
         vec![comment_id.into(), object_id.into()],
     ))
     .one(db)
@@ -292,11 +334,11 @@ async fn load_visible(db: &DatabaseConnection, object_id: Uuid, comment_id: Uuid
     .ok_or_else(|| ApiError::not_found("flow comment not found".to_string()))
 }
 
-async fn load_parent(db: &DatabaseConnection, parent_id: Uuid) -> Result<ParentRow, ApiError> {
+async fn load_parent<C: ConnectionTrait>(db: &C, parent_id: Uuid) -> Result<ParentRow, ApiError> {
     ParentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT object_id, parent_id, block_id, (deleted_at IS NOT NULL) AS deleted \
-         FROM flow_comments WHERE id = $1",
+         FROM flow_comments WHERE id = $1 FOR SHARE",
         vec![parent_id.into()],
     ))
     .one(db)
@@ -304,7 +346,7 @@ async fn load_parent(db: &DatabaseConnection, parent_id: Uuid) -> Result<ParentR
     .ok_or_else(|| ApiError::not_found("flow comment not found".to_string()))
 }
 
-fn normalize_body(raw: &str) -> Result<String, ApiError> {
+pub(crate) fn normalize_body(raw: &str) -> Result<String, ApiError> {
     let body = raw.trim();
     let chars = body.chars().count();
     if chars == 0 || chars > BODY_MAX_CHARS {
@@ -315,7 +357,7 @@ fn normalize_body(raw: &str) -> Result<String, ApiError> {
     Ok(body.to_string())
 }
 
-fn normalize_block_id(raw: Option<String>) -> Result<Option<String>, ApiError> {
+pub(crate) fn normalize_block_id(raw: Option<String>) -> Result<Option<String>, ApiError> {
     let Some(raw) = raw else {
         return Ok(None);
     };
@@ -331,7 +373,7 @@ fn normalize_block_id(raw: Option<String>) -> Result<Option<String>, ApiError> {
     Ok(Some(block_id.to_string()))
 }
 
-fn normalize_mentions(raw: &[Uuid]) -> Result<Vec<Uuid>, ApiError> {
+pub(crate) fn normalize_mentions(raw: &[Uuid]) -> Result<Vec<Uuid>, ApiError> {
     let mut mentions = Vec::new();
     for id in raw {
         if mentions.contains(id) {
@@ -347,7 +389,7 @@ fn normalize_mentions(raw: &[Uuid]) -> Result<Vec<Uuid>, ApiError> {
     Ok(mentions)
 }
 
-fn parse_mentions(value: &Value) -> Vec<Uuid> {
+pub(crate) fn parse_mentions(value: &Value) -> Vec<Uuid> {
     let Some(items) = value.as_array() else {
         return Vec::new();
     };
@@ -374,58 +416,7 @@ fn view_of(row: CommentRow) -> FlowCommentView {
     }
 }
 
-async fn notify_mentions(
-    db: &DatabaseConnection,
-    workspace_id: Uuid,
-    object_id: Uuid,
-    actor_id: Uuid,
-    mention_user_ids: &[Uuid],
-) -> Result<(), ApiError> {
-    if mention_user_ids.is_empty() {
-        return Ok(());
-    }
-    let actor_name = actor_label(db, actor_id).await?;
-    let link = format!("/workspace/{workspace_id}/flow/{object_id}");
-    let now = Utc::now();
-    for mention_user_id in mention_user_ids {
-        if *mention_user_id == actor_id {
-            continue;
-        }
-        let member = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
-                vec![workspace_id.into(), (*mention_user_id).into()],
-            ))
-            .await?;
-        if member.is_none() {
-            continue;
-        }
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "INSERT INTO notifications ( \
-                id, user_id, workspace_id, type, kind, payload, title, content, link, \
-                related_issue_id, related_comment_id, is_read, created_at \
-             ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, NULL, NULL, false, $10)",
-            vec![
-                Uuid::new_v4().into(),
-                (*mention_user_id).into(),
-                workspace_id.into(),
-                "mentioned".into(),
-                "mentioned".into(),
-                json!({}).into(),
-                "notification.mentionedTitle".into(),
-                format!("mentioned_by:{actor_name}").into(),
-                link.clone().into(),
-                now.into(),
-            ],
-        ))
-        .await?;
-    }
-    Ok(())
-}
-
-async fn actor_label(db: &DatabaseConnection, actor_id: Uuid) -> Result<String, ApiError> {
+pub(crate) async fn actor_label<C: ConnectionTrait>(db: &C, actor_id: Uuid) -> Result<String, ApiError> {
     #[derive(FromQueryResult)]
     struct NameRow {
         name: String,
@@ -462,7 +453,9 @@ pub struct MentionCandidateList {
 }
 
 /// Workspace members, plus users who are not members but hold a grant on this page or an
-/// ancestor it still inherits from. Notifications stay member-only; this list is only the picker.
+/// ancestor it still inherits from.
+///
+/// The scoped application service independently validates notification recipients; this list is only the picker.
 pub async fn list_mention_candidates(
     db: &DatabaseConnection,
     workspace_id: Uuid,
@@ -528,7 +521,7 @@ pub async fn list_mention_candidates(
     Ok(MentionCandidateList { items })
 }
 
-fn normalize_mention_query(query: &str) -> Result<String, ApiError> {
+pub(crate) fn normalize_mention_query(query: &str) -> Result<String, ApiError> {
     // Check the raw query. `trim` deletes a trailing newline, which would hide the control character.
     let trimmed = query.trim();
     if query.chars().any(char::is_control) || trimmed.chars().count() > MENTION_QUERY_CHARS_MAX {

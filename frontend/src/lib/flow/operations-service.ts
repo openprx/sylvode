@@ -1240,10 +1240,10 @@ export class CursorPager<T extends { next_cursor?: string | null }> {
 export class ProjectionLagPager extends CursorPager<FlowProjectionLag> {
 	constructor(
 		workspaceId: string,
-		reads: Pick<FlowObjectRepository, 'getProjectionLag'>,
+		reads: Pick<FlowObjectRepository, 'getWorkspaceProjectionLag'>,
 		limit = OPS_LAG_PAGE_SIZE
 	) {
-		super((query) => reads.getProjectionLag(workspaceId, query), limit);
+		super((query) => reads.getWorkspaceProjectionLag(workspaceId, query), limit);
 	}
 }
 
@@ -1252,7 +1252,7 @@ export class ProjectionLagPager extends CursorPager<FlowProjectionLag> {
 export interface FlowOperationsDeps {
 	readonly reads: Pick<
 		FlowObjectRepository,
-		'getAdminHealth' | 'getAdminLag' | 'getAdminIntegrity' | 'getProjectionLag'
+		'getAdminHealth' | 'getAdminLag' | 'getAdminIntegrity' | 'getWorkspaceProjectionLag'
 	>;
 	readonly commands: Pick<
 		FlowCommandService,

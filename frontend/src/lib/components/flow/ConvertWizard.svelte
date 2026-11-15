@@ -171,12 +171,7 @@
 						? 'flow.bridge.convert.live.jobPending'
 						: outcome.failure.messageKey
 			);
-			await goto(
-				resolve('/(app)/workspace/[workspaceId]/flow/conversions/[jobId]', {
-					workspaceId,
-					jobId: outcome.jobId
-				})
-			);
+			await goto(resolve('/(app)/flow/conversions/[jobId]', { jobId: outcome.jobId }));
 		} else if (outcome.status === 'repreviewed') {
 			announce(REPREVIEW_NOTICE_KEYS[outcome.reason]);
 		} else if (outcome.status === 'failed') {

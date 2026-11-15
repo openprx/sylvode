@@ -184,8 +184,7 @@ pub async fn list_flow_share_links(
     Path(object_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let access = authorize(&state, &claims, bot.as_ref(), object_id, PermissionLevel::View).await?;
-    let level = permission_level(&state, &access).await?;
-    let listed = shares::list_links(&state.db, access.object_id(), level).await?;
+    let listed = crate::flow::scope_shares::list(&state.db, access.object_id(), access.actor_id()).await?;
     Ok(ApiResponse::success(listed))
 }
 
@@ -217,8 +216,8 @@ pub async fn revoke_flow_share_link(
     Path(path): Path<ShareLinkPath>,
 ) -> Result<impl IntoResponse, ApiError> {
     let access = authorize(&state, &claims, bot.as_ref(), path.object_id, PermissionLevel::View).await?;
-    let level = permission_level(&state, &access).await?;
-    let revoked = shares::revoke_link(&state.db, access.object_id(), path.link_id, level).await?;
+    let revoked =
+        crate::flow::scope_shares::revoke(&state.db, access.object_id(), path.link_id, access.actor_id()).await?;
     Ok(ApiResponse::success(revoked))
 }
 

@@ -44,7 +44,7 @@ export interface CollectionDraft {
 
 export interface CollectionCreator {
 	createObject(
-		workspaceId: string,
+		scopeId: string,
 		input: Omit<CreateFlowObjectInput, 'idempotency_key'>,
 		options?: { idempotencyKey?: string }
 	): Promise<AcceptedChange>;
@@ -103,7 +103,7 @@ export class CreateCollectionSession {
 	private submitting = false;
 
 	constructor(
-		private readonly workspaceId: string,
+		private readonly scopeId: string,
 		private readonly commands: CollectionCreator,
 		private readonly mintId: () => string = newId
 	) {}
@@ -156,7 +156,7 @@ export class CreateCollectionSession {
 		const idempotencyKey = this.keyFor(draft);
 		this.submitting = true;
 		try {
-			const change = await this.commands.createObject(this.workspaceId, body, { idempotencyKey });
+			const change = await this.commands.createObject(this.scopeId, body, { idempotencyKey });
 			this.intent = null;
 			return { kind: 'created', change };
 		} catch (raw) {

@@ -12,7 +12,8 @@ use crate::error::ApiError;
 /// State that must compare exactly before and after a storage/rebuild operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DocumentFingerprint {
-    pub workspace_id: Uuid,
+    pub workspace_id: Option<Uuid>,
+    pub scope_id: Uuid,
     pub object_id: Uuid,
     pub document_id: Uuid,
     pub head_seq: i64,
@@ -23,7 +24,8 @@ pub struct DocumentFingerprint {
 
 #[derive(FromQueryResult)]
 struct IdentityAndProjection {
-    workspace_id: Uuid,
+    workspace_id: Option<Uuid>,
+    scope_id: Uuid,
     object_id: Uuid,
     projection_seq: i64,
 }
@@ -59,7 +61,7 @@ pub async fn document_fingerprint(db: &DatabaseConnection, document_id: Uuid) ->
 
     let identity = IdentityAndProjection::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT fo.workspace_id, fo.id AS object_id, fp.document_seq AS projection_seq \
+        "SELECT fo.workspace_id, fo.scope_id, fo.id AS object_id, fp.document_seq AS projection_seq \
          FROM collab_documents cd \
          JOIN flow_objects fo ON fo.id = cd.object_id \
          JOIN flow_object_projections fp ON fp.object_id = fo.id \
@@ -72,6 +74,7 @@ pub async fn document_fingerprint(db: &DatabaseConnection, document_id: Uuid) ->
 
     Ok(DocumentFingerprint {
         workspace_id: identity.workspace_id,
+        scope_id: identity.scope_id,
         object_id: identity.object_id,
         document_id,
         head_seq: boot.head_seq,

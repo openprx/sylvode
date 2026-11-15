@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
+	import { getContext } from 'svelte';
+	import { TASK_EDIT_SURFACE, taskEditorAction } from '#lib/workbench/edit-surface.js';
 	interface Props {
 		open?: boolean;
+		taskScoped?: boolean;
 		title: string;
 		maxWidthClass?: string;
 		onclose?: () => void;
@@ -11,6 +14,7 @@
 
 	let {
 		open = $bindable(false),
+		taskScoped = false,
 		title,
 		maxWidthClass = 'max-w-md',
 		onclose,
@@ -18,6 +22,9 @@
 		footer
 	}: Props = $props();
 
+	const editorAction = taskEditorAction();
+	const hasSurface = !!getContext(TASK_EDIT_SURFACE);
+	const scoped = $derived(taskScoped && hasSurface);
 	function handleBackdropClick(_e: MouseEvent) {
 		// Do not close on backdrop click — require explicit close (X or Cancel)
 	}
@@ -36,12 +43,15 @@
 
 {#if open}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70"
+		use:editorAction={scoped}
+		class="{scoped
+			? 'pointer-events-auto absolute inset-0 z-30'
+			: 'fixed inset-0 z-50'} flex items-center justify-center bg-black/50 p-4 dark:bg-black/70"
 		onclick={handleBackdropClick}
 		onkeydown={handleEscape}
 		role="dialog"
 		tabindex="-1"
-		aria-modal="true"
+		aria-modal={scoped ? 'false' : 'true'}
 		aria-labelledby="modal-title"
 	>
 		<div

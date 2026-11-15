@@ -84,7 +84,13 @@ function loadEngineModules() {
 	return modulesPromise;
 }
 
-function buildSchema(pm: PmModule): InstanceType<PmModule['Schema']> {
+/** Logical anchors resolve only through the explicit CRDT alias map. */
+export function resolveEditorBlockId(doc: LoroDocType, blockId: string): string {
+	const alias = (doc as import('loro-crdt').LoroDoc).getMap('flow_editor_aliases').get(blockId);
+	return typeof alias === 'string' ? alias : blockId;
+}
+
+export function buildSchema(pm: PmModule): InstanceType<PmModule['Schema']> {
 	const indentAttr = { default: 0 };
 	return new pm.Schema({
 		nodes: {
@@ -195,7 +201,9 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 	): { pos: number; size: number } | null {
 		if (!this.mods) return null;
 		const mapping = this.mods.loroPm.loroSyncPluginKey.getState(state)?.mapping;
-		const node = mapping?.get(blockId as import('loro-crdt').ContainerID);
+		const node = mapping?.get(
+			resolveEditorBlockId(this.doc, blockId) as import('loro-crdt').ContainerID
+		);
 		if (!node || Array.isArray(node)) return null;
 		let found: { pos: number; size: number } | null = null;
 		state.doc.forEach((child, offset) => {

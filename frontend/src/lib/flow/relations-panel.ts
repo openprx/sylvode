@@ -89,8 +89,8 @@ function isString(value: unknown): value is string {
 }
 
 /** Parses one wire row. Throws `RelationIntegrityError` for anything that is not a well-formed
- * row of the root's workspace. */
-export function parseRelationRow(raw: unknown, workspaceId: string): RelationRow {
+ * row of the root's canonical scope. */
+export function parseRelationRow(raw: unknown, scopeId: string): RelationRow {
 	if (typeof raw !== 'object' || raw === null) throw new RelationIntegrityError('row');
 	const row = raw as Record<string, unknown>;
 	if (row.visibility === 'unavailable') return { kind: 'unavailable' };
@@ -98,11 +98,11 @@ export function parseRelationRow(raw: unknown, workspaceId: string): RelationRow
 	const other = row.other_object;
 	if (typeof other !== 'object' || other === null) throw new RelationIntegrityError('other');
 	const target = other as Record<string, unknown>;
-	// `RelatedObjectView` carries no workspace; a row that names one must name the root's.
-	if ('workspace_id' in target && target.workspace_id !== workspaceId) {
+	// Older RelatedObjectView omits scope; when supplied it must match the canonical source.
+	if ('scope_id' in target && target.scope_id !== scopeId) {
 		throw new RelationIntegrityError('workspace');
 	}
-	if ('workspace_id' in row && row.workspace_id !== workspaceId) {
+	if ('scope_id' in row && row.scope_id !== scopeId) {
 		throw new RelationIntegrityError('workspace');
 	}
 	if (
@@ -160,7 +160,7 @@ export class FlowRelationsController {
 
 	constructor(
 		private readonly objectId: string,
-		private readonly workspaceId: string,
+		private readonly scopeId: string,
 		private readonly onChange: (snapshot: RelationsSnapshot) => void = () => {},
 		deps: Partial<RelationsPanelDeps> = {}
 	) {
@@ -235,7 +235,7 @@ export class FlowRelationsController {
 		}
 		let page: RelationRow[];
 		try {
-			page = result.data.items.map((item) => parseRelationRow(item, this.workspaceId));
+			page = result.data.items.map((item) => parseRelationRow(item, this.scopeId));
 		} catch {
 			this.failClosed(RELATION_INTEGRITY_KEY);
 			return this.snapshot;

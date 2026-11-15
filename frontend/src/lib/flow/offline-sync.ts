@@ -290,6 +290,29 @@ export class FlowOfflineSync {
 		});
 	}
 
+	/** Changes edit permission while a legitimate view stream remains connected. */
+	async onAuthorizationChange(canWrite: boolean): Promise<boolean> {
+		if (!canWrite) this.readOnly = true;
+		// Include already emitted, not-yet-persisted keystrokes before drafting the queue.
+		await this.enqueueChain;
+		await this.run(async () => {
+			if (!canWrite) {
+				this.readOnly = true;
+				await this.draftRemaining({
+					code: 'policy_rejected',
+					source: 'server',
+					details: { reason: 'authorization_changed' }
+				});
+				if (this.needsRebuild) await this.recover();
+			} else if (this.readOnly) {
+				// The draft stays a draft. Rebuild accepted state before new edits can depend on it.
+				if (this.needsRebuild) await this.recover();
+				if (!this.needsRebuild) this.readOnly = false;
+			}
+		});
+		return !this.disposed && !this.needsRebuild;
+	}
+
 	/** Forgets the drafts this instance holds (the ones its user saw); drafts another tab added
 	 * to the shared store since stay there for that tab. */
 	async clearDraft(): Promise<void> {
@@ -346,6 +369,7 @@ export class FlowOfflineSync {
 	 * accept or a timed retry over to `recover`. */
 	private async pump(): Promise<void> {
 		while (!this.disposed && this.queue.length > 0) {
+			if (this.readOnly) return;
 			if (this.transport.isTerminal) return;
 			if (!this.transport.isConnected) return; // `onConnected` resumes with a recovery pass
 			const entry = this.queue[0];

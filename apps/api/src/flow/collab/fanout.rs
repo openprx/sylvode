@@ -210,6 +210,7 @@ async fn relay(registry: &SessionRegistry, db: &DatabaseConnection, notice: &Not
                 document_id: notice.document_id,
                 reason: "fanout_history_unavailable".to_string(),
                 minimum_snapshot_seq: Some(seq),
+                authorization: None,
             },
             None,
         );

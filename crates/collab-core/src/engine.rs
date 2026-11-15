@@ -411,12 +411,182 @@ impl LoroCollabEngine {
         Ok(())
     }
 
-    /// Applies one locally-originated operation from the shared vocabulary.
+    /// Browser navigator ordering is an existing named map, separate from tree placement IDs.
+    #[must_use]
+    pub fn navigator_order(&self) -> BTreeMap<String, String> {
+        let mut values = BTreeMap::new();
+        self.doc.get_map("order").for_each(|id, value| {
+            if let ValueOrContainer::Value(LoroValue::String(key)) = value {
+                values.insert(id.to_owned(), key.to_string());
+            }
+        });
+        values
+    }
+    /// Mutate one navigator key in place; preserve all other container identities and content.
     ///
     /// # Errors
-    /// See [`CollabError`]'s variants for the possible rejection reasons (unknown node, duplicate
-    /// node, cyclic move, or an underlying engine failure).
+    /// Rejects an invalid bounded key or an underlying map mutation failure.
+    pub fn set_navigator_order(&mut self, id: &str, key: &str) -> Result<(), CollabError> {
+        if id.is_empty()
+            || id.len() > 128
+            || key.is_empty()
+            || key.len() > 65
+            || !key.bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
+        {
+            return Err(CollabError::OperationFailed {
+                reason: "invalid bounded navigator order key".into(),
+            });
+        }
+        self.doc
+            .get_map("order")
+            .insert(id, key)
+            .map_err(|e| CollabError::OperationFailed { reason: e.to_string() })?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Whether browser prose owns the document representation, including an empty document.
+    #[must_use]
+    pub fn has_editor_doc(&self) -> bool {
+        matches!(
+            self.doc.get_map("doc").get("children"),
+            Some(ValueOrContainer::Container(Container::List(_)))
+        )
+    }
+
+    /// Initialize supported tree-only Page prose on a private candidate. Callers must include
+    /// this delta in their normal accepted write transaction; reads never invoke this method.
+    pub fn initialize_page_editor(&mut self) -> Result<bool, CollabError> {
+        if self.has_editor_doc() {
+            return Ok(false);
+        }
+        let legacy = self.semantic_snapshot()?;
+        let mut blocks = Vec::new();
+        let mut deleted = Vec::new();
+        for (id, node) in &legacy.nodes {
+            if node.kind != NodeKind::Block || node.properties.contains_key("embed_object_id") {
+                continue;
+            }
+            if node.deleted {
+                deleted.push(id.clone());
+                continue;
+            }
+            if node.parent.is_some()
+                || node
+                    .properties
+                    .keys()
+                    .any(|key| !matches!(key.as_str(), "block_type" | "indent" | "level"))
+            {
+                return Err(CollabError::OperationFailed {
+                    reason: "legacy_editor_migration_requires_flat_supported_prose".into(),
+                });
+            }
+            let parse = |key: &str, default: u32| -> Result<u32, CollabError> {
+                node.properties.get(key).map_or(Ok(default), |value| {
+                    value.parse::<u32>().map_err(|_| CollabError::OperationFailed {
+                        reason: "legacy_editor_migration_invalid_attribute".into(),
+                    })
+                })
+            };
+            let kind = node
+                .properties
+                .get("block_type")
+                .cloned()
+                .unwrap_or_else(|| "paragraph".into());
+            let level = if kind == "heading" {
+                Some(parse("level", 1)?)
+            } else {
+                if node.properties.contains_key("level") {
+                    return Err(CollabError::OperationFailed {
+                        reason: "legacy_editor_migration_invalid_level".into(),
+                    });
+                }
+                None
+            };
+            blocks.push((
+                node.order_key.clone(),
+                id.clone(),
+                crate::editor_doc_bridge::EditorInitialBlock {
+                    id: id.to_string(),
+                    kind,
+                    text: node.text.clone(),
+                    indent: parse("indent", 0)?,
+                    level,
+                },
+            ));
+        }
+        if blocks.len().saturating_add(deleted.len()) > crate::limits::DOCUMENT_BLOCK_COUNT_MAX {
+            return Err(CollabError::OperationFailed {
+                reason: "editor_block_alias_limit_exceeded".into(),
+            });
+        }
+        blocks.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+        let blocks = blocks.into_iter().map(|(_, _, block)| block).collect::<Vec<_>>();
+        let changed = crate::editor_doc_bridge::initialize_editor_doc(&self.doc, &blocks)?;
+        if !changed {
+            return Err(CollabError::OperationFailed {
+                reason: "editor_doc_invalid_existing_children".into(),
+            });
+        }
+        for id in deleted {
+            self.doc
+                .get_map("flow_editor_aliases")
+                .insert(id.as_ref(), "__deleted__")
+                .map_err(|e| CollabError::OperationFailed { reason: e.to_string() })?;
+        }
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Includes tombstoned aliases, so a deleted editor anchor cannot be reused as tree prose.
+    #[must_use]
+    pub fn has_editor_alias(&self, id: &str) -> bool {
+        self.has_editor_doc() && self.doc.get_map("flow_editor_aliases").get(id).is_some()
+    }
+
+    /// Resolve only an attested live editor alias; otherwise preserve the caller's tree ID.
+    #[must_use]
+    pub fn resolve_content_node_id(&self, id: &NodeId) -> NodeId {
+        crate::editor_doc_bridge::resolve_editor_block_id(&self.doc, id).map_or_else(|| id.clone(), NodeId::from)
+    }
+
+    /// Prose-command intent is explicit: typed embed planners use tree metadata blocks and
+    /// must not accidentally create editor paragraphs. Text CID edits share the same path below.
+    pub fn apply_content_operation(&mut self, operation: &Operation) -> Result<(), CollabError> {
+        if let Operation::CreateNode { id, .. } = operation
+            && self.id_to_tree.contains_key(id)
+        {
+            return Err(CollabError::DuplicateNode { id: id.to_string() });
+        }
+        if crate::editor_doc_bridge::apply_editor_structure(&self.doc, operation)? {
+            self.doc.commit();
+            return Ok(());
+        }
+        self.apply_operation(operation)
+    }
+
     pub fn apply_operation(&mut self, operation: &Operation) -> Result<(), CollabError> {
+        let editor_changed = match operation {
+            Operation::InsertText { id, index, text } => {
+                crate::editor_doc_bridge::apply_editor_text(&self.doc, id, *index, None, Some(text))?
+            }
+            Operation::DeleteText { id, index, len } => {
+                crate::editor_doc_bridge::apply_editor_text(&self.doc, id, *index, Some(*len), None)?
+            }
+            _ => false,
+        };
+        if editor_changed {
+            self.doc.commit();
+            return Ok(());
+        }
+        // Browser prose has a separate canonical Loro container. A legacy tree-text write
+        // cannot be acknowledged if it would only change the shadow tree that readers suppress.
+        // The explicit editor-block bridge handles its own container identities separately.
+        if matches!(operation, Operation::InsertText { .. } | Operation::DeleteText { .. }) && self.has_editor_doc() {
+            return Err(CollabError::OperationFailed {
+                reason: "editor_doc_requires_editor_block_command".into(),
+            });
+        }
         match operation {
             Operation::CreateNode {
                 id,
@@ -424,7 +594,11 @@ impl LoroCollabEngine {
                 index,
                 kind,
             } => {
-                if self.id_to_tree.contains_key(id) {
+                if self.id_to_tree.contains_key(id)
+                    || (self.has_editor_doc()
+                        && (self.doc.get_map("flow_editor_aliases").get(id.as_ref()).is_some()
+                            || crate::editor_doc_bridge::resolve_editor_block_id(&self.doc, id).is_some()))
+                {
                     return Err(CollabError::DuplicateNode { id: id.to_string() });
                 }
                 let parent_id = self.resolve_parent(parent.as_ref())?;
@@ -495,6 +669,47 @@ impl LoroCollabEngine {
     /// # Errors
     /// Propagates the underlying engine's read failure, if any.
     pub fn semantic_snapshot(&self) -> Result<SemanticSnapshot, CollabError> {
+        let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
+        let order = self.navigator_order();
+        for (id, node) in &mut snapshot.nodes {
+            if node.kind != NodeKind::NavigatorNode {
+                continue;
+            }
+            let direct = order.get(id.as_ref());
+            let generated = id.split_once('#').and_then(|(base, generation)| {
+                let valid = base.len() == 36
+                    && base.bytes().enumerate().all(|(i, b)| {
+                        if [8, 13, 18, 23].contains(&i) {
+                            b == b'-'
+                        } else {
+                            b.is_ascii_hexdigit()
+                        }
+                    });
+                (valid && !generation.is_empty() && generation.bytes().all(|b| b.is_ascii_digit()))
+                    .then(|| order.get(base))
+                    .flatten()
+            });
+            if let Some(key) = direct.or(generated) {
+                node.order_key.clone_from(key);
+            }
+        }
+        crate::prose_projection::project_editor_prose(&self.doc, &mut snapshot)?;
+        Ok(snapshot)
+    }
+
+    /// Exact package v2 reader before navigator order-map projection (tree plus editor prose).
+    ///
+    /// # Errors
+    /// Propagates tree or editor-prose decoding errors without changing the document.
+    pub fn legacy_package_semantic_snapshot_v2(&self) -> Result<SemanticSnapshot, CollabError> {
+        let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
+        crate::prose_projection::project_editor_prose(&self.doc, &mut snapshot)?;
+        Ok(snapshot)
+    }
+
+    /// Exact tree-only semantic reader used by package v1 before editor prose projection.
+    /// Restricted to versioned package fingerprints; current reads must use `semantic_snapshot`.
+    pub fn legacy_package_semantic_snapshot_v1(&self) -> Result<SemanticSnapshot, CollabError> {
         let mut snapshot = SemanticSnapshot::default();
         // Every node's `order_key` needs its position among its parent's children. The
         // straightforward per-node `siblings.iter().position(...)` (this method's shape before
@@ -672,6 +887,198 @@ impl CollabEngine for LoroCollabEngine {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_flat_page_initialization_preserves_alias_and_never_overwrites_existing_editor() {
+        let mut engine = LoroCollabEngine::new_empty(42);
+        let id: NodeId = "old-logical-block".into();
+        engine
+            .apply_operation(&Operation::CreateNode {
+                id: id.clone(),
+                parent: None,
+                index: 0,
+                kind: NodeKind::Block,
+            })
+            .unwrap();
+        engine
+            .apply_operation(&Operation::InsertText {
+                id: id.clone(),
+                index: 0,
+                text: "Legacy 😀 prose".into(),
+            })
+            .unwrap();
+        engine
+            .apply_operation(&Operation::SetProperty {
+                id: id.clone(),
+                key: "block_type".into(),
+                value: "heading".into(),
+            })
+            .unwrap();
+        engine
+            .apply_operation(&Operation::SetProperty {
+                id: id.clone(),
+                key: "level".into(),
+                value: "2".into(),
+            })
+            .unwrap();
+        engine
+            .apply_operation(&Operation::CreateNode {
+                id: "aaa-after".into(),
+                parent: None,
+                index: 1,
+                kind: NodeKind::Block,
+            })
+            .unwrap();
+        engine
+            .apply_operation(&Operation::InsertText {
+                id: "aaa-after".into(),
+                index: 0,
+                text: "second paragraph".into(),
+            })
+            .unwrap();
+        assert!(engine.initialize_page_editor().unwrap());
+        let canonical = engine.resolve_content_node_id(&id);
+        let migrated = engine.semantic_snapshot().unwrap();
+        let first = migrated.nodes.get(&canonical).unwrap();
+        let second = migrated
+            .nodes
+            .get(&engine.resolve_content_node_id(&NodeId::from("aaa-after")))
+            .unwrap();
+        assert!(first.order_key < second.order_key);
+        assert_eq!(first.properties.get("level").unwrap(), "2");
+
+        assert!(canonical.starts_with("cid:"));
+        assert_eq!(
+            engine.semantic_snapshot().unwrap().nodes.get(&canonical).unwrap().text,
+            "Legacy 😀 prose"
+        );
+        engine
+            .apply_content_operation(&Operation::InsertText {
+                id,
+                index: u32::try_from("Legacy 😀".len()).unwrap(),
+                text: " agent".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            engine.semantic_snapshot().unwrap().nodes.get(&canonical).unwrap().text,
+            "Legacy 😀 agent prose"
+        );
+        let before = engine.frontier();
+        assert!(!engine.initialize_page_editor().unwrap());
+        assert_eq!(engine.frontier(), before);
+        if let Ok(output) = std::env::var("FLOW_EDITOR_BRIDGE_INITIALIZED_RUST_OUTPUT") {
+            std::fs::write(output, engine.export_snapshot().unwrap()).unwrap();
+        }
+        let mut nested = LoroCollabEngine::new_empty(43);
+        nested
+            .apply_operation(&Operation::CreateNode {
+                id: "parent".into(),
+                parent: None,
+                index: 0,
+                kind: NodeKind::Block,
+            })
+            .unwrap();
+        nested
+            .apply_operation(&Operation::CreateNode {
+                id: "child".into(),
+                parent: Some("parent".into()),
+                index: 0,
+                kind: NodeKind::Block,
+            })
+            .unwrap();
+        let frontier = nested.frontier();
+        assert!(nested.initialize_page_editor().is_err());
+        assert_eq!(nested.frontier(), frontier);
+    }
+
+    #[test]
+    fn actual_browser_snapshot_accepts_cid_utf8_text_edit_and_preserves_anchor() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot"
+        ))
+        .unwrap();
+        let mut engine = LoroCollabEngine::load(&bytes).unwrap();
+        let before = engine.semantic_snapshot().unwrap();
+        let (id, node) = before
+            .nodes
+            .iter()
+            .find(|(_, node)| node.text == "Browser 😀 prose")
+            .unwrap();
+        let id = id.clone();
+        let properties = node.properties.clone();
+        assert!(id.starts_with("cid:"));
+        engine
+            .apply_operation(&Operation::InsertText {
+                id: id.clone(),
+                index: u32::try_from("Browser 😀".len()).unwrap(),
+                text: " agent".into(),
+            })
+            .unwrap();
+        let after = engine.semantic_snapshot().unwrap();
+        let edited = after.nodes.get(&id).unwrap();
+        assert_eq!(edited.text, "Browser 😀 agent prose");
+        assert_eq!(edited.properties, properties);
+        let snapshot = engine.export_snapshot().unwrap();
+        let reopened = LoroCollabEngine::load(&snapshot).unwrap();
+        assert_eq!(
+            reopened.semantic_snapshot().unwrap().nodes.get(&id).unwrap().text,
+            "Browser 😀 agent prose"
+        );
+        if let Ok(output) = std::env::var("FLOW_EDITOR_BRIDGE_RUST_OUTPUT") {
+            std::fs::write(output, &snapshot).unwrap();
+        }
+    }
+
+    #[test]
+    fn browser_doc_refuses_shadow_tree_text_without_changing_either_frontier_or_prose() {
+        let mut engine = LoroCollabEngine::new_empty(7);
+        let id: NodeId = "legacy-prose".into();
+        engine
+            .apply_operation(&Operation::CreateNode {
+                id: id.clone(),
+                parent: None,
+                index: 0,
+                kind: NodeKind::Block,
+            })
+            .unwrap();
+        engine
+            .apply_operation(&Operation::InsertText {
+                id: id.clone(),
+                index: 0,
+                text: "old tree".into(),
+            })
+            .unwrap();
+        let children = engine
+            .doc
+            .get_map("doc")
+            .insert_container("children", loro::LoroList::new())
+            .unwrap();
+        let block = children.insert_container(0, LoroMap::new()).unwrap();
+        block.insert("nodeName", "paragraph").unwrap();
+        let inline = block.insert_container("children", loro::LoroList::new()).unwrap();
+        inline
+            .insert_container(0, LoroText::new())
+            .unwrap()
+            .insert(0, "browser prose")
+            .unwrap();
+        engine.doc.commit();
+        let before = engine.frontier();
+        let semantic = engine.semantic_snapshot().unwrap();
+        for operation in [
+            Operation::InsertText {
+                id: id.clone(),
+                index: 0,
+                text: "invisible".into(),
+            },
+            Operation::DeleteText { id, index: 0, len: 1 },
+        ] {
+            let err = engine.apply_operation(&operation).unwrap_err();
+            assert!(err.to_string().contains("editor_doc_requires_editor_block_command"));
+            assert_eq!(engine.frontier(), before);
+            assert_eq!(engine.semantic_snapshot().unwrap(), semantic);
+        }
+    }
 
     #[test]
     fn zero_padded_order_key_matches_the_format_macro_it_replaced() {

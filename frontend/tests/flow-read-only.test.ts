@@ -31,6 +31,7 @@ import {
 	installFakes,
 	objectView,
 	tick,
+	textOf,
 	OUTBOX_DB
 } from './support/collab-fakes';
 import { IndexedDbOutboxStore } from '../src/lib/flow/outbox';
@@ -38,8 +39,8 @@ import type { FlowObjectView } from '../src/lib/api/flow';
 
 const suite = new Suite('flow_read_only');
 
-async function open(server: FakeCollabServer) {
-	const idb = await freshIndexedDb();
+async function open(server: FakeCollabServer, factory?: IDBFactory) {
+	const idb = factory ?? (await freshIndexedDb());
 	const restore = await installFakes(server);
 	const store = await IndexedDbOutboxStore.open(idb, OUTBOX_DB);
 	assert(store, 'fake IndexedDB opens');
@@ -51,7 +52,7 @@ async function open(server: FakeCollabServer) {
 		offlineSync: { sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))) }
 	});
 	const entry = await repository.open({
-		workspaceId: WORKSPACE_ID,
+		scopeId: WORKSPACE_ID,
 		objectId: OBJECT_ID,
 		signal: new AbortController().signal,
 		object: objectView() as unknown as FlowObjectView
@@ -63,6 +64,7 @@ async function open(server: FakeCollabServer) {
 	let pending = 0;
 	entry.pending.subscribe((n) => (pending = n));
 	return {
+		idb,
 		store,
 		connectivity,
 		repository,
@@ -208,6 +210,198 @@ await suite.checkAsync(
 			assertEqual(ctx.readOnly(), false, 'still writable');
 		} finally {
 			await ctx.close();
+		}
+	}
+);
+
+function notifications(server: FakeCollabServer) {
+	server.ticketResponse = {
+		ticket: 'authorization-ticket',
+		expires_at: '',
+		websocket_path: '/api/v2/flow/collab/ws',
+		authorization_notifications: true,
+		authz_revision: 7,
+		scope_id: WORKSPACE_ID,
+		object_id: OBJECT_ID
+	};
+}
+
+await suite.checkAsync(
+	'bound permission downgrade updates read-only without an edit or losing legitimate peer updates',
+	async () => {
+		const server = new FakeCollabServer();
+		notifications(server);
+		const a = await open(server);
+		const socket = MockWebSocket.instances.at(-1)!;
+		try {
+			assert(
+				server.ticketRequests[0].authorization_notifications === true,
+				'ticket explicitly opts in'
+			);
+			server.notifyAuthorization(socket, ['view'], 2);
+			await waitFor(() => a.readOnly(), 'notification makes editor read-only');
+			assertEqual(server.updatesSeen.length, 0, 'no rejected first edit needed');
+			assertEqual(socket.readyState, MockWebSocket.OPEN, 'legitimate view socket remains open');
+			const b = await open(server);
+			try {
+				edit(b.entry.doc, 'peer remains visible');
+				await waitFor(
+					() => textOf(a.entry.doc) === 'peer remains visible',
+					'read stream still applies peer content'
+				);
+				assertEqual(a.readOnly(), true, 'peer update does not unlock writes');
+			} finally {
+				await b.close();
+			}
+		} finally {
+			await a.close();
+		}
+	}
+);
+
+await suite.checkAsync(
+	'unchanged source epoch plus ordered audience notification drafts pending input and upgrade never replays it',
+	async () => {
+		const server = new FakeCollabServer();
+		notifications(server);
+		const a = await open(server);
+		const socket = MockWebSocket.instances.at(-1)!;
+		try {
+			edit(a.entry.doc, 'recover me');
+			server.notifyAuthorization(socket, ['view'], 2);
+			await waitFor(
+				() => a.readOnly() && a.entry.offline.draftEntries.length === 1,
+				'persisted intent is drafted'
+			);
+			await a.entry.offline.idle();
+			assertEqual(server.updatesSeen.length, 0, 'queued edit not sent after downgrade');
+			assertEqual(textOf(a.entry.doc), '', 'live document rebuilt to accepted baseline');
+			server.notifyAuthorization(socket, ['view', 'comment', 'edit'], 3);
+			await waitFor(() => !a.readOnly(), 'higher sequence with same source epoch restores edit');
+			assertEqual(a.entry.offline.draftEntries.length, 1, 'recovery draft remains');
+			assertEqual(server.updatesSeen.length, 0, 'upgrade did not replay recovery draft');
+			edit(a.entry.doc, 'fresh authorized edit');
+			await waitFor(() => server.accepted.length === 1, 'new authorized edit accepted');
+			assertEqual(
+				textOf(server.doc),
+				'fresh authorized edit',
+				'fresh edit does not depend on rejected local operations'
+			);
+		} finally {
+			await a.close();
+		}
+	}
+);
+
+await suite.checkAsync(
+	'stale sequence, old server session and regressed source epoch cannot unlock an active reader',
+	async () => {
+		const server = new FakeCollabServer();
+		notifications(server);
+		const a = await open(server);
+		const socket = MockWebSocket.instances.at(-1)!;
+		try {
+			server.notifyAuthorization(socket, ['view'], 2);
+			await waitFor(() => a.readOnly(), 'reader');
+			server.notifyAuthorization(socket, ['view', 'edit'], 1);
+			server.notifyAuthorization(socket, ['view', 'edit'], 3, { session_id: 'old-session' });
+			server.notifyAuthorization(socket, ['view', 'edit'], 3, { authz_revision: 6 });
+			await tick(10);
+			assertEqual(a.readOnly(), true, 'stale metadata ignored');
+			assertEqual(socket.readyState, MockWebSocket.OPEN, 'no unnecessary reconnect');
+			server.notifyAuthorization(socket, ['view', 'edit'], 3);
+			await waitFor(() => !a.readOnly(), 'valid ordered update applies');
+		} finally {
+			await a.close();
+		}
+	}
+);
+
+await suite.checkAsync(
+	'initial read-only authorization arrives before snapshot without deadlocking or replaying persisted pending input',
+	async () => {
+		const server = new FakeCollabServer();
+		const first = await open(server);
+		first.connectivity.goOffline();
+		await waitFor(() => first.states.at(-1) === 'offline', 'offline');
+		edit(first.entry.doc, 'persisted before reconnect');
+		await waitFor(() => first.pending() === 1, 'persisted queue');
+		const idb = first.idb;
+		await first.close();
+		server.online = true;
+		server.effectiveLevel = 'view';
+		notifications(server);
+		const second = await open(server, idb);
+		const socket = MockWebSocket.instances.at(-1)!;
+		try {
+			assertEqual(second.readOnly(), true, 'initial editable baseline is blocked');
+			assertEqual(second.pending(), 0, 'pending input moved to draft');
+			assertEqual(second.entry.offline.draftEntries.length, 1, 'input retained');
+			assertEqual(
+				textOf(second.entry.doc),
+				'',
+				'accepted snapshot rendered, not premature pending text'
+			);
+			assertEqual(server.updatesSeen.length, 0, 'no unauthorized replay');
+			const kinds = socket.received.map((frame) => frame.type);
+			assert(
+				kinds.indexOf('resync') < kinds.indexOf('snapshot'),
+				'authorization preceded snapshot'
+			);
+		} finally {
+			await second.close();
+		}
+	}
+);
+
+await suite.checkAsync(
+	'new server session resets ordering and queued callbacks from the old socket cannot change permissions',
+	async () => {
+		const server = new FakeCollabServer();
+		notifications(server);
+		const a = await open(server);
+		const old = MockWebSocket.instances.at(-1)!;
+		try {
+			await a.entry.session.reconnect('manual');
+			await waitFor(
+				() => MockWebSocket.instances.at(-1) !== old && a.entry.session.hasBoundAuthorization,
+				'new bound session'
+			);
+			const current = MockWebSocket.instances.at(-1)!;
+			const sessionId = server.connections.get(current)!.sessionId;
+			const frame = {
+				type: 'resync',
+				protocol_version: 1,
+				document_id: a.entry.handle.documentId,
+				reason: 'authorization_changed',
+				authorization: {
+					scope_id: WORKSPACE_ID,
+					object_id: OBJECT_ID,
+					authz_revision: 7,
+					authority_sequence: 99,
+					session_id: sessionId,
+					permitted_actions: ['view']
+				}
+			};
+			old.deliverQueued(frame);
+			await tick(10);
+			assertEqual(a.readOnly(), false, 'old socket cannot lock current writer');
+			server.notifyAuthorization(current, ['view'], 2);
+			await waitFor(() => a.readOnly(), 'new connection sequence is independent');
+			old.deliverQueued({
+				...frame,
+				authorization: {
+					...frame.authorization,
+					authority_sequence: 100,
+					permitted_actions: ['view', 'edit']
+				}
+			});
+			await tick(10);
+			assertEqual(a.readOnly(), true, 'old callback cannot unlock reader');
+			server.notifyAuthorization(current, ['view', 'edit'], 3);
+			await waitFor(() => !a.readOnly(), 'valid current sequence still applies');
+		} finally {
+			await a.close();
 		}
 	}
 );

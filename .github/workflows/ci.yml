@@ -124,7 +124,7 @@ jobs:
         working-directory: frontend
         run: |
           set -e
-          for suite in record-values markdown-sanitize flow-limits flow-i18n-parity i18n-parity bot-transport-surfaces \
+          for suite in record-values markdown-sanitize flow-limits flow-scope-api flow-route-scope flow-navigator-placements flow-i18n-parity i18n-parity bot-transport-surfaces \
                        webhook-events flow-navigator-equivalence flow-cross-parent-move flow-ui-state flow-bridge \
                        flow-package-import flow-v0.4 flow-static-build; do
             echo "::group::test:$suite"
@@ -179,7 +179,7 @@ jobs:
   build:
     name: Build
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -205,7 +205,7 @@ jobs:
   web-e2e:
     name: Web E2E
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -311,7 +311,7 @@ jobs:
   image-contents:
     name: Image contents
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

@@ -33,7 +33,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::frame::{DrainSignal, Frame, PROTOCOL_VERSION, RejectedCode, WriteState};
+use super::frame::{DrainSignal, Frame, PROTOCOL_VERSION, RejectedCode, ResourceAuthorization, WriteState};
 use super::limits::{
     CONNECTIONS_PER_DOCUMENT_MAX, CONNECTIONS_PER_USER_MAX, CONNECTIONS_PER_WORKSPACE_MAX,
     PRESENCE_ENTRIES_PER_CONNECTION_MAX, PRESENCE_ENTRIES_PER_DOCUMENT_MAX, SLOW_CONSUMER_QUEUE_BYTES_MAX,
@@ -200,6 +200,7 @@ struct ConnMeta {
     workspace_id: Uuid,
     /// The highest `ack` this session has sent, or `None` until it sends its first one.
     acked: Option<AckFrontier>,
+    resource_authorization: Option<ResourceAuthorization>,
 }
 
 #[derive(Default)]
@@ -405,10 +406,65 @@ impl SessionRegistry {
                 user_id,
                 workspace_id,
                 acked: None,
+                resource_authorization: None,
             },
         );
         connections.by_object.entry(object_id).or_default().insert(session_id);
         Ok(RegisteredSession { receiver, queue })
+    }
+
+    /// Opted-in v2 sessions receive permission metadata, never a fabricated rejected write.
+    pub fn initialize_resource_authorization(&self, session: Uuid, authorization: ResourceAuthorization) {
+        if let Some(meta) = self.connections.lock().by_session.get_mut(&session)
+            && authorization.session_id == session
+            && authorization.object_id == meta.object_id
+        {
+            meta.resource_authorization = Some(authorization);
+        }
+    }
+    pub fn publish_resource_authorization(&self, session: ActiveSession, revision: i64, actions: Vec<String>) {
+        let notification = {
+            let mut connections = self.connections.lock();
+            let Some(meta) = connections.by_session.get_mut(&session.session_id) else {
+                return;
+            };
+            if meta.document_id != session.document_id
+                || meta.object_id != session.object_id
+                || meta.user_id != session.user_id
+            {
+                return;
+            }
+            let Some(current) = meta.resource_authorization.as_mut() else {
+                return;
+            };
+            if revision < current.authz_revision {
+                return;
+            }
+            if revision == current.authz_revision && actions == current.permitted_actions {
+                return;
+            }
+            current.authz_revision = revision;
+            current.authority_sequence = current.authority_sequence.saturating_add(1);
+            current.permitted_actions = actions;
+            let notification = current.clone();
+            drop(connections);
+            notification
+        };
+        let handle = self
+            .sessions
+            .lock()
+            .get(&session.document_id)
+            .and_then(|sessions| sessions.get(&session.session_id))
+            .cloned();
+        if let Some(handle) = handle {
+            handle.send(OutboundEvent::ControlFrame(Box::new(Frame::Resync {
+                protocol_version: PROTOCOL_VERSION,
+                document_id: session.document_id,
+                reason: "authorization_changed".into(),
+                minimum_snapshot_seq: None,
+                authorization: Some(notification),
+            })));
+        }
     }
 
     /// Compact test-only adapter for the registry's pre-v0.5 call shape. Production must always
@@ -1559,5 +1615,97 @@ mod tests {
             0,
             "the last live session must remove the reverse-index bucket"
         );
+    }
+}
+
+#[cfg(test)]
+mod authorization_notification_tests {
+    use super::*;
+    #[test]
+    fn opted_in_metadata_orders_downgrade_upgrade_and_ignores_stale_epochs() {
+        let registry = SessionRegistry::default();
+        let document = Uuid::new_v4();
+        let object = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let workspace = Uuid::new_v4();
+        let scope = Uuid::new_v4();
+        let session = Uuid::new_v4();
+        let mut registered = registry
+            .try_register_authorized(document, object, user, workspace, session, 0)
+            .expect("registered");
+        let active = ActiveSession {
+            session_id: session,
+            document_id: document,
+            object_id: object,
+            user_id: user,
+        };
+        registry.initialize_resource_authorization(
+            session,
+            ResourceAuthorization {
+                scope_id: scope,
+                object_id: object,
+                authz_revision: 0,
+                authority_sequence: 1,
+                session_id: session,
+                permitted_actions: vec!["view".into(), "edit".into()],
+            },
+        );
+        registry.publish_resource_authorization(active, 1, vec!["view".into()]);
+        let OutboundEvent::ControlFrame(frame) = registered.receiver.try_recv().expect("notification") else {
+            panic!("control frame expected");
+        };
+        let Frame::Resync {
+            reason,
+            authorization: Some(metadata),
+            document_id,
+            ..
+        } = *frame
+        else {
+            panic!("authorization Resync expected");
+        };
+        assert_eq!(reason, "authorization_changed");
+        assert_eq!(document_id, document);
+        assert_eq!(metadata.scope_id, scope);
+        assert_eq!(metadata.object_id, object);
+        assert_eq!(metadata.session_id, session);
+        assert_eq!(metadata.authority_sequence, 2);
+        assert_eq!(metadata.permitted_actions, vec!["view"]);
+        registry.publish_resource_authorization(active, 0, vec!["view".into(), "edit".into()]);
+        assert!(registered.receiver.try_recv().is_err());
+        registry.publish_resource_authorization(active, 2, vec!["view".into(), "edit".into()]);
+        let OutboundEvent::ControlFrame(frame) = registered.receiver.try_recv().expect("upgrade") else {
+            panic!("control frame expected");
+        };
+        let Frame::Resync {
+            authorization: Some(metadata),
+            ..
+        } = *frame
+        else {
+            panic!("authorization expected");
+        };
+        assert_eq!(metadata.authority_sequence, 3);
+        assert!(metadata.permitted_actions.contains(&"edit".to_string()));
+    }
+    #[test]
+    fn old_unnegotiated_connection_receives_no_initial_or_change_extension() {
+        let registry = SessionRegistry::default();
+        let document = Uuid::new_v4();
+        let object = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let session = Uuid::new_v4();
+        let mut registered = registry
+            .try_register_authorized(document, object, user, Uuid::new_v4(), session, 0)
+            .expect("registered");
+        registry.publish_resource_authorization(
+            ActiveSession {
+                session_id: session,
+                document_id: document,
+                object_id: object,
+                user_id: user,
+            },
+            1,
+            vec!["view".into()],
+        );
+        assert!(registered.receiver.try_recv().is_err());
     }
 }

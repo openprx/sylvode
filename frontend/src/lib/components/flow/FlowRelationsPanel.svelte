@@ -15,16 +15,16 @@
 
 	interface Props {
 		objectId: string;
-		workspaceId: string;
+		scopeId: string;
 	}
 
-	let { objectId, workspaceId }: Props = $props();
+	let { objectId, scopeId }: Props = $props();
 
 	let snapshot = $state<RelationsSnapshot | null>(null);
 	let controller: FlowRelationsController | null = null;
 
 	$effect(() => {
-		const next = new FlowRelationsController(objectId, workspaceId, (value) => (snapshot = value));
+		const next = new FlowRelationsController(objectId, scopeId, (value) => (snapshot = value));
 		controller = next;
 		void next.load();
 		return () => {
@@ -117,10 +117,7 @@
 								· {row.relationType}
 							</p>
 							<a
-								href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
-									workspaceId,
-									objectId: target
-								})}
+								href={resolve('/(app)/flow/[objectId]', { objectId: target })}
 								class="inline-flex min-h-11 items-center font-medium text-blue-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-400"
 							>
 								{row.title}

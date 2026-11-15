@@ -253,12 +253,12 @@ export class PackageImportWizard {
 	private unmappedProjects: readonly ProjectUnmappedConflict[] = [];
 
 	constructor(
-		workspaceId: string,
+		scopeId: string,
 		private readonly onChange: (snapshot: WizardSnapshot) => void = () => {},
 		deps: Partial<PackageWizardDeps> = {}
 	) {
 		this.deps = {
-			session: deps.session ?? new FlowPackageImportSession(workspaceId),
+			session: deps.session ?? new FlowPackageImportSession(scopeId),
 			newKey: deps.newKey ?? newIdempotencyKey,
 			now: deps.now ?? Date.now
 		};

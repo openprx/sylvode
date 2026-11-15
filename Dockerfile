@@ -20,6 +20,7 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 # sources to load the workspace even when building one package.
 COPY apps apps
 COPY crates crates
+COPY benches benches
 COPY migrations migrations
 COPY spikes/collab-shared spikes/collab-shared
 COPY spikes/collab-loro spikes/collab-loro

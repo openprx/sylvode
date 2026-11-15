@@ -13,7 +13,7 @@ use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProjectionRebuildResult {
-    pub workspace_id: Uuid,
+    pub workspace_id: Option<Uuid>,
     pub object_id: Uuid,
     pub document_id: Uuid,
     pub head_seq: i64,
@@ -36,7 +36,7 @@ pub struct SearchRebuildResult {
 
 #[derive(FromQueryResult)]
 struct DocumentIdentity {
-    workspace: Uuid,
+    workspace: Option<Uuid>,
     object: Uuid,
     document: Uuid,
 }

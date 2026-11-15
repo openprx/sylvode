@@ -98,6 +98,39 @@ export interface ParsedCollection {
 	readonly rootOrder: readonly string[];
 }
 
+/** Field context for one Record; nulls explicitly mean no parent metadata was requested. */
+export interface RecordFieldsContext {
+	readonly collectionId: null;
+	readonly title: null;
+	readonly frontier: null;
+	readonly schemaSeq: null;
+	readonly recordCount: null;
+	readonly fieldSecrecyEnabled: boolean;
+	readonly fields: readonly CollectionField[];
+	readonly views: readonly CollectionView[];
+	readonly rootOrder: readonly string[];
+	readonly recordOnly: true;
+}
+export function parseRecordFields(
+	raw: import('../api/flow').FlowRecordContext
+): RecordFieldsContext {
+	return {
+		collectionId: null,
+		title: null,
+		frontier: null,
+		schemaSeq: null,
+		recordCount: null,
+		fieldSecrecyEnabled: raw.field_secrecy_enabled,
+		fields: raw.fields
+			.filter((field) => !field.archived)
+			.map(parseField)
+			.sort((a, b) => a.position - b.position || a.fieldId.localeCompare(b.fieldId)),
+		views: [],
+		rootOrder: [],
+		recordOnly: true
+	};
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -124,7 +157,9 @@ export function selectOptions(config: Readonly<Record<string, unknown>>): string
 	return out;
 }
 
-export function parseField(raw: FlowCollectionFieldView): CollectionField {
+export function parseField(
+	raw: Pick<FlowCollectionFieldView, 'field_id' | 'label' | 'type' | 'config' | 'position'>
+): CollectionField {
 	const config = isRecord(raw.config) ? raw.config : {};
 	return {
 		fieldId: raw.field_id,

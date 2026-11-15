@@ -159,10 +159,10 @@ await suite.checkAsync('flowApi export endpoints use the contract paths and body
 		[
 			{
 				method: 'POST',
-				path: `/api/v1/workspaces/${WS}/flow/exports`,
+				path: `/api/v2/flow/scopes/${WS}/exports`,
 				body: { format: 'package', include_history: false, idempotency_key: 'k' }
 			},
-			{ method: 'GET', path: '/api/v1/flow/exports/job-1', body: null }
+			{ method: 'GET', path: '/api/v2/flow/exports/job-1', body: null }
 		],
 		'exactly POST exports and GET job; the refused download sent nothing'
 	);
@@ -227,7 +227,7 @@ await suite.checkAsync(
 				ok(job('running')),
 				ok(job('running')),
 				ok(job('running')),
-				ok(job('completed', { download_url: '/api/v1/flow/exports/job-1/artifact' })),
+				ok(job('completed', { download_url: '/api/v2/flow/exports/job-1/artifact' })),
 				ok(job('running'))
 			]
 		);
@@ -242,7 +242,7 @@ await suite.checkAsync(
 		assertEqual(h.gets.length, 6, 'no poll after the terminal status');
 		assertEqual(
 			exportDownloadUrl(view.job),
-			'/api/v1/flow/exports/job-1/artifact',
+			'/api/v2/flow/exports/job-1/artifact',
 			'download available on success'
 		);
 	}
@@ -251,7 +251,7 @@ await suite.checkAsync(
 await suite.checkAsync(
 	'download_url is surfaced only for a successful terminal status',
 	async () => {
-		const url = '/api/v1/flow/exports/job-1/artifact';
+		const url = '/api/v2/flow/exports/job-1/artifact';
 		assertEqual(exportDownloadUrl(job('running', { download_url: url })), null, 'running');
 		assertEqual(exportDownloadUrl(job('queued', { download_url: url })), null, 'queued');
 		assertEqual(exportDownloadUrl(job('failed', { download_url: url })), null, 'failed');
@@ -374,7 +374,7 @@ await suite.checkAsync(
 await suite.checkAsync(
 	'download hashes the downloaded bytes locally and compares them with the job checksum',
 	async () => {
-		const url = '/api/v1/flow/exports/job-1/artifact';
+		const url = '/api/v2/flow/exports/job-1/artifact';
 		const blob = new Blob(['zip']);
 		const realHash = await sha256HexOfBlob(blob);
 		assertEqual(realHash, ZIP_SHA256, 'local hash of "zip" is the known SHA-256');
@@ -579,6 +579,78 @@ await suite.checkAsync(
 			pages.length = 0;
 			failPage = '2';
 			assertDeepEqual(await listWorkspaceProjects('ws'), [], 'no partial list on a failed page');
+		} finally {
+			globalThis.fetch = original;
+		}
+	}
+);
+
+await suite.checkAsync(
+	'HTTP200 typed authority denial is not an artifact; fresh declared JSON bytes remain unchanged',
+	async () => {
+		const original = globalThis.fetch;
+		const raw = JSON.stringify({
+			code: 403,
+			message: 'Literal exported user content',
+			data: { value: 'unchanged' }
+		});
+		const blob = new Blob([raw], { type: 'application/json' });
+		const checksum = await sha256HexOfBlob(blob);
+		const oldUrl = '/api/v2/flow/exports/old-job/artifact';
+		const newUrl = '/api/v2/flow/exports/fresh-job/artifact';
+		const requests: string[] = [];
+		globalThis.fetch = (async (input) => {
+			const url = String(input);
+			requests.push(url);
+			if (url === oldUrl)
+				return new Response(
+					JSON.stringify({
+						code: 403,
+						message: 'Denied',
+						data: null,
+						error_code: 'policy_rejected',
+						details: {
+							reason: 'export_authority_changed',
+							new_request_required: true,
+							action: 'regenerate_export'
+						}
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				);
+			return new Response(raw, {
+				status: 200,
+				headers: {
+					'Content-Type': 'application/json',
+					'Content-Disposition': 'attachment; filename="fresh.json"',
+					'x-flow-package-sha256': checksum
+				}
+			});
+		}) as typeof fetch;
+		try {
+			const denied = await downloadExport(
+				job('completed', { download_url: oldUrl, checksum }),
+				'old.json'
+			);
+			assertEqual(denied.status, 'failed', 'denied envelope never yields bytes');
+			assert(
+				denied.status === 'failed' && denied.failure.cause === 'export_authority_changed',
+				'typed reason requests a new export'
+			);
+			const fresh = await downloadExport(
+				job('completed', { download_url: newUrl, checksum, format: 'json' }),
+				'fresh.json'
+			);
+			assert(fresh.status === 'ready', 'fresh artifact verified');
+			assertEqual(
+				await fresh.blob.text(),
+				raw,
+				'valid JSON preserved byte-for-byte, not treated as an envelope'
+			);
+			assertDeepEqual(
+				requests,
+				[oldUrl, newUrl],
+				'fresh artifact has a distinct URL; old artifact is not rewritten'
+			);
 		} finally {
 			globalThis.fetch = original;
 		}

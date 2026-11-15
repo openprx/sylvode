@@ -21,7 +21,7 @@
 	import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
 
 	interface Props {
-		workspaceId: string;
+		workspaceId: string | null;
 		jobId: string;
 		repository: Pick<FlowObjectRepository, 'get'>;
 		commands: Pick<FlowCommandService, 'convertStatus' | 'convertRetry'>;
@@ -207,10 +207,7 @@
 						{#if snap.source.state === 'ready'}
 							<a
 								class={linkClass}
-								href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
-									workspaceId,
-									objectId: job.source_object_id
-								})}
+								href={resolve('/(app)/flow/[objectId]', { objectId: job.source_object_id })}
 								data-testid="flow-conversion-source-link"
 							>
 								{snap.source.title}
@@ -317,7 +314,11 @@
 											class={linkClass}
 											href={resolve(
 												'/(app)/workspace/[workspaceId]/projects/[projectId]/forms/records/[recordId]',
-												{ workspaceId, projectId: target.projectId, recordId: target.id }
+												{
+													workspaceId: target.workspaceId ?? workspaceId!,
+													projectId: target.projectId,
+													recordId: target.id
+												}
 											)}
 											data-testid="flow-conversion-target-link"
 										>
@@ -399,8 +400,7 @@
 							{#if snap.retryFailure && !snap.retryFailure.retryable}
 								<a
 									class={linkClass}
-									href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]/convert', {
-										workspaceId,
+									href={resolve('/(app)/flow/[objectId]/convert', {
 										objectId: job.source_object_id
 									})}
 									data-testid="flow-conversion-new"

@@ -7,6 +7,7 @@
 
 #![allow(clippy::items_after_statements)]
 
+use crate::flow::json_value::FlowJson;
 use std::collections::{BTreeMap, BTreeSet};
 
 use axum::http::Extensions;
@@ -363,7 +364,7 @@ struct TargetView {
     created_by: Option<Uuid>,
 }
 
-async fn bridge_enabled<C: ConnectionTrait>(conn: &C, workspace_id: Uuid) -> Result<bool, ApiError> {
+pub(crate) async fn bridge_enabled<C: ConnectionTrait>(conn: &C, workspace_id: Uuid) -> Result<bool, ApiError> {
     #[derive(FromQueryResult)]
     struct Row {
         bridge_enabled: bool,
@@ -844,7 +845,7 @@ pub struct ConversionPreviewInput {
     pub idempotency_key: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ConversionPreviewResponse {
     pub preview_id: Uuid,
     pub expires_at: DateTime<Utc>,
@@ -1225,6 +1226,18 @@ async fn conversion_event(
     causation_id: Option<Uuid>,
     payload: Value,
 ) -> Result<Uuid, ApiError> {
+    let identity = super::scope::identity(tx, preview.source_object_id).await?;
+    if identity.workspace_id != Some(preview.workspace_id) {
+        return super::scope_event::insert_object_audit(
+            tx,
+            &identity,
+            preview.actor_id,
+            event_type,
+            idempotency_key,
+            payload,
+        )
+        .await;
+    }
     Ok(insert_flow_event(
         tx,
         BusinessEventInput {
@@ -1305,15 +1318,28 @@ async fn claim_commit_job(
     job_id: Uuid,
     idempotency_key: &str,
     origin: &CommandOrigin,
+    request_key: &str,
 ) -> Result<Option<Uuid>, ApiError> {
     let tx = state.db.begin().await?;
+    let identity = super::scope::identity(&tx, preview.source_object_id).await?;
+    let scoped = idempotency_key != request_key;
+    let intent = json!({"operation":"conversion_commit","preview_id":preview.id,"source_frontier":preview.source_frontier,"target_schema_version":preview.target_schema_version});
+    if scoped
+        && super::scope_commands::lock_and_replay(&tx, identity.scope_id, preview.actor_id, request_key, &intent)
+            .await?
+            .is_some()
+    {
+        tx.commit().await?;
+        return Ok(None);
+    }
+
     let claimed = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "INSERT INTO flow_conversion_jobs \
              (id, workspace_id, preview_id, actor_id, actor_kind, source_object_id, source_frontier, target_type, \
-              target_schema_version, status, idempotency_key, started_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'started',$10,now()) \
+              target_schema_version, status, idempotency_key, request_key, started_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'started',$10,$11,now()) \
              ON CONFLICT DO NOTHING",
             vec![
                 job_id.into(),
@@ -1326,6 +1352,7 @@ async fn claim_commit_job(
                 preview.target_type.clone().into(),
                 preview.target_schema_version.into(),
                 idempotency_key.into(),
+                request_key.into(),
             ],
         ))
         .await?;
@@ -1344,6 +1371,19 @@ async fn claim_commit_job(
         started_payload(preview, job_id),
     )
     .await?;
+    if scoped {
+        super::scope_commands::record(
+            &tx,
+            identity.scope_id,
+            preview.actor_id,
+            request_key,
+            intent,
+            identity.id,
+            started_event,
+            json!({"job_id":job_id}),
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok(Some(started_event))
 }
@@ -1357,15 +1397,28 @@ async fn claim_retry_job(
     job_id: Uuid,
     idempotency_key: &str,
     origin: &CommandOrigin,
+    request_key: &str,
 ) -> Result<Option<Uuid>, ApiError> {
     let tx = state.db.begin().await?;
+    let identity = super::scope::identity(&tx, preview.source_object_id).await?;
+    let scoped = idempotency_key != request_key;
+    let intent = json!({"operation":"conversion_retry","preview_id":preview.id,"job_id":job_id,"source_frontier":preview.source_frontier,"target_schema_version":preview.target_schema_version});
+    if scoped
+        && super::scope_commands::lock_and_replay(&tx, identity.scope_id, preview.actor_id, request_key, &intent)
+            .await?
+            .is_some()
+    {
+        tx.commit().await?;
+        return Ok(None);
+    }
+
     let claimed = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, error_reason=NULL, idempotency_key=$2, \
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, error_reason=NULL, idempotency_key=$2, request_key=$3, \
              started_at=now(), updated_at=now() \
              WHERE id=$1 AND status='failed'",
-            vec![job_id.into(), idempotency_key.into()],
+            vec![job_id.into(), idempotency_key.into(), request_key.into()],
         ))
         .await?;
     if claimed.rows_affected() == 0 {
@@ -1383,6 +1436,19 @@ async fn claim_retry_job(
         started_payload(preview, job_id),
     )
     .await?;
+    if scoped {
+        super::scope_commands::record(
+            &tx,
+            identity.scope_id,
+            preview.actor_id,
+            request_key,
+            intent,
+            identity.id,
+            started_event,
+            json!({"job_id":job_id}),
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok(Some(started_event))
 }
@@ -1579,10 +1645,6 @@ async fn run_conversion(
     run: &ConversionRun,
 ) -> Result<ConversionJobResponse, ApiError> {
     let preview = &run.preview;
-    let job_id = run.job_id;
-    let idempotency_key = run.idempotency_key.as_str();
-    let origin = &run.origin;
-    let started_event = run.started_event;
     let tx = state.db.begin().await?;
     if !bridge_enabled(&tx, preview.workspace_id).await? {
         return Err(bridge_policy_rejected(
@@ -1603,6 +1665,23 @@ async fn run_conversion(
         ));
     }
 
+    finish_conversion(state, tx, source.id, source.projection_title, actor, run).await
+}
+
+// Both scope-native and legacy entry points use the same native Forms mutation transaction.
+async fn finish_conversion(
+    state: &AppState,
+    tx: sea_orm::DatabaseTransaction,
+    source_id: Uuid,
+    source_title: String,
+    actor: BridgeActor,
+    run: &ConversionRun,
+) -> Result<ConversionJobResponse, ApiError> {
+    let preview = &run.preview;
+    let job_id = run.job_id;
+    let idempotency_key = run.idempotency_key.as_str();
+    let origin = &run.origin;
+    let started_event = run.started_event;
     let (schema, permission) = if let Some(form_id) = preview.target_form_id {
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -1672,7 +1751,7 @@ async fn run_conversion(
             .get("title")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .or_else(|| Some(source.projection_title.clone()));
+            .or_else(|| Some(source_title.clone()));
         let form = crate::routes::form::find_form_with_conn(&tx, form_id).await?;
         let creation = crate::forms::native_create::create_record_in_transaction(
             state,
@@ -1687,7 +1766,7 @@ async fn run_conversion(
                 title,
                 source: json!({
                     "type":"flow_conversion",
-                    "source_object_id":source.id,
+                    "source_object_id":source_id,
                     "correlation_id":origin.correlation_id,
                 }),
                 idempotency_key: Some(format!("forms-conversion-target:{idempotency_key}")),
@@ -1708,7 +1787,7 @@ async fn run_conversion(
             .mapping
             .get("name")
             .and_then(Value::as_str)
-            .unwrap_or(&source.projection_title);
+            .unwrap_or(&source_title);
         let form = crate::forms::native_create::create_form_in_transaction(
             &tx,
             crate::forms::native_create::NativeFormCreateRequest {
@@ -1730,7 +1809,7 @@ async fn run_conversion(
                 created_by: (!actor.is_bot).then_some(actor.id),
                 source: json!({
                     "type":"flow_conversion",
-                    "source_object_id":source.id,
+                    "source_object_id":source_id,
                     "correlation_id":origin.correlation_id,
                 }),
                 change_summary: "created from Flow conversion".to_string(),
@@ -1846,8 +1925,8 @@ async fn existing_commit_job<C: ConnectionTrait>(
     }
     if let Some(existing) = Existing::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id, preview_id FROM flow_conversion_jobs WHERE workspace_id=$1 AND idempotency_key=$2",
-        vec![preview.workspace_id.into(), idempotency_key.into()],
+        "SELECT id, preview_id FROM flow_conversion_jobs WHERE scope_id=(SELECT scope_id FROM flow_conversion_previews WHERE id=$1) AND request_key=$2",
+        vec![preview.id.into(), idempotency_key.into()],
     ))
     .one(conn)
     .await?
@@ -1909,7 +1988,16 @@ pub async fn commit_conversion(
     precheck_commit(state, &source, &preview).await?;
 
     let job_id = Uuid::new_v4();
-    let Some(started_event) = claim_commit_job(state, &preview, job_id, &input.idempotency_key, &origin).await? else {
+    let Some(started_event) = claim_commit_job(
+        state,
+        &preview,
+        job_id,
+        &input.idempotency_key,
+        &origin,
+        &input.idempotency_key,
+    )
+    .await?
+    else {
         // A concurrent commit of the same preview (or key) won `UNIQUE (preview_id)` /
         // `UNIQUE (workspace_id, idempotency_key)`; answer with its job instead of a 500.
         return match existing_commit_job(&state.db, &preview, &input.idempotency_key).await? {
@@ -2037,12 +2125,8 @@ pub async fn retry_conversion(
     }
     if KeyOwner::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id FROM flow_conversion_jobs WHERE workspace_id=$1 AND idempotency_key=$2",
-        vec![
-            preview.workspace_id.into(),
-            input.idempotency_key.clone().into(),
-            job_id.into(),
-        ],
+        "SELECT id FROM flow_conversion_jobs WHERE scope_id=(SELECT scope_id FROM flow_conversion_previews WHERE id=$1) AND request_key=$2",
+        vec![preview.id.into(),input.idempotency_key.clone().into()],
     ))
     .one(&state.db)
     .await?
@@ -2054,7 +2138,16 @@ pub async fn retry_conversion(
     }
     // No preview TTL check: the job holds the frontier and target schema version it froze, and
     // the run rechecks both, plus every permission, against them (`rest-api-v1.md` v0.7 retry).
-    let Some(started_event) = claim_retry_job(state, &preview, job_id, &input.idempotency_key, &origin).await? else {
+    let Some(started_event) = claim_retry_job(
+        state,
+        &preview,
+        job_id,
+        &input.idempotency_key,
+        &origin,
+        &input.idempotency_key,
+    )
+    .await?
+    else {
         // A concurrent retry already moved the job on.
         return load_job(&state.db, job_id).await;
     };
@@ -2082,6 +2175,10 @@ pub struct RecordLineageReference {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_object_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_scope_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_workspace_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display: Option<Value>,
@@ -2099,6 +2196,10 @@ pub struct RecordLineageConversion {
     pub source_available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_object_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_scope_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_workspace_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_title: Option<String>,
     /// Whether the caller may open the job itself (`GET /flow/conversions/{job_id}`): the job's
@@ -2153,6 +2254,8 @@ pub async fn record_flow_lineage(
     struct TitleRow {
         id: Uuid,
         title: Option<String>,
+        scope_id: Uuid,
+        workspace_id: Option<Uuid>,
     }
 
     if !bridge_enabled(&state.db, workspace_id).await? {
@@ -2188,52 +2291,63 @@ pub async fn record_flow_lineage(
         .into_iter()
         .collect();
     let mut caller: Option<(Uuid, bool)> = None;
-    let readable: BTreeSet<Uuid> = match policy::resolve_flow_principal(state, extensions, workspace_id).await {
-        Ok((actor_id, role, is_bot)) => {
-            // Same rule as `conversion_status`: the job's actor, or a workspace owner/admin.
-            caller = Some((actor_id, matches!(role.as_str(), "owner" | "admin")));
-            authz::effective_permissions(
-                &state.db,
-                workspace_id,
-                &source_ids,
-                if is_bot { "bot" } else { "user" },
-                actor_id,
-                &role,
-            )
-            .await?
-            .into_iter()
-            .filter(|(_, level)| *level >= PermissionLevel::View)
-            .map(|(id, _)| id)
-            .collect()
+    let mut proofs = Vec::new();
+    let mut readable = BTreeSet::new();
+    match policy::resolve_flow_principal(state, extensions, workspace_id).await {
+        Ok((actor, role, is_bot)) => {
+            caller = Some((actor, matches!(role.as_str(), "owner" | "admin")));
+            if is_bot {
+                // Existing OPR credentials stay bounded to their actual legacy workspace.
+                for (id, level) in
+                    authz::effective_permissions(&state.db, workspace_id, &source_ids, "bot", actor, &role).await?
+                {
+                    if level >= PermissionLevel::View {
+                        readable.insert(id);
+                    }
+                }
+            } else {
+                for id in &source_ids {
+                    match super::scope::authorize(&state.db, *id, actor, PermissionLevel::View).await {
+                        Ok(proof) => {
+                            readable.insert(*id);
+                            proofs.push(proof);
+                        }
+                        Err(e) if matches!(e.kind(), ApiErrorKind::NotFound | ApiErrorKind::Forbidden) => {}
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
         }
-        Err(error)
+        Err(e)
             if matches!(
-                error.kind(),
+                e.kind(),
                 ApiErrorKind::Unauthenticated | ApiErrorKind::Forbidden | ApiErrorKind::NotFound
-            ) =>
-        {
-            BTreeSet::new()
-        }
-        Err(error) => return Err(error),
-    };
+            ) => {}
+        Err(e) => return Err(e),
+    }
     let readable_ids: Vec<Uuid> = readable.iter().copied().collect();
-    let titles: BTreeMap<Uuid, Option<String>> = if readable_ids.is_empty() {
+    let titles: BTreeMap<Uuid, TitleRow> = if readable_ids.is_empty() {
         BTreeMap::new()
     } else {
         TitleRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT fo.id, p.title FROM flow_objects fo \
+            "SELECT fo.id,fo.scope_id,fo.workspace_id,p.title FROM flow_objects fo \
              LEFT JOIN flow_object_projections p ON p.object_id = fo.id \
-             WHERE fo.workspace_id = $1 AND fo.id = ANY($2)",
-            vec![workspace_id.into(), readable_ids.into()],
+             WHERE fo.id = ANY($1)",
+            vec![readable_ids.into()],
         ))
         .all(&state.db)
         .await?
         .into_iter()
-        .map(|row| (row.id, row.title))
+        .map(|row| (row.id, row))
         .collect()
     };
 
+    for proof in proofs {
+        if !super::scope::proof_current(&state.db, &proof).await? {
+            return Err(super::policy::authorization_read_unstable());
+        }
+    }
     Ok(RecordFlowLineage {
         references: references
             .into_iter()
@@ -2243,7 +2357,11 @@ pub async fn record_flow_lineage(
                         reference_id: row.id,
                         source_available: true,
                         source_object_id: Some(row.source_object_id),
-                        source_title: titles.get(&row.source_object_id).cloned().flatten(),
+                        source_scope_id: titles.get(&row.source_object_id).map(|source| source.scope_id),
+                        source_workspace_id: titles.get(&row.source_object_id).and_then(|source| source.workspace_id),
+                        source_title: titles
+                            .get(&row.source_object_id)
+                            .and_then(|source| source.title.clone()),
                         display: Some(row.display),
                         created_at: Some(row.created_at),
                     }
@@ -2252,6 +2370,8 @@ pub async fn record_flow_lineage(
                         reference_id: row.id,
                         source_available: false,
                         source_object_id: None,
+                        source_scope_id: None,
+                        source_workspace_id: None,
                         source_title: None,
                         display: None,
                         created_at: None,
@@ -2267,10 +2387,18 @@ pub async fn record_flow_lineage(
                         job_id: row.id,
                         source_available: true,
                         source_object_id: Some(row.source_object_id),
-                        source_title: titles.get(&row.source_object_id).cloned().flatten(),
-                        job_available: Some(
-                            caller.is_some_and(|(caller_id, is_admin)| is_admin || caller_id == row.actor_id),
-                        ),
+                        source_scope_id: titles.get(&row.source_object_id).map(|source| source.scope_id),
+                        source_workspace_id: titles.get(&row.source_object_id).and_then(|source| source.workspace_id),
+                        source_title: titles
+                            .get(&row.source_object_id)
+                            .and_then(|source| source.title.clone()),
+                        job_available: Some(caller.is_some_and(|(caller_id, is_admin)| {
+                            caller_id == row.actor_id
+                                || (is_admin
+                                    && titles
+                                        .get(&row.source_object_id)
+                                        .is_some_and(|source| source.workspace_id == Some(workspace_id)))
+                        })),
                         status: Some(row.status),
                         lineage_id: Some(row.lineage_id),
                         created_at: Some(row.created_at),
@@ -2280,6 +2408,8 @@ pub async fn record_flow_lineage(
                         job_id: row.id,
                         source_available: false,
                         source_object_id: None,
+                        source_scope_id: None,
+                        source_workspace_id: None,
                         source_title: None,
                         job_available: None,
                         status: None,
@@ -2357,4 +2487,726 @@ mod tests {
         assert!(decision.state.field_write_limited);
         assert!(decision.state.record_limited);
     }
+}
+
+/// Scope-native reference reads intersect canonical source permission with each destination
+/// Forms policy. A source grant does not imply Forms access or reveal inaccessible targets.
+pub async fn list_scope_references(
+    state: &AppState,
+    user: Uuid,
+    source_object_id: Uuid,
+) -> Result<ReferenceList, ApiError> {
+    let proof = super::scope::authorize(&state.db, source_object_id, user, PermissionLevel::View).await?;
+    let rows=ReferenceRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT id,workspace_id,source_object_id,target_type,target_id,display,removed_at FROM flow_bridge_references WHERE source_object_id=$1 AND removed_at IS NULL ORDER BY created_at,id LIMIT 1000",vec![source_object_id.into()])).all(&state.db).await?;
+    // Reference reads depend on both source authorization and the live Forms policies.
+    // Lock audience workspaces before source, then form policy locks in canonical UUID order.
+    let mut fenced = proof.clone();
+    for row in &rows {
+        fenced
+            .audience_revisions
+            .push((row.workspace_id, authz::read_epoch(&state.db, row.workspace_id).await?));
+    }
+    fenced.audience_revisions.sort_unstable();
+    fenced.audience_revisions.dedup();
+    let tx = state.db.begin().await?;
+    super::scope::fence(&tx, &fenced).await?;
+    let mut forms = Vec::new();
+    for row in &rows {
+        if let Some(target) = target_view(&tx, row.workspace_id, &row.target_type, row.target_id).await? {
+            forms.push(target.form_id);
+        }
+    }
+    forms.sort_unstable();
+    forms.dedup();
+    for form in forms {
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT pg_advisory_xact_lock(hashtextextended($1,19019))",
+            vec![form.to_string().into()],
+        ))
+        .await?;
+    }
+    let mut items = Vec::new();
+    for row in rows {
+        #[derive(FromQueryResult)]
+        struct Role {
+            role: String,
+        }
+        let Some(role) = Role::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+            vec![row.workspace_id.into(), user.into()],
+        ))
+        .one(&tx)
+        .await?
+        else {
+            continue;
+        };
+        let actor = BridgeActor {
+            id: user,
+            role: role.role,
+            is_bot: false,
+            flow_level: proof.level,
+        };
+        let Some(target) = target_view(&tx, row.workspace_id, &row.target_type, row.target_id).await? else {
+            items.push(BridgeReferenceView::Unavailable);
+            continue;
+        };
+        let Some(permission) = target_permission(&tx, &actor, &target).await? else {
+            continue;
+        };
+        let summary = if row.target_type == "form_record" {
+            permission
+                .denied_read_fields
+                .iter()
+                .fold(target.summary, |mut values, key| {
+                    if let Some(values) = values.as_object_mut() {
+                        values.remove(key);
+                    }
+                    values
+                })
+        } else {
+            target.summary
+        };
+        let permission_state = if bridge_enabled(&tx, row.workspace_id).await? {
+            permission.state
+        } else {
+            read_only_state(permission.state)
+        };
+        items.push(BridgeReferenceView::Available {
+            reference_id: row.id,
+            source_object_id: row.source_object_id,
+            target_type: row.target_type,
+            target_id: row.target_id,
+            title: target.title,
+            status: target.status,
+            summary,
+            display: row.display,
+            permission_state: Box::new(permission_state),
+        });
+    }
+    if !super::scope::proof_current(&tx, &proof).await? {
+        return Err(super::policy::authorization_read_unstable());
+    }
+    tx.commit().await?;
+    Ok(ReferenceList { items })
+}
+
+/// Personal references retain a real Forms target namespace, independent of Flow ownership.
+/// The same Forms/Flow intersection policy as legacy references decides visibility and actions.
+pub async fn create_scope_reference(
+    state: &AppState,
+    user: Uuid,
+    object: Uuid,
+    input: CreateReferenceInput,
+) -> Result<Value, ApiError> {
+    use super::scope;
+    let identity = scope::identity(&state.db, object).await?;
+    let mut proof = scope::authorize(&state.db, object, user, PermissionLevel::Edit).await?;
+    if !proof.resource_active {
+        return Err(ApiError::invalid_update("reference source must be active"));
+    }
+    if identity.workspace_id.is_some() {
+        return Err(ApiError::invalid_update(
+            "legacy reference requires its integration adapter",
+        ));
+    }
+    if !input.display.is_object() {
+        return Err(ApiError::invalid_update("display must be an object"));
+    }
+    let body = json!({"operation":"reference_create","object_id":object,"target_type":input.target_type,"target_id":input.target_id,"display":input.display});
+    // Validate request identity early, but reauthorize the current Forms target before returning
+    // any old permission-state metadata on replay.
+    let _prior =
+        super::scope_commands::replay(&state.db, identity.scope_id, user, &input.idempotency_key, &body).await?;
+    let target_row=match input.target_type.as_str(){
+  "form"=>state.db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT workspace_id,id AS form_id FROM project_forms WHERE id=$1 AND archived_at IS NULL",vec![input.target_id.into()])).await?,
+  "form_record"=>state.db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT r.workspace_id,r.form_id FROM form_records r JOIN project_forms f ON f.id=r.form_id WHERE r.id=$1 AND r.archived_at IS NULL AND f.archived_at IS NULL",vec![input.target_id.into()])).await?,
+  _=>return Err(ApiError::invalid_update("target_type must be form or form_record"))
+ }.ok_or_else(||ApiError::not_found("bridge target not found"))?;
+    let destination = target_row.try_get::<Uuid>("", "workspace_id")?;
+    let form = target_row.try_get::<Uuid>("", "form_id")?;
+    let epoch = authz::read_epoch(&state.db, destination).await?;
+    proof.audience_revisions.push((destination, epoch));
+    proof.audience_revisions.sort_unstable();
+    proof.audience_revisions.dedup();
+    let tx = state.db.begin().await?;
+    scope::require_personal_write(&tx).await?;
+    scope::fence(&tx, &proof).await?;
+    if !bridge_enabled(&tx, destination).await? {
+        return Err(ApiError::policy_rejected("forms bridge is disabled"));
+    }
+    let role = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+            vec![destination.into(), user.into()],
+        ))
+        .await?
+        .ok_or_else(|| ApiError::not_found("bridge target not found"))?
+        .try_get::<String>("", "role")?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT pg_advisory_xact_lock(hashtextextended($1,19019))",
+        vec![form.to_string().into()],
+    ))
+    .await?;
+    let target = target_view(&tx, destination, &input.target_type, input.target_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("bridge target not found"))?;
+    let actor = BridgeActor {
+        id: user,
+        role,
+        is_bot: false,
+        flow_level: proof.level,
+    };
+    let permission = target_permission(&tx, &actor, &target)
+        .await?
+        .ok_or_else(|| ApiError::not_found("bridge target not found"))?;
+    if let Some(mut result) =
+        super::scope_commands::lock_and_replay(&tx, identity.scope_id, user, &input.idempotency_key, &body).await?
+    {
+        *result.field_mut("permission_state")? = json!(permission.state);
+        tx.commit().await?;
+        return Ok(result);
+    }
+    let reference = Uuid::new_v4();
+    let storage_key = format!("scope:{}:{}", identity.scope_id, input.idempotency_key);
+    tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_bridge_references(id,scope_id,workspace_id,source_object_id,target_type,target_id,display,idempotency_key,created_by,created_by_kind) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'user')",vec![reference.into(),identity.scope_id.into(),destination.into(),object.into(),input.target_type.clone().into(),input.target_id.into(),input.display.into(),storage_key.into(),user.into()])).await?;
+    // Reference target identifiers are recipient-sensitive; this audit-only event cannot publish a
+    // Forms target into an unrelated mounted workspace. Content collaboration remains independent.
+    let event=super::scope_event::insert_object_audit(&tx,&identity,user,"flow.reference.created",&input.idempotency_key,json!({"object_id":object,"reference_id":reference,"target_type":input.target_type,"target_id":input.target_id})).await?;
+    let result = json!({"reference_id":reference,"source_object_id":object,"target_type":input.target_type,"target_id":input.target_id,"lineage_id":null,"permission_state":permission.state});
+    super::scope_commands::record(
+        &tx,
+        identity.scope_id,
+        user,
+        &input.idempotency_key,
+        body,
+        object,
+        event,
+        result.clone(),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+pub async fn remove_scope_reference(
+    state: &AppState,
+    user: Uuid,
+    object: Uuid,
+    reference: Uuid,
+    key: &str,
+) -> Result<Value, ApiError> {
+    use super::scope;
+    let identity = scope::identity(&state.db, object).await?;
+    let proof = scope::authorize(&state.db, object, user, PermissionLevel::Edit).await?;
+    let body = json!({"operation":"reference_remove","object_id":object,"reference_id":reference});
+    if let Some(result) = super::scope_commands::replay(&state.db, identity.scope_id, user, key, &body).await? {
+        return Ok(result);
+    }
+    let tx = state.db.begin().await?;
+    scope::fence(&tx, &proof).await?;
+    if let Some(result) = super::scope_commands::lock_and_replay(&tx, identity.scope_id, user, key, &body).await? {
+        tx.commit().await?;
+        return Ok(result);
+    }
+    let updated=tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_bridge_references SET removed_at=now() WHERE id=$1 AND source_object_id=$2 AND scope_id=$3 AND removed_at IS NULL",vec![reference.into(),object.into(),identity.scope_id.into()])).await?;
+    if updated.rows_affected() != 1 {
+        return Err(ApiError::not_found("reference not found"));
+    }
+    let event = super::scope_event::insert_object_audit(
+        &tx,
+        &identity,
+        user,
+        "flow.reference.removed",
+        key,
+        json!({"object_id":object,"reference_id":reference}),
+    )
+    .await?;
+    let result = json!({"removed":true,"event_id":event});
+    super::scope_commands::record(&tx, identity.scope_id, user, key, body, object, event, result.clone()).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+/// V2 conversion intent: destination context is explicit and never substitutes for Flow ownership.
+#[derive(Debug, Deserialize)]
+pub struct ScopeConversionPreviewInput {
+    pub source_object_id: Uuid,
+    pub source_frontier: String,
+    pub target_type: String,
+    pub mapping: Value,
+    pub idempotency_key: String,
+    pub destination_workspace_id: Uuid,
+    pub destination_project_id: Option<Uuid>,
+}
+pub async fn preview_scope_conversion(
+    state: &AppState,
+    user: Uuid,
+    input: ScopeConversionPreviewInput,
+) -> Result<ConversionPreviewResponse, ApiError> {
+    let identity = super::scope::identity(&state.db, input.source_object_id).await?;
+    let proof = super::scope::authorize(&state.db, input.source_object_id, user, PermissionLevel::Edit).await?;
+    if !proof.resource_active {
+        return Err(ApiError::policy_rejected("conversion source must be active"));
+    }
+    let caps = super::scope::capabilities(&state.db).await?;
+    let enabled = if identity.workspace_id.is_none() {
+        caps.personal_forms_conversion
+    } else {
+        caps.cross_workspace_forms_conversion
+    };
+    if !enabled {
+        return Err(ApiError::typed_with_details(
+            ApiErrorKind::FeatureDisabled,
+            "scope Forms conversion is not enabled",
+            json!({"reason":"scope_forms_conversion_disabled"}),
+        ));
+    }
+    if identity.workspace_id.is_none() {
+        super::scope::require_personal_write(&state.db).await?;
+    } else {
+        super::scope::require_reader_ready(&state.db).await?;
+    }
+    if input.idempotency_key.trim().is_empty() || input.idempotency_key.len() > 128 || !input.mapping.is_object() {
+        return Err(ApiError::invalid_update(
+            "conversion requires an object mapping and1..128-byte intent key",
+        ));
+    }
+    let source = super::scope::object_view(&state.db, input.source_object_id, user).await?;
+    let frontier = source.field("frontier").as_str().ok_or_else(ApiError::internal)?;
+    if input.source_frontier != frontier {
+        return Err(ApiError::stale_frontier(
+            "source frontier changed",
+            source.field("document_seq").as_i64(),
+            Some(frontier),
+        ));
+    }
+    let destination = input.destination_workspace_id;
+    let epoch = authz::read_epoch(&state.db, destination).await?;
+    let tx = state.db.begin().await?;
+    super::scope::fence_many_with_workspaces(&tx, std::slice::from_ref(&proof), &[(destination, epoch)]).await?;
+    if !bridge_enabled(&tx, destination).await? {
+        return Err(ApiError::policy_rejected("destination Forms bridge is disabled"));
+    }
+    let role = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+            vec![destination.into(), user.into()],
+        ))
+        .await?
+        .ok_or_else(|| ApiError::not_found("conversion destination not found"))?
+        .try_get::<String>("", "role")?;
+    let actor = BridgeActor {
+        id: user,
+        role,
+        is_bot: false,
+        flow_level: proof.level,
+    };
+    let (project, form, version, permission, warnings) = match input.target_type.as_str() {
+        "form" => {
+            let mapped = input
+                .mapping
+                .get("target_project_id")
+                .filter(|v| !v.is_null())
+                .map(|_| mapping_uuid(&input.mapping, "target_project_id"))
+                .transpose()?;
+            if mapped.is_some() && input.destination_project_id.is_some() && mapped != input.destination_project_id {
+                return Err(ApiError::invalid_update("destination project and mapping disagree"));
+            }
+            let project = input.destination_project_id.or(mapped).ok_or_else(|| {
+                ApiError::invalid_update("explicit destination_project_id required for form creation")
+            })?;
+
+            if !matches!(actor.role.as_str(), "owner" | "admin") || !project_exists(&tx, destination, project).await? {
+                return Err(ApiError::policy_rejected("target form creation is not permitted"));
+            }
+            (
+                project,
+                None,
+                0,
+                BridgePermissionState {
+                    access: BridgeAccess::Controlled,
+                    configuration: PolicyConfiguration::Explicit,
+                    actions: vec!["form.view".into(), "record.create".into()],
+                    field_read_limited: false,
+                    field_write_limited: false,
+                    record_limited: false,
+                },
+                Vec::new(),
+            )
+        }
+        "form_record" => {
+            let form = mapping_uuid(&input.mapping, "target_form_id")?;
+            tx.execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT pg_advisory_xact_lock(hashtextextended($1,19019))",
+                vec![form.to_string().into()],
+            ))
+            .await?;
+            let target = target_view(&tx, destination, "form", form)
+                .await?
+                .ok_or_else(|| ApiError::not_found("conversion target not found"))?;
+            let permission = target_permission(&tx, &actor, &target)
+                .await?
+                .ok_or_else(|| ApiError::not_found("conversion target not found"))?;
+            if !permission.allows("record.create") {
+                return Err(record_create_rejected(&permission.state));
+            }
+            let (project, version, schema) = form_schema(&tx, destination, form)
+                .await?
+                .ok_or_else(|| ApiError::not_found("conversion target not found"))?;
+            (
+                project,
+                Some(form),
+                version,
+                permission.state,
+                conversion_warnings(&schema, &input.mapping),
+            )
+        }
+        _ => return Err(ApiError::invalid_update("target_type must be form or form_record")),
+    };
+    if input.destination_project_id.is_some_and(|declared| declared != project) {
+        return Err(ApiError::invalid_update(
+            "explicit destination project does not match the target",
+        ));
+    }
+    let body = json!({"operation":"conversion_preview","source_object_id":input.source_object_id,"source_frontier":input.source_frontier,"target_type":input.target_type,"mapping":input.mapping,"destination_workspace_id":destination,"destination_project_id":input.destination_project_id});
+    if let Some(value) =
+        super::scope_commands::lock_and_replay(&tx, identity.scope_id, user, &input.idempotency_key, &body).await?
+    {
+        tx.commit().await?;
+        return serde_json::from_value(value).map_err(|_| ApiError::internal());
+    }
+    let id = Uuid::new_v4();
+    let expiry = Utc::now() + chrono::Duration::minutes(15);
+    let storage_key = format!("scope:{}:{}", identity.scope_id, input.idempotency_key);
+    tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_conversion_previews(id,scope_id,workspace_id,actor_id,actor_kind,source_object_id,source_frontier,target_type,target_project_id,target_form_id,target_schema_version,mapping,permission_snapshot,idempotency_key,request_key,expires_at) VALUES($1,$2,$3,$4,'user',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",vec![id.into(),identity.scope_id.into(),destination.into(),user.into(),input.source_object_id.into(),input.source_frontier.clone().into(),input.target_type.into(),project.into(),form.into(),version.into(),input.mapping.clone().into(),serde_json::to_value(&permission).map_err(|_|ApiError::internal())?.into(),storage_key.into(),input.idempotency_key.clone().into(),expiry.into()])).await?;
+    let result = ConversionPreviewResponse {
+        preview_id: id,
+        expires_at: expiry,
+        source_frontier: input.source_frontier,
+        target_schema_version: version,
+        mapping: input.mapping,
+        warnings,
+        permission_decision: permission,
+        estimated_objects: 1,
+    };
+    let event = super::scope_event::insert_object_audit(
+        &tx,
+        &identity,
+        user,
+        "flow.conversion.previewed",
+        &input.idempotency_key,
+        json!({"object_id":identity.id,"preview_id":id}),
+    )
+    .await?;
+    super::scope_commands::record(
+        &tx,
+        identity.scope_id,
+        user,
+        &input.idempotency_key,
+        body,
+        identity.id,
+        event,
+        serde_json::to_value(&result).map_err(|_| ApiError::internal())?,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+async fn scoped_conversion_actor(
+    state: &AppState,
+    user: Uuid,
+    preview: &PreviewRow,
+    write: bool,
+) -> Result<
+    (
+        super::scope::ObjectIdentity,
+        super::scope::AuthorizationProof,
+        BridgeActor,
+    ),
+    ApiError,
+> {
+    let identity = super::scope::identity(&state.db, preview.source_object_id).await?;
+    let proof = super::scope::authorize(
+        &state.db,
+        identity.id,
+        user,
+        if write {
+            PermissionLevel::Edit
+        } else {
+            PermissionLevel::View
+        },
+    )
+    .await?;
+    // Destination administration never grants ownership of a foreign source preview/job.
+    if preview.actor_id != user || preview.actor_kind != "user" {
+        return Err(ApiError::not_found("conversion job not found"));
+    }
+    if write {
+        let caps = super::scope::capabilities(&state.db).await?;
+        if !(if identity.workspace_id.is_none() {
+            caps.personal_forms_conversion
+        } else {
+            caps.cross_workspace_forms_conversion
+        }) {
+            return Err(ApiError::typed_with_details(
+                ApiErrorKind::FeatureDisabled,
+                "scope Forms conversion is not enabled",
+                json!({"reason":"scope_forms_conversion_disabled"}),
+            ));
+        }
+        if identity.workspace_id.is_none() {
+            super::scope::require_personal_write(&state.db).await?;
+        } else {
+            super::scope::require_reader_ready(&state.db).await?;
+        }
+        if !proof.resource_active {
+            return Err(ApiError::policy_rejected("conversion source must be active"));
+        }
+    }
+    let role = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+            vec![preview.workspace_id.into(), user.into()],
+        ))
+        .await?
+        .ok_or_else(|| ApiError::not_found("conversion destination not found"))?
+        .try_get("", "role")?;
+    let actor = BridgeActor {
+        id: user,
+        role,
+        is_bot: false,
+        flow_level: proof.level,
+    };
+    Ok((identity, proof, actor))
+}
+
+async fn run_scope_conversion(
+    state: &AppState,
+    user: Uuid,
+    run: &ConversionRun,
+) -> Result<ConversionJobResponse, ApiError> {
+    let (identity, proof, actor) = scoped_conversion_actor(state, user, &run.preview, true).await?;
+    let epoch = authz::read_epoch(&state.db, run.preview.workspace_id).await?;
+    let tx = state.db.begin().await?;
+    super::scope::fence_many_with_workspaces(&tx, &[proof], &[(run.preview.workspace_id, epoch)]).await?;
+    if !bridge_enabled(&tx, run.preview.workspace_id).await? {
+        return Err(ApiError::policy_rejected("destination Forms bridge is disabled"));
+    }
+    // Re-read destination role under the authority fence, not from the preflight snapshot.
+    let mut actor = actor;
+    actor.role = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+            vec![run.preview.workspace_id.into(), user.into()],
+        ))
+        .await?
+        .ok_or_else(|| ApiError::not_found("conversion destination not found"))?
+        .try_get("", "role")?;
+    let head=tx.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT d.head_seq,d.head_frontier,p.title FROM flow_objects o JOIN collab_documents d ON d.object_id=o.id JOIN flow_object_projections p ON p.object_id=o.id WHERE o.id=$1 FOR SHARE OF d",
+        vec![identity.id.into()])).await?.ok_or_else(||ApiError::not_found("conversion source not found"))?;
+    use base64::Engine as _;
+    let frontier = base64::engine::general_purpose::STANDARD.encode(head.try_get::<Vec<u8>>("", "head_frontier")?);
+    if frontier != run.source_frontier {
+        return Err(ApiError::stale_frontier(
+            "source frontier changed",
+            Some(head.try_get("", "head_seq")?),
+            Some(&frontier),
+        ));
+    }
+    let title = head.try_get("", "title")?;
+    finish_conversion(state, tx, identity.id, title, actor, run).await
+}
+
+async fn execute_scope_claimed(
+    state: &AppState,
+    user: Uuid,
+    run: ConversionRun,
+) -> Result<ConversionJobResponse, ApiError> {
+    match run_scope_conversion(state, user, &run).await {
+        Ok(job) => Ok(job),
+        Err(error) => {
+            let (typed, code) = conversion_failure(run.job_id, error);
+            fail_conversion_job(state, &run, code).await?;
+            let status = load_job(&state.db, run.job_id).await?.status;
+            Err(typed
+                .with_detail("job_id", json!(run.job_id))
+                .with_detail("job_status", json!(status)))
+        }
+    }
+}
+
+pub async fn commit_scope_conversion(
+    state: &AppState,
+    user: Uuid,
+    input: ConversionCommitInput,
+    origin: CommandOrigin,
+) -> Result<ConversionJobResponse, ApiError> {
+    if !input.confirm || input.idempotency_key.trim().is_empty() || input.idempotency_key.len() > 128 {
+        return Err(ApiError::invalid_update(
+            "confirm=true and a1..128-byte idempotency_key are required",
+        ));
+    }
+    let preview = load_preview(&state.db, input.preview_id).await?;
+    let (identity, _, _) = scoped_conversion_actor(state, user, &preview, true).await?;
+    if input.source_frontier != preview.source_frontier {
+        return Err(ApiError::stale_frontier(
+            "source frontier differs from preview",
+            None,
+            Some(&preview.source_frontier),
+        ));
+    }
+    if input.target_schema_version != preview.target_schema_version {
+        return Err(policy_rejected_reason(
+            "target schema version differs from preview",
+            TARGET_SCHEMA_CHANGED_REASON,
+            None,
+        ));
+    }
+    let key = format!("scope:{}:{}", identity.scope_id, input.idempotency_key);
+    let intent = json!({"operation":"conversion_commit","preview_id":preview.id,"source_frontier":preview.source_frontier,"target_schema_version":preview.target_schema_version});
+    if let Some(prior) =
+        super::scope_commands::replay(&state.db, identity.scope_id, user, &input.idempotency_key, &intent).await?
+    {
+        let id = prior
+            .field("job_id")
+            .as_str()
+            .and_then(|v| Uuid::parse_str(v).ok())
+            .ok_or_else(ApiError::internal)?;
+        return load_job(&state.db, id).await;
+    }
+    if let Some(id) = existing_commit_job(&state.db, &preview, &input.idempotency_key).await? {
+        return load_job(&state.db, id).await;
+    }
+    if preview.expires_at <= Utc::now() {
+        return Err(policy_rejected_reason(
+            "conversion preview expired",
+            PREVIEW_EXPIRED_REASON,
+            None,
+        ));
+    }
+    let job_id = Uuid::new_v4();
+    let Some(started_event) = claim_commit_job(state, &preview, job_id, &key, &origin, &input.idempotency_key).await?
+    else {
+        return load_job(
+            &state.db,
+            existing_commit_job(&state.db, &preview, &input.idempotency_key)
+                .await?
+                .ok_or_else(ApiError::internal)?,
+        )
+        .await;
+    };
+    let run = ConversionRun {
+        source_frontier: preview.source_frontier.clone(),
+        target_schema_version: preview.target_schema_version,
+        preview,
+        job_id,
+        idempotency_key: key,
+        origin,
+        started_event,
+    };
+    execute_scope_claimed(state, user, run).await
+}
+
+pub async fn scope_conversion_status(
+    state: &AppState,
+    user: Uuid,
+    job_id: Uuid,
+) -> Result<ConversionJobResponse, ApiError> {
+    let row = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT preview_id FROM flow_conversion_jobs WHERE id=$1",
+            vec![job_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| ApiError::not_found("conversion job not found"))?;
+    let preview = load_preview(&state.db, row.try_get("", "preview_id")?).await?;
+    scoped_conversion_actor(state, user, &preview, false).await?;
+    load_job(&state.db, job_id).await
+}
+
+pub async fn retry_scope_conversion(
+    state: &AppState,
+    user: Uuid,
+    job_id: Uuid,
+    input: ConversionRetryInput,
+    origin: CommandOrigin,
+) -> Result<ConversionJobResponse, ApiError> {
+    if !input.confirm || input.idempotency_key.trim().is_empty() || input.idempotency_key.len() > 128 {
+        return Err(ApiError::invalid_update(
+            "confirm=true and a1..128-byte idempotency_key are required",
+        ));
+    }
+    let row = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT preview_id,request_key,source_frontier,target_schema_version FROM flow_conversion_jobs WHERE id=$1",
+            vec![job_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| ApiError::not_found("conversion job not found"))?;
+    let preview = load_preview(&state.db, row.try_get("", "preview_id")?).await?;
+    let (identity, _, _) = scoped_conversion_actor(state, user, &preview, true).await?;
+    let intent = json!({"operation":"conversion_retry","preview_id":preview.id,"job_id":job_id,"source_frontier":preview.source_frontier,"target_schema_version":preview.target_schema_version});
+    if super::scope_commands::replay(&state.db, identity.scope_id, user, &input.idempotency_key, &intent)
+        .await?
+        .is_some()
+    {
+        return load_job(&state.db, job_id).await;
+    }
+    let job = load_job(&state.db, job_id).await?;
+    if job.status == "completed" || row.try_get::<String>("", "request_key")? == input.idempotency_key {
+        return Ok(job);
+    }
+    if job.status == "started" {
+        return Err(ApiError::server_draining(
+            ServerDrainingReason::Contention,
+            IN_FLIGHT_RETRY_AFTER_MS,
+            "conversion job is still started",
+        ));
+    }
+    if job.status != "failed" {
+        return Err(ApiError::policy_rejected("only failed conversion jobs can be retried"));
+    }
+    let key = format!("scope:{}:{}", identity.scope_id, input.idempotency_key);
+    if existing_commit_job(&state.db, &preview, &input.idempotency_key)
+        .await?
+        .is_some_and(|id| id != job_id)
+    {
+        return Err(ApiError::idempotency_key_body_drift(
+            "retry key belongs to another conversion",
+        ));
+    }
+    let Some(started_event) = claim_retry_job(state, &preview, job_id, &key, &origin, &input.idempotency_key).await?
+    else {
+        return load_job(&state.db, job_id).await;
+    };
+    execute_scope_claimed(
+        state,
+        user,
+        ConversionRun {
+            preview,
+            job_id,
+            idempotency_key: key,
+            origin,
+            source_frontier: row.try_get("", "source_frontier")?,
+            target_schema_version: row.try_get("", "target_schema_version")?,
+            started_event,
+        },
+    )
+    .await
 }

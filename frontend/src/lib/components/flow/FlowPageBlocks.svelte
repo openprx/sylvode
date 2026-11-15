@@ -4,6 +4,7 @@
 	// provisional block of a Collection embed in flight. Also hosts the slash-menu dialogs for those
 	// entries. All intent, key and classification logic lives in `#lib/flow/slash-bridge.js`; this
 	// component only keeps dialog state.
+	import { FLOW_COLLECTION_UI_ENABLED } from '#lib/flow/product-mode.js';
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -37,13 +38,13 @@
 
 	interface Props {
 		doc: LoroDocType;
-		workspaceId: string;
+		scopeId: string;
 		objectId: string;
 		/** Read-only canvas: no slash-bridge dialog and no reference removal. */
 		readOnly?: boolean;
 	}
 
-	let { doc, workspaceId, objectId, readOnly = false }: Props = $props();
+	let { doc, scopeId, objectId, readOnly = false }: Props = $props();
 
 	const repository = getContext<FlowObjectRepository>(FLOW_REPOSITORY_CONTEXT);
 	const commands = new FlowCommandService();
@@ -112,6 +113,7 @@
 	export function open(action: SlashBridgeAction): void {
 		if (readOnly) return;
 		if (action === 'collection') {
+			if (!FLOW_COLLECTION_UI_ENABLED) return;
 			collectionTitle = get(t)('flow.canvas.slashMenu.collectionDefaultTitle');
 			collectionInvalid = null;
 			collectionOpen = true;
@@ -119,7 +121,7 @@
 			formsMode = action;
 			formsFailure = null;
 			formsSubmitting = false;
-			const next = new FormsTargetPicker(workspaceId, FORMS_PICKER_READS, (snapshot) => {
+			const next = new FormsTargetPicker(scopeId, FORMS_PICKER_READS, (snapshot) => {
 				pickerSnap = snapshot;
 			});
 			picker = next;
@@ -127,12 +129,7 @@
 			formsOpen = true;
 			void next.load();
 		} else {
-			void goto(
-				resolve('/(app)/workspace/[workspaceId]/flow/[objectId]/convert', {
-					workspaceId,
-					objectId
-				})
-			);
+			void goto(resolve('/(app)/flow/[objectId]/convert', { objectId: objectId }));
 		}
 	}
 
@@ -226,7 +223,16 @@
 	<div class="mx-auto max-w-3xl" data-testid="flow-page-blocks">
 		{#each cards as card (card.kind === 'collection' ? card.blockId : card.kind === 'provisional' ? `provisional-${card.provisional.localId}` : card.key)}
 			{#if card.kind === 'collection'}
-				<EmbeddedCollection {workspaceId} collectionId={card.collectionId} blockId={card.blockId} />
+				{#if FLOW_COLLECTION_UI_ENABLED}
+					<EmbeddedCollection {scopeId} collectionId={card.collectionId} blockId={card.blockId} />
+				{:else}
+					<section
+						class="not-prose my-4 rounded border border-slate-200 p-4 text-sm text-slate-500 dark:border-slate-700"
+						data-testid="flow-hidden-collection"
+					>
+						{$t('flow.pageOnly.embedHidden')}
+					</section>
+				{/if}
 			{:else if card.kind === 'provisional'}
 				<section
 					class="not-prose my-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-900"
@@ -243,7 +249,7 @@
 				</section>
 			{:else if card.kind === 'reference'}
 				<BridgeReferenceCard
-					{workspaceId}
+					{scopeId}
 					reference={card.reference}
 					mode={card.mode}
 					onremove={askRemove}

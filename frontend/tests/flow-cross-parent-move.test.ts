@@ -9,6 +9,7 @@ import {
 	moveInsideTargets,
 	moveObjectCommand,
 	moveOutsideTarget,
+	personalMoveAllowed,
 	type MoveNode
 } from '../src/lib/flow/cross-parent-move';
 
@@ -29,8 +30,16 @@ suite.check('move inside excludes self, descendants, and the current parent', ()
 
 suite.check('move outside uses the grandparent, including the navigator root', () => {
 	assertEqual(moveOutsideTarget(nodes, 'child'), 'nav', 'child moves under the navigator');
-	assertEqual(moveOutsideTarget(nodes, 'grandchild'), 'root-page', 'grandchild moves under the page');
-	assertEqual(moveOutsideTarget(nodes, 'root-page'), null, 'a top-level page has no outside target');
+	assertEqual(
+		moveOutsideTarget(nodes, 'grandchild'),
+		'root-page',
+		'grandchild moves under the page'
+	);
+	assertEqual(
+		moveOutsideTarget(nodes, 'root-page'),
+		null,
+		'a top-level page has no outside target'
+	);
 });
 
 suite.check('the command payload is move_object with the target parent', () => {
@@ -44,4 +53,19 @@ suite.check('the command payload is move_object with the target parent', () => {
 	);
 });
 
+suite.check(
+	'personal moves preserve typed associations and never offer schema containers as parents',
+	() => {
+		assertEqual(personalMoveAllowed('page', 'page'), true, 'personal move kind eligibility');
+		assertEqual(
+			personalMoveAllowed('collection', 'navigator'),
+			true,
+			'personal move kind eligibility'
+		);
+		assertEqual(personalMoveAllowed('record', 'page'), false, 'personal move kind eligibility');
+		assertEqual(personalMoveAllowed('navigator', 'page'), false, 'personal move kind eligibility');
+		assertEqual(personalMoveAllowed('page', 'collection'), false, 'personal move kind eligibility');
+		assertEqual(personalMoveAllowed('page', 'record'), false, 'personal move kind eligibility');
+	}
+);
 finish(suite.result());

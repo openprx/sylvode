@@ -60,7 +60,7 @@ export class ImportReportPoller {
 	private disposed = false;
 
 	constructor(
-		private readonly workspaceId: string,
+		private readonly scopeId: string,
 		private readonly importId: string,
 		private readonly onChange: (state: ImportReportState) => void = () => {},
 		deps: Partial<ImportReportDeps> = {}
@@ -84,7 +84,7 @@ export class ImportReportPoller {
 			if (attempt > 0) await this.deps.sleep(exportPollDelay(attempt - 1));
 			if (this.disposed) break;
 			const result: ApiResult<FlowPackageImportReport> = await this.deps.reads.getImportReport(
-				this.workspaceId,
+				this.scopeId,
 				this.importId
 			);
 			if (this.disposed) break;

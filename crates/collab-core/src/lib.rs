@@ -35,12 +35,14 @@
 //! engine there is nothing left to abstract over, so those three capabilities are plain inherent
 //! methods on [`engine::LoroCollabEngine`] instead.
 
+mod editor_doc_bridge;
 pub mod engine;
 pub mod error;
 pub mod frontier;
 pub mod isolation;
 pub mod limits;
 pub mod operation;
+mod prose_projection;
 pub mod semantic;
 
 pub use engine::{CollabEngine, Diff, EngineMetadata, LoroCollabEngine, metadata};

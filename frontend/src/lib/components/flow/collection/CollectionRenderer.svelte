@@ -11,24 +11,29 @@
 	import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
 	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
 	import { FlowCommandService } from '#lib/flow/command-service.js';
-	import { CollectionViewController, activeViewIn } from '#lib/flow/collection-view.js';
+	import {
+		CollectionViewController,
+		activeViewIn,
+		hasPendingWritesIn
+	} from '#lib/flow/collection-view.js';
 	import { resolveRenderer } from '#lib/flow/renderer-registry.js';
 	import CollectionQueryBar from './CollectionQueryBar.svelte';
 	import CollectionSchemaEditor from './CollectionSchemaEditor.svelte';
 
 	interface Props {
-		workspaceId: string;
-		collectionId: string;
+		scopeId: string;
+		collectionId?: string | null;
 		/** Standalone record page: the record whose panel to show. */
 		recordId?: string | null;
+		onRecordChange?: (record: import('#lib/api/flow.js').FlowObjectView) => void;
 	}
 
-	let { workspaceId, collectionId, recordId = null }: Props = $props();
+	let { scopeId, collectionId = null, recordId = null, onRecordChange }: Props = $props();
 
 	const repository = getContext<FlowObjectRepository>(FLOW_REPOSITORY_CONTEXT);
 	// svelte-ignore state_referenced_locally
 	const controller = new CollectionViewController(
-		collectionId,
+		recordId ? null : collectionId,
 		repository,
 		new FlowCommandService(),
 		recordId ? { schemaFromRecord: recordId } : {}
@@ -41,6 +46,21 @@
 	let boardComponent = $state<AnyComponent | null>(null);
 	let panelComponent = $state<AnyComponent | null>(null);
 	let missingRecord = $state(false);
+	let refreshing = $state(false);
+	async function refresh(): Promise<void> {
+		if (refreshing) return;
+		refreshing = true;
+		try {
+			await controller.refresh();
+			if (recordId) missingRecord = controller.snapshot().panel?.status !== 'open';
+		} finally {
+			refreshing = false;
+		}
+	}
+
+	$effect(() => {
+		if (recordId && $viewState.recordObject) onRecordChange?.($viewState.recordObject);
+	});
 
 	const schemaMode = $derived(page.url.searchParams.get('mode') === 'schema');
 	const activeView = $derived(activeViewIn($viewState));
@@ -113,6 +133,24 @@
 	}
 </script>
 
+{#if $viewState.collection || $viewState.status === 'error'}
+	<div
+		class="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2 dark:border-slate-800"
+	>
+		<p class="flex-1 text-xs text-slate-500 dark:text-slate-400">
+			{$t('flow.personal.refreshHint')}
+		</p>
+		<button
+			type="button"
+			class="min-h-11 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-50"
+			data-testid="collection-refresh"
+			disabled={refreshing || $viewState.status === 'loading' || hasPendingWritesIn($viewState)}
+			aria-busy={refreshing}
+			onclick={refresh}>{$t('flow.personal.refresh')}</button
+		>
+	</div>
+{/if}
+
 {#if $viewState.status === 'error'}
 	<div class="p-8 text-center text-sm text-red-600" role="alert">
 		{$t($viewState.errorKey ?? 'flow.collection.loadFailed')}
@@ -127,7 +165,7 @@
 	{:else if panelComponent}
 		{@const Panel = panelComponent}
 
-		<Panel {controller} snapshot={$viewState} {workspaceId} standalone />
+		<Panel {controller} snapshot={$viewState} {scopeId} standalone />
 	{/if}
 {:else}
 	<div
@@ -219,7 +257,7 @@
 			{#if viewComponent}
 				{@const View = viewComponent}
 
-				<View {controller} snapshot={$viewState} {workspaceId} />
+				<View {controller} snapshot={$viewState} {scopeId} />
 			{:else}
 				<p class="p-4 text-sm text-slate-500" aria-live="polite">{$t('common.loading')}</p>
 			{/if}
@@ -228,7 +266,7 @@
 		{#if $viewState.panel && panelComponent}
 			{@const Panel = panelComponent}
 
-			<Panel {controller} snapshot={$viewState} {workspaceId} />
+			<Panel {controller} snapshot={$viewState} {scopeId} />
 		{/if}
 	</div>
 {/if}

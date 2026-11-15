@@ -138,6 +138,66 @@ impl ObjectStorage {
         }
     }
 
+    /// Import staging must reject oversized objects while streaming, before growing a buffer
+    /// past its admitted bound. This does not publish an object or change bucket visibility.
+    pub async fn get_bounded(&self, key: &str, max_bytes: u64) -> Result<Vec<u8>, ApiError> {
+        validate_object_key(key)?;
+        let exceeded = |observed: u64| {
+            ApiError::limit_exceeded(
+                "staged object exceeds the import byte budget",
+                "import_archive_bytes",
+                Some(serde_json::json!(max_bytes)),
+                Some(serde_json::json!(observed)),
+                None,
+            )
+        };
+        match &self.backend {
+            ObjectStorageBackend::Local(local) => {
+                use tokio::io::AsyncReadExt;
+                let file = fs::File::open(local.object_path(key)?)
+                    .await
+                    .map_err(|_| ApiError::NotFound("object not found".into()))?;
+                if let Ok(meta) = file.metadata().await
+                    && meta.len() > max_bytes
+                {
+                    return Err(exceeded(meta.len()));
+                }
+                let mut reader = file.take(max_bytes.saturating_add(1));
+                let mut bytes = Vec::new();
+                reader.read_to_end(&mut bytes).await.map_err(|_| ApiError::Internal)?;
+                if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_bytes {
+                    return Err(exceeded(bytes.len() as u64));
+                }
+                Ok(bytes)
+            }
+            ObjectStorageBackend::S3(s3) => {
+                let mut response = s3.send(Method::GET, key, &[]).await?;
+                if response.status() == StatusCode::NOT_FOUND {
+                    return Err(ApiError::NotFound("object not found".into()));
+                }
+                if !response.status().is_success() {
+                    return Err(ApiError::Internal);
+                }
+                if response.content_length().is_some_and(|size| size > max_bytes) {
+                    return Err(exceeded(
+                        response.content_length().unwrap_or_else(|| max_bytes.saturating_add(1)),
+                    ));
+                }
+                let mut bytes = Vec::new();
+                while let Some(chunk) = response.chunk().await.map_err(|_| ApiError::Internal)? {
+                    let prospective = u64::try_from(bytes.len())
+                        .unwrap_or(u64::MAX)
+                        .saturating_add(chunk.len() as u64);
+                    if prospective > max_bytes {
+                        return Err(exceeded(prospective));
+                    }
+                    bytes.extend_from_slice(&chunk);
+                }
+                Ok(bytes)
+            }
+        }
+    }
+
     pub async fn delete(&self, key: &str) -> Result<(), ApiError> {
         validate_object_key(key)?;
         match &self.backend {

@@ -96,6 +96,7 @@ export class MockWebSocket {
 	readonly url: string;
 	readyState = MockWebSocket.CONNECTING;
 	readonly sent: Array<Record<string, unknown>> = [];
+	readonly received: Array<Record<string, unknown>> = [];
 	closedByClient: { code: number | undefined; reason: string | undefined } | null = null;
 	readonly id: number;
 	private readonly listeners = new Map<string, Listener[]>();
@@ -150,6 +151,13 @@ export class MockWebSocket {
 	/** Server side: deliver one frame to the client. */
 	deliver(frame: Record<string, unknown>): void {
 		if (this.readyState !== MockWebSocket.OPEN) return;
+		this.received.push(frame);
+		this.emit('message', { data: JSON.stringify(frame) });
+	}
+
+	/** A message already queued by the browser before its old socket closed. */
+	deliverQueued(frame: Record<string, unknown>): void {
+		this.received.push(frame);
 		this.emit('message', { data: JSON.stringify(frame) });
 	}
 
@@ -195,6 +203,8 @@ interface Connection {
 }
 
 export class FakeCollabServer {
+	ticketResponse: Record<string, unknown> | null = null;
+	readonly ticketRequests: Record<string, unknown>[] = [];
 	readonly doc = new LoroDoc();
 	headSeq = 0;
 	online = true;
@@ -230,6 +240,31 @@ export class FakeCollabServer {
 			socket,
 			sessionId: `00000000-0000-4000-8000-${String(this.connectionCounter).padStart(12, '0')}`,
 			userId: this.connectionUserIds.shift() ?? null
+		});
+	}
+
+	notifyAuthorization(
+		socket: MockWebSocket,
+		actions: string[],
+		sequence: number,
+		override: Record<string, unknown> = {}
+	): void {
+		const session = this.connections.get(socket);
+		if (!session) return;
+		socket.deliver({
+			type: 'resync',
+			protocol_version: 1,
+			document_id: DOCUMENT_ID,
+			reason: 'authorization_changed',
+			authorization: {
+				scope_id: WORKSPACE_ID,
+				object_id: OBJECT_ID,
+				authz_revision: 7,
+				authority_sequence: sequence,
+				session_id: session.sessionId,
+				permitted_actions: actions,
+				...override
+			}
 		});
 	}
 
@@ -271,6 +306,16 @@ export class FakeCollabServer {
 				});
 				return;
 			case 'open':
+				if (this.ticketResponse?.authorization_notifications === true)
+					this.notifyAuthorization(
+						socket,
+						this.effectiveLevel === 'view'
+							? ['view']
+							: this.effectiveLevel === 'comment'
+								? ['view', 'comment']
+								: ['view', 'comment', 'edit'],
+						1
+					);
 				socket.deliver({
 					type: 'snapshot',
 					protocol_version: 1,
@@ -417,10 +462,17 @@ export class FakeCollabServer {
 				headers: { 'Content-Type': 'application/json' }
 			});
 		if (!this.online) throw new TypeError('Failed to fetch');
-		if (method === 'POST' && path === '/api/v1/collab/tickets') {
-			return ok({ websocket_url: '/api/v1/collab/ws?ticket=t', ticket: 't', expires_at: '' });
+		if (method === 'POST' && path === '/api/v2/flow/collab/tickets') {
+			this.ticketRequests.push(JSON.parse(String(init?.body ?? '{}')));
+			return ok(
+				this.ticketResponse ?? {
+					websocket_url: '/api/v1/collab/ws?ticket=t',
+					ticket: 't',
+					expires_at: ''
+				}
+			);
 		}
-		if (method === 'GET' && path === `/api/v1/flow/objects/${OBJECT_ID}/grants`) {
+		if (method === 'GET' && path === `/api/v2/flow/objects/${OBJECT_ID}/grants`) {
 			return ok({
 				items: [],
 				inherit_from_parent: true,
@@ -428,7 +480,7 @@ export class FakeCollabServer {
 				effective_level: this.effectiveLevel
 			});
 		}
-		if (method === 'GET' && path === `/api/v1/flow/objects/${OBJECT_ID}/bootstrap`) {
+		if (method === 'GET' && path === `/api/v2/flow/objects/${OBJECT_ID}/bootstrap`) {
 			// The REST bootstrap admits `view` (`routes/flow.rs::get_flow_object_bootstrap`),
 			// like the WebSocket session.
 			if (this.effectiveLevel === 'none') {
@@ -456,7 +508,7 @@ export class FakeCollabServer {
 				websocket_path: '/api/v1/collab/ws'
 			});
 		}
-		if (method === 'GET' && path === `/api/v1/flow/objects/${OBJECT_ID}`) {
+		if (method === 'GET' && path === `/api/v2/flow/objects/${OBJECT_ID}`) {
 			return ok(objectView());
 		}
 		return new Response(JSON.stringify({ code: 404, message: 'not found', data: null }), {
@@ -468,6 +520,7 @@ export class FakeCollabServer {
 export function objectView(): Record<string, unknown> {
 	return {
 		id: OBJECT_ID,
+		scope_id: WORKSPACE_ID,
 		workspace_id: WORKSPACE_ID,
 		project_id: null,
 		object_type: 'page',

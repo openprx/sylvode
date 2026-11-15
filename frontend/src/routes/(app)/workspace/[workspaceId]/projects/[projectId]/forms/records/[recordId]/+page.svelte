@@ -1521,8 +1521,7 @@
 											>
 												{#if row.available}
 													<a
-														href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
-															workspaceId,
+														href={resolve('/(app)/flow/[objectId]', {
 															objectId: row.sourceObjectId
 														})}
 														class="inline-flex min-h-11 items-center font-medium text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300"
@@ -1572,8 +1571,7 @@
 											>
 												{#if row.available}
 													<a
-														href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
-															workspaceId,
+														href={resolve('/(app)/flow/[objectId]', {
 															objectId: row.sourceObjectId
 														})}
 														class="inline-flex min-h-11 items-center font-medium text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300"

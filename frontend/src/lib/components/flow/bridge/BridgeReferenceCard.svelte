@@ -4,6 +4,7 @@
 	// content when the request-time `permission_state` allows viewing, otherwise a placeholder.
 	// Target reads come from `loadEmbedContent`, which asks Forms for nothing without `form.view`.
 	import { onMount } from 'svelte';
+	import { projectsApi } from '#lib/api/projects.js';
 	import { t } from 'svelte-i18n';
 	import { resolve } from '$app/paths';
 	import {
@@ -20,20 +21,25 @@
 	} from '#lib/flow/slash-bridge.js';
 
 	interface Props {
-		workspaceId: string;
+		scopeId: string;
 		reference: AvailableReference;
 		mode: ReferenceMode;
 		onremove: (referenceId: string) => void;
 	}
 
-	let { workspaceId, reference, mode, onremove }: Props = $props();
+	let { scopeId, reference, mode, onremove }: Props = $props();
 
+	let sourceWorkspaceId = $state<string | null>(null);
 	let content = $state<EmbedContent | null>(null);
 	const badge = $derived(permissionBadge(reference.permission_state));
 	const viewable = $derived(canViewTarget(reference.permission_state));
 
 	onMount(async () => {
 		content = await loadEmbedContent(reference, FORMS_EMBED_READS);
+		if (content && (content.kind === 'form' || content.kind === 'record')) {
+			const project = await projectsApi.get(content.projectId);
+			sourceWorkspaceId = project.data?.workspace_id ?? null;
+		}
 	});
 
 	const linkClass =
@@ -50,6 +56,7 @@
 <article
 	class="not-prose my-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
 	data-testid="flow-bridge-card"
+	data-source-scope={scopeId}
 	data-mode={mode}
 	data-reference-id={reference.reference_id}
 	data-target-type={reference.target_type}
@@ -118,23 +125,27 @@
 	{/if}
 
 	<div class="mt-3 flex flex-wrap items-center gap-2">
-		{#if content?.kind === 'record'}
+		{#if content?.kind === 'record' && sourceWorkspaceId}
 			<a
 				href={resolve(
 					'/(app)/workspace/[workspaceId]/projects/[projectId]/forms/records/[recordId]',
-					{ workspaceId, projectId: content.projectId, recordId: reference.target_id }
+					{
+						workspaceId: sourceWorkspaceId!,
+						projectId: content.projectId,
+						recordId: reference.target_id
+					}
 				)}
 				class={linkClass}
 				data-testid="flow-bridge-card-source"
 			>
 				{$t('flow.bridge.card.openSource')}
 			</a>
-		{:else if content?.kind === 'form'}
+		{:else if content?.kind === 'form' && sourceWorkspaceId}
 			<!-- The path is resolve()d; only the ?form= query that selects the form is appended. -->
 			<!-- eslint-disable svelte/no-navigation-without-resolve -->
 			<a
 				href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/forms', {
-					workspaceId,
+					workspaceId: sourceWorkspaceId!,
 					projectId: content.projectId
 				}) + `?form=${encodeURIComponent(content.formId)}`}
 				class={linkClass}

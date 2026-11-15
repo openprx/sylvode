@@ -95,6 +95,8 @@ async fn main() -> anyhow::Result<()> {
     // operator fixes both in one pass instead of being walked through them one at a time.
     let cfg = AppConfig::from_config(&config, "worker", "0.0.0.0:8081")?;
     let db = connect_db(&config.database_runtime()?).await?;
+    api::flow::scope_runtime::spawn(db.clone(), "worker").await?;
+    api::flow::scope_runtime::spawn(db.clone(), "maintenance").await?;
     let state = AppState {
         cfg: cfg.clone(),
         db: db.clone(),
@@ -192,6 +194,14 @@ async fn main() -> anyhow::Result<()> {
             Err(error) => tracing::warn!(error = %error, "flow search rebuild job tick failed"),
         }
 
+        match api::flow::scope_operations::run_quarantine_jobs(&db, args.concurrency.saturating_mul(4)).await {
+            Ok(completed) => tracing::debug!(completed, "scoped quarantine queue tick"),
+            Err(error) => tracing::warn!(%error,"scoped quarantine queue tick failed"),
+        }
+        match api::flow::scope_operations::run_compaction_jobs(&db, args.concurrency.saturating_mul(4)).await {
+            Ok(completed) => tracing::debug!(completed, "scoped compaction queue tick"),
+            Err(error) => tracing::warn!(%error,"scoped compaction queue tick failed"),
+        }
         match flow::compaction::run_tick(&db, args.concurrency.saturating_mul(4)).await {
             Ok(report) => tracing::debug!(?report, "flow compaction tick"),
             Err(error) => tracing::warn!(error = %error, "flow compaction tick failed"),

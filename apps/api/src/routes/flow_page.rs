@@ -133,7 +133,11 @@ pub async fn get_flow_appearance_asset(
     Path(path): Path<AssetPath>,
 ) -> Result<impl IntoResponse, ApiError> {
     let access = authorize(&state, &claims, bot.as_ref(), path.object_id, PermissionLevel::View).await?;
-    let asset = appearance::read_asset(&state.db, access.workspace_id(), access.object_id(), path.asset_id).await?;
+    let asset = if access.principal_kind_wire() == "user" {
+        crate::flow::scope_assets::read(&state.db, access.object_id(), path.asset_id, access.actor_id()).await?
+    } else {
+        appearance::read_asset(&state.db, access.workspace_id(), access.object_id(), path.asset_id).await?
+    };
     Ok(image_response(asset))
 }
 

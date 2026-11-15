@@ -16,13 +16,29 @@ use clap::{CommandFactory, Subcommand};
 use std::ffi::OsString;
 
 /// The Flow groups' top-level names, as [`FlowCli`] defines them.
-pub const FLOW_GROUPS: [&str; 6] = ["features", "objects", "collections", "records", "collab", "deliveries"];
+pub const FLOW_GROUPS: [&str; 7] = [
+    "flow",
+    "features",
+    "objects",
+    "collections",
+    "records",
+    "collab",
+    "deliveries",
+];
 
 /// Global options of either model that take a value in the next argument.
 ///
 /// Skipped together with that value while looking for the first subcommand name, so
 /// `sylvode --format table projects list` routes on `projects`, not on `table`.
-const VALUE_OPTIONS: [&str; 5] = ["--config", "--format", "--api-url", "--bot-token", "--workspace-id"];
+const VALUE_OPTIONS: [&str; 7] = [
+    "--config",
+    "--format",
+    "--api-url",
+    "--bot-token",
+    "--workspace-id",
+    "--access-token",
+    "--access-token-file",
+];
 
 /// The parser a command line is handed to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
