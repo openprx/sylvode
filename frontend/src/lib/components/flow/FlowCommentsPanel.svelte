@@ -1,16 +1,32 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
+	import { getContext, untrack } from 'svelte';
+	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
+	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
+	import { authStore } from '#lib/stores/auth.js';
+	import { get } from 'svelte/store';
+	import { commentActions, FlowMutationIntents } from '#lib/flow/social-actions.js';
 	import { flowApi, type FlowComment, type FlowMentionCandidate } from '#lib/api/flow.js';
 	import { flowErrorFromResult } from '#lib/flow/command-service.js';
 	import { flowErrorDetailKey } from '#lib/flow/errors.js';
 
 	interface Props {
 		objectId: string;
+		canComment?: boolean;
+		canEdit?: boolean;
+		canManage?: boolean;
 		blockId?: string | null;
 		nonce?: number;
 	}
 
-	let { objectId, blockId = null, nonce = 0 }: Props = $props();
+	let {
+		objectId,
+		canComment = true,
+		canEdit = false,
+		canManage = false,
+		blockId = null,
+		nonce = 0
+	}: Props = $props();
 
 	let items = $state<FlowComment[]>([]);
 	let truncated = $state(false);
@@ -26,13 +42,23 @@
 	let failureKey = $state<string | null>(null);
 	let busy = $state(false);
 
+	const intents = new FlowMutationIntents();
+	function actions(comment: FlowComment) {
+		return commentActions(comment, get(authStore).user?.id ?? null, {
+			comment: canComment,
+			edit: canEdit,
+			manage: canManage
+		});
+	}
+	function operation(kind: string, id = '') {
+		return `${get(authStore).user?.id ?? ''}:${objectId}:${kind}:${id}`;
+	}
+
 	const roots = $derived(items.filter((item) => !item.parent_id));
-	const visibleRoots = $derived(
-		anchor ? roots.filter((item) => item.block_id === anchor) : roots
-	);
-	const anchoredBlocks = $derived(
-		[...new Set(roots.map((item) => item.block_id).filter((id): id is string => !!id))]
-	);
+	const visibleRoots = $derived(anchor ? roots.filter((item) => item.block_id === anchor) : roots);
+	const anchoredBlocks = $derived([
+		...new Set(roots.map((item) => item.block_id).filter((id): id is string => !!id))
+	]);
 
 	function repliesOf(id: string): FlowComment[] {
 		return items.filter((item) => item.parent_id === id);
@@ -80,11 +106,22 @@
 	$effect(() => {
 		const id = objectId;
 		items = [];
-		body = '';
-		replyTo = null;
-		editingId = null;
-		picked = [];
-		anchor = null;
+		const saved = untrack(() =>
+			workbench?.snapshot<{
+				body: string;
+				replyTo: string | null;
+				editingId: string | null;
+				editBody: string;
+				anchor: string | null;
+				picked: FlowMentionCandidate[];
+			}>(`flow:${id}::comment-draft`)
+		);
+		body = saved?.body ?? '';
+		replyTo = saved?.replyTo ?? null;
+		editingId = saved?.editingId ?? null;
+		editBody = saved?.editBody ?? '';
+		picked = saved?.picked ?? [];
+		anchor = saved?.anchor ?? null;
 		void loadFor(id);
 	});
 
@@ -92,6 +129,11 @@
 		if (nonce > 0) anchor = blockId ?? null;
 	});
 
+	$effect(() => {
+		const draft = { body, replyTo, editingId, editBody, anchor, picked };
+		const key = `flow:${objectId}::comment-draft`;
+		untrack(() => workbench?.saveSnapshot(key, draft));
+	});
 	async function loadFor(id: string): Promise<void> {
 		loading = true;
 		const result = await flowApi.listComments(id);
@@ -106,20 +148,23 @@
 	}
 
 	async function submit(): Promise<void> {
-		if (busy) return;
+		if (busy || !canComment) return;
 		busy = true;
 		failureKey = null;
-		const result = await flowApi.createComment(objectId, {
+		const payload = {
 			body,
 			parent_id: replyTo,
 			block_id: anchor,
 			mentions: picked.map((person) => person.user_id)
-		});
+		};
+		const op = operation('create');
+		const result = await flowApi.createComment(objectId, payload, intents.key(op, payload));
 		busy = false;
 		if (result.code !== 0 || !result.data) {
 			fail(result);
 			return;
 		}
+		intents.complete(op);
 		body = '';
 		picked = [];
 		replyTo = null;
@@ -127,42 +172,66 @@
 	}
 
 	async function saveEdit(commentId: string): Promise<void> {
-		if (busy) return;
+		const comment = items.find((item) => item.id === commentId);
+		if (busy || !comment || !actions(comment).edit) return;
 		busy = true;
-		const result = await flowApi.updateComment(objectId, commentId, { body: editBody });
+		const payload = { body: editBody };
+		const op = operation('edit', commentId);
+		const result = await flowApi.updateComment(
+			objectId,
+			commentId,
+			payload,
+			intents.key(op, payload)
+		);
 		busy = false;
 		if (result.code !== 0) {
 			fail(result);
 			return;
 		}
+		intents.complete(op);
 		editingId = null;
 		await load();
 	}
 
 	async function remove(commentId: string): Promise<void> {
-		if (busy) return;
+		const comment = items.find((item) => item.id === commentId);
+		if (busy || !comment || !actions(comment).delete) return;
 		busy = true;
-		const result = await flowApi.deleteComment(objectId, commentId);
+		const op = operation('delete', commentId);
+		const result = await flowApi.deleteComment(objectId, commentId, intents.key(op, {}));
 		busy = false;
 		if (result.code !== 0) {
 			fail(result);
 			return;
 		}
+		intents.complete(op);
 		await load();
 	}
 
 	async function resolve(commentId: string, resolved: boolean): Promise<void> {
-		if (busy) return;
+		const comment = items.find((item) => item.id === commentId);
+		if (busy || !comment || !actions(comment).resolve) return;
 		busy = true;
-		const result = await flowApi.resolveComment(objectId, commentId, resolved);
+		const op = operation('resolve', commentId);
+		const result = await flowApi.resolveComment(
+			objectId,
+			commentId,
+			resolved,
+			intents.key(op, { resolved })
+		);
 		busy = false;
 		if (result.code !== 0) {
 			fail(result);
 			return;
 		}
+		intents.complete(op);
 		await load();
 	}
 </script>
+
+{#if !canComment}<p class="mb-3 text-xs text-slate-500" role="status">
+		{$t('flow.personal.commentsReadOnly')}
+	</p>{/if}
 
 <div class="space-y-3 text-sm" data-testid="flow-comments">
 	{#if loading && items.length === 0}
@@ -177,9 +246,12 @@
 						<textarea
 							class="min-h-16 w-full rounded-md border border-slate-300 bg-white p-2 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
 							bind:value={editBody}
-						></textarea>
-						<button type="button" class="mr-2 text-blue-600" onclick={() => saveEdit(comment.id)}
-							>{$t('flow.comments.save')}</button
+							readonly={!actions(comment).edit}></textarea>
+						<button
+							type="button"
+							class="mr-2 text-blue-600"
+							disabled={busy || !actions(comment).edit}
+							onclick={() => saveEdit(comment.id)}>{$t('flow.comments.save')}</button
 						>
 						<button type="button" onclick={() => (editingId = null)}>{$t('common.cancel')}</button>
 					{:else}
@@ -187,29 +259,42 @@
 						{#if comment.resolved_at}
 							<p class="text-xs text-slate-500">{$t('flow.comments.resolved')}</p>
 						{/if}
-						<div class="mt-1 flex flex-wrap gap-2 text-xs">
-							<button type="button" onclick={() => (replyTo = comment.id)}>{$t('flow.comments.reply')}</button>
-							<button
-								type="button"
-								onclick={() => {
-									editingId = comment.id;
-									editBody = comment.body;
-								}}>{$t('flow.comments.edit')}</button
-							>
-							<button type="button" onclick={() => remove(comment.id)}>{$t('flow.comments.delete')}</button>
-							<button type="button" onclick={() => resolve(comment.id, !comment.resolved_at)}>
-								{comment.resolved_at ? $t('flow.comments.reopen') : $t('flow.comments.resolve')}
-							</button>
-						</div>
+						{#if canComment}
+							<div class="mt-1 flex flex-wrap gap-2 text-xs">
+								<button type="button" onclick={() => (replyTo = comment.id)}
+									>{$t('flow.comments.reply')}</button
+								>
+								{#if actions(comment).edit}<button
+										type="button"
+										onclick={() => {
+											editingId = comment.id;
+											editBody = comment.body;
+										}}>{$t('flow.comments.edit')}</button
+									>{/if}
+								{#if actions(comment).delete}<button
+										type="button"
+										onclick={() => remove(comment.id)}>{$t('flow.comments.delete')}</button
+									>{/if}
+								{#if actions(comment).resolve}<button
+										type="button"
+										onclick={() => resolve(comment.id, !comment.resolved_at)}
+									>
+										{comment.resolved_at ? $t('flow.comments.reopen') : $t('flow.comments.resolve')}
+									</button>{/if}
+							</div>
+						{/if}
 					{/if}
 					{#if repliesOf(comment.id).length > 0}
 						<ul class="mt-2 space-y-2 border-l border-slate-200 pl-3 dark:border-slate-700">
 							{#each repliesOf(comment.id) as reply (reply.id)}
 								<li>
 									<p class="whitespace-pre-wrap text-slate-800 dark:text-slate-100">{reply.body}</p>
-									<button type="button" class="text-xs" onclick={() => remove(reply.id)}
-										>{$t('flow.comments.delete')}</button
-									>
+									{#if actions(reply).delete}<button
+											type="button"
+											class="text-xs"
+											disabled={busy}
+											onclick={() => remove(reply.id)}>{$t('flow.comments.delete')}</button
+										>{/if}
 								</li>
 							{/each}
 						</ul>
@@ -231,7 +316,9 @@
 	{/if}
 	{#if anchoredBlocks.length > 0}
 		<div class="flex flex-wrap gap-2 text-xs">
-			<button type="button" class="underline" onclick={() => (anchor = null)}>{$t('flow.comments.page')}</button>
+			<button type="button" class="underline" onclick={() => (anchor = null)}
+				>{$t('flow.comments.page')}</button
+			>
 			{#each anchoredBlocks as id (id)}
 				<button type="button" class="underline" onclick={() => (anchor = id)}>
 					{$t('flow.comments.onBlock')}
@@ -244,9 +331,9 @@
 		<textarea
 			class="min-h-16 w-full rounded-md border border-slate-300 bg-white p-2 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
 			bind:value={body}
-			oninput={onBodyInput}
-		></textarea>
-		{#if mentionOpen}
+			readonly={!canComment}
+			oninput={onBodyInput}></textarea>
+		{#if mentionOpen && canComment}
 			<ul
 				class="absolute z-10 mt-1 max-h-40 w-full overflow-y-auto rounded-md border border-slate-200 bg-white shadow dark:border-slate-700 dark:bg-slate-900"
 				role="listbox"
@@ -257,9 +344,17 @@
 				{/if}
 				{#each people as person (person.user_id)}
 					<li>
-						<button type="button" class="block w-full px-2 py-1 text-left hover:bg-slate-100 dark:hover:bg-slate-800" onclick={() => pickPerson(person)}>
+						<button
+							type="button"
+							class="block w-full px-2 py-1 text-left hover:bg-slate-100 dark:hover:bg-slate-800"
+							onclick={() => pickPerson(person)}
+						>
 							{person.name || person.user_id}
-							<span class="text-xs text-slate-500">{person.kind === 'guest' ? $t('flow.comments.guest') : $t('flow.comments.member')}</span>
+							<span class="text-xs text-slate-500"
+								>{person.kind === 'guest'
+									? $t('flow.comments.guest')
+									: $t('flow.comments.member')}</span
+							>
 						</button>
 					</li>
 				{/each}
@@ -276,7 +371,7 @@
 	<button
 		type="button"
 		class="min-h-11 rounded-md bg-blue-600 px-3 text-white disabled:opacity-50"
-		disabled={busy || body.trim() === ''}
+		disabled={busy || !canComment || body.trim() === ''}
 		onclick={submit}
 	>
 		{$t('flow.comments.submit')}

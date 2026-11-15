@@ -485,6 +485,70 @@ struct NavigatorChange {
 /// "No change at all" is decided by the *frontier*, not by guessing which operations are no-ops: a
 /// `MoveNode` that lands an entry exactly where it already sat may produce no operation in the
 /// engine, and shipping an empty update would advance a head with nothing in it.
+/// Shared same-scope reorder preparation; authority and persistence stay with the caller.
+pub(crate) fn reorder_scope_navigator(
+    engine: &mut LoroCollabEngine,
+    object: Uuid,
+    after: Option<Uuid>,
+) -> Result<Option<Vec<u8>>, ApiError> {
+    build_navigator_update(
+        engine,
+        &NavigatorBatch {
+            primary: object,
+            cascaded: &[],
+            remove: false,
+            after_id: after,
+        },
+    )
+    .map(|change| change.bytes)
+}
+
+/// Materialize only missing placements in SQL creation order before applying a move. This is
+/// needed by personal scopes whose older create path did not write navigator entries.
+pub(crate) fn complete_and_reorder_scope_navigator(
+    engine: &mut LoroCollabEngine,
+    ordered_objects: &[Uuid],
+    object: Uuid,
+    after: Option<Uuid>,
+) -> Result<Option<Vec<u8>>, ApiError> {
+    let base = engine.frontier();
+    let snapshot = engine.semantic_snapshot().map_err(|e| map_collab_error(&e))?;
+    let index = NavigatorIndex::build(&snapshot);
+    let missing: Vec<_> = ordered_objects
+        .iter()
+        .copied()
+        .filter(|id| !index.live_entry.contains_key(id))
+        .collect();
+    if let Some((primary, rest)) = missing.split_first() {
+        build_navigator_update(
+            engine,
+            &NavigatorBatch {
+                primary: *primary,
+                cascaded: rest,
+                remove: false,
+                after_id: None,
+            },
+        )?;
+    }
+    reorder_scope_navigator(engine, object, after)?;
+    if engine.frontier().as_bytes() == base.as_bytes() {
+        return Ok(None);
+    }
+    let bytes = engine.export_from(&base).map_err(|e| map_collab_error(&e))?;
+    Ok((!bytes.is_empty()).then_some(bytes))
+}
+
+/// Resolve stable object IDs, including placement generations, to canonical ordering keys.
+#[cfg(test)]
+pub(crate) fn navigator_positions(snapshot: &collab_core::SemanticSnapshot) -> std::collections::HashMap<Uuid, String> {
+    let index = NavigatorIndex::build(snapshot);
+    index
+        .live_entry
+        .into_iter()
+        .filter_map(|(object, entry)| snapshot.nodes.get(&entry).map(|node| (object, node.order_key.clone())))
+        .collect()
+}
+
 fn build_navigator_update(
     engine: &mut LoroCollabEngine,
     batch: &NavigatorBatch<'_>,

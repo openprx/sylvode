@@ -144,12 +144,18 @@ pub async fn run_rebuild_jobs(db: &DatabaseConnection, requested_batch_size: usi
             ))
             .await?
             .and_then(|row| row.try_get("", "object_id").ok());
-        let outcome = if let Some(object_id) = object_id {
-            api::flow::maintenance::rebuild_search(db, object_id, job.expected_head_seq, !job.dry_run)
-                .await
-                .map(|result| serde_json::to_value(result).unwrap_or_else(|_| serde_json::json!({})))
-        } else {
-            Err(api::error::ApiError::NotFound("collab document not found".to_string()))
+        let (_authority, outcome) = match api::flow::scope_operations::job_authority(db, job.id).await {
+            Ok(guard) => (
+                guard,
+                if let Some(object_id) = object_id {
+                    api::flow::maintenance::rebuild_search(db, object_id, job.expected_head_seq, !job.dry_run)
+                        .await
+                        .map(|result| serde_json::to_value(result).unwrap_or_else(|_| serde_json::json!({})))
+                } else {
+                    Err(api::error::ApiError::NotFound("collab document not found".to_string()))
+                },
+            ),
+            Err(error) => (None, Err(error)),
         };
         match outcome {
             Ok(result) => {

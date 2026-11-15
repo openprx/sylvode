@@ -42,6 +42,32 @@ const fn public_payload(public_keys: &'static [&'static str]) -> EventPayloadPol
 /// time an undeclared event type withholds its whole payload instead of leaking it.
 pub const FLOW_EVENT_PAYLOAD_POLICIES: &[(&str, EventPayloadPolicy)] = &[
     (
+        "flow.share_link.created",
+        public_payload(&["object_id", "share_link_id"]),
+    ),
+    (
+        "flow.share_link.revoked",
+        public_payload(&["object_id", "share_link_id"]),
+    ),
+    ("flow.appearance.changed", public_payload(&["object_id"])),
+    (
+        "flow.appearance.asset_uploaded",
+        public_payload(&["object_id", "asset_id", "content_type", "byte_size"]),
+    ),
+    ("flow.comment.created", public_payload(&["object_id", "comment_id"])),
+    ("flow.comment.updated", public_payload(&["object_id", "comment_id"])),
+    ("flow.comment.deleted", public_payload(&["object_id", "comment_id"])),
+    (
+        "flow.comment.resolved",
+        public_payload(&["object_id", "comment_id", "resolved"]),
+    ),
+    (
+        "flow.permission.grants_replaced",
+        public_payload(&["object_id", "changed_principal_count"]),
+    ),
+    ("flow.object.mounted", public_payload(&["object_id", "mount_id"])),
+    ("flow.object.unmounted", public_payload(&["object_id", "mount_id"])),
+    (
         "flow.object.created",
         public_payload(&["object_id", "object_type", "parent_object_id"]),
     ),

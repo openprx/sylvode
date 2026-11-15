@@ -277,7 +277,7 @@ async function openClient(server: FakeCollabServer, idb?: IDBFactory) {
 		session: { connectivity: new FakeConnectivity(), answerTimeoutMs: 1500 }
 	});
 	const entry = await repository.open({
-		workspaceId: WORKSPACE_ID,
+		scopeId: WORKSPACE_ID,
 		objectId: OBJECT_ID,
 		signal: new AbortController().signal,
 		object: objectView() as unknown as FlowObjectView

@@ -87,11 +87,11 @@ export class FlowCommandService {
 	 * is one, the coarse HTTP-status mapping only for a legacy envelope.
 	 */
 	async createObject(
-		workspaceId: string,
+		scopeId: string,
 		input: Omit<CreateFlowObjectInput, 'idempotency_key'>,
 		options: { idempotencyKey?: string } = {}
 	): Promise<AcceptedChange> {
-		const result = await flowApi.createObject(workspaceId, {
+		const result = await flowApi.createObject(scopeId, {
 			...input,
 			idempotency_key: options.idempotencyKey ?? newIdempotencyKey()
 		});
@@ -169,14 +169,14 @@ export class FlowCommandService {
 	}
 
 	async listObjects(
-		workspaceId: string,
+		scopeId: string,
 		query: ListFlowObjectsQuery = {}
 	): Promise<ApiResult<FlowObjectListResponse>> {
-		return flowApi.listObjects(workspaceId, query);
+		return flowApi.listObjects(scopeId, query);
 	}
 
-	async getNavigator(workspaceId: string): Promise<ApiResult<FlowNavigatorResponse>> {
-		return flowApi.getNavigator(workspaceId);
+	async getNavigator(scopeId: string): Promise<ApiResult<FlowNavigatorResponse>> {
+		return flowApi.getNavigator(scopeId);
 	}
 
 	async getHistory(
@@ -189,8 +189,8 @@ export class FlowCommandService {
 	/** Workspace Flow settings read (`GET .../features/flow`). Returns the raw `ApiResult` so the
 	 * route guard, the sidebar store and the settings page can each fail closed on their own
 	 * terms. */
-	async getFlowFeature(workspaceId: string): Promise<ApiResult<FlowFeatureFlags>> {
-		return flowApi.getFeatureFlags(workspaceId);
+	async getFlowFeature(scopeId: string): Promise<ApiResult<FlowFeatureFlags>> {
+		return flowApi.getFeatureFlags(scopeId);
 	}
 
 	/**
@@ -200,10 +200,10 @@ export class FlowCommandService {
 	 * the raw `ApiResult` so the caller can branch on `error_code`.
 	 */
 	async setFlowFeature(
-		workspaceId: string,
+		scopeId: string,
 		input: SetFlowFeatureInput
 	): Promise<ApiResult<FlowFeatureUpdate>> {
-		return flowApi.setFeatureFlags(workspaceId, input);
+		return flowApi.setFeatureFlags(scopeId, input);
 	}
 
 	// v0.8 admin maintenance writes (`surface-coverage-v1.md`: verify / compact / rebuild /
@@ -233,10 +233,10 @@ export class FlowCommandService {
 	}
 
 	async replayDeliveries(
-		workspaceId: string,
+		scopeId: string,
 		input: ReplayDeliveriesInput
 	): Promise<ApiResult<FlowReplayResponse>> {
-		return flowApi.replayDeliveries(workspaceId, input);
+		return flowApi.replayDeliveries(scopeId, input);
 	}
 
 	// v0.7 Forms Bridge conversion (`surface-coverage-v1.md`: Convert preview / Convert confirm are
@@ -298,14 +298,14 @@ export class FlowCommandService {
 	// returned so callers branch on `error_code`.
 
 	async startWorkspaceExport(
-		workspaceId: string,
+		scopeId: string,
 		input: CreateWorkspaceExportInput
 	): Promise<ApiResult<FlowExportJob>> {
-		return flowApi.exportWorkspace(workspaceId, input);
+		return flowApi.exportWorkspace(scopeId, input);
 	}
 
 	async uploadImportPackage(
-		workspaceId: string,
+		scopeId: string,
 		file: Blob,
 		filename: string,
 		idempotencyKey: string,
@@ -313,7 +313,7 @@ export class FlowCommandService {
 		onProgress?: (progress: UploadProgress) => void
 	): Promise<ApiResult<FlowPackageArtifactReceipt>> {
 		return flowApi.uploadPackageArtifact(
-			workspaceId,
+			scopeId,
 			file,
 			filename,
 			idempotencyKey,
@@ -323,18 +323,18 @@ export class FlowCommandService {
 	}
 
 	async previewImport(
-		workspaceId: string,
+		scopeId: string,
 		input: PreviewImportInput
 	): Promise<ApiResult<FlowPackageImportPreview>> {
-		return flowApi.previewPackageImport(workspaceId, input);
+		return flowApi.previewPackageImport(scopeId, input);
 	}
 
 	async commitImport(
-		workspaceId: string,
+		scopeId: string,
 		previewId: string,
 		input: CommitImportInput
 	): Promise<ApiResult<FlowPackageImportJobReceipt>> {
-		return flowApi.commitPackageImport(workspaceId, previewId, input);
+		return flowApi.commitPackageImport(scopeId, previewId, input);
 	}
 
 	// v0.5 Share panel writes (`ui-surface-v1.md` "职责边界": `grants_set`/`inheritance_set` go

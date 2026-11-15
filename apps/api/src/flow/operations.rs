@@ -318,6 +318,21 @@ struct InsertedRun {
 }
 
 pub async fn document_scope(db: &DatabaseConnection, document_id: Uuid) -> Result<DocumentScope, ApiError> {
+    if let Some(row) = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT fo.workspace_id FROM collab_documents cd JOIN flow_objects fo ON fo.id=cd.object_id WHERE cd.id=$1",
+            vec![document_id.into()],
+        ))
+        .await?
+        && row.try_get::<Option<Uuid>>("", "workspace_id")?.is_none()
+    {
+        return Err(ApiError::typed_with_details(
+            ApiErrorKind::UnsupportedProtocol,
+            "personal maintenance uses scope-owned v2 operations",
+            json!({"reason":"personal_resource_requires_v2","action":"use_scope_operations_api"}),
+        ));
+    }
     DocumentScope::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT fo.workspace_id,fo.id AS object_id,cd.id AS document_id \
@@ -330,6 +345,21 @@ pub async fn document_scope(db: &DatabaseConnection, document_id: Uuid) -> Resul
 }
 
 pub async fn object_scope(db: &DatabaseConnection, object_id: Uuid) -> Result<DocumentScope, ApiError> {
+    if let Some(row) = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT fo.workspace_id FROM collab_documents cd JOIN flow_objects fo ON fo.id=cd.object_id WHERE fo.id=$1",
+            vec![object_id.into()],
+        ))
+        .await?
+        && row.try_get::<Option<Uuid>>("", "workspace_id")?.is_none()
+    {
+        return Err(ApiError::typed_with_details(
+            ApiErrorKind::UnsupportedProtocol,
+            "personal maintenance uses scope-owned v2 operations",
+            json!({"reason":"personal_resource_requires_v2","action":"use_scope_operations_api"}),
+        ));
+    }
     DocumentScope::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT fo.workspace_id,fo.id AS object_id,cd.id AS document_id \

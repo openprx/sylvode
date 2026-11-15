@@ -49,6 +49,26 @@ pub mod relations;
 pub mod repository;
 pub mod restore;
 pub mod rollback;
+pub mod scope;
+pub mod scope_acl;
+pub mod scope_assets;
+pub mod scope_collab;
+pub mod scope_collections;
+pub mod scope_commands;
+pub mod scope_editor;
+pub mod scope_event;
+pub mod scope_export;
+pub mod scope_history;
+pub mod scope_import;
+pub mod scope_mounts;
+pub mod scope_package;
+pub mod scope_purge;
+pub mod scope_record_context;
+pub mod scope_relations;
+pub mod scope_runtime;
+pub mod scope_shares;
+pub mod scope_social;
+pub mod scope_write;
 pub mod search;
 pub mod shares;
 pub mod trash;
@@ -58,3 +78,10 @@ pub mod trash;
 /// `server_draining{reason:"contention"}` because the in-flight run holds the idempotency claim
 /// the retry has to wait on.
 pub(crate) const IN_FLIGHT_RETRY_AFTER_MS: u64 = 1_000;
+
+pub mod scope_move;
+pub mod scope_navigation_query;
+
+pub mod scope_operations;
+
+pub mod json_value;

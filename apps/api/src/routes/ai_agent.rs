@@ -33,6 +33,7 @@ pub struct AiAgentRow {
     pub registered_by: Uuid,
     pub last_active_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    pub config_updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,6 +62,7 @@ pub struct UpdateAiAgentRequest {
     pub can_veto_human_consensus: Option<bool>,
     pub reason_min_length: Option<i32>,
     pub is_active: Option<bool>,
+    pub expected_config_updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -105,7 +107,7 @@ pub async fn list_ai_agents(
             SELECT id, project_id, name, model, provider, api_endpoint,
                    capabilities, domain_overrides, max_domain_level,
                    can_veto_human_consensus, reason_min_length, is_active,
-                   registered_by, last_active_at, created_at
+                   registered_by, last_active_at, created_at, config_updated_at
             FROM ai_participants
             WHERE project_id = $1
             ORDER BY created_at DESC
@@ -222,7 +224,7 @@ pub async fn get_ai_agent(
             SELECT id, project_id, name, model, provider, api_endpoint,
                    capabilities, domain_overrides, max_domain_level,
                    can_veto_human_consensus, reason_min_length, is_active,
-                   registered_by, last_active_at, created_at
+                   registered_by, last_active_at, created_at, config_updated_at
             FROM ai_participants
             WHERE project_id = $1 AND id = $2
         ",
@@ -361,18 +363,26 @@ pub async fn update_ai_agent(
     values.push(project_id.into());
     values.push(id.clone().into());
 
-    let sql = format!(
-        "UPDATE ai_participants SET {} WHERE project_id = ${idx} AND id = ${} RETURNING id",
+    let mut sql = format!(
+        "UPDATE ai_participants SET {} WHERE project_id=${idx} AND id=${}",
         sets.join(", "),
         idx + 1
     );
-
+    if let Some(expected) = req.expected_config_updated_at {
+        std::fmt::Write::write_fmt(&mut sql, format_args!(" AND config_updated_at=${}", idx + 2))
+            .map_err(|_| ApiError::Internal)?;
+        values.push(expected.into());
+    }
+    sql.push_str(" RETURNING id");
     let updated = state
         .db
         .query_one(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
         .await?;
 
     if updated.is_none() {
+        if req.expected_config_updated_at.is_some() {
+            return Err(ApiError::VersionConflict("assistant_config_version_conflict"));
+        }
         return Err(ApiError::NotFound("ai agent not found".to_string()));
     }
 
@@ -423,7 +433,7 @@ pub async fn get_ai_agent_stats(
             SELECT id, project_id, name, model, provider, api_endpoint,
                    capabilities, domain_overrides, max_domain_level,
                    can_veto_human_consensus, reason_min_length, is_active,
-                   registered_by, last_active_at, created_at
+                   registered_by, last_active_at, created_at, config_updated_at
             FROM ai_participants
             WHERE project_id = $1 AND id = $2
         ",

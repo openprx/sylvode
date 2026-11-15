@@ -1,4 +1,10 @@
 <script lang="ts">
+	import { FLOW_TASK_SESSIONS, type FlowTaskSessions } from '#lib/workbench/flow-sessions.js';
+	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
+	import { FLOW_COLLECTION_UI_ENABLED, pageOnlyParents } from '#lib/flow/product-mode.js';
+	import { observeNavigatorDocument } from '#lib/flow/navigator-doc-observer.js';
+	import { navigatorPlacements } from '#lib/flow/navigator-placements.js';
+	import { resolve } from '$app/paths';
 	// Left navigator: create/select/expand/collapse Page objects, same-parent-only pointer AND
 	// keyboard reorder (`ADR-0012` §4: "v0.4 的拖拽只做同一父级内重排"). Reorder is a real CRDT
 	// content change on the single per-workspace Navigator object's `order` map
@@ -39,12 +45,13 @@
 		type DropSide,
 		type OrderedSibling
 	} from '#lib/flow/navigator-reorder.js';
-	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
+	import { FLOW_REPOSITORY_CONTEXT, FLOW_NAV_VIEW_CONTEXT } from '#lib/flow/context-keys.js';
 	import {
 		descendantIds,
 		moveInsideTargets,
 		moveObjectCommand,
-		moveOutsideTarget
+		moveOutsideTarget,
+		personalMoveAllowed
 	} from '#lib/flow/cross-parent-move.js';
 	import { flowErrorDetailKey } from '#lib/flow/errors.js';
 	import type { FlowError } from '#lib/flow/types.js';
@@ -65,15 +72,50 @@
 	const navRenderer = resolveRenderer('navigator', 'tree');
 
 	interface Props {
-		workspaceId: string;
+		scopeId: string;
+		integrationWorkspaceId?: string;
 		selectedObjectId: string | null;
 	}
 
-	let { workspaceId, selectedObjectId }: Props = $props();
+	let { scopeId, selectedObjectId, integrationWorkspaceId }: Props = $props();
+
+	let placements = $state<import('#lib/flow/navigator-placements.js').NavigatorPlacement[]>([]);
+	let refreshingNavigator = $state(false);
+	let navigatorFailureKey = $state<string | null>(null);
+	let confirmingPlacement = $state<string | null>(null);
+	let removingPlacement = $state(false);
+	async function refreshNavigator(): Promise<void> {
+		if (refreshingNavigator) return;
+		refreshingNavigator = true;
+		try {
+			await loadNavigatorRoot();
+			await loadObjects();
+			navigatorFailureKey = null;
+		} catch (error) {
+			navigatorFailureKey = flowErrorDetailKey(error as FlowError);
+		} finally {
+			refreshingNavigator = false;
+		}
+	}
+	async function removePlacement(objectId: string, mountId: string): Promise<void> {
+		if (removingPlacement) return;
+		removingPlacement = true;
+		const result = await flowApi.removeMount(objectId, mountId);
+		if (result.code === 0 && result.data?.removed) {
+			placements = placements.filter((item) => item.mountId !== mountId);
+			confirmingPlacement = null;
+		} else navigatorFailureKey = flowErrorDetailKey(flowErrorFromResult(result));
+		removingPlacement = false;
+	}
 
 	const repository = getContext<FlowObjectRepository>(FLOW_REPOSITORY_CONTEXT);
 	const commandService = new FlowCommandService();
 
+	const navView = getContext<{ refresh: () => Promise<void> } | undefined>(FLOW_NAV_VIEW_CONTEXT);
+	let navSnapshotKey = '';
+	let navSnapshotUser: string | null = null;
+	const taskWorkbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
+	const flowTasks = getContext<(() => FlowTaskSessions | null) | undefined>(FLOW_TASK_SESSIONS)?.();
 	let objects = $state<FlowObjectView[]>([]);
 	let rootObjectId = $state<string | null>(null);
 	let navEntry: OpenFlowObjectResult | null = null;
@@ -90,11 +132,9 @@
 	// Collection create; debounce/abort/keyboard state lives in `#lib/flow/navigator-search.js`, the
 	// lag badge's refresh loop in `#lib/flow/navigator-lag.js`.
 	const search = new FlowNavigatorSearch(
-		() => workspaceId,
+		() => scopeId,
 		(snapshot) => (searchState = snapshot),
-		{
-			reads: repository
-		}
+		{ reads: repository }
 	);
 	let searchState = $state<SearchSnapshot>(search.snapshot);
 	let searchInput = $state('');
@@ -103,10 +143,15 @@
 	const searchOpen = $derived(searchState.status !== 'idle');
 
 	const lagBadge = new FlowLagBadge(
-		() => workspaceId,
+		() => scopeId,
 		(state) => (lagState = state),
 		{
-			reads: repository
+			reads: {
+				getProjectionLag: (scope) =>
+					integrationWorkspaceId
+						? repository.getWorkspaceProjectionLag(integrationWorkspaceId, { limit: 1 })
+						: repository.getProjectionLag(scope)
+			}
 		}
 	);
 	let lagState = $state<LagBadgeState>(lagBadge.current);
@@ -115,16 +160,38 @@
 	let newMenuButton = $state<HTMLButtonElement | null>(null);
 	let newMenuEl = $state<HTMLDivElement | null>(null);
 	let collectionDialogOpen = $state(false);
+	let navigationParents = $state<Record<string, string | null>>({});
 	let trashOpen = $state(false);
 	let trashItems = $state<FlowTrashItem[]>([]);
 	let trashFailureKey = $state<string | null>(null);
 	let trashBusy = $state(false);
+	let trashLoading = $state(false);
+	let trashNextCursor = $state<string | null>(null);
+	let trashRequest = 0;
 	let confirmingDelete = $state<string | null>(null);
 
-	async function loadTrash(): Promise<void> {
-		const result = await flowApi.listTrash(workspaceId, { limit: 50 });
+	async function loadTrash(cursor: string | null = null): Promise<void> {
+		const request = ++trashRequest;
+		trashLoading = true;
+		if (!cursor) trashNextCursor = null;
+		const query = { limit: 50, ...(cursor ? { cursor } : {}) };
+		const result = await (integrationWorkspaceId
+			? flowApi.listWorkspaceTrash(integrationWorkspaceId, query)
+			: flowApi.listTrash(scopeId, query));
+		if (request !== trashRequest) return;
+		trashLoading = false;
 		if (result.code === 0 && result.data) {
-			trashItems = result.data.items;
+			trashItems = cursor
+				? [
+						...new Map(
+							[
+								...trashItems,
+								...result.data.items.filter((item) => item.object_type === 'page')
+							].map((item) => [item.id, item])
+						).values()
+					]
+				: result.data.items.filter((item) => item.object_type === 'page');
+			trashNextCursor = result.data.next_cursor ?? null;
 			trashFailureKey = null;
 		} else {
 			trashFailureKey = flowErrorDetailKey(flowErrorFromResult(result));
@@ -193,8 +260,11 @@
 	const tree = $derived.by((): TreeNode[] => {
 		void orderVersion;
 		const byParent = new Map<string | null, FlowObjectView[]>();
+		const displayParents = rootObjectId
+			? pageOnlyParents(objects, navigationParents, rootObjectId)
+			: null;
 		for (const object of objects) {
-			const parentKey = object.parent_id ?? null;
+			const parentKey = displayParents?.get(object.id) ?? object.parent_id ?? null;
 			const siblings = byParent.get(parentKey) ?? [];
 			siblings.push(object);
 			byParent.set(parentKey, siblings);
@@ -248,7 +318,7 @@
 	 * to no key change means the object is already there: nothing is written and nothing is
 	 * announced as a failure, because landing where you started is a no-op, not an error. */
 	function commitReorder(objectId: string, destination: number | null): boolean {
-		if (!navEntry || destination === null) {
+		if (!navEntry || destination === null || !canReorderPage(objectId)) {
 			announce('flow.nav.liveRegion.reorderFailed');
 			return false;
 		}
@@ -298,35 +368,115 @@
 	}
 
 	async function loadObjects(): Promise<void> {
-		const result = await commandService.listObjects(workspaceId, { limit: 100 });
-		if (result.code === 0 && result.data) {
-			objects = result.data.items.filter(
-				(o) => o.object_type === 'page' || o.object_type === 'collection'
+		let cursor: string | undefined;
+		const loaded: FlowObjectView[] = [];
+		for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+			const result = await commandService.listObjects(scopeId, {
+				limit: 100,
+				object_type: 'page',
+				...(cursor ? { cursor } : {})
+			});
+			if (result.code !== 0 || !result.data) {
+				navigatorFailureKey = flowErrorDetailKey(flowErrorFromResult(result));
+				throw flowErrorFromResult(result);
+			}
+			loaded.push(
+				...result.data.items.filter(
+					(object) => object.scope_id === scopeId && object.object_type === 'page'
+				)
 			);
+			cursor = result.data.next_cursor ?? undefined;
+			if (!cursor) {
+				objects = loaded;
+				return;
+			}
 		}
+		throw {
+			code: 'limit_exceeded',
+			recoverable: false,
+			details: { limit_kind: 'scan_budget', limit: 1000 }
+		};
 	}
 
 	async function loadNavigatorRoot(): Promise<string> {
-		const result = await commandService.getNavigator(workspaceId);
+		const result = await commandService.getNavigator(scopeId);
 		if (result.code !== 0 || !result.data) {
-			throw new Error('workspace navigator root is unavailable');
+			throw flowErrorFromResult(result);
 		}
+		navigationParents = Object.fromEntries(
+			result.data.nodes.map((node) => [node.object_id, node.parent_id ?? null])
+		);
+		placements = navigatorPlacements(result.data.nodes.filter((node) => node.type === 'page'));
 		rootObjectId = result.data.root_object_id;
 		return result.data.root_object_id;
 	}
 
 	onMount(() => {
+		const taskKey = taskWorkbench?.current.active;
 		const controller = new AbortController();
+		let unsubscribeNavigator = () => {};
+		let refreshing = false;
+		let refreshAgain = false;
+		async function refreshNavigatorMetadata(): Promise<void> {
+			refreshAgain = true;
+			if (refreshing) return;
+			refreshing = true;
+			try {
+				while (refreshAgain && !controller.signal.aborted) {
+					refreshAgain = false;
+					await loadNavigatorRoot();
+					await loadObjects();
+				}
+			} catch (error) {
+				if (!controller.signal.aborted)
+					navigatorFailureKey = flowErrorDetailKey(error as FlowError);
+			} finally {
+				refreshing = false;
+			}
+		}
+		if (navView) navView.refresh = refreshNavigatorMetadata;
+		const saved = navSnapshotKey
+			? taskWorkbench?.snapshot<{
+					expanded: string[];
+					search: string;
+					focused: string | null;
+					trash: boolean;
+				}>(navSnapshotKey)
+			: undefined;
+		if (saved) {
+			expanded = new Set(saved.expanded);
+			searchInput = saved.search;
+			focusedId = saved.focused;
+			trashOpen = saved.trash;
+			if (saved.search) search.setQuery(saved.search);
+		}
 		void (async () => {
 			try {
 				const navigatorObjectId = await loadNavigatorRoot();
 				await loadObjects();
 				navEntry = await repository.open({
-					workspaceId,
+					scopeId,
 					objectId: navigatorObjectId,
 					signal: controller.signal
 				});
+				if (controller.signal.aborted) {
+					await repository.close(navigatorObjectId);
+					return;
+				}
+				if (taskKey) await flowTasks?.retain(taskKey, 'navigator', scopeId, navigatorObjectId);
+				if (controller.signal.aborted) return;
+				unsubscribeNavigator = observeNavigatorDocument(
+					navEntry,
+					() => {
+						orderVersion += 1;
+					},
+					() => {
+						void refreshNavigatorMetadata();
+					}
+				);
 				await ensureOrderEntries();
+			} catch (error) {
+				navigatorFailureKey = flowErrorDetailKey(error as FlowError);
 			} finally {
 				loading = false;
 			}
@@ -343,10 +493,13 @@
 					// eslint-disable-next-line svelte/prefer-svelte-reactivity -- replaced whole, like every other `expanded` write here
 					expanded = new Set(expanded).add(created.parentId);
 				}
-			})();
+			})().catch((error) => {
+				navigatorFailureKey = flowErrorDetailKey(error as FlowError);
+			});
 		});
 		return () => {
 			controller.abort();
+			unsubscribeNavigator();
 			lagBadge.stop();
 			search.dispose();
 			unsubscribeCreated();
@@ -354,6 +507,14 @@
 	});
 
 	onDestroy(() => {
+		if (navSnapshotKey && taskWorkbench?.current.userId === navSnapshotUser)
+			taskWorkbench.saveSnapshot(navSnapshotKey, {
+				expanded: [...expanded],
+				search: searchInput,
+				focused: focusedId,
+				trash: trashOpen
+			});
+		if (navView) navView.refresh = async () => {};
 		if (navEntry) void repository.close(navEntry.handle.objectId);
 	});
 
@@ -444,6 +605,7 @@
 	}
 
 	function chooseNewCollection(): void {
+		if (!FLOW_COLLECTION_UI_ENABLED) return;
 		closeNewMenu(false);
 		collectionDialogOpen = true;
 	}
@@ -466,7 +628,14 @@
 	}
 
 	function select(id: string): void {
-		void goto(`/workspace/${workspaceId}/flow/${id}`);
+		void goto(
+			integrationWorkspaceId
+				? resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
+						workspaceId: integrationWorkspaceId,
+						objectId: id
+					})
+				: resolve('/(app)/flow/[objectId]', { objectId: id })
+		);
 	}
 
 	function onTreeKeydown(event: KeyboardEvent, node: TreeNode): void {
@@ -566,7 +735,19 @@
 		}
 	}
 
+	function canReorderPage(objectId: string): boolean {
+		const object = objects.find((item) => item.id === objectId);
+		return (
+			!!object &&
+			(object.parent_id === rootObjectId ||
+				objects.some((parent) => parent.id === object.parent_id))
+		);
+	}
 	function startLift(objectId: string): void {
+		if (!canReorderPage(objectId)) {
+			announce('flow.nav.liveRegion.moveFailed');
+			return;
+		}
 		liftedId = objectId;
 		draftSiblingOrder = siblingsOf(objectId).map((o) => o.id);
 		const object = objects.find((o) => o.id === objectId);
@@ -628,6 +809,15 @@
 	}
 
 	async function moveToParent(objectId: string, targetObjectId: string): Promise<void> {
+		const source = objects.find((object) => object.id === objectId);
+		const targetType =
+			targetObjectId === navEntry?.handle.objectId
+				? 'navigator'
+				: objects.find((object) => object.id === targetObjectId)?.object_type;
+		if (!integrationWorkspaceId && !personalMoveAllowed(source?.object_type, targetType)) {
+			announce('flow.nav.liveRegion.moveFailed');
+			return;
+		}
 		try {
 			await commandService.execute(objectId, moveObjectCommand(targetObjectId));
 			await loadObjects();
@@ -659,7 +849,11 @@
 		if (!moveInsideFor) return [];
 		return moveInsideTargets(moveNodes(), moveInsideFor).flatMap((id) => {
 			const object = objects.find((candidate) => candidate.id === id);
-			return object ? [{ id, title: object.title }] : [];
+			const source = objects.find((candidate) => candidate.id === moveInsideFor);
+			return object &&
+				(integrationWorkspaceId || personalMoveAllowed(source?.object_type, object.object_type))
+				? [{ id, title: object.title }]
+				: [];
 		});
 	});
 
@@ -707,7 +901,7 @@
 		if (creatingParentId !== undefined) return;
 		creatingParentId = parentId ?? null;
 		try {
-			const created = await commandService.createObject(workspaceId, {
+			const created = await commandService.createObject(scopeId, {
 				object_type: 'page',
 				parent_object_id: parentId,
 				title: get(t)('flow.nav.untitled')
@@ -741,9 +935,18 @@
 </script>
 
 <nav
-	class="flex h-full w-64 shrink-0 flex-col border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950"
+	class="flex h-full w-full shrink-0 flex-col border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950"
 	aria-label={$t('flow.nav.title')}
 >
+	<a
+		href={integrationWorkspaceId
+			? resolve('/(app)/workspace/[workspaceId]/settings/flow/package', {
+					workspaceId: integrationWorkspaceId
+				})
+			: resolve('/(app)/flow/package')}
+		class="block min-h-11 px-3 py-2 text-sm text-slate-600 underline dark:text-slate-300"
+		>{$t('flow.personal.packages')}</a
+	>
 	<div
 		class="flex items-center justify-between border-b border-slate-200 p-3 dark:border-slate-800"
 	>
@@ -751,6 +954,15 @@
 			>{$t('flow.nav.title')}</span
 		>
 		<div class="relative flex items-center gap-1">
+			<button
+				type="button"
+				class="min-h-11 min-w-11 rounded px-2 text-slate-500 hover:bg-slate-200 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-slate-800"
+				aria-label={$t('flow.personal.refreshNavigator')}
+				title={$t('flow.personal.refreshNavigator')}
+				disabled={refreshingNavigator}
+				aria-busy={refreshingNavigator}
+				onclick={refreshNavigator}>↻</button
+			>
 			<button
 				type="button"
 				bind:this={newMenuButton}
@@ -800,14 +1012,16 @@
 					>
 						{$t('flow.nav.newPage')}
 					</button>
-					<button
-						type="button"
-						role="menuitem"
-						class="block min-h-11 w-full px-3 text-left text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
-						onclick={chooseNewCollection}
-					>
-						{$t('flow.nav.createCollection.menuItem')}
-					</button>
+					{#if FLOW_COLLECTION_UI_ENABLED}
+						<button
+							type="button"
+							role="menuitem"
+							class="block min-h-11 w-full px-3 text-left text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
+							onclick={chooseNewCollection}
+						>
+							{$t('flow.nav.createCollection.menuItem')}
+						</button>
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -990,7 +1204,7 @@
 						aria-level={node.depth + 1}
 						aria-expanded={node.children.length > 0 || undefined}
 						aria-selected={selectedObjectId === node.object.id}
-						draggable="true"
+						draggable={canReorderPage(node.object.id)}
 						class={`group flex cursor-pointer items-center gap-1 rounded px-2 py-1.5 text-sm outline-none ${
 							selectedObjectId === node.object.id
 								? 'bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-100'
@@ -1049,6 +1263,77 @@
 				{/each}
 			</div>
 		{/if}
+		{#if placements.length > 0}
+			<section
+				class="mt-3 border-t border-slate-200 pt-2 dark:border-slate-800"
+				aria-labelledby="flow-placements-heading"
+				data-testid="flow-nav-placements"
+			>
+				<h2 id="flow-placements-heading" class="px-2 text-xs font-semibold text-slate-500">
+					{$t('flow.mounts.sharedObjects')}
+				</h2>
+				<ul class="mt-1 space-y-1">
+					{#each placements as placement (placement.mountId)}
+						<li
+							data-mount-id={placement.mountId}
+							data-source-scope={placement.scopeId}
+							class="rounded px-2 text-sm"
+						>
+							{#if placement.status === 'source_archived'}
+								<p class="py-2 text-slate-500">
+									{placement.title || $t('flow.nav.untitled')} · {$t('flow.mounts.sourceArchived')}
+								</p>
+							{:else}
+								<a
+									href={resolve('/(app)/flow/[objectId]', { objectId: placement.objectId })}
+									draggable={false}
+									aria-current={selectedObjectId === placement.objectId ? 'page' : undefined}
+									title={$t('flow.mounts.nonOwningHint')}
+									class="flex min-h-11 items-center gap-2 rounded text-slate-700 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300"
+								>
+									<FlowObjectIcon objectId={placement.objectId} appearance={placement.appearance} />
+									<span class="min-w-0 flex-1 truncate"
+										>{placement.title || $t('flow.nav.untitled')}</span
+									>
+									<span class="shrink-0 text-xs text-slate-500"
+										>{$t('flow.mounts.sharedBadge')}</span
+									>
+								</a>
+							{/if}
+							{#if placement.canRemove}
+								{#if confirmingPlacement === placement.mountId}
+									<p class="text-xs">{$t('flow.mounts.confirm')}</p>
+									<button
+										type="button"
+										class="min-h-11 px-1 text-xs text-red-700 underline"
+										disabled={removingPlacement}
+										onclick={() => removePlacement(placement.objectId, placement.mountId)}
+										>{$t('flow.mounts.remove')}</button
+									>
+									<button
+										type="button"
+										class="min-h-11 px-1 text-xs"
+										disabled={removingPlacement}
+										onclick={() => (confirmingPlacement = null)}>{$t('flow.mounts.cancel')}</button
+									>
+								{:else}
+									<button
+										type="button"
+										class="min-h-11 text-xs text-slate-500 underline"
+										onclick={() => (confirmingPlacement = placement.mountId)}
+										>{$t('flow.mounts.remove')}</button
+									>
+								{/if}
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
+		{#if navigatorFailureKey}<p class="p-2 text-xs text-red-600" role="alert">
+				{$t(navigatorFailureKey)}
+			</p>{/if}
+
 		<div class="mt-3 border-t border-slate-200 pt-2 dark:border-slate-800" data-testid="flow-trash">
 			<button
 				type="button"
@@ -1062,29 +1347,55 @@
 				{$t('flow.trash.title')}
 			</button>
 			{#if trashOpen}
-				{#if trashItems.length === 0}
-					<p class="px-2 py-1 text-xs text-slate-500">{$t('flow.trash.empty')}</p>
+				{#if trashItems.length === 0 && !trashLoading && !trashFailureKey}
+					<p class="px-2 py-1 text-xs text-slate-500">{$t('flow.pageOnly.trashEmpty')}</p>
 				{/if}
 				<ul class="space-y-1">
 					{#each trashItems as item (item.id)}
 						<li class="flex items-center gap-1 px-2 py-1 text-sm">
 							<FlowObjectIcon appearance={item.appearance} objectId={item.id} />
 							<span class="min-w-0 flex-1 truncate">{item.title || $t('flow.nav.untitled')}</span>
-							<button type="button" class="text-xs underline" disabled={trashBusy} onclick={() => restoreArchived(item.id)}>
+							<button
+								type="button"
+								class="text-xs underline"
+								disabled={trashBusy}
+								onclick={() => restoreArchived(item.id)}
+							>
 								{$t('flow.trash.restore')}
 							</button>
 							{#if confirmingDelete === item.id}
-								<button type="button" class="text-xs text-red-600 underline" disabled={trashBusy} onclick={() => purgeArchived(item.id)}>
+								<button
+									type="button"
+									class="text-xs text-red-600 underline"
+									disabled={trashBusy}
+									onclick={() => purgeArchived(item.id)}
+								>
 									{$t('flow.trash.confirmDelete')}
 								</button>
 							{:else}
-								<button type="button" class="text-xs underline" disabled={trashBusy} onclick={() => (confirmingDelete = item.id)}>
+								<button
+									type="button"
+									class="text-xs underline"
+									disabled={trashBusy}
+									onclick={() => (confirmingDelete = item.id)}
+								>
 									{$t('flow.trash.delete')}
 								</button>
 							{/if}
 						</li>
 					{/each}
 				</ul>
+				{#if trashLoading}<p class="px-2 text-xs text-slate-500" role="status">
+						{$t('common.loading')}
+					</p>{/if}
+				{#if trashNextCursor}
+					<button
+						type="button"
+						class="min-h-11 px-2 text-sm underline"
+						disabled={trashLoading || trashBusy}
+						onclick={() => loadTrash(trashNextCursor)}>{$t('common.loadMore')}</button
+					>
+				{/if}
 				{#if trashFailureKey}
 					<p class="px-2 text-xs text-red-600" role="alert">{$t(trashFailureKey)}</p>
 				{/if}
@@ -1097,7 +1408,7 @@
 
 <CreateCollectionDialog
 	open={collectionDialogOpen}
-	{workspaceId}
+	{scopeId}
 	oncreated={onCollectionCreated}
 	onclose={() => (collectionDialogOpen = false)}
 />
@@ -1145,6 +1456,11 @@
 			type="button"
 			role="menuitem"
 			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			disabled={!integrationWorkspaceId &&
+				!personalMoveAllowed(
+					objects.find((object) => object.id === contextMenuFor)?.object_type,
+					'page'
+				)}
 			onclick={() => openMoveInside(contextMenuFor!)}
 		>
 			{$t('flow.nav.contextMenu.moveInside')}
@@ -1153,6 +1469,11 @@
 			type="button"
 			role="menuitem"
 			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			disabled={!integrationWorkspaceId &&
+				!personalMoveAllowed(
+					objects.find((object) => object.id === contextMenuFor)?.object_type,
+					'page'
+				)}
 			onclick={() => moveOutside(contextMenuFor!)}
 		>
 			{$t('flow.nav.contextMenu.moveOutside')}
@@ -1175,7 +1496,10 @@
 			role="dialog"
 			aria-labelledby="flow-move-inside-title"
 		>
-			<h2 id="flow-move-inside-title" class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+			<h2
+				id="flow-move-inside-title"
+				class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100"
+			>
 				{$t('flow.nav.move.title')}
 			</h2>
 			{#if insideChoices.length === 0}
@@ -1199,7 +1523,11 @@
 					{/each}
 				</ul>
 			{/if}
-			<button type="button" class="mt-3 text-sm text-slate-600" onclick={() => (moveInsideFor = null)}>
+			<button
+				type="button"
+				class="mt-3 text-sm text-slate-600"
+				onclick={() => (moveInsideFor = null)}
+			>
 				{$t('common.cancel')}
 			</button>
 		</div>

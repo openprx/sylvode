@@ -225,6 +225,8 @@ pub struct UpdateRecordRequest {
     pub title: Option<String>,
     pub source: Option<Value>,
     pub idempotency_key: Option<String>,
+    pub expected_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub expected_schema_version: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -942,19 +944,26 @@ pub async fn update_form(
         if let Some(expected) = req.expected_schema_version
             && expected != form.schema_version
         {
-            return Err(ApiError::Conflict(format!(
-                "schema version conflict: expected {}, current {}",
-                expected, form.schema_version
-            )));
+            return Err(ApiError::VersionConflict("form_schema_version_conflict"));
         }
         set_parts.push("schema_version = schema_version + 1".to_string());
     }
-    set_parts.push("updated_at = now()".to_string());
+    set_parts.push("updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')".to_string());
     values.push(form_id.into());
-    let sql = format!("UPDATE project_forms SET {} WHERE id = ${idx}", set_parts.join(", "));
+    let mut sql = format!("UPDATE project_forms SET {} WHERE id = ${idx}", set_parts.join(", "));
+    if schema_changed && let Some(expected) = req.expected_schema_version {
+        idx += 1;
+        std::fmt::Write::write_fmt(&mut sql, format_args!(" AND schema_version=${idx}"))
+            .map_err(|_| ApiError::Internal)?;
+        values.push(expected.into());
+    }
     let tx = state.db.begin().await?;
-    tx.execute(Statement::from_sql_and_values(DbBackend::Postgres, &sql, values))
+    let written = tx
+        .execute(Statement::from_sql_and_values(DbBackend::Postgres, &sql, values))
         .await?;
+    if written.rows_affected() != 1 {
+        return Err(ApiError::VersionConflict("form_schema_version_conflict"));
+    }
     let updated_form = find_form_with_conn(&tx, form_id).await?;
     let source = json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id });
     insert_form_event(
@@ -1158,11 +1167,7 @@ pub async fn update_form_view(
     if let Some(expected_updated_at) = req.expected_updated_at
         && expected_updated_at != view.updated_at
     {
-        return Err(ApiError::Conflict(format!(
-            "view update conflict: expected {}, current {}",
-            expected_updated_at.to_rfc3339(),
-            view.updated_at.to_rfc3339()
-        )));
+        return Err(ApiError::VersionConflict("form_view_version_conflict"));
     }
     let mut set_parts = Vec::new();
     let mut values = Vec::new();
@@ -1195,15 +1200,24 @@ pub async fn update_form_view(
         return Ok(ApiResponse::success(view));
     }
 
-    set_parts.push("updated_at = now()".to_string());
+    set_parts.push("updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')".to_string());
     values.push(view_id.into());
-    let sql = format!("UPDATE form_views SET {} WHERE id = ${idx}", set_parts.join(", "));
+    let mut sql = format!("UPDATE form_views SET {} WHERE id = ${idx}", set_parts.join(", "));
+    if let Some(expected) = req.expected_updated_at {
+        idx += 1;
+        std::fmt::Write::write_fmt(&mut sql, format_args!(" AND updated_at=${idx}")).map_err(|_| ApiError::Internal)?;
+        values.push(expected.into());
+    }
     let tx = state.db.begin().await?;
     if mark_default {
         clear_default_form_views(&tx, form.id, Some(view_id)).await?;
     }
-    tx.execute(Statement::from_sql_and_values(DbBackend::Postgres, &sql, values))
+    let written = tx
+        .execute(Statement::from_sql_and_values(DbBackend::Postgres, &sql, values))
         .await?;
+    if written.rows_affected() != 1 {
+        return Err(ApiError::VersionConflict("form_view_version_conflict"));
+    }
     let updated = find_view_with_conn(&tx, view_id).await?;
     insert_form_event(
         &tx,
@@ -3659,6 +3673,15 @@ async fn update_record_for_form(
     {
         return Ok(record);
     }
+    if req
+        .expected_updated_at
+        .is_some_and(|expected| expected != record.updated_at)
+        || req
+            .expected_schema_version
+            .is_some_and(|expected| expected != form.schema_version)
+    {
+        return Err(ApiError::VersionConflict("record_version_conflict"));
+    }
     let record_id = record.id;
     let updated_by = if is_bot { None } else { Some(actor_id) };
     let source = ensure_json_object(
@@ -3668,6 +3691,20 @@ async fn update_record_for_form(
     )?;
     let previous_values = record.values.clone();
     let tx = state.db.begin().await?;
+    // Schema validation and the record CAS observe one stable form revision. Designer UPDATEs
+    // take the conflicting row lock; no parent/schema token is silently refreshed for a draft.
+    let locked = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT schema_version FROM project_forms WHERE id=$1 FOR SHARE",
+            vec![form.id.into()],
+        ))
+        .await?
+        .ok_or_else(|| ApiError::NotFound("form not found".into()))?;
+    if locked.try_get::<i32>("", "schema_version")? != form.schema_version {
+        return Err(ApiError::VersionConflict("record_version_conflict"));
+    }
+
     let mut signature_audit_entries = Vec::new();
     let values = match req.values {
         Some(values) => {
@@ -3725,12 +3762,14 @@ async fn update_record_for_form(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| render_title(&form.title_template, record_id, &values));
 
-    tx.execute(Statement::from_sql_and_values(
+    let written=tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
             UPDATE form_records
-            SET title = $1, values = $2, source = $3, schema_version = $4, updated_by = $5, updated_at = now()
+            SET title = $1, values = $2, source = $3, schema_version = $4, updated_by = $5, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
             WHERE id = $6
+              AND ($7::timestamptz IS NULL OR updated_at=$7)
+              AND ($8::int IS NULL OR EXISTS(SELECT 1 FROM project_forms f WHERE f.id=form_records.form_id AND f.schema_version=$8))
         ",
         vec![
             title.into(),
@@ -3739,9 +3778,14 @@ async fn update_record_for_form(
             form.schema_version.into(),
             updated_by.into(),
             record_id.into(),
+            req.expected_updated_at.into(),
+            req.expected_schema_version.into(),
         ],
     ))
     .await?;
+    if written.rows_affected() != 1 {
+        return Err(ApiError::VersionConflict("record_version_conflict"));
+    }
     refresh_record_projection(&tx, form.project_id, form.id, record_id, &form.schema, &values).await?;
     let event_payload = json!({ "record_id": record_id, "values": values });
     insert_form_event_with_idempotency(
@@ -4376,6 +4420,8 @@ pub async fn update_child_record(
             title: req.title,
             source: req.source,
             idempotency_key: None,
+            expected_updated_at: None,
+            expected_schema_version: None,
         },
     )
     .await?;

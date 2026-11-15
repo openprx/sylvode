@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { taskEditorAction } from '#lib/workbench/edit-surface.js';
 	import {
 		Activity,
 		AlertTriangle,
@@ -27,7 +28,19 @@
 	} from '@lucide/svelte';
 
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { getContext, onMount, tick } from 'svelte';
+	import { WORKBENCH_CONTEXT, type TaskWorkbench } from '#lib/workbench/tabs.js';
+	import {
+		FormsRefreshLatch,
+		formsFingerprint,
+		formsDraftDirty,
+		cloneFormsSnapshot,
+		restoredFormsSnapshot,
+		recordWriteVersion,
+		mayRefreshForms,
+		type FormsDraftVersion,
+		type FormsSessionSnapshot
+	} from '#lib/workbench/forms-session.js';
 	import { page } from '$app/state';
 	import { apiClient } from '#lib/api/client.js';
 
@@ -464,6 +477,7 @@
 	type ViewTimelineSource = 'records' | 'events';
 	type TimelineEventLayout = 'summary' | 'detailed';
 
+	const recordEditorAction = taskEditorAction();
 	let project = $state<Project | null>(null);
 	let scenarioTemplates = $state<ScenarioTemplate[]>([]);
 	let forms = $state<UniversalForm[]>([]);
@@ -892,6 +906,471 @@
 		detailPageWidgetEntriesFromLayout(selectedForm?.detail_layout)
 	);
 
+	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
+	let formsSessionKey = $state<string | null>(null);
+	let formsSessionUser: string | null = null;
+	let formsSessionRelease: (() => void) | null = null;
+	let formsSessionReady = $state(false);
+	let formsSessionRemoteChanged = $state(false);
+	let formsSessionRefreshFailed = $state(false);
+	let formsSessionConflict = $state(false);
+	let formsSessionReview = $state(false);
+	let formsSessionClean = $state<Record<string, string>>({});
+	let formsSessionRecordVersion = $state<FormsDraftVersion | null>(null);
+	let formsSessionSchemaVersion = $state<number | null>(null);
+	let formsSessionViewVersion = $state<string | null>(null);
+	let formsSessionGeneration = 0;
+	let formsSessionActivating = '';
+	let formsSessionOpening: Promise<void> | null = null;
+	let formsSessionOpenRequest = 0;
+	let formsSessionTransitioning = $state(false);
+	let formsSessionRoot = $state<HTMLElement | null>(null);
+	let formsSessionFocus: { selector: string; start: number | null; end: number | null } | null =
+		null;
+	const formsSessionLatch = new FormsRefreshLatch();
+	let formsSessionRemoteRecord = $state<FormRecord | null>(null);
+	let formsSessionRemoteSchema = $state<number | null>(null);
+
+	function formsDraftGroups() {
+		return {
+			record: { recordDraft, recordTitle },
+			view: viewDraft,
+			design: {
+				designerFieldDrafts,
+				detailHeaderDraft,
+				detailHighlightDraft,
+				detailPageCompositionDraft,
+				detailLayoutSectionDrafts
+			},
+			create: { formDraft, fieldDrafts },
+			comment: recordCommentDraft,
+			child: childEditor
+		};
+	}
+	function cleanFormsGroup(group: string) {
+		const groups = formsDraftGroups();
+		formsSessionClean = {
+			...formsSessionClean,
+			[group]: formsFingerprint(groups[group as keyof typeof groups])
+		};
+	}
+	function cleanFormsSession() {
+		formsSessionClean = Object.fromEntries(
+			Object.entries(formsDraftGroups()).map(([key, value]) => [key, formsFingerprint(value)])
+		);
+		formsSessionSchemaVersion = selectedForm?.schema_version ?? null;
+		formsSessionViewVersion = selectedView?.updated_at ?? null;
+	}
+	function formsSessionDirty() {
+		return formsDraftDirty(formsDraftGroups(), formsSessionClean);
+	}
+	function formsSessionSaving() {
+		return (
+			formSubmitting ||
+			viewSubmitting ||
+			recordSubmitting ||
+			designerSaving ||
+			childSubmitting ||
+			detailHeaderSaving ||
+			detailHighlightSaving ||
+			detailPageCompositionSaving ||
+			detailLayoutSectionSaving ||
+			detailPageWidgetSaving ||
+			!!attachmentSubmittingField ||
+			bulkMovingKanban ||
+			!!updatingKanbanRecordId ||
+			!!updatingCalendarRecordId ||
+			!!updatingGanttRecordId ||
+			!!updatingCardRecordId ||
+			!!updatingTimelineRecordId
+		);
+	}
+	function formsSessionState() {
+		return $state.snapshot({
+			selectedViewId,
+			selectedRecordId: selectedRecord?.id ?? null,
+			focusedRecordIds,
+			activeMode,
+			recordPage,
+			recordEditorOpen,
+			editingRecordId,
+			recordDraft,
+			recordTitle,
+			recordCommentDraft,
+			childEditor,
+			linkDraft,
+			formDraft,
+			fieldDrafts,
+			showCreateForm,
+			viewDraft,
+			viewToolsExpanded,
+			designerFieldDrafts,
+			selectedDesignerFieldIndex,
+			showAdvancedSchema,
+			detailLayoutMode,
+			detailHeaderDraft,
+			detailHighlightDraft,
+			detailPageCompositionDraft,
+			detailLayoutSectionDrafts,
+			collapsedCardGroupKeys,
+			selectedKanbanRecordIds,
+			pinnedTimelineEventIds,
+			formsSessionConflict,
+			focus: formsSessionFocus,
+			scroll: Array.from(
+				formsSessionRoot?.querySelectorAll<HTMLElement>(
+					'.overflow-x-auto,.overflow-auto,.overflow-y-auto'
+				) ?? []
+			).map((element) => ({ left: element.scrollLeft, top: element.scrollTop }))
+		});
+	}
+	function captureFormsSession(): FormsSessionSnapshot {
+		return cloneFormsSnapshot({
+			formId: selectedFormId || null,
+			state: formsSessionState(),
+			clean: $state.snapshot(formsSessionClean),
+			formSchemaVersion: formsSessionSchemaVersion,
+			recordVersion: $state.snapshot(formsSessionRecordVersion),
+			viewUpdatedAt: formsSessionViewVersion
+		});
+	}
+	function releaseFormsSession() {
+		formsSessionRelease?.();
+		formsSessionRelease = null;
+		formsSessionKey = null;
+		formsSessionUser = null;
+	}
+	async function attachFormsSession() {
+		const user = workbench?.current.userId;
+		const key = selectedFormId
+			? `forms:${projectId}:${selectedFormId}`
+			: `forms-entry:${projectId}`;
+		if (!workbench || !user || (formsSessionKey === key && formsSessionUser === user)) return;
+		// Never render a cached snapshot as authority. The live resource read must succeed first.
+		const id = selectedFormId;
+		const generation = formsSessionGeneration;
+		const authorized = id ? await formsApi.get(id) : await projectsApi.get(projectId);
+		if (
+			authorized.code !== 0 ||
+			!authorized.data ||
+			workbench.current.userId !== user ||
+			generation !== formsSessionGeneration ||
+			id !== selectedFormId
+		)
+			return;
+		const urlForm = page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
+		if (urlForm && urlForm !== id) return;
+		const cached = restoredFormsSnapshot(workbench.snapshot(key), selectedFormId || null, true);
+		if (cached) {
+			const saved = cached.state as ReturnType<typeof formsSessionState>;
+			selectedRecord = records.find((row) => row.id === saved.selectedRecordId) ?? null;
+			if (selectedRecord)
+				await Promise.all([
+					loadSelectedRecordLinks(),
+					loadSelectedRecordChildren(),
+					loadSelectedRecordComments(),
+					loadRecordAttachments(selectedRecord.id)
+				]);
+			if (generation !== formsSessionGeneration || workbench.current.userId !== user) return;
+			({
+				selectedViewId,
+				focusedRecordIds,
+				activeMode,
+				recordPage,
+				recordEditorOpen,
+				editingRecordId,
+				recordDraft,
+				recordTitle,
+				recordCommentDraft,
+				childEditor,
+				linkDraft,
+				formDraft,
+				fieldDrafts,
+				showCreateForm,
+				viewDraft,
+				viewToolsExpanded,
+				designerFieldDrafts,
+				selectedDesignerFieldIndex,
+				showAdvancedSchema,
+				detailLayoutMode,
+				detailHeaderDraft,
+				detailHighlightDraft,
+				detailPageCompositionDraft,
+				detailLayoutSectionDrafts,
+				collapsedCardGroupKeys,
+				selectedKanbanRecordIds,
+				pinnedTimelineEventIds,
+				formsSessionConflict
+			} = saved);
+			formsSessionFocus = saved.focus ?? null;
+			formsSessionClean = cached.clean;
+			formsSessionSchemaVersion = cached.formSchemaVersion;
+			formsSessionRecordVersion = cached.recordVersion;
+			formsSessionViewVersion = cached.viewUpdatedAt;
+			formsSessionRemoteRecord =
+				records.find((row) => row.id === cached.recordVersion?.recordId) ?? null;
+			formsSessionRemoteSchema = selectedForm?.schema_version ?? null;
+			formsSessionRemoteChanged = !!(
+				cached.recordVersion &&
+				formsSessionRemoteRecord &&
+				(cached.recordVersion.updatedAt !== formsSessionRemoteRecord.updated_at ||
+					cached.recordVersion.schemaVersion !== formsSessionRemoteSchema)
+			);
+		}
+		formsSessionKey = key;
+		formsSessionUser = user;
+		formsSessionRelease = workbench.register(key, {
+			capture: captureFormsSession,
+			dirty: formsSessionDirty,
+			refresh: refreshFormsSession
+		});
+		workbench.setTitle(key, selectedForm?.name ?? project?.name ?? 'Forms');
+		if (cached) {
+			await tick();
+			if (generation !== formsSessionGeneration || key !== formsSessionKey) return;
+			const scroll = (cached.state as ReturnType<typeof formsSessionState>).scroll;
+			formsSessionRoot
+				?.querySelectorAll<HTMLElement>('.overflow-x-auto,.overflow-auto,.overflow-y-auto')
+				.forEach((element, index) => {
+					const position = scroll?.[index];
+					if (position) {
+						element.scrollLeft = position.left;
+						element.scrollTop = position.top;
+					}
+				});
+			const focus = formsSessionFocus;
+			if (focus) {
+				const input = formsSessionRoot?.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+					focus.selector
+				);
+				input?.focus({ preventScroll: true });
+				try {
+					if (input && focus.start !== null) input.setSelectionRange(focus.start, focus.end);
+				} catch {
+					/* Nontext controls retain focus only. */
+				}
+			}
+		}
+	}
+	async function refreshFormsSession() {
+		const key = formsSessionKey;
+		const user = formsSessionUser;
+		const id = selectedFormId;
+		if (
+			!key ||
+			!user ||
+			!workbench ||
+			!mayRefreshForms({
+				active: workbench.current.active === key,
+				visible: document.visibilityState === 'visible',
+				online: navigator.onLine,
+				saving: formsSessionSaving(),
+				loading
+			})
+		)
+			return;
+		await formsSessionLatch.run(async () => {
+			const generation = formsSessionGeneration;
+			try {
+				const [freshForms, freshForm, freshViews, freshRecords] = await Promise.all([
+					formsApi.list(projectId, { page: 1, per_page: 100 }),
+					id ? formsApi.get(id) : projectsApi.get(projectId),
+					id ? formsApi.listViews(id) : Promise.resolve({ code: 0, data: [] as FormView[] }),
+					id
+						? formsApi.listRecords(id, { page: 1, per_page: 100 })
+						: Promise.resolve({ code: 0, data: { items: [] as FormRecord[] } })
+				]);
+				if (
+					generation !== formsSessionGeneration ||
+					key !== formsSessionKey ||
+					workbench.current.userId !== user
+				)
+					return;
+				if (
+					[freshForms, freshForm, freshViews, freshRecords].some(
+						(result) => result.code !== 0 || !result.data
+					)
+				) {
+					formsSessionRefreshFailed = true;
+					return;
+				}
+				formsSessionRefreshFailed = false;
+				const rows = freshRecords.data?.items ?? [];
+				const currentForm = id ? (freshForm.data as UniversalForm) : null;
+				formsSessionRemoteRecord = rows.find((row) => row.id === editingRecordId) ?? null;
+				formsSessionRemoteSchema = currentForm?.schema_version ?? null;
+				const changed =
+					formsFingerprint({
+						forms: freshForms.data?.items,
+						views: freshViews.data,
+						records: rows
+					}) !== formsFingerprint({ forms, views: formViews, records });
+				if (formsSessionDirty() || editingRecordId !== null || recordEditorOpen) {
+					if (changed) {
+						formsSessionRemoteChanged = true;
+						workbench.markChanged(key);
+					}
+					return; // Whole editing snapshot and its original CAS remain intact.
+				}
+				forms = freshForms.data?.items ?? [];
+				if (!id) return;
+				formViews = sortViewsByDefault(freshViews.data ?? []);
+				records = rows;
+				filterPreviewRecords = rows;
+				if (selectedRecord)
+					selectedRecord = rows.find((row) => row.id === selectedRecord?.id) ?? null;
+				// Retain local filters/selection; only replace clean schema/design baselines.
+				designerSyncedFormId = '';
+				syncDesignerDrafts(currentForm);
+				cleanFormsGroup('design');
+				formsSessionSchemaVersion = currentForm?.schema_version ?? null;
+				formsSessionRemoteChanged = false;
+			} catch {
+				if (generation === formsSessionGeneration) formsSessionRefreshFailed = true;
+			}
+		});
+	}
+	async function updateRecordWithVersion(
+		recordId: string,
+		data: Parameters<typeof formsApi.updateRecord>[1]
+	) {
+		const record =
+			records.find((row) => row.id === recordId) ??
+			(selectedRecord?.id === recordId ? selectedRecord : null);
+		const version = recordWriteVersion(
+			recordId,
+			formsSessionRecordVersion,
+			record,
+			formsSessionSchemaVersion ?? selectedForm?.schema_version ?? null
+		);
+		if (!version) return { code: 409, message: $t('forms.session.conflict'), data: null };
+		const result = await formsApi.updateRecord(recordId, { ...data, ...version });
+		if (result.code === 409) {
+			formsSessionConflict = true;
+			formsSessionRemoteChanged = true;
+			window.setTimeout(() => {
+				void refreshFormsSession();
+			}, 0);
+		}
+		return result;
+	}
+	async function reloadFormsSession() {
+		if (formsSessionDirty() && !window.confirm($t('forms.session.discardPrompt'))) return;
+		const id = selectedFormId;
+		const recordId = editingRecordId;
+		formsSessionGeneration++;
+		const fresh = await formsApi.get(id);
+		if (fresh.code !== 0 || !fresh.data) {
+			formsSessionRefreshFailed = true;
+			return;
+		}
+		forms = forms.map((item) => (item.id === id ? fresh.data! : item));
+		const loaded = await loadFormState(id, { syncUrl: false });
+		if (!loaded) {
+			formsSessionRefreshFailed = true;
+			return;
+		}
+		const record =
+			records.find((row) => row.id === recordId) ??
+			filterPreviewRecords.find((row) => row.id === recordId);
+		if (record) openRecordEditDrawer(record);
+		cleanFormsSession();
+		formsSessionConflict = false;
+		formsSessionRemoteChanged = false;
+		formsSessionReview = false;
+		formsSessionRefreshFailed = false;
+		formsSessionRemoteRecord = null;
+		formsSessionRemoteSchema = null;
+		if (formsSessionKey) {
+			workbench?.markChanged(formsSessionKey, false);
+			workbench?.markDirty(formsSessionKey, false);
+		}
+	}
+
+	async function openForm(formId: string, options: { syncUrl?: boolean } = {}) {
+		const target = new URL(page.url.href);
+		target.searchParams.set('form', formId);
+		target.searchParams.delete('form_id');
+		if (workbench?.current.userId && !workbench.canOpen(target.href)) {
+			workbench.showLimit();
+			return;
+		}
+		if (formsSessionActivating === formId) return;
+		const request = ++formsSessionOpenRequest;
+		if (formsSessionOpening) await formsSessionOpening;
+		if (request !== formsSessionOpenRequest) return;
+		const opening = (async () => {
+			releaseFormsSession();
+			formsSessionGeneration++;
+			formsSessionActivating = formId;
+			formsSessionTransitioning = true;
+			formsSessionConflict = false;
+			formsSessionRemoteChanged = false;
+			formsSessionRefreshFailed = false;
+			formsSessionReview = false;
+			try {
+				if (options.syncUrl !== false) {
+					await syncFormUrl(formId);
+					const admitted =
+						page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
+					if (admitted !== formId) return;
+				}
+				await loadFormState(formId, { syncUrl: false });
+				if (formsSessionReady) await restoreRecordDetailFromUrl();
+				cleanFormsSession();
+				if (formsSessionReady) await attachFormsSession();
+			} finally {
+				formsSessionActivating = '';
+				formsSessionTransitioning = false;
+			}
+		})();
+		formsSessionOpening = opening;
+		try {
+			await opening;
+		} finally {
+			if (formsSessionOpening === opening) formsSessionOpening = null;
+		}
+	}
+	function rememberFormsFocus(event: FocusEvent) {
+		const input = event.target;
+		if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) return;
+		const field = input.closest<HTMLElement>('[data-record-edit-field]')?.dataset.recordEditField;
+		const selector = field
+			? `[data-record-edit-field="${CSS.escape(field)}"] ${input.tagName.toLowerCase()}`
+			: input.id
+				? `#${CSS.escape(input.id)}`
+				: null;
+		if (selector)
+			formsSessionFocus = { selector, start: input.selectionStart, end: input.selectionEnd };
+	}
+	function formsReviewText(value: unknown): string {
+		return typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value ?? '');
+	}
+	$effect(() => {
+		if (formsSessionKey) workbench?.markDirty(formsSessionKey, formsSessionDirty());
+	});
+	onMount(() => {
+		const unsubscribe = workbench?.subscribe(() => {
+			if (formsSessionReady && !formsSessionActivating) void attachFormsSession();
+		});
+		return () => {
+			unsubscribe?.();
+			formsSessionLatch.dispose();
+			releaseFormsSession();
+		};
+	});
+
+	$effect(() => {
+		const formId = page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
+		if (
+			formsSessionReady &&
+			formId &&
+			formId !== selectedFormId &&
+			formId !== formsSessionActivating
+		)
+			void openForm(formId, { syncUrl: false });
+	});
+
 	onMount(async () => {
 		await Promise.all([
 			loadProject(),
@@ -902,6 +1381,9 @@
 
 		await restoreRecordDetailFromUrl();
 		loading = false;
+		if (!formsSessionKey) cleanFormsSession();
+		formsSessionReady = true;
+		await attachFormsSession();
 	});
 
 	async function loadProject() {
@@ -1011,10 +1493,10 @@
 		}
 	}
 
-	async function openForm(formId: string, options: { syncUrl?: boolean } = {}) {
+	async function loadFormState(formId: string, options: { syncUrl?: boolean } = {}) {
 		const form = forms.find((item) => item.id === formId);
 
-		if (!form) return;
+		if (!form) return false;
 
 		selectedFormId = form.id;
 		selectedViewId = '';
@@ -1048,7 +1530,7 @@
 
 		await loadFormPermissions();
 		await loadFormViews();
-		await loadRecords();
+		return await loadRecords();
 	}
 
 	async function loadFormViews() {
@@ -1151,7 +1633,7 @@
 	}
 
 	async function loadRecords() {
-		if (!selectedFormId) return;
+		if (!selectedFormId) return false;
 
 		recordsLoading = true;
 
@@ -1190,6 +1672,7 @@
 		await loadFormEvents();
 		resetRecordDraft();
 		recordsLoading = false;
+		return response.code === 0 && previewResponse.code === 0;
 	}
 
 	async function loadFormEvents() {
@@ -1374,7 +1857,7 @@
 		const wasEditing = Boolean(editingRecordId);
 
 		const response = editingRecordId
-			? await formsApi.updateRecord(editingRecordId, {
+			? await updateRecordWithVersion(editingRecordId, {
 					title: recordTitle.trim() || undefined,
 					values,
 					source: { type: 'web' }
@@ -1611,7 +2094,7 @@
 
 		updatingCalendarRecordId = occurrence.record.id;
 
-		const response = await formsApi.updateRecord(occurrence.record.id, {
+		const response = await updateRecordWithVersion(occurrence.record.id, {
 			values: nextValues,
 			source: { type: 'web', origin: 'calendar_shift' }
 		});
@@ -1996,7 +2479,7 @@
 
 		updatingKanbanRecordId = record.id;
 
-		const response = await formsApi.updateRecord(record.id, {
+		const response = await updateRecordWithVersion(record.id, {
 			values: { ...record.values, [field.key]: value },
 			source: { type: 'web', origin: 'kanban' }
 		});
@@ -2019,7 +2502,7 @@
 
 		updatingCardRecordId = record.id;
 
-		const response = await formsApi.updateRecord(record.id, {
+		const response = await updateRecordWithVersion(record.id, {
 			values: { ...record.values, [field.key]: value },
 			source: { type: 'web', origin: 'card' }
 		});
@@ -2165,7 +2648,7 @@
 
 		updatingTimelineRecordId = record.id;
 
-		const response = await formsApi.updateRecord(record.id, {
+		const response = await updateRecordWithVersion(record.id, {
 			values: { ...record.values, [field.key]: value },
 			source: { type: 'web', origin: 'timeline' }
 		});
@@ -2244,7 +2727,7 @@
 		for (const record of selectedRecords) {
 			if (String(record.values[kanbanGroupField.key] ?? '') === bulkKanbanTarget) continue;
 
-			const response = await formsApi.updateRecord(record.id, {
+			const response = await updateRecordWithVersion(record.id, {
 				values: { ...record.values, [kanbanGroupField.key]: bulkKanbanTarget },
 				source: { type: 'web', origin: 'kanban_bulk' }
 			});
@@ -2350,7 +2833,7 @@
 
 		updatingCalendarRecordId = record.id;
 
-		const response = await formsApi.updateRecord(record.id, {
+		const response = await updateRecordWithVersion(record.id, {
 			values: nextValues,
 			source: { type: 'web', origin: 'calendar' }
 		});
@@ -2394,7 +2877,7 @@
 
 		updatingCalendarRecordId = record.id;
 
-		const response = await formsApi.updateRecord(record.id, {
+		const response = await updateRecordWithVersion(record.id, {
 			values: nextValues,
 			source: { type: 'web', origin: 'calendar_series' }
 		});
@@ -2427,7 +2910,7 @@
 
 		updatingCalendarRecordId = record.id;
 
-		const response = await formsApi.updateRecord(record.id, {
+		const response = await updateRecordWithVersion(record.id, {
 			values: {
 				...record.values,
 				[endField.key]: calendarDatePayloadValue(endField, nextEnd)
@@ -2514,7 +2997,7 @@
 
 		updatingGanttRecordId = record.id;
 
-		const response = await formsApi.updateRecord(record.id, {
+		const response = await updateRecordWithVersion(record.id, {
 			values: nextValues,
 			source: { type: 'web', origin: 'gantt' }
 		});
@@ -2543,7 +3026,7 @@
 
 		updatingGanttRecordId = record.id;
 
-		const response = await formsApi.updateRecord(record.id, {
+		const response = await updateRecordWithVersion(record.id, {
 			values: {
 				...record.values,
 				[endField.key]: calendarDatePayloadValue(endField, nextEnd)
@@ -2695,6 +3178,11 @@
 	}
 
 	function startEditRecord(record: FormRecord) {
+		formsSessionRecordVersion = {
+			recordId: record.id,
+			updatedAt: record.updated_at,
+			schemaVersion: selectedForm?.schema_version ?? 0
+		};
 		selectedRecord = record;
 		editingRecordId = record.id;
 		activeMode = 'data';
@@ -2703,6 +3191,7 @@
 			fields.map((field) => [field.key, draftValueForField(field, record)])
 		);
 		void loadRecordAttachments(record.id);
+		cleanFormsGroup('record');
 	}
 
 	function openRecordCreateDrawer() {
@@ -2733,61 +3222,14 @@
 		);
 	}
 
-	/** The record drawer is a modal: Escape closes it and Tab stays inside it. */
+	/** Task-local editor: navigation chrome stays reachable; do not trap Tab globally. */
 	function handleGlobalKeydown(event: KeyboardEvent) {
-		if (!recordEditorOpen) return;
-
+		if (!recordEditorOpen || !recordEditorPanel?.contains(document.activeElement)) return;
 		if (event.key === 'Escape') {
 			event.preventDefault();
 			closeRecordEditorDrawer();
-
-			return;
-		}
-
-		if (event.key !== 'Tab') return;
-
-		const panel = recordEditorPanel;
-
-		if (!panel) return;
-
-		const focusable = focusableElementsIn(panel);
-		const first = focusable[0];
-		const last = focusable[focusable.length - 1];
-
-		if (!first || !last) return;
-
-		const active = document.activeElement;
-		const inside = panel.contains(active);
-
-		if (event.shiftKey) {
-			if (!inside || active === first) {
-				event.preventDefault();
-				last.focus();
-			}
-
-			return;
-		}
-
-		if (!inside || active === last) {
-			event.preventDefault();
-			first.focus();
 		}
 	}
-
-	$effect(() => {
-		if (!recordEditorOpen) return;
-
-		const panel = recordEditorPanel;
-
-		if (!panel) return;
-
-		const previouslyFocused =
-			document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-		focusableElementsIn(panel)[0]?.focus({ preventScroll: true });
-
-		return () => previouslyFocused?.focus({ preventScroll: true });
-	});
 
 	function goToRecordPage(page: number) {
 		recordPage = Math.min(Math.max(page, 1), recordPageCount);
@@ -3158,7 +3600,7 @@
 		childSubmitting = true;
 
 		const response = childEditor.recordId
-			? await formsApi.updateRecord(childEditor.recordId, {
+			? await updateRecordWithVersion(childEditor.recordId, {
 					title: childEditor.title.trim() || undefined,
 					values,
 					source: { type: 'web', parent_record_id: selectedRecord.id }
@@ -3269,6 +3711,8 @@
 
 		recordDraft = next;
 		recordTitle = '';
+		formsSessionRecordVersion = null;
+		cleanFormsGroup('record');
 	}
 
 	function defaultDraftValueForField(field: FormField): unknown {
@@ -7387,6 +7831,8 @@
 			visibility: 'shared',
 			isDefault: false
 		};
+		formsSessionViewVersion = selectedView?.updated_at ?? null;
+		cleanFormsGroup('view');
 	}
 
 	function startNewViewDraft() {
@@ -8349,7 +8795,8 @@
 					view_type: viewDraft.view_type,
 					config: viewConfigFromDraft(),
 					expected_updated_at:
-						selectedView?.id === selectedViewId ? selectedView.updated_at : undefined
+						formsSessionViewVersion ??
+						(selectedView?.id === selectedViewId ? selectedView.updated_at : undefined)
 				})
 			: await formsApi.createView(selectedForm.id, {
 					key,
@@ -10746,7 +11193,7 @@
 
 		const response = await formsApi.update(selectedForm.id, {
 			schema,
-			expected_schema_version: selectedForm.schema_version
+			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
 		designerSaving = false;
@@ -10786,7 +11233,7 @@
 					badge_field: detailHeaderDraft.badgeField || undefined
 				}
 			},
-			expected_schema_version: selectedForm.schema_version
+			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
 		detailHeaderSaving = false;
@@ -10813,7 +11260,7 @@
 				...(selectedForm.detail_layout ?? {}),
 				highlights: detailHighlightDraft.fields
 			},
-			expected_schema_version: selectedForm.schema_version
+			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
 		detailHighlightSaving = false;
@@ -10844,7 +11291,7 @@
 					field_columns: detailPageCompositionDraft.fieldColumns
 				}
 			},
-			expected_schema_version: selectedForm.schema_version
+			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
 		detailPageCompositionSaving = false;
@@ -10870,7 +11317,7 @@
 
 		const response = await formsApi.update(selectedForm.id, {
 			detail_layout: { ...(selectedForm.detail_layout ?? {}), sections },
-			expected_schema_version: selectedForm.schema_version
+			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
 		detailLayoutSectionSaving = false;
@@ -10897,7 +11344,7 @@
 				...(selectedForm.detail_layout ?? {}),
 				widgets: detailPageWidgetPayload(entries)
 			},
-			expected_schema_version: selectedForm.schema_version
+			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
 		detailPageWidgetSaving = false;
@@ -11219,7 +11666,7 @@
 
 		const currentRecord = records.find((record) => record.id === editingRecordId) ?? selectedRecord;
 		const values = { ...(currentRecord?.values ?? recordDraft), [field.key]: value };
-		const response = await formsApi.updateRecord(editingRecordId, {
+		const response = await updateRecordWithVersion(editingRecordId, {
 			values,
 			source: { type: 'web', origin: 'attachment' }
 		});
@@ -11741,9 +12188,94 @@
 	}
 </script>
 
+{#snippet formsSessionNotice()}
+	{#if formsSessionRefreshFailed}
+		<p
+			class="rounded border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950"
+			role="status"
+			data-testid="task-refresh-stale"
+		>
+			{$t('forms.session.refreshFailed')}
+		</p>
+	{/if}
+	{#if formsSessionRemoteChanged || formsSessionConflict}
+		<section
+			class="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950"
+			role="status"
+			data-testid="task-remote-change"
+		>
+			<p>{$t('forms.session.remoteChanged')}</p>
+			{#if formsSessionConflict}<p data-testid="task-conflict">
+					{$t('forms.session.conflict')}
+				</p>{/if}
+			<div class="mt-2 flex gap-2">
+				<button
+					type="button"
+					class="rounded border px-3 py-1"
+					data-testid="task-review"
+					onclick={() => {
+						formsSessionReview = !formsSessionReview;
+					}}>{$t('forms.session.review')}</button
+				>
+				<button
+					type="button"
+					class="rounded border px-3 py-1"
+					data-testid="task-reload"
+					onclick={() => {
+						void reloadFormsSession();
+					}}>{$t('forms.session.reload')}</button
+				>
+			</div>
+			{#if formsSessionReview}
+				<div class="mt-3 space-y-2" data-testid="task-review-content">
+					{#if formsSessionRemoteRecord}
+						<table class="w-full text-left">
+							<thead
+								><tr
+									><th>{$t('forms.session.field')}</th><th>{$t('forms.session.mine')}</th><th
+										>{$t('forms.session.server')}</th
+									></tr
+								></thead
+							><tbody>
+								<tr
+									><th>Title</th><td class="whitespace-pre-wrap">{recordTitle}</td><td
+										class="whitespace-pre-wrap">{formsSessionRemoteRecord.title}</td
+									></tr
+								>
+								{#each Object.entries(recordDraft) as [key, value]}<tr
+										><th>{key}</th><td class="whitespace-pre-wrap">{formsReviewText(value)}</td><td
+											class="whitespace-pre-wrap"
+											>{formsReviewText(formsSessionRemoteRecord.values[key])}</td
+										></tr
+									>{/each}
+							</tbody>
+						</table>
+					{/if}
+					<p>{$t('forms.session.reviewReadOnly')}</p>
+					<button
+						type="button"
+						class="rounded border px-3 py-1"
+						data-testid="task-keep-draft"
+						onclick={() => {
+							formsSessionReview = false;
+						}}>{$t('forms.session.keepDraft')}</button
+					>
+				</div>
+			{/if}
+		</section>
+	{/if}
+{/snippet}
+
 <svelte:window onkeydown={handleGlobalKeydown} />
 
-<div class="mx-auto max-w-7xl space-y-5">
+<div
+	class="mx-auto max-w-7xl space-y-5"
+	bind:this={formsSessionRoot}
+	onfocusout={rememberFormsFocus}
+	aria-busy={formsSessionTransitioning}
+	inert={formsSessionTransitioning}
+>
+	{#if !recordEditorOpen}{@render formsSessionNotice()}{/if}
 	<div
 		class="flex flex-col gap-3 border-b border-slate-200 pb-4 dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between"
 	>
@@ -16358,10 +16890,11 @@
 
 								{#if recordEditorOpen}
 									<div
-										class="fixed inset-0 z-40 flex justify-end bg-slate-950/30 backdrop-blur-[1px]"
+										use:recordEditorAction
+										class="pointer-events-auto absolute inset-0 z-30 flex justify-end bg-slate-950/30"
 										data-record-editor-drawer
 										role="dialog"
-										aria-modal="true"
+										aria-modal="false"
 										aria-labelledby="record-editor-title"
 									>
 										<button
@@ -16396,6 +16929,7 @@
 												</Button>
 											</div>
 
+											{@render formsSessionNotice()}
 											<div class="grid gap-3 md:grid-cols-2">
 												<label class="space-y-1 md:col-span-2">
 													<span class="text-sm font-medium text-slate-700 dark:text-slate-300"

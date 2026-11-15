@@ -200,7 +200,7 @@ export interface NavigatorEntry {
 }
 
 export interface ObjectHandle {
-	readonly workspaceId: string;
+	readonly scopeId: string;
 	readonly objectId: string;
 	readonly objectType: FlowReadableObjectType;
 	readonly documentId: string;
@@ -238,7 +238,7 @@ export interface HistorySummaryItem {
 // see the delivery report for the exact list of contract members not built this round.
 
 export interface ObjectHandleInput {
-	readonly workspaceId: string;
+	readonly scopeId: string;
 	readonly objectId: string;
 	readonly signal: AbortSignal;
 }

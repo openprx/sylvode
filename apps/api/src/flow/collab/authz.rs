@@ -298,7 +298,28 @@ enum ChainWalk {
 ///
 /// The probe deliberately runs one hop past the legal maximum so that an over-deep or cyclic chain
 /// is *detected* rather than coming back looking like a valid short one.
+#[derive(Clone, Copy)]
+enum ChainNamespace {
+    LegacyWorkspace,
+    FlowScope,
+}
+impl ChainNamespace {
+    const fn column(self) -> &'static str {
+        match self {
+            Self::LegacyWorkspace => "workspace_id",
+            Self::FlowScope => "scope_id",
+        }
+    }
+}
 async fn walk_chain<C: ConnectionTrait>(conn: &C, workspace_id: Uuid, object_id: Uuid) -> Result<ChainWalk, ApiError> {
+    walk_chain_in(conn, workspace_id, object_id, ChainNamespace::LegacyWorkspace).await
+}
+async fn walk_chain_in<C: ConnectionTrait>(
+    conn: &C,
+    workspace_id: Uuid,
+    object_id: Uuid,
+    namespace: ChainNamespace,
+) -> Result<ChainWalk, ApiError> {
     #[derive(FromQueryResult)]
     struct Row {
         id: Uuid,
@@ -319,23 +340,26 @@ async fn walk_chain<C: ConnectionTrait>(conn: &C, workspace_id: Uuid, object_id:
     let probe_depth = i64::try_from(MAX_CHAIN_NODES).unwrap_or(i64::MAX);
     let rows = Row::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "WITH RECURSIVE chain AS ( \
+        format!(
+            "WITH RECURSIVE chain AS ( \
              SELECT o.id, o.parent_id, o.inherit_from_parent, \
                     flow_is_system_navigator_root(o.object_type, o.parent_id, o.governance_metadata) \
                         AS is_system_navigator_root, \
                     0 AS depth \
                FROM flow_objects o \
-              WHERE o.id = $1 AND o.workspace_id = $2 \
+              WHERE o.id = $1 AND o.{ownership} = $2 \
              UNION ALL \
              SELECT p.id, p.parent_id, p.inherit_from_parent, \
                     flow_is_system_navigator_root(p.object_type, p.parent_id, p.governance_metadata), \
                     c.depth + 1 \
                FROM chain c \
-               JOIN flow_objects p ON p.id = c.parent_id AND p.workspace_id = $2 \
+               JOIN flow_objects p ON p.id = c.parent_id AND p.{ownership} = $2 \
               WHERE c.parent_id IS NOT NULL AND c.depth < $3::int \
          ) \
          SELECT id, parent_id, inherit_from_parent, is_system_navigator_root \
            FROM chain ORDER BY depth",
+            ownership = namespace.column()
+        ),
         vec![object_id.into(), workspace_id.into(), probe_depth.into()],
     ))
     .all(conn)
@@ -449,7 +473,22 @@ pub async fn ensure_parent_can_adopt_child<C: ConnectionTrait>(
     workspace_id: Uuid,
     parent_id: Uuid,
 ) -> Result<(), ApiError> {
-    match walk_chain(conn, workspace_id, parent_id).await? {
+    ensure_parent_in(conn, workspace_id, parent_id, ChainNamespace::LegacyWorkspace).await
+}
+pub async fn ensure_scope_parent_can_adopt_child<C: ConnectionTrait>(
+    conn: &C,
+    scope_id: Uuid,
+    parent: Uuid,
+) -> Result<(), ApiError> {
+    ensure_parent_in(conn, scope_id, parent, ChainNamespace::FlowScope).await
+}
+async fn ensure_parent_in<C: ConnectionTrait>(
+    conn: &C,
+    workspace_id: Uuid,
+    parent_id: Uuid,
+    namespace: ChainNamespace,
+) -> Result<(), ApiError> {
+    match walk_chain_in(conn, workspace_id, parent_id, namespace).await? {
         ChainWalk::Complete(chain) => {
             // The internal navigator root is not user content and therefore does not consume one
             // of the 32 user-visible parent hops.
@@ -884,6 +923,23 @@ pub async fn inheritance_chain<C: ConnectionTrait>(
     })
 }
 
+pub async fn scope_inheritance_chain<C: ConnectionTrait>(
+    conn: &C,
+    scope_id: Uuid,
+    object_id: Uuid,
+) -> Result<InheritanceChain, ApiError> {
+    let chain = match walk_chain_in(conn, scope_id, object_id, ChainNamespace::FlowScope).await? {
+        ChainWalk::Complete(chain) => chain,
+        ChainWalk::Missing => return Err(ApiError::not_found("flow object not found")),
+        _ => return Err(ApiError::forbidden("invalid Flow scope inheritance chain")),
+    };
+    let boundary_index = chain.iter().position(|node| !node.inherit_from_parent);
+    Ok(InheritanceChain {
+        ids: chain.into_iter().map(|node| node.id).collect(),
+        boundary_index,
+    })
+}
+
 /// Takes the conflicting (`FOR UPDATE`) lock on the workspace's `authz_epoch` row, held to the
 /// caller's commit.
 ///
@@ -1067,6 +1123,14 @@ pub async fn advance_epoch_if_present<C: ConnectionTrait>(
     conn: &C,
     workspace_id: Uuid,
 ) -> Result<Option<i64>, ApiError> {
+    // This audience fence exists even before Flow settings are provisioned. Mount creation
+    // takes it FOR SHARE before installing settings and reading publishing membership.
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM workspaces WHERE id=$1 FOR UPDATE",
+        vec![workspace_id.into()],
+    ))
+    .await?;
     #[derive(FromQueryResult)]
     struct Row {
         authz_epoch: i64,

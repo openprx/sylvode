@@ -67,6 +67,7 @@ pub struct UpdateProjectRequest {
     pub description: Option<String>,
     pub type_key: Option<String>,
     pub type_settings: Option<JsonValue>,
+    pub expected_updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -2210,17 +2211,24 @@ pub async fn update_project(
         return Err(ApiError::BadRequest("no fields to update".to_string()));
     }
 
-    updates.push(format!("updated_at = ${param_idx}"));
-    values.push(chrono::Utc::now().into());
-    param_idx += 1;
+    updates.push("updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')".into());
 
     values.push(project_id.into());
 
-    let query = format!("UPDATE projects SET {} WHERE id = ${}", updates.join(", "), param_idx);
-
+    let mut query = format!("UPDATE projects SET {} WHERE id = ${}", updates.join(", "), param_idx);
+    if let Some(expected) = req.expected_updated_at {
+        param_idx += 1;
+        std::fmt::Write::write_fmt(&mut query, format_args!(" AND updated_at=${param_idx}"))
+            .map_err(|_| ApiError::Internal)?;
+        values.push(expected.into());
+    }
     let tx = state.db.begin().await?;
-    tx.execute(Statement::from_sql_and_values(DbBackend::Postgres, &query, values))
+    let written = tx
+        .execute(Statement::from_sql_and_values(DbBackend::Postgres, &query, values))
         .await?;
+    if written.rows_affected() != 1 {
+        return Err(ApiError::VersionConflict("project_version_conflict"));
+    }
 
     // Fetch updated project
     #[derive(Debug, sea_orm::FromQueryResult)]
@@ -2355,6 +2363,23 @@ pub async fn delete_project(
     }
 
     let tx = state.db.begin().await?;
+    crate::flow::scope_mounts::fence_destination_delete(&tx, project.workspace_id, Some(project_id)).await?;
+    let current = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+            vec![project.workspace_id.into(), user_id.into()],
+        ))
+        .await?;
+    if !current.is_some_and(|row| {
+        row.try_get::<String>("", "role")
+            .is_ok_and(|role| matches!(role.as_str(), "owner" | "admin"))
+    }) {
+        return Err(ApiError::Forbidden(
+            "only owners and admins can delete projects".to_string(),
+        ));
+    }
+
     insert_business_event(
         &tx,
         BusinessEventInput {

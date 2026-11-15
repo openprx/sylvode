@@ -65,7 +65,7 @@ async function open(
 	const connectivity = shared?.connectivity ?? new FakeConnectivity();
 	const repository = shared?.repository ?? (await newRepository(connectivity));
 	const entry = await repository.open({
-		workspaceId: WORKSPACE_ID,
+		scopeId: WORKSPACE_ID,
 		objectId: OBJECT_ID,
 		signal: new AbortController().signal,
 		object: objectView() as unknown as FlowObjectView

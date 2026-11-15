@@ -80,8 +80,15 @@ export function classifyObjectExportFailure(result: FlowPackageEnvelope): FlowPa
 
 /** The formats offered for an object of `objectType`. A Record keeps `package`: whether it has
  * restricted fields is the server's decision, answered as `field_secrecy` when it does. */
-export function objectExportFormats(objectType: string): FlowObjectExportFormat[] {
-	return OBJECT_EXPORT_FORMATS.filter((format) => format !== 'csv' || objectType === 'collection');
+export function objectExportFormats(
+	objectType: string,
+	supported?: readonly FlowObjectExportFormat[]
+): FlowObjectExportFormat[] {
+	return OBJECT_EXPORT_FORMATS.filter((format) =>
+		supported === undefined
+			? format !== 'csv' || objectType === 'collection'
+			: supported.includes(format)
+	);
 }
 
 export interface ObjectExportOptions {

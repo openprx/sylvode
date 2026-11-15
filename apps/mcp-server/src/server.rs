@@ -614,6 +614,20 @@ impl McpServer {
             return None;
         }
 
+        if self.client.is_flow_only() && req.method.starts_with("resources/") {
+            let response = match req.method.as_str() {
+                "resources/list" => JsonRpcResponse::success(req.id, json!({"resources":[]})),
+                "resources/templates/list" => JsonRpcResponse::success(req.id, json!({"resourceTemplates":[]})),
+                _ => JsonRpcResponse::error(
+                    req.id,
+                    JsonRpcError::method_not_found(
+                        "Flow-only mode exposes registered Flow tools, not workspace resource dispatch",
+                    ),
+                ),
+            };
+            return if is_notification { None } else { Some(response) };
+        }
+
         let response = match req.method.as_str() {
             "initialize" => self.handle_initialize(req.id),
             "notifications/initialized" | "ping" => JsonRpcResponse::success(req.id, json!({})),
@@ -635,7 +649,11 @@ impl McpServer {
     }
 
     async fn handle_list_tools(&self, id: Option<Value>, params: Option<Value>) -> JsonRpcResponse {
-        let static_tools = tools::get_all_tool_definitions();
+        let static_tools = if self.client.is_flow_only() {
+            tools::flow_scope::definitions()
+        } else {
+            tools::get_all_tool_definitions()
+        };
         let requested_project_id = match extract_tools_list_project_id(params.as_ref()) {
             Ok(project_id) => project_id,
             Err(error) => return JsonRpcResponse::error(id, JsonRpcError::invalid_params(error)),
@@ -708,8 +726,39 @@ impl McpServer {
     pub async fn call_tool(&self, name: &str, args: Value) -> CallToolResult {
         let scoped = Self {
             client: self.client.recording_operation(name),
-            project_id_cache: Arc::clone(&self.project_id_cache),
+            project_id_cache: if self.client.is_flow_only() {
+                Arc::new(Mutex::new(HashMap::new()))
+            } else {
+                Arc::clone(&self.project_id_cache)
+            },
         };
+        if scoped.client.is_flow_only() {
+            let request = match tools::flow_scope::prepare(&scoped.client, name, &args).await {
+                Ok(value) => value,
+                Err(error) => return error,
+            };
+            let mut projects = request
+                .policy_projects
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            for target in &request.form_policy_args {
+                match scoped.resolve_form_data_owner(name, target).await {
+                    Ok(project) => {
+                        projects.insert(project);
+                    }
+                    Err(error) => return CallToolResult::error(error),
+                }
+            }
+            for project in &projects {
+                for policy_tool in &request.policy_tools {
+                    if let Err(error) = scoped.enforce_resolved_project_policy(policy_tool, Some(project)).await {
+                        return CallToolResult::error(error);
+                    }
+                }
+            }
+            return tools::flow_scope::execute(&scoped.client, request).await;
+        }
         if let Err(error) = enforce_workspace_admin_tool_policy(name, &args) {
             return CallToolResult::error(error);
         }
@@ -1385,9 +1434,14 @@ impl McpServer {
             return Ok(());
         };
 
+        self.enforce_resolved_project_policy(tool_name, Some(&project_id)).await
+    }
+
+    async fn enforce_resolved_project_policy(&self, tool_name: &str, project_id: Option<&str>) -> Result<(), String> {
+        let Some(project_id) = project_id else { return Ok(()) };
         let policy = self
             .client
-            .get_project_agent_policy(&project_id)
+            .get_project_agent_policy(project_id)
             .await
             .map_err(|error| format!("Failed to load project agent policy for tools/call: {error}"))?;
         // The policy subject is a validated UUID and the client rejects anything that is
@@ -1424,7 +1478,7 @@ impl McpServer {
 
     #[allow(clippy::unused_self)]
     fn handle_initialize(&self, id: Option<Value>) -> JsonRpcResponse {
-        let result = json!({
+        let mut result = json!({
             "protocolVersion": "2024-11-05",
             "capabilities": {
                 "tools": {
@@ -1444,6 +1498,11 @@ impl McpServer {
             }
         });
 
+        if self.client.is_flow_only()
+            && let Some(fields) = result.as_object_mut()
+        {
+            fields.insert("capabilities".into(), json!({"tools":{"listChanged":false}}));
+        }
         JsonRpcResponse::success(id, result)
     }
 

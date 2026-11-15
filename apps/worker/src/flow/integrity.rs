@@ -7,6 +7,7 @@ use uuid::Uuid;
 struct Job {
     id: Uuid,
     document_id: Uuid,
+    expected_head_seq: Option<i64>,
 }
 
 #[derive(Debug, Default)]
@@ -24,13 +25,32 @@ pub async fn run_tick(db: &DatabaseConnection, requested_batch_size: usize) -> a
              WHERE id = (SELECT id FROM flow_operation_runs \
                WHERE operation = 'verify_document' AND status = 'planned' \
                ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1) \
-             RETURNING id, scope_id AS document_id"
+             RETURNING id, scope_id AS document_id, expected_head_seq"
                 .to_string(),
         ))
         .one(db)
         .await?;
         let Some(job) = job else { break };
-        match api::flow::collab::integrity::document_fingerprint(db, job.document_id).await {
+        let (_authority, outcome) = match api::flow::scope_operations::job_authority(db, job.id).await {
+            Ok(guard) => (
+                guard,
+                api::flow::collab::integrity::document_fingerprint(db, job.document_id)
+                    .await
+                    .and_then(|fingerprint| {
+                        if job.expected_head_seq.is_some_and(|seq| seq != fingerprint.head_seq) {
+                            Err(api::error::ApiError::stale_frontier(
+                                "maintenance head changed",
+                                Some(fingerprint.head_seq),
+                                None,
+                            ))
+                        } else {
+                            Ok(fingerprint)
+                        }
+                    }),
+            ),
+            Err(error) => (None, Err(error)),
+        };
+        match outcome {
             Ok(fingerprint) => {
                 let result = serde_json::to_value(fingerprint)?;
                 db.execute(Statement::from_sql_and_values(

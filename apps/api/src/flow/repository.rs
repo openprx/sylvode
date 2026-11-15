@@ -54,7 +54,7 @@ pub async fn fetch_object_view<C: ConnectionTrait>(
     conn: &C,
     object_id: Uuid,
 ) -> Result<Option<ObjectViewRow>, ApiError> {
-    let sql = format!("{OBJECT_VIEW_SELECT} WHERE fo.id = $1");
+    let sql = format!("{OBJECT_VIEW_SELECT} WHERE fo.id = $1 AND fo.workspace_id IS NOT NULL");
     Ok(ObjectViewRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         sql,
@@ -69,7 +69,7 @@ pub async fn fetch_object_view<C: ConnectionTrait>(
 pub async fn fetch_object_workspace<C: ConnectionTrait>(conn: &C, object_id: Uuid) -> Result<Option<Uuid>, ApiError> {
     #[derive(FromQueryResult)]
     struct Row {
-        workspace_id: Uuid,
+        workspace_id: Option<Uuid>,
     }
     let row = Row::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -78,7 +78,14 @@ pub async fn fetch_object_workspace<C: ConnectionTrait>(conn: &C, object_id: Uui
     ))
     .one(conn)
     .await?;
-    Ok(row.map(|r| r.workspace_id))
+    match row {
+        Some(Row { workspace_id: None }) => Err(ApiError::typed_with_details(
+            crate::error::ApiErrorKind::UnsupportedProtocol,
+            "personal resources require the Flow v2 API",
+            serde_json::json!({"reason":"personal_resource_requires_v2"}),
+        )),
+        other => Ok(other.and_then(|r| r.workspace_id)),
+    }
 }
 
 /// Immutable accepted update needed to reconstruct the semantic state at a historical seq.

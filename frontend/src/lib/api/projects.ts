@@ -149,6 +149,7 @@ export const projectsApi = {
 			description?: string;
 			type_key?: string;
 			type_settings?: Record<string, unknown>;
+			expected_updated_at?: string;
 		}
 	): Promise<ApiResult<Project>> {
 		return apiClient.put<Project>(`/api/v1/projects/${projectId}`, data);
@@ -230,6 +231,7 @@ export const projectsApi = {
 			locator?: Record<string, unknown>;
 			permission_policy?: Record<string, unknown>;
 			sync_status?: string;
+			expected_updated_at?: string;
 		}
 	): Promise<ApiResult<ProjectResource>> {
 		return apiClient.patch<ProjectResource>(

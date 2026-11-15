@@ -52,6 +52,8 @@ struct Args {
     build_info: bool,
 }
 
+const MAX_HTTP_REQUEST_BYTES: usize = 200 * 1024 * 1024;
+
 /// Logs once per process, at startup, when this build has no `ADR-0014` isolated-apply boundary
 /// (every target except Linux). Such a server still serves Projects, Forms, MCP, and Flow reads,
 /// but every Flow collaborative write and object diff is refused with `server_rejected`
@@ -112,9 +114,11 @@ async fn main() -> anyhow::Result<()> {
         reaper_stop_rx,
     ));
 
+    let reader_db = state.db.clone();
     let app = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(&cfg.bind_addr).await?;
+    api::flow::scope_runtime::spawn(reader_db, "api").await?;
     tracing::info!(bind_addr = %cfg.bind_addr, "api server started");
     axum::serve(
         listener,
@@ -1769,7 +1773,7 @@ fn build_router(state: AppState) -> Router {
                 middleware::bot_auth::bot_or_user_auth_middleware,
             )),
         )
-        .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(MAX_HTTP_REQUEST_BYTES))
         // The custom span preserves the tower-http fields but records only the URI path. Query
         // strings carry both secrets (collab tickets) and user content (search/filter terms), so
         // sanitization is global rather than an allowlist of routes that will drift.
@@ -1787,7 +1791,388 @@ fn build_router(state: AppState) -> Router {
 /// A Flow route belongs here and not in [`build_router`]; `tests/flow_typed_error_gate.rs` fails
 /// on one registered anywhere else, and on a route here that is not a Flow handler.
 fn flow_surface_routes(auth_state: &AppState) -> Router<AppState> {
-    Router::new()
+    let v2 = Router::new()
+        .route(
+            "/api/v2/flow/objects/{object_id}/relations",
+            get(routes::flow::get_flow_v2_relations).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/inheritance",
+            put(routes::flow::put_flow_v2_inheritance).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/mention-candidates",
+            get(routes::flow::get_flow_v2_mentions).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/public-shares/{token}",
+            get(routes::flow::get_flow_v2_public_share),
+        )
+        .route(
+            "/api/v2/flow/public-shares/{token}/assets/{asset_id}",
+            get(routes::flow::get_flow_v2_public_asset),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/share-links",
+            get(routes::flow::get_flow_v2_share_links)
+                .post(routes::flow::post_flow_v2_share_link)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/share-links/{link_id}/revoke",
+            post(routes::flow::revoke_flow_v2_share_link).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/appearance",
+            put(routes::flow::put_flow_v2_appearance).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/appearance/assets",
+            post(routes::flow::post_flow_v2_asset).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/appearance/assets/{asset_id}",
+            get(routes::flow::get_flow_v2_asset).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/comments/{comment_id}",
+            patch(routes::flow::patch_flow_v2_comment)
+                .delete(routes::flow::delete_flow_v2_comment)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/comments/{comment_id}/resolve",
+            post(routes::flow::resolve_flow_v2_comment).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/collections/{collection_id}",
+            get(routes::flow::get_flow_v2_collection).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/schema",
+            get(routes::flow::get_flow_v2_schema).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/collections/{collection_id}/records",
+            get(routes::flow::get_flow_v2_records)
+                .post(routes::flow::post_flow_v2_record)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/collections/{collection_id}/query",
+            post(routes::flow::post_flow_v2_record_query).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/references/{reference_id}",
+            delete(routes::flow::delete_flow_v2_reference).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/references",
+            get(routes::flow::get_flow_v2_references)
+                .post(routes::flow::post_flow_v2_reference)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/collab",
+            get(routes::flow::get_flow_v2_collab_diagnostics).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/operations",
+            post(routes::flow::post_flow_v2_operation).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/operations/{operation_id}",
+            get(routes::flow::get_flow_v2_operation).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/health",
+            get(routes::flow::get_flow_v2_scope_health).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/exports",
+            post(routes::flow::post_flow_v2_scope_export).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/import-artifacts",
+            post(routes::flow::post_flow_v2_import_artifact).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/imports/preview",
+            post(routes::flow::post_flow_v2_import_preview).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/imports/{preview_id}/commit",
+            post(routes::flow::post_flow_v2_import_commit).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/imports/{job_id}",
+            get(routes::flow::get_flow_v2_import).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/records/{record_id}/context",
+            get(routes::flow::get_flow_v2_record_context).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/exports",
+            post(routes::flow::post_flow_v2_export).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/exports/{job_id}",
+            get(routes::flow::get_flow_v2_export).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/exports/{job_id}/artifact",
+            get(routes::flow::get_flow_v2_export_artifact).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/mounts",
+            get(routes::flow::get_flow_v2_mounts)
+                .post(routes::flow::post_flow_v2_mount)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/mounts/{mount_id}",
+            delete(routes::flow::delete_flow_v2_mount).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/purge",
+            post(routes::flow::post_flow_v2_purge).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/history/restore",
+            post(routes::flow::post_flow_v2_restore_version).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/diff",
+            get(routes::flow::get_flow_v2_diff).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/history",
+            get(routes::flow::get_flow_v2_history).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/comments",
+            get(routes::flow::get_flow_v2_comments)
+                .post(routes::flow::post_flow_v2_comment)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/grants",
+            get(routes::flow::get_flow_v2_grants)
+                .put(routes::flow::put_flow_v2_grants)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/search",
+            get(routes::flow::get_flow_v2_search).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/trash",
+            get(routes::flow::get_flow_v2_trash).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/projection-lag",
+            get(routes::flow::get_flow_v2_projection_lag).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/share-principals",
+            get(routes::flow::get_flow_v2_share_principals).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route("/api/v2/flow/collab/ws", get(routes::flow::get_flow_v2_ws))
+        .route(
+            "/api/v2/flow/collab/tickets",
+            post(routes::flow::post_flow_v2_ticket).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/capabilities",
+            get(routes::flow::get_flow_v2_capabilities).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/home",
+            get(routes::flow::get_flow_v2_home).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/workspaces/{workspace_id}/scope",
+            get(routes::flow::get_flow_v2_workspace_scope).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/objects",
+            get(routes::flow::get_flow_v2_objects).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/navigator",
+            get(routes::flow::get_flow_v2_navigator).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects",
+            post(routes::flow::post_flow_v2_object).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}",
+            get(routes::flow::get_flow_v2_object).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/bootstrap",
+            get(routes::flow::get_flow_v2_bootstrap).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/commands",
+            post(routes::flow::post_flow_v2_command).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        );
+    let legacy = Router::new()
         // Sylvode Flow routes (protected). v0.4 REST API layer, package 1: object create/list/get
         // /history/commands/bootstrap — package 2 (collab tickets/ws/diagnostics/verify) follows
         // below.
@@ -1940,6 +2325,41 @@ fn flow_surface_routes(auth_state: &AppState) -> Router<AppState> {
         .route(
             "/api/v1/flow/objects/{object_id}/references/{reference_id}",
             delete(routes::flow::delete_flow_object_reference).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/conversions/preview",
+            post(routes::flow::post_flow_v2_conversion_preview).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/conversions",
+            post(routes::flow::post_flow_v2_conversion).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/conversions/{job_id}",
+            get(routes::flow::get_flow_v2_conversion).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/conversions/{conversion_id}/owner",
+            get(routes::flow::get_flow_v2_conversion_owner).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/conversions/{job_id}/retry",
+            post(routes::flow::post_flow_v2_conversion_retry).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
                 middleware::bot_auth::bot_or_user_auth_middleware,
             )),
@@ -2216,7 +2636,27 @@ fn flow_surface_routes(auth_state: &AppState) -> Router<AppState> {
                 auth_state.clone(),
                 middleware::bot_auth::bot_or_user_auth_middleware,
             )),
-        )
+        );
+    let adapter = routes::flow::LegacyFlowRouter(
+        legacy
+            .clone()
+            .layer(DefaultBodyLimit::max(MAX_HTTP_REQUEST_BYTES))
+            .with_state(auth_state.clone()),
+    );
+    v2.route(
+        "/api/v2/flow/{*legacy_path}",
+        get(routes::flow::flow_v2_legacy_adapter)
+            .post(routes::flow::flow_v2_legacy_adapter)
+            .put(routes::flow::flow_v2_legacy_adapter)
+            .patch(routes::flow::flow_v2_legacy_adapter)
+            .delete(routes::flow::flow_v2_legacy_adapter)
+            .route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+    )
+    .layer(axum::Extension(adapter))
+    .merge(legacy)
 }
 
 fn write_build_info() -> anyhow::Result<()> {
@@ -2653,6 +3093,66 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0077_flow_public_share_rate.sql",
         include_str!("../../../migrations/0077_flow_public_share_rate.sql"),
     ),
+    (
+        "0078_flow_scope_expansion.sql",
+        include_str!("../../../migrations/0078_flow_scope_expansion.sql"),
+    ),
+    (
+        "0079_flow_scope_constraint_cutover.sql",
+        include_str!("../../../migrations/0079_flow_scope_constraint_cutover.sql"),
+    ),
+    (
+        "0080_flow_scope_secondary_ownership.sql",
+        include_str!("../../../migrations/0080_flow_scope_secondary_ownership.sql"),
+    ),
+    (
+        "0081_flow_scope_typed_ownership.sql",
+        include_str!("../../../migrations/0081_flow_scope_typed_ownership.sql"),
+    ),
+    (
+        "0082_flow_scope_relations_mount_ancestry.sql",
+        include_str!("../../../migrations/0082_flow_scope_relations_mount_ancestry.sql"),
+    ),
+    (
+        "0083_flow_export_authority_snapshot.sql",
+        include_str!("../../../migrations/0083_flow_export_authority_snapshot.sql"),
+    ),
+    (
+        "0084_flow_legacy_export_authority.sql",
+        include_str!("../../../migrations/0084_flow_legacy_export_authority.sql"),
+    ),
+    (
+        "0085_flow_ticket_authorization_notifications.sql",
+        include_str!("../../../migrations/0085_flow_ticket_authorization_notifications.sql"),
+    ),
+    (
+        "0086_flow_purge_tombstone_receipts.sql",
+        include_str!("../../../migrations/0086_flow_purge_tombstone_receipts.sql"),
+    ),
+    (
+        "0087_flow_reference_source_scope.sql",
+        include_str!("../../../migrations/0087_flow_reference_source_scope.sql"),
+    ),
+    (
+        "0088_flow_scope_import_ownership.sql",
+        include_str!("../../../migrations/0088_flow_scope_import_ownership.sql"),
+    ),
+    (
+        "0089_flow_export_scope_selection.sql",
+        include_str!("../../../migrations/0089_flow_export_scope_selection.sql"),
+    ),
+    (
+        "0090_flow_conversion_source_scope.sql",
+        include_str!("../../../migrations/0090_flow_conversion_source_scope.sql"),
+    ),
+    (
+        "0091_flow_operation_scope_ownership.sql",
+        include_str!("../../../migrations/0091_flow_operation_scope_ownership.sql"),
+    ),
+    (
+        "0092_ai_participant_config_version.sql",
+        include_str!("../../../migrations/0092_ai_participant_config_version.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -3044,6 +3544,63 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0077_flow_public_share_rate.sql",
         SchemaProbe::Relation("flow_public_share_hits"),
+    ),
+    ("0078_flow_scope_expansion.sql", SchemaProbe::Relation("flow_scopes")),
+    (
+        "0079_flow_scope_constraint_cutover.sql",
+        SchemaProbe::Relation("flow_mounts"),
+    ),
+    (
+        "0080_flow_scope_secondary_ownership.sql",
+        SchemaProbe::Column("flow_export_jobs", "scope_id"),
+    ),
+    (
+        "0081_flow_scope_typed_ownership.sql",
+        SchemaProbe::Column("flow_collection_projections", "scope_id"),
+    ),
+    (
+        "0082_flow_scope_relations_mount_ancestry.sql",
+        SchemaProbe::Column("flow_relations", "scope_id"),
+    ),
+    (
+        "0083_flow_export_authority_snapshot.sql",
+        SchemaProbe::Column("flow_export_jobs", "source_authz_revision"),
+    ),
+    (
+        "0084_flow_legacy_export_authority.sql",
+        SchemaProbe::Column("flow_export_jobs", "artifact_resource_ids"),
+    ),
+    (
+        "0085_flow_ticket_authorization_notifications.sql",
+        SchemaProbe::Column("collab_tickets", "authorization_notifications"),
+    ),
+    (
+        "0086_flow_purge_tombstone_receipts.sql",
+        SchemaProbe::Column("flow_purge_receipts", "request_body"),
+    ),
+    (
+        "0087_flow_reference_source_scope.sql",
+        SchemaProbe::Column("flow_bridge_references", "scope_id"),
+    ),
+    (
+        "0088_flow_scope_import_ownership.sql",
+        SchemaProbe::Column("flow_import_jobs", "scope_id"),
+    ),
+    (
+        "0089_flow_export_scope_selection.sql",
+        SchemaProbe::Column("flow_export_jobs", "warnings"),
+    ),
+    (
+        "0090_flow_conversion_source_scope.sql",
+        SchemaProbe::Column("flow_conversion_jobs", "scope_id"),
+    ),
+    (
+        "0091_flow_operation_scope_ownership.sql",
+        SchemaProbe::Column("flow_operation_runs", "owner_flow_scope_id"),
+    ),
+    (
+        "0092_ai_participant_config_version.sql",
+        SchemaProbe::Column("ai_participants", "config_updated_at"),
     ),
 ];
 
@@ -5151,6 +5708,12 @@ mod flow_surface_boundary_tests {
             db,
             flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
         }
+    }
+
+    #[test]
+    fn scope_native_and_legacy_adapter_router_constructs_without_panicking() {
+        let state = state_for(DatabaseConnection::Disconnected);
+        let _router = super::build_router(state);
     }
 
     fn token_for(user_id: Uuid) -> String {

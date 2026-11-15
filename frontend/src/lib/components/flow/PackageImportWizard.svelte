@@ -28,11 +28,13 @@
 	import type { WorkspaceProjectOption } from '#lib/flow/package-export.js';
 
 	interface Props {
-		workspaceId: string;
+		scopeId: string;
+		reportWorkspaceId?: string;
 		projects: WorkspaceProjectOption[];
+		allowHistory?: boolean;
 	}
 
-	let { workspaceId, projects }: Props = $props();
+	let { scopeId, projects, reportWorkspaceId, allowHistory = true }: Props = $props();
 
 	// Snapshots are plain objects issued by the wizard; `$state.raw` keeps them unproxied.
 	let snap = $state.raw<WizardSnapshot | null>(null);
@@ -44,7 +46,7 @@
 
 	// The page is keyed by its route, so the workspace id is fixed for this component's lifetime.
 	const wizard = new PackageImportWizard(
-		untrack(() => workspaceId),
+		untrack(() => scopeId),
 		(next) => {
 			const previousStep = snap?.step;
 			snap = next;
@@ -53,6 +55,9 @@
 		}
 	);
 	snap = wizard.snapshot();
+	$effect(() => {
+		if (!allowHistory && snap?.options.includeHistory) wizard.setOptions({ includeHistory: false });
+	});
 
 	const clock = setInterval(() => {
 		if (!snap?.preview) return;
@@ -199,10 +204,12 @@
 		if (outcome.status === 'committed') {
 			announce('flow.import.live.committed');
 			await goto(
-				resolve('/(app)/workspace/[workspaceId]/settings/flow/package/imports/[importId]', {
-					workspaceId,
-					importId: outcome.importId
-				})
+				reportWorkspaceId
+					? resolve('/(app)/workspace/[workspaceId]/settings/flow/package/imports/[importId]', {
+							workspaceId: reportWorkspaceId,
+							importId: outcome.importId
+						})
+					: resolve('/(app)/flow/package/imports/[importId]', { importId: outcome.importId })
 			);
 		}
 	}
@@ -214,6 +221,13 @@
 	const fieldClass =
 		'mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
 </script>
+
+<p
+	class="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+	data-testid="flow-import-snapshot-history-notice"
+>
+	{$t('flow.package.snapshotHistoryNotice')}
+</p>
 
 <Card>
 	<section aria-labelledby="flow-import-heading" data-testid="flow-import">
@@ -413,13 +427,19 @@
 								type="checkbox"
 								class="h-5 w-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
 								checked={snap.options.includeHistory}
+								disabled={!allowHistory}
 								onchange={(event) =>
-									wizard.setOptions({ includeHistory: event.currentTarget.checked })}
+									wizard.setOptions({
+										includeHistory: allowHistory && event.currentTarget.checked
+									})}
 							/>
 							<span class="text-slate-900 dark:text-slate-100">
 								{$t('flow.import.options.includeHistory')}
 							</span>
 						</label>
+						{#if !allowHistory}<p class="text-xs text-slate-500">
+								{$t('flow.personal.packageHistoryUnavailable')}
+							</p>{/if}
 						<fieldset>
 							<legend class="text-sm font-medium text-slate-700 dark:text-slate-300">
 								{$t('flow.import.options.mappingLegend')}
@@ -613,6 +633,25 @@
 												})}
 											</dd>
 										</div>
+										{#if summary.source}
+											<div class="md:col-span-2">
+												<dt class="text-slate-500 dark:text-slate-400">
+													{$t('flow.package.sourceProvenance')}
+												</dt>
+												<dd
+													class="break-all font-mono text-xs text-slate-900 dark:text-slate-100"
+													data-testid="flow-import-source-provenance"
+												>
+													{#if summary.source.scope_id}<span class="block"
+															>{$t('flow.package.sourceScope')}: {summary.source.scope_id}</span
+														>{/if}
+													{#if summary.source.workspace_id}<span class="block"
+															>{$t('flow.package.sourceWorkspace')}: {summary.source
+																.workspace_id}</span
+														>{/if}
+												</dd>
+											</div>
+										{/if}
 										<div class="md:col-span-2">
 											<dt class="text-slate-500 dark:text-slate-400">
 												{$t('flow.import.preview.manifest.projects')}

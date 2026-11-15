@@ -43,6 +43,35 @@ pub struct TailUpdate {
     pub after_frontier: String,
 }
 
+/// Server-attested current resource permissions. The sequence orders notifications only within
+/// the actual Hello session; the source epoch need not change when an external audience changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceAuthorization {
+    pub scope_id: Uuid,
+    pub object_id: Uuid,
+    pub authz_revision: i64,
+    pub authority_sequence: u64,
+    pub session_id: Uuid,
+    pub permitted_actions: Vec<String>,
+}
+pub fn permitted_actions(level: super::authz::PermissionLevel, active: bool) -> Vec<String> {
+    use super::authz::PermissionLevel;
+    let mut actions = Vec::new();
+    if level >= PermissionLevel::View {
+        actions.push("view".into());
+    }
+    if active && level >= PermissionLevel::Comment {
+        actions.push("comment".into());
+    }
+    if active && level >= PermissionLevel::Edit {
+        actions.push("edit".into());
+    }
+    if level >= PermissionLevel::FullAccess {
+        actions.push("manage".into());
+    }
+    actions
+}
+
 /// `rejected.code` — the frozen error-semantics vocabulary (`collab-protocol-v1.md` "错误语义").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -239,6 +268,8 @@ pub enum Frame {
         reason: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         minimum_snapshot_seq: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authorization: Option<ResourceAuthorization>,
     },
     Ping {
         protocol_version: u32,

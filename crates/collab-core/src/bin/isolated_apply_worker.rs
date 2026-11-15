@@ -136,6 +136,39 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
         reason: format!("diff request is invalid: {error}"),
     })?;
     let mut engine = LoroCollabEngine::load(base_snapshot)?;
+    if let Some(updates) = request.package_updates_base64 {
+        use base64::Engine;
+        for encoded in updates {
+            let update =
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .map_err(|e| CollabError::DecodeFailed {
+                        input: "update",
+                        reason: e.to_string(),
+                    })?;
+            engine.import_update_causally_complete(&update)?;
+        }
+        if request.from_frontier != request.to_frontier || engine.frontier().as_bytes() != request.to_frontier {
+            return Err(CollabError::OperationFailed {
+                reason: "package accepted frontier does not match replayed head".into(),
+            });
+        }
+        let semantic = engine.semantic_snapshot()?;
+        check_snapshot(&semantic, &DocumentLimits::default()).map_err(CollabError::from)?;
+        let title = engine.title()?;
+        let snapshot = engine.export_snapshot()?;
+        return Ok(wire::ReplayDiffResult {
+            semantic_diff: collab_core::SemanticDiff::default(),
+            to_snapshot: semantic,
+            from_title: title.clone(),
+            to_title: title,
+            legacy_package_semantic_hash_v1: Some(engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
+            legacy_package_semantic_hash_v2: Some(engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
+            package_reference_remap_required: Some(wire::package_reference_remap_required(&engine)?),
+            validated_head_snapshot_base64: Some(base64::engine::general_purpose::STANDARD.encode(snapshot)),
+        });
+    }
+
     if engine.frontier().as_bytes() != request.snapshot_frontier {
         return Err(CollabError::OperationFailed {
             reason: "snapshot frontier does not match the retained history".to_string(),
@@ -169,6 +202,10 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
         to_snapshot,
         from_title,
         to_title,
+        legacy_package_semantic_hash_v1: Some(to_engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
+        legacy_package_semantic_hash_v2: Some(to_engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
+        package_reference_remap_required: Some(wire::package_reference_remap_required(&to_engine)?),
+        validated_head_snapshot_base64: None,
     })
 }
 

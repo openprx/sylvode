@@ -32,6 +32,7 @@ import type {
 	SetFlowGrantsInput,
 	SetFlowInheritanceInput
 } from '#lib/api/flow.js';
+import { flowApi } from '#lib/api/flow.js';
 import { botsApi, type Bot } from '#lib/api/bots.js';
 import { membersApi } from '#lib/api/members.js';
 import { FlowCommandService } from './command-service';
@@ -352,14 +353,17 @@ export class FlowSharePanelController {
 
 	constructor(
 		private readonly objectId: string,
-		workspaceId: string,
+		workspaceId: string | null,
 		private readonly onChange: (snapshot: ShareSnapshot) => void = () => {},
 		deps: Partial<SharePanelDeps> = {}
 	) {
 		this.deps = {
 			reads: deps.reads ?? new FlowObjectRepository(),
 			commands: deps.commands ?? new FlowCommandService(),
-			directory: deps.directory ?? (() => listShareDirectory(workspaceId)),
+			directory:
+				deps.directory ??
+				(() =>
+					workspaceId ? listShareDirectory(workspaceId) : listObjectShareDirectory(objectId)),
 			newKey: deps.newKey ?? newIdempotencyKey
 		};
 	}
@@ -387,6 +391,7 @@ export class FlowSharePanelController {
 			return this.load_;
 		}
 		const canManage = result.data.effective_level === 'full_access';
+		if (!canManage) this.directory_ = [];
 		const view: FlowGrantsView = canManage
 			? result.data
 			: {
@@ -569,4 +574,24 @@ export class FlowSharePanelController {
 	private emit(): void {
 		this.onChange(this.snapshot);
 	}
+}
+
+async function listObjectShareDirectory(objectId: string): Promise<ShareDirectoryEntry[]> {
+	const result = await flowApi.listMentionCandidates(objectId);
+	if (result.code !== 0 || !result.data) return [];
+	const data = result.data as {
+		items?: Array<{ user_id?: string; id?: string; name?: string; email?: string }>;
+	};
+	return (data.items ?? []).flatMap((user) => {
+		const id = user.user_id ?? user.id;
+		return id
+			? [
+					{
+						principal_kind: 'user' as const,
+						principal_id: id,
+						label: user.name ?? user.email ?? id
+					}
+				]
+			: [];
+	});
 }

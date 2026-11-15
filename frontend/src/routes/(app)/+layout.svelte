@@ -1,16 +1,25 @@
 <script lang="ts">
+	import { isFlowCanvasRoute } from '#lib/flow/page-layout.js';
+	import { createTaskEditSurface, TASK_EDIT_SURFACE } from '#lib/workbench/edit-surface.js';
 	import '#lib/i18n/index.js';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy, setContext } from 'svelte';
 	import { authStore, verifySession } from '#lib/stores/auth.js';
 	import { authApi } from '#lib/api/auth.js';
 	import { notificationsApi } from '#lib/api/notifications.js';
 	import SearchModal from '#lib/components/SearchModal.svelte';
-	import { goto } from '$app/navigation';
+	import { goto, beforeNavigate, afterNavigate } from '$app/navigation';
+	import { TaskWorkbench, WORKBENCH_CONTEXT, taskResource } from '#lib/workbench/tabs.js';
+	import { navigateTask } from '#lib/workbench/navigation.js';
+	import { FlowObjectRepository } from '#lib/flow/object-repository.js';
+	import { FlowTaskSessions, FLOW_TASK_SESSIONS } from '#lib/workbench/flow-sessions.js';
+	import TaskTabs from '#lib/components/workbench/TaskTabs.svelte';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { isAdminUser } from '#lib/utils/auth.js';
 	import { t } from 'svelte-i18n';
 	import { projectOptionsStore } from '#lib/stores/project-options.js';
 	import { workspacesApi } from '#lib/api/workspaces.js';
+	import { flowApi } from '#lib/api/flow.js';
 	import { flowFeatureStore } from '#lib/stores/flow-feature.js';
 	import {
 		isWorkspaceHomePath,
@@ -22,12 +31,122 @@
 
 	let { children } = $props();
 
+	const workbench = new TaskWorkbench();
+	let flowTasks = $state<FlowTaskSessions | null>(null);
+	setContext(FLOW_TASK_SESSIONS, () => flowTasks);
+	setContext(WORKBENCH_CONTEXT, workbench);
+	let editOverlay: HTMLElement | null = null;
+	let viewBackground: HTMLElement | null = null;
+	let scopedEditorCount = $state(0);
+	setContext(
+		TASK_EDIT_SURFACE,
+		createTaskEditSurface(
+			() => editOverlay,
+			() => viewBackground,
+			(count) => (scopedEditorCount = count)
+		)
+	);
+	let contentRoot: HTMLElement;
+	const flowCanvasLayout = $derived(isFlowCanvasRoute(page.route.id));
+	function taskScrollOwner() {
+		return flowCanvasLayout
+			? (contentRoot?.querySelector<HTMLElement>('[data-flow-scroll-owner]') ?? contentRoot)
+			: contentRoot;
+	}
+	function restoreTaskScroll(value: number) {
+		const owner = taskScrollOwner();
+		if (owner) owner.scrollTop = value;
+		window.scrollTo(0, flowCanvasLayout ? 0 : value);
+	}
+	let restoredAccount: string | null = null;
+	function captureTask() {
+		const key = workbench.current.active;
+		if (key && taskResource(page.url.href)?.key === key) {
+			workbench.setScroll(key, taskScrollOwner()?.scrollTop ?? window.scrollY);
+			workbench.capture(key);
+		}
+	}
+	workbench.onViewReady = (key) => {
+		if (key !== workbench.current.active) return;
+		const tab = workbench.current.tabs.find((tab) => tab.key === key);
+		if (tab)
+			requestAnimationFrame(() => {
+				restoreTaskScroll(tab.scroll);
+			});
+	};
+
+	beforeNavigate((navigation) => {
+		captureTask();
+		if (navigation.to && !workbench.canOpen(navigation.to.url.href)) {
+			workbench.showLimit();
+			navigation.cancel();
+		}
+	});
+	afterNavigate(() => {
+		if (workbench.current.userId) {
+			workbench.visit(page.url.href);
+			const tab = workbench.current.tabs.find((tab) => tab.key === workbench.current.active);
+			if (tab)
+				requestAnimationFrame(() => {
+					restoreTaskScroll(tab.scroll);
+				});
+		}
+	});
+	function beforeTaskUnload(event: BeforeUnloadEvent) {
+		workbench.capture();
+		if (workbench.hasDirty()) {
+			event.preventDefault();
+			event.returnValue = '';
+		}
+	}
+	$effect(() => {
+		if (loadingProfile) return;
+		const user = currentUserId;
+		workbench.activateUser(user);
+		if (flowTasks?.userId !== user) {
+			flowTasks?.dispose();
+			flowTasks = user ? new FlowTaskSessions(user, workbench, new FlowObjectRepository()) : null;
+		}
+		if (user && restoredAccount !== user) {
+			restoredAccount = user;
+			const previous = workbench.current.tabs.find((tab) => tab.key === workbench.current.active);
+			if (page.url.pathname === '/workspace' && !page.url.search && previous) {
+				void navigateTask(previous.url, true);
+				return;
+			}
+			workbench.restoreRoute(page.url.href);
+			return;
+		}
+		if (user) workbench.visit(page.url.href);
+	});
+	onMount(() => {
+		const refresh = () => {
+			if (document.visibilityState === 'visible' && navigator.onLine)
+				void workbench.refreshActive();
+		};
+		const timer = setInterval(refresh, 15000);
+		window.addEventListener('focus', refresh);
+		document.addEventListener('visibilitychange', refresh);
+		return () => {
+			clearInterval(timer);
+			window.removeEventListener('focus', refresh);
+			document.removeEventListener('visibilitychange', refresh);
+		};
+	});
+	onDestroy(() => {
+		flowTasks?.dispose();
+		workbench.dispose();
+	});
+
 	async function handleLogout() {
+		workbench.capture();
+		if (workbench.hasDirty() && !window.confirm($t('workbench.leaveDirty'))) return;
 		await authApi.logout();
 		await authStore.logout();
 		goto('/auth/login');
 	}
 
+	let personalFlowAvailable = $state(false);
 	let sidebarOpen = $state(false);
 	let searchOpen = $state(false);
 	let unreadCount = $state(0);
@@ -44,6 +163,7 @@
 	const appPageTitle = $derived.by(() => {
 		const pathname = page.url.pathname;
 
+		if (pathname === '/flow' || pathname.startsWith('/flow/')) return $t('nav.flow');
 		if (pathname === '/workspace') return $t('pageTitle.workspace');
 		if (isWorkspaceHomePath(pathname)) {
 			const workspaceId = pathname.split('/')[2] ?? '';
@@ -176,7 +296,16 @@
 				return;
 			}
 
-			await Promise.all([fetchUnreadCount(), projectOptionsStore.ensureLoaded()]);
+			await Promise.all([
+				fetchUnreadCount(),
+				projectOptionsStore.ensureLoaded(),
+				flowApi.getCapabilities().then((result) => {
+					personalFlowAvailable =
+						result.code === 0 &&
+						result.data?.api_version === 2 &&
+						result.data.minimum_reader_version <= 2;
+				})
+			]);
 
 			loadingProfile = false;
 		})();
@@ -240,12 +369,16 @@
 	});
 </script>
 
-<svelte:window onkeydown={handleGlobalSearchShortcut} />
+<svelte:window onkeydown={handleGlobalSearchShortcut} onbeforeunload={beforeTaskUnload} />
 <svelte:head><title>{appPageTitle}</title></svelte:head>
 
-<div class="min-h-screen bg-slate-50 dark:bg-slate-950">
+<div
+	class="{flowCanvasLayout
+		? 'flex h-dvh flex-col overflow-hidden'
+		: 'min-h-screen'} bg-slate-50 dark:bg-slate-950"
+>
 	<header
-		class="sticky top-0 z-20 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+		class="sticky top-0 z-20 shrink-0 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
 	>
 		<div class="flex items-center justify-between gap-3 px-4 py-3">
 			<div class="flex items-center gap-3">
@@ -325,9 +458,15 @@
 		</div>
 	</header>
 
-	<div class="flex">
+	<div
+		class="flex {flowCanvasLayout
+			? 'min-h-0 flex-1 overflow-hidden'
+			: 'h-[calc(100dvh-4rem)] min-h-0'}"
+	>
 		<aside
-			class="fixed top-[57px] z-10 h-[calc(100vh-57px)] w-64 border-r border-slate-200 bg-white transition-transform duration-300 dark:border-slate-700 dark:bg-slate-900 lg:sticky {sidebarOpen
+			class="fixed top-[57px] z-10 {flowCanvasLayout
+				? 'h-full'
+				: 'h-[calc(100vh-57px)]'} w-64 border-r border-slate-200 bg-white transition-transform duration-300 dark:border-slate-700 dark:bg-slate-900 lg:sticky {sidebarOpen
 				? 'translate-x-0'
 				: '-translate-x-full lg:translate-x-0'}"
 		>
@@ -360,6 +499,38 @@
 							<span>{$t('nav.myWorkspace')}</span>
 						</span>
 					</a>
+					{#if personalFlowAvailable}
+						<a
+							href={resolve('/(app)/flow')}
+							class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 {isActive(
+								'/flow'
+							)
+								? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
+								: 'text-slate-700 dark:text-slate-300'}"
+							aria-current={isActive('/flow') ? 'page' : undefined}
+							data-testid="global-flow-link"
+						>
+							<span class="inline-flex items-center gap-3">
+								<svg
+									class="h-5 w-5 shrink-0 {isActive('/flow') ? 'text-blue-600' : 'text-slate-400'}"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.5"
+									viewBox="0 0 24 24"
+									aria-hidden="true"
+								>
+									<rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+									<rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+									<path
+										d="M7 10.5v6a.5.5 0 0 0 .5.5h6m-3-10h6a.5.5 0 0 1 .5.5v6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
+								</svg>
+								<span>{$t('nav.flow')}</span>
+							</span>
+						</a>
+					{/if}
 					<a
 						href="/my-work"
 						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(
@@ -595,9 +766,46 @@
 			</nav>
 		</aside>
 
-		<main class="flex-1 overflow-auto">
-			<div class="p-4 sm:p-6">
-				{@render children()}
+		<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+			<TaskTabs {workbench} />
+			{#each $workbench.tabs.filter((tab) => tab.key !== $workbench.active) as tab (tab.key)}<div
+					role="tabpanel"
+					id={`task-panel-${encodeURIComponent(tab.key)}`}
+					aria-labelledby={`task-tab-${encodeURIComponent(tab.key)}`}
+					hidden
+				></div>{/each}
+			<div class="relative min-h-0 flex-1">
+				<div
+					bind:this={contentRoot}
+					class={flowCanvasLayout
+						? 'flex h-full min-h-0 flex-col overflow-hidden'
+						: 'h-full overflow-auto p-4 sm:p-6'}
+					data-testid="task-tabpanel"
+					data-tab-key={$workbench.active ?? ''}
+					role={$workbench.active ? 'tabpanel' : undefined}
+					id={$workbench.active ? `task-panel-${encodeURIComponent($workbench.active)}` : undefined}
+					aria-labelledby={$workbench.active
+						? `task-tab-${encodeURIComponent($workbench.active)}`
+						: undefined}
+				>
+					<div
+						bind:this={viewBackground}
+						class={flowCanvasLayout ? 'flex h-full min-h-0 flex-col' : undefined}
+						inert={scopedEditorCount > 0}
+						aria-hidden={scopedEditorCount > 0 ? 'true' : undefined}
+					>
+						{#if !loadingProfile && flowTasks?.userId === currentUserId && currentUserId}{#key `${currentUserId}:${page.url.pathname}`}{@render children()}{/key}{:else}<p
+								role="status"
+							>
+								{$t('common.loading')}
+							</p>{/if}
+					</div>
+				</div>
+				<div
+					bind:this={editOverlay}
+					class="pointer-events-none absolute inset-0 z-30"
+					data-testid="task-edit-surface"
+				></div>
 			</div>
 		</main>
 	</div>

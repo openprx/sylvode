@@ -32,10 +32,18 @@ pub struct Cli {
     /// Bot authentication token (overrides `mcp.bot_token`)
     #[arg(long, global = true)]
     pub bot_token: Option<String>,
+    /// Current global-user bearer for `flow call`; prefer a private token file
+    #[arg(long, global=true, value_parser=crate::flow_runtime::parse_access_token, hide_default_value=true)]
+    pub access_token: Option<platform::config::Secret>,
+    /// Private file holding the current global-user bearer for `flow call`
+    #[arg(long, global = true)]
+    pub access_token_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Bounded scope-native Flow tools, without a default workspace or bot impersonation
+    Flow(FlowOnlyCmd),
     /// Flow workspace feature flag
     Features(FeaturesCmd),
     /// Flow objects
@@ -867,4 +875,22 @@ mod tests {
     fn requires_a_subcommand() {
         assert!(Cli::try_parse_from(["sylvode"]).is_err());
     }
+}
+
+#[derive(Debug, Args)]
+pub struct FlowOnlyCmd {
+    #[command(subcommand)]
+    pub action: FlowOnlyAction,
+}
+#[derive(Debug, Subcommand)]
+pub enum FlowOnlyAction {
+    /// Print only the static Flow tool schemas; sends no API requests
+    Tools,
+    /// Call a registered Flow tool through the same MCP policy and audit path
+    Call {
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "{}")]
+        args_json: String,
+    },
 }

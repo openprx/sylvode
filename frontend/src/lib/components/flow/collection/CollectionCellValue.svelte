@@ -12,10 +12,10 @@
 	interface Props {
 		field: CollectionField;
 		values: Readonly<Record<string, unknown>>;
-		workspaceId: string;
+		scopeId: string;
 	}
 
-	let { field, values, workspaceId }: Props = $props();
+	let { field, values, scopeId }: Props = $props();
 
 	const display = $derived(displayValue(field, values));
 </script>
@@ -46,10 +46,8 @@
 	<span class="flex flex-wrap gap-1">
 		{#each display.ids as id (id)}
 			<a
-				href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
-					workspaceId,
-					objectId: id
-				})}
+				href={resolve('/(app)/flow/[objectId]', { objectId: id })}
+				data-source-scope={scopeId}
 				class="text-xs text-blue-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-400"
 				>{$t('flow.collection.value.relationLink', { values: { id: id.slice(0, 8) } })}</a
 			>

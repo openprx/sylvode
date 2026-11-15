@@ -33,6 +33,7 @@ import type {
 import { formsApi, type FormField, type FormRecord, type UniversalForm } from '#lib/api/forms.js';
 import { flowErrorFromResult } from './command-service';
 import { flowErrorI18nKey } from './errors';
+import { workspacesApi } from '#lib/api/workspaces.js';
 import { listWorkspaceProjects } from './package-export';
 import type { FlowError } from './types';
 
@@ -71,8 +72,8 @@ export const SLASH_BRIDGE_OPTIONS: readonly SlashBridgeOption[] = [
 ];
 
 /** The N4 conversion wizard for this Page. */
-export function convertWizardPath(workspaceId: string, objectId: string): string {
-	return `/workspace/${workspaceId}/flow/${objectId}/convert`;
+export function convertWizardPath(scopeId: string, objectId: string): string {
+	return `/flow/${objectId}/convert`;
 }
 
 export function newIdempotencyKey(): string {
@@ -815,13 +816,25 @@ export interface PickerProject {
 }
 
 export interface FormsPickerReads {
-	listProjects(workspaceId: string): Promise<PickerProject[]>;
+	listProjects(scopeId: string): Promise<PickerProject[]>;
 	listForms(projectId: string): Promise<ApiResult<PaginatedData<UniversalForm>>>;
 	listRecords(formId: string): Promise<ApiResult<PaginatedData<FormRecord>>>;
 }
 
 export const FORMS_PICKER_READS: FormsPickerReads = {
-	listProjects: listWorkspaceProjects,
+	listProjects: async () => {
+		const workspaces = await workspacesApi.list();
+		if (workspaces.code !== 0 || !workspaces.data) return [];
+		const projects = await Promise.all(
+			workspaces.data.items.map(async (workspace) =>
+				(await listWorkspaceProjects(workspace.id)).map((project) => ({
+					...project,
+					label: `${workspace.name} / ${project.label}`
+				}))
+			)
+		);
+		return projects.flat();
+	},
 	listForms: (projectId) => formsApi.list(projectId, { per_page: 100 }),
 	listRecords: (formId) => formsApi.listRecords(formId, { per_page: 50 })
 };
@@ -856,7 +869,7 @@ export class FormsTargetPicker {
 	private recordId: string | null = null;
 
 	constructor(
-		private readonly workspaceId: string,
+		private readonly scopeId: string,
 		private readonly reads: FormsPickerReads,
 		private readonly onChange: (snapshot: FormsPickerSnapshot) => void = () => {}
 	) {}
@@ -885,7 +898,7 @@ export class FormsTargetPicker {
 		this.projectsState = 'loading';
 		this.emit();
 		try {
-			this.projects = await this.reads.listProjects(this.workspaceId);
+			this.projects = await this.reads.listProjects(this.scopeId);
 			this.projectsState = 'ready';
 		} catch {
 			this.projectsState = 'failed';

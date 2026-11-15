@@ -7,7 +7,7 @@ use axum::{
     response::IntoResponse,
 };
 use platform::{app::AppState, auth::JwtClaims};
-use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -356,14 +356,25 @@ pub async fn delete_workspace(
         return Err(ApiError::Forbidden("only owners can delete workspaces".to_string()));
     }
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
+    let tx = state.db.begin().await?;
+    crate::flow::scope_mounts::fence_destination_delete(&tx, workspace_id, None).await?;
+    let current = tx
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "DELETE FROM workspaces WHERE id = $1",
-            vec![workspace_id.into()],
+            "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+            vec![workspace_id.into(), user_id.into()],
         ))
         .await?;
+    if current.is_none_or(|row| row.try_get::<String>("", "role").ok().as_deref() != Some("owner")) {
+        return Err(ApiError::Forbidden("only owners can delete workspaces".to_string()));
+    }
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "DELETE FROM workspaces WHERE id=$1",
+        vec![workspace_id.into()],
+    ))
+    .await?;
+    tx.commit().await?;
 
     Ok(ApiResponse::ok())
 }

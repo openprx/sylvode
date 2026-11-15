@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy, getContext } from 'svelte';
+	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
+	import { projectConflicts, reviewProjectDraft } from '#lib/workbench/project-session.js';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
@@ -60,9 +62,102 @@
 			null
 	);
 
+	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
+	const taskKey = `projects:${workspaceId}`;
+	let unregisterTask: () => void = () => {};
+	let remoteProject = $state<Project | null>(null);
+	let projectUnavailable = $state(false);
+	type ProjectSnapshot = {
+		search: string;
+		showCreate: boolean;
+		create: typeof createForm;
+		showEdit: boolean;
+		editing: Project | null;
+		edit: typeof editForm;
+		remote: Project | null;
+	};
+	function projectDirty() {
+		return (
+			(showCreateModal && !!(createForm.name || createForm.key || createForm.description)) ||
+			(showEditModal &&
+				!!editingProject &&
+				(editForm.name !== editingProject.name ||
+					editForm.description !== (editingProject.description ?? '') ||
+					editForm.workflow_id !== ''))
+		);
+	}
+	function captureProject(): ProjectSnapshot {
+		return {
+			search: searchQuery,
+			showCreate: showCreateModal,
+			create: $state.snapshot(createForm),
+			showEdit: showEditModal,
+			editing: $state.snapshot(editingProject),
+			edit: $state.snapshot(editForm),
+			remote: $state.snapshot(remoteProject)
+		};
+	}
+	async function refreshProjects() {
+		if (loading || creating || updating || deleting) return;
+		const result = await projectsApi.list(workspaceId);
+		if (result.code !== 0 || !result.data) {
+			if (result.code === 403 || result.code === 404) projectUnavailable = true;
+			return;
+		}
+		const fresh = result.data.items ?? [];
+		if (showEditModal && editingProject) {
+			const remote = fresh.find((item) => item.id === editingProject!.id);
+			projectUnavailable = !remote;
+			if (remote && remote.updated_at !== editingProject.updated_at) {
+				remoteProject = remote;
+				workbench?.markChanged(taskKey);
+			}
+		}
+		projects = fresh;
+	}
+	function reviewProject() {
+		if (!remoteProject || !editingProject) return;
+		editForm = { ...editForm, ...reviewProjectDraft(editingProject, editForm, remoteProject) };
+		editingProject = remoteProject;
+		remoteProject = null;
+		workbench?.markChanged(taskKey, false);
+		projectUnavailable = false;
+	}
+	$effect(() => {
+		void editForm.name;
+		void editForm.description;
+		void editForm.workflow_id;
+		void createForm.name;
+		void createForm.key;
+		void createForm.description;
+		workbench?.markDirty(taskKey, projectDirty());
+	});
 	onMount(async () => {
 		await loadData();
+		const saved = workbench?.snapshot<ProjectSnapshot>(taskKey);
+		if (saved) {
+			searchQuery = saved.search;
+			createForm = saved.create;
+			showCreateModal = saved.showCreate;
+			editingProject = saved.editing;
+			editForm = saved.edit;
+			showEditModal = saved.showEdit;
+			remoteProject = saved.remote;
+			if (showEditModal && editingProject) {
+				const fresh = projects.find((item) => item.id === editingProject!.id);
+				if (fresh && fresh.updated_at !== editingProject.updated_at) remoteProject = fresh;
+				projectUnavailable = !fresh;
+			}
+		}
+		workbench?.setTitle(taskKey, workspace?.name ?? get(t)('workbench.projects'));
+		unregisterTask =
+			workbench?.register(taskKey, {
+				capture: captureProject,
+				dirty: projectDirty,
+				refresh: refreshProjects
+			}) ?? (() => {});
 	});
+	onDestroy(() => unregisterTask());
 
 	async function loadData() {
 		loading = true;
@@ -178,6 +273,8 @@
 	async function openEditModal(project: Project, event: Event) {
 		event.stopPropagation();
 		editingProject = project;
+		remoteProject = null;
+		projectUnavailable = false;
 		editForm = {
 			name: project.name,
 			description: project.description || '',
@@ -200,12 +297,16 @@
 		updating = true;
 		const response = await projectsApi.update(editingProject.id, {
 			name: editForm.name.trim(),
-			description: editForm.description.trim() || undefined
+			description: editForm.description.trim() || undefined,
+			expected_updated_at: editingProject.updated_at
 		});
 
 		if (response.code !== 0) {
-			toast.error(response.message);
 			updating = false;
+			if (response.code === 409 || response.error_code === 'version_conflict') {
+				await refreshProjects();
+				toast.error(get(t)('workbench.conflictBody'));
+			} else toast.error(response.message);
 			return;
 		}
 
@@ -462,7 +563,12 @@
 	{/if}
 </div>
 
-<Modal bind:open={showCreateModal} title={$t('project.create')} maxWidthClass="max-w-4xl">
+<Modal
+	taskScoped
+	bind:open={showCreateModal}
+	title={$t('project.create')}
+	maxWidthClass="max-w-4xl"
+>
 	<form
 		onsubmit={(e) => {
 			e.preventDefault();
@@ -556,7 +662,7 @@
 	{/snippet}
 </Modal>
 
-<Modal bind:open={showEditModal} title={$t('project.editProject')}>
+<Modal taskScoped bind:open={showEditModal} title={$t('project.editProject')}>
 	<form
 		onsubmit={(e) => {
 			e.preventDefault();
@@ -564,6 +670,29 @@
 		}}
 		class="space-y-4"
 	>
+		{#if remoteProject && editingProject}
+			<section
+				class="rounded border border-amber-300 bg-amber-50 p-3 text-sm"
+				data-testid="task-conflict"
+				role="alert"
+			>
+				<p>{$t('workbench.conflictBody')}</p>
+				{#each projectConflicts(editingProject, editForm, remoteProject) as field (field)}<p>
+						{field}: {$t('workbench.localValue')}
+						{editForm[field]} · {$t('workbench.remoteValue')}
+						{remoteProject[field] ?? ''}
+					</p>{/each}
+				<button
+					type="button"
+					class="mt-2 min-h-11 underline"
+					data-testid="task-conflict-review"
+					onclick={reviewProject}>{$t('workbench.reviewRetry')}</button
+				>
+			</section>
+		{/if}
+		{#if projectUnavailable}<p role="alert" data-testid="task-resource-unavailable">
+				{$t('workbench.resourceUnavailable')}
+			</p>{/if}
 		<Input
 			label={$t('project.name')}
 			placeholder={$t('project.namePlaceholder')}
@@ -614,7 +743,12 @@
 			>{$t('common.cancel')}</Button
 		>
 
-		<Button type="submit" loading={updating} onclick={handleUpdate}>{$t('common.save')}</Button>
+		<Button
+			type="submit"
+			loading={updating}
+			disabled={!!remoteProject || projectUnavailable}
+			onclick={handleUpdate}>{$t('common.save')}</Button
+		>
 	{/snippet}
 </Modal>
 

@@ -108,8 +108,7 @@ pub async fn issue(
     ))
     .one(&tx)
     .await?
-    .map(|r| r.role)
-    .ok_or_else(|| ApiError::forbidden("not a member of this workspace".to_string()))?;
+    .map_or_else(|| "__flow_guest".to_string(), |r| r.role);
 
     // Check the rollout flag before trying to lock its settings row. A missing settings row is
     // deliberately the same `feature_disabled` answer as an explicit false value; asking the
@@ -128,8 +127,7 @@ pub async fn issue(
     ))
     .one(&tx)
     .await?
-    .map(|row| row.role)
-    .ok_or_else(|| ApiError::forbidden("not a member of this workspace".to_string()))?;
+    .map_or_else(|| "__flow_guest".to_string(), |row| row.role);
 
     // `ADR-0018` clarifies ADR-0007's "read+write ACL" wording as checking both ACLs rather than
     // requiring write authority: view and comment principals may obtain read-only sessions.
@@ -192,6 +190,7 @@ pub async fn issue(
         ));
     }
 
+    super::super::scope_editor::require_admitted(conn, doc.object_id).await?;
     let mut secret = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut secret);
     let raw = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, secret);

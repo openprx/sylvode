@@ -38,6 +38,7 @@ import type {
 	FlowCollectionRecordsResponse,
 	FlowCommandInput,
 	FlowObjectView,
+	FlowRecordContext,
 	FlowRecordFilter,
 	FlowRecordSort
 } from '#lib/api/flow.js';
@@ -56,11 +57,13 @@ import {
 	clampColumnWidth,
 	encodeValue,
 	parseCollection,
+	parseRecordFields,
 	reorderIndex,
 	type CollectionField,
 	type CollectionView,
 	type CollectionViewKind,
 	type DraftValue,
+	type RecordFieldsContext,
 	type ParsedCollection
 } from './collection-values';
 
@@ -71,6 +74,7 @@ export const RECORD_LOOKUP_MAX_PAGES = 20;
 export type CollectionMode = 'entry' | 'schema';
 
 export interface CollectionReads {
+	getRecordContext?(recordId: string): Promise<ApiResult<FlowRecordContext>>;
 	getCollection(collectionId: string): Promise<ApiResult<FlowCollectionDescription>>;
 	/** `GET /flow/objects/{id}/schema`: for a Record, its owning Collection's schema. */
 	getSchema(objectId: string): Promise<ApiResult<FlowCollectionDescription>>;
@@ -123,6 +127,9 @@ export interface RecordPanelState {
 	readonly bodyWithheld: boolean;
 	readonly errorKey: string | null;
 	readonly bodyStatus: CellStatus | null;
+	readonly canEdit?: boolean;
+	readonly canArchive?: boolean;
+	readonly contextReviewRequired?: boolean;
 }
 
 export interface DraftQuery {
@@ -139,7 +146,8 @@ export interface CollectionNotice {
 export interface CollectionViewState {
 	readonly status: 'loading' | 'ready' | 'error';
 	readonly errorKey: string | null;
-	readonly collection: ParsedCollection | null;
+	readonly collection: ParsedCollection | RecordFieldsContext | null;
+	readonly recordObject?: FlowObjectView;
 	readonly activeViewId: string | null;
 	readonly mode: CollectionMode;
 	readonly rows: readonly RecordRow[];
@@ -158,6 +166,14 @@ export interface CollectionViewState {
 	readonly cellStatus: Readonly<Record<string, CellStatus>>;
 	readonly schemaBusy: boolean;
 	readonly notice: CollectionNotice | null;
+}
+
+export function hasPendingWritesIn(state: CollectionViewState): boolean {
+	return (
+		state.schemaBusy ||
+		state.panel?.bodyStatus?.state === 'saving' ||
+		Object.values(state.cellStatus).some((status) => status.state === 'saving')
+	);
 }
 
 export type SchemaOutcome =
@@ -223,7 +239,10 @@ function recordBody(view: FlowObjectView): string | null {
 /** Whether the server withheld this record's content: field secrecy is on for the Collection
  * and `semantic_content` came back as the empty object. A record that merely has no body still
  * carries its `nodes`. */
-function bodyWithheld(view: FlowObjectView, collection: ParsedCollection | null): boolean {
+function bodyWithheld(
+	view: FlowObjectView,
+	collection: ParsedCollection | RecordFieldsContext | null
+): boolean {
 	const secret =
 		collection !== null &&
 		(collection.fieldSecrecyEnabled || collection.fields.some((field) => field.restricted));
@@ -283,9 +302,12 @@ const INITIAL_STATE: CollectionViewState = {
 };
 
 export class CollectionViewController {
-	readonly collectionId: string;
+	readonly collectionId: string | null;
 	private readonly reads: CollectionReads;
 	private readonly schemaFromRecord: string | null;
+	private recordContext: FlowRecordContext | null = null;
+	private readonly recordSchemaBases = new Map<string, string>();
+	private recordContextReviewRequired = false;
 	private readonly writes: CollectionWrites;
 	private readonly store = writable<CollectionViewState>(INITIAL_STATE);
 	private current: CollectionViewState = INITIAL_STATE;
@@ -300,12 +322,12 @@ export class CollectionViewController {
 	private disposed = false;
 
 	constructor(
-		collectionId: string,
+		collectionId: string | null,
 		reads: CollectionReads,
 		writes: CollectionWrites,
 		options: CollectionViewOptions = {}
 	) {
-		this.collectionId = collectionId;
+		this.collectionId = options.schemaFromRecord ? null : collectionId;
 		this.reads = reads;
 		this.writes = writes;
 		this.schemaFromRecord = options.schemaFromRecord ?? null;
@@ -356,13 +378,38 @@ export class CollectionViewController {
 		this.patch({ status: 'loading', errorKey: null });
 		const ok = await this.reloadSchema(preferredViewId);
 		if (!ok) return;
-		await this.reloadRecords();
+		await this.reloadRecords(true);
+	}
+
+	/** Explicit refresh keeps unsent input and its conflict base while reading current server data. */
+	async refresh(): Promise<void> {
+		if (this.disposed || hasPendingWritesIn(this.current)) return;
+		const dirty = new Set([
+			...Object.keys(this.current.drafts),
+			...Object.keys(this.current.bodyDrafts)
+		]);
+		const bases = new Map(
+			[...dirty].flatMap((id) => {
+				const frontier = this.frontiers.get(id);
+				return frontier === undefined ? [] : [[id, frontier] as const];
+			})
+		);
+		const record = this.openedRecordId ?? this.schemaFromRecord;
+		this.closeOpenedRecord();
+		await this.load(this.current.activeViewId);
+		if (record && this.current.status === 'ready') await this.openPanel(record);
+		for (const [id, frontier] of bases) this.frontiers.set(id, frontier);
 	}
 
 	private async reloadSchema(preferredViewId: string | null = null): Promise<boolean> {
-		const result = this.schemaFromRecord
-			? await this.reads.getSchema(this.schemaFromRecord)
-			: await this.reads.getCollection(this.collectionId);
+		if (this.schemaFromRecord) {
+			return this.reloadRecordContext();
+		}
+		if (!this.collectionId) {
+			this.patch({ status: 'error', errorKey: 'flow.collection.loadFailed' });
+			return false;
+		}
+		const result = await this.reads.getCollection(this.collectionId);
 		if (this.disposed) return false;
 		if (result.code !== 0 || !result.data) {
 			const error = flowErrorFromEnvelope(result);
@@ -380,6 +427,129 @@ export class CollectionViewController {
 			null;
 		this.patch({ status: 'ready', collection, activeViewId });
 		return true;
+	}
+
+	private canEditRecord(recordId: string): boolean {
+		if (!this.schemaFromRecord)
+			return this.current.panel?.recordId === recordId
+				? this.current.panel.canEdit !== false
+				: true;
+		return (
+			recordId === this.schemaFromRecord &&
+			this.recordContext?.record.lifecycle_status === 'active' &&
+			this.recordContext.record.permitted_actions?.includes('edit') === true &&
+			this.recordContext.record.record_content_writable === true
+		);
+	}
+	private canArchiveRecord(recordId: string): boolean {
+		return this.schemaFromRecord
+			? recordId === this.schemaFromRecord &&
+					this.recordContext?.record.record_archive_allowed === true
+			: this.canEditRecord(recordId);
+	}
+
+	private captureRecordSchema(recordId: string): void {
+		if (this.schemaFromRecord && !this.recordSchemaBases.has(recordId) && this.recordContext)
+			this.recordSchemaBases.set(recordId, this.recordContext.schema_revision);
+	}
+	private async reloadRecordContext(): Promise<boolean> {
+		const id = this.schemaFromRecord;
+		if (!id || !this.reads.getRecordContext) {
+			this.patch({ status: 'error', errorKey: 'flow.personal.recordContextUnavailable' });
+			return false;
+		}
+		const result = await this.reads.getRecordContext(id);
+		if (this.disposed) return false;
+		if (result.code !== 0 || !result.data) {
+			const error = flowErrorFromEnvelope(result);
+			this.patch({
+				status: 'error',
+				errorKey: error ? flowErrorI18nKey(error) : 'flow.collection.loadFailed'
+			});
+			return false;
+		}
+		const context = result.data;
+		if (
+			context.record.id !== id ||
+			context.record.object_type !== 'record' ||
+			!context.schema_revision
+		) {
+			this.patch({ status: 'error', errorKey: 'flow.collection.loadFailed' });
+			return false;
+		}
+		const dirty =
+			Object.keys(this.current.drafts[id] ?? {}).length > 0 ||
+			this.current.bodyDrafts[id] !== undefined;
+		const oldFrontier = this.frontiers.get(id),
+			oldSchema = this.recordSchemaBases.get(id);
+		if (
+			dirty &&
+			((oldFrontier !== undefined && oldFrontier !== context.record.frontier) ||
+				(oldSchema !== undefined && oldSchema !== context.schema_revision))
+		)
+			this.recordContextReviewRequired = true;
+		this.recordContext = context;
+		if (!dirty) this.frontiers.set(id, context.record.frontier);
+		this.patch({
+			status: 'ready',
+			errorKey: null,
+			collection: parseRecordFields(context),
+			recordObject: context.record,
+			rows: [
+				rowFromItem({ record: context.record, values_by_field_id: context.values_by_field_id })
+			],
+			activeViewId: null,
+			nextCursor: null,
+			loadingRecords: false,
+			...(this.current.panel?.recordId === id
+				? {
+						panel: {
+							...this.current.panel,
+							body: recordBody(context.record),
+							bodyWithheld: bodyWithheld(context.record, parseRecordFields(context)),
+							canEdit: this.canEditRecord(id),
+							canArchive: this.canArchiveRecord(id),
+							contextReviewRequired: this.recordContextReviewRequired
+						}
+					}
+				: {})
+		});
+		return true;
+	}
+	/** Explicit local review changes save bases, never sends/replays a draft. */
+	reviewRecordContext(recordId: string): void {
+		if (
+			!this.schemaFromRecord ||
+			!this.recordContext ||
+			recordId !== this.schemaFromRecord ||
+			!this.canEditRecord(recordId) ||
+			hasPendingWritesIn(this.current)
+		)
+			return;
+		this.frontiers.set(recordId, this.recordContext.record.frontier);
+		this.recordSchemaBases.set(recordId, this.recordContext.schema_revision);
+		this.recordContextReviewRequired = false;
+		const cellStatus = { ...this.current.cellStatus };
+		for (const key of Object.keys(cellStatus)) {
+			if (key.startsWith(`${recordId}:`) && cellStatus[key]?.state === 'conflict')
+				delete cellStatus[key];
+		}
+		this.patch({
+			cellStatus,
+			notice: null,
+			...(this.current.panel?.recordId === recordId
+				? {
+						panel: {
+							...this.current.panel,
+							contextReviewRequired: false,
+							bodyStatus:
+								this.current.panel.bodyStatus?.state === 'conflict'
+									? null
+									: this.current.panel.bodyStatus
+						}
+					}
+				: {})
+		});
 	}
 
 	private recordsQuery(cursor: string | null): FlowCollectionRecordsQuery {
@@ -409,7 +579,12 @@ export class CollectionViewController {
 	}
 
 	/** Reads the first page for the effective query, replacing the rows. */
-	async reloadRecords(): Promise<void> {
+	async reloadRecords(reuseContext = false): Promise<void> {
+		if (this.schemaFromRecord) {
+			if (!reuseContext) await this.reloadRecordContext();
+			return;
+		}
+		if (!this.collectionId) return;
 		const generation = ++this.recordsGeneration;
 		this.patch({ loadingRecords: true });
 		const result = await this.reads.listRecords(this.collectionId, this.recordsQuery(null));
@@ -436,6 +611,7 @@ export class CollectionViewController {
 
 	/** Reads the next page with the same query (the cursor is bound to it server-side). */
 	async loadMore(): Promise<void> {
+		if (this.schemaFromRecord || !this.collectionId) return;
 		const cursor = this.current.nextCursor;
 		if (!cursor || this.current.loadingRecords) return;
 		const generation = this.recordsGeneration;
@@ -485,7 +661,7 @@ export class CollectionViewController {
 	}
 
 	setMode(mode: CollectionMode): void {
-		this.patch({ mode, notice: null });
+		this.patch({ mode: this.schemaFromRecord ? 'entry' : mode, notice: null });
 	}
 
 	async setDraftQuery(update: Partial<DraftQuery>): Promise<void> {
@@ -515,6 +691,8 @@ export class CollectionViewController {
 	// ---- value edits --------------------------------------------------------------------------
 
 	setDraft(recordId: string, fieldId: string, value: DraftValue): void {
+		if (this.schemaFromRecord && recordId !== this.schemaFromRecord) return;
+		this.captureRecordSchema(recordId);
 		const forRecord = { ...(this.current.drafts[recordId] ?? {}), [fieldId]: value };
 		const cellStatus = { ...this.current.cellStatus };
 		const status = cellStatus[cellKey(recordId, fieldId)];
@@ -531,8 +709,22 @@ export class CollectionViewController {
 		const cellStatus = { ...this.current.cellStatus };
 		delete cellStatus[cellKey(recordId, fieldId)];
 		this.patch({ drafts, cellStatus });
+		this.clearCleanRecordBase(recordId);
 	}
 
+	private clearCleanRecordBase(recordId: string): void {
+		if (
+			!this.schemaFromRecord ||
+			Object.keys(this.current.drafts[recordId] ?? {}).length ||
+			this.current.bodyDrafts[recordId] !== undefined
+		)
+			return;
+		this.recordSchemaBases.delete(recordId);
+		this.recordContextReviewRequired = false;
+		if (this.recordContext) this.frontiers.set(recordId, this.recordContext.record.frontier);
+		if (this.current.panel?.recordId === recordId)
+			this.patch({ panel: { ...this.current.panel, contextReviewRequired: false } });
+	}
 	private intentKey(scope: string, signature: string): string {
 		const existing = this.intents.get(scope);
 		if (existing && existing.signature === signature) return existing.key;
@@ -554,8 +746,18 @@ export class CollectionViewController {
 		values: Record<string, unknown>
 	): void {
 		const frontier = change.head_frontier || change.object.frontier;
+		if (this.recordContext && this.schemaFromRecord === recordId)
+			this.recordContext = {
+				...this.recordContext,
+				record: change.object,
+				values_by_field_id: { ...this.recordContext.values_by_field_id, ...values }
+			};
 		this.frontiers.set(recordId, frontier);
 		this.patch({
+			...(this.schemaFromRecord ? { recordObject: change.object } : {}),
+			...(this.schemaFromRecord && this.current.panel?.recordId === recordId
+				? { panel: { ...this.current.panel, canEdit: this.canEditRecord(recordId) } }
+				: {}),
 			rows: this.current.rows.map((row) =>
 				row.recordId === recordId
 					? { recordId, frontier, values: { ...row.values, ...values } }
@@ -569,6 +771,13 @@ export class CollectionViewController {
 	 * frontier as `expected_frontier`. Returns whether the value was accepted.
 	 */
 	async commitCell(recordId: string, fieldId: string, value?: DraftValue): Promise<boolean> {
+		if (
+			this.schemaFromRecord &&
+			(!this.canEditRecord(recordId) || this.recordContextReviewRequired)
+		)
+			return false;
+		const target = this.schemaFromRecord ?? this.collectionId;
+		if (!target) return false;
 		if (value !== undefined) this.setDraft(recordId, fieldId, value);
 		const draft = this.draftFor(recordId, fieldId);
 		const field = this.field(fieldId);
@@ -587,13 +796,28 @@ export class CollectionViewController {
 		const properties = { [fieldId]: encoded.value };
 		const key = this.intentKey(
 			`cell:${recordId}:${fieldId}`,
-			JSON.stringify([frontier, encoded.value])
+			JSON.stringify([
+				frontier,
+				encoded.value,
+				this.schemaFromRecord
+					? (this.recordSchemaBases.get(recordId) ?? this.recordContext?.schema_revision)
+					: null
+			])
 		);
 		this.setCellStatus(recordId, fieldId, { state: 'saving' });
 		try {
 			const change = await this.writes.execute(
-				this.collectionId,
-				{ type: 'record_patch', payload: { record_id: recordId, properties } },
+				target,
+				{
+					type: 'record_patch',
+					payload: this.schemaFromRecord
+						? {
+								properties,
+								schema_revision:
+									this.recordSchemaBases.get(recordId) ?? this.recordContext?.schema_revision
+							}
+						: { record_id: recordId, properties }
+				},
 				{ idempotencyKey: key, expectedFrontier: frontier }
 			);
 			if (this.disposed) return false;
@@ -608,6 +832,7 @@ export class CollectionViewController {
 				// records (fresh frontier and values), and let the user resubmit deliberately.
 				this.setCellStatus(recordId, fieldId, { state: 'conflict' });
 				this.patch({ notice: { key: RECORD_STALE_KEY, code: error.code } });
+				if (this.schemaFromRecord) this.recordContextReviewRequired = true;
 				await this.reloadRecords();
 				return false;
 			}
@@ -634,6 +859,12 @@ export class CollectionViewController {
 
 	/** `POST .../records` with `values_by_field_id` (only fields the caller set). */
 	async createRecord(values: Readonly<Record<string, DraftValue>> = {}): Promise<SchemaOutcome> {
+		if (this.schemaFromRecord || !this.collectionId)
+			return {
+				ok: false,
+				key: 'flow.personal.recordContextNoCollection',
+				code: 'unsupported_protocol'
+			};
 		const encodedValues: Record<string, unknown> = {};
 		for (const [fieldId, draft] of Object.entries(values)) {
 			const field = this.field(fieldId);
@@ -685,16 +916,30 @@ export class CollectionViewController {
 			}
 		});
 		try {
-			const view = await this.reads.openRecord(recordId);
+			const view = this.schemaFromRecord
+				? this.recordContext?.record
+				: await this.reads.openRecord(recordId);
+			if (!view || view.id !== recordId)
+				throw { code: 'not_found', recoverable: false } satisfies FlowError;
 			if (this.disposed || this.openedRecordId !== recordId) return;
 			// The panel's read is the newest one of this record.
-			this.frontiers.set(recordId, view.frontier);
+			if (!this.schemaFromRecord || !this.frontiers.has(recordId))
+				this.frontiers.set(recordId, view.frontier);
 			this.patch({
 				panel: {
 					recordId,
 					status: 'open',
 					body: recordBody(view),
 					bodyWithheld: bodyWithheld(view, this.current.collection),
+					canArchive: this.canArchiveRecord(recordId),
+					canEdit: this.schemaFromRecord
+						? this.canEditRecord(recordId)
+						: view.record_content_writable === false
+							? false
+							: view.permitted_actions
+								? view.permitted_actions.includes('edit')
+								: true,
+					contextReviewRequired: this.recordContextReviewRequired,
 					errorKey: null,
 					bodyStatus: null
 				}
@@ -703,7 +948,7 @@ export class CollectionViewController {
 			if (this.openedRecordId !== recordId) return;
 			const error = asFlowError(raw);
 			// A failed open holds no document: release the reference right away.
-			this.reads.closeRecord(recordId);
+			if (!this.schemaFromRecord) this.reads.closeRecord(recordId);
 			this.openedRecordId = null;
 			this.patch({
 				panel: {
@@ -725,12 +970,14 @@ export class CollectionViewController {
 
 	private closeOpenedRecord(): void {
 		if (this.openedRecordId) {
-			this.reads.closeRecord(this.openedRecordId);
+			if (!this.schemaFromRecord) this.reads.closeRecord(this.openedRecordId);
 			this.openedRecordId = null;
 		}
 	}
 
 	setBodyDraft(recordId: string, text: string): void {
+		if (this.schemaFromRecord && recordId !== this.schemaFromRecord) return;
+		this.captureRecordSchema(recordId);
 		this.patch({ bodyDrafts: { ...this.current.bodyDrafts, [recordId]: text } });
 	}
 
@@ -738,6 +985,7 @@ export class CollectionViewController {
 		const bodyDrafts = { ...this.current.bodyDrafts };
 		delete bodyDrafts[recordId];
 		this.patch({ bodyDrafts });
+		this.clearCleanRecordBase(recordId);
 	}
 
 	private setBodyStatus(recordId: string, bodyStatus: CellStatus | null, body?: string): void {
@@ -750,18 +998,43 @@ export class CollectionViewController {
 
 	/** Saves the record body draft: one `record_patch {record_id, body}`. */
 	async commitBody(recordId: string): Promise<boolean> {
+		if (
+			this.schemaFromRecord &&
+			(!this.canEditRecord(recordId) || this.recordContextReviewRequired)
+		)
+			return false;
+		const target = this.schemaFromRecord ?? this.collectionId;
+		if (!target) return false;
 		const draft = this.current.bodyDrafts[recordId];
 		const frontier = this.frontiers.get(recordId);
 		if (draft === undefined || frontier === undefined) return false;
 		// A withheld body is not known to be empty: saving would overwrite what the user cannot see.
 		const panel = this.current.panel;
 		if (panel && panel.recordId === recordId && panel.bodyWithheld) return false;
-		const key = this.intentKey(`body:${recordId}`, JSON.stringify([frontier, draft]));
+		const key = this.intentKey(
+			`body:${recordId}`,
+			JSON.stringify([
+				frontier,
+				draft,
+				this.schemaFromRecord
+					? (this.recordSchemaBases.get(recordId) ?? this.recordContext?.schema_revision)
+					: null
+			])
+		);
 		this.setBodyStatus(recordId, { state: 'saving' });
 		try {
 			const change = await this.writes.execute(
-				this.collectionId,
-				{ type: 'record_patch', payload: { record_id: recordId, body: draft } },
+				target,
+				{
+					type: 'record_patch',
+					payload: this.schemaFromRecord
+						? {
+								body: draft,
+								schema_revision:
+									this.recordSchemaBases.get(recordId) ?? this.recordContext?.schema_revision
+							}
+						: { record_id: recordId, body: draft }
+				},
 				{ idempotencyKey: key, expectedFrontier: frontier }
 			);
 			if (this.disposed) return false;
@@ -788,6 +1061,11 @@ export class CollectionViewController {
 
 	/** Re-reads an open record after a body conflict (fresh frontier and stored body). */
 	private async refreshRecordFrontier(recordId: string): Promise<void> {
+		if (this.schemaFromRecord) {
+			this.recordContextReviewRequired = true;
+			await this.reloadRecordContext();
+			return;
+		}
 		if (this.openedRecordId !== recordId) return;
 		try {
 			// Reopen-then-close keeps the reference count balanced while forcing a fresh read.
@@ -822,12 +1100,33 @@ export class CollectionViewController {
 	 */
 	async archiveRecord(recordId: string, confirmed: boolean): Promise<ArchiveRecordOutcome> {
 		if (confirmed !== true) return { kind: 'needs_confirmation' };
-		const key = this.intentKey(`archive:${recordId}`, recordId);
+		const target = this.schemaFromRecord ?? this.collectionId;
+		if (!target || (this.schemaFromRecord && !this.canArchiveRecord(recordId)))
+			return { kind: 'failed', key: 'flow.personal.recordReadOnly', code: 'forbidden' };
+		const key = this.intentKey(
+			`archive:${recordId}`,
+			JSON.stringify([
+				recordId,
+				this.schemaFromRecord ? this.recordContext?.schema_revision : null,
+				this.schemaFromRecord ? this.recordContext?.record.frontier : null
+			])
+		);
+		let accepted: AcceptedChange;
 		try {
-			await this.writes.execute(
-				this.collectionId,
-				{ type: 'record_archive', payload: { record_id: recordId } },
-				{ idempotencyKey: key }
+			accepted = await this.writes.execute(
+				target,
+				{
+					type: 'record_archive',
+					payload: this.schemaFromRecord
+						? { schema_revision: this.recordContext?.schema_revision }
+						: { record_id: recordId }
+				},
+				{
+					idempotencyKey: key,
+					...(this.schemaFromRecord
+						? { expectedFrontier: this.recordContext?.record.frontier }
+						: {})
+				}
 			);
 		} catch (raw) {
 			const error = asFlowError(raw);
@@ -840,6 +1139,23 @@ export class CollectionViewController {
 		}
 		if (this.disposed) return { kind: 'archived' };
 		this.intents.delete(`archive:${recordId}`);
+		if (this.schemaFromRecord && this.recordContext) {
+			this.recordContext = { ...this.recordContext, record: accepted.object };
+			const panel = this.current.panel;
+			this.patch({
+				recordObject: accepted.object,
+				panel: panel
+					? {
+							...panel,
+							canEdit: false,
+							canArchive: false,
+							contextReviewRequired: false,
+							bodyStatus: null
+						}
+					: null
+			});
+			return { kind: 'archived' };
+		}
 		if (this.current.panel?.recordId === recordId) this.closePanel();
 		const drafts = { ...this.current.drafts };
 		delete drafts[recordId];
@@ -851,7 +1167,7 @@ export class CollectionViewController {
 			drafts,
 			bodyDrafts
 		});
-		await this.reloadRecords();
+		if (!this.schemaFromRecord) await this.reloadRecords();
 		return { kind: 'archived' };
 	}
 
@@ -859,11 +1175,12 @@ export class CollectionViewController {
 
 	private async schemaCommand(scope: string, command: FlowCommandInput): Promise<SchemaOutcome> {
 		// Hard gate: no `field_*` / `view_*` command leaves this client outside schema mode.
-		if (this.current.mode !== 'schema') {
+		if (this.schemaFromRecord || !this.collectionId || this.current.mode !== 'schema') {
 			return { ok: false, key: SCHEMA_MODE_REQUIRED_KEY, code: null };
 		}
 		const collection = this.current.collection;
-		if (!collection) return { ok: false, key: 'flow.collection.loadFailed', code: null };
+		if (!collection || collection.collectionId === null)
+			return { ok: false, key: 'flow.collection.loadFailed', code: null };
 		const key = this.intentKey(`schema:${scope}`, JSON.stringify([collection.frontier, command]));
 		this.patch({ schemaBusy: true, notice: null });
 		try {

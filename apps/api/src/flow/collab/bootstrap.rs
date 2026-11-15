@@ -6,7 +6,9 @@
 
 #![allow(clippy::items_after_statements, clippy::too_long_first_doc_paragraph)]
 
-use sea_orm::{AccessMode, DatabaseConnection, FromQueryResult, IsolationLevel, Statement, TransactionTrait};
+use sea_orm::{
+    AccessMode, ConnectionTrait, DatabaseConnection, FromQueryResult, IsolationLevel, Statement, TransactionTrait,
+};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -179,7 +181,7 @@ pub async fn load(db: &DatabaseConnection, document_id: Uuid) -> Result<Bootstra
 
     #[derive(FromQueryResult)]
     struct DocRow {
-        workspace_id: Uuid,
+        workspace_id: Option<Uuid>,
         engine: String,
         format_version: String,
         snapshot: Vec<u8>,
@@ -308,12 +310,23 @@ pub async fn load(db: &DatabaseConnection, document_id: Uuid) -> Result<Bootstra
 /// time any caller reaches this (see `load`'s own commit above), so this insert runs on `db`
 /// directly, not on the transaction that discovered the corruption. `details_redacted` carries
 /// only the logical reason string, never tail bytes or CRDT content.
-async fn resync_required(db: &DatabaseConnection, workspace_id: Uuid, document_id: Uuid, reason: &str) -> ApiError {
+async fn resync_required(
+    db: &DatabaseConnection,
+    workspace_id: Option<Uuid>,
+    document_id: Uuid,
+    reason: &str,
+) -> ApiError {
     tracing::error!(
         reason,
         %document_id,
         "collab bootstrap loader: integrity check failed, failing closed"
     );
+    let Some(workspace_id) = workspace_id else {
+        if let Err(err)=db.execute(Statement::from_sql_and_values(sea_orm::DbBackend::Postgres,
+            "INSERT INTO flow_integrity_records(scope_id,workspace_id,kind,subject_kind,subject_id,detected_by,details_redacted) SELECT o.scope_id,NULL,'collab_tail_integrity_violation','collab_document',$1::text,'flow.collab.bootstrap_loader',$2 FROM collab_documents d JOIN flow_objects o ON o.id=d.object_id WHERE d.id=$1",
+            vec![document_id.into(),json!({"reason":reason}).into()])).await {tracing::error!(%err,"failed to record personal document integrity alert");}
+        return ApiError::resync_required("resync_required", None);
+    };
     if let Err(err) = repository::insert_integrity_record(
         db,
         IntegrityRecordInput {

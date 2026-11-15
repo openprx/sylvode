@@ -8,6 +8,9 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use collab_core::{Frontier, SemanticSnapshot};
 use serde_json::Value;
 
+/// Current version of derived editor-CID and canonical navigator-order projections.
+pub const PROJECTION_MODEL_VERSION: u64 = 3;
+
 /// Base64 encoding for an opaque [`Frontier`] on the wire. `Bootstrap.snapshot_base64`
 /// elsewhere in the contract sets the precedent that opaque CRDT bytes are base64 in JSON.
 #[must_use]
@@ -25,7 +28,14 @@ pub fn encode_frontier(frontier: &Frontier) -> String {
 /// Only if `serde_json` itself cannot encode the snapshot, which cannot happen for the field
 /// types `SemanticSnapshot` carries (see its own `canonical_json` doc comment).
 pub fn state_json(snapshot: &SemanticSnapshot) -> Result<Value, serde_json::Error> {
-    serde_json::to_value(snapshot)
+    let mut value = serde_json::to_value(snapshot)?;
+    if let Value::Object(fields) = &mut value {
+        fields.insert(
+            "__flow_projection_model".into(),
+            serde_json::json!(PROJECTION_MODEL_VERSION),
+        );
+    }
+    Ok(value)
 }
 
 /// Plain-text projection: every live (non-deleted) node's text, in a stable `(order_key, id)`
@@ -75,6 +85,40 @@ pub fn render_markdown(title: &str, snapshot: &SemanticSnapshot) -> String {
         rendered.push('\n');
     }
     rendered
+}
+
+/// Bounded, read-only refresh for projections emitted before canonical editor CID support.
+///
+/// The marker belongs only to the derived JSON, never the accepted snapshot/frontier/hash.
+/// Replacing the entire projection from an older writer also removes its marker and is detected.
+pub async fn refresh_editor_state(
+    db: &sea_orm::DatabaseConnection,
+    document: uuid::Uuid,
+    expected_frontier: &str,
+    stored: &mut Value,
+) -> Result<Option<collab_core::LoroCollabEngine>, crate::error::ApiError> {
+    use collab_core::CollabEngine;
+    let ordinal = stored
+        .get("nodes")
+        .and_then(Value::as_object)
+        .is_some_and(|nodes| nodes.keys().any(|id| id.starts_with("__editor_prose__:")));
+    if stored.get("__flow_projection_model").and_then(Value::as_u64) == Some(PROJECTION_MODEL_VERSION) && !ordinal {
+        return Ok(None);
+    }
+    let engine = super::document::load_head_engine(db, document).await?;
+    if encode_frontier(&engine.frontier()) != expected_frontier {
+        return Err(crate::error::ApiError::resync_required(
+            "document changed during projection refresh",
+            None,
+        ));
+    }
+    *stored = state_json(
+        &engine
+            .semantic_snapshot()
+            .map_err(|e| super::command::map_collab_error(&e))?,
+    )
+    .map_err(|_| crate::error::ApiError::internal())?;
+    Ok(Some(engine))
 }
 
 #[cfg(test)]

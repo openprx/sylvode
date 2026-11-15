@@ -310,6 +310,7 @@ export type TargetView =
 			readonly id: string;
 			readonly state: 'record';
 			readonly projectId: string;
+			readonly workspaceId?: string;
 			readonly title: string;
 	  }
 	| { readonly id: string; readonly state: 'unresolved' };
@@ -372,7 +373,7 @@ export class ConversionJobController {
 	private retryWithdrawn = false;
 
 	constructor(
-		private readonly workspaceId: string,
+		private readonly workspaceId: string | null,
 		private readonly jobId: string,
 		private readonly onChange: (snapshot: ConversionJobSnapshot) => void = () => {},
 		deps: Partial<ConversionJobDeps> & Pick<ConversionJobDeps, 'commands' | 'repository'>
@@ -561,7 +562,9 @@ export class ConversionJobController {
 		if (this.sourceFor !== objectId) return;
 		const object = result && result.code === 0 ? result.data : null;
 		this.source =
-			object && object.id === objectId && object.workspace_id === this.workspaceId
+			object &&
+			object.id === objectId &&
+			(this.workspaceId === null || object.workspace_id === this.workspaceId)
 				? { state: 'ready', title: object.title }
 				: { state: 'hidden' };
 		this.emit();
@@ -589,11 +592,17 @@ export class ConversionJobController {
 			if (
 				record &&
 				record.id === id &&
-				record.workspace_id === this.workspaceId &&
+				(this.workspaceId === null || record.workspace_id === this.workspaceId) &&
 				typeof record.project_id === 'string' &&
 				record.project_id !== ''
 			) {
-				return { id, state: 'record', projectId: record.project_id, title: record.title };
+				return {
+					id,
+					state: 'record',
+					projectId: record.project_id,
+					workspaceId: record.workspace_id,
+					title: record.title
+				};
 			}
 		} catch {
 			// Fall through to the bare id.

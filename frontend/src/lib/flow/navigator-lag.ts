@@ -2,8 +2,8 @@
 // `GET /workspaces/{workspace_id}/flow/projection-lag` -> lag badge; `rest-api-v1.md` v0.5:
 // `{max_lag,p95_lag,items,next_cursor?}`).
 //
-// `max_lag`/`p95_lag` cover the whole policy-visible scope before paging
-// (`flow/model.rs::ProjectionLagResponse`), so one `limit=1` read is enough for the aggregate.
+// Both scope-native and genuine legacy adapters compute aggregates before pagination.
+// Personal scope reads fail explicitly if the published authorization scan budget is exceeded.
 // Refreshed every 30s while mounted. A rejected read hides the numbers rather than showing a
 // stale "synced": the badge must never claim a state it did not observe.
 
@@ -20,10 +20,7 @@ export type LagBadgeState =
 	| { readonly kind: 'unavailable'; readonly errorCode: string | null };
 
 export interface LagReads {
-	getProjectionLag(
-		workspaceId: string,
-		query?: { cursor?: string; limit?: number }
-	): Promise<ApiResult<FlowProjectionLag>>;
+	getProjectionLag(scopeId: string): Promise<ApiResult<FlowProjectionLag>>;
 }
 
 export interface LagBadgeDeps {
@@ -66,7 +63,7 @@ export class FlowLagBadge {
 		};
 	}
 
-	private workspaceId(): string {
+	private scopeId(): string {
 		return typeof this.workspace === 'function' ? this.workspace() : this.workspace;
 	}
 
@@ -91,7 +88,7 @@ export class FlowLagBadge {
 
 	async refresh(): Promise<LagBadgeState> {
 		const generation = this.generation;
-		const result = await this.deps.reads.getProjectionLag(this.workspaceId(), { limit: 1 });
+		const result = await this.deps.reads.getProjectionLag(this.scopeId());
 		if (generation !== this.generation) return this.state;
 		this.state = lagBadgeFromResult(result);
 		this.onChange(this.state);

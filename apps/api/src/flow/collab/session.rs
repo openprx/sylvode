@@ -689,7 +689,7 @@ async fn fetch_role(
     ))
     .one(db)
     .await
-    .map(|row| row.map(|r| r.role))
+    .map(|row| Some(row.map_or_else(|| "__flow_guest".to_string(), |r| r.role)))
 }
 
 fn encode(frame: &Frame) -> Option<Message> {
@@ -756,7 +756,18 @@ fn authorization_churn_frame(document_id: Uuid) -> Frame {
 /// failure this function can observe is either a clean protocol-level `rejected`/close (sent on
 /// the wire) or a best-effort log, because by the time this runs the HTTP upgrade has already
 /// completed and there is no more "the request failed" response left to give.
-pub async fn run(mut socket: WebSocket, state: AppState, consumed: ConsumedTicket) {
+pub async fn run(socket: WebSocket, state: AppState, consumed: ConsumedTicket) {
+    run_inner(socket, state, consumed, false).await;
+}
+pub async fn run_with_authorization_metadata(socket: WebSocket, state: AppState, consumed: ConsumedTicket) {
+    run_inner(socket, state, consumed, true).await;
+}
+async fn run_inner(
+    mut socket: WebSocket,
+    state: AppState,
+    consumed: ConsumedTicket,
+    authorization_notifications: bool,
+) {
     let session_id = Uuid::new_v4();
     let document_id = consumed.document_id;
     let collab = runtime::runtime();
@@ -907,6 +918,42 @@ pub async fn run(mut socket: WebSocket, state: AppState, consumed: ConsumedTicke
 
         match register_after_bootstrap(&state, &collab.registry, &consumed, session_id, ctx).await {
             Ok((registered, ctx)) => {
+                if authorization_notifications {
+                    let Ok(proof) = crate::flow::scope::authorize(
+                        &state.db,
+                        ctx.object_id,
+                        consumed.user_id,
+                        PermissionLevel::View,
+                    )
+                    .await
+                    else {
+                        collab.registry.unregister(document_id, session_id);
+                        close(&mut socket, 4403, "authorization revoked").await;
+                        return;
+                    };
+                    let metadata = super::frame::ResourceAuthorization {
+                        scope_id: proof.scope_id,
+                        object_id: ctx.object_id,
+                        authz_revision: proof.revision,
+                        authority_sequence: 1,
+                        session_id,
+                        permitted_actions: super::frame::permitted_actions(proof.level, proof.resource_active),
+                    };
+                    collab
+                        .registry
+                        .initialize_resource_authorization(session_id, metadata.clone());
+                    send(
+                        &mut socket,
+                        &Frame::Resync {
+                            protocol_version: PROTOCOL_VERSION,
+                            document_id,
+                            reason: "authorization_changed".into(),
+                            minimum_snapshot_seq: None,
+                            authorization: Some(metadata),
+                        },
+                    )
+                    .await;
+                }
                 for frame in &opening_frames {
                     send(&mut socket, frame).await;
                 }
@@ -1294,6 +1341,7 @@ async fn plan_gap_resolution(
                 document_id,
                 reason: "outbound_gap".to_string(),
                 minimum_snapshot_seq: Some(missing_from.saturating_sub(1)),
+                authorization: None,
             },
         };
     };

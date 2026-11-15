@@ -106,10 +106,10 @@ await flowApi.getPackageImport('workspace', 'job');
 assert.deepEqual(
 	calls.map(({ method, path }) => [method, path]),
 	[
-		['POST', '/api/v1/workspaces/workspace/flow/import-artifacts'],
-		['POST', '/api/v1/workspaces/workspace/flow/imports/preview'],
-		['POST', '/api/v1/workspaces/workspace/flow/imports/preview/commit'],
-		['GET', '/api/v1/workspaces/workspace/flow/imports/job']
+		['POST', '/api/v2/flow/scopes/workspace/import-artifacts'],
+		['POST', '/api/v2/flow/scopes/workspace/imports/preview'],
+		['POST', '/api/v2/flow/scopes/workspace/imports/preview/commit'],
+		['GET', '/api/v2/flow/scopes/workspace/imports/job']
 	]
 );
 assert.deepEqual(calls[0].body, { filename: 'workspace.sylvode-flow.zip', size: 7 });

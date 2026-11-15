@@ -44,12 +44,12 @@ await flowApi.retryConversion('job', 'retry-key');
 assert.deepEqual(
 	calls.map(({ method, path }) => [method, path]),
 	[
-		['POST', '/api/v1/flow/objects/source/references'],
-		['DELETE', '/api/v1/flow/objects/source/references/reference'],
-		['POST', '/api/v1/flow/conversions/preview'],
-		['POST', '/api/v1/flow/conversions'],
-		['GET', '/api/v1/flow/conversions/job'],
-		['POST', '/api/v1/flow/conversions/job/retry']
+		['POST', '/api/v2/flow/objects/source/references'],
+		['DELETE', '/api/v2/flow/objects/source/references/reference'],
+		['POST', '/api/v2/flow/conversions/preview'],
+		['POST', '/api/v2/flow/conversions'],
+		['GET', '/api/v2/flow/conversions/job'],
+		['POST', '/api/v2/flow/conversions/job/retry']
 	]
 );
 assert.equal(calls[1].idempotencyKey, 'unreference-key');

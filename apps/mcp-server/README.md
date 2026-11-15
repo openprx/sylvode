@@ -14,6 +14,76 @@ The MCP Server provides AI models with tools to interact with Sylvode's project 
 - Global search across all entities
 - Metadata-only bot operation records
 
+## Scope-native Flow profile
+
+The existing binaries also provide a bounded Flow-only profile for a current global
+user, without requiring a default workspace. The normal workspace server and commands
+retain their existing startup requirements and bot/project policy.
+
+```sh
+sylvode flow tools
+sylvode --api-url http://127.0.0.1:3000 --access-token-file /private/path/user-token flow call --name flow.home
+sylvode --api-url http://127.0.0.1:3000 --access-token-file /private/path/user-token flow call --name objects.query --args-json '{"personal":true}'
+mcp-server --api-url http://127.0.0.1:3000 serve --flow-only --transport stdio --access-token-file /private/path/user-token
+mcp-server --api-url http://127.0.0.1:3000 serve --flow-only --transport http --bind-addr 127.0.0.1:8090
+```
+
+Use an existing API user access token in a private file; `--access-token` is also
+accepted but may be visible in process arguments or shell history. The profile does
+not obtain, refresh, or impersonate a user credential. Expiry is reported by the API.
+It never interprets `mcp.bot_token` as a human credential. HTTP/SSE require each
+caller's actual Bearer token and reject a shared `--access-token` configuration.
+No token is needed for `flow tools`, which prints static schemas without API calls.
+
+The profile now registers 36 names: 34 actual existing Flow registry tools plus
+`flow.home` and the bounded `objects.command` alias. Existing names cover object
+read/create/patch/move/link/unlink/diff, grants/inheritance/relations, Collections and
+Records, comments/mentions, page shares/appearance, trash/purge, projection lag and
+Forms references. Success values retain baseline data DTOs; typed business errors
+remain structured. The normal 154-tool registry is unchanged.
+
+`objects.command` additionally requires statically mapped baseline operation policies
+on every affected project (and the outer alias policy). It cannot bypass a denied
+`objects.patch`, `objects.link`, `objects.unlink` or `objects.move`. Atomic embedding
+also requires `objects.create`. Named adapters keep their actual existing policy names,
+without requiring the internal generic alias permission. Client payloads cannot select
+a policy name.
+
+Object `at_seq`/`render` options map to bounded API reads; Collection `at_seq` is only a
+current `schema_seq` guard. A Collection create with `embed_page_id` derives scope and
+project from that actual Page, not personal home. Optional context IDs are checked claims;
+`personal` and `parent_id` cannot be combined with this variant. Omitted `after_block_id`
+appends; only existing tree block anchors support relative placement. Editor prose CID
+or alias relative placement is explicitly unsupported by the backend.
+
+Personal moves reparent non-root Pages/Collections inside their existing scope, requiring source
+management and target edit. Records retain their Collection association; navigator roots and
+Collection/Record destinations are refused. Cross-scope ownership changes use no move fallback.
+Navigator SQL hierarchy and CRDT ordering commit together; missing legacy placements are initialized
+in creation order. Both trash and projection-lag accept cursor/limit (1..100), with requester/query-
+bound cursors and an explicit published authorization scan-budget refusal. Lag aggregates cover the
+authorized scope before pagination. Personal scope has no project filter; legacy adapters retain
+the original workspace services and query contract.
+
+Only registered tools can dispatch. Package promotion/export, historical restoration,
+conversion jobs and workspace administrative/maintenance tools remain excluded from the
+personal profile. The normal legacy server retains its own existing services and gates.
+`objects.export` remains current-head rendered JSON, Markdown or CSV, never a raw typed
+package. Explicit `initialize_editor_doc` requires a Page, an empty payload and captured
+`expected_frontier`; nothing initializes during tools/list or ordinary metadata reads.
+
+List/create/search selectors require exactly one of `personal:true`, `scope_id`, or
+a genuine `workspace_id`; project claims must match actual resource context.
+Object-targeted calls resolve the object's canonical scope. Personal home is resolved
+only during an actual Flow call and is never cached between authenticated callers.
+Backend authorization remains authoritative. OPR workspace-bot calls retain genuine
+workspace adapters and Read/Write/project gates; they cannot select personal home.
+A personal scope skips only the project policy that requires a project, not resource
+authorization or the tool policy/audit path.
+
+This profile has developer mock/schema/identity coverage. It is not a claim of live
+MCP transport acceptance or of backend support for every broader Flow feature.
+
 ## Features
 
 - **154 MCP Tools**: Project, governance, universal forms, WASM plugin, operation records, release next actions, template, scenario toolkit, and Sylvode Flow
@@ -462,3 +532,25 @@ AGPL-3.0-or-later
 - [MCP Specification](https://modelcontextprotocol.io/)
 - [Sylvode API Documentation](../../docs/)
 - [Database Schema](../../migrations/)
+
+### Flow multi-resource project policy
+
+Flow-only mutations resolve actual source/target owners during each call, then check
+every distinct legacy project before dispatch. Link/move use actual target objects;
+unlink resolves an authorized outgoing relation and its target; record mutations and
+declared relation-field values resolve their actual targets. Plain text/user JSON is
+not recursively scanned for ownership hints. Caller project claims are not authority.
+Archive/restore stay source-project scoped under the backend subtree invariant.
+
+These are fresh admission/dispatch checks combined with backend resource authorization,
+not a transactionally atomic policy guarantee across a concurrent project move. No
+identity or backend permission model is changed. If unlink cannot resolve its target
+(including an unavailable/removed target), it refuses without sending a mutation; this
+can conservatively limit cleanup that another API surface permits. Relation lookup
+is bounded to 100 pages, and target resolution to 1,000 distinct affected objects.
+
+Forms reference creation checks the real destination Form/record project even for a
+personal source, using request-local ownership resolution. Link cleanup through
+`objects.unreference` follows source-Edit semantics and does not read or mutate the
+Forms destination. This differs from Flow-to-Flow unlink, which retains both-endpoint
+Edit authorization. No API permission is relaxed by these adapters.

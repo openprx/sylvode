@@ -27,14 +27,21 @@
 	interface Props {
 		controller: CollectionViewController;
 		snapshot: CollectionViewState;
-		workspaceId: string;
+		scopeId: string;
 		/** Standalone record page: no close button (the route owns the panel). */
 		standalone?: boolean;
 	}
 
-	let { controller, snapshot, workspaceId, standalone = false }: Props = $props();
+	let { controller, snapshot, scopeId, standalone = false }: Props = $props();
 
 	const panel = $derived(snapshot.panel);
+	const canEdit = $derived(panel?.canEdit !== false);
+	const canArchive = $derived(panel?.canArchive ?? canEdit);
+	const readOnlyKey = $derived(
+		snapshot.recordObject?.record_readonly_reason === 'container_inactive'
+			? 'flow.personal.recordContainerReadonly'
+			: 'flow.personal.recordReadOnly'
+	);
 	const row = $derived(
 		panel
 			? (snapshot.rows.find((candidate) => candidate.recordId === panel.recordId) ?? null)
@@ -114,6 +121,30 @@
 				{$t(panel.errorKey ?? 'flow.record.openFailed')}
 			</p>
 		{:else}
+			{#if !canEdit}<p class="px-4 py-3 text-sm text-slate-500" role="status">
+					{$t(readOnlyKey)}
+				</p>{/if}
+			{#if panel.contextReviewRequired}
+				<div
+					class="space-y-2 border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm dark:border-amber-900 dark:bg-amber-950"
+					role="status"
+				>
+					<p>{$t('flow.personal.recordReviewRequired')}</p>
+					<button
+						type="button"
+						class="min-h-11 rounded-md border border-amber-400 px-3 disabled:opacity-50"
+						disabled={!canEdit}
+						onclick={() => controller.reviewRecordContext(panel.recordId)}
+						>{$t('flow.personal.recordReviewAction')}</button
+					>
+					{#if bodyDraft !== undefined && !panel.bodyWithheld}<p
+							class="whitespace-pre-wrap break-words text-xs"
+						>
+							{$t('flow.personal.recordCurrentValue')}: {panel.body ?? ''}
+						</p>{/if}
+				</div>
+			{/if}
+
 			<section
 				class="space-y-3 overflow-y-auto px-4 py-3"
 				aria-label={$t('flow.record.properties')}
@@ -136,20 +167,24 @@
 								{field.label}
 							</label>
 							{#if isEditableField(field)}
-								<CollectionValueEditor
-									{field}
-									id={editorId}
-									value={editorValue(field, row.values, draft)}
-									onchange={(value) => controller.setDraft(panel.recordId, field.fieldId, value)}
-									oncommit={() => void controller.commitCell(panel.recordId, field.fieldId)}
-									oncancel={() => controller.cancelDraft(panel.recordId, field.fieldId)}
-								/>
+								<fieldset disabled={!canEdit} class="min-w-0 border-0 p-0">
+									<CollectionValueEditor
+										{field}
+										id={editorId}
+										value={editorValue(field, row.values, draft)}
+										onchange={(value) => controller.setDraft(panel.recordId, field.fieldId, value)}
+										oncommit={() => void controller.commitCell(panel.recordId, field.fieldId)}
+										oncancel={() => controller.cancelDraft(panel.recordId, field.fieldId)}
+									/>
+								</fieldset>
 								{#if draft !== null}
 									<div class="flex items-center gap-2">
 										<button
 											type="button"
 											class="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
-											disabled={status?.state === 'saving'}
+											disabled={!canEdit ||
+												panel.contextReviewRequired ||
+												status?.state === 'saving'}
 											data-testid="record-panel-field-save"
 											onclick={() => void controller.commitCell(panel.recordId, field.fieldId)}
 											>{$t('flow.record.save')}</button
@@ -167,9 +202,18 @@
 								{/if}
 							{:else}
 								<div id={editorId} class="text-sm">
-									<CollectionCellValue {field} values={row.values} {workspaceId} />
+									<CollectionCellValue {field} values={row.values} {scopeId} />
 								</div>
 							{/if}
+							{#if panel.contextReviewRequired && draft !== null}<div
+									class="rounded border border-amber-200 p-2 text-xs"
+								>
+									<span>{$t('flow.personal.recordCurrentValue')}</span><CollectionCellValue
+										{field}
+										values={row.values}
+										{scopeId}
+									/>
+								</div>{/if}
 							{#if status && status.state !== 'saving'}
 								<p class="text-xs text-red-600 dark:text-red-400" role="alert">
 									{status.state === 'conflict'
@@ -208,6 +252,7 @@
 						class="min-h-40 w-full rounded border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
 						placeholder={$t('flow.record.bodyPlaceholder')}
 						value={bodyValue}
+						readonly={!canEdit}
 						data-testid="record-panel-body"
 						oninput={(event) => controller.setBodyDraft(panel.recordId, event.currentTarget.value)}
 					></textarea>
@@ -215,7 +260,10 @@
 						<button
 							type="button"
 							class="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
-							disabled={bodyDraft === undefined || panel.bodyStatus?.state === 'saving'}
+							disabled={!canEdit ||
+								panel.contextReviewRequired ||
+								bodyDraft === undefined ||
+								panel.bodyStatus?.state === 'saving'}
 							data-testid="record-panel-body-save"
 							onclick={() => void controller.commitBody(panel.recordId)}
 							>{$t('flow.record.saveBody')}</button
@@ -249,7 +297,9 @@
 				class="space-y-2 border-t border-slate-200 px-4 py-3 dark:border-slate-800"
 				aria-label={$t('flow.record.archive')}
 			>
-				{#if archiveConfirming}
+				{#if !canArchive}<p class="text-xs text-slate-500">
+						{$t(readOnlyKey)}
+					</p>{:else if archiveConfirming}
 					<div class="space-y-2" role="group" aria-labelledby={`record-archive-${panel.recordId}`}>
 						<p
 							id={`record-archive-${panel.recordId}`}
@@ -261,14 +311,14 @@
 							<button
 								type="button"
 								class="min-h-11 rounded bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
-								disabled={archiveBusy}
+								disabled={archiveBusy || !canArchive}
 								data-testid="record-panel-archive-confirm"
 								onclick={() => void archive()}>{$t('flow.record.archiveConfirm')}</button
 							>
 							<button
 								type="button"
 								class="min-h-11 rounded px-3 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-								disabled={archiveBusy}
+								disabled={archiveBusy || !canArchive}
 								onclick={() => {
 									archiveConfirming = false;
 									archiveErrorKey = null;

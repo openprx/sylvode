@@ -44,6 +44,17 @@ pub fn seal(routes: Router<AppState>) -> Router<AppState> {
 
 async fn boundary(request: Request, next: Next) -> Response {
     let mut response = with_typed_database_failures(next.run(request)).await;
+    // Authenticated content and bearer-link content must be reauthorized after revocation or
+    // account switch. The application may keep its explicit user-isolated offline cache; HTTP
+    // intermediaries and browser caches must not retain another authorization context's bytes.
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("private, no-store"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::VARY,
+        axum::http::HeaderValue::from_static("Authorization, Cookie"),
+    );
     response.extensions_mut().insert(FlowSurfaceResponse);
     response
 }

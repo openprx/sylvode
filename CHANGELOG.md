@@ -10,6 +10,18 @@ name.
 
 ## [Unreleased]
 
+### Added
+
+- Independent personal Flow scopes, scope-aware sharing, lifecycle, durable events and bounded import/export compatibility.
+- Page-focused Flow navigation and editor tools, plus an eight-tab workspace with retained drafts, drag ordering and safe refresh.
+- Atomic optional version checks for Forms, projects, resources and assistant configuration to prevent stale saves.
+
+### Changed
+
+- Flow Collection/Record UI entry points are hidden while existing data and validated backend APIs remain available.
+- Browser CI and its binary producer/consumers use Ubuntu 24.04, supported by the locked Playwright version.
+- Source Docker builds include the Flow benchmark workspace member. Page rich-text, block movement, presence and package-reference limitations remain explicitly bounded.
+
 ### Security
 
 - Patched RustSec findings in the lockfile: rustls 0.23.46, rustls-webpki 0.103.16,

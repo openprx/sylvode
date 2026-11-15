@@ -19,6 +19,7 @@
 
 import { Suite, assert, assertDeepEqual, assertEqual, finish, waitFor } from './support/harness';
 import {
+	MockWebSocket,
 	FakeCollabServer,
 	FakeConnectivity,
 	OBJECT_ID,
@@ -36,7 +37,7 @@ import type { FlowError } from '../src/lib/flow/types';
 
 const suite = new Suite('flow_outbox');
 
-async function open(server: FakeCollabServer, factory?: IDBFactory) {
+async function open(server: FakeCollabServer, factory?: IDBFactory, scopeId = WORKSPACE_ID) {
 	const idb = factory ?? (await freshIndexedDb());
 	const restore = await installFakes(server);
 	const store = await IndexedDbOutboxStore.open(idb, OUTBOX_DB);
@@ -49,10 +50,10 @@ async function open(server: FakeCollabServer, factory?: IDBFactory) {
 		offlineSync: { sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))) }
 	});
 	const entry = await repository.open({
-		workspaceId: WORKSPACE_ID,
+		scopeId,
 		objectId: OBJECT_ID,
 		signal: new AbortController().signal,
-		object: objectView() as unknown as FlowObjectView
+		object: { ...objectView(), scope_id: scopeId } as unknown as FlowObjectView
 	});
 	const states: string[] = [];
 	entry.session.state.subscribe((s) => states.push(s));
@@ -241,7 +242,62 @@ await suite.checkAsync(
 );
 
 await suite.checkAsync(
-	'entries left by an earlier page load are replayed by the next one',
+	'shared object admission uses canonical source scope, independent from the navigator scope',
+	async () => {
+		const server = new FakeCollabServer();
+		server.ticketResponse = {
+			ticket: 'scope-ticket',
+			expires_at: '',
+			websocket_path: '/api/v2/flow/collab/ws',
+			scope_id: 'canonical-source-scope',
+			object_id: OBJECT_ID
+		};
+		const idb = await freshIndexedDb();
+		const restore = await installFakes(server);
+		const { FlowObjectRepository } = await import('../src/lib/flow/object-repository');
+		const repository = new FlowObjectRepository({
+			session: { connectivity: new FakeConnectivity(), answerTimeoutMs: 1500 }
+		});
+		try {
+			const entry = await repository.open({
+				scopeId: 'navigator-scope',
+				objectId: OBJECT_ID,
+				signal: new AbortController().signal,
+				object: { ...objectView(), scope_id: 'canonical-source-scope' } as FlowObjectView
+			});
+			assertEqual(entry.handle.scopeId, 'canonical-source-scope', 'canonical handle identity');
+			assertEqual(
+				server.ticketRequests[0].scope_id,
+				'canonical-source-scope',
+				'ticket uses source scope'
+			);
+			const socketUrl = new URL(MockWebSocket.instances.at(-1)!.url);
+			assertEqual(socketUrl.pathname, '/api/v2/flow/collab/ws', 'negotiated WS endpoint');
+			assertEqual(
+				socketUrl.searchParams.get('ticket'),
+				'scope-ticket',
+				'bare path receives issued admission ticket'
+			);
+			assertEqual(
+				socketUrl.searchParams.get('client_id'),
+				server.ticketRequests[0].client_id as string,
+				'same ticket client identity'
+			);
+			assertEqual(server.ticketRequests[0].object_id, OBJECT_ID, 'same canonical object');
+			assertEqual(
+				server.ticketRequests[0].document_id,
+				entry.handle.documentId,
+				'same existing document'
+			);
+		} finally {
+			await repository.close(OBJECT_ID);
+			restore();
+		}
+	}
+);
+
+await suite.checkAsync(
+	'pre-scope persisted outbox schema replays after workspace-to-scope resolution without changing update identity',
 	async () => {
 		const server = new FakeCollabServer();
 		const first = await open(server);
@@ -252,10 +308,33 @@ await suite.checkAsync(
 		await waitFor(() => first.pending() === 1, 'pending');
 		const [stored] = await first.store.list(OBJECT_ID);
 		await first.close();
-		const second = await open(server, idb);
+		// This is the exact pre-decoupling persistence schema: there is no workspace/scope key
+		// to migrate or discard. The scope resolved from the migrated object may differ.
+		assertDeepEqual(
+			Object.keys(stored).sort(),
+			[
+				'updateId',
+				'idempotencyKey',
+				'objectId',
+				'documentId',
+				'order',
+				'bytes',
+				'baseFrontier',
+				'intent',
+				'enqueuedAt',
+				'peerId'
+			].sort(),
+			'pre-scope persisted field set'
+		);
+		const second = await open(server, idb, '99999999-9999-4999-8999-999999999999');
 		try {
 			await waitFor(() => second.pending() === 0 && server.accepted.length === 1, 'replayed', 5000);
 			assertEqual(server.accepted[0].updateId, stored.updateId, 'under the original id');
+			assertEqual(
+				server.updatesSeen[0].updateId,
+				stored.idempotencyKey,
+				'legacy idempotency key unchanged'
+			);
 			assertEqual(textOf(second.entry.doc), 'survives a reload', 'and visible in the new doc');
 		} finally {
 			await second.close();

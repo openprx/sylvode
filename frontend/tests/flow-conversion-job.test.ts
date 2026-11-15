@@ -81,6 +81,7 @@ function object(overrides: Partial<FlowObjectView> = {}): FlowObjectView {
 	return {
 		id: OBJ,
 		workspace_id: WS,
+		scope_id: 'scope-1',
 		project_id: null,
 		object_type: 'page',
 		lifecycle_status: 'active',
@@ -215,9 +216,9 @@ await suite.checkAsync(
 			calls.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : null });
 			if (calls.length > RUNAWAY_LIMIT) controllerRef?.dispose();
 			let data: unknown = {};
-			if (path === `/api/v1/flow/conversions/${JOB}` && method === 'GET') data = failed();
-			if (path === `/api/v1/flow/conversions/${JOB}/retry`) data = job();
-			if (path === `/api/v1/flow/objects/${OBJ}`) data = object();
+			if (path === `/api/v2/flow/conversions/${JOB}` && method === 'GET') data = failed();
+			if (path === `/api/v2/flow/conversions/${JOB}/retry`) data = job();
+			if (path === `/api/v2/flow/objects/${OBJ}`) data = object();
 			if (path === `/api/v1/form-records/${RECORD}`) data = record(RECORD);
 			return new Response(JSON.stringify({ code: 0, message: 'ok', data }), {
 				headers: { 'Content-Type': 'application/json' }
@@ -248,9 +249,9 @@ await suite.checkAsync(
 		assertDeepEqual(
 			calls.map(({ method, path }) => [method, path]),
 			[
-				['GET', `/api/v1/flow/conversions/${JOB}`],
-				['GET', `/api/v1/flow/objects/${OBJ}`],
-				['POST', `/api/v1/flow/conversions/${JOB}/retry`],
+				['GET', `/api/v2/flow/conversions/${JOB}`],
+				['GET', `/api/v2/flow/objects/${OBJ}`],
+				['POST', `/api/v2/flow/conversions/${JOB}/retry`],
 				['GET', `/api/v1/form-records/${RECORD}`]
 			],
 			'paths'
@@ -260,7 +261,15 @@ await suite.checkAsync(
 		assertEqual(snap?.job?.status, 'completed', 'job after retry');
 		assertDeepEqual(
 			snap?.targets,
-			[{ id: RECORD, state: 'record', projectId: PROJECT, title: record(RECORD).title }],
+			[
+				{
+					id: RECORD,
+					state: 'record',
+					projectId: PROJECT,
+					workspaceId: WS,
+					title: record(RECORD).title
+				}
+			],
 			'target resolved through formsApi.getRecord'
 		);
 	}
@@ -592,7 +601,13 @@ await suite.checkAsync(
 		assertDeepEqual(
 			h.controller.snapshot().targets,
 			[
-				{ id: RECORD, state: 'record', projectId: PROJECT, title: record(RECORD).title },
+				{
+					id: RECORD,
+					state: 'record',
+					projectId: PROJECT,
+					workspaceId: WS,
+					title: record(RECORD).title
+				},
 				{ id: RECORD_2, state: 'unresolved' },
 				{ id: FORM_ID, state: 'unresolved' }
 			],

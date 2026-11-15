@@ -71,7 +71,13 @@ async fn current_roles(
     ))
     .all(&state.db)
     .await?;
-    Ok(rows.into_iter().map(|row| (row.user_id, row.role)).collect())
+    let mut roles: HashMap<Uuid, String> = user_ids
+        .iter()
+        .copied()
+        .map(|id| (id, "__flow_guest".to_string()))
+        .collect();
+    roles.extend(rows.into_iter().map(|row| (row.user_id, row.role)));
+    Ok(roles)
 }
 
 async fn current_roles_with_retry(
@@ -233,6 +239,20 @@ async fn revalidate_candidates(
         object_ids.dedup();
         let (levels, uncertain_objects) =
             levels_with_object_fallback(state, workspace_id, user_id, role, &object_ids).await;
+        for session in &user_sessions {
+            if let Some(level) = levels.get(&session.object_id)
+                && *level >= MINIMUM_COLLAB_SESSION_LEVEL
+                && let Ok(proof) =
+                    crate::flow::scope::authorize(&state.db, session.object_id, user_id, MINIMUM_COLLAB_SESSION_LEVEL)
+                        .await
+            {
+                registry.publish_resource_authorization(
+                    *session,
+                    proof.revision,
+                    super::frame::permitted_actions(proof.level, proof.resource_active),
+                );
+            }
+        }
         partition_user_sessions(user_sessions, &levels, &uncertain_objects, &mut revoked, &mut uncertain);
     }
     let mut result = apply_revocations(registry, candidate_count, &revoked);

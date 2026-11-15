@@ -62,7 +62,7 @@ export interface FlowPackageFailure {
 	/** Set when the rejection names a cause the wizard resolves itself: `project_unmapped`
 	 * (`invalid_update.details.reason`, back to the mapping step) or `lineage_rejected` (a commit
 	 * `policy_rejected` under `reject_existing`: the objects were already imported). */
-	readonly cause?: 'project_unmapped' | 'lineage_rejected';
+	readonly cause?: 'project_unmapped' | 'lineage_rejected' | 'export_authority_changed';
 }
 
 const BLOCKING_CODES: ReadonlySet<string> = new Set([
@@ -78,6 +78,9 @@ export const FLOW_PACKAGE_ERROR_KEYS = [
 	'flow.package.error.expired',
 	'flow.export.error.empty',
 	'flow.export.error.conflict',
+	'flow.export.error.authorityChanged',
+	'flow.package.error.typedRoundtripUnsupported',
+	'flow.package.error.invalidObjectTypes',
 	'flow.import.error.previewRejected',
 	'flow.import.error.conflict',
 	'flow.import.error.commitConflict',
@@ -121,6 +124,46 @@ export function classifyPackageFailure(
 	operation: FlowPackageOperation
 ): FlowPackageFailure {
 	const flowError = flowErrorFromEnvelope(envelope);
+	if (
+		flowError?.code === 'unsupported_format' &&
+		detailsReason(envelope.details) === 'typed_package_roundtrip_unsupported'
+	) {
+		return {
+			messageKey: 'flow.package.error.typedRoundtripUnsupported',
+			values: {},
+			blocking: true,
+			retryable: false,
+			forbidden: false
+		};
+	}
+	if (
+		flowError?.code === 'invalid_update' &&
+		detailsReason(envelope.details) === 'invalid_package_object_types'
+	) {
+		return {
+			messageKey: 'flow.package.error.invalidObjectTypes',
+			values: {},
+			blocking: false,
+			retryable: false,
+			forbidden: false
+		};
+	}
+
+	if (
+		flowError?.code === 'policy_rejected' &&
+		detailsReason(envelope.details) === 'export_authority_changed' &&
+		(envelope.details as { action?: unknown }).action === 'regenerate_export'
+	) {
+		return {
+			messageKey: 'flow.export.error.authorityChanged',
+			values: {},
+			blocking: false,
+			retryable: false,
+			forbidden: false,
+			cause: 'export_authority_changed'
+		};
+	}
+
 	if (
 		flowError?.code === 'invalid_update' &&
 		detailsReason(envelope.details) === PROJECT_UNMAPPED_REASON
@@ -210,7 +253,7 @@ export class FlowPackageImportSession {
 	private previewConflictPolicy: FlowPackageConflictPolicy | null = null;
 
 	constructor(
-		private readonly workspaceId: string,
+		private readonly scopeId: string,
 		private readonly commands: Pick<
 			FlowCommandService,
 			'uploadImportPackage' | 'previewImport' | 'commitImport'
@@ -226,7 +269,7 @@ export class FlowPackageImportSession {
 	): Promise<FlowPackageArtifactReceipt> {
 		this.reset();
 		const result = await this.commands.uploadImportPackage(
-			this.workspaceId,
+			this.scopeId,
 			file,
 			filename,
 			idempotencyKey,
@@ -266,7 +309,7 @@ export class FlowPackageImportSession {
 		this.previewReceipt = null;
 		this.previewConflictPolicy = null;
 		this.previewReceipt = requireData(
-			await this.commands.previewImport(this.workspaceId, {
+			await this.commands.previewImport(this.scopeId, {
 				artifact_id: this.artifact.artifact_id,
 				project_mapping: input.projectMapping ?? {},
 				external_reference_policy: input.externalReferencePolicy,
@@ -291,7 +334,7 @@ export class FlowPackageImportSession {
 			throw new Error('The confirmed package hash does not match the server preview');
 		}
 		return requireData(
-			await this.commands.commitImport(this.workspaceId, preview.preview_id, {
+			await this.commands.commitImport(this.scopeId, preview.preview_id, {
 				package_sha256: preview.package_sha256,
 				mapping_hash: preview.mapping_hash,
 				conflict_policy: conflictPolicy,

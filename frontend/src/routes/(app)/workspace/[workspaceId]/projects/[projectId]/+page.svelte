@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { FileText, Power } from '@lucide/svelte';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy, getContext } from 'svelte';
+	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { goto } from '$app/navigation';
@@ -68,6 +69,139 @@
 		templateArray(scenarioTemplate, 'resource_schema', 'resources')
 	);
 
+	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
+	const taskKey = `project:${projectId}`;
+	let unregisterTask: () => void = () => {};
+	let remoteDetail = $state(false);
+	let resourceBases = $state<Record<string, ProjectResource>>({});
+	let assistantBases = $state<Record<string, AiAgent>>({});
+	let assistantBaseDrafts = $state<
+		Record<string, { provider: string; model: string; api_endpoint: string }>
+	>({});
+	let resourceConflicts = $state<Record<string, ProjectResource>>({});
+	let assistantConflicts = $state<Record<string, AiAgent>>({});
+	type DetailSnapshot = {
+		assistant: typeof assistantConfigDrafts;
+		assistantBase: typeof assistantBases;
+		assistantUiBase: typeof assistantBaseDrafts;
+		resourceBase: typeof resourceBases;
+		resourceEdit: typeof resourceEditDrafts;
+		resourceForm: typeof resourceForm;
+		editing: string | null;
+	};
+	function detailDirty() {
+		return (
+			!!editingResourceId ||
+			!!resourceForm.name ||
+			!!resourceForm.locator ||
+			Object.entries(assistantConfigDrafts).some(
+				([id, draft]) => JSON.stringify(draft) !== JSON.stringify(assistantBaseDrafts[id])
+			)
+		);
+	}
+	function captureDetail(): DetailSnapshot {
+		return {
+			assistant: $state.snapshot(assistantConfigDrafts),
+			assistantBase: $state.snapshot(assistantBases),
+			assistantUiBase: $state.snapshot(assistantBaseDrafts),
+			resourceBase: $state.snapshot(resourceBases),
+			resourceEdit: $state.snapshot(resourceEditDrafts),
+			resourceForm: $state.snapshot(resourceForm),
+			editing: editingResourceId
+		};
+	}
+	async function refreshDetail(force = false) {
+		if (!force && (loading || resourceSubmitting || updatingAssistantId)) return;
+		const [projectResponse, resourceResponse, agentResponse] = await Promise.all([
+			projectsApi.get(projectId),
+			projectsApi.listResources(projectId),
+			aiAgentsApi.list(projectId)
+		]);
+		if (projectResponse.code !== 0 || !projectResponse.data) return;
+		project = projectResponse.data;
+		if (resourceResponse.code === 0 && resourceResponse.data) {
+			const fresh = resourceResponse.data.items ?? [];
+			for (const [id, base] of Object.entries(resourceBases)) {
+				const remote = fresh.find((row) => row.id === id);
+				if (remote && resourceEditDrafts[id] && remote.updated_at !== base.updated_at)
+					resourceConflicts = { ...resourceConflicts, [id]: remote };
+			}
+			resources = fresh;
+		}
+		if (agentResponse.code === 0 && agentResponse.data) {
+			const fresh = agentResponse.data.items ?? [];
+			for (const [id, base] of Object.entries(assistantBases)) {
+				const remote = fresh.find((row) => row.id === id);
+				if (
+					remote &&
+					assistantConfigDrafts[id] &&
+					remote.config_updated_at !== base.config_updated_at
+				)
+					assistantConflicts = { ...assistantConflicts, [id]: remote };
+			}
+			aiAgents = fresh;
+		}
+		remoteDetail =
+			Object.keys(resourceConflicts).length > 0 || Object.keys(assistantConflicts).length > 0;
+		if (remoteDetail) workbench?.markChanged(taskKey);
+		await loadRecentIssues();
+	}
+	function reviewResource(id: string) {
+		const base = resourceBases[id],
+			remote = resourceConflicts[id],
+			local = resourceEditDrafts[id];
+		if (!base || !remote || !local) return;
+		resourceEditDrafts = {
+			...resourceEditDrafts,
+			[id]: {
+				kind: local.kind !== base.kind ? local.kind : remote.kind,
+				name: local.name !== base.name ? local.name : remote.name,
+				locator:
+					local.locator !== formatLocator(base.locator)
+						? local.locator
+						: formatLocator(remote.locator),
+				sync_status: local.sync_status !== base.sync_status ? local.sync_status : remote.sync_status
+			}
+		};
+		resourceBases = { ...resourceBases, [id]: remote };
+		const next = { ...resourceConflicts };
+		delete next[id];
+		resourceConflicts = next;
+		remoteDetail = Object.keys(next).length > 0 || Object.keys(assistantConflicts).length > 0;
+		workbench?.markChanged(taskKey, remoteDetail);
+	}
+	function reviewAssistant(id: string) {
+		const remote = assistantConflicts[id],
+			base = assistantBaseDrafts[id],
+			local = assistantConfigDrafts[id];
+		if (!remote || !base || !local) return;
+		const current = {
+			provider: remote.provider,
+			model: remote.model,
+			api_endpoint: remote.api_endpoint ?? ''
+		};
+		const next = { ...local };
+		for (const field of ['provider', 'model', 'api_endpoint'] as const)
+			if (local[field] === base[field]) next[field] = current[field];
+		assistantConfigDrafts = { ...assistantConfigDrafts, [id]: next };
+		assistantBases = { ...assistantBases, [id]: remote };
+		assistantBaseDrafts = { ...assistantBaseDrafts, [id]: current };
+		const conflicts = { ...assistantConflicts };
+		delete conflicts[id];
+		assistantConflicts = conflicts;
+		remoteDetail = Object.keys(conflicts).length > 0 || Object.keys(resourceConflicts).length > 0;
+		workbench?.markChanged(taskKey, remoteDetail);
+	}
+	$effect(() => {
+		void resourceForm.name;
+		void resourceForm.locator;
+		void editingResourceId;
+		void assistantConfigDrafts;
+		workbench?.markDirty(taskKey, detailDirty());
+	});
+
+	onDestroy(() => unregisterTask());
+
 	onMount(async () => {
 		const loadedProject = await loadProject();
 		if (!loadedProject) {
@@ -76,11 +210,29 @@
 		}
 
 		if (loadedProject.type_key === 'custom_form') {
+			workbench?.close(taskKey, true);
 			await goto(`/workspace/${workspaceId}/projects/${projectId}/forms`, { replaceState: true });
 			return;
 		}
 
 		await Promise.all([loadRecentIssues(), loadResources(), loadAiAgents()]);
+		const saved = workbench?.snapshot<DetailSnapshot>(taskKey);
+		if (saved) {
+			assistantConfigDrafts = saved.assistant;
+			assistantBases = saved.assistantBase;
+			assistantBaseDrafts = saved.assistantUiBase;
+			resourceBases = saved.resourceBase;
+			resourceEditDrafts = saved.resourceEdit;
+			resourceForm = saved.resourceForm;
+			editingResourceId = saved.editing;
+		}
+		workbench?.setTitle(taskKey, loadedProject.name);
+		unregisterTask =
+			workbench?.register(taskKey, {
+				capture: captureDetail,
+				dirty: detailDirty,
+				refresh: refreshDetail
+			}) ?? (() => {});
 		loading = false;
 	});
 
@@ -187,6 +339,13 @@
 		value: string,
 		role: unknown
 	) {
+		if (!assistantBases[assistant.id]) {
+			assistantBases = { ...assistantBases, [assistant.id]: $state.snapshot(assistant) };
+			assistantBaseDrafts = {
+				...assistantBaseDrafts,
+				[assistant.id]: assistantDraft(assistant, role)
+			};
+		}
 		assistantConfigDrafts = {
 			...assistantConfigDrafts,
 			[assistant.id]: {
@@ -211,13 +370,24 @@
 			provider,
 			model,
 			api_endpoint: draft.api_endpoint.trim() || undefined,
-			is_active: true
+			expected_config_updated_at:
+				assistantBases[assistant.id]?.config_updated_at ?? assistant.config_updated_at
 		});
 		updatingAssistantId = null;
 		if (response.code !== 0) {
-			toast.error(response.message);
+			if (response.code === 409) {
+				await refreshDetail(true);
+				toast.error(get(t)('workbench.conflictBody'));
+			} else toast.error(response.message);
 			return;
 		}
+		const clean = { ...assistantConfigDrafts };
+		delete clean[assistant.id];
+		assistantConfigDrafts = clean;
+		const bases = { ...assistantBases };
+		delete bases[assistant.id];
+		assistantBases = bases;
+
 		toast.success(get(t)('project.assistantSaved'));
 		await loadAiAgents();
 	}
@@ -289,6 +459,7 @@
 	}
 
 	function startEditResource(resource: ProjectResource) {
+		resourceBases = { ...resourceBases, [resource.id]: $state.snapshot(resource) };
 		editingResourceId = resource.id;
 		resourceEditDrafts = {
 			...resourceEditDrafts,
@@ -312,17 +483,25 @@
 			kind: draft.kind,
 			name: draft.name.trim(),
 			locator: parseLocator(draft.locator),
-			sync_status: draft.sync_status.trim() || 'manual'
+			sync_status: draft.sync_status.trim() || 'manual',
+			expected_updated_at: resourceBases[resource.id]?.updated_at ?? resource.updated_at
 		});
 		resourceSubmitting = false;
 		if (response.code !== 0) {
-			toast.error(response.message);
+			if (response.code === 409) {
+				await refreshDetail(true);
+				toast.error(get(t)('workbench.conflictBody'));
+			} else toast.error(response.message);
 			return;
 		}
+
 		if (response.data) {
 			resources = resources.map((item) => (item.id === response.data?.id ? response.data : item));
 		}
 		editingResourceId = null;
+		const bases = { ...resourceBases };
+		delete bases[resource.id];
+		resourceBases = bases;
 		toast.success('Project resource updated');
 	}
 
@@ -413,6 +592,37 @@
 		}
 	}
 </script>
+
+{#each Object.values(resourceConflicts) as remote (remote.id)}<section
+		class="rounded border border-amber-300 p-3"
+		role="alert"
+		data-testid="task-conflict"
+	>
+		<p>{$t('workbench.conflictBody')}</p>
+		<p>{$t('workbench.remoteValue')} {remote.name} · {formatLocator(remote.locator)}</p>
+		<button type="button" class="min-h-11 underline" onclick={() => reviewResource(remote.id)}
+			>{$t('workbench.reviewRetry')}</button
+		>
+	</section>{/each}
+{#each Object.values(assistantConflicts) as remote (remote.id)}<section
+		class="rounded border border-amber-300 p-3"
+		role="alert"
+		data-testid="task-conflict"
+	>
+		<p>{$t('workbench.conflictBody')}</p>
+		<p>{$t('workbench.remoteValue')} {remote.provider} · {remote.model}</p>
+		<button type="button" class="min-h-11 underline" onclick={() => reviewAssistant(remote.id)}
+			>{$t('workbench.reviewRetry')}</button
+		>
+	</section>{/each}
+
+{#if remoteDetail}<p
+		class="rounded border border-amber-300 bg-amber-50 p-3 text-sm"
+		role="status"
+		data-testid="task-remote-change"
+	>
+		{$t('workbench.conflictBody')}
+	</p>{/if}
 
 <div class="max-w-7xl mx-auto">
 	{#if loading}
@@ -896,6 +1106,7 @@
 												<Button
 													size="sm"
 													loading={resourceSubmitting}
+													disabled={!!resourceConflicts[resource.id]}
 													onclick={() => handleUpdateResource(resource)}>{$t('common.save')}</Button
 												>
 											</div>

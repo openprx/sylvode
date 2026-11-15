@@ -11,7 +11,7 @@
  *   (Flow or the bridge is off, or nothing refers to the record);
  * - a row whose source the caller cannot read (`source_available: false`) carries no link, no
  *   title, no mode, no status and no time -- only its id for keying and the placeholder;
- * - a readable source links to its Page (`/workspace/{ws}/flow/{sourceObjectId}`);
+ * - a readable source links by global object identity (`/flow/{sourceObjectId}`), independent of the destination workspace;
  * - a conversion links to its job page (`/workspace/{ws}/flow/conversions/{jobId}`) only when
  *   `job_available` is true (the job endpoint answers `not_found` to anyone else, so a link
  *   would lead to an error page).

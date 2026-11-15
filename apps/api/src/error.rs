@@ -645,6 +645,9 @@ pub enum ApiError {
     NotFound(String),
     #[error("{0}")]
     Conflict(String),
+    /// Optimistic editing conflict outside the Flow CRDT protocol. No current private metadata.
+    #[error("resource changed; review changes before retrying")]
+    VersionConflict(&'static str),
     #[error("internal server error")]
     Internal,
     #[error("database error")]
@@ -706,7 +709,7 @@ impl ApiError {
         }
     }
 
-    fn typed_with_details(kind: ApiErrorKind, message: impl Into<String>, details: Value) -> Self {
+    pub(crate) fn typed_with_details(kind: ApiErrorKind, message: impl Into<String>, details: Value) -> Self {
         Self::Typed {
             kind,
             message: message.into(),
@@ -814,7 +817,7 @@ impl ApiError {
             Self::NotFound(message) => Self::not_found(message),
             Self::BadRequest(message) => Self::invalid_update(message),
             Self::Internal => Self::internal(),
-            other @ (Self::Conflict(_) | Self::Database(_) | Self::Typed { .. }) => other,
+            other @ (Self::Conflict(_) | Self::VersionConflict(_) | Self::Database(_) | Self::Typed { .. }) => other,
         }
     }
 
@@ -999,7 +1002,9 @@ impl ApiError {
             Self::Unauthorized(_) => ApiErrorKind::Unauthenticated,
             Self::Forbidden(_) => ApiErrorKind::Forbidden,
             Self::NotFound(_) => ApiErrorKind::NotFound,
-            Self::BadRequest(_) | Self::Conflict(_) | Self::Internal | Self::Database(_) => ApiErrorKind::Unclassified,
+            Self::BadRequest(_) | Self::Conflict(_) | Self::VersionConflict(_) | Self::Internal | Self::Database(_) => {
+                ApiErrorKind::Unclassified
+            }
         }
     }
 }
@@ -1061,6 +1066,21 @@ impl IntoResponse for ApiError {
             Self::Unauthorized(msg) => Self::legacy_response(401, &msg, "unauthorized"),
             Self::Forbidden(msg) => Self::legacy_response(403, &msg, "forbidden"),
             Self::NotFound(msg) => Self::legacy_response(404, &msg, "not found"),
+            Self::VersionConflict(reason) => {
+                let body = ApiResponse::<Value> {
+                    code: 409,
+                    message: "resource changed; review changes before retrying".into(),
+                    data: Some(Value::Null),
+                    error_code: Some("version_conflict"),
+                    details: Some(json!({"reason":reason,"action":"review_and_retry","write_state":"not_accepted"})),
+                };
+                let mut response = (StatusCode::CONFLICT, Json(body)).into_response();
+                response.extensions_mut().insert(OperationResponseMeta {
+                    business_code: 409,
+                    error_summary: Some("version conflict"),
+                });
+                response
+            }
             Self::Conflict(msg) => Self::legacy_response(409, &msg, "conflict"),
             Self::Internal => Self::legacy_response(500, "internal server error", "internal server error"),
             Self::Database(err) => {

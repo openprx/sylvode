@@ -88,8 +88,23 @@ export function exportFileName(workspaceLabel: string, jobId: string): string {
 
 export interface ExportOptions {
 	readonly includeHistory: boolean;
+	readonly objectTypes?: readonly import('../api/flow').FlowPackageObjectType[];
 	/** `null` exports the whole workspace. */
 	readonly projectId: string | null;
+}
+
+/** Canonical explicit filter; unsupported kinds are rejected, never silently discarded. */
+export function selectedPackageObjectTypes(
+	types: readonly string[] | undefined
+): import('../api/flow').FlowPackageObjectType[] | undefined {
+	if (types === undefined) return undefined;
+	if (
+		!Array.isArray(types) ||
+		types.length === 0 ||
+		types.some((type) => type !== 'page' && type !== 'navigator')
+	)
+		throw new Error('invalid_package_object_types');
+	return (['page', 'navigator'] as const).filter((type) => types.includes(type));
 }
 
 export function buildWorkspaceExportRequest(
@@ -99,6 +114,9 @@ export function buildWorkspaceExportRequest(
 	return {
 		format: 'package',
 		include_history: options.includeHistory,
+		...(options.objectTypes !== undefined
+			? { object_types: selectedPackageObjectTypes(options.objectTypes) }
+			: {}),
 		...(options.projectId ? { project_id: options.projectId } : {}),
 		idempotency_key: idempotencyKey
 	};
@@ -118,16 +136,16 @@ function browserStore(): KeyValueStore | null {
 	}
 }
 
-export function recentExportsKey(workspaceId: string): string {
-	return `sylvode.flow.exports.${workspaceId}`;
+export function recentExportsKey(scopeId: string): string {
+	return `sylvode.flow.exports.${scopeId}`;
 }
 
 const JOB_ID = /^[A-Za-z0-9-]{1,64}$/;
 
-export function readRecentExports(workspaceId: string, store = browserStore()): string[] {
+export function readRecentExports(scopeId: string, store = browserStore()): string[] {
 	if (!store) return [];
 	try {
-		const parsed: unknown = JSON.parse(store.getItem(recentExportsKey(workspaceId)) ?? '[]');
+		const parsed: unknown = JSON.parse(store.getItem(recentExportsKey(scopeId)) ?? '[]');
 		if (!Array.isArray(parsed)) return [];
 		return parsed
 			.filter((id): id is string => typeof id === 'string' && JOB_ID.test(id))
@@ -137,18 +155,14 @@ export function readRecentExports(workspaceId: string, store = browserStore()): 
 	}
 }
 
-export function rememberExport(
-	workspaceId: string,
-	jobId: string,
-	store = browserStore()
-): string[] {
-	const next = [jobId, ...readRecentExports(workspaceId, store).filter((id) => id !== jobId)].slice(
+export function rememberExport(scopeId: string, jobId: string, store = browserStore()): string[] {
+	const next = [jobId, ...readRecentExports(scopeId, store).filter((id) => id !== jobId)].slice(
 		0,
 		RECENT_EXPORTS_MAX
 	);
 	if (!store) return next;
 	try {
-		store.setItem(recentExportsKey(workspaceId), JSON.stringify(next));
+		store.setItem(recentExportsKey(scopeId), JSON.stringify(next));
 	} catch {
 		// Storage full or blocked: the list is a convenience only.
 	}
@@ -200,7 +214,7 @@ export class PackageExportController {
 	private readonly polling = new Set<string>();
 
 	constructor(
-		private readonly workspaceId: string,
+		private readonly scopeId: string,
 		private readonly onChange: (jobs: ExportJobView[]) => void = () => {},
 		deps: Partial<PackageExportDeps> = {}
 	) {
@@ -220,7 +234,11 @@ export class PackageExportController {
 
 	/** The idempotency key the next submit of `options` will send. Same options, same key. */
 	keyFor(options: ExportOptions): string {
-		const signature = JSON.stringify([options.includeHistory, options.projectId ?? null]);
+		const signature = JSON.stringify([
+			options.includeHistory,
+			options.projectId ?? null,
+			selectedPackageObjectTypes(options.objectTypes) ?? null
+		]);
 		if (!this.intent || this.intent.signature !== signature) {
 			this.intent = { key: this.deps.newKey(), signature };
 		}
@@ -230,7 +248,7 @@ export class PackageExportController {
 	async submit(options: ExportOptions): Promise<ExportSubmitOutcome> {
 		const key = this.keyFor(options);
 		const result = await this.deps.commands.startWorkspaceExport(
-			this.workspaceId,
+			this.scopeId,
 			buildWorkspaceExportRequest(options, key)
 		);
 		if (result.code !== 0 || !result.data) {
@@ -241,7 +259,7 @@ export class PackageExportController {
 		}
 		this.intent = null;
 		const jobId = result.data.job_id;
-		rememberExport(this.workspaceId, jobId, this.deps.store);
+		rememberExport(this.scopeId, jobId, this.deps.store);
 		const failed = exportJobFailure(result.data);
 		if (failed) {
 			// Already terminal: the job is stored (a reload re-attaches to it), nothing to poll.
@@ -255,7 +273,7 @@ export class PackageExportController {
 
 	/** Re-attaches to the job ids remembered for this workspace and polls each to terminal. */
 	resume(): void {
-		for (const jobId of readRecentExports(this.workspaceId, this.deps.store)) {
+		for (const jobId of readRecentExports(this.scopeId, this.deps.store)) {
 			if (this.jobs.has(jobId)) continue;
 			this.put({ jobId, job: null, polling: true, failure: null }, false);
 			void this.poll(jobId);

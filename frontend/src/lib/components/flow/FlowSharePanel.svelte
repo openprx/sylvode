@@ -2,6 +2,7 @@
 	// Share panel (`ui-surface-v1.md` "职责边界" Share panel). All state and every rule lives in
 	// `FlowSharePanelController` (`lib/flow/share-panel.ts`); this component only renders it and
 	// forwards user actions.
+	import { flowApi } from '#lib/api/flow.js';
 	import { t } from 'svelte-i18n';
 	import Modal from '#lib/components/Modal.svelte';
 	import {
@@ -17,25 +18,58 @@
 
 	interface Props {
 		objectId: string;
-		workspaceId: string;
+		scopeId: string;
+		permittedActions?: readonly string[] | null;
+		workspaceId: string | null;
 	}
 
-	let { objectId, workspaceId }: Props = $props();
+	let { objectId, scopeId, workspaceId, permittedActions = null }: Props = $props();
 
 	let snapshot = $state<ShareSnapshot | null>(null);
 	let controller: FlowSharePanelController | null = null;
+	let recipientQuery = $state('');
+	let directoryError = $state(false);
 	let addPrincipal = $state('');
 	let addLevel = $state<FlowGrantLevel>('view');
 	let liveMessage = $state('');
 
+	function query() {
+		return recipientQuery.trim();
+	}
 	$effect(() => {
-		const next = new FlowSharePanelController(objectId, workspaceId, (value) => (snapshot = value));
+		const next = new FlowSharePanelController(
+			objectId,
+			workspaceId,
+			(value) => (snapshot = value),
+			workspaceId
+				? {}
+				: {
+						directory: async () => {
+							if (query().length < 3) return [];
+							const result = await flowApi.listSharePrincipals(scopeId, query());
+							directoryError = result.code !== 0;
+							return result.data?.items ?? [];
+						}
+					}
+		);
 		controller = next;
 		addPrincipal = '';
 		void next.load();
 		return () => {
 			if (controller === next) controller = null;
 		};
+	});
+
+	const permittedToManage = $derived(
+		permittedActions === null || permittedActions.includes('manage')
+	);
+	let lastPermissionKey: string | null = null;
+	$effect(() => {
+		const key = permittedActions?.join('|') ?? null;
+		if (key !== lastPermissionKey) {
+			if (lastPermissionKey !== null) void controller?.load();
+			lastPermissionKey = key;
+		}
 	});
 
 	const ready = $derived(snapshot?.load.status === 'ready' ? snapshot.load : null);
@@ -78,7 +112,7 @@
 	const botCandidates = $derived(addCandidates.filter((entry) => entry.principal_kind === 'bot'));
 
 	async function run(change: ShareChange): Promise<void> {
-		if (!controller) return;
+		if (!controller || !permittedToManage) return;
 		const outcome = await controller.propose(change);
 		if (outcome.status === 'committed') liveMessage = $t('flow.share.saved');
 		else if (outcome.status === 'failed') liveMessage = $t(outcome.failure.messageKey);
@@ -98,7 +132,7 @@
 	}
 
 	async function confirmChange(): Promise<void> {
-		if (!controller) return;
+		if (!controller || !permittedToManage) return;
 		const outcome = await controller.confirm();
 		if (outcome.status === 'committed') liveMessage = $t('flow.share.saved');
 		else if (outcome.status === 'failed') liveMessage = $t(outcome.failure.messageKey);
@@ -117,6 +151,36 @@
 	const linkButtonClass =
 		'min-h-11 rounded-md px-2 text-xs font-medium text-blue-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:text-blue-400';
 </script>
+
+{#if !workspaceId && ready?.canManage && permittedToManage}
+	<form
+		class="mb-3 space-y-2"
+		onsubmit={(event) => {
+			event.preventDefault();
+			void controller?.load();
+		}}
+	>
+		<label for="flow-share-recipient-query" class="block text-sm"
+			>{$t('flow.personal.findUser')}</label
+		>
+		<input
+			id="flow-share-recipient-query"
+			class="min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 dark:bg-slate-900"
+			bind:value={recipientQuery}
+			minlength="3"
+			maxlength="256"
+			required
+		/>
+		<button
+			type="submit"
+			class="min-h-11 px-2 underline"
+			disabled={recipientQuery.trim().length < 3}>{$t('flow.personal.search')}</button
+		>
+		{#if directoryError}<p role="alert" class="text-sm text-red-700">
+				{$t('flow.personal.recipientSearchFailed')}
+			</p>{/if}
+	</form>
+{/if}
 
 <div class="space-y-4 text-sm" data-testid="flow-share-panel">
 	<p class="sr-only" aria-live="polite">{liveMessage}</p>
@@ -150,7 +214,7 @@
 			</div>
 		</dl>
 
-		{#if !ready.canManage}
+		{#if !ready.canManage || !permittedToManage}
 			<p class="text-slate-500 dark:text-slate-400" data-testid="flow-share-restricted">
 				{$t('flow.share.restricted')}
 			</p>
@@ -428,7 +492,8 @@
 		<button
 			type="button"
 			class="min-h-11 rounded-md bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:opacity-50 dark:focus-visible:ring-offset-slate-800"
-			disabled={!pending ||
+			disabled={!permittedToManage ||
+				!pending ||
 				pending.phase === 'previewing' ||
 				pending.phase === 'submitting' ||
 				(pending.phase === 'failed' && !pending.failure?.retryable) ||

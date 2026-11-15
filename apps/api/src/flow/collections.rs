@@ -4,6 +4,12 @@
 //! `flow_objects`/`collab_documents` aggregate; only rebuildable typed values live in projection
 //! tables. No path in this module reads or writes Universal Forms tables.
 
+#[derive(FromQueryResult)]
+struct SecrecyDocumentHead {
+    id: Uuid,
+    head_seq: i64,
+}
+
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -179,7 +185,7 @@ fn parse_payload<T: for<'de> Deserialize<'de>>(name: &str, payload: &Value) -> R
     serde_json::from_value(payload.clone()).map_err(|_| ApiError::invalid_update(format!("invalid {name} payload")))
 }
 
-fn validate_label(label: &str, field: &str) -> Result<String, ApiError> {
+pub(crate) fn validate_label(label: &str, field: &str) -> Result<String, ApiError> {
     let normalized = label.trim();
     if normalized.is_empty() || normalized.chars().count() > LABEL_MAX_CHARS {
         return Err(ApiError::invalid_update(format!(
@@ -376,18 +382,18 @@ struct EmbedIdempotencyBody {
 }
 
 #[derive(Debug, Deserialize)]
-struct CreateCollectionEmbedPayload {
-    title: String,
+pub(crate) struct CreateCollectionEmbedPayload {
+    pub(crate) title: String,
     #[serde(default)]
-    display_settings: Map<String, Value>,
+    pub(crate) display_settings: Map<String, Value>,
     #[serde(default)]
-    initial_fields: Vec<Value>,
+    pub(crate) initial_fields: Vec<Value>,
     #[serde(default)]
-    initial_view: Option<Value>,
+    pub(crate) initial_view: Option<Value>,
     /// `rest-api-v1.md` v0.6 `create_collection_embed`: insert the embed block right after this
     /// block; absent means append at the end of the Page tree.
     #[serde(default)]
-    after_block_id: Option<String>,
+    pub(crate) after_block_id: Option<String>,
 }
 
 pub fn apply_initial_collection_schema(engine: &mut LoroCollabEngine, schema: &Value) -> Result<(), ApiError> {
@@ -469,13 +475,26 @@ pub fn apply_initial_collection_schema(engine: &mut LoroCollabEngine, schema: &V
 /// Where a new embed block goes so that it lands right after `after_block_id`: that block's
 /// parent, at the position following it among its live siblings (ordered as the semantic snapshot
 /// orders them, by `(order_key, id)`).
-fn embed_position_after(
+pub(crate) fn embed_position_after(
     boot: &bootstrap::BootstrapResult,
     after_block_id: &str,
 ) -> Result<(Option<NodeId>, u32), ApiError> {
-    let semantic = engine_at_head(boot)?
-        .semantic_snapshot()
-        .map_err(|_| ApiError::internal())?;
+    let engine = engine_at_head(boot)?;
+    let canonical = engine.resolve_content_node_id(&NodeId::from(after_block_id));
+    let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;
+    if engine.has_editor_alias(after_block_id)
+        || semantic.nodes.get(&canonical).is_some_and(|node| {
+            node.properties
+                .get("content_source")
+                .is_some_and(|source| source == "editor_doc")
+        })
+    {
+        return Err(ApiError::typed_with_details(
+            ApiErrorKind::UnsupportedProtocol,
+            "editor-relative embed placement is not supported by the current reference renderer",
+            json!({"reason":"editor_relative_embed_position_unsupported"}),
+        ));
+    }
     let unknown = || ApiError::invalid_update("after_block_id does not name a block of this page");
     let anchor = semantic
         .nodes
@@ -485,7 +504,14 @@ fn embed_position_after(
     let mut siblings = semantic
         .nodes
         .iter()
-        .filter(|(_, node)| !node.deleted && node.parent == anchor.parent)
+        .filter(|(_, node)| {
+            !node.deleted
+                && node.parent == anchor.parent
+                && node
+                    .properties
+                    .get("content_source")
+                    .is_none_or(|source| source != "editor_doc")
+        })
         .map(|(id, node)| (node.order_key.as_str(), id.as_ref()))
         .collect::<Vec<_>>();
     siblings.sort_unstable();
@@ -509,7 +535,10 @@ fn engine_at_head(boot: &bootstrap::BootstrapResult) -> Result<LoroCollabEngine,
     Ok(engine)
 }
 
-fn export_operations(boot: &bootstrap::BootstrapResult, operations: &[Operation]) -> Result<Vec<u8>, ApiError> {
+pub(crate) fn export_operations(
+    boot: &bootstrap::BootstrapResult,
+    operations: &[Operation],
+) -> Result<Vec<u8>, ApiError> {
     let mut engine = engine_at_head(boot)?;
     let base = engine.frontier();
     for operation in operations {
@@ -520,7 +549,7 @@ fn export_operations(boot: &bootstrap::BootstrapResult, operations: &[Operation]
     engine.export_from(&base).map_err(|_| ApiError::internal())
 }
 
-async fn sync_collection_projection(
+pub(crate) async fn sync_collection_projection(
     tx: &sea_orm::DatabaseTransaction,
     collection_id: Uuid,
     document_seq: i64,
@@ -671,7 +700,7 @@ pub async fn sync_new_collection_projection(
     sync_collection_projection(tx, collection_id, 0, engine).await
 }
 
-async fn sync_record_projection(
+pub(crate) async fn sync_record_projection(
     tx: &sea_orm::DatabaseTransaction,
     collection_id: Uuid,
     record_id: Uuid,
@@ -783,7 +812,6 @@ pub struct ProjectionRebuildResult {
 struct RebuildDocumentRow {
     record_id: Uuid,
     document_id: Uuid,
-    document_seq: i64,
 }
 
 /// Rebuilds only the typed, disposable Collection projections from canonical collab documents.
@@ -797,7 +825,6 @@ pub async fn rebuild_typed_projections(
     #[derive(FromQueryResult)]
     struct CollectionDocumentRow {
         document_id: Uuid,
-        schema_seq: i64,
     }
     let collection = CollectionDocumentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -820,10 +847,40 @@ pub async fn rebuild_typed_projections(
     let mut record_engines = Vec::with_capacity(records.len());
     for record in &records {
         let boot = bootstrap::load(&state.db, record.document_id).await?;
-        record_engines.push(engine_at_head(&boot)?);
+        record_engines.push((engine_at_head(&boot)?, boot.head_seq));
     }
 
     let tx = state.db.begin().await?;
+    // Typed writers take the Collection projection authority before document heads. Rebuilders
+    // use that same order and verify every prepared head, so no stale outside-lock projection can
+    // overwrite a schema/value change that committed while reconstruction was in progress.
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT collection_id FROM flow_collection_projections WHERE collection_id=$1 FOR UPDATE",
+        vec![collection_id.into()],
+    ))
+    .await?;
+    let mut expected = std::collections::BTreeMap::new();
+    expected.insert(collection.document_id, collection_boot.head_seq);
+    for (record, (_, seq)) in records.iter().zip(&record_engines) {
+        expected.insert(record.document_id, *seq);
+    }
+
+    let heads = SecrecyDocumentHead::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id,head_seq FROM collab_documents WHERE id=ANY($1) ORDER BY id FOR SHARE",
+        vec![expected.keys().copied().collect::<Vec<_>>().into()],
+    ))
+    .all(&tx)
+    .await?;
+    if heads.len() != expected.len() || heads.iter().any(|head| expected.get(&head.id) != Some(&head.head_seq)) {
+        return Err(ApiError::stale_frontier(
+            "typed rebuild source heads changed; retry",
+            None,
+            None,
+        ));
+    }
+
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "DELETE FROM flow_record_value_projections WHERE collection_id = $1",
@@ -842,9 +899,9 @@ pub async fn rebuild_typed_projections(
         vec![collection_id.into()],
     ))
     .await?;
-    sync_collection_projection(&tx, collection_id, collection.schema_seq, &collection_engine).await?;
-    for (record, engine) in records.iter().zip(&record_engines) {
-        sync_record_projection(&tx, collection_id, record.record_id, record.document_seq, engine).await?;
+    sync_collection_projection(&tx, collection_id, collection_boot.head_seq, &collection_engine).await?;
+    for (record, (engine, seq)) in records.iter().zip(&record_engines) {
+        sync_record_projection(&tx, collection_id, record.record_id, *seq, engine).await?;
     }
     let field_count = CountRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -867,7 +924,7 @@ pub async fn rebuild_typed_projections(
     tx.commit().await?;
     Ok(ProjectionRebuildResult {
         collection_id,
-        collection_seq: collection.schema_seq,
+        collection_seq: collection_boot.head_seq,
         record_count: records.len(),
         field_count,
         value_count,
@@ -963,16 +1020,16 @@ fn value_is_declared_option(field_type: &str, config: &Value, value: &Value) -> 
 }
 
 #[derive(Clone, Copy)]
-enum ProjectionSync {
+pub(crate) enum ProjectionSync {
     Collection { collection_id: Uuid },
     Record { collection_id: Uuid, record_id: Uuid },
 }
 
-struct SemanticEventRewrite {
-    event_type: &'static str,
-    aggregate_type: &'static str,
-    aggregate_id: String,
-    payload: Value,
+pub(crate) struct SemanticEventRewrite {
+    pub(crate) event_type: &'static str,
+    pub(crate) aggregate_type: &'static str,
+    pub(crate) aggregate_id: String,
+    pub(crate) payload: Value,
 }
 
 #[cfg(test)]
@@ -983,9 +1040,10 @@ fn fail_next_projection_for(collection_id: Uuid) {
     *TRANSIENT_PROJECTION_FAILURE.lock() = Some(collection_id);
 }
 
-async fn semantic_event_rewrite(
+pub(crate) async fn semantic_event_rewrite(
     tx: &sea_orm::DatabaseTransaction,
-    input: &ExecuteCommandInput,
+    command_type: &str,
+    payload: &Value,
     sync: ProjectionSync,
     seq: i64,
 ) -> Result<SemanticEventRewrite, ApiError> {
@@ -1009,17 +1067,16 @@ async fn semantic_event_rewrite(
         )));
     }
     let required_uuid = |key: &str| {
-        input
-            .payload
+        payload
             .get(key)
             .and_then(Value::as_str)
             .and_then(|raw| Uuid::parse_str(raw).ok())
             .ok_or_else(|| ApiError::invalid_update(format!("{key} must be a UUID")))
     };
-    match input.command_type.as_str() {
+    match command_type {
         "field_create" | "field_update" | "field_archive" | "field_reorder" => {
             let field_id = required_uuid("field_id")?;
-            let change_kind = input.command_type.trim_start_matches("field_");
+            let change_kind = command_type.trim_start_matches("field_");
             Ok(SemanticEventRewrite {
                 event_type: "flow.schema.changed",
                 aggregate_type: "flow_collection",
@@ -1034,8 +1091,7 @@ async fn semantic_event_rewrite(
         }
         "view_create" => {
             let view_id = required_uuid("view_id")?;
-            let view_type = input
-                .payload
+            let view_type = payload
                 .get("view_type")
                 .and_then(Value::as_str)
                 .ok_or_else(|| ApiError::invalid_update("view_type is required"))?;
@@ -1079,8 +1135,7 @@ async fn semantic_event_rewrite(
             .one(tx)
             .await?
             .ok_or_else(|| ApiError::invalid_update("view does not exist"))?;
-            let new_ordinal = input
-                .payload
+            let new_ordinal = payload
                 .get("index")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| ApiError::invalid_update("index is required"))?;
@@ -1101,8 +1156,7 @@ async fn semantic_event_rewrite(
             let ProjectionSync::Record { record_id, .. } = sync else {
                 return Err(ApiError::internal());
             };
-            let mut changed_field_ids = input
-                .payload
+            let mut changed_field_ids = payload
                 .get("properties")
                 .and_then(Value::as_object)
                 .map(|properties| properties.keys().cloned().collect::<Vec<_>>())
@@ -1116,7 +1170,7 @@ async fn semantic_event_rewrite(
                     "collection_id": collection_id,
                     "record_id": record_id,
                     "changed_field_ids": changed_field_ids,
-                    "body_changed": input.payload.get("body").is_some_and(|body| !body.is_null()),
+                    "body_changed": payload.get("body").is_some_and(|body| !body.is_null()),
                     "seq": seq,
                 }),
             })
@@ -1214,7 +1268,7 @@ async fn execute_document_update(
                 write::StagedOutcome::Rebase => return Ok(AttemptOutcome::Rebase),
                 write::StagedOutcome::EpochMismatch => return Ok(AttemptOutcome::EpochMismatch),
             };
-            let semantic_event = semantic_event_rewrite(&tx, input, sync, staged.new_head_seq).await?;
+            let semantic_event = semantic_event_rewrite(&tx, &input.command_type, &input.payload, sync, staged.new_head_seq).await?;
             match sync {
                 ProjectionSync::Collection { collection_id } => {
                     sync_collection_projection(&tx, collection_id, staged.new_head_seq, &prepared.candidate).await?;
@@ -1316,7 +1370,7 @@ async fn execute_document_update(
     Err(ApiError::internal())
 }
 
-async fn collection_operations(
+pub(crate) async fn collection_operations(
     state: &AppState,
     document_id: Uuid,
     kind: CollectionCommandType,
@@ -1495,7 +1549,7 @@ async fn ensure_collection_target(
     Ok(row)
 }
 
-async fn validate_properties_against_fields<C: ConnectionTrait>(
+pub(crate) async fn validate_properties_against_fields<C: ConnectionTrait>(
     conn: &C,
     collection_id: Uuid,
     properties: &Map<String, Value>,
@@ -1553,7 +1607,7 @@ async fn validate_properties_against_fields<C: ConnectionTrait>(
             let count = CountRow::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "SELECT count(*) AS count FROM flow_objects \
-                 WHERE workspace_id = (SELECT workspace_id FROM flow_collection_projections WHERE collection_id = $1) \
+                 WHERE scope_id = (SELECT scope_id FROM flow_collection_projections WHERE collection_id = $1) \
                    AND id = ANY($2)",
                 vec![collection_id.into(), ids.clone().into()],
             ))
@@ -1564,7 +1618,7 @@ async fn validate_properties_against_fields<C: ConnectionTrait>(
             if count.count != expected {
                 return Err(invalid_field_value(
                     field_id,
-                    "relation value references an object outside the collection workspace",
+                    "relation value references an object outside the collection scope",
                 ));
             }
         }
@@ -1572,7 +1626,10 @@ async fn validate_properties_against_fields<C: ConnectionTrait>(
     Ok(())
 }
 
-fn build_record_engine(properties: &Map<String, Value>, body: Option<&str>) -> Result<LoroCollabEngine, ApiError> {
+pub(crate) fn build_record_engine(
+    properties: &Map<String, Value>,
+    body: Option<&str>,
+) -> Result<LoroCollabEngine, ApiError> {
     let mut engine = LoroCollabEngine::new_empty(rand::random());
     for (index, (field_id, value)) in properties.iter().enumerate() {
         let field_id = Uuid::parse_str(field_id)
@@ -1965,10 +2022,10 @@ async fn archive_record(
 }
 
 #[derive(Debug, FromQueryResult)]
-struct CollectionReadRow {
-    schema_seq: i64,
-    client_crdt_enabled: bool,
-    field_secrecy_enabled: bool,
+pub(crate) struct CollectionReadRow {
+    pub(crate) schema_seq: i64,
+    pub(crate) client_crdt_enabled: bool,
+    pub(crate) field_secrecy_enabled: bool,
 }
 
 #[derive(Debug, FromQueryResult, Serialize)]
@@ -2023,16 +2080,16 @@ pub struct RecordQueryResponse {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct RecordQueryCursor {
-    fingerprint: String,
-    offset: u32,
+pub(crate) struct RecordQueryCursor {
+    pub(crate) fingerprint: String,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug, FromQueryResult)]
-struct RecordCandidateRow {
-    record_id: Uuid,
-    properties: Value,
-    document_seq: i64,
+pub(crate) struct RecordCandidateRow {
+    pub(crate) record_id: Uuid,
+    pub(crate) properties: Value,
+    pub(crate) document_seq: i64,
 }
 
 fn query_cursor_key(secret: &str) -> Result<LessSafeKey, ApiError> {
@@ -2052,7 +2109,7 @@ fn query_fingerprint(query: &RecordQueryPayload) -> Result<String, ApiError> {
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
-fn encode_query_cursor(secret: &str, cursor: &RecordQueryCursor) -> Result<String, ApiError> {
+pub(crate) fn encode_query_cursor(secret: &str, cursor: &RecordQueryCursor) -> Result<String, ApiError> {
     let mut nonce_bytes = [0_u8; aead::NONCE_LEN];
     SystemRandom::new()
         .fill(&mut nonce_bytes)
@@ -2098,7 +2155,10 @@ fn decode_query_cursor(secret: &str, raw: &str, fingerprint: &str) -> Result<u32
     Ok(cursor.offset)
 }
 
-async fn collection_read_row<C: ConnectionTrait>(conn: &C, collection_id: Uuid) -> Result<CollectionReadRow, ApiError> {
+pub(crate) async fn collection_read_row<C: ConnectionTrait>(
+    conn: &C,
+    collection_id: Uuid,
+) -> Result<CollectionReadRow, ApiError> {
     CollectionReadRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT schema_seq, client_crdt_enabled, field_secrecy_enabled \
@@ -2110,7 +2170,7 @@ async fn collection_read_row<C: ConnectionTrait>(conn: &C, collection_id: Uuid) 
     .ok_or_else(|| ApiError::not_found("collection not found".to_string()))
 }
 
-async fn collection_fields<C: ConnectionTrait>(
+pub(crate) async fn collection_fields<C: ConnectionTrait>(
     conn: &C,
     collection_id: Uuid,
     include_archived: bool,
@@ -2133,7 +2193,7 @@ async fn collection_fields<C: ConnectionTrait>(
     .await?)
 }
 
-async fn collection_views<C: ConnectionTrait>(
+pub(crate) async fn collection_views<C: ConnectionTrait>(
     conn: &C,
     collection_id: Uuid,
 ) -> Result<Vec<CollectionViewView>, ApiError> {
@@ -2184,6 +2244,56 @@ pub fn redacted_semantic_content() -> Value {
     json!({})
 }
 
+/// Restricted field definitions are not a back door through the generic semantic projection.
+///
+/// Current field policy also redacts old receipts/history snapshots whose stored config predates
+/// the restriction. Semantic data is a read model; canonical CRDT bytes remain unchanged.
+pub async fn redact_collection_content<C: ConnectionTrait>(
+    conn: &C,
+    collection: Uuid,
+    content: &mut Value,
+) -> Result<bool, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Restricted {
+        field_id: Uuid,
+    }
+    let restricted=Restricted::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
+  "SELECT field_id FROM flow_field_projections WHERE collection_id=$1 AND config ? 'restricted' AND config->'restricted' IS DISTINCT FROM 'false'::jsonb",vec![collection.into()])).all(conn).await?.into_iter().map(|r|r.field_id.to_string()).collect::<BTreeSet<_>>();
+    let Some(nodes) = content.get_mut("nodes").and_then(Value::as_object_mut) else {
+        return Ok(false);
+    };
+    let before = nodes.len();
+    nodes.retain(|id, node| {
+        if restricted.contains(id) {
+            return false;
+        }
+        let own_restricted = node.get("kind").and_then(Value::as_str) == Some("collection_field")
+            && node
+                .get("properties")
+                .and_then(|p| p.get("config"))
+                .and_then(Value::as_str)
+                .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                .and_then(|v| v.get("restricted").cloned())
+                .is_some_and(|v| v != Value::Bool(false));
+        !own_restricted
+    });
+    Ok(before != nodes.len())
+}
+pub async fn has_collection_secrecy<C: ConnectionTrait>(conn: &C, object: Uuid) -> Result<bool, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Secret {
+        secret: bool,
+    }
+    Ok(Secret::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT field_secrecy_enabled AS secret FROM flow_collection_projections WHERE collection_id=$1",
+        vec![object.into()],
+    ))
+    .one(conn)
+    .await?
+    .is_some_and(|r| r.secret))
+}
+
 /// Applies [`secret_record_ids`] to object views in place.
 pub async fn redact_secret_record_views<C: ConnectionTrait>(
     conn: &C,
@@ -2195,18 +2305,30 @@ pub async fn redact_secret_record_views<C: ConnectionTrait>(
         .map(|view| view.id)
         .collect::<Vec<_>>();
     let secret = secret_record_ids(conn, &record_ids).await?;
-    for view in views.iter_mut().filter(|view| secret.contains(&view.id)) {
-        view.semantic_content = redacted_semantic_content();
+    for view in views.iter_mut() {
+        if secret.contains(&view.id) {
+            view.semantic_content = redacted_semantic_content();
+        }
+        if view.object_type == "collection" {
+            redact_collection_content(conn, view.id, &mut view.semantic_content).await?;
+        }
     }
     Ok(())
 }
 
 /// Applies [`secret_record_ids`] to a command response: both the object view and the
 /// `semantic_diff` (which carries the same semantic content).
-async fn redact_secret_record_change<C: ConnectionTrait>(
+pub(crate) async fn redact_secret_record_change<C: ConnectionTrait>(
     conn: &C,
     change: &mut AcceptedChange,
 ) -> Result<(), ApiError> {
+    if change.object.object_type == "collection" {
+        let redacted = redact_collection_content(conn, change.object.id, &mut change.object.semantic_content).await?;
+        if redacted || has_collection_secrecy(conn, change.object.id).await? {
+            change.semantic_diff = redacted_semantic_content();
+        }
+        return Ok(());
+    }
     if change.object.object_type != "record" {
         return Ok(());
     }
@@ -2220,7 +2342,7 @@ async fn redact_secret_record_change<C: ConnectionTrait>(
     Ok(())
 }
 
-fn field_is_restricted(field: &CollectionFieldView) -> bool {
+pub(crate) fn field_is_restricted(field: &CollectionFieldView) -> bool {
     match field.config.get("restricted") {
         None | Some(Value::Bool(false)) => false,
         Some(_) => true,
@@ -2283,8 +2405,10 @@ pub async fn describe_collection(
     if !policy::ensure_epoch_current(state, access.context()).await? {
         return Ok(None);
     }
+    let mut object = query::object_view_from_row(object_row);
+    redact_secret_record_views(&state.db, std::slice::from_mut(&mut object)).await?;
     Ok(Some(CollectionDescription {
-        object: query::object_view_from_row(object_row),
+        object,
         fields,
         views,
         record_count: count.count,
@@ -2319,7 +2443,7 @@ fn scalar_sql_parameter(column: &str, parameter: usize) -> Result<String, ApiErr
     }
 }
 
-fn query_field(fields: &[CollectionFieldView], field_id: Uuid) -> Result<&CollectionFieldView, ApiError> {
+pub(crate) fn query_field(fields: &[CollectionFieldView], field_id: Uuid) -> Result<&CollectionFieldView, ApiError> {
     fields
         .iter()
         .find(|field| field.field_id == field_id && !field.archived && !field_is_restricted(field))
@@ -2385,12 +2509,19 @@ async fn query_collection_records_requiring_typed_index(
     query_collection_records_inner(state, access, request, true).await
 }
 
-async fn query_collection_records_inner(
+pub(crate) struct RecordQueryCandidates {
+    pub(crate) collection: CollectionReadRow,
+    pub(crate) all_fields: Vec<CollectionFieldView>,
+    pub(crate) fingerprint: String,
+    pub(crate) offset: u32,
+    pub(crate) candidates: Vec<RecordCandidateRow>,
+}
+pub(crate) async fn record_query_candidates(
     state: &AppState,
-    access: &policy::AuthorizedFlowObject,
+    collection_id: Uuid,
     request: &RecordQueryPayload,
     require_typed_index: bool,
-) -> Result<Option<RecordQueryResponse>, ApiError> {
+) -> Result<RecordQueryCandidates, ApiError> {
     if request.limit == 0 || request.limit > 100 {
         return Err(ApiError::invalid_update("record query limit must be 1-100"));
     }
@@ -2401,8 +2532,8 @@ async fn query_collection_records_inner(
             "record query sort direction must be asc or desc",
         ));
     }
-    let collection = collection_read_row(&state.db, access.object_id()).await?;
-    let all_fields = collection_fields(&state.db, access.object_id(), false).await?;
+    let collection = collection_read_row(&state.db, collection_id).await?;
+    let all_fields = collection_fields(&state.db, collection_id, false).await?;
     let fingerprint = query_fingerprint(request)?;
     let offset = request
         .cursor
@@ -2415,7 +2546,7 @@ async fn query_collection_records_inner(
         "SELECT rp.record_id, rp.properties, rp.document_seq FROM flow_record_projections rp \
          JOIN flow_objects fo ON fo.id = rp.record_id",
     );
-    let mut values: Vec<sea_orm::Value> = vec![access.object_id().into()];
+    let mut values: Vec<sea_orm::Value> = vec![collection_id.into()];
     if let Some(group_id) = request.group {
         let field = query_field(&all_fields, group_id)?;
         let column = typed_column(&field.field_type)?;
@@ -2518,6 +2649,28 @@ async fn query_collection_records_inner(
         RecordCandidateRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
             .all(&state.db)
             .await?;
+    Ok(RecordQueryCandidates {
+        collection,
+        all_fields,
+        fingerprint,
+        offset,
+        candidates,
+    })
+}
+
+async fn query_collection_records_inner(
+    state: &AppState,
+    access: &policy::AuthorizedFlowObject,
+    request: &RecordQueryPayload,
+    require_typed_index: bool,
+) -> Result<Option<RecordQueryResponse>, ApiError> {
+    let RecordQueryCandidates {
+        collection,
+        all_fields,
+        fingerprint,
+        offset,
+        candidates,
+    } = record_query_candidates(state, access.object_id(), request, require_typed_index).await?;
     let candidate_ids = candidates.iter().map(|row| row.record_id).collect::<Vec<_>>();
     let Some(visible) =
         policy::authorize_flow_objects(state, access.context(), &candidate_ids, authz::PermissionLevel::View).await?
@@ -5655,6 +5808,7 @@ mod database_tests {
         let receipt = crate::flow::export::create_package_export(
             &state.db,
             &crate::flow::export::CreateExportRequest {
+                object_types: None,
                 scope,
                 format: format.to_string(),
                 at_seq: None,
@@ -5670,12 +5824,9 @@ mod database_tests {
         Ok(bytes)
     }
 
-    /// `rest-api-v1.md` v0.6 "导出与字段保密" / `ADR-0018` NR-7: an object export of a Record under
-    /// field secrecy is one more representation of it. `json` carries the records query's redacted
-    /// `semantic_content` (`{}`), `markdown`/`csv` carry no Record content, and `package` (which would
-    /// ship the Loro snapshot) is refused with `policy_rejected{reason:"field_secrecy"}`. A workspace
-    /// package skips the secret Record's document and names it in `manifest.warnings[]`. A Record of
-    /// a Collection without restricted fields still exports its content.
+    /// Rendered typed exports retain current field secrecy. Following the scope migration
+    /// baseline audit, NEW raw typed packages are refused for both object and scope selections
+    /// until validated typed roundtrip exists; existing files/IDs are not destroyed.
     #[tokio::test]
     async fn exports_of_a_secret_record_apply_field_secrecy_on_every_format() {
         let scratch = scratch_or_skip!("export_field_secrecy");
@@ -5789,8 +5940,12 @@ mod database_tests {
         .await
         .expect_err("a package of a secret record is refused");
         let (kind, reason, _) = refusal_reason(&refused);
-        assert_eq!(kind, ApiErrorKind::PolicyRejected, "{refused:?}");
-        assert_eq!(reason.as_deref(), Some("field_secrecy"), "{refused:?}");
+        assert_eq!(kind, ApiErrorKind::UnsupportedFormat, "{refused:?}");
+        assert_eq!(
+            reason.as_deref(),
+            Some("typed_package_roundtrip_unsupported"),
+            "{refused:?}"
+        );
 
         // Control: the open Record keeps its content in json.
         let plain_json = export_bytes(
@@ -5803,14 +5958,14 @@ mod database_tests {
         .expect("plain record json export runs");
         assert!(String::from_utf8_lossy(&plain_json).contains("PLAINEXPORT"));
 
-        // Workspace package: the secret Record's document is skipped and named in warnings[].
+        // Scope defaults cannot silently skip unsupported typed resources.
         let owner = crate::flow::export::ExportPrincipal {
             id: owner_id,
-            kind: "user".to_string(),
-            role: "owner".to_string(),
+            kind: "user".into(),
+            role: "owner".into(),
             workspace_export_capability: false,
         };
-        let package = export_bytes(
+        let refused = export_bytes(
             &state,
             crate::flow::export::ExportScope::Workspace {
                 workspace_id,
@@ -5820,35 +5975,10 @@ mod database_tests {
             &owner,
         )
         .await
-        .expect("workspace package export runs");
-        assert!(
-            leaks(&package).is_empty(),
-            "workspace package leaked {:?}",
-            leaks(&package)
-        );
-        let verified = crate::flow::package::verify_package(std::io::Cursor::new(&package), None)
-            .expect("workspace package verifies");
-        assert_eq!(
-            verified.manifest.warnings,
-            vec![format!("secret_record_excluded:{}", record.id)],
-            "the excluded record is named"
-        );
-        assert!(
-            verified
-                .manifest
-                .members
-                .iter()
-                .all(|member| !member.path.contains(&record.id.to_string())),
-            "no member of the excluded record ships"
-        );
-        assert!(
-            verified
-                .manifest
-                .members
-                .iter()
-                .any(|member| member.path == format!("objects/{}/object.json", plain_record.id)),
-            "the open record ships"
-        );
+        .expect_err("raw typed scope package is refused");
+        let (kind, reason, _) = refusal_reason(&refused);
+        assert_eq!(kind, ApiErrorKind::UnsupportedFormat);
+        assert_eq!(reason.as_deref(), Some("typed_package_roundtrip_unsupported"));
         scratch.drop_self().await;
     }
 
@@ -5981,4 +6111,15 @@ mod database_tests {
         assert_eq!(field_id, Some(relation_field.to_string()), "{refused:?}");
         scratch.drop_self().await;
     }
+}
+
+/// The canonical object, rather than a caller-supplied workspace, owns a new typed projection.
+pub(crate) async fn insert_scope_collection_projection(
+    tx: &sea_orm::DatabaseTransaction,
+    collection: Uuid,
+    document: Uuid,
+) -> Result<(), ApiError> {
+    tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,
+        "INSERT INTO flow_collection_projections(collection_id,document_id,workspace_id,scope_id,project_id,schema_seq,display_settings,client_crdt_enabled) SELECT id,$2,workspace_id,scope_id,project_id,0,'{}'::jsonb,false FROM flow_objects WHERE id=$1 AND object_type='collection'",vec![collection.into(),document.into()])).await?;
+    Ok(())
 }

@@ -100,8 +100,8 @@ await suite.checkAsync('flowApi.getRelations sends the contract query', async ()
 	assertDeepEqual(
 		seen,
 		[
-			`/api/v1/flow/objects/${OBJECT}/relations?direction=incoming&relation_type=related&cursor=c1&limit=50`,
-			`/api/v1/flow/objects/${OBJECT}/relations`
+			`/api/v2/flow/objects/${OBJECT}/relations?direction=incoming&relation_type=related&cursor=c1&limit=50`,
+			`/api/v2/flow/objects/${OBJECT}/relations`
 		],
 		'query string'
 	);
@@ -183,7 +183,7 @@ await suite.checkAsync('cross-workspace relation: the whole panel fails closed',
 			object_type: 'page',
 			title: 'Foreign',
 			lifecycle_status: 'active',
-			workspace_id: 'ws-other'
+			scope_id: 'ws-other'
 		}
 	});
 	const h = harness([
@@ -205,7 +205,7 @@ await suite.checkAsync('cross-workspace relation: the whole panel fails closed',
 				object_type: 'page',
 				title: 'x',
 				lifecycle_status: 'a',
-				workspace_id: WS
+				scope_id: WS
 			}
 		}),
 		WS

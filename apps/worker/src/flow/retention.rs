@@ -4,7 +4,7 @@
 //! edit-tier Page archive has `permanent_cleanup_after IS NULL` and is therefore invisible to
 //! this job.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
+use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use uuid::Uuid;
 
 #[derive(Debug, FromQueryResult)]
@@ -32,36 +32,28 @@ async fn run_tick_at(
         return Ok(TickReport::default());
     }
     let limit = i64::try_from(requested_batch_size.clamp(1, 100)).unwrap_or(100);
-    let tx = db.begin().await?;
     let candidates = Candidate::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT id FROM flow_objects \
           WHERE lifecycle_status='archived' AND permanent_cleanup_after < $2 \
-          ORDER BY permanent_cleanup_after,id FOR UPDATE SKIP LOCKED LIMIT $1",
+            AND NOT flow_is_system_navigator_root(object_type,parent_id,governance_metadata) \
+            AND NOT EXISTS(SELECT 1 FROM flow_objects c WHERE c.parent_id=flow_objects.id) \
+          ORDER BY permanent_cleanup_after,id LIMIT $1",
         vec![limit.into(), now.into()],
     ))
-    .all(&tx)
+    .all(db)
     .await?;
     let mut report = TickReport {
         selected: candidates.len() as u64,
         ..TickReport::default()
     };
     for candidate in candidates {
-        let deleted = tx
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "DELETE FROM flow_objects WHERE id=$1 AND lifecycle_status='archived' \
-                   AND permanent_cleanup_after < $2",
-                vec![candidate.id.into(), now.into()],
-            ))
-            .await?
-            .rows_affected();
+        let deleted = u64::from(api::flow::scope_purge::retention_leaf(db, candidate.id, now).await?);
         report.deleted += deleted;
         if deleted == 0 {
             report.raced += 1;
         }
     }
-    tx.commit().await?;
     Ok(report)
 }
 

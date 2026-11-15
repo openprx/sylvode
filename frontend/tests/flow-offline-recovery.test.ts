@@ -105,7 +105,7 @@ async function setup(server: FakeCollabServer) {
 		offlineSync: { sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))) }
 	});
 	const entry = await repository.open({
-		workspaceId: WORKSPACE_ID,
+		scopeId: WORKSPACE_ID,
 		objectId: OBJECT_ID,
 		signal: new AbortController().signal,
 		object: objectView() as unknown as FlowObjectView

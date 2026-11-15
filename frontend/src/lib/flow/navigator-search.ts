@@ -62,7 +62,7 @@ export interface SearchSnapshot {
 
 export interface SearchReads {
 	search(
-		workspaceId: string,
+		scopeId: string,
 		query: FlowSearchQuery,
 		signal?: AbortSignal
 	): Promise<ApiResult<FlowSearchResponse>>;
@@ -179,7 +179,7 @@ export class FlowNavigatorSearch {
 		};
 	}
 
-	private workspaceId(): string {
+	private scopeId(): string {
 		return typeof this.workspace === 'function' ? this.workspace() : this.workspace;
 	}
 
@@ -274,8 +274,14 @@ export class FlowNavigatorSearch {
 		this.status = 'loading';
 		this.emit();
 		const result = await this.deps.reads.search(
-			this.workspaceId(),
-			{ q, all_visible: true, freshness: this.freshness, limit: SEARCH_RESULT_LIMIT },
+			this.scopeId(),
+			{
+				q,
+				all_visible: true,
+				object_type: 'page',
+				freshness: this.freshness,
+				limit: SEARCH_RESULT_LIMIT
+			},
 			controller.signal
 		);
 		// A newer request (or a clear) aborted this one: its answer belongs to an old query.
@@ -293,7 +299,9 @@ export class FlowNavigatorSearch {
 			this.emit();
 			return;
 		}
-		this.rows = (result.data.items ?? []).map(searchRowFromHit);
+		this.rows = (result.data.items ?? [])
+			.filter((hit) => hit.object.object_type === 'page')
+			.map(searchRowFromHit);
 		this.activeIndex = this.rows.length > 0 ? 0 : -1;
 		this.frontierStale = result.data.index_frontier?.stale === true;
 		this.frontierLag = Math.max(0, result.data.index_frontier?.lag ?? 0);

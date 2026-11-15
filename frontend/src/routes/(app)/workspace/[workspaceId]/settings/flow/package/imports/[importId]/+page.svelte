@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Import report deep link: polls `GET .../flow/imports/{import_id}` until a terminal status.
 	// Reloading the page simply resumes polling. Missing and foreign imports share one safe state.
+	import { flowApi } from '#lib/api/flow.js';
 	import { onDestroy, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
@@ -14,14 +15,25 @@
 	const importId = requireRouteParam(page.params.importId, 'importId');
 
 	let reportState = $state.raw<ImportReportState>({ status: 'loading' });
-	const poller = new ImportReportPoller(workspaceId, importId, (next) => {
-		reportState = next;
-	});
-
+	let poller: ImportReportPoller | null = null;
+	let destroyed = false;
 	onMount(() => {
-		void poller.run();
+		void flowApi.getWorkspaceScope(workspaceId).then((result) => {
+			if (destroyed) return;
+			if (result.code !== 0 || !result.data) {
+				reportState = { status: 'not_found' };
+				return;
+			}
+			poller = new ImportReportPoller(result.data.scope.id, importId, (next) => {
+				reportState = next;
+			});
+			void poller.run();
+		});
 	});
-	onDestroy(() => poller.dispose());
+	onDestroy(() => {
+		destroyed = true;
+		poller?.dispose();
+	});
 </script>
 
 <div class="mx-auto max-w-4xl space-y-6">

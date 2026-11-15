@@ -86,6 +86,10 @@ interface SessionHooks {
 	onTerminal?(error: FlowError): void;
 	/** Access was revoked on a live connection (close 4403): the session is now read-only. */
 	onRevoked?(error: FlowError): void;
+	/** Prepare a permission transition without closing an authorized read stream. */
+	onAuthorizationPending?(actions: readonly string[]): void;
+	onAuthorizationChange?(actions: readonly string[]): Promise<boolean> | boolean;
+	onPermissionState?(readOnly: boolean): void;
 }
 
 /** Test seams. Production uses the defaults. */
@@ -144,7 +148,7 @@ function wsBaseUrl(): string {
 	if (configured) {
 		return configured.replace(/^http/, 'ws');
 	}
-	if (typeof window === 'undefined') return '';
+	if (typeof window === 'undefined') return 'ws://localhost';
 	return window.location.origin.replace(/^http/, 'ws');
 }
 
@@ -159,7 +163,10 @@ type PendingResolve = {
  * "narrowed to what this v0.4 delivery actually implements" convention. */
 export interface TicketIssuer {
 	createTicket(input: {
-		workspace_id: string;
+		authorization_notifications?: boolean;
+		scope_id?: string;
+		object_id?: string;
+		workspace_id?: string;
 		document_id: string;
 		client_id: string;
 		origin: string;
@@ -208,6 +215,18 @@ export class LoroObjectSession implements ObjectSessionContract {
 	private terminal = false;
 	/** `view`/`comment` on this object, or a 4403 revocation: no local write is sent. */
 	private permissionReadOnly = false;
+	private authorizationNotifications = false;
+	private authorizationSessionId: string | null = null;
+	private authoritySequence = 0;
+	private sourceAuthorizationRevision: number | null = null;
+	private snapshotReceived = false;
+	private initialAuthorizationApplied = false;
+	private pendingAuthorization: {
+		actions: readonly string[];
+		sequence: number;
+		socket: WebSocket | null;
+		sessionId: string | null;
+	} | null = null;
 	/** `collab-protocol-v1.md` "连续 3 次": consecutive `update` frames this connection saw
 	 * answered `server_rejected`. Any other answer to an update resets it; frames that are not
 	 * answers to an update (`presence`, `ping`, a `rejected` with no `update_id`) do not touch it. */
@@ -397,7 +416,9 @@ export class LoroObjectSession implements ObjectSessionContract {
 		}
 
 		let ticketResult = await this.commandService.createTicket({
-			workspace_id: this.handle.workspaceId,
+			authorization_notifications: true,
+			scope_id: this.handle.scopeId,
+			object_id: this.handle.objectId,
 			document_id: this.handle.documentId,
 			client_id: this.clientId,
 			origin: typeof window !== 'undefined' ? window.location.origin : 'sylvode-flow-web'
@@ -409,7 +430,9 @@ export class LoroObjectSession implements ObjectSessionContract {
 			const refreshed = await apiClient.ensureFreshAccessToken();
 			if (refreshed) {
 				ticketResult = await this.commandService.createTicket({
-					workspace_id: this.handle.workspaceId,
+					authorization_notifications: true,
+					scope_id: this.handle.scopeId,
+					object_id: this.handle.objectId,
 					document_id: this.handle.documentId,
 					client_id: this.clientId,
 					origin: typeof window !== 'undefined' ? window.location.origin : 'sylvode-flow-web'
@@ -450,9 +473,40 @@ export class LoroObjectSession implements ObjectSessionContract {
 			return;
 		}
 
-		const url = `${wsBaseUrl()}${ticketResult.data.websocket_url}`;
-		const socket = new WebSocket(url);
+		const ticket = ticketResult.data;
+		if (
+			(ticket.scope_id && ticket.scope_id !== this.handle.scopeId) ||
+			(ticket.object_id && ticket.object_id !== this.handle.objectId) ||
+			(ticket.document_id && ticket.document_id !== this.handle.documentId)
+		) {
+			this.applyFlowError({ code: 'unsupported_protocol', recoverable: false });
+			return;
+		}
+		const path = ticket.websocket_path ?? ticket.websocket_url;
+		if (!path || !/^(?:\/api\/|wss?:\/\/)/.test(path)) {
+			this.applyFlowError({ code: 'unsupported_protocol', recoverable: false });
+			return;
+		}
+		const url = new URL(path, `${wsBaseUrl()}/`);
+		// A v2 ticket may return a bare websocket_path. Admission still requires the issued
+		// ticket and the exact client identity used to request it, independent from WS frame version.
+		if (!url.searchParams.has('ticket')) url.searchParams.set('ticket', ticket.ticket);
+		if (!url.searchParams.has('client_id')) url.searchParams.set('client_id', this.clientId);
+		if (this.disposed || this.terminal || this.revoked || this.socket) return;
+		const socket = new WebSocket(url.href);
 		this.socket = socket;
+		this.authorizationNotifications = ticket.authorization_notifications === true;
+		this.snapshotReceived = false;
+		this.initialAuthorizationApplied = false;
+		this.pendingAuthorization = null;
+		if (this.authorizationNotifications) {
+			this.setPermissionReadOnly(true);
+			this.hooks.onPermissionState?.(true);
+		}
+		this.authorizationSessionId = null;
+		this.authoritySequence = 0;
+		this.sourceAuthorizationRevision =
+			typeof ticket.authz_revision === 'number' ? ticket.authz_revision : null;
 
 		socket.addEventListener('open', () => {
 			this.sendFrame({
@@ -466,6 +520,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 
 		let sentOpen = false;
 		socket.addEventListener('message', (event: MessageEvent<string>) => {
+			if (this.socket !== socket) return;
 			let frame: Record<string, unknown>;
 			try {
 				frame = JSON.parse(event.data) as Record<string, unknown>;
@@ -474,6 +529,9 @@ export class LoroObjectSession implements ObjectSessionContract {
 			}
 
 			if (frame.type === 'hello' && !sentOpen) {
+				this.authorizationSessionId =
+					typeof frame.session_id === 'string' ? frame.session_id : null;
+				this.authoritySequence = 0;
 				sentOpen = true;
 				this.sendFrame({
 					type: 'open',
@@ -554,12 +612,24 @@ export class LoroObjectSession implements ObjectSessionContract {
 				// reflects "loaded and mirrors the server as of this snapshot, no in-flight or
 				// confirmed local edit" without making that false claim.
 				this.setState('local');
-				this.firstSync?.resolve();
+				this.snapshotReceived = true;
+				if (!this.authorizationNotifications || this.initialAuthorizationApplied) {
+					this.firstSync?.resolve();
+					this.hooks.onConnected?.();
+				} else if (this.pendingAuthorization) {
+					const pending = this.pendingAuthorization;
+					this.pendingAuthorization = null;
+					this.completeAuthorization(
+						pending.actions,
+						pending.sequence,
+						pending.socket,
+						pending.sessionId
+					);
+				}
 				this.startPresenceTimers();
 				// Re-announce this user's own presence on the new connection: the server dropped
 				// the old entry when the old connection closed.
 				if (this.localPresence) this.presenceThrottle.push(this.localPresence);
-				this.hooks.onConnected?.();
 				break;
 			}
 			case 'update': {
@@ -673,6 +743,10 @@ export class LoroObjectSession implements ObjectSessionContract {
 				break;
 			}
 			case 'resync': {
+				if (frame.reason === 'authorization_changed' && this.authorizationNotifications) {
+					this.applyAuthorizationNotification(frame);
+					break;
+				}
 				this.setState('resyncing');
 				this.reconnect('stale_frontier');
 				break;
@@ -696,6 +770,110 @@ export class LoroObjectSession implements ObjectSessionContract {
 	 * missing or unknown `details.reason` is a protocol violation, not a third behaviour: it is
 	 * reported and NOT acted on, because both possible guesses are harmful (retrying into a
 	 * draining instance, or showing maintenance for a lock conflict). */
+	private applyAuthorizationNotification(frame: Record<string, unknown>): void {
+		const state = frame.authorization;
+		if (
+			frame.protocol_version !== PROTOCOL_VERSION ||
+			!this.handle ||
+			!state ||
+			typeof state !== 'object'
+		) {
+			this.rejectAuthorizationNotification();
+			return;
+		}
+		const value = state as Record<string, unknown>;
+		// A notification sequence is local to this actual server session, not the source epoch.
+		// Audience changes may advance the sequence while leaving authz_revision unchanged.
+		if (value.session_id !== this.authorizationSessionId) return;
+		if (
+			frame.document_id !== this.handle.documentId ||
+			value.scope_id !== this.handle.scopeId ||
+			value.object_id !== this.handle.objectId
+		) {
+			this.rejectAuthorizationNotification();
+			return;
+		}
+		const sequence = value.authority_sequence;
+		const revision = value.authz_revision;
+		const actions = value.permitted_actions;
+		if (
+			!Number.isSafeInteger(sequence) ||
+			(sequence as number) <= 0 ||
+			!Number.isSafeInteger(revision) ||
+			(revision as number) < 0 ||
+			!Array.isArray(actions) ||
+			!actions.every((action) => typeof action === 'string') ||
+			!actions.includes('view')
+		) {
+			this.rejectAuthorizationNotification();
+			return;
+		}
+		if (
+			(sequence as number) <= this.authoritySequence ||
+			(this.sourceAuthorizationRevision !== null &&
+				(revision as number) < this.sourceAuthorizationRevision)
+		)
+			return;
+		this.authoritySequence = sequence as number;
+		this.sourceAuthorizationRevision = revision as number;
+		const socket = this.socket;
+		const sessionId = this.authorizationSessionId;
+		const canWrite = actions.includes('edit');
+		if (!canWrite) {
+			this.setPermissionReadOnly(true);
+			this.hooks.onPermissionState?.(true);
+		}
+		if (!this.snapshotReceived) {
+			this.hooks.onAuthorizationPending?.(actions);
+			this.pendingAuthorization = { actions, sequence: sequence as number, socket, sessionId };
+			return;
+		}
+		this.completeAuthorization(actions, sequence as number, socket, sessionId);
+	}
+
+	private completeAuthorization(
+		actions: readonly string[],
+		sequence: number,
+		socket: WebSocket | null,
+		sessionId: string | null
+	): void {
+		const canWrite = actions.includes('edit');
+		void Promise.resolve(this.hooks.onAuthorizationChange?.(actions) ?? true)
+			.then((ready) => {
+				if (
+					this.socket !== socket ||
+					this.authorizationSessionId !== sessionId ||
+					this.authoritySequence !== sequence ||
+					this.revoked ||
+					this.disposed
+				)
+					return;
+				const readOnly = !canWrite || ready === false;
+				if (this.permissionReadOnly !== readOnly) this.setPermissionReadOnly(readOnly);
+				this.hooks.onPermissionState?.(this.isReadOnly);
+				const initial = !this.initialAuthorizationApplied;
+				this.initialAuthorizationApplied = true;
+				if (initial && this.snapshotReceived) {
+					this.firstSync?.resolve();
+					this.hooks.onConnected?.();
+				}
+			})
+			.catch(() => this.rejectAuthorizationNotification());
+	}
+
+	get hasBoundAuthorization(): boolean {
+		return this.authorizationNotifications && this.initialAuthorizationApplied;
+	}
+
+	private rejectAuthorizationNotification(): void {
+		this.setPermissionReadOnly(true);
+		this.hooks.onPermissionState?.(true);
+		const error = clientError('unsupported_protocol', { reason: 'invalid_authorization_state' });
+		this.hooks.onFlowError(error);
+		this.firstSync?.reject(error);
+		this.closeCurrentSocket(1002, 'invalid authorization state');
+	}
+
 	private applyFlowError(error: FlowError): void {
 		if (error.code === 'server_draining') {
 			const disposition = drainDisposition(error);

@@ -26,6 +26,12 @@
 //! there, not here — matching the split every other route module in this crate already uses
 //! between the axum handler and its backing service/repository code.
 
+#[path = "flow_v2.rs"]
+mod flow_v2;
+pub use flow_v2::*;
+#[path = "flow_record_context.rs"]
+mod flow_record_context;
+pub use flow_record_context::get_flow_v2_record_context;
 #[path = "flow_page.rs"]
 mod flow_page;
 #[path = "flow_social.rs"]
@@ -93,6 +99,8 @@ where
 
 #[derive(Debug, Deserialize)]
 pub struct PackageExportRequest {
+    #[serde(default)]
+    pub object_types: Option<Vec<String>>,
     pub format: String,
     #[serde(default)]
     pub include_history: bool,
@@ -202,6 +210,12 @@ pub async fn post_flow_object_export(
     Json(req): Json<PackageExportRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_package_tool(bot.as_ref(), "objects.export")?;
+    if req.object_types.is_some() {
+        return Err(ApiError::invalid_update_with_details(
+            "object export does not accept object_types",
+            json!({"reason":"invalid_package_object_types"}),
+        ));
+    }
     if req.project_id.is_some() {
         return Err(ApiError::invalid_update("object export does not accept project_id"));
     }
@@ -210,6 +224,7 @@ pub async fn post_flow_object_export(
     let receipt = crate::flow::export::create_package_export(
         &state.db,
         &crate::flow::export::CreateExportRequest {
+            object_types: None,
             scope: crate::flow::export::ExportScope::Object(object_id),
             format: req.format,
             at_seq: req.at_seq,
@@ -242,6 +257,7 @@ pub async fn post_flow_workspace_export(
     let receipt = crate::flow::export::create_package_export(
         &state.db,
         &crate::flow::export::CreateExportRequest {
+            object_types: req.object_types,
             scope: crate::flow::export::ExportScope::Workspace {
                 workspace_id,
                 project_id: req.project_id,
@@ -313,6 +329,19 @@ pub async fn get_flow_export_artifact(
     )
     .await?;
     let mut headers = HeaderMap::new();
+
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("private, no-store"),
+    );
+    headers.insert(
+        axum::http::header::VARY,
+        axum::http::HeaderValue::from_static("Authorization, Cookie"),
+    );
+    headers.insert(
+        axum::http::header::CONTENT_DISPOSITION,
+        axum::http::HeaderValue::from_static("attachment"),
+    );
     let content_type = match format.as_str() {
         "json" => "application/json; charset=utf-8",
         "markdown" => "text/markdown; charset=utf-8",
@@ -442,7 +471,7 @@ pub async fn post_flow_import_artifact(
                     ));
                 }
                 let bytes = crate::services::object_storage::ObjectStorage::from_runtime_config()?
-                    .get(object_key)
+                    .get_bounded(object_key, crate::flow::collab::limits::IMPORT_ARCHIVE_BYTES_MAX)
                     .await?;
                 if u64::try_from(bytes.len()).ok() != Some(expected_size) {
                     return Err(ApiError::invalid_update(
@@ -1641,6 +1670,7 @@ pub async fn get_flow_object_bootstrap(
         else {
             continue;
         };
+        crate::flow::scope_editor::require_admitted(&state.db, object_id).await?;
         let Some(bootstrap) =
             query::get_bootstrap(&state, &access, params.known_seq, params.known_frontier.clone()).await?
         else {
@@ -11759,7 +11789,8 @@ mod flow_database_tests {
                 source_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
             },
             source: PackageSource {
-                workspace_id: Uuid::new_v4().to_string(),
+                workspace_id: Some(Uuid::new_v4().to_string()),
+                scope_id: None,
                 scope: "object".to_string(),
                 root_object_ids: vec![object_id.to_string()],
             },
@@ -11768,9 +11799,11 @@ mod flow_database_tests {
                 name: ENGINE_NAME.to_string(),
                 crate_version: ENGINE_CRATE_VERSION.to_string(),
                 wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
+                semantic_model: None,
             },
             history: PackageHistory {
                 included: false,
+                snapshot_history: None,
                 through_seq_by_document: std::collections::BTreeMap::from([(document_id.to_string(), 0)]),
             },
             counts: PackageCounts {

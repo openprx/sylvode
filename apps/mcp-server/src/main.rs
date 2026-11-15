@@ -63,7 +63,31 @@ async fn run() -> anyhow::Result<()> {
     match &cli.command {
         // The executable name is the stable service label of a deployment, so `serve` on any
         // transport stays silent (ADR-0020 D2).
-        Commands::Serve(args) => serve(&cli::prepare_runtime(&cli.global, Some(args))?).await,
+        Commands::Serve(args) if args.flow_only => {
+            let mode = args.transport.map(McpTransport::from);
+            let settings = mcp_server::flow_runtime::FlowRuntime::load(
+                cli.global.config.as_deref(),
+                cli.global.api_url.as_deref(),
+                args.access_token.as_ref(),
+                args.access_token_file.as_deref(),
+                mode,
+                args.bind_addr.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            let client = settings.client().map_err(anyhow::Error::msg)?;
+            let shutdown = Shutdown::install()?;
+            match settings.transport {
+                McpTransport::Stdio => run_stdio(client, shutdown).await,
+                McpTransport::Http => run_http(&settings.bind_addr, client, shutdown).await,
+                McpTransport::Sse => run_sse(&settings.bind_addr, client, shutdown).await,
+            }
+        }
+        Commands::Serve(args) => {
+            if args.access_token.is_some() || args.access_token_file.is_some() {
+                anyhow::bail!("--access-token is only valid with serve --flow-only");
+            }
+            serve(&cli::prepare_runtime(&cli.global, Some(args))?).await
+        }
         Commands::Business(command) => {
             cli::report_legacy_invocation(&subcommand);
             cli::run_business(&cli.global, command).await
@@ -255,8 +279,7 @@ async fn require_caller_token(mut request: Request, next: Next) -> Response {
             StatusCode::UNAUTHORIZED,
             [(header::WWW_AUTHENTICATE, "Bearer")],
             Json(json!({
-                "error": "Missing Authorization: Bearer <opr_ bot token>. This MCP server acts as its caller, so \
-                          every request must present the caller's own workspace bot token."
+                "error": "Missing Authorization: Bearer <caller credential>. This MCP server forwards the actual caller; Flow-only user scopes require a current global-user access token, and legacy bot calls retain workspace authorization."
             })),
         )
             .into_response();
@@ -304,7 +327,7 @@ async fn run_http(bind_addr: &str, client: OpenPrClient, shutdown: Shutdown) -> 
 ///
 /// A constant rather than a computed label because there is now only one answer; a log line
 /// that could say something else would imply a setting that no longer exists.
-const INBOUND_AUTH_DESCRIPTION: &str = "per-request caller bot token (Authorization: Bearer), required";
+const INBOUND_AUTH_DESCRIPTION: &str = "per-request caller bearer credential (Authorization: Bearer), required";
 
 async fn handle_jsonrpc(
     State(state): State<SseState>,

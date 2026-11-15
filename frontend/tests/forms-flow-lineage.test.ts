@@ -277,8 +277,8 @@ suite.check('the unavailable branches render the placeholder and no href', () =>
 	assertDeepEqual(
 		links.sort(),
 		[
-			'/(app)/workspace/[workspaceId]/flow/[objectId] workspaceId, objectId: row.sourceObjectId',
-			'/(app)/workspace/[workspaceId]/flow/[objectId] workspaceId, objectId: row.sourceObjectId',
+			'/(app)/flow/[objectId] objectId: row.sourceObjectId',
+			'/(app)/flow/[objectId] objectId: row.sourceObjectId',
 			'/(app)/workspace/[workspaceId]/flow/conversions/[jobId] workspaceId, jobId: row.linkedJobId'
 		],
 		'source links go to the Page, the job link to the conversion job page'

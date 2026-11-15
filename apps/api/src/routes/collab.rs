@@ -121,8 +121,22 @@ pub struct WsQuery {
 /// Query strings include secrets on the collab upgrade route and user content on search and
 /// filtering routes. The router has many `Query<T>` extractors, so a route allowlist is unsafe:
 /// every request span records only [`axum::http::Uri::path`].
-fn request_path_for_trace<B>(request: &axum::http::Request<B>) -> &str {
-    request.uri().path()
+fn request_path_for_trace<B>(request: &axum::http::Request<B>) -> String {
+    let mut parts = request.uri().path().split('/').map(str::to_string).collect::<Vec<_>>();
+    let sensitive = parts
+        .windows(3)
+        .enumerate()
+        .filter_map(|(index, window)| match window {
+            [flow, shares, _] if flow == "flow" && shares == "public-shares" => Some(index + 2),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for index in sensitive {
+        if let Some(token) = parts.get_mut(index) {
+            *token = "[redacted]".into();
+        }
+    }
+    parts.join("/")
 }
 
 /// A `tower_http::trace::MakeSpan` with the default span name, level, and fields, except its `uri`
@@ -206,6 +220,9 @@ pub async fn ws_upgrade(
         return ApiError::unauthenticated("invalid ticket".to_string()).into_response();
     };
     if let Err(err) = crate::flow::policy::require_flow_enabled_on(&state.db, consumed.workspace_id).await {
+        return err.into_response();
+    }
+    if let Err(err) = crate::flow::scope_editor::require_document_admitted(&state.db, consumed.document_id).await {
         return err.into_response();
     }
     ws.on_upgrade(move |socket| session::run(socket, state, consumed))

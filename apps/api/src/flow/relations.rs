@@ -78,19 +78,19 @@ fn check_relation_scan_budget(examined: u64) -> Result<(), ApiError> {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LinkPayload {
-    target_object_id: Uuid,
-    relation_type: String,
+pub(crate) struct LinkPayload {
+    pub(crate) target_object_id: Uuid,
+    pub(crate) relation_type: String,
     #[serde(default = "empty_object")]
-    properties: Value,
+    pub(crate) properties: Value,
     #[serde(default)]
-    position_key: Option<String>,
+    pub(crate) position_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct UnlinkPayload {
-    relation_id: Uuid,
+pub(crate) struct UnlinkPayload {
+    pub(crate) relation_id: Uuid,
 }
 
 fn empty_object() -> Value {
@@ -101,7 +101,7 @@ fn principal_kind(input: &ExecuteCommandInput) -> &'static str {
     if input.actor_is_bot() { "bot" } else { "user" }
 }
 
-fn valid_relation_type(value: &str) -> bool {
+pub(crate) fn valid_relation_type(value: &str) -> bool {
     let mut chars = value.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
@@ -660,7 +660,7 @@ fn cursor_key(secret: &str) -> Result<LessSafeKey, ApiError> {
 }
 
 #[allow(clippy::print_stderr)]
-fn encode_cursor(secret: &str, created_at: DateTime<Utc>, id: Uuid) -> Result<String, ApiError> {
+pub(crate) fn encode_cursor(secret: &str, created_at: DateTime<Utc>, id: Uuid) -> Result<String, ApiError> {
     #[cfg(test)]
     if std::env::var_os("OPENPR_FLOW_TEST_MUTATION_RELATION_CURSOR_PLAINTEXT").is_some() {
         eprintln!("WP28_MUTATION_RELATION_CURSOR_PLAINTEXT_ACTIVE");
@@ -682,7 +682,7 @@ fn encode_cursor(secret: &str, created_at: DateTime<Utc>, id: Uuid) -> Result<St
     Ok(BASE64_URL.encode(token))
 }
 
-fn decode_cursor(secret: &str, raw: &str) -> Result<(DateTime<Utc>, Uuid), ApiError> {
+pub(crate) fn decode_cursor(secret: &str, raw: &str) -> Result<(DateTime<Utc>, Uuid), ApiError> {
     let token = BASE64_URL
         .decode(raw)
         .map_err(|_| ApiError::invalid_update("cursor is not valid"))?;

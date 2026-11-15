@@ -7,7 +7,7 @@ use axum::{
     response::IntoResponse,
 };
 use platform::app::AppState;
-use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -478,8 +478,27 @@ pub async fn delete_user(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let result = state
-        .db
+    let tx = state.db.begin().await?;
+    // Provisioning takes this same user row lock, so deletion cannot race a first personal home.
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM users WHERE id=$1 FOR UPDATE",
+        vec![user_id.into()],
+    ))
+    .await?;
+    let retained=tx.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT EXISTS(SELECT 1 FROM flow_scopes s JOIN flow_objects o ON o.scope_id=s.id WHERE s.owner_user_id=$1) AS retained",vec![user_id.into()])).await?
+        .and_then(|row|row.try_get::<bool>("","retained").ok()).unwrap_or(false);
+    if retained {
+        return Ok(Json(ApiResponse::<()> {
+            code: 409,
+            message: "Resolve retained personal Flow ownership before deleting this account".to_string(),
+            data: None,
+            error_code: Some("ownership_disposition_required"),
+            details: Some(serde_json::json!({"reason":"retained_personal_flow_content","disposition_required":true})),
+        }));
+    }
+    let result = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE users SET is_active = false, session_version = session_version + 1, updated_at = now() WHERE id = $1".to_string(),
@@ -490,7 +509,7 @@ pub async fn delete_user(
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound("user not found".to_string()));
     }
-
+    tx.commit().await?;
     Ok(ApiResponse::ok())
 }
 

@@ -21,10 +21,57 @@ use crate::error::ApiError;
 use super::import::{BoundedImportStager, effective_import_limits};
 
 pub const PACKAGE_SCHEMA: &str = "sylvode.flow.export-package.v1";
+pub const SCOPE_PACKAGE_SCHEMA: &str = "sylvode.flow.export-package.v2";
+pub const SEMANTIC_MODEL_V2: &str = "editor_cid_v2";
+pub const SEMANTIC_MODEL_V3: &str = "canonical_order_v3";
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageSemanticModel {
+    V1,
+    V2,
+    V3,
+}
+pub fn semantic_model(manifest: &ExportPackageManifest) -> Result<PackageSemanticModel, ApiError> {
+    match (manifest.schema.as_str(), manifest.engine.semantic_model.as_deref()) {
+        (PACKAGE_SCHEMA, None) => Ok(PackageSemanticModel::V1),
+        (SCOPE_PACKAGE_SCHEMA, None | Some(SEMANTIC_MODEL_V2)) => Ok(PackageSemanticModel::V2),
+        (SCOPE_PACKAGE_SCHEMA, Some(SEMANTIC_MODEL_V3)) => Ok(PackageSemanticModel::V3),
+        _ => Err(ApiError::typed_with_details(
+            crate::error::ApiErrorKind::UnsupportedFormat,
+            "package semantic model has no tested reader",
+            serde_json::json!({"reason":"package_semantic_model_unsupported"}),
+        )),
+    }
+}
 pub const FLOW_SCHEMA_VERSION: u32 = 1;
 pub const ENGINE_NAME: &str = "loro";
 pub const ENGINE_CRATE_VERSION: &str = "1.13.9";
 pub const ENGINE_WIRE_FORMAT_VERSION: u32 = 1;
+
+pub fn inner_reference_refusal() -> ApiError {
+    ApiError::typed_with_details(
+        crate::error::ApiErrorKind::UnsupportedFormat,
+        "raw package references require an identity-remapping adapter; use a rendered export",
+        serde_json::json!({"reason":"package_inner_reference_remap_unsupported"}),
+    )
+}
+pub(crate) fn require_supported_snapshot(engine: &collab_core::LoroCollabEngine) -> Result<(), ApiError> {
+    if collab_core::isolation::wire::package_reference_remap_required(engine)
+        .map_err(|_| ApiError::checksum_mismatch("package snapshot cannot be inspected"))?
+    {
+        return Err(inner_reference_refusal());
+    }
+    Ok(())
+}
+pub fn typed_raw_refusal(kinds: &[String]) -> ApiError {
+    let mut kinds = kinds.to_vec();
+    kinds.sort();
+    kinds.dedup();
+    ApiError::typed_with_details(
+        crate::error::ApiErrorKind::UnsupportedFormat,
+        "typed raw package roundtrip is not supported; use typed commands or rendered exports",
+        serde_json::json!({"reason":"typed_package_roundtrip_unsupported","unsupported_object_types":kinds}),
+    )
+}
 
 const MANIFEST_PATH: &str = "manifest.json";
 const CHECKSUMS_PATH: &str = "checksums.sha256";
@@ -46,7 +93,10 @@ pub struct PackageProducer {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageSource {
-    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_id: Option<String>,
     pub scope: String,
     pub root_object_ids: Vec<String>,
 }
@@ -56,11 +106,16 @@ pub struct PackageEngine {
     pub name: String,
     pub crate_version: String,
     pub wire_format_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageHistory {
     pub included: bool,
+    /// V2 explicitly distinguishes separate history members from history inside Loro snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_history: Option<String>,
     pub through_seq_by_document: BTreeMap<String, i64>,
 }
 
@@ -443,12 +498,21 @@ fn expected_kind(path: &str) -> Option<&'static str> {
 }
 
 fn validate_manifest_compatibility(manifest: &ExportPackageManifest) -> Result<(), ApiError> {
-    if manifest.schema != PACKAGE_SCHEMA {
-        return Err(ApiError::unsupported_format("package schema major is not v1"));
+    semantic_model(manifest)?;
+    let scope_native = manifest.schema == SCOPE_PACKAGE_SCHEMA;
+    if manifest.schema != PACKAGE_SCHEMA && !scope_native {
+        return Err(ApiError::unsupported_format(
+            "package schema major has no tested adapter",
+        ));
     }
-    if manifest.flow_schema_version != FLOW_SCHEMA_VERSION {
+    if manifest.flow_schema_version != if scope_native { 2 } else { FLOW_SCHEMA_VERSION } {
         return Err(ApiError::unsupported_format(
             "Flow schema version has no tested forward adapter",
+        ));
+    }
+    if scope_native && manifest.history.snapshot_history.as_deref() != Some("retained") {
+        return Err(ApiError::unsupported_format(
+            "v2 snapshot history semantics must be explicit",
         ));
     }
     if manifest.engine.name != ENGINE_NAME
@@ -462,11 +526,33 @@ fn validate_manifest_compatibility(manifest: &ExportPackageManifest) -> Result<(
     if !manifest.export_policy.complete {
         return Err(ApiError::unsupported_format("partial export packages are forbidden"));
     }
-    if !matches!(manifest.source.scope.as_str(), "object" | "workspace") {
+    if !(if scope_native {
+        matches!(manifest.source.scope.as_str(), "object" | "scope")
+    } else {
+        matches!(manifest.source.scope.as_str(), "object" | "workspace")
+    }) {
         return Err(ApiError::unsupported_format("manifest source scope is unsupported"));
     }
     if uuid::Uuid::parse_str(&manifest.package_id).is_err()
-        || uuid::Uuid::parse_str(&manifest.source.workspace_id).is_err()
+        || (if scope_native {
+            manifest
+                .source
+                .scope_id
+                .as_deref()
+                .is_none_or(|id| uuid::Uuid::parse_str(id).is_err())
+        } else {
+            manifest
+                .source
+                .workspace_id
+                .as_deref()
+                .is_none_or(|id| uuid::Uuid::parse_str(id).is_err())
+                || manifest.source.scope_id.is_some()
+        })
+        || manifest
+            .source
+            .workspace_id
+            .as_deref()
+            .is_some_and(|id| uuid::Uuid::parse_str(id).is_err())
         || manifest.source.root_object_ids.is_empty()
         || manifest
             .source
@@ -815,7 +901,8 @@ mod tests {
                 source_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
             },
             source: PackageSource {
-                workspace_id: WORKSPACE_ID.to_string(),
+                workspace_id: Some(WORKSPACE_ID.to_string()),
+                scope_id: None,
                 scope: "object".to_string(),
                 root_object_ids: vec![OBJECT_ID.to_string()],
             },
@@ -824,9 +911,11 @@ mod tests {
                 name: ENGINE_NAME.to_string(),
                 crate_version: ENGINE_CRATE_VERSION.to_string(),
                 wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
+                semantic_model: None,
             },
             history: PackageHistory {
                 included: false,
+                snapshot_history: None,
                 through_seq_by_document: BTreeMap::from([(DOCUMENT_ID.to_string(), 7)]),
             },
             counts: PackageCounts {
@@ -842,6 +931,25 @@ mod tests {
             projects: Vec::new(),
             warnings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn scope_package_identity_requires_real_scope_without_fabricated_workspace() {
+        let mut manifest = fixture_manifest();
+        manifest.schema = SCOPE_PACKAGE_SCHEMA.into();
+        manifest.flow_schema_version = 2;
+        manifest.history.snapshot_history = Some("retained".into());
+        manifest.source.workspace_id = None;
+        manifest.source.scope_id = Some(WORKSPACE_ID.into());
+        let package = build_package(manifest.clone(), fixture_inputs()).unwrap();
+        let verified = verify_package(std::io::Cursor::new(package.bytes), None).unwrap();
+        assert_eq!(verified.manifest.source.scope_id, Some(WORKSPACE_ID.into()));
+        assert_eq!(verified.manifest.source.workspace_id, None);
+        manifest.source.scope_id = None;
+        assert!(build_package(manifest.clone(), fixture_inputs()).is_err());
+        manifest.schema = PACKAGE_SCHEMA.into();
+        manifest.flow_schema_version = FLOW_SCHEMA_VERSION;
+        assert!(build_package(manifest, fixture_inputs()).is_err());
     }
 
     fn fixture_inputs() -> Vec<PackageMemberInput> {

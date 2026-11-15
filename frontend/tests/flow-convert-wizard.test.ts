@@ -77,6 +77,7 @@ function object(overrides: Partial<FlowObjectView> = {}): FlowObjectView {
 	return {
 		id: OBJ,
 		workspace_id: WS,
+		scope_id: 'scope-1',
 		project_id: null,
 		object_type: 'page',
 		lifecycle_status: 'active',
@@ -287,9 +288,9 @@ await suite.checkAsync(
 		assertDeepEqual(
 			calls.map(({ method, path }) => [method, path]),
 			[
-				['GET', `/api/v1/flow/objects/${OBJ}`],
-				['POST', '/api/v1/flow/conversions/preview'],
-				['POST', '/api/v1/flow/conversions']
+				['GET', `/api/v2/flow/objects/${OBJ}`],
+				['POST', '/api/v2/flow/conversions/preview'],
+				['POST', '/api/v2/flow/conversions']
 			],
 			'paths'
 		);
@@ -462,6 +463,8 @@ await suite.checkAsync(
 				{
 					source_object_id: OBJ,
 					source_frontier: 'F-local',
+					destination_workspace_id: WS,
+					destination_project_id: PROJECT,
 					target_type: 'form_record',
 					mapping: { target_form_id: FORM, title: 'Quarterly plan', values: { owner_note: 'x' } },
 					idempotency_key: 'key-1'

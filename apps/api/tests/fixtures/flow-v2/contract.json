@@ -1,0 +1,140 @@
+{
+  "contract_version": 2,
+  "response_envelope": {
+    "success": {
+      "code": 0,
+      "message": "success",
+      "data": "endpoint payload"
+    },
+    "error_discriminant": "error_code"
+  },
+  "scope": {
+    "id": "uuid",
+    "kind": "personal|legacy_managed",
+    "owner_user_id": "uuid|null",
+    "lifecycle_status": "active|archived"
+  },
+  "root": {
+    "object_id": "uuid",
+    "project_id": "uuid|null"
+  },
+  "capabilities": {
+    "api_version": 2,
+    "schema_version": 1,
+    "scope_native_legacy": "boolean",
+    "personal_provisioning": "boolean",
+    "personal_writes": "boolean",
+    "external_mounts": "boolean",
+    "minimum_reader_version": 2
+  },
+  "home": {
+    "scope": "scope",
+    "roots": [
+      "root"
+    ],
+    "capabilities": "capabilities"
+  },
+  "object": {
+    "inherits": "FlowObjectView v1 fields",
+    "required_additions": {
+      "scope_id": "uuid",
+      "permitted_actions": [
+        "view|comment|edit|manage"
+      ]
+    },
+    "workspace_id": "optional legacy UUID only"
+  },
+  "bootstrap": {
+    "inherits": "Bootstrap v1 fields",
+    "scope_id": "uuid",
+    "limits": {
+      "inherits": "FlowLimitsV1 except connections_per_workspace_max",
+      "version": "2",
+      "connections_per_scope_max": 500
+    }
+  },
+  "ticket_request": {
+    "object_id": "uuid",
+    "document_id": "uuid",
+    "client_id": "string 1..256",
+    "origin": "allowlisted origin; header must agree"
+  },
+  "ticket_response": {
+    "ticket": "one-use secret",
+    "expires_at": "RFC3339",
+    "websocket_path": "query-bearing relative URL with ticket and client_id (same as websocket_url)",
+    "scope_id": "uuid",
+    "object_id": "uuid",
+    "document_id": "uuid",
+    "authz_revision": "i64",
+    "limits": "FlowLimitsV2",
+    "websocket_url": "query-bearing relative URL with ticket and client_id"
+  },
+  "routes": {
+    "capabilities": "GET /api/v2/flow/capabilities",
+    "home": "GET /api/v2/flow/home",
+    "legacy_scope": "GET /api/v2/flow/workspaces/{workspace_id}/scope",
+    "create": "POST /api/v2/flow/objects (scope_id + v1 create fields)",
+    "list": "GET /api/v2/flow/scopes/{scope_id}/objects",
+    "navigator": "GET /api/v2/flow/scopes/{scope_id}/navigator",
+    "search": "GET /api/v2/flow/scopes/{scope_id}/search",
+    "object": "GET /api/v2/flow/objects/{object_id}",
+    "ticket": "POST /api/v2/flow/collab/tickets",
+    "mounts": "GET|POST /api/v2/flow/objects/{object_id}/mounts; DELETE /api/v2/flow/objects/{object_id}/mounts/{mount_id}",
+    "object_suffixes": "commands,bootstrap,history,diff,relations,grants,inheritance,collection,schema,records,comments,shares,appearance,mention-candidates,exports,conversions",
+    "scope_suffixes": "trash,projection-lag,imports,exports,share-principals"
+  },
+  "unsupported_legacy_personal_error": {
+    "error_code": "unsupported_protocol",
+    "details": {
+      "reason": "personal_resource_requires_v2"
+    }
+  },
+  "rollout_errors": {
+    "error_code": "feature_disabled",
+    "reason": "scope_runtime_not_ready|personal_creation_disabled|external_mounts_disabled"
+  },
+  "transport_notes": [
+    "WS frames remain protocol_version=1; authorization/ticket/limits negotiation v2",
+    "workspace-less direct grant is not a membership",
+    "Collection/Record raw CRDT WS writes forbidden",
+    "personal provisioning never inserts workspace or workspace_members",
+    "event source and recipient workspace are separate; webhook at-least-once"
+  ],
+  "share_principals": {
+    "request": "q3..256 characters, source owner/manage only",
+    "response": {
+      "items": [
+        {
+          "principal_kind": "user",
+          "principal_id": "uuid",
+          "label": "string"
+        }
+      ]
+    }
+  },
+  "mount": {
+    "request": {
+      "destination_workspace_id": "uuid",
+      "destination_project_id": "uuid|null",
+      "level": "view|comment|edit",
+      "idempotency_key": "string"
+    },
+    "response": {
+      "id": "uuid",
+      "source_object_id": "uuid",
+      "destination_workspace_id": "uuid",
+      "destination_project_id": "uuid|null",
+      "level": "view|comment|edit",
+      "status": "active"
+    },
+    "list": {
+      "items": [
+        "mount"
+      ]
+    },
+    "delete": {
+      "removed": true
+    }
+  }
+}

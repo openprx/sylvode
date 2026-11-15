@@ -8,6 +8,7 @@
 	// is ProseMirror's own render of that doc via `LoroSyncPlugin` -- there is no second copy of
 	// block text sitting in this component's `$state`.
 
+	import { FLOW_COLLECTION_UI_ENABLED } from '#lib/flow/product-mode.js';
 	import { onDestroy, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import type { Readable } from 'svelte/store';
@@ -27,7 +28,7 @@
 
 	interface Props {
 		doc: LoroDocType;
-		workspaceId: string;
+		scopeId: string;
 		objectId: string;
 		/** `view`/`comment`, or write access revoked: no typing, no slash menu, no block handle. */
 		readOnly?: boolean;
@@ -41,7 +42,7 @@
 
 	let {
 		doc,
-		workspaceId,
+		scopeId,
 		objectId,
 		readOnly = false,
 		presence,
@@ -77,6 +78,8 @@
 	// Bridge Reference / Embed, and the conversion wizard. Each carries its ownership note.
 	const filteredBridgeOptions = $derived(
 		SLASH_BRIDGE_OPTIONS.filter(
+			(option) => FLOW_COLLECTION_UI_ENABLED || option.action !== 'collection'
+		).filter(
 			(option) =>
 				slashMenu.query === '' ||
 				option.labelKey.toLowerCase().includes(slashMenu.query.toLowerCase()) ||
@@ -159,7 +162,7 @@
 </script>
 
 <div
-	class="relative min-h-[40vh] px-16 pt-2 pb-16"
+	class="relative min-h-[40vh] px-6 pt-2 pb-16 sm:px-8 2xl:px-16"
 	role="presentation"
 	onmousemove={onHostMouseMove}
 	onmouseleave={onHostMouseLeave}
@@ -212,30 +215,30 @@
 				</button>
 			{/if}
 			{#if !readOnly}
-			<button
-				type="button"
-				class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-				onclick={() => adjustHoveredIndent(-1)}
-				aria-label={$t('flow.block.outdent')}
-				title={$t('flow.block.outdent')}
-			>
-				⇤
-			</button>
-			<button
-				type="button"
-				class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-				onclick={() => adjustHoveredIndent(1)}
-				aria-label={$t('flow.block.nest')}
-				title={$t('flow.block.nest')}
-			>
-				⇥
-			</button>
-			<span
-				class="cursor-grab select-none px-1 text-slate-300 dark:text-slate-600"
-				aria-label={$t('flow.block.handleLabel')}
-			>
-				⋮⋮
-			</span>
+				<button
+					type="button"
+					class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+					onclick={() => adjustHoveredIndent(-1)}
+					aria-label={$t('flow.block.outdent')}
+					title={$t('flow.block.outdent')}
+				>
+					⇤
+				</button>
+				<button
+					type="button"
+					class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+					onclick={() => adjustHoveredIndent(1)}
+					aria-label={$t('flow.block.nest')}
+					title={$t('flow.block.nest')}
+				>
+					⇥
+				</button>
+				<span
+					class="cursor-grab select-none px-1 text-slate-300 dark:text-slate-600"
+					aria-label={$t('flow.block.handleLabel')}
+				>
+					⋮⋮
+				</span>
 			{/if}
 		</div>
 	{/if}
@@ -246,7 +249,7 @@
 		data-placeholder={$t('flow.canvas.placeholder')}
 	></div>
 
-	<FlowPageBlocks bind:this={pageBlocks} {doc} {workspaceId} {objectId} {readOnly} />
+	<FlowPageBlocks bind:this={pageBlocks} {doc} {scopeId} {objectId} {readOnly} />
 
 	{#if slashMenu.active && slashMenu.coords && !readOnly}
 		<div

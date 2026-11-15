@@ -1,5 +1,9 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { t } from 'svelte-i18n';
+	import { authStore } from '#lib/stores/auth.js';
+	import { get } from 'svelte/store';
+	import { FlowMutationIntents } from '#lib/flow/social-actions.js';
 	import {
 		appearanceBlobUrl,
 		flowApi,
@@ -11,8 +15,6 @@
 	import { flowErrorFromResult } from '#lib/flow/command-service.js';
 	import { flowErrorDetailKey } from '#lib/flow/errors.js';
 	import FlowObjectIcon from './FlowObjectIcon.svelte';
-	import FlowSyncIndicator from './FlowSyncIndicator.svelte';
-	import type { SyncState } from '#lib/flow/types.js';
 
 	interface Crumb {
 		id: string;
@@ -21,13 +23,11 @@
 	}
 
 	interface Props {
-		workspaceId: string;
+		scopeId: string;
 		objectId: string;
 		title: string;
 		readOnly: boolean;
 		appearance?: FlowAppearance | null;
-		syncState?: SyncState;
-		pending?: number;
 		/** Public page: images load through the share token and nothing is editable. */
 		publicToken?: string | null;
 		onTitle?: (value: string) => void;
@@ -35,17 +35,26 @@
 	}
 
 	let {
-		workspaceId,
+		scopeId,
 		objectId,
 		title,
 		readOnly,
 		appearance = null,
-		syncState = 'local',
-		pending = 0,
 		publicToken = null,
 		onTitle,
 		onAppearance
 	}: Props = $props();
+
+	let titleInput = $state<HTMLTextAreaElement | null>(null);
+	function resizeTitle(): void {
+		if (!titleInput) return;
+		titleInput.style.height = 'auto';
+		titleInput.style.height = `${titleInput.scrollHeight}px`;
+	}
+	$effect(() => {
+		void title;
+		resizeTitle();
+	});
 
 	let crumbs = $state<Crumb[]>([]);
 	let menu = $state<'icon' | 'cover' | null>(null);
@@ -113,18 +122,32 @@
 		return { ...(appearance ?? {}), ...patch };
 	}
 
+	const appearanceIntents = new FlowMutationIntents();
+	function appearanceOperation(kind: string) {
+		return `${get(authStore).user?.id ?? ''}:${objectId}:${kind}`;
+	}
+
 	async function save(next: FlowAppearance): Promise<void> {
+		if (readOnly) return;
 		failureKey = null;
-		const result = await flowApi.setAppearance(objectId, next);
+		const actor = get(authStore).user?.id,
+			target = objectId;
+		const op = appearanceOperation('appearance');
+		const result = await flowApi.setAppearance(target, next, appearanceIntents.key(op, next));
+		if (actor !== get(authStore).user?.id || target !== objectId) return;
 		if (result.code !== 0 || !result.data) {
 			failureKey = flowErrorDetailKey(flowErrorFromResult(result));
 			return;
 		}
+		appearanceIntents.complete(op);
 		onAppearance?.(result.data);
 		menu = null;
 	}
 
 	async function onUpload(event: Event, kind: 'icon' | 'cover'): Promise<void> {
+		if (readOnly) return;
+		const actor = get(authStore).user?.id,
+			target = objectId;
 		const input = event.currentTarget;
 		if (!(input instanceof HTMLInputElement)) return;
 		const file = input.files?.[0];
@@ -134,11 +157,20 @@
 		const bytes = new Uint8Array(data);
 		let binary = '';
 		for (const byte of bytes) binary += String.fromCharCode(byte);
-		const result = await flowApi.uploadAppearance(objectId, btoa(binary));
+		if (readOnly || actor !== get(authStore).user?.id || target !== objectId) return;
+		const encoded = btoa(binary),
+			op = appearanceOperation(`upload:${kind}`);
+		const result = await flowApi.uploadAppearance(
+			objectId,
+			encoded,
+			appearanceIntents.key(op, encoded)
+		);
+		if (actor !== get(authStore).user?.id || target !== objectId) return;
 		if (result.code !== 0 || !result.data) {
 			failureKey = flowErrorDetailKey(flowErrorFromResult(result));
 			return;
 		}
+		appearanceIntents.complete(op);
 		if (kind === 'icon') {
 			await save(withAppearance({ icon: { kind: 'image', asset_id: result.data.asset_id } }));
 		} else {
@@ -164,14 +196,46 @@
 	}
 </script>
 
-<header class="bg-white dark:bg-slate-950" data-testid="flow-page-header">
+<svelte:window onresize={resizeTitle} />
+
+<header
+	class="flow-page-header bg-white dark:bg-slate-950"
+	data-testid="flow-page-header"
+	data-scope-id={scopeId}
+>
 	{#if cover}
 		<div
 			class="relative h-48 w-full overflow-hidden"
 			data-testid="flow-page-cover"
+			role="slider"
+			tabindex={readOnly ? -1 : 0}
+			aria-label={$t('flow.personal.coverPosition')}
+			aria-valuemin={0}
+			aria-valuemax={100}
+			aria-valuenow={Math.round(position * 100)}
+			aria-readonly={readOnly}
+			onkeydown={(event) => {
+				if (readOnly || !cover) return;
+				const delta =
+					event.key === 'ArrowUp' || event.key === 'ArrowRight'
+						? 0.05
+						: event.key === 'ArrowDown' || event.key === 'ArrowLeft'
+							? -0.05
+							: null;
+				if (delta === null && event.key !== 'Home' && event.key !== 'End') return;
+				event.preventDefault();
+				const next =
+					event.key === 'Home'
+						? 0
+						: event.key === 'End'
+							? 1
+							: Math.min(1, Math.max(0, position + (delta ?? 0)));
+				void save(withAppearance({ cover: { ...cover, position: next } }));
+			}}
 			onpointerdown={(event) => {
 				if (readOnly) return;
 				dragging = true;
+				event.currentTarget.setPointerCapture(event.pointerId);
 				onCoverPointer(event, false);
 			}}
 			onpointermove={(event) => {
@@ -184,7 +248,11 @@
 			}}
 		>
 			{#if gallery}
-				<div class="h-[200%] w-full" style:background={gallery} style:transform={`translateY(-${position * 50}%)`}></div>
+				<div
+					class="h-[200%] w-full"
+					style:background={gallery}
+					style:transform={`translateY(-${position * 50}%)`}
+				></div>
 			{:else if coverUrl}
 				<img
 					src={coverUrl}
@@ -202,12 +270,18 @@
 		</div>
 	{/if}
 
-	<div class="mx-auto w-full max-w-3xl px-16 pt-6">
+	<div class="mx-auto w-full max-w-3xl px-6 pt-6 sm:px-8 2xl:px-16">
 		{#if crumbs.length > 0}
-			<nav class="mb-3 flex flex-wrap items-center gap-1 text-sm text-slate-500" aria-label={$t('flow.header.breadcrumbs')}>
+			<nav
+				class="mb-3 flex flex-wrap items-center gap-1 text-sm text-slate-500"
+				aria-label={$t('flow.header.breadcrumbs')}
+			>
 				{#each crumbs as crumb, index (crumb.id)}
 					{#if index > 0}<span aria-hidden="true">/</span>{/if}
-					<a class="inline-flex items-center gap-1 hover:underline" href={`/workspace/${workspaceId}/flow/${crumb.id}`}>
+					<a
+						class="inline-flex items-center gap-1 hover:underline"
+						href={resolve('/(app)/flow/[objectId]', { objectId: crumb.id })}
+					>
 						<FlowObjectIcon appearance={crumb.appearance} objectId={crumb.id} />
 						<span>{crumb.title || $t('flow.nav.untitled')}</span>
 					</a>
@@ -222,27 +296,42 @@
 			{#if !readOnly}
 				<button
 					type="button"
-					class="mt-1 text-sm text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+					class="appearance-action mt-1 text-sm text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
 					onclick={() => (menu = menu === 'icon' ? null : 'icon')}
 				>
 					{appearance?.icon ? $t('flow.header.changeIcon') : $t('flow.header.addIcon')}
 				</button>
 			{/if}
 			{#if menu === 'icon' && !readOnly}
-				<div class="absolute z-20 mt-1 w-72 rounded-md border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+				<div
+					class="absolute z-20 mt-1 w-72 rounded-md border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+				>
 					<div class="grid grid-cols-8 gap-1">
 						{#each PAGE_EMOJIS as emoji (emoji)}
-							<button type="button" class="rounded p-1 text-xl hover:bg-slate-100 dark:hover:bg-slate-800" onclick={() => save(withAppearance({ icon: { kind: 'emoji', emoji } }))}>
+							<button
+								type="button"
+								class="rounded p-1 text-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+								onclick={() => save(withAppearance({ icon: { kind: 'emoji', emoji } }))}
+							>
 								{emoji}
 							</button>
 						{/each}
 					</div>
 					<label class="mt-2 block text-xs text-slate-500">
 						{$t('flow.header.uploadIcon')}
-						<input class="mt-1 block w-full text-sm" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange={(event) => onUpload(event, 'icon')} />
+						<input
+							class="mt-1 block w-full text-sm"
+							type="file"
+							accept="image/png,image/jpeg,image/webp,image/gif"
+							onchange={(event) => onUpload(event, 'icon')}
+						/>
 					</label>
 					{#if appearance?.icon}
-						<button type="button" class="mt-2 text-xs text-slate-500" onclick={() => save(withAppearance({ icon: null }))}>
+						<button
+							type="button"
+							class="mt-2 text-xs text-slate-500"
+							onclick={() => save(withAppearance({ icon: null }))}
+						>
 							{$t('flow.header.removeIcon')}
 						</button>
 					{/if}
@@ -250,30 +339,44 @@
 			{/if}
 		</div>
 
-		<div class="flex items-start gap-3">
-			<input
+		<div class="flex flex-col items-start gap-2">
+			<textarea
+				bind:this={titleInput}
 				value={title}
+				rows={1}
 				oninput={(event) => {
 					const target = event.currentTarget;
-					if (target instanceof HTMLInputElement) onTitle?.(target.value);
+					const value = target.value.replace(/[\r\n]+/g, ' ');
+					if (target.value !== value) target.value = value;
+					onTitle?.(value);
+					resizeTitle();
+				}}
+				onkeydown={(event) => {
+					if (event.key === 'Enter' && !event.isComposing) {
+						event.preventDefault();
+						event.currentTarget.blur();
+					}
 				}}
 				readonly={readOnly}
 				placeholder={$t('flow.titlePlaceholder')}
-				aria-label={$t('flow.panel.title')}
-				class="min-w-0 flex-1 border-none bg-transparent text-4xl font-semibold text-slate-900 outline-none dark:text-slate-100"
-			/>
-			{#if !publicToken}
-				<FlowSyncIndicator state={syncState} {pending} />
-			{/if}
+				aria-label={$t('flow.personal.pageTitle')}
+				class="w-full min-w-0 resize-none overflow-hidden border-none bg-transparent text-4xl leading-tight font-semibold text-slate-900 outline-none dark:text-slate-100"
+			></textarea>
 		</div>
 
 		{#if !readOnly}
 			<div class="relative mt-2">
-				<button type="button" class="text-sm text-slate-500 hover:text-slate-800" onclick={() => (menu = menu === 'cover' ? null : 'cover')}>
+				<button
+					type="button"
+					class="appearance-action text-sm text-slate-500 hover:text-slate-800"
+					onclick={() => (menu = menu === 'cover' ? null : 'cover')}
+				>
 					{cover ? $t('flow.header.changeCover') : $t('flow.header.addCover')}
 				</button>
 				{#if menu === 'cover'}
-					<div class="absolute z-20 mt-1 w-80 rounded-md border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+					<div
+						class="absolute z-20 mt-1 w-80 rounded-md border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+					>
 						<p class="mb-2 text-xs text-slate-500">{$t('flow.header.gallery')}</p>
 						<div class="grid grid-cols-3 gap-2">
 							{#each COVER_GALLERIES as entry (entry.id)}
@@ -293,10 +396,19 @@
 						</div>
 						<label class="mt-2 block text-xs text-slate-500">
 							{$t('flow.header.uploadCover')}
-							<input class="mt-1 block w-full text-sm" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange={(event) => onUpload(event, 'cover')} />
+							<input
+								class="mt-1 block w-full text-sm"
+								type="file"
+								accept="image/png,image/jpeg,image/webp,image/gif"
+								onchange={(event) => onUpload(event, 'cover')}
+							/>
 						</label>
 						{#if cover}
-							<button type="button" class="mt-2 text-xs text-slate-500" onclick={() => save(withAppearance({ cover: null }))}>
+							<button
+								type="button"
+								class="mt-2 text-xs text-slate-500"
+								onclick={() => save(withAppearance({ cover: null }))}
+							>
 								{$t('flow.header.removeCover')}
 							</button>
 						{/if}
@@ -309,3 +421,21 @@
 		{/if}
 	</div>
 </header>
+
+<style>
+	@media (hover: hover) and (pointer: fine) {
+		.appearance-action {
+			opacity: 0;
+			transition: opacity 0.12s;
+		}
+		.flow-page-header:hover .appearance-action,
+		.flow-page-header:focus-within .appearance-action {
+			opacity: 1;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.appearance-action {
+			transition: none;
+		}
+	}
+</style>

@@ -36,16 +36,12 @@ ignore = [
     # is dropped upstream.
     "RUSTSEC-2023-0089",
 
-    # im / sized-chunks / bitmaps and smallstr are unmaintained. All four are reachable ONLY
-    # from the Sylvode Flow v0.3 CRDT evaluation spikes -- im/sized-chunks/bitmaps via
-    # loro -> loro-internal, smallstr via yrs. `cargo tree -p api|worker|mcp-server` shows zero
-    # dependency on spikes/*, so none of these is linked into any shipped binary; they are
-    # reachable only when running the v0.3 benchmark/corpus harness locally.
-    # These are "unmaintained" advisories, not vulnerabilities: no CVE, no known exploit path.
-    # ADR-0005 selects exactly one engine, after which the losing candidate's subtree leaves the
-    # lockfile entirely -- so this set shrinks rather than grows. Re-evaluate at that decision,
-    # and treat the surviving engine's unmaintained transitive deps as a supply-chain input to
-    # the decision itself rather than as a permanent exemption.
+    # im / sized-chunks / bitmaps are unmaintained and are shipped through
+    # api -> collab-core -> loro -> loro-internal -> im (and sized-chunks -> bitmaps).
+    # Keep these existing advisory exceptions visible as production supply-chain debt;
+    # revisit them when the selected Loro engine removes the transitive dependencies.
+    # The retained smallstr exception originated in the yrs evaluation spike; smallstr
+    # is absent from the current locked graph. No advisory exception is added here.
     "RUSTSEC-2026-0247",
     "RUSTSEC-2026-0248",
     "RUSTSEC-2026-0251",

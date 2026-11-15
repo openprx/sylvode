@@ -20,6 +20,7 @@ export interface AiAgent {
 	registered_by: string;
 	last_active_at?: string;
 	created_at: string;
+	config_updated_at?: string;
 }
 
 export interface AiAgentStats {
@@ -107,7 +108,8 @@ function mapAiAgent(raw: Record<string, unknown>): AiAgent {
 		is_active: Boolean(raw.is_active),
 		registered_by: String(raw.registered_by ?? ''),
 		last_active_at: raw.last_active_at ? String(raw.last_active_at) : undefined,
-		created_at: String(raw.created_at ?? '')
+		created_at: String(raw.created_at ?? ''),
+		config_updated_at: typeof raw.config_updated_at === 'string' ? raw.config_updated_at : undefined
 	};
 }
 
@@ -176,6 +178,7 @@ export const aiAgentsApi = {
 			can_veto_human_consensus?: boolean;
 			reason_min_length?: number;
 			is_active?: boolean;
+			expected_config_updated_at?: string;
 		}
 	): Promise<ApiResult<AiAgent>> {
 		const res = await apiClient.patch<Record<string, unknown>>(
@@ -184,6 +187,7 @@ export const aiAgentsApi = {
 		);
 		if (res.code !== 0 || !res.data) {
 			return {
+				...res,
 				code: res.code,
 				message: res.message || get(t)('api.updateAiAgentFailed'),
 				data: null

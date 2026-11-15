@@ -16,6 +16,7 @@
 import { get, readonly as readonlyStore, writable, type Readable } from 'svelte/store';
 import {
 	flowApi,
+	clearFlowAppearanceCache,
 	type FlowAdminHealth,
 	type FlowAdminIntegrity,
 	type FlowAdminLag,
@@ -147,6 +148,26 @@ async function writeCachedSnapshot(userId: string | null, entry: CachedSnapshot)
 	});
 }
 
+async function deleteCachedSnapshot(userId: string | null, objectId: string): Promise<void> {
+	const db = await openIndexedDb(userId);
+	if (!db) return;
+	await new Promise<void>((resolve) => {
+		const finish = () => {
+			db.close();
+			resolve();
+		};
+		try {
+			const tx = db.transaction(STORE_NAME, 'readwrite');
+			tx.objectStore(STORE_NAME).delete(objectId);
+			tx.oncomplete = finish;
+			tx.onerror = finish;
+			tx.onabort = finish;
+		} catch {
+			finish();
+		}
+	});
+}
+
 /** Structural shape of a Loro map, wide enough to cover any container name (see `setTitle`'s
  * comment for why `LoroDocType.getMap` needs widening for non-`doc`/`data` containers). */
 export interface NamedLoroMap {
@@ -180,6 +201,7 @@ export interface OpenFlowObjectResult {
 	readonly recoveryDraft: Readable<ReadonlyArray<RecoveryDraftEntry>>;
 	/** The user may not write this object (`view`/`comment`, or revoked mid-session). */
 	readonly readOnly: Readable<boolean>;
+	readonly permittedActions: Readable<readonly string[] | null>;
 	/** Remote peers on this document (ephemeral, never in the engine doc). */
 	readonly presence: Readable<ReadonlyArray<RemotePresence>>;
 	/** The outbox controller (diagnostics and tests; components use the stores above). */
@@ -208,6 +230,7 @@ class OpenEntry implements OpenFlowObjectResult {
 	readonly pending: Readable<number>;
 	readonly recoveryDraft: Readable<ReadonlyArray<RecoveryDraftEntry>>;
 	readonly readOnly: Readable<boolean>;
+	readonly permittedActions: Readable<readonly string[] | null>;
 	readonly presence: Readable<ReadonlyArray<RemotePresence>>;
 	readonly offline: FlowOfflineSync;
 	readonly generationStore: ReturnType<typeof writable<number>>;
@@ -230,6 +253,7 @@ class OpenEntry implements OpenFlowObjectResult {
 		offline: FlowOfflineSync;
 		generationStore: ReturnType<typeof writable<number>>;
 		readOnlyStore: ReturnType<typeof writable<boolean>>;
+		permissionsStore: ReturnType<typeof writable<readonly string[] | null>>;
 	}) {
 		this.handle = input.handle;
 		this.session = input.session;
@@ -241,6 +265,7 @@ class OpenEntry implements OpenFlowObjectResult {
 		this.readOnlyStore = input.readOnlyStore;
 		this.docGeneration = readonlyStore(input.generationStore);
 		this.readOnly = readonlyStore(input.readOnlyStore);
+		this.permittedActions = readonlyStore(input.permissionsStore);
 		this.pending = input.offline.pending;
 		this.recoveryDraft = input.offline.recoveryDraft;
 		this.presence = input.session.presence;
@@ -338,7 +363,7 @@ export class FlowObjectRepository {
 	}
 
 	async open(input: {
-		workspaceId: string;
+		scopeId: string;
 		objectId: string;
 		signal: AbortSignal;
 		/** The object as the caller already read it (`get`), so the route page that dispatches on
@@ -360,8 +385,10 @@ export class FlowObjectRepository {
 			const objectResult = await flowApi.getObject(input.objectId);
 			if (objectResult.code !== 0 || !objectResult.data) {
 				throw {
-					code: objectResult.code === 404 ? 'not_found' : 'forbidden',
-					recoverable: false
+					...(flowErrorFromEnvelope(objectResult) ?? {
+						code: objectResult.code === 404 ? 'not_found' : 'forbidden',
+						recoverable: false
+					})
 				} satisfies FlowError;
 			}
 			object = objectResult.data;
@@ -376,7 +403,10 @@ export class FlowObjectRepository {
 		const projection = new LiveProjectionStore(objectToProjection(object));
 		const flowErrorStore = writable<FlowError | null>(null);
 		const generationStore = writable(0);
-		const readOnlyStore = writable(false);
+		const permissionsStore = writable<readonly string[] | null>(object.permitted_actions ?? null);
+		const readOnlyStore = writable(
+			object.permitted_actions ? !object.permitted_actions.includes('edit') : false
+		);
 		let lastKnownFrontierBase64 = '';
 		// Assigned right below; the session hooks only run after `connect`, by which time it is set.
 		let entry: OpenEntry | null = null;
@@ -435,8 +465,20 @@ export class FlowObjectRepository {
 						details: error.details
 					});
 				},
+				onAuthorizationPending: (actions: readonly string[]) => {
+					permissionsStore.set([...actions]);
+					if (!actions.includes('edit')) entry?.offline.setReadOnly(true);
+				},
+				onAuthorizationChange: async (actions: readonly string[]) => {
+					permissionsStore.set([...actions]);
+					return entry ? entry.offline.onAuthorizationChange(actions.includes('edit')) : false;
+				},
+				onPermissionState: (readOnly: boolean) => readOnlyStore.set(readOnly),
 				onRevoked: (error: FlowError) => {
+					permissionsStore.set([]);
 					readOnlyStore.set(true);
+					void deleteCachedSnapshot(userId, input.objectId);
+					clearFlowAppearanceCache(input.objectId);
 					void entry?.offline.onRevoked({ code: error.code, source: 'server' });
 				}
 			},
@@ -445,7 +487,7 @@ export class FlowObjectRepository {
 		);
 
 		const handle: ObjectHandle = {
-			workspaceId: input.workspaceId,
+			scopeId: object.scope_id,
 			objectId: input.objectId,
 			objectType: object.object_type,
 			documentId: object.document_id,
@@ -508,7 +550,8 @@ export class FlowObjectRepository {
 			doc,
 			offline,
 			generationStore,
-			readOnlyStore
+			readOnlyStore,
+			permissionsStore
 		});
 		const opened = entry;
 		// Every local mutation of the doc -- whether from `EditorAdapter`'s ProseMirror binding, a
@@ -533,7 +576,7 @@ export class FlowObjectRepository {
 		// The permission re-check runs beside the connect: a `view`/`comment` user gets a
 		// read-only canvas before the editor ever mounts (`ADR-0012`: "`view` 只读").
 		const [writable_] = await Promise.all([this.canWrite(input.objectId), session.connect(handle)]);
-		if (!writable_) {
+		if (!session.hasBoundAuthorization && !writable_) {
 			session.setPermissionReadOnly(true);
 			offline.setReadOnly(true);
 			readOnlyStore.set(true);
@@ -563,6 +606,12 @@ export class FlowObjectRepository {
 	 * allow; a pre-check must not turn a network blip into a read-only canvas.
 	 */
 	async canWrite(objectId: string): Promise<boolean> {
+		const object = await flowApi.getObject(objectId);
+		if (object.code === 0 && object.data?.permitted_actions)
+			return object.data.permitted_actions.includes('edit');
+		const objectError = flowErrorFromEnvelope(object);
+		if (objectError && (objectError.code === 'forbidden' || objectError.code === 'not_found'))
+			return false;
 		const result = await flowApi.getGrants(objectId);
 		if (result.code === 0 && result.data) return WRITABLE_LEVELS.has(result.data.effective_level);
 		const typed = flowErrorFromEnvelope(result);
@@ -646,6 +695,15 @@ export class FlowObjectRepository {
 		await entry.session.dispose();
 		entry.doc.free();
 		for (const retired of entry.retired) retired.free();
+	}
+
+	/** App/account teardown: no cached document or socket may survive into another account. */
+	async disposeAll(): Promise<void> {
+		for (const [id, entry] of [...this.open_.entries()]) {
+			entry.refCount = 1;
+			await this.close(id);
+		}
+		this.records_.clear();
 	}
 
 	getProjection(objectId: string): Readable<ObjectProjection> {
@@ -774,29 +832,36 @@ export class FlowObjectRepository {
 	// dashboards and the projection-lag badge are `adapter:ObjectRepository` consumers). They
 	// return the raw `ApiResult` so the operations panel can branch on `error_code` itself.
 
-	getAdminHealth(workspaceId: string): Promise<ApiResult<FlowAdminHealth>> {
-		return flowApi.getAdminHealth(workspaceId);
+	getAdminHealth(scopeId: string): Promise<ApiResult<FlowAdminHealth>> {
+		return flowApi.getAdminHealth(scopeId);
 	}
 
 	getAdminLag(
-		workspaceId: string,
+		scopeId: string,
 		query: { cursor?: string; limit?: number } = {}
 	): Promise<ApiResult<FlowAdminLag>> {
-		return flowApi.getAdminLag(workspaceId, query);
+		return flowApi.getAdminLag(scopeId, query);
 	}
 
 	getAdminIntegrity(
-		workspaceId: string,
+		scopeId: string,
 		query: { scope: 'summary' | 'documents'; cursor?: string; limit?: number }
 	): Promise<ApiResult<FlowAdminIntegrity>> {
-		return flowApi.getAdminIntegrity(workspaceId, query);
+		return flowApi.getAdminIntegrity(scopeId, query);
 	}
 
-	getProjectionLag(
+	getWorkspaceProjectionLag(
 		workspaceId: string,
 		query: { cursor?: string; limit?: number } = {}
 	): Promise<ApiResult<FlowProjectionLag>> {
-		return flowApi.getProjectionLag(workspaceId, query);
+		return flowApi.getWorkspaceProjectionLag(workspaceId, query);
+	}
+
+	getProjectionLag(
+		scopeId: string,
+		query: { cursor?: string; limit?: number } = {}
+	): Promise<ApiResult<FlowProjectionLag>> {
+		return flowApi.getProjectionLag(scopeId, query);
 	}
 
 	// v0.5 Navigator / command palette full-text search (`surface-coverage-v1.md`: search is an
@@ -805,11 +870,11 @@ export class FlowObjectRepository {
 	// branches on `error_code` (`require_current` -> `stale_frontier`).
 
 	search(
-		workspaceId: string,
+		scopeId: string,
 		query: FlowSearchQuery,
 		signal?: AbortSignal
 	): Promise<ApiResult<FlowSearchResponse>> {
-		return flowApi.searchObjects(workspaceId, query, signal);
+		return flowApi.searchObjects(scopeId, query, signal);
 	}
 
 	// v0.8 package round-trip reads (export job status, the finished artifact, the import job
@@ -826,10 +891,10 @@ export class FlowObjectRepository {
 	}
 
 	getImportReport(
-		workspaceId: string,
+		scopeId: string,
 		importJobId: string
 	): Promise<ApiResult<FlowPackageImportReport>> {
-		return flowApi.getPackageImport(workspaceId, importJobId);
+		return flowApi.getPackageImport(scopeId, importJobId);
 	}
 
 	// v0.5 object panel reads (`ui-surface-v1.md` "职责边界": the Share panel reads through
@@ -842,6 +907,10 @@ export class FlowObjectRepository {
 
 	/** `GET /flow/objects/{id}/schema`. A Record answers its owning Collection's schema; the
 	 * standalone record route reads it this way (`CollectionViewOptions.schemaFromRecord`). */
+	getRecordContext(recordId: string) {
+		return flowApi.getRecordContext(recordId);
+	}
+
 	getSchema(objectId: string): Promise<ApiResult<FlowCollectionDescription>> {
 		return flowApi.getObjectSchema(objectId);
 	}

@@ -254,8 +254,8 @@ await suite.checkAsync('steps cannot be skipped; back keeps entered values', asy
 	assertDeepEqual(
 		calls.map((call) => [call.method, call.path]),
 		[
-			['POST', `/api/v1/workspaces/${WS}/flow/import-artifacts`],
-			['POST', `/api/v1/workspaces/${WS}/flow/imports/preview`]
+			['POST', `/api/v2/flow/scopes/${WS}/import-artifacts`],
+			['POST', `/api/v2/flow/scopes/${WS}/imports/preview`]
 		],
 		'exactly one upload and one preview'
 	);
@@ -301,7 +301,7 @@ await suite.checkAsync(
 		const commit = calls.at(-1);
 		assertEqual(
 			commit?.path,
-			`/api/v1/workspaces/${WS}/flow/imports/preview-1/commit`,
+			`/api/v2/flow/scopes/${WS}/imports/preview-1/commit`,
 			'commit path uses preview id'
 		);
 		assertDeepEqual(
@@ -863,7 +863,7 @@ await suite.checkAsync('XHR upload path: shape, progress, envelope, abort', asyn
 		const xhr = instances[0];
 		assert(xhr, 'an XHR was opened');
 		assertEqual(xhr.method, 'POST', 'method');
-		assertEqual(xhr.url, `/api/v1/workspaces/${WS}/flow/import-artifacts`, 'url');
+		assertEqual(xhr.url, `/api/v2/flow/scopes/${WS}/import-artifacts`, 'url');
 		assertEqual(xhr.headers['Idempotency-Key'], 'upload-key', 'idempotency header');
 		assertEqual(xhr.withCredentials, true, 'credentials');
 		assertEqual(

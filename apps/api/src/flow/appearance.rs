@@ -55,7 +55,7 @@ pub enum PageCover {
     Upload { asset_id: Uuid, position: f64 },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AppearanceAssetCreated {
     pub asset_id: Uuid,
     pub content_type: String,
@@ -141,6 +141,12 @@ pub async fn set_appearance(
     actor_is_bot: bool,
     appearance: &PageAppearance,
 ) -> Result<PageAppearance, ApiError> {
+    if !actor_is_bot {
+        if super::scope::identity(db, object_id).await?.workspace_id != Some(workspace_id) {
+            return Err(ApiError::not_found("flow object not found"));
+        }
+        return super::scope_assets::set(db, object_id, actor_id, appearance.clone(), None).await;
+    }
     validate_appearance(appearance)?;
     ensure_active_page(db, workspace_id, object_id).await?;
     for asset_id in referenced_assets(appearance) {
@@ -169,6 +175,12 @@ pub async fn upload_asset(
     actor_is_bot: bool,
     data_base64: &str,
 ) -> Result<AppearanceAssetCreated, ApiError> {
+    if !actor_is_bot {
+        if super::scope::identity(db, object_id).await?.workspace_id != Some(workspace_id) {
+            return Err(ApiError::not_found("flow object not found"));
+        }
+        return super::scope_assets::upload(db, object_id, actor_id, data_base64, None).await;
+    }
     ensure_active_page(db, workspace_id, object_id).await?;
     let (content_type, bytes) = decode_image(data_base64)?;
     let id = Uuid::new_v4();
@@ -223,7 +235,7 @@ pub async fn read_asset(
     })
 }
 
-fn referenced_assets(appearance: &PageAppearance) -> Vec<Uuid> {
+pub(crate) fn referenced_assets(appearance: &PageAppearance) -> Vec<Uuid> {
     let mut ids = Vec::new();
     if let Some(PageIcon::Image { asset_id }) = appearance.icon {
         ids.push(asset_id);
@@ -327,7 +339,7 @@ pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
-fn static_content_type(value: &str) -> Option<&'static str> {
+pub(crate) fn static_content_type(value: &str) -> Option<&'static str> {
     match value {
         "image/png" => Some("image/png"),
         "image/jpeg" => Some("image/jpeg"),

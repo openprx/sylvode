@@ -56,3 +56,14 @@ export function moveOutsideTarget(nodes: readonly MoveNode[], objectId: string):
 	if (!parent?.parent_id) return null;
 	return parent.parent_id;
 }
+
+/** Personal typed Records keep their Collection binding; schema containers are not generic parents. */
+export function personalMoveAllowed(
+	sourceType: string | undefined,
+	targetType: string | undefined
+): boolean {
+	return (
+		(sourceType === 'page' || sourceType === 'collection') &&
+		(targetType === 'page' || targetType === 'navigator')
+	);
+}

@@ -3,3 +3,7 @@
 // bundle that only needs the key.
 
 export const FLOW_REPOSITORY_CONTEXT = Symbol('flow-repository');
+
+export const FLOW_SCOPE_CONTEXT = Symbol('flow-scope');
+
+export const FLOW_NAV_VIEW_CONTEXT = Symbol('flow-nav-view');

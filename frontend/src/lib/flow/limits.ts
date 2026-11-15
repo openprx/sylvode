@@ -121,14 +121,17 @@ export function negotiateFlowLimitsVersion(payload: unknown): FlowLimitsNegotiat
 	if (typeof version !== 'string' || version.length === 0) {
 		return rejected(null, 'missing_version', []);
 	}
-	if (version !== FLOW_LIMITS_VERSION) {
+	if (version !== FLOW_LIMITS_VERSION && version !== '2') {
 		return rejected(version, 'unsupported_version', []);
 	}
 
 	const missingFields: string[] = [];
 	const adopted: Partial<Record<keyof FlowLimitsV1, number>> = {};
 	for (const field of FLOW_LIMITS_FIELDS) {
-		const wireName = wireFieldName(field);
+		const wireName =
+			version === '2' && field === 'connectionsPerWorkspaceMax'
+				? 'connections_per_scope_max'
+				: wireFieldName(field);
 		const value = readWireNumber(record, wireName);
 		if (value === null) {
 			missingFields.push(wireName);

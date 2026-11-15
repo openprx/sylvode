@@ -78,6 +78,7 @@ function objectView(id: string, extra: Partial<FlowObjectView> = {}): FlowObject
 	return {
 		id,
 		workspace_id: 'ws-1',
+		scope_id: 'scope-1',
 		project_id: null,
 		object_type: 'record',
 		lifecycle_status: 'active',
@@ -564,7 +565,7 @@ await suite.checkAsync(
 		assert(accepted1 && accepted2, 'both accepted');
 		assertEqual(bodies.length, 2, 'one request per cell');
 		assert(
-			bodies[0].url.endsWith(`/api/v1/flow/objects/${COLLECTION}/commands`),
+			bodies[0].url.endsWith(`/api/v2/flow/objects/${COLLECTION}/commands`),
 			'collection command endpoint'
 		);
 		assertDeepEqual(
@@ -1064,10 +1065,7 @@ suite.check(
 				assert(!/loro|WebSocket|indexedDB/i.test(line), `${file}: ${line.trim()}`);
 			}
 		}
-		const route = readFileSync(
-			join(ROOT, 'src/routes/(app)/workspace/[workspaceId]/flow/[objectId]/+page.svelte'),
-			'utf8'
-		);
+		const route = readFileSync(join(ROOT, 'src/lib/components/flow/FlowObjectPage.svelte'), 'utf8');
 		assert(
 			route.includes('CollectionRenderer'),
 			'object route dispatches collections to the renderer'
@@ -1334,15 +1332,31 @@ await suite.checkAsync(
 );
 
 await suite.checkAsync(
-	'a record opened on its own route reads its schema through GET objects/{record}/schema',
+	'a record opened on its own route reads only its bounded record context',
 	async () => {
 		const repo = fakeRepository([page(['r1'], undefined)]);
-		const controller = new CollectionViewController(COLLECTION, repo, fakeWrites(), {
+		const bounded = {
+			...repo,
+			getRecordContext: async (id: string) => {
+				repo.schemaReads.push(`record:${id}`);
+				return ok({
+					record: objectView(id, {
+						record_context_supported: true,
+						permitted_actions: ['view', 'edit']
+					}),
+					fields: description().fields.filter((field) => !field.config.restricted),
+					values_by_field_id: {},
+					field_secrecy_enabled: false,
+					schema_revision: 'opaque-record-schema'
+				});
+			}
+		};
+		const controller = new CollectionViewController(null, bounded, fakeWrites(), {
 			schemaFromRecord: 'r1'
 		});
 		await controller.load();
 		assertEqual(controller.snapshot().status, 'ready', 'loaded');
-		assertDeepEqual(repo.schemaReads, ['object:r1'], 'the record-scoped schema read, only');
+		assertDeepEqual(repo.schemaReads, ['record:r1'], 'bounded record context only');
 		const plain = fakeRepository([page(['r1'], undefined)]);
 		await new CollectionViewController(COLLECTION, plain, fakeWrites()).load();
 		assertDeepEqual(plain.schemaReads, [`collection:${COLLECTION}`], 'a Collection reads its own');
@@ -1358,11 +1372,11 @@ await suite.checkAsync(
 		}) as typeof fetch;
 		try {
 			const { FlowObjectRepository } = await import('../src/lib/flow/object-repository');
-			await new FlowObjectRepository().getSchema('rec-1');
+			await new FlowObjectRepository().getRecordContext('rec-1');
 		} finally {
 			globalThis.fetch = original;
 		}
-		assertDeepEqual(seen, ['/api/v1/flow/objects/rec-1/schema'], 'the repository route');
+		assertDeepEqual(seen, ['/api/v2/flow/records/rec-1/context'], 'the repository route');
 
 		const renderer = readFileSync(
 			join(ROOT, 'src/lib/components/flow/collection/CollectionRenderer.svelte'),
@@ -1412,6 +1426,54 @@ await suite.checkAsync(
 		assert(rendered < 50, `far fewer rows than records (${rendered} of 250)`);
 		assert(html.includes('data-record-id="r000"'), 'the first record is rendered');
 		assert(!html.includes('data-record-id="r249"'), 'the last record is not');
+	}
+);
+
+await suite.checkAsync(
+	'manual refresh reopens cached record reads and preserves drafts with their original conflict frontier',
+	async () => {
+		const repo = fakeRepository([page(['r1'], undefined, () => ({ [F_NAME]: 'original' }))]);
+		const writes = fakeWrites();
+		const controller = new CollectionViewController(COLLECTION, repo, writes);
+		await controller.load();
+		await controller.openPanel('r1');
+		controller.setDraft('r1', F_NAME, 'unsent field');
+		controller.setBodyDraft('r1', 'unsent body');
+		const originalOpen = repo.openRecord;
+		repo.openRecord = async (id) => ({
+			...(await originalOpen(id)),
+			frontier: 'fresh-panel-frontier'
+		});
+		const updated = page(['r1'], undefined, () => ({ [F_NAME]: 'peer change' }));
+		updated.items[0].record.frontier = 'new-peer-frontier';
+		repo.pages = [updated];
+		await controller.refresh();
+		assertEqual(
+			controller.snapshot().rows[0].values[F_NAME],
+			'peer change',
+			'current server value is visible'
+		);
+		assertEqual(controller.draftFor('r1', F_NAME), 'unsent field', 'field input preserved');
+		assertEqual(controller.snapshot().bodyDrafts.r1, 'unsent body', 'body input preserved');
+		assertEqual(repo.opened.length, 2, 'record read reopened after invalidating cache');
+		assertEqual(repo.closed.length, 1, 'old cached reference closed');
+		writes.failNext.push({ code: 'stale_frontier', recoverable: true });
+		assertEqual(
+			await controller.commitCell('r1', F_NAME),
+			false,
+			'conflicting draft is not silently accepted'
+		);
+		assertEqual(
+			writes.executed[0].frontier,
+			'fr-r1-panel',
+			'refresh did not silently widen the draft conflict base'
+		);
+		assertEqual(
+			controller.draftFor('r1', F_NAME),
+			'unsent field',
+			'conflict still preserves draft'
+		);
+		controller.dispose();
 	}
 );
 

@@ -27,10 +27,10 @@
 	interface Props {
 		controller: CollectionViewController;
 		snapshot: CollectionViewState;
-		workspaceId: string;
+		scopeId: string;
 	}
 
-	let { controller, snapshot, workspaceId }: Props = $props();
+	let { controller, snapshot, scopeId }: Props = $props();
 
 	const ROW_HEIGHT = 48;
 	const OPEN_COLUMN_WIDTH = 64;
@@ -218,7 +218,7 @@
 					: draft}
 		</span>
 	{:else}
-		<CollectionCellValue {field} values={row.values} {workspaceId} />
+		<CollectionCellValue {field} values={row.values} {scopeId} />
 	{/if}
 	{#if status}
 		<span
