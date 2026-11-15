@@ -24,6 +24,11 @@
 		activeTool = tool;
 		if (more) more.open = false;
 	}
+	const MORE_TOOLS = [
+		{ id: 'info', labelKey: 'flow.panel.tabs.info' },
+		{ id: 'history', labelKey: 'flow.panel.tabs.history' },
+		{ id: 'relations', labelKey: 'flow.panel.tabs.relations' }
+	] as const;
 	const button =
 		'min-h-10 rounded-md px-3 text-sm text-slate-600 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-slate-300 dark:hover:bg-slate-800';
 </script>
@@ -62,12 +67,11 @@
 		<div
 			class="absolute right-0 z-40 min-w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
 		>
-			{#each ['info', 'history', 'relations'] as tool (tool)}<button
+			{#each MORE_TOOLS as tool (tool.id)}<button
 					type="button"
 					class={`${button} block w-full text-left`}
-					data-testid={`flow-open-${tool}`}
-					onclick={() => select(tool as 'info' | 'history' | 'relations')}
-					>{$t(`flow.panel.tabs.${tool}`)}</button
+					data-testid={`flow-open-${tool.id}`}
+					onclick={() => select(tool.id)}>{$t(tool.labelKey)}</button
 				>{/each}
 		</div>
 	</details>

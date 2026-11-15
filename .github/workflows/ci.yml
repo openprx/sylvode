@@ -47,6 +47,9 @@ jobs:
           cargo install cargo-machete --locked
           cargo machete
 
+      - name: SQLite exception guard controls
+        run: bash scripts/test-verify-inactive-sqlite.sh
+
       - name: Start script configuration checks
         run: bash scripts/test-start-config.sh
 

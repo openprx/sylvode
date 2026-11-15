@@ -24,6 +24,8 @@ name.
 
 ### Security
 
+- Updated quinn-udp to 0.5.16 for RUSTSEC-2026-0538. The lock-only SQLx SQLite advisory RUSTSEC-2026-0459 is explicitly excepted only while a mandatory all-target/all-feature normal/build/dev dependency guard proves SQLite unreachable; SQLite itself was not upgraded or declared patched.
+
 - Patched RustSec findings in the lockfile: rustls 0.23.46, rustls-webpki 0.103.16,
   webpki-roots 1.0.11, wasmtime 49.0.5, zip 9.2, tokio 1.54.1 (RUSTSEC-2026-0386),
   and quinn-proto 0.11.19 (RUSTSEC-2026-0338 through 0342). The unused wasmtime

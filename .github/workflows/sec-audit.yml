@@ -10,6 +10,8 @@ on:
       - "**/Cargo.toml"
       - "deny.toml"
       - '.cargo/audit.toml'
+      - 'scripts/verify-inactive-sqlite.sh'
+      - '.github/workflows/sec-audit.yml'
   pull_request:
     paths:
       - "Cargo.toml"
@@ -17,6 +19,8 @@ on:
       - "**/Cargo.toml"
       - "deny.toml"
       - '.cargo/audit.toml'
+      - 'scripts/verify-inactive-sqlite.sh'
+      - '.github/workflows/sec-audit.yml'
   schedule:
     - cron: "0 6 * * 1"
 
@@ -42,6 +46,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify inactive SQLite exception
+        run: bash scripts/verify-inactive-sqlite.sh
       - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -58,6 +64,8 @@ jobs:
     continue-on-error: ${{ matrix.checks == 'advisories' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify inactive SQLite exception
+        run: bash scripts/verify-inactive-sqlite.sh
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check ${{ matrix.checks }}

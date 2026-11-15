@@ -10,7 +10,8 @@ Usage: scripts/audit-universal-forms-security-scope.sh
 
 Verifies the universal forms delivery security-audit scope:
   - cargo audit succeeds with the repository audit policy
-  - the only ignored advisory is the documented SQLx inactive MySQL backend case
+  - the ignore set matches individually documented advisory policy
+  - SQLite stays absent from all resolved normal/build/dev targets and features
   - workspace feature resolution pulls in neither sqlx-mysql nor rsa
   - the workspace enables sqlx-postgres through SeaORM
 
@@ -131,6 +132,8 @@ contains "cargo audit ignore documents RUSTSEC-2023-0071" "$ROOT_DIR/.cargo/audi
 contains "cargo deny documents SQLx inactive MySQL advisory" "$ROOT_DIR/deny.toml" "SQLx's inactive MySQL backend"
 contains "cargo deny ignore includes RUSTSEC-2023-0071" "$ROOT_DIR/deny.toml" '"RUSTSEC-2023-0071"'
 
+bash "$ROOT_DIR/scripts/verify-inactive-sqlite.sh"
+
 if (cd "$ROOT_DIR" && cargo audit --json >"$AUDIT_JSON"); then
   pass "cargo audit succeeds with repository policy"
 else
@@ -147,14 +150,12 @@ if jq empty "$AUDIT_JSON" >/dev/null; then
   # 2023-0089 atomic-polyfill: build-graph only, through wasmtime's Cranelift backend. It emulates
   # atomics for single-core targets and is never compiled for the targets we build.
   #
-  # 2026-0215 smallstr, 2026-0247 bitmaps, 2026-0248 im, 2026-0251 sized-chunks: unmaintained, not
-  # vulnerable. Reachable only from the Sylvode Flow engine spikes -- yrs pulls smallstr, loro pulls
-  # the im family. `cargo tree -p api|worker|mcp-server` shows no path to spikes/*, so none is linked
-  # into a shipped binary. ADR-0005 selected Loro, so the yrs subtree leaves the lockfile when the
-  # losing candidate's spike is retired, and this set shrinks rather than grows.
+  # The im family is production Loro supply-chain debt; smallstr is absent.
+  # 2026-0459 is lock-only SQLite, with the mandatory all-target/all-feature
+  # normal/build/dev reachability guard above. It is not a patched SQLite claim.
   equals "cargo audit ignore list matches the reviewed advisories" \
     "$(jq -r '.settings.ignore | sort | join(" ")' "$AUDIT_JSON")" \
-    "RUSTSEC-2023-0071 RUSTSEC-2023-0089 RUSTSEC-2026-0173 RUSTSEC-2026-0215 RUSTSEC-2026-0235 RUSTSEC-2026-0247 RUSTSEC-2026-0248 RUSTSEC-2026-0251"
+    "RUSTSEC-2023-0071 RUSTSEC-2023-0089 RUSTSEC-2026-0173 RUSTSEC-2026-0215 RUSTSEC-2026-0235 RUSTSEC-2026-0247 RUSTSEC-2026-0248 RUSTSEC-2026-0251 RUSTSEC-2026-0459"
 else
   fail "cargo audit JSON is valid"
 fi
