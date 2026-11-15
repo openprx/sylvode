@@ -608,7 +608,7 @@ mod tests {
             level: None,
         };
         let frontier = doc.oplog_vv();
-        assert!(initialize_editor_doc(&doc, &[bad.clone()]).is_err());
+        assert!(initialize_editor_doc(&doc, std::slice::from_ref(&bad)).is_err());
         assert_eq!(doc.oplog_vv(), frontier);
         assert!(root_children(&doc).is_none());
         let good = EditorInitialBlock {
