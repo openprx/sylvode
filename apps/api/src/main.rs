@@ -3591,6 +3591,7 @@ enum SchemaProbe {
     /// Complete independent block-sharing registry, private anchors and lifecycle fences.
     BlockSharing,
     PageBlockTransfers,
+    CrossWorkspaceIntegrity,
     /// No object is created that could be probed, but re-executing the file is a no-op, so it is
     /// executed rather than adopted.
     Rerunnable,
@@ -3674,6 +3675,19 @@ impl SchemaProbe {
                   AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('flow_runtime_capabilities') AND attname='block_transfers_enabled' AND atttypid='boolean'::regtype AND attnotnull AND NOT attisdropped)
                   AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('flow_page_block_transfers') AND pg_get_constraintdef(oid)='UNIQUE (actor_id, source_object_id, prepare_key)')
                   AS present".to_owned(),
+            )),
+            Self::CrossWorkspaceIntegrity => Some(Statement::from_string(
+                DbBackend::Postgres,
+                "SELECT EXISTS (
+                   SELECT 1 FROM pg_trigger
+                   WHERE tgrelid = to_regclass('flow_integrity_records')
+                     AND tgname = 'flow_integrity_bind_owner'
+                     AND NOT tgisinternal
+                     AND tgenabled IN ('O', 'A')
+                     AND position('details_redacted' IN pg_get_triggerdef(oid)) > 0
+                     AND position('requesting_workspace_id' IN pg_get_functiondef(tgfoid)) > 0
+                     AND position('referenced_workspace_id' IN pg_get_functiondef(tgfoid)) > 0
+                 ) AS present",
             )),
             Self::BlockSharing => Some(Statement::from_sql_and_values(DbBackend::Postgres,
                 r"SELECT
@@ -4039,7 +4053,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     ),
     (
         "0102_flow_integrity_cross_workspace_attempts.sql",
-        SchemaProbe::Rerunnable,
+        SchemaProbe::CrossWorkspaceIntegrity,
     ),
 ];
 
@@ -4817,6 +4831,14 @@ mod tests {
             // Icon or cover for that same link. The handler returns bytes only while the page's
             // current appearance still references the asset.
             "/api/v1/flow/public-shares/{token}/assets/{asset_id}",
+            // Scoped WebSocket upgrades consume an origin-bound, one-time ticket before
+            // revalidating scoped document access.
+            "/api/v2/flow/collab/ws",
+            // Scoped public links authenticate against a hashed, unexpired, unrevoked token
+            // and return only sanitized content or assets currently referenced by that Page.
+            "/api/v2/flow/public-shares/{token}",
+            "/api/v2/flow/public-shares/{token}/assets/{asset_id}",
+            "/api/v2/flow/public-shares/{token}/body-assets/{asset_id}",
         ];
 
         let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
