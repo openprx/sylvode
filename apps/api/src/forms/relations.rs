@@ -71,7 +71,7 @@ pub struct LinkResponse {
     pub relation_type: String,
     pub metadata: Value,
     pub created_by: Option<Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -83,7 +83,7 @@ pub struct RelationTargetResponse {
     pub title: String,
     pub display: String,
     pub values: Value,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -101,9 +101,9 @@ pub struct ChildRecordRow {
     pub schema_version: Option<i32>,
     pub created_by: Option<Uuid>,
     pub updated_by: Option<Uuid>,
-    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub archived_at: Option<platform::timestamp::Timestamp>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

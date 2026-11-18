@@ -1,3 +1,5 @@
+import { get } from 'svelte/store';
+import { editorObservation } from '../flow/editor-batch';
 import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
 import type { FlowObjectView } from '#lib/api/flow.js';
 import type { TaskWorkbench } from './tabs';
@@ -70,7 +72,18 @@ export class FlowTaskSessions {
 			});
 		const unsubscribePending =
 			slot === 'page'
-				? opened.pending.subscribe((count) => this.workbench.markDirty(tabKey, count > 0))
+				? opened.pending.subscribe((count) =>
+						this.workbench.markDirty(
+							tabKey,
+							count > 0 || (opened.bodyPending ? get(opened.bodyPending) : 0) > 0
+						)
+					)
+				: () => {};
+		const unsubscribeBody =
+			slot === 'page'
+				? (opened.bodyPending?.subscribe((count) =>
+						this.workbench.markDirty(tabKey, count > 0 || get(opened.pending) > 0)
+					) ?? (() => {}))
 				: () => {};
 		let unsubscribeDoc = () => {};
 		const unsubscribeGeneration =
@@ -78,7 +91,9 @@ export class FlowTaskSessions {
 				? opened.docGeneration.subscribe(() => {
 						unsubscribeDoc();
 						unsubscribeDoc = opened.doc.subscribe((event) => {
-							if (event.by === 'local') this.workbench.markDirty(tabKey, true);
+							editorObservation(opened.doc, this.workbench, () => {
+								if (event.by === 'local') this.workbench.markDirty(tabKey, true);
+							});
 						});
 					})
 				: () => {};
@@ -88,6 +103,7 @@ export class FlowTaskSessions {
 			release: () => {
 				unsubscribeProjection();
 				unsubscribePending();
+				unsubscribeBody();
 				unsubscribeGeneration();
 				unsubscribeDoc();
 				void this.repository.close(objectId);

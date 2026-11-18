@@ -1,11 +1,16 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
-	import { getContext, untrack } from 'svelte';
+	import { getContext, untrack, onDestroy } from 'svelte';
 	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
 	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
+	import { apiClient } from '#lib/api/client.js';
 	import { authStore } from '#lib/stores/auth.js';
 	import { get } from 'svelte/store';
-	import { commentActions, FlowMutationIntents } from '#lib/flow/social-actions.js';
+	import {
+		commentActions,
+		commentCreationAnchor,
+		FlowMutationIntents
+	} from '#lib/flow/social-actions.js';
 	import { flowApi, type FlowComment, type FlowMentionCandidate } from '#lib/api/flow.js';
 	import { flowErrorFromResult } from '#lib/flow/command-service.js';
 	import { flowErrorDetailKey } from '#lib/flow/errors.js';
@@ -17,6 +22,7 @@
 		canManage?: boolean;
 		blockId?: string | null;
 		nonce?: number;
+		revision?: string;
 	}
 
 	let {
@@ -25,12 +31,19 @@
 		canEdit = false,
 		canManage = false,
 		blockId = null,
-		nonce = 0
+		nonce = 0,
+		revision = ''
 	}: Props = $props();
 
 	let items = $state<FlowComment[]>([]);
 	let truncated = $state(false);
 	let loading = $state(true);
+	let requestGeneration = 0;
+	let destroyed = false;
+	onDestroy(() => {
+		destroyed = true;
+		requestGeneration++;
+	});
 	let body = $state('');
 	let replyTo = $state<string | null>(null);
 	let anchor = $state<string | null>(null);
@@ -55,9 +68,18 @@
 	}
 
 	const roots = $derived(items.filter((item) => !item.parent_id));
-	const visibleRoots = $derived(anchor ? roots.filter((item) => item.block_id === anchor) : roots);
+	const visibleRoots = $derived(
+		anchor
+			? roots.filter((item) => item.anchor_status !== 'orphaned' && item.block_id === anchor)
+			: roots
+	);
 	const anchoredBlocks = $derived([
-		...new Set(roots.map((item) => item.block_id).filter((id): id is string => !!id))
+		...new Set(
+			roots
+				.filter((item) => item.anchor_status !== 'orphaned')
+				.map((item) => item.block_id)
+				.filter((id): id is string => !!id)
+		)
 	]);
 
 	function repliesOf(id: string): FlowComment[] {
@@ -91,16 +113,7 @@
 	}
 
 	async function load(): Promise<void> {
-		loading = true;
-		const result = await flowApi.listComments(objectId);
-		if (result.code === 0 && result.data) {
-			items = result.data.items;
-			truncated = result.data.truncated;
-			failureKey = null;
-		} else {
-			fail(result);
-		}
-		loading = false;
+		return loadFor(objectId);
 	}
 
 	$effect(() => {
@@ -122,7 +135,6 @@
 		editBody = saved?.editBody ?? '';
 		picked = saved?.picked ?? [];
 		anchor = saved?.anchor ?? null;
-		void loadFor(id);
 	});
 
 	$effect(() => {
@@ -134,14 +146,35 @@
 		const key = `flow:${objectId}::comment-draft`;
 		untrack(() => workbench?.saveSnapshot(key, draft));
 	});
+
+	$effect(() => {
+		const id = objectId;
+		void revision;
+		untrack(() => {
+			items = [];
+			void loadFor(id);
+		});
+	});
 	async function loadFor(id: string): Promise<void> {
+		const version = ++requestGeneration,
+			context = revision,
+			epoch = apiClient.getAuthSessionEpoch();
 		loading = true;
 		const result = await flowApi.listComments(id);
-		if (id !== objectId) return;
+		if (
+			destroyed ||
+			version !== requestGeneration ||
+			id !== objectId ||
+			context !== revision ||
+			!apiClient.isAuthSessionEpoch(epoch)
+		)
+			return;
 		if (result.code === 0 && result.data) {
 			items = result.data.items;
 			truncated = result.data.truncated;
+			failureKey = null;
 		} else {
+			items = [];
 			fail(result);
 		}
 		loading = false;
@@ -154,7 +187,7 @@
 		const payload = {
 			body,
 			parent_id: replyTo,
-			block_id: anchor,
+			block_id: commentCreationAnchor(anchor, replyTo, items),
 			mentions: picked.map((person) => person.user_id)
 		};
 		const op = operation('create');
@@ -242,6 +275,12 @@
 		<ul class="space-y-3">
 			{#each visibleRoots as comment (comment.id)}
 				<li class="rounded-md border border-slate-200 p-2 dark:border-slate-700">
+					{#if comment.anchor_status === 'orphaned'}<p
+							class="mb-1 text-xs text-slate-500"
+							data-comment-anchor-status="orphaned"
+						>
+							{$t('flow.comments.anchorUnavailable')}
+						</p>{/if}
 					{#if editingId === comment.id}
 						<textarea
 							class="min-h-16 w-full rounded-md border border-slate-300 bg-white p-2 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
@@ -289,6 +328,12 @@
 							{#each repliesOf(comment.id) as reply (reply.id)}
 								<li>
 									<p class="whitespace-pre-wrap text-slate-800 dark:text-slate-100">{reply.body}</p>
+									{#if reply.anchor_status === 'orphaned'}<p
+											class="text-xs text-slate-500"
+											data-comment-anchor-status="orphaned"
+										>
+											{$t('flow.comments.anchorUnavailable')}
+										</p>{/if}
 									{#if actions(reply).delete}<button
 											type="button"
 											class="text-xs"
@@ -306,6 +351,14 @@
 	{#if truncated}
 		<p class="text-xs text-slate-500">{$t('flow.comments.truncated')}</p>
 	{/if}
+	{#if replyTo}<p role="status" class="text-xs text-slate-500">
+			{$t('flow.comments.replyingInThread')} · {#if items.find((item) => item.id === replyTo)?.anchor_status === 'orphaned'}{$t(
+					'flow.comments.anchorUnavailable'
+				)}{/if}<button type="button" class="ms-2 underline" onclick={() => (replyTo = null)}
+				>{$t('common.cancel')}</button
+			>
+		</p>{/if}
+
 	{#if anchor}
 		<p class="text-xs text-slate-500">
 			{$t('flow.comments.anchored')}

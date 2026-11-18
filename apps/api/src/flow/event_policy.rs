@@ -25,22 +25,49 @@ pub const EVENT_REDACTED_MARKER: &str = "field_permission_redacted";
 
 /// What a single Flow event type may expose in its delivered payload.
 pub struct EventPayloadPolicy {
-    /// Payload keys that carry no restricted content. Flow's v0.4 event payloads are entirely
-    /// ids/enums/counts (`events-v1.md` "`semantic_summary` 只允许 action、changed counts, stable
-    /// ... ids" and the "禁止进入 envelope" list), so every declared Flow policy is this shape;
-    /// unlike Forms there is no `value_maps` case yet (nothing emits a raw `{field: value}` map).
-    pub public_keys: &'static [&'static str],
+    /// Keys cleared for sharing, typically IDs, enums and counts. A withheld policy has no
+    /// public keys and is excluded from recipient-facing history exports.
+    public_keys: Option<&'static [&'static str]>,
 }
 
 const fn public_payload(public_keys: &'static [&'static str]) -> EventPayloadPolicy {
-    EventPayloadPolicy { public_keys }
+    EventPayloadPolicy {
+        public_keys: Some(public_keys),
+    }
 }
 
-/// Declared exposure for every Flow event type actually emitted in v0.4 (`apps/api/src/flow/
+const fn withheld_payload() -> EventPayloadPolicy {
+    EventPayloadPolicy { public_keys: None }
+}
+
+/// Declared exposure for every Flow event type (`apps/api/src/flow/
 /// command.rs`, `apps/api/src/flow/collab/write.rs`). Adding a producer without adding an entry
 /// here fails `every_emitted_flow_event_type_declares_a_payload_policy` below, and at delivery
 /// time an undeclared event type withholds its whole payload instead of leaking it.
 pub const FLOW_EVENT_PAYLOAD_POLICIES: &[(&str, EventPayloadPolicy)] = &[
+    // Audit-only operations keep their IDs, package provenance and diagnostics internal.
+    ("flow.editor.initialized_noop", withheld_payload()),
+    ("flow.import.uploaded", withheld_payload()),
+    ("flow.import.previewed", withheld_payload()),
+    ("flow.conversion.previewed", withheld_payload()),
+    ("flow.object.purged", withheld_payload()),
+    ("flow.operation.queued", withheld_payload()),
+    ("flow.operation.previewed", withheld_payload()),
+    ("flow.version.imported", withheld_payload()),
+    ("flow.version.restore_noop", withheld_payload()),
+    // These events can dispatch, but their payloads describe private shares, access changes
+    // or imported packages. Preserve the previously withheld payload for recipients.
+    ("flow.block_share.created", withheld_payload()),
+    ("flow.block_share.republished", withheld_payload()),
+    ("flow.block_share.revoked", withheld_payload()),
+    ("flow.block_share.suspended", withheld_payload()),
+    ("flow.object.mount_permission_changed", withheld_payload()),
+    ("flow.import.completed", withheld_payload()),
+    ("flow.child_page.reserved", public_payload(&["object_id"])),
+    ("flow.child_page.cancelled", public_payload(&["object_id"])),
+    ("flow.page_asset.uploaded", public_payload(&["object_id"])),
+    ("flow.page_asset.copied", public_payload(&["object_id"])),
+    ("flow.page_asset.discarded", public_payload(&["object_id"])),
     (
         "flow.share_link.created",
         public_payload(&["object_id", "share_link_id"]),
@@ -242,18 +269,21 @@ pub fn flow_event_payload_policy(event_type: &str) -> Option<&'static EventPaylo
         .map(|(_, policy)| policy)
 }
 
+/// Whether this event type can appear in an exported history envelope.
+pub fn flow_event_has_public_payload(event_type: &str) -> bool {
+    flow_event_payload_policy(event_type).is_some_and(|policy| policy.public_keys.is_some())
+}
+
 fn withheld_object() -> Value {
     let mut object = Map::new();
     object.insert(EVENT_REDACTED_MARKER.to_string(), Value::Bool(true));
     Value::Object(object)
 }
 
-/// Fail-closed delivery-time filter: an event type with no declared policy has its entire payload
-/// replaced by the withheld marker; a declared type keeps only the keys its policy lists (a
-/// non-object payload, which no declared Flow policy should ever produce, is treated the same as
-/// "no policy" and withheld rather than forwarded verbatim).
+/// Fail-closed delivery-time filter. Unknown or withheld types and non-object payloads return
+/// the withheld marker. A public policy exposes only the keys it lists.
 pub fn redact_flow_event_payload_for_delivery(event_type: &str, payload: &Value) -> Value {
-    let Some(policy) = flow_event_payload_policy(event_type) else {
+    let Some(public_keys) = flow_event_payload_policy(event_type).and_then(|policy| policy.public_keys) else {
         return withheld_object();
     };
     let Value::Object(entries) = payload else {
@@ -261,7 +291,7 @@ pub fn redact_flow_event_payload_for_delivery(event_type: &str, payload: &Value)
     };
     let mut kept = Map::new();
     for (key, value) in entries {
-        if policy.public_keys.contains(&key.as_str()) {
+        if public_keys.contains(&key.as_str()) {
             kept.insert(key.clone(), value.clone());
         }
     }
@@ -356,8 +386,8 @@ fn looks_like_flow_event_type(literal: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        EVENT_REDACTED_MARKER, FLOW_EVENT_PAYLOAD_POLICIES, event_type_literals, flow_event_payload_policy,
-        redact_flow_event_metadata_for_delivery, redact_flow_event_payload_for_delivery,
+        EVENT_REDACTED_MARKER, FLOW_EVENT_PAYLOAD_POLICIES, event_type_literals, flow_event_has_public_payload,
+        flow_event_payload_policy, redact_flow_event_metadata_for_delivery, redact_flow_event_payload_for_delivery,
     };
     use serde_json::json;
     use std::collections::BTreeSet;
@@ -396,6 +426,29 @@ mod tests {
         let payload = json!({ "object_id": "o1" });
         let filtered = redact_flow_event_payload_for_delivery("flow.made_up.event", &payload);
         assert_eq!(filtered, json!({ EVENT_REDACTED_MARKER: true }));
+    }
+
+    #[test]
+    fn sensitive_audit_and_dispatch_types_remain_withheld() {
+        let payload = json!({
+            "object_id": "private-object",
+            "share_id": "private-share",
+            "level": "edit",
+            "package_sha256": "private-provenance"
+        });
+        for event_type in [
+            "flow.version.imported",
+            "flow.import.completed",
+            "flow.object.mount_permission_changed",
+            "flow.block_share.created",
+        ] {
+            assert!(flow_event_payload_policy(event_type).is_some());
+            assert!(!flow_event_has_public_payload(event_type));
+            assert_eq!(
+                redact_flow_event_payload_for_delivery(event_type, &payload),
+                json!({ EVENT_REDACTED_MARKER: true })
+            );
+        }
     }
 
     #[test]

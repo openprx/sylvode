@@ -7,7 +7,11 @@
 	import { getNamedMap } from '#lib/flow/object-repository.js';
 	import { FLOW_TASK_SESSIONS, type FlowTaskSessions } from '#lib/workbench/flow-sessions.js';
 	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
-	import { FLOW_COLLECTION_UI_ENABLED } from '#lib/flow/product-mode.js';
+	import { conversionAvailability } from '#lib/flow/convert-availability.js';
+	import {
+		FLOW_COLLECTION_UI_ENABLED,
+		FLOW_PROCESS_READER_COMPATIBILITY
+	} from '#lib/flow/product-mode.js';
 	import { getContext, onDestroy, onMount, untrack } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
@@ -32,6 +36,11 @@
 	import FlowContextPanel from '#lib/components/flow/FlowContextPanel.svelte';
 	import FlowResizablePane from './FlowResizablePane.svelte';
 	import FlowPageToolbar from './FlowPageToolbar.svelte';
+	import FlowBlockShareSource from './FlowBlockShareSource.svelte';
+	import FlowBlockTransferDialog from './FlowBlockTransferDialog.svelte';
+	import { blockTransfersSupported } from '#lib/flow/block-transfer/capability.js';
+	import type { TransferPageRuntime } from '#lib/flow/block-transfer/runtime.js';
+	import { sharedBlocksSupported } from '#lib/flow/shared-blocks/capability.js';
 	import FlowPageHeader from '#lib/components/flow/FlowPageHeader.svelte';
 	import type { FlowAppearance } from '#lib/api/flow.js';
 	import FlowRecoveryDraftPanel from '#lib/components/flow/FlowRecoveryDraftPanel.svelte';
@@ -79,10 +88,93 @@
 	let hiddenTypedObject = $state(false);
 	let legacyEditorObject = $state<FlowObjectView | null>(null);
 	let enablingEditor = $state(false);
+	let sharedBlocksReady = $state(false);
+	let sourceShareRevokeReady = $state(false);
+	let transfersReady = $state(false);
+	let portablePackagesReady = $state(false);
+	let portableGraphReady = $state(false);
+
+	let transferOpen = $state(false);
+	let transferRoot = $state('');
+	let transferKind = $state<'move' | 'copy'>('move');
+	let transferRuntime = $state<TransferPageRuntime | null>(null);
+	let visibleTransfers = $state<TransferPageRuntime[]>([]);
+	$effect(() => {
+		const actor = $authStore.user?.id,
+			objectId = entry?.handle.objectId;
+		let stop: (() => void) | null = null,
+			active = true;
+		if (actor && objectId)
+			void import('#lib/flow/block-transfer/session.js').then(({ transferSessions }) => {
+				if (!active) return;
+				const sessions = transferSessions(repository, actor, () => get(authStore).user?.id ?? null);
+				stop = sessions.subscribe(() => {
+					if (active) visibleTransfers = sessions.forPage(objectId);
+				});
+			});
+		else visibleTransfers = [];
+		return () => {
+			active = false;
+			stop?.();
+		};
+	});
+	async function openTransfer(blockId: string, kind: 'move' | 'copy') {
+		const actor = get(authStore).user?.id;
+		if (!entry || !actor || !transfersReady) return;
+		const sourceId = entry.handle.objectId;
+		const { transferSessions } = await import('#lib/flow/block-transfer/session.js');
+		if (disposed || get(authStore).user?.id !== actor || entry?.handle.objectId !== sourceId)
+			return;
+		transferRuntime = transferSessions(
+			repository,
+			actor,
+			() => get(authStore).user?.id ?? null
+		).forSource(sourceId);
+		transferRoot = transferRuntime.operation.beginNewIntent() ? blockId : '';
+		transferKind = kind;
+		transferOpen = true;
+	}
+	let sourceShareOpen = $state(false);
+	let sourceShareRoot = $state<string | null>(null);
+	onMount(() => {
+		void flowApi.getCapabilities().then((result) => {
+			if (!disposed) {
+				sharedBlocksReady = sharedBlocksSupported(result);
+				sourceShareRevokeReady =
+					sharedBlocksReady && result.data?.block_share_source_revoke_supported === true;
+				transfersReady = blockTransfersSupported(result);
+				portablePackagesReady =
+					result.code === 0 &&
+					result.data?.api_version === 2 &&
+					result.data.portable_page_packages_supported === true &&
+					result.data.minimum_reader_version >= 5 &&
+					result.data.minimum_reader_version <= FLOW_PROCESS_READER_COMPATIBILITY;
+				portableGraphReady =
+					result.code === 0 &&
+					result.data?.api_version === 2 &&
+					result.data.portable_graph_packages_supported === true &&
+					result.data.minimum_reader_version >= 5 &&
+					result.data.minimum_reader_version <= FLOW_PROCESS_READER_COMPATIBILITY;
+			}
+		});
+	});
+
+	let richEditorReady = $state(false);
+	let upgradingRichEditor = $state(false);
+	let richUpgradePromise: Promise<boolean> | null = null;
 	let legacyEditorError = $state<FlowError | null>(null);
 	let editorIntent: { objectId: string; frontier: string; key: string } | null = null;
 	let syncState = $state<SyncState>('local');
 	let pending = $state(0);
+	let recoveringEdits = $state(false);
+	let bodyPending = $state(0);
+	const persistedPageReady = $derived(
+		pending === 0 &&
+			bodyPending === 0 &&
+			!recoveringEdits &&
+			(syncState === 'local' || syncState === 'saved' || syncState === 'read_only')
+	);
+	let objectMetadata = $state<FlowObjectView | null>(null);
 	let drafts = $state<ReadonlyArray<RecoveryDraftEntry>>([]);
 	let readOnly = $state(false);
 	let permittedActions = $state<readonly string[] | null>(null);
@@ -91,6 +183,7 @@
 	let appearance = $state<FlowAppearance | null>(null);
 	let commentBlockId = $state<string | null>(null);
 	let commentNonce = $state(0);
+	let commentStructureRevision = $state(0);
 	let activeTool = $state<'info' | 'comments' | 'relations' | 'history' | null>(null);
 	function closeTool() {
 		const previous = activeTool;
@@ -212,7 +305,10 @@
 				};
 				return;
 			}
+			recoveringEdits = get(opened.offline.recovering);
 			entry = opened;
+			objectMetadata = opened.handle.object;
+			richEditorReady = opened.handle.object.editor_structure_state === 'ready';
 			const taskKey = `flow:${objectId}`;
 			const savedTool = taskWorkbench?.snapshot<{
 				activeTool: typeof activeTool;
@@ -238,6 +334,7 @@
 					}),
 					dirty: () =>
 						pending > 0 ||
+						bodyPending > 0 ||
 						!!taskWorkbench.snapshot<{ body: string; editBody: string }>(
 							`${taskKey}::comment-draft`
 						)?.body ||
@@ -263,11 +360,39 @@
 			});
 			unsubscribeOthers = [
 				opened.pending.subscribe((value) => (pending = value)),
+				opened.offline.recovering.subscribe((value) => (recoveringEdits = value)),
+				opened.metadata?.subscribe((value) => (objectMetadata = value)) ?? (() => {}),
+				opened.bodyPending?.subscribe((value) => (bodyPending = value)) ?? (() => {}),
 				opened.recoveryDraft.subscribe((value) => (drafts = value)),
 				opened.readOnly.subscribe((value) => (readOnly = value)),
 				opened.permittedActions.subscribe((value) => (permittedActions = value)),
-				opened.docGeneration.subscribe((value) => (docGeneration = value))
+				opened.docGeneration.subscribe((value) => {
+					docGeneration = value;
+					commentStructureRevision++;
+				})
 			];
+			let stopCommentStructure = () => {};
+			unsubscribeOthers.push(
+				opened.docGeneration.subscribe(() => {
+					stopCommentStructure();
+					const root = opened.doc.getMap('doc'),
+						physical = root.get('children');
+					const physicalId = (physical as unknown as { id?: string } | null)?.id ?? null;
+					stopCommentStructure = opened.doc.subscribe((batch) => {
+						if (
+							batch.events.some(
+								(event) =>
+									event.diff.type === 'tree' ||
+									event.target === root.id ||
+									event.target === physicalId
+							)
+						)
+							commentStructureRevision++;
+					});
+				}),
+				() => stopCommentStructure()
+			);
+
 			// Presence identity: who this user is, as a summary (id, display name, colour).
 			const user = get(authStore).user;
 			if (user) {
@@ -323,6 +448,57 @@
 		if (enablingEditor) return;
 		openedObjectId = null;
 		await openCurrent();
+	}
+
+	function ensureRichEditor(): Promise<boolean> {
+		if (richEditorReady) return Promise.resolve(true);
+		if (richUpgradePromise) return richUpgradePromise;
+		richUpgradePromise = enableRichEditor().finally(() => (richUpgradePromise = null));
+		return richUpgradePromise;
+	}
+	async function enableRichEditor(): Promise<boolean> {
+		if (!entry || readOnly) return false;
+		const id = entry.handle.objectId;
+		upgradingRichEditor = true;
+		runtimeError = null;
+		try {
+			if (pending > 0)
+				await new Promise<void>((resolve, reject) => {
+					const timer = setTimeout(() => {
+						stop();
+						reject({ code: 'resync_required', recoverable: true });
+					}, 10000);
+					const stop = entry!.pending.subscribe((count) => {
+						if (count === 0) {
+							clearTimeout(timer);
+							queueMicrotask(() => stop());
+							resolve();
+						}
+					});
+				});
+			const fresh = await repository.get(id);
+			if (fresh.code !== 0 || !fresh.data)
+				throw flowErrorFromEnvelope(fresh) ?? { code: 'server_rejected', recoverable: false };
+			const result = await flowApi.executeCommand(id, {
+				command: { type: 'initialize_editor_doc', payload: { model: 'rich_page_v4' } },
+				expected_frontier: fresh.data.frontier,
+				idempotency_key: crypto.randomUUID()
+			});
+			if (result.code !== 0)
+				throw flowErrorFromEnvelope(result) ?? { code: 'server_rejected', recoverable: false };
+			const bootstrap = await repository.bootstrap(id);
+			await repository.replaceWithAccepted(bootstrap);
+			if (entry?.handle.objectId === id) {
+				richEditorReady = true;
+				return true;
+			}
+			return false;
+		} catch (error) {
+			runtimeError = error as FlowError;
+			return false;
+		} finally {
+			upgradingRichEditor = false;
+		}
 	}
 
 	async function enableLegacyEditor(): Promise<void> {
@@ -432,6 +608,13 @@
 	// (no outbox this round -- see `object-session.ts`'s header comment), so offer a local
 	// snapshot download instead of silently losing it (`ui-surface-v1.md` step 5: "不能重放的
 	// intent 进入 recovery draft，并提供下载/复制动作").
+	const editorWritePaused = $derived(
+		runtimeError?.origin === 'client' &&
+			runtimeError.code === 'invalid_update' &&
+			(runtimeError.details as { reason?: string } | undefined)?.reason ===
+				'editor_transaction_aborted'
+	);
+
 	const canDownloadDraft = $derived(
 		runtimeError !== null &&
 			(runtimeError.code === 'policy_rejected' ||
@@ -505,6 +688,49 @@
 	}}
 />
 
+{#each visibleTransfers as transfer (transfer.sourceId)}
+	{@const applied = transfer.operation.current().phase === 'applied'}
+	<div
+		role="status"
+		data-testid="flow-transfer-resolution"
+		class="mx-auto my-2 flex max-w-3xl items-center justify-between gap-2 rounded border p-3 text-sm"
+		class:border-amber-400={!applied}
+	>
+		<p>{applied ? $t('flow.transfer.applied') : $t('flow.transfer.pending')}</p>
+		<button
+			type="button"
+			class="underline"
+			onclick={() => {
+				transferRuntime = transfer;
+				transferRoot = '';
+				transferKind = transfer.operation.current().review?.kind ?? 'move';
+				transferOpen = true;
+			}}>{applied ? $t('flow.transfer.viewReceipt') : $t('flow.transfer.checkReceipt')}</button
+		>
+	</div>
+{/each}
+{#if transferOpen && transferRuntime}
+	<FlowBlockTransferDialog
+		bind:open={transferOpen}
+		runtime={transferRuntime}
+		rootCid={transferRoot}
+		pickerScopeId={entry?.handle.object.scope_id ?? flowScopeId()}
+		initialKind={transferKind}
+	/>
+{/if}
+
+{#if sourceShareOpen && (entry || legacyEditorObject)}<FlowBlockShareSource
+		bind:open={sourceShareOpen}
+		sourceId={entry?.handle.objectId ?? legacyEditorObject!.id}
+		rootCid={sourceShareRoot}
+		canRevoke={sourceShareRevokeReady}
+		canManage={(
+			permittedActions ??
+			(objectMetadata ?? entry?.handle.object ?? legacyEditorObject)?.permitted_actions ??
+			[]
+		).includes('manage')}
+	/>{/if}
+
 {#snippet pageToolPane(toolObject: FlowObjectView, toolActions: readonly string[] | null)}
 	{#if lastTool}
 		<div hidden={!activeTool} class="flow-tool-pane" data-testid="flow-tool-panel">
@@ -512,7 +738,22 @@
 				<FlowContextPanel
 					object={toolObject}
 					permittedActions={toolActions}
+					{portablePackagesReady}
+					{portableGraphReady}
+					onGraphPagesCreated={(objects) => {
+						for (const { id, parentId } of objects) repository.notifyObjectCreated(id, parentId);
+						void navView?.refresh();
+					}}
+					onPortablePageCreated={(id) => {
+						repository.notifyObjectCreated(id, toolObject.id);
+						void navView?.refresh();
+					}}
+					portableExportReady={persistedPageReady}
+					historyRestoreReady={persistedPageReady}
+					onHistoryRestored={(id) =>
+						entry?.handle.objectId === id ? repository.resyncAccepted(id) : Promise.resolve(true)}
 					{commentBlockId}
+					commentRevision={`${commentStructureRevision}:${docGeneration}:${toolActions?.join(',') ?? ''}`}
 					{commentNonce}
 					selectedTool={activeTool ?? lastTool}
 					onclose={closeTool}
@@ -533,7 +774,17 @@
 		</p>
 	</div>
 {:else if legacyEditorObject}
-	<FlowPageToolbar object={legacyEditorObject} bind:activeTool />
+	<FlowPageToolbar
+		object={legacyEditorObject}
+		bind:activeTool
+		onManageSharedBlocks={sharedBlocksReady &&
+		legacyEditorObject.permitted_actions?.includes('manage')
+			? () => {
+					sourceShareRoot = null;
+					sourceShareOpen = true;
+				}
+			: undefined}
+	/>
 	<div class="relative flex min-h-0 flex-1 overflow-hidden">
 		<FlowLegacyEditorPreview
 			object={legacyEditorObject}
@@ -614,7 +865,16 @@
 	</div>
 {:else}
 	<FlowPageToolbar
-		object={entry.handle.object}
+		onManageSharedBlocks={sharedBlocksReady &&
+		(permittedActions ?? (objectMetadata ?? entry.handle.object).permitted_actions ?? []).includes(
+			'manage'
+		)
+			? () => {
+					sourceShareRoot = null;
+					sourceShareOpen = true;
+				}
+			: undefined}
+		object={objectMetadata ?? entry.handle.object}
 		{permittedActions}
 		{syncState}
 		{pending}
@@ -636,9 +896,14 @@
 				 `server_draining` with a MISSING required discriminator as an ordinary contention
 				 retry, which `error-mapping-v1.md` forbids ("缺失/未知 reason 违反协议"). -->
 					<span class="flex-1" data-testid="flow-runtime-error" data-error-code={runtimeError.code}
-						>{$t(flowErrorDetailKey(runtimeError), {
-							values: runtimeErrorValues(runtimeError)
-						})}</span
+						>{$t(
+							editorWritePaused
+								? 'flow.error.editor_transaction_aborted'
+								: flowErrorDetailKey(runtimeError),
+							{
+								values: runtimeErrorValues(runtimeError)
+							}
+						)}</span
 					>
 					{#if integrityRepair && entry.handle.object.workspace_id}
 						<a
@@ -662,7 +927,7 @@
 						<button
 							type="button"
 							class="font-medium underline underline-offset-2 hover:no-underline disabled:opacity-50"
-							disabled={reloading}
+							disabled={reloading || editorWritePaused}
 							onclick={reloadFromServer}
 						>
 							{$t('flow.recovery.reload')}
@@ -671,6 +936,7 @@
 					<button
 						type="button"
 						class="font-medium underline underline-offset-2 hover:no-underline"
+						disabled={editorWritePaused}
 						onclick={dismissRuntimeError}
 					>
 						{$t('flow.recovery.dismiss')}
@@ -701,13 +967,35 @@
 				onAppearance={(value) => (appearance = value)}
 			/>
 			{#if canvasRenderer}
+				{#if upgradingRichEditor}<p
+						role="status"
+						class="mx-auto mb-2 max-w-3xl text-xs text-slate-500"
+					>
+						{$t('flow.canvas.upgrading')}
+					</p>{/if}
 				<!-- A rebuild from the accepted snapshot replaces the engine doc; remount on it. -->
 				{#key docGeneration}
 					<FlowCanvas
 						doc={entry.doc}
 						scopeId={entry.handle.scopeId}
+						pickerScopeId={flowScopeId()}
+						canConvert={conversionAvailability(objectMetadata ?? entry.handle.object).mode !==
+							'unavailable'}
 						objectId={entry.handle.objectId}
+						{recoveringEdits}
 						{readOnly}
+						onShareBlock={sharedBlocksReady && permittedActions?.includes('manage')
+							? (blockId) => {
+									sourceShareRoot = blockId;
+									sourceShareOpen = true;
+								}
+							: undefined}
+						canMoveToPage={permittedActions?.includes('manage') ?? false}
+						onTransferBlock={transfersReady
+							? (blockId, kind) => void openTransfer(blockId, kind)
+							: undefined}
+						onEnsureStructure={ensureRichEditor}
+						lifecycleInfo={() => (entry ? repository.editorLifecycle(entry.handle.objectId) : null)}
 						presence={entry.presence}
 						onPresenceCursor={reportPresence}
 						onCommentBlock={permittedActions && !permittedActions.includes('comment')
@@ -725,7 +1013,7 @@
 				</div>
 			{/if}
 		</div>
-		{@render pageToolPane(entry.handle.object, permittedActions)}
+		{@render pageToolPane(objectMetadata ?? entry.handle.object, permittedActions)}
 	</div>
 {/if}
 

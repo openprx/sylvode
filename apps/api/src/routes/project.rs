@@ -67,7 +67,7 @@ pub struct UpdateProjectRequest {
     pub description: Option<String>,
     pub type_key: Option<String>,
     pub type_settings: Option<JsonValue>,
-    pub expected_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub expected_updated_at: Option<platform::timestamp::Timestamp>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -101,7 +101,7 @@ struct ScenarioProjectRow {
     type_settings: JsonValue,
     workflow_id: Option<Uuid>,
     created_by: Uuid,
-    created_at: chrono::DateTime<chrono::Utc>,
+    created_at: platform::timestamp::Timestamp,
 }
 
 async fn ensure_project_type_exists(state: &AppState, type_key: &str) -> Result<(), ApiError> {
@@ -1596,7 +1596,7 @@ pub async fn create_project(
     }
 
     let project_id = Uuid::new_v4();
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
     let description = req.description.unwrap_or_default();
     let scenario_template = match req.scenario_template_key.as_deref() {
         Some(key) => Some(load_scenario_template(&state, workspace_id, &normalize_scenario_template_key(key)?).await?),
@@ -1766,7 +1766,7 @@ pub async fn install_project_scenario_template(
     .await?;
     let event_actor_id = if is_bot { None } else { Some(actor_id) };
     let type_settings = merge_template_type_settings(Some(project.type_settings.clone()), Some(&template))?;
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
 
     let form_keys = scenario_form_templates(&template)
         .into_iter()
@@ -1961,8 +1961,8 @@ pub async fn list_projects(
         description: String,
         type_key: Option<String>,
         type_settings: JsonValue,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let window = list_projects_window(&query);
@@ -2084,8 +2084,8 @@ pub async fn get_project(
         description: String,
         type_key: Option<String>,
         type_settings: JsonValue,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let project = ProjectRow::find_by_statement(Statement::from_sql_and_values(
@@ -2240,8 +2240,8 @@ pub async fn update_project(
         description: String,
         type_key: Option<String>,
         type_settings: JsonValue,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let updated = ProjectRow::find_by_statement(Statement::from_sql_and_values(

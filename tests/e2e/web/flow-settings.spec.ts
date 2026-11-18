@@ -112,17 +112,17 @@ test('owner toggles Flow and its baseline; a member gets the forbidden-safe stat
 	const status = page.getByTestId('flow-settings-status');
 	await expect(page.getByTestId('flow-settings-enabled')).toHaveText('Disabled');
 	await expect(sidebar.getByRole('link', { name: 'Flow settings' })).toBeVisible();
-	await expect(sidebar.getByRole('link', { name: 'Flow', exact: true })).toHaveCount(0);
+	await expect(sidebar.locator(`a[href="/workspace/${workspace.id}/flow"]`)).toHaveCount(0);
 	const epochBefore = Number(await page.getByTestId('flow-settings-epoch').textContent());
 
 	// Enable: no confirmation, entry appears, toast carries the event id.
 	await page.getByRole('button', { name: 'Enable Flow' }).click();
 	await expect(page.getByTestId('flow-settings-enabled')).toHaveText('Enabled');
 	await expect(page.getByText(/^Saved\. Event [0-9a-f-]{36}$/).first()).toBeVisible();
-	await expect(sidebar.getByRole('link', { name: 'Flow', exact: true })).toBeVisible();
+	await expect(sidebar.locator(`a[href="/workspace/${workspace.id}/flow"]`)).toBeVisible();
 	await expect(page.getByTestId('flow-settings-epoch')).toHaveText(String(epochBefore + 1));
 
-	await sidebar.getByRole('link', { name: 'Flow', exact: true }).click();
+	await sidebar.locator(`a[href="/workspace/${workspace.id}/flow"]`).click();
 	await expect(page).toHaveURL(new RegExp(`${flowUrl}$`));
 	await expect(page.getByText('Flow is not enabled')).toHaveCount(0);
 
@@ -138,11 +138,11 @@ test('owner toggles Flow and its baseline; a member gets the forbidden-safe stat
 	await ack.check();
 	await confirmDisable.click();
 	await expect(page.getByTestId('flow-settings-enabled')).toHaveText('Disabled');
-	await expect(sidebar.getByRole('link', { name: 'Flow', exact: true })).toHaveCount(0);
+	await expect(sidebar.locator(`a[href="/workspace/${workspace.id}/flow"]`)).toHaveCount(0);
 
 	await page.goto(flowUrl);
 	await expect(page.getByRole('heading', { name: 'Flow is not enabled' })).toBeVisible();
-	await expect(sidebar.getByRole('link', { name: 'Flow', exact: true })).toHaveCount(0);
+	await expect(sidebar.locator(`a[href="/workspace/${workspace.id}/flow"]`)).toHaveCount(0);
 
 	// Baseline change: confirmation dialog, epoch advances.
 	await page.goto(settingsUrl);
@@ -161,10 +161,10 @@ test('owner toggles Flow and its baseline; a member gets the forbidden-safe stat
 	// Re-enable: entry back, /flow reachable.
 	await page.getByRole('button', { name: 'Enable Flow' }).click();
 	await expect(page.getByTestId('flow-settings-enabled')).toHaveText('Enabled');
-	await expect(sidebar.getByRole('link', { name: 'Flow', exact: true })).toBeVisible();
+	await expect(sidebar.locator(`a[href="/workspace/${workspace.id}/flow"]`)).toBeVisible();
 	await page.goto(flowUrl);
 	await expect(page.getByRole('heading', { name: 'Flow is not enabled' })).toHaveCount(0);
-	await expect(sidebar.getByRole('link', { name: 'Flow', exact: true })).toBeVisible();
+	await expect(sidebar.locator(`a[href="/workspace/${workspace.id}/flow"]`)).toBeVisible();
 
 	const server = await unwrap<{ flow_enabled: boolean; default_member_level: string }>(
 		await request.get(`/api/v1/workspaces/${workspace.id}/features/flow`, { headers: ownerAuth })
@@ -179,7 +179,7 @@ test('owner toggles Flow and its baseline; a member gets the forbidden-safe stat
 	await signInAs(memberPage, memberLogin);
 	await memberPage.goto(`/workspace/${workspace.id}/projects`);
 	const memberSidebar = memberPage.locator('aside nav');
-	await expect(memberSidebar.getByRole('link', { name: 'Flow', exact: true })).toBeVisible();
+	await expect(memberSidebar.locator(`a[href="/workspace/${workspace.id}/flow"]`)).toBeVisible();
 	await expect(memberSidebar.getByRole('link', { name: 'Flow settings' })).toHaveCount(0);
 
 	await memberPage.goto(`/workspace/${workspace.id}/settings`);

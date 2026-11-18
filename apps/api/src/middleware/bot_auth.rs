@@ -16,7 +16,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use chrono::Utc;
+use platform::timestamp::Timestamp;
 use platform::{
     app::AppState,
     auth::{JwtClaims, JwtManager, TokenType},
@@ -190,7 +190,7 @@ async fn record_operation<C: ConnectionTrait>(
             error_message.map(str::to_string).into(),
             duration_ms.into(),
             context.request_id.into(),
-            Utc::now().into(),
+            Timestamp::now().into(),
         ],
     ))
     .await
@@ -452,7 +452,7 @@ pub async fn bot_or_user_auth_middleware(
             permissions: serde_json::Value,
             transport_surface: String,
             is_active: bool,
-            expires_at: Option<chrono::DateTime<Utc>>,
+            expires_at: Option<platform::timestamp::Timestamp>,
         }
 
         let bot = BotRow::find_by_statement(Statement::from_sql_and_values(
@@ -471,7 +471,7 @@ pub async fn bot_or_user_auth_middleware(
             return Err(ApiError::Unauthorized("bot token is disabled".to_string()));
         }
         if let Some(expires_at) = bot.expires_at
-            && expires_at < Utc::now()
+            && expires_at < Timestamp::now()
         {
             return Err(ApiError::Unauthorized("bot token has expired".to_string()));
         }
@@ -484,7 +484,7 @@ pub async fn bot_or_user_auth_middleware(
                 .execute(Statement::from_sql_and_values(
                     DbBackend::Postgres,
                     "UPDATE workspace_bots SET last_used_at = $1 WHERE id = $2",
-                    vec![Utc::now().into(), bot_id.into()],
+                    vec![Timestamp::now().into(), bot_id.into()],
                 ))
                 .await;
         });

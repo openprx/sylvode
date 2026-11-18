@@ -75,9 +75,9 @@ use axum::middleware as axum_middleware;
 use axum::routing::{get, post};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use chrono::Utc;
 use collab_core::{CollabEngine, LoroCollabEngine};
 use futures_util::{SinkExt, StreamExt};
+use platform::timestamp::Timestamp;
 use platform::{
     app::AppState,
     auth::JwtManager,
@@ -250,7 +250,7 @@ impl Report {
         json!({
             "schema_version": "sylvode.flow.v05-session-round-trip.v1",
             "source_head": option_env!("GIT_HASH").unwrap_or("runtime-test-build"),
-            "generated_at": Utc::now().to_rfc3339(),
+            "generated_at": Timestamp::now().to_rfc3339(),
             "environment": {
                 "declared_dedicated_pg_container": std::env::var(DEDICATED_PG_CONTAINER_ENV).ok(),
                 "known_shared_instances_rejected": KNOWN_SHARED_INSTANCES,
@@ -308,7 +308,7 @@ fn emit_environment_not_satisfied(reason_code: &str, detail: &str) {
     let value = json!({
         "schema_version": "sylvode.flow.v05-session-round-trip-environment.v1",
         "source_head": option_env!("GIT_HASH").unwrap_or("runtime-test-build"),
-        "generated_at": Utc::now().to_rfc3339(),
+        "generated_at": Timestamp::now().to_rfc3339(),
         "environment_gate": {
             "status": "not_satisfied",
             "reason_code": reason_code,

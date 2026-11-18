@@ -557,7 +557,7 @@ mod tests {
         let visible = Uuid::new_v4();
         let hidden = Uuid::new_v4();
         let view = Uuid::new_v4();
-        let created=scope::create_personal(db,owner,scope::CreateInput{scope_id,object_type:"collection".into(),parent_object_id:None,project_id:None,title:"PRIVATE PARENT TITLE SENTINEL".into(),idempotency_key:Uuid::new_v4().to_string(),message:None,initial_fields:vec![json!({"field_id":hidden,"label":"HIDDEN FIELD LABEL SENTINEL","field_type":"text","index":0,"config":{"restricted":secret}}),json!({"field_id":visible,"label":"Visible field","field_type":"text","index":1,"config":{}})],initial_view:Some(json!({"view_id":view,"name":"PRIVATE VIEW SENTINEL","view_type":"table","config":{}}))}).await.unwrap();
+        let created=scope::create_personal(db,owner,scope::CreateInput{editor_model:1,scope_id,object_type:"collection".into(),parent_object_id:None,project_id:None,title:"PRIVATE PARENT TITLE SENTINEL".into(),idempotency_key:Uuid::new_v4().to_string(),message:None,initial_fields:vec![json!({"field_id":hidden,"label":"HIDDEN FIELD LABEL SENTINEL","field_type":"text","index":0,"config":{"restricted":secret}}),json!({"field_id":visible,"label":"Visible field","field_type":"text","index":1,"config":{}})],initial_view:Some(json!({"view_id":view,"name":"PRIVATE VIEW SENTINEL","view_type":"table","config":{}}))}).await.unwrap();
         let collection = Uuid::parse_str(created.pointer("/object/id").unwrap().as_str().unwrap()).unwrap();
         let state = state(db.clone());
         let mut ids = Vec::new();

@@ -7,7 +7,7 @@ struct TicketIdentityMatch {
 
 #[derive(FromQueryResult)]
 struct TicketExpiry {
-    expires_at: chrono::DateTime<chrono::Utc>,
+    expires_at: platform::timestamp::Timestamp,
 }
 
 use super::{
@@ -256,6 +256,35 @@ const fn reject(
         audit_event_id: None,
     }
 }
+fn error_rejection(document: Uuid, update: Uuid, error: &ApiError, client_model: u32) -> Frame {
+    let details = match error {
+        ApiError::Typed {
+            details: Some(details), ..
+        } => Some(details.clone()),
+        _ => None,
+    };
+    let code = match error.kind() {
+        crate::error::ApiErrorKind::UnsupportedProtocol => RejectedCode::UnsupportedProtocol,
+        crate::error::ApiErrorKind::InvalidUpdate => RejectedCode::InvalidUpdate,
+        crate::error::ApiErrorKind::LimitExceeded => RejectedCode::LimitExceeded,
+        crate::error::ApiErrorKind::FeatureDisabled => RejectedCode::FeatureDisabled,
+        crate::error::ApiErrorKind::NotFound | crate::error::ApiErrorKind::PolicyRejected => {
+            RejectedCode::PolicyRejected
+        }
+        _ => RejectedCode::ServerRejected,
+    };
+    let details = if code == RejectedCode::UnsupportedProtocol {
+        details.or_else(|| {
+            Some(
+                json!({"reason":"editor_upgrade_required","minimum_editor_model":5,"client_editor_model":client_model}),
+            )
+        })
+    } else {
+        details
+    };
+    reject(document, Some(update), code, false, WriteState::NotApplied, details)
+}
+
 async fn read_handshake(socket: &mut WebSocket) -> Option<Frame> {
     let Ok(Some(Ok(Message::Text(text)))) = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await else {
         return None;
@@ -293,16 +322,46 @@ pub async fn run(mut socket: WebSocket, state: AppState, context: TicketContext)
         close(&mut socket, "expected protocol hello").await;
         return;
     };
-    if capabilities.iter().any(|c| c != "presence") {
+    if capabilities
+        .iter()
+        .any(|c| c != "presence" && c != "rich_page_v4" && c != "rich_page_v5")
+    {
         close(&mut socket, "unsupported required capability").await;
         return;
     }
+    let editor_model = if capabilities.iter().any(|c| c == "rich_page_v5") {
+        5
+    } else if capabilities.iter().any(|c| c == "rich_page_v4") {
+        4
+    } else {
+        1
+    };
+    if super::scope_editor::require_model(&state.db, context.object_id, editor_model)
+        .await
+        .is_err()
+    {
+        close(&mut socket, "editor_upgrade_required").await;
+        return;
+    }
+    let presence_hub = if capabilities.iter().any(|c| c == "presence") {
+        super::scope_presence::start(&state.db)
+            .await
+            .ok()
+            .filter(|hub| hub.ready())
+    } else {
+        None
+    };
+    let mut presence_rx = presence_hub.as_ref().map(|hub| hub.subscribe());
     let session_id = Uuid::new_v4();
     if !send(
         &mut socket,
         &Frame::Hello {
             protocol_version: 1,
-            capabilities: vec![],
+            capabilities: if presence_hub.as_ref().is_some_and(|hub| hub.ready()) {
+                vec!["presence".into(), "rich_page_v4".into(), "rich_page_v5".into()]
+            } else {
+                vec!["rich_page_v4".into(), "rich_page_v5".into()]
+            },
             client_id: "server".to_string(),
             session_id,
         },
@@ -324,7 +383,8 @@ pub async fn run(mut socket: WebSocket, state: AppState, context: TicketContext)
         close(&mut socket, "document identity mismatch").await;
         return;
     }
-    let Ok(boot) = scope_write::bootstrap(&state.db, context.object_id, context.user_id).await else {
+    let Ok(boot) = scope_write::bootstrap_model(&state.db, context.object_id, context.user_id, editor_model).await
+    else {
         close(&mut socket, "authorization revoked").await;
         return;
     };
@@ -378,6 +438,33 @@ pub async fn run(mut socket: WebSocket, state: AppState, context: TicketContext)
     if !send(&mut socket, &snapshot).await {
         return;
     }
+    let _presence_lease = presence_hub.as_ref().map(|_| super::scope_presence::Lease {
+        db: state.db.clone(),
+        event: super::scope_presence::Event {
+            object: context.object_id,
+            document: context.document_id,
+            session: session_id,
+            user: context.user_id,
+            payload: Value::Null,
+            ttl: 0,
+        },
+    });
+    if let Some(hub) = &presence_hub {
+        for event in hub.snapshot(context.document_id) {
+            if event.session != session_id && event.object == context.object_id {
+                if scope::authorize(&state.db, context.object_id, context.user_id, PermissionLevel::View)
+                    .await
+                    .is_err()
+                {
+                    close(&mut socket, "authorization revoked").await;
+                    return;
+                }
+                if !send(&mut socket, &event.frame()).await {
+                    return;
+                }
+            }
+        }
+    }
     let mut sent_seq = boot.field("head_seq").as_i64().unwrap_or(0);
     let mut poll = tokio::time::interval(Duration::from_millis(200));
     let mut window = tokio::time::Instant::now();
@@ -386,7 +473,19 @@ pub async fn run(mut socket: WebSocket, state: AppState, context: TicketContext)
     let mut last_inbound = tokio::time::Instant::now();
     loop {
         tokio::select! {
+                 event=async { match &mut presence_rx { Some(receiver) => receiver.recv().await, None => std::future::pending().await } } => {
+                    match event {
+                        Ok(event) if event.document == context.document_id && event.object == context.object_id && event.session != session_id => {
+                            if scope::authorize(&state.db,context.object_id,context.user_id,PermissionLevel::View).await.is_err() { close(&mut socket,"authorization revoked").await;return; }
+                            if !send(&mut socket,&event.frame()).await { return; }
+                        },
+                        Ok(_) => {},
+                        Err(_) => { close(&mut socket,"presence consumer fell behind").await;return; }
+                    }
+                 }
                  _=poll.tick()=>{
+                  if presence_hub.as_ref().is_some_and(|hub|!hub.ready()) { close(&mut socket,"presence transport unavailable").await;return; }
+                  if super::scope_editor::require_model(&state.db,context.object_id,editor_model).await.is_err(){close(&mut socket,"editor_upgrade_required").await;return;}
                   if last_inbound.elapsed()>Duration::from_mins(1){close(&mut socket,"heartbeat timeout").await;return;}
                   let Ok(current)=scope::authorize(&state.db,context.object_id,context.user_id,PermissionLevel::View).await else {close(&mut socket,"authorization revoked").await;return;};
                   if context.authorization_notifications&&(current.revision!=last_proof.revision||current.level!=last_proof.level||current.audience_revisions!=last_proof.audience_revisions||current.resource_active!=last_proof.resource_active){
@@ -414,13 +513,49 @@ pub async fn run(mut socket: WebSocket, state: AppState, context: TicketContext)
                   match frame{
                    Frame::Update{document_id,update_id,bytes,idempotency_key,..}=>{
                     updates+=1;if document_id!=context.document_id||updates>limits::UPDATE_BURST_MAX{close(&mut socket,"invalid update admission").await;return;}
-                    let result=match BASE64.decode(bytes){Ok(bytes)=>scope_write::accept(&state.db,context.object_id,bytes,scope_write::UpdateIntent{user:context.user_id,update:update_id,client:&context.client_id,key:idempotency_key.as_deref(),expected:None,command_body:None}).await,Err(_)=>Err(ApiError::invalid_update("invalid update bytes"))};
-                    match result{Ok(collab::write::AcceptOutcome::Accepted(receipt))=>{if receipt.head_seq>sent_seq {continue;}let frame=Frame::Accepted{protocol_version:1,document_id,update_id,head_seq:receipt.head_seq,head_frontier:BASE64.encode(receipt.head_frontier),projection_seq:receipt.projection_seq,event_id:receipt.event_id};if !send(&mut socket,&frame).await{return;}},Ok(collab::write::AcceptOutcome::Rejected(refusal))=>{let frame=reject(document_id,Some(update_id),refusal.code,refusal.recoverable,refusal.write_state,refusal.details);if !send(&mut socket,&frame).await{return;}},Err(err)=>{let code=match err.kind(){crate::error::ApiErrorKind::NotFound|crate::error::ApiErrorKind::PolicyRejected=>RejectedCode::PolicyRejected,_=>RejectedCode::ServerRejected};if !send(&mut socket,&reject(document_id,Some(update_id),code,false,WriteState::NotApplied,None)).await{return;}}}
+                    let result=match BASE64.decode(bytes){Ok(bytes)=>scope_write::accept_model(&state.db,context.object_id,bytes,scope_write::UpdateIntent{user:context.user_id,update:update_id,client:&context.client_id,key:idempotency_key.as_deref(),expected:None,command_body:None},editor_model).await,Err(_)=>Err(ApiError::invalid_update("invalid update bytes"))};
+                    match result{Ok(collab::write::AcceptOutcome::Accepted(receipt))=>{if receipt.head_seq>sent_seq {continue;}let frame=Frame::Accepted{protocol_version:1,document_id,update_id,head_seq:receipt.head_seq,head_frontier:BASE64.encode(receipt.head_frontier),projection_seq:receipt.projection_seq,event_id:receipt.event_id};if !send(&mut socket,&frame).await{return;}},Ok(collab::write::AcceptOutcome::Rejected(refusal))=>{let frame=reject(document_id,Some(update_id),refusal.code,refusal.recoverable,refusal.write_state,refusal.details);if !send(&mut socket,&frame).await{return;}},Err(err)=>{if !send(&mut socket,&error_rejection(document_id,update_id,&err,editor_model)).await{return;}}}
                    }
                    Frame::Ping{nonce,..}=>{if !send(&mut socket,&Frame::Pong{protocol_version:1,nonce}).await{return;}},Frame::Ack{document_id,seq,frontier,..}=>{if document_id!=context.document_id{close(&mut socket,"document identity mismatch").await;return;}
-                   if let Ok(frontier)=BASE64.decode(frontier){let _=collab::compaction::record_client_ack(&state.db,document_id,&context.client_id,seq,&frontier).await;}},Frame::Pong{..}|Frame::Presence{..}=>{},_=>{close(&mut socket,"unexpected frame").await;return;}
+                   if let Ok(frontier)=BASE64.decode(frontier){let _=collab::compaction::record_client_ack(&state.db,document_id,&context.client_id,seq,&frontier).await;}},Frame::Presence{document_id,payload,ttl_seconds,..}=>{
+                    let ttl=ttl_seconds.unwrap_or(limits::PRESENCE_TTL_SECONDS_DEFAULT);
+                    if presence_hub.is_none()||document_id!=context.document_id||ttl==0||ttl>limits::PRESENCE_TTL_SECONDS_MAX||!super::scope_presence::valid_payload(&payload){close(&mut socket,"invalid presence admission").await;return;}
+                    if scope::authorize(&state.db,context.object_id,context.user_id,PermissionLevel::View).await.is_err(){close(&mut socket,"authorization revoked").await;return;}
+                    let event=super::scope_presence::Event{object:context.object_id,document:context.document_id,session:session_id,user:context.user_id,payload,ttl};
+                    if super::scope_presence::publish(&state.db,event).await.is_err(){close(&mut socket,"presence transport unavailable").await;return;}
+                   },Frame::Pong{..}=>{},_=>{close(&mut socket,"unexpected frame").await;return;}
                   }
                  }
                 }
+    }
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+    #[test]
+    fn an_old_writer_rejection_keeps_identity_and_not_applied_protocol_contract() {
+        let document = Uuid::new_v4();
+        let update = Uuid::new_v4();
+        let frame = error_rejection(document, update, &super::super::scope_editor::model_error(1, 4), 1);
+        let Frame::Rejected {
+            document_id,
+            update_id,
+            code,
+            write_state,
+            details,
+            ..
+        } = frame
+        else {
+            panic!("rejection frame")
+        };
+        assert_eq!(document_id, document);
+        assert_eq!(update_id, Some(update));
+        assert_eq!(code, RejectedCode::UnsupportedProtocol);
+        assert_eq!(write_state, WriteState::NotApplied);
+        assert_eq!(
+            details,
+            Some(json!({"reason":"editor_upgrade_required","minimum_editor_model":4,"client_editor_model":1}))
+        );
     }
 }

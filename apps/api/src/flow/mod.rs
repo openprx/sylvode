@@ -85,3 +85,21 @@ pub mod scope_navigation_query;
 pub mod scope_operations;
 
 pub mod json_value;
+
+pub mod scope_presence;
+
+// Phase2 body asset service candidate; HTTP routes and model5 admission are not enabled yet.
+pub mod block_anchors;
+pub mod block_registry;
+pub mod block_shares;
+pub mod body_assets;
+
+pub mod child_pages;
+
+// Independent next sub-batch; no HTTP registration until the complete two-Page transaction gate.
+pub mod page_transfer_contract;
+pub mod page_transfer_ir;
+pub mod page_transfer_prepare;
+pub mod page_transfers;
+pub mod portable_graph_package;
+pub mod portable_page_package;

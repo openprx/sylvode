@@ -34,7 +34,16 @@ pub async fn accept(
     bytes: Vec<u8>,
     intent: UpdateIntent<'_>,
 ) -> Result<AcceptOutcome, ApiError> {
-    accept_inner(db, object, bytes, intent, None, false).await
+    accept_inner(db, object, bytes, intent, None, false, 5, None).await
+}
+pub async fn accept_model(
+    db: &DatabaseConnection,
+    object: Uuid,
+    bytes: Vec<u8>,
+    intent: UpdateIntent<'_>,
+    model: u32,
+) -> Result<AcceptOutcome, ApiError> {
+    accept_inner(db, object, bytes, intent, None, false, model, None).await
 }
 pub(crate) async fn accept_typed(
     db: &DatabaseConnection,
@@ -46,7 +55,7 @@ pub(crate) async fn accept_typed(
     if intent.key.is_none() || intent.command_body.is_none() {
         return Err(ApiError::invalid_update("typed mutations require a request identity"));
     }
-    accept_inner(db, object, bytes, intent, Some(typed), false).await
+    accept_inner(db, object, bytes, intent, Some(typed), false, 5, None).await
 }
 async fn accept_inner(
     db: &DatabaseConnection,
@@ -55,6 +64,8 @@ async fn accept_inner(
     intent: UpdateIntent<'_>,
     typed: Option<super::scope_collections::TypedCommit>,
     editor_init: bool,
+    editor_model: u32,
+    shared: Option<super::block_shares::SharedWritePermit>,
 ) -> Result<AcceptOutcome, ApiError> {
     let UpdateIntent {
         user,
@@ -77,7 +88,7 @@ async fn accept_inner(
         return Err(ApiError::policy_rejected("typed Record target identity changed"));
     }
 
-    if identity.workspace_id.is_some() && !editor_init && !record_typed {
+    if identity.workspace_id.is_some() && !editor_init && !record_typed && shared.is_none() {
         return Err(ApiError::invalid_update(
             "legacy updates must use the compatibility application service",
         ));
@@ -114,7 +125,11 @@ async fn accept_inner(
         let minimum = typed
             .as_ref()
             .map_or(PermissionLevel::Edit, super::scope_collections::TypedCommit::minimum);
-        let proof = scope::authorize(db, object, user, minimum).await?;
+        let proof = if let Some(permit) = shared.as_ref() {
+            permit.authorize(db, object, user).await?
+        } else {
+            scope::authorize(db, object, user, minimum).await?
+        };
         if let Some(prior) = prior(db, document, update).await? {
             if prior.content_hash != super::collab::bootstrap::content_hash(&bytes) {
                 return Err(ApiError::idempotency_key_body_drift("update identity changed bytes"));
@@ -126,6 +141,16 @@ async fn accept_inner(
                 HydrateOutcome::Prepared(p) => p,
                 HydrateOutcome::Rejected(result) => return Ok(result),
             };
+        if let Some(permit) = shared.as_ref() {
+            permit.validate_candidate(&prepared.candidate)?;
+        }
+        let minimum = prepared
+            .candidate
+            .minimum_editor_model()
+            .map_err(|e| super::command::map_collab_error(&e))?;
+        if editor_model < minimum {
+            return Err(super::scope_editor::model_error(editor_model, minimum));
+        }
         let should_advance = match super::collab::snapshot::evaluate(
             &prepared.observed.tail_stats(),
             runtime::runtime().snapshot.last_rebuild_wall_ms(document),
@@ -152,13 +177,21 @@ async fn accept_inner(
         } else {
             scope::require_personal_write(&tx).await?;
         }
-        scope::fence(&tx, &proof).await?;
+        if minimum >= 4 {
+            scope::require_editor_model_readers(&tx, minimum).await?;
+        }
+        if let Some(permit) = shared.as_ref() {
+            permit.fence(&tx, &proof).await?;
+        } else {
+            scope::fence(&tx, &proof).await?;
+        }
         if scope::identity(&tx, object).await?.lifecycle_status != "active"
             || scope::get(&tx, identity.scope_id).await?.lifecycle_status != "active"
         {
             return Err(ApiError::policy_rejected("archived content cannot accept updates"));
         }
         if let (Some(key), Some(body)) = (key, command_body.as_ref())
+            && shared.is_none()
             && let Some(result) =
                 super::scope_commands::lock_and_replay(&tx, identity.scope_id, user, key, body).await?
         {
@@ -180,6 +213,21 @@ async fn accept_inner(
         if let Some(typed) = typed.as_ref() {
             super::scope_collections::lock_projection(&tx, typed, user).await?;
         }
+        if shared.is_some() {
+            // Lifecycle commands lock the object before their durable share-suspension trigger.
+            // Keep the same object→document→share order, including workspace legacy archives.
+            let row = tx
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT lifecycle_status FROM flow_objects WHERE id=$1 FOR UPDATE",
+                    vec![object.into()],
+                ))
+                .await?
+                .ok_or_else(ApiError::internal)?;
+            if row.try_get::<String>("", "lifecycle_status")? != "active" {
+                return Err(ApiError::policy_rejected("shared source unavailable"));
+            }
+        }
         write::set_locked_phase_statement_budgets(&tx, 1).await?;
 
         let head = AcceptedDocumentHead::find_by_statement(Statement::from_sql_and_values(
@@ -200,6 +248,12 @@ async fn accept_inner(
                 return Err(ApiError::idempotency_key_body_drift("update identity changed bytes"));
             }
             return Ok(AcceptOutcome::Accepted(prior.accepted(update)));
+        }
+        if let Some(permit) = shared.as_ref() {
+            permit.lock_after_head(&tx, head.head_seq).await?;
+        }
+        if editor_init {
+            super::block_registry::preserve_editor_aliases(&tx, object, &prepared.logical_blocks).await?;
         }
         let seq = head.head_seq + 1;
         let event_key = format!("content:{document}:{update}");
@@ -227,6 +281,12 @@ async fn accept_inner(
         // until the shared compactor's acknowledged retention boundary, never a private checkpoint.
         tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE collab_documents SET head_seq=$2,head_frontier=$3,byte_count=byte_count+$4,update_count=update_count+1,updated_at=now() WHERE id=$1",vec![document.into(),seq.into(),prepared.after_frontier.clone().into(),i64::try_from(bytes.len()).unwrap_or(i64::MAX).into()])).await?;
         tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_object_projections SET document_seq=$2,document_frontier=$3,title=$4,state=$5,plain_text=$6,updated_at=now() WHERE object_id=$1",vec![object.into(),seq.into(),prepared.after_frontier.clone().into(),prepared.title.clone().into(),prepared.state_json.clone().into(),prepared.plain_text.clone().into()])).await?;
+        super::body_assets::reconcile_accepted(&tx, object, seq, &prepared.asset_references).await?;
+        super::child_pages::reconcile_accepted(&tx, object, Some(user), seq, &prepared.child_references).await?;
+        super::block_registry::reconcile_accepted(&tx, object, seq, &prepared.logical_blocks).await?;
+        if let Some(permit) = shared.as_ref() {
+            permit.record(&tx).await?;
+        }
         if let Some(typed) = typed.as_ref() {
             super::scope_collections::sync(&tx, typed, object, user, seq, &prepared.candidate, event).await?;
         }
@@ -236,7 +296,9 @@ async fn accept_inner(
             vec![object.into(), user.into()],
         ))
         .await?;
-        if let (Some(key), Some(body)) = (key, command_body.as_ref()) {
+        if let (Some(key), Some(body)) = (key, command_body.as_ref())
+            && shared.is_none()
+        {
             let mut result = scope::accepted(scope::object_view(&tx, object, user).await?, event);
             if let Some(typed) = typed.as_ref() {
                 typed.decorate(&mut result);
@@ -352,6 +414,11 @@ pub fn limits() -> Value {
     }
     value
 }
+pub async fn bootstrap_model(db: &DatabaseConnection, object: Uuid, user: Uuid, model: u32) -> Result<Value, ApiError> {
+    let value = bootstrap(db, object, user).await?;
+    super::scope_editor::require_bootstrap_model(&value, model)?;
+    Ok(value)
+}
 pub async fn bootstrap(db: &DatabaseConnection, object: Uuid, user: Uuid) -> Result<Value, ApiError> {
     let proof = scope::authorize(db, object, user, PermissionLevel::View).await?;
     let identity = scope::identity(db, object).await?;
@@ -430,6 +497,19 @@ pub(crate) async fn accept_editor_init(
         },
         None,
         true,
+        5,
+        None,
     )
     .await
+}
+
+/// Only a server-generated fixed-member typed command can obtain the sealed permit.
+pub(crate) async fn accept_shared(
+    db: &DatabaseConnection,
+    object: Uuid,
+    bytes: Vec<u8>,
+    intent: UpdateIntent<'_>,
+    permit: super::block_shares::SharedWritePermit,
+) -> Result<AcceptOutcome, ApiError> {
+    accept_inner(db, object, bytes, intent, None, false, 5, Some(permit)).await
 }

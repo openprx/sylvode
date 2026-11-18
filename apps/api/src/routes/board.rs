@@ -79,7 +79,7 @@ pub async fn get_project_board(
         priority: String,
         assignee_id: Option<Uuid>,
         assignee_name: Option<String>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let issues = IssueRow::find_by_statement(Statement::from_sql_and_values(

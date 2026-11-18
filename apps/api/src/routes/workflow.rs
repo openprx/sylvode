@@ -251,8 +251,8 @@ pub async fn list_workflows(
         description: String,
         is_system_default: bool,
         state_count: i64,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let rows = WorkflowRow::find_by_statement(Statement::from_sql_and_values(
@@ -336,7 +336,7 @@ pub async fn create_workflow(
     }
 
     let workflow_id = Uuid::new_v4();
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
     let description = req.description.unwrap_or_default();
 
     state
@@ -422,8 +422,8 @@ pub async fn get_workflow(
         name: String,
         description: String,
         is_system_default: bool,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let wf = WorkflowRow::find_by_statement(Statement::from_sql_and_values(
@@ -560,7 +560,7 @@ pub async fn update_workflow(
     }
 
     updates.push(format!("updated_at = ${param_idx}"));
-    values.push(chrono::Utc::now().into());
+    values.push(platform::timestamp::Timestamp::now().into());
     param_idx += 1;
 
     values.push(workflow_id.into());
@@ -579,8 +579,8 @@ pub async fn update_workflow(
         description: String,
         is_system_default: bool,
         state_count: i64,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let updated = WorkflowRow::find_by_statement(Statement::from_sql_and_values(
@@ -843,7 +843,7 @@ pub async fn create_workflow_state(
     }
 
     let state_id = Uuid::new_v4();
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
 
     state
         .db
@@ -1002,7 +1002,7 @@ pub async fn update_workflow_state(
     }
 
     updates.push(format!("updated_at = ${param_idx}"));
-    values.push(chrono::Utc::now().into());
+    values.push(platform::timestamp::Timestamp::now().into());
     param_idx += 1;
 
     values.push(state_id.into());

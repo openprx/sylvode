@@ -9,12 +9,7 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  * field and one record, a second form, and one Page.
  * In the browser:
  *
- * 1. `/` -> Collection: the first `create_collection_embed` is failed by the network (the
- *    provisional block disappears, an error with Retry is shown), Retry resends the same body and
- *    key, and the embedded table appears with an Open link. Exactly two command requests were
- *    sent, both `create_collection_embed`, and no `POST .../flow/objects`. The navigator lists the
- *    new Collection under the Page, the API reports it as the Page's child, and a reload still
- *    shows the embed (it is a server-written block in the Page document).
+ * 1. The Page menu omits the retired Collection embed entry and keeps Page text.
  * 2. `/` -> Reference a Form: project -> form -> record, the request carries
  *    `display.mode=reference`, a card with the record title and a permission badge appears; the
  *    card's link opens the record detail, whose Flow section lists the reference and links back
@@ -203,96 +198,21 @@ async function openSlashMenu(page: Page): Promise<void> {
 	await expect(page.getByRole('listbox')).toBeVisible();
 }
 
-test('slash Collection: one atomic command, failure drops the provisional block, retry reuses the key', async ({
+test('Page slash menu omits the retired Collection editor and preserves Page text', async ({
 	page,
 	request
 }) => {
 	const f = await setup(request);
-	const pageTitle = `Embed host ${runId}`;
-	const objectId = await newPage(request, f, pageTitle);
-	const commandBodies: Array<Record<string, unknown>> = [];
-	const objectCreates: string[] = [];
-	page.on('request', (req: Request) => {
-		if (req.method() !== 'POST') return;
-		const path = new URL(req.url()).pathname;
-		if (path === `/api/v1/flow/objects/${objectId}/commands`)
-			commandBodies.push(req.postDataJSON() as Record<string, unknown>);
-		if (path === `/api/v1/workspaces/${f.workspaceId}/flow/objects`) objectCreates.push(path);
-	});
-
+	const objectId = await newPage(request, f, `Embed host ${runId}`);
 	await signInAs(page, f.ownerLogin);
 	await page.goto(`/workspace/${f.workspaceId}/flow/${objectId}`);
 	await openSlashMenu(page);
-	const option = page.getByTestId('flow-slash-collection');
-	await expect(option).toContainText('Collection');
-	await expect(option).toContainText('belongs to this Page');
-	await option.click();
-
-	const dialog = page.getByTestId('flow-slash-collection-dialog');
-	await expect(dialog).toBeVisible();
-	const titleInput = page.getByTestId('flow-slash-collection-title');
-	await expect(titleInput).toHaveValue('Untitled collection');
-	const collectionTitle = `Roadmap ${runId}`;
-	await titleInput.fill(collectionTitle);
-
-	// The first attempt dies in the network: nothing reaches the server.
-	let failNext = true;
-	await page.route(`**/api/v1/flow/objects/${objectId}/commands`, async (route) => {
-		if (failNext) {
-			failNext = false;
-			await new Promise((resolveLater) => setTimeout(resolveLater, 300));
-			await route.abort('connectionreset');
-			return;
-		}
-		await route.continue();
-	});
-	await page.getByTestId('flow-slash-collection-submit').click();
-	await expect(page.getByTestId('flow-embed-provisional')).toHaveCount(1);
-	await expect(page.getByTestId('flow-embed-provisional')).toContainText(collectionTitle);
-	const failed = page.getByTestId('flow-embed-failed');
-	await expect(failed).toBeVisible();
-	await expect(failed).toContainText(collectionTitle);
-	await expect(page.getByTestId('flow-embed-provisional')).toHaveCount(0);
-	await expect(page.getByTestId('flow-embedded-collection')).toHaveCount(0);
-
-	await page.getByTestId('flow-embed-retry').click();
-	const embedded = page.getByTestId('flow-embedded-collection');
-	await expect(embedded).toHaveCount(1);
-	await expect(embedded).toContainText(collectionTitle);
-	await expect(page.getByTestId('flow-embed-failed')).toHaveCount(0);
-	await expect(page.getByTestId('flow-embed-provisional')).toHaveCount(0);
-	await expect(embedded.getByRole('grid')).toBeVisible();
-
-	expect(commandBodies).toHaveLength(2);
-	for (const body of commandBodies) {
-		expect((body.command as { type: string }).type).toBe('create_collection_embed');
-	}
-	expect(commandBodies[1]).toEqual(commandBodies[0]);
-	expect(objectCreates).toHaveLength(0);
-
-	const collectionId = await embedded.getAttribute('data-collection-id');
-	expect(collectionId).toBeTruthy();
-	const collection = await unwrap<ObjectView>(
-		await request.get(`/api/v1/flow/objects/${collectionId}`, {
-			headers: f.auth
-		})
-	);
-	expect(collection.object_type).toBe('collection');
-	expect(collection.parent_id).toBe(objectId);
-	expect(collection.title).toBe(collectionTitle);
-
-	const nav = page.getByRole('navigation', { name: 'Navigator' });
-	await expect(nav.getByRole('treeitem').filter({ hasText: collectionTitle })).toBeVisible();
-
-	// The embed is a block in the Page document, not client state.
-	await page.reload();
-	await expect(page.getByTestId('flow-embedded-collection')).toHaveCount(1);
-	await expect(page.getByTestId('flow-embedded-collection')).toContainText(collectionTitle);
-	await page.getByTestId('flow-embedded-collection-open').click();
-	await expect(page).toHaveURL(new RegExp(`/workspace/${f.workspaceId}/flow/${collectionId}$`));
-	await page.screenshot({
-		path: 'test-results/flow-slash-bridge-collection.png'
-	});
+	const menu = page.getByRole('listbox');
+	await expect(menu.getByTestId('flow-slash-collection')).toHaveCount(0);
+	await expect(menu.getByTestId('flow-slash-reference')).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(menu).not.toBeVisible();
+	await expect(page.getByRole('textbox', { name: 'Page editor' })).toContainText('/');
 });
 
 test('slash Reference and Embed: cards from the bridge, confirmed removal leaves the record', async ({
@@ -306,7 +226,7 @@ test('slash Reference and Embed: cards from the bridge, confirmed removal leaves
 	const hiddenReads: string[] = [];
 	page.on('request', (req: Request) => {
 		const path = new URL(req.url()).pathname;
-		if (req.method() === 'POST' && path === `/api/v1/flow/objects/${objectId}/references`)
+		if (req.method() === 'POST' && path === `/api/v2/flow/objects/${objectId}/references`)
 			referenceBodies.push(req.postDataJSON() as Record<string, unknown>);
 		if (req.method() === 'DELETE') deletes.push(path);
 		if (path.startsWith(`/api/v1/forms/${f.hiddenFormId}`)) hiddenReads.push(path);
@@ -372,9 +292,9 @@ test('slash Reference and Embed: cards from the bridge, confirmed removal leaves
 	await expect(lineage.getByTestId('record-flow-lineage-conversion')).toHaveCount(0);
 	const backToPage = lineageReference.getByTestId('record-flow-lineage-source');
 	await expect(backToPage).toHaveText(`Reference host ${runId}`);
-	await expect(backToPage).toHaveAttribute('href', `/workspace/${f.workspaceId}/flow/${objectId}`);
+	await expect(backToPage).toHaveAttribute('href', `/flow/${objectId}`);
 	await backToPage.click();
-	await expect(page).toHaveURL(new RegExp(`/workspace/${f.workspaceId}/flow/${objectId}$`));
+	await expect(page).toHaveURL(new RegExp(`/flow/${objectId}$`));
 	await expect(page.locator('[data-testid="flow-bridge-card"][data-mode="reference"]')).toHaveCount(
 		1
 	);
@@ -385,9 +305,9 @@ test('slash Reference and Embed: cards from the bridge, confirmed removal leaves
 	expect(deletes).toHaveLength(0);
 	await page.getByTestId('flow-bridge-remove-confirm').click();
 	await expect(page.getByTestId('flow-bridge-card')).toHaveCount(0);
-	expect(deletes).toEqual([`/api/v1/flow/objects/${objectId}/references/${referenceId}`]);
+	expect(deletes).toEqual([`/api/v2/flow/objects/${objectId}/references/${referenceId}`]);
 	const live = await unwrap<{ items: unknown[] }>(
-		await request.get(`/api/v1/flow/objects/${objectId}/references`, {
+		await request.get(`/api/v2/flow/objects/${objectId}/references`, {
 			headers: f.auth
 		})
 	);
@@ -467,6 +387,6 @@ test('slash Convert to Forms opens the conversion wizard', async ({ page, reques
 	const option = page.getByTestId('flow-slash-convert');
 	await expect(option).toContainText('the record belongs to Forms');
 	await option.click();
-	await expect(page).toHaveURL(new RegExp(`/workspace/${f.workspaceId}/flow/${objectId}/convert$`));
+	await expect(page).toHaveURL(new RegExp(`/flow/${objectId}/convert$`));
 	await expect(page.getByTestId('flow-convert')).toBeVisible();
 });

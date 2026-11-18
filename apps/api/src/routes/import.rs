@@ -78,7 +78,7 @@ pub async fn import_project(
 
         let project_key = generate_project_key(&project_name);
         let project_id = Uuid::new_v4();
-        let now = chrono::Utc::now();
+        let now = platform::timestamp::Timestamp::now();
 
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -116,7 +116,7 @@ pub async fn import_project(
     for import_issue in req.issues {
         let issue_id = Uuid::new_v4();
         let issue_key = format!("{project_key}-{next_num}");
-        let now = chrono::Utc::now();
+        let now = platform::timestamp::Timestamp::now();
         let title = import_issue.title.clone();
 
         let result = txn

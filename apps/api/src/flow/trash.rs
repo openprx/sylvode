@@ -5,7 +5,7 @@
 //! row. Child rows cascade, so a page is deleted only when every descendant is already archived
 //! and the caller has full access to each of them.
 
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::Serialize;
 use serde_json::Value;
@@ -137,7 +137,7 @@ pub async fn list_trash(
 async fn fetch_archived_batch<C: ConnectionTrait>(
     db: &C,
     workspace_id: Uuid,
-    after: Option<(DateTime<Utc>, Uuid)>,
+    after: Option<(Timestamp, Uuid)>,
 ) -> Result<Vec<TrashRow>, ApiError> {
     let (after_archived, after_id) = match after {
         Some((stamp, id)) => (Some(stamp), id),
@@ -178,7 +178,7 @@ pub async fn purge_archived(
     let nodes = DescendantRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "WITH RECURSIVE tree AS ( \
-            SELECT id, lifecycle_status, 0 AS depth, ARRAY[id]::uuid[] AS path \
+            SELECT id, lifecycle_status, 0::bigint AS depth, ARRAY[id]::uuid[] AS path \
             FROM flow_objects \
             WHERE id = $1 AND workspace_id = $2 \
             UNION ALL \
@@ -203,7 +203,7 @@ pub async fn purge_archived(
     }
     let locked = DescendantRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id, lifecycle_status, 0 AS depth FROM flow_objects \
+        "SELECT id, lifecycle_status, 0::bigint AS depth FROM flow_objects \
          WHERE workspace_id = $1 AND id = ANY(string_to_array($2, ',')::uuid[]) \
          FOR UPDATE",
         vec![
@@ -271,20 +271,20 @@ fn item_of(row: TrashRow) -> TrashItem {
         parent_id: row.parent_id,
         object_type: row.object_type,
         title: row.title,
-        archived_at: row
-            .archived_at
-            .map_or_else(|| Utc::now().to_rfc3339(), |stamp| stamp.to_rfc3339()),
+        archived_at: row.archived_at.map_or_else(
+            || Timestamp::now().to_rfc3339(),
+            platform::timestamp::Timestamp::to_rfc3339,
+        ),
         appearance: appearance::parse_stored(&row.appearance),
     }
 }
 
-fn decode_cursor(cursor: &str) -> Result<(DateTime<Utc>, Uuid), ApiError> {
+fn decode_cursor(cursor: &str) -> Result<(Timestamp, Uuid), ApiError> {
     let Some((stamp, id)) = cursor.rsplit_once('|') else {
         return Err(ApiError::invalid_update("invalid trash cursor".to_string()));
     };
-    let archived_at = DateTime::parse_from_rfc3339(stamp)
-        .map(|stamp| stamp.with_timezone(&Utc))
-        .map_err(|_| ApiError::invalid_update("invalid trash cursor".to_string()))?;
+    let archived_at =
+        Timestamp::parse_rfc3339(stamp).map_err(|_| ApiError::invalid_update("invalid trash cursor".to_string()))?;
     let id = Uuid::parse_str(id).map_err(|_| ApiError::invalid_update("invalid trash cursor".to_string()))?;
     Ok((archived_at, id))
 }
@@ -299,7 +299,7 @@ struct TrashRow {
     parent_id: Option<Uuid>,
     object_type: String,
     title: String,
-    archived_at: Option<DateTime<Utc>>,
+    archived_at: Option<Timestamp>,
     appearance: Value,
 }
 

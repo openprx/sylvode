@@ -87,6 +87,7 @@ interface ManifestEntry {
 	file: string;
 	imports?: string[];
 	dynamicImports?: string[];
+	assets?: string[];
 }
 
 const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8')) as Record<string, ManifestEntry>;
@@ -233,8 +234,14 @@ function staticClosure(key: string, seen = new Set<string>()): Set<string> {
 	return seen;
 }
 
-const ENGINE_KEYS = Object.keys(manifest).filter((key) =>
-	/node_modules\/(loro-crdt|loro-prosemirror|prosemirror-)/.test(key)
+const LORO_BINDING = 'src/lib/flow/vendor/loro-prosemirror/index.ts';
+const WASM_KEY = 'node_modules/loro-crdt/browser/loro_wasm_bg.wasm';
+const wasmAsset = manifest[WASM_KEY]?.file;
+const wasmLoaderKey = Object.keys(manifest).find(
+	(key) => wasmAsset && manifest[key].assets?.includes(wasmAsset)
+);
+const ENGINE_KEYS = Object.keys(manifest).filter(
+	(key) => key === LORO_BINDING || key === wasmLoaderKey || /node_modules\/(loro-crdt|prosemirror-)/.test(key)
 );
 
 /** Maps a route source path to its generated node index, via `.svelte-kit/generated`. */
@@ -277,9 +284,13 @@ suite.check('the engine reaches the Flow route only through a dynamic import', (
 		staticallyBound.length === 0,
 		`the Flow route statically imports ${staticallyBound.join(', ')}; ui-surface-v1.md requires the engine chunk to be dynamically imported`
 	);
+	assert(wasmLoaderKey !== undefined, 'no emitted chunk loads the Loro WASM asset');
+	const dynamicEntries = [...closure].flatMap((key) => manifest[key]?.dynamicImports ?? []);
+	assert(dynamicEntries.includes(LORO_BINDING), 'the Flow route does not dynamically import the editor binding');
+	assert(staticClosure(LORO_BINDING).has(wasmLoaderKey), 'the editor binding does not load the Loro WASM chunk');
 	const adapter = readFileSync(join(ROOT, 'src/lib/flow/editor-adapter.ts'), 'utf8');
 	for (const module of [
-		'loro-prosemirror',
+		'./vendor/loro-prosemirror/index',
 		'prosemirror-model',
 		'prosemirror-state',
 		'prosemirror-view'
@@ -408,18 +419,23 @@ if (!chrome) {
 				// the engine chunk is fetched with the deep route's base path in effect, the wasm-bindgen
 				// glue instantiates the module, and a real CRDT document is created and mutated.
 				const { sessionId } = await browser.coldLoad(`${site.origin}${DEEP_ROUTE}`);
-				const engineChunk = manifest['node_modules/loro-crdt/browser/index.js']?.file;
-				assert(
-					engineChunk !== undefined,
-					'the manifest has no chunk for the loro-crdt browser entry'
-				);
+				assert(wasmLoaderKey !== undefined, 'no emitted chunk loads the Loro WASM asset');
+				const bindingChunk = manifest[LORO_BINDING]?.file;
+				assert(bindingChunk !== undefined, 'the editor binding chunk is missing');
+				const engineChunk = manifest[wasmLoaderKey].file;
 
 				const outcome = (await browser.evaluate(
 					sessionId,
 					`(async () => {
 					try {
-						const module = await import('/${engineChunk}');
-						const doc = new module.LoroDoc();
+						await import(${JSON.stringify('/' + bindingChunk)});
+						const module = await import(${JSON.stringify('/' + engineChunk)});
+						// Rollup may expose the dynamically imported module namespace under
+						// a minified export when the chunk also has static consumers.
+						const Doc = module.LoroDoc ?? Object.values(module)
+							.find((value) => typeof value?.LoroDoc === 'function')?.LoroDoc;
+						if (!Doc) throw new Error('Loro document constructor missing');
+						const doc = new Doc();
 						doc.getText('probe').insert(0, 'flow');
 						const bytes = doc.export({ mode: 'snapshot' });
 						return JSON.stringify({
@@ -455,6 +471,10 @@ if (!chrome) {
 					'the instantiated CRDT document exported no snapshot bytes'
 				);
 				assertEqual(parsed.violations, 0, 'instantiating the engine raised a CSP violation');
+				assert(
+					site.requests.some((request) => request.path === '/' + wasmAsset && request.status === 200),
+					'the browser did not load the WASM asset from the static site'
+				);
 				engineExercisedCleanly = true;
 			}
 		);

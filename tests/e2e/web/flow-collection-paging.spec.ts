@@ -1,21 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
-/**
- * Collection records paging and table virtualisation against a real API + PostgreSQL
- * (`versions/v0.6-collections.md` "大集合只打开 viewport"; `rest-api-v1.md` v0.6 records list,
- * `limit` default 50), and the standalone Record route's schema read.
- *
- * The owner creates a Collection and 55 records through REST, then in the browser:
- * - the first records read asks for `limit=50` and the table reports 50 loaded, while far fewer
- *   than 50 rows are in the DOM (only the virtual window);
- * - scrolling to the end loads the next page (`cursor` + `limit=50`): 55 loaded, the grid's
- *   `aria-rowcount` covers all 55, and the DOM still holds fewer than 55 rows;
- * - opening one record on its own route reads the owning Collection's schema through
- *   `GET /flow/objects/{record_id}/schema` and shows that record's panel.
- *
- * Needs the stack from `scripts/e2e-web-stack.sh up` (BASE_URL, ADMIN_EMAIL / ADMIN_PASSWORD).
- */
-
+// The Page-only product mode retires the table and Record renderer. The existing records
+// remain readable through the typed paging and record-specific schema APIs.
 const RECORDS = 55;
 const runId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 const owner = {
@@ -77,7 +63,7 @@ async function signInAs(page: Page, session: LoginData): Promise<void> {
 	);
 }
 
-test('collection: 55 records page by 50, the table renders only its window, a record route reads its schema', async ({
+test('collection: typed records page by 50 and the retired routes direct the owner back to Pages', async ({
 	browser,
 	request
 }) => {
@@ -142,68 +128,44 @@ test('collection: 55 records page by 50, the table renders only its window, a re
 	const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 	const page = await context.newPage();
 	await signInAs(page, ownerLogin);
-	const recordReads: Array<{ limit: string | null; cursor: string | null }> = [];
-	const schemaReads: string[] = [];
-	page.on('request', (req) => {
-		const url = new URL(req.url());
-		if (
-			req.method() === 'GET' &&
-			url.pathname === `/api/v1/flow/collections/${collectionId}/records`
-		) {
-			recordReads.push({
-				limit: url.searchParams.get('limit'),
-				cursor: url.searchParams.get('cursor')
-			});
-		}
-		const schema = /^\/api\/v1\/flow\/objects\/([^/]+)\/schema$/.exec(url.pathname);
-		if (req.method() === 'GET' && schema) schemaReads.push(schema[1]);
-	});
-
-	await page.goto(`/workspace/${workspace.id}/flow/${collectionId}`);
-	const table = page.getByTestId('collection-table');
-	const rows = page.getByTestId('collection-row');
-	await expect(table).toBeVisible();
-	await expect(page.getByText('50 records loaded')).toBeVisible();
-	expect(recordReads[0], 'the first page').toEqual({ limit: '50', cursor: null });
-	const firstPaint = await rows.count();
-	expect(firstPaint, 'some rows are rendered').toBeGreaterThan(0);
-	expect(firstPaint, `only the window is in the DOM (${firstPaint} of 50)`).toBeLessThan(50);
-
-	// Scroll to the end: the next page is requested with the cursor.
-	const scroller = page.getByTestId('collection-table-scroller');
-	await scroller.evaluate((element) => {
-		element.scrollTop = element.scrollHeight;
-		element.dispatchEvent(new Event('scroll'));
-	});
-	await expect(page.getByText(`${RECORDS} records loaded`)).toBeVisible();
-	expect(recordReads.length, 'two pages were read').toBe(2);
-	expect(recordReads[1].limit, 'the second page asks for 50 again').toBe('50');
-	expect(recordReads[1].cursor, 'the second page continues from the cursor').not.toBeNull();
-	await expect(table).toHaveAttribute('aria-rowcount', String(RECORDS + 1));
-	const afterMore = await rows.count();
-	expect(afterMore, `the DOM still holds only a window (${afterMore} of ${RECORDS})`).toBeLessThan(
-		RECORDS
+	const reads: string[] = [];
+	page.on('request', (req) => reads.push(new URL(req.url()).pathname));
+	for (const id of [collectionId, recordIds[3]]) {
+		await page.goto(`/workspace/${workspace.id}/flow/${id}`);
+		const retired = page.getByTestId('flow-typed-unavailable');
+		await expect(retired.getByRole('heading')).toHaveText(
+			'This feature is not currently available'
+		);
+		await expect(retired).toContainText('Existing Collection and Record data is preserved.');
+		await expect(retired.getByRole('link', { name: 'Back to Pages' })).toHaveAttribute(
+			'href',
+			'/flow'
+		);
+		await expect(page.getByTestId('collection-table')).toHaveCount(0);
+		await expect(page.getByTestId('flow-record-route')).toHaveCount(0);
+	}
+	expect(reads).not.toContain(`/api/v2/flow/objects/${collectionId}/bootstrap`);
+	type RecordsPage = { items: Array<{ record: { id: string } }>; next_cursor?: string | null };
+	const url = `/api/v1/flow/collections/${collectionId}/records`;
+	const first = await unwrap<RecordsPage>(
+		await context.request.get(url, { headers: auth, params: { limit: '50' } })
 	);
-	// Scrolled to the end again, the 55th row (grid row index 56, after the header) is rendered
-	// while the first rows have left the DOM.
-	await scroller.evaluate((element) => {
-		element.scrollTop = element.scrollHeight;
-		element.dispatchEvent(new Event('scroll'));
-	});
-	await expect(
-		page.locator(`[data-testid="collection-row"][aria-rowindex="${RECORDS + 1}"]`),
-		'the last record is reachable at the end of the list'
-	).toBeVisible();
-	await expect(page.locator('[data-testid="collection-row"][aria-rowindex="2"]')).toHaveCount(0);
-	expect(await rows.count(), 'still only a window at the end').toBeLessThan(RECORDS);
-
-	// The standalone Record route reads the owning Collection's schema through the record.
-	const recordId = recordIds[3];
-	await page.goto(`/workspace/${workspace.id}/flow/${recordId}`);
-	await expect(page.getByTestId('flow-record-route')).toBeVisible();
-	await expect.poll(() => schemaReads.includes(recordId)).toBe(true);
-	expect(schemaReads, 'no Collection-scoped schema read is needed for it').not.toContain(
-		collectionId
+	expect(first.items).toHaveLength(50);
+	expect(first.next_cursor).toBeTruthy();
+	const second = await unwrap<RecordsPage>(
+		await context.request.get(url, {
+			headers: auth,
+			params: { limit: '50', cursor: first.next_cursor! }
+		})
 	);
+	expect(second.items).toHaveLength(5);
+	expect(second.next_cursor ?? null).toBeNull();
+	expect(new Set([...first.items, ...second.items].map(({ record }) => record.id))).toEqual(
+		new Set(recordIds)
+	);
+	const schema = await unwrap<{ fields: Array<{ field_id: string }> }>(
+		await context.request.get(`/api/v1/flow/objects/${recordIds[3]}/schema`, { headers: auth })
+	);
+	expect(schema.fields.map(({ field_id }) => field_id)).toEqual([fieldId]);
 	await context.close();
 });

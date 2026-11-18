@@ -27,9 +27,9 @@ struct WebhookRow {
     pub active: bool,
     pub bot_user_id: Option<Uuid>,
     pub created_by: Uuid,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub last_triggered_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
+    pub last_triggered_at: Option<platform::timestamp::Timestamp>,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,9 +42,9 @@ pub struct WebhookResponse {
     pub active: bool,
     pub bot_user_id: Option<Uuid>,
     pub created_by: Uuid,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub last_triggered_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
+    pub last_triggered_at: Option<platform::timestamp::Timestamp>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,8 +65,8 @@ pub struct WebhookDeliveryResponse {
     pub error: Option<String>,
     pub duration_ms: Option<i64>,
     pub success: bool,
-    pub delivered_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub delivered_at: Option<platform::timestamp::Timestamp>,
+    pub created_at: platform::timestamp::Timestamp,
 }
 
 impl TryFrom<WebhookRow> for WebhookResponse {
@@ -250,7 +250,7 @@ pub async fn create_webhook(
     let secret = req.secret.unwrap_or_else(generate_secret);
 
     let webhook_id = Uuid::new_v4();
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
     let active = req.enabled.or(req.active).unwrap_or(true);
 
     let tx = state.db.begin().await?;
@@ -419,7 +419,7 @@ pub async fn update_webhook(
     }
 
     updates.push(format!("updated_at = ${param_idx}"));
-    params.push(chrono::Utc::now().into());
+    params.push(platform::timestamp::Timestamp::now().into());
     param_idx += 1;
 
     let webhook_id_idx = param_idx;

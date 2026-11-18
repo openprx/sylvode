@@ -1,4 +1,5 @@
 [workspace]
+exclude = ["crates/vendor/sea-orm"]
 resolver = "2"
 members = [
   "apps/api",
@@ -16,7 +17,7 @@ members = [
 authors = ["g1e2x87"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-version = "0.2.538"
+version = "0.2.539"
 description = "Sylvode open-source project management platform"
 repository = "https://github.com/openprx/sylvode"
 homepage = "https://openprx.dev/sylvode"
@@ -24,14 +25,13 @@ homepage = "https://openprx.dev/sylvode"
 [workspace.dependencies]
 anyhow = "1.0"
 axum = { version = "0.8", features = ["ws", "multipart"] }
-chrono = { version = "0.4", features = ["serde"] }
+time = { version = "0.3", features = ["formatting", "large-dates", "macros", "parsing", "serde", "serde-well-known"] }
 clap = { version = "4.5.38", features = ["derive"] }
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls", "stream"], default-features = false }
 sea-orm = { version = "1", default-features = false, features = [
   "sqlx-postgres",
   "runtime-tokio-rustls",
   "macros",
-  "with-chrono",
   "with-json",
   "with-time",
   "with-uuid",
@@ -156,3 +156,7 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.loro-thunderdome]
 opt-level = 3
+
+# Preserve SeaORM JSON decoding with its unused Chrono edge removed from the lockfile.
+[patch.crates-io]
+sea-orm = { path = "crates/vendor/sea-orm" }

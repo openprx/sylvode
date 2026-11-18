@@ -2,9 +2,10 @@
 #![allow(clippy::case_sensitive_file_extension_comparisons)]
 
 use base64::Engine;
-use chrono::{DateTime, Duration, Utc};
+use platform::timestamp::Timestamp;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use time::Duration;
 use uuid::Uuid;
 
 use crate::{error::ApiError, services::object_storage::ObjectStorage};
@@ -119,7 +120,7 @@ async fn materialize_signature_values_with_existing_storage(
         audit_entry.insert("content_type".to_string(), json!("image/png"));
         audit_entry.insert("byte_size".to_string(), json!(bytes.len()));
         audit_entry.insert("sha256".to_string(), json!(signature_sha256_hex(&bytes)));
-        audit_entry.insert("materialized_at".to_string(), json!(Utc::now()));
+        audit_entry.insert("materialized_at".to_string(), json!(Timestamp::now()));
         if let Some(previous_url) = existing_values
             .and_then(|values| values.get(&field.key))
             .and_then(Value::as_str)
@@ -330,7 +331,7 @@ pub fn signature_lifecycle_summary(schema: &Value, values: &Value, source: &Valu
                 signature_lifecycle_event_timestamp(entry).and_then(|value| parse_signature_audit_timestamp(&value))
             })
             .max()
-            .map(|timestamp| timestamp.to_rfc3339());
+            .map(platform::timestamp::Timestamp::to_rfc3339);
         let status = if current_object_key.is_some() && current_audit_entry_count > 0 {
             "active_with_audit"
         } else if current_object_key.is_some() {
@@ -561,7 +562,7 @@ pub async fn verify_signature_audit_entry_with_storage(
             "expected_byte_size": expected_byte_size,
             "actual_byte_size": actual_byte_size,
             "verified": verified,
-            "verified_at": Utc::now()
+            "verified_at": Timestamp::now()
         }),
     })
 }
@@ -604,7 +605,7 @@ pub async fn verify_signature_audit_source_with_storage(
                     "object_key": entry.get("object_key").and_then(Value::as_str),
                     "verified": false,
                     "error": error.to_string(),
-                    "verified_at": Utc::now()
+                    "verified_at": Timestamp::now()
                 }));
             }
         }
@@ -658,8 +659,8 @@ pub fn expired_signature_object_key(
     schema: &Value,
     field_key: &str,
     value: &str,
-    retained_since: DateTime<Utc>,
-    now: DateTime<Utc>,
+    retained_since: Timestamp,
+    now: Timestamp,
 ) -> Result<Option<String>, ApiError> {
     let Some(retention_days) = signature_retention_days(schema, field_key)? else {
         return Ok(None);
@@ -677,8 +678,8 @@ pub fn expired_signature_object_key(
 pub async fn cleanup_expired_signature_values(
     schema: &Value,
     values: Value,
-    retained_since: DateTime<Utc>,
-    now: DateTime<Utc>,
+    retained_since: Timestamp,
+    now: Timestamp,
 ) -> Result<SignatureRetentionCleanup, ApiError> {
     cleanup_expired_signature_values_with_storage(schema, values, retained_since, now, None).await
 }
@@ -686,8 +687,8 @@ pub async fn cleanup_expired_signature_values(
 pub async fn cleanup_expired_signature_values_with_storage(
     schema: &Value,
     values: Value,
-    retained_since: DateTime<Utc>,
-    now: DateTime<Utc>,
+    retained_since: Timestamp,
+    now: Timestamp,
     storage_override: Option<ObjectStorage>,
 ) -> Result<SignatureRetentionCleanup, ApiError> {
     let mut object = values
@@ -754,7 +755,7 @@ pub async fn cleanup_expired_replaced_signature_audit_entries(
     schema: &Value,
     values: &Value,
     source: Value,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<SignatureAuditRetentionCleanup, ApiError> {
     cleanup_expired_replaced_signature_audit_entries_with_storage(schema, values, source, now, None).await
 }
@@ -763,7 +764,7 @@ pub async fn cleanup_expired_replaced_signature_audit_entries_with_storage(
     schema: &Value,
     values: &Value,
     source: Value,
-    now: DateTime<Utc>,
+    now: Timestamp,
     storage_override: Option<ObjectStorage>,
 ) -> Result<SignatureAuditRetentionCleanup, ApiError> {
     let mut source_object = source
@@ -867,10 +868,8 @@ fn current_signature_object_key(values: &Value, field_key: &str) -> Option<Strin
         .and_then(signature_object_key_from_url)
 }
 
-fn parse_signature_audit_timestamp(value: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(value)
-        .ok()
-        .map(|timestamp| timestamp.with_timezone(&Utc))
+fn parse_signature_audit_timestamp(value: &str) -> Option<Timestamp> {
+    Timestamp::parse_rfc3339(value).ok()
 }
 
 fn is_safe_signature_file_name(file_name: &str) -> bool {
@@ -893,9 +892,10 @@ mod tests {
         verify_signature_audit_entry_with_storage, verify_signature_audit_source_with_storage,
     };
     use crate::{error::ApiError, services::object_storage::ObjectStorage};
-    use chrono::{Duration, TimeZone, Utc};
+    use platform::timestamp::Timestamp;
     use serde_json::json;
     use std::{fs, path::PathBuf};
+    use time::Duration;
     use uuid::Uuid;
 
     #[test]
@@ -967,10 +967,7 @@ mod tests {
                 {"field_id": "fld_signature", "key": "guest_signature", "type": "signature", "signature": {"retention_days": 7}}
             ]
         });
-        let retained_since = Utc
-            .with_ymd_and_hms(2026, 6, 1, 0, 0, 0)
-            .single()
-            .expect("timestamp should be valid");
+        let retained_since = Timestamp::from_utc(time::macros::datetime!(2026-06-01 0:00 UTC));
         let value = "/api/v1/uploads/signatures/signature-guest-123.png";
 
         assert_eq!(
@@ -1016,10 +1013,7 @@ mod tests {
                 {"field_id": "fld_note", "key": "note", "type": "text"}
             ]
         });
-        let retained_since = Utc
-            .with_ymd_and_hms(2026, 6, 1, 0, 0, 0)
-            .single()
-            .expect("timestamp should be valid");
+        let retained_since = Timestamp::from_utc(time::macros::datetime!(2026-06-01 0:00 UTC));
         let now = retained_since + Duration::days(8);
 
         let cleanup = cleanup_expired_signature_values_with_storage(
@@ -1080,10 +1074,7 @@ mod tests {
                 {"field_id": "fld_signature", "key": "guest_signature", "type": "signature", "signature": {"retention_days": 7}}
             ]
         });
-        let retained_since = Utc
-            .with_ymd_and_hms(2026, 6, 1, 0, 0, 0)
-            .single()
-            .expect("timestamp should be valid");
+        let retained_since = Timestamp::from_utc(time::macros::datetime!(2026-06-01 0:00 UTC));
         let now = retained_since + Duration::days(8);
         let source = json!({
             "type": "user",

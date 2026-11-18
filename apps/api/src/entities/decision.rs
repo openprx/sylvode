@@ -1,3 +1,4 @@
+use platform::timestamp::Timestamp;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -18,7 +19,8 @@ pub struct Model {
     pub weighted_approval_rate: Option<f64>,
     pub is_weighted: bool,
     pub veto_event_id: Option<i64>,
-    pub decided_at: DateTimeWithTimeZone,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub decided_at: Timestamp,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -1,5 +1,7 @@
+use platform::timestamp::Timestamp;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::Date;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "decision_audit_reports")]
@@ -7,7 +9,9 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: String,
     pub project_id: Uuid,
+    #[serde(with = "super::iso_date")]
     pub period_start: Date,
+    #[serde(with = "super::iso_date")]
     pub period_end: Date,
     pub total_proposals: i32,
     pub approved_proposals: i32,
@@ -20,7 +24,8 @@ pub struct Model {
     pub domain_stats: Option<Json>,
     pub ai_participation_stats: Option<Json>,
     pub key_insights: Option<Json>,
-    pub generated_at: DateTimeWithTimeZone,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub generated_at: Timestamp,
     pub generated_by: String,
 }
 

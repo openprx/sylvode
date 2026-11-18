@@ -2,7 +2,7 @@
 //! are returned once, never stored in command receipts, logs, event metadata or notifications.
 use super::{appearance, collab::authz::PermissionLevel, public_page, scope, shares};
 use crate::error::ApiError;
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -30,7 +30,7 @@ pub async fn create(
     db: &DatabaseConnection,
     object: Uuid,
     user: Uuid,
-    expires: Option<DateTime<Utc>>,
+    expires: Option<Timestamp>,
 ) -> Result<shares::CreatedShareLink, ApiError> {
     let proof = management_proof(db, object, user).await?;
     let identity = scope::identity(db, object).await?;
@@ -109,7 +109,7 @@ struct PublicGrant {
     title: Option<String>,
     plain_text: Option<String>,
     document_id: Option<Uuid>,
-    expires_at: Option<DateTime<Utc>>,
+    expires_at: Option<Timestamp>,
 }
 async fn grant(db: &DatabaseConnection, token: &str) -> Result<PublicGrant, ApiError> {
     if !shares::valid_token(token) {
@@ -153,7 +153,7 @@ pub async fn read_public(db: &DatabaseConnection, token: &str) -> Result<shares:
         plain_text: text,
         blocks,
         appearance,
-        expires_at: first.expires_at.map(|t| t.to_rfc3339()),
+        expires_at: first.expires_at.map(platform::timestamp::Timestamp::to_rfc3339),
     })
 }
 pub async fn read_public_asset(
@@ -184,4 +184,24 @@ pub async fn read_public_asset(
         content_type: mime,
         bytes,
     })
+}
+
+pub async fn read_public_body_asset(
+    db: &DatabaseConnection,
+    token: &str,
+    asset: Uuid,
+) -> Result<super::body_assets::AssetBytes, ApiError> {
+    let first = grant(db, token).await?;
+    let revision = scope::revision(db, first.scope_id).await?;
+    let (bytes, head) = super::body_assets::read_public_current(db, first.scope_id, first.object_id, asset).await?;
+    let current = grant(db, token).await?;
+    if current.link_id != first.link_id
+        || current.object_id != first.object_id
+        || current.scope_id != first.scope_id
+        || scope::revision(db, first.scope_id).await? != revision
+    {
+        return Err(shares::missing());
+    }
+    super::body_assets::confirm_public_current(db, first.scope_id, first.object_id, asset, head).await?;
+    Ok(bytes)
 }

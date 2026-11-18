@@ -85,9 +85,10 @@ pub async fn get_flow_v2_object(
     {
         let semantic: collab_core::SemanticSnapshot =
             serde_json::from_value(view.field("semantic_content").clone()).map_err(|_| ApiError::internal())?;
-        *view.field_mut("rendered_markdown")? = json!(crate::flow::projection::render_markdown(
+        *view.field_mut("rendered_markdown")? = json!(crate::flow::projection::render_markdown_for_object(
             view.field("title").as_str().unwrap_or(""),
-            &semantic
+            &semantic,
+            object
         ));
     }
     Ok(ApiResponse::success(view))
@@ -116,7 +117,7 @@ pub async fn post_flow_v2_object(
             origin: super::request_origin(&extensions),
         };
         let accepted = if input.initial_fields.is_empty() && input.initial_view.is_none() {
-            crate::flow::command::create_object(&state, legacy).await?
+            crate::flow::command::create_object_with_editor_model(&state, legacy, input.editor_model).await?
         } else {
             crate::flow::command::create_object_with_collection_schema(
                 &state,
@@ -329,14 +330,23 @@ pub async fn get_flow_v2_navigator(
         json!({"scope_id":scope_id,"root_object_id":root,"nodes":nodes,"document_seq":root_view.field("document_seq"),"frontier":root_view.field("frontier")}),
     ))
 }
+#[derive(Deserialize)]
+pub struct EditorModelQuery {
+    #[serde(default = "default_editor_model")]
+    pub editor_model: u32,
+}
+const fn default_editor_model() -> u32 {
+    1
+}
 pub async fn get_flow_v2_bootstrap(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(object): Path<Uuid>,
+    Query(model): Query<EditorModelQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        scope_write::bootstrap(&state.db, object, user(&claims, bot.as_ref())?).await?,
+        scope_write::bootstrap_model(&state.db, object, user(&claims, bot.as_ref())?, model.editor_model).await?,
     ))
 }
 pub async fn post_flow_v2_command(
@@ -344,10 +354,18 @@ pub async fn post_flow_v2_command(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(object): Path<Uuid>,
-    Json(req): Json<super::ExecuteFlowCommandRequest>,
+    Json(mut req): Json<super::ExecuteFlowCommandRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = user(&claims, bot.as_ref())?;
     let identity = scope::identity(&state.db, object).await?;
+    req.command.payload = crate::flow::body_assets::normalize_command_payload(
+        &state.db,
+        object,
+        actor,
+        &req.command.command_type,
+        &req.command.payload,
+    )
+    .await?;
     if identity.object_type == "record"
         && matches!(req.command.command_type.as_str(), "record_patch" | "record_archive")
     {
@@ -491,7 +509,11 @@ pub async fn post_flow_v2_command(
             &tx,
             &[object],
             if archived { "archived" } else { "active" },
-            if archived { Some(chrono::Utc::now()) } else { None },
+            if archived {
+                Some(platform::timestamp::Timestamp::now())
+            } else {
+                None
+            },
             Some(actor),
         )
         .await?;
@@ -578,6 +600,8 @@ pub async fn post_flow_v2_command(
 
 #[derive(Deserialize)]
 pub struct ScopeTicketRequest {
+    #[serde(default = "default_editor_model")]
+    editor_model: u32,
     object_id: Uuid,
     document_id: Uuid,
     client_id: String,
@@ -591,6 +615,14 @@ pub async fn post_flow_v2_ticket(
     bot: Option<Extension<BotAuthContext>>,
     Json(req): Json<ScopeTicketRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    scope::authorize(
+        &state.db,
+        req.object_id,
+        user(&claims, bot.as_ref())?,
+        crate::flow::collab::authz::PermissionLevel::View,
+    )
+    .await?;
+    crate::flow::scope_editor::require_model(&state.db, req.object_id, req.editor_model).await?;
     Ok(ApiResponse::success(
         crate::flow::scope_collab::issue_with_options(
             &state.db,
@@ -699,10 +731,28 @@ pub async fn get_flow_v2_history(
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = user(&claims, bot.as_ref())?;
     let proof = scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
-    let rows=state.db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT u.seq,u.actor_id AS actor,u.origin_surface AS origin,e.metadata->>'message' AS message,COALESCE(e.metadata->'semantic_summary','{}'::jsonb) AS semantic_summary,u.created_at FROM collab_updates u JOIN collab_documents d ON d.id=u.document_id JOIN business_events e ON e.id=u.event_id WHERE d.object_id=$1 AND ($2::bigint IS NULL OR u.seq<$2) ORDER BY u.seq DESC LIMIT $3",vec![object.into(),query.before_seq.into(),i64::try_from(query.limit.unwrap_or(50).clamp(1,100)).unwrap_or(100).into()])).await?;
+    let rows = state.db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT seq,actor,origin,message,semantic_summary,created_at FROM (
+           SELECT u.seq,u.actor_id AS actor,u.origin_surface AS origin,e.metadata->>'message' AS message,
+                  CASE WHEN e.event_type='flow.version.imported' THEN e.payload
+                       ELSE COALESCE(e.metadata->'semantic_summary','{}'::jsonb) END AS semantic_summary,u.created_at
+             FROM collab_updates u JOIN collab_documents d ON d.id=u.document_id
+             JOIN business_events e ON e.id=u.event_id WHERE d.object_id=$1
+           UNION ALL
+           SELECT 0,e.actor_id,'system',NULL,
+                  jsonb_build_object('imported',true,'source_seq',e.metadata->'imported_base_source_seq',
+                      'source_recorded_at',e.metadata->'imported_base_source_recorded_at',
+                      'package_sha256',e.metadata->'package_sha256'),e.created_at
+             FROM collab_documents d JOIN business_events e
+               ON e.aggregate_id=d.object_id::text AND e.idempotency_key='portable_graph_create:'||d.object_id::text
+             WHERE d.object_id=$1 AND e.event_type='flow.object.created' AND e.metadata->>'imported_base_source_seq' IS NOT NULL
+               AND (d.snapshot_seq=0 OR EXISTS(SELECT 1 FROM collab_updates first WHERE first.document_id=d.id AND first.seq=1))
+         ) versions WHERE ($2::bigint IS NULL OR seq<$2) ORDER BY seq DESC LIMIT $3",
+        vec![object.into(),query.before_seq.into(),i64::try_from(query.limit.unwrap_or(50).clamp(1,100)).unwrap_or(100).into()])
+    ).await?;
     let mut items = Vec::new();
     for row in rows {
-        items.push(json!({"seq":row.try_get::<i64>("","seq")?,"actor":row.try_get::<Option<Uuid>>("","actor")?,"origin":row.try_get::<String>("","origin")?,"message":row.try_get::<Option<String>>("","message")?,"semantic_summary":row.try_get::<Value>("","semantic_summary")?,"created_at":row.try_get::<chrono::DateTime<chrono::Utc>>("","created_at")?.to_rfc3339()}));
+        items.push(json!({"seq":row.try_get::<i64>("","seq")?,"actor":row.try_get::<Option<Uuid>>("","actor")?,"origin":row.try_get::<String>("","origin")?,"message":row.try_get::<Option<String>>("","message")?,"semantic_summary":row.try_get::<Value>("","semantic_summary")?,"created_at":row.try_get::<platform::timestamp::Timestamp>("","created_at")?.to_rfc3339()}));
     }
     if !scope::proof_current(&state.db, &proof).await? {
         return Err(crate::flow::policy::authorization_read_unstable());
@@ -737,7 +787,7 @@ pub async fn get_flow_v2_grants(
         if proof.level < PermissionLevel::FullAccess {
             break;
         }
-        grants.push(json!({"principal_kind":row.try_get::<String>("","principal_kind")?,"principal_id":row.try_get::<Uuid>("","principal_id")?,"level":row.try_get::<String>("","level")?,"granted_by":row.try_get::<Option<Uuid>>("","granted_by")?,"created_at":row.try_get::<chrono::DateTime<chrono::Utc>>("","created_at")?.to_rfc3339()}));
+        grants.push(json!({"principal_kind":row.try_get::<String>("","principal_kind")?,"principal_id":row.try_get::<Uuid>("","principal_id")?,"level":row.try_get::<String>("","level")?,"granted_by":row.try_get::<Option<Uuid>>("","granted_by")?,"created_at":row.try_get::<platform::timestamp::Timestamp>("","created_at")?.to_rfc3339()}));
     }
     if !scope::proof_current(&state.db, &proof).await? {
         return Err(crate::flow::policy::authorization_read_unstable());
@@ -830,7 +880,7 @@ pub async fn get_flow_v2_search(
     bot: Option<Extension<BotAuthContext>>,
     Path(scope_id): Path<Uuid>,
     Query(query): Query<super::FlowSearchQuery>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let actor = user(&claims, bot.as_ref())?;
     let owner_scope = accessible_scope(&state, scope_id, actor).await?;
     let selectors =
@@ -863,6 +913,17 @@ pub async fn get_flow_v2_search(
     }
     if query.q.is_empty() || query.q.chars().count() > 256 {
         return Err(ApiError::invalid_update("q must contain1..256 characters"));
+    }
+    if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
+        return Ok(super::get_flow_search(
+            State(state),
+            Extension(claims),
+            bot,
+            Path(workspace),
+            super::FlowQuery(query),
+        )
+        .await?
+        .into_response());
     }
     let cursor = query
         .cursor
@@ -924,7 +985,8 @@ pub async fn get_flow_v2_search(
     }
     Ok(ApiResponse::success(
         json!({"items":items,"next_cursor":next,"index_frontier":{"indexed_seq":indexed,"head_seq":head,"lag":head-indexed,"stale":false}}),
-    ))
+    )
+    .into_response())
 }
 fn escape_html(text: &str) -> String {
     text.replace('&', "&amp;")
@@ -1039,6 +1101,17 @@ pub async fn post_flow_v2_mount(
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
         crate::flow::scope_mounts::create(&state.db, user(&claims, bot.as_ref())?, object, input).await?,
+    ))
+}
+pub async fn patch_flow_v2_mount(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((object, mount)): Path<(Uuid, Uuid)>,
+    Json(input): Json<crate::flow::scope_mounts::ChangeMountInput>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::scope_mounts::change(&state.db, user(&claims, bot.as_ref())?, object, mount, input).await?,
     ))
 }
 pub async fn delete_flow_v2_mount(
@@ -1755,7 +1828,7 @@ pub async fn get_flow_v2_asset(
 
 #[derive(Deserialize)]
 pub struct ScopeShareCreate {
-    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    expires_at: Option<platform::timestamp::Timestamp>,
 }
 pub async fn get_flow_v2_share_links(
     State(state): State<AppState>,
@@ -2322,4 +2395,425 @@ pub async fn get_flow_v2_collab_diagnostics(
         return Err(crate::flow::policy::authorization_read_unstable());
     }
     Ok(ApiResponse::success(result).into_response())
+}
+
+fn body_asset_intent(headers: &axum::http::HeaderMap) -> Result<String, ApiError> {
+    let key = optional_intent(headers)?.ok_or_else(|| ApiError::invalid_update("Idempotency-Key is required"))?;
+    if key.trim().is_empty() || key.len() > 128 {
+        return Err(ApiError::invalid_update("Idempotency-Key must contain 1..128 bytes"));
+    }
+    Ok(key.into())
+}
+pub async fn get_flow_v2_body_asset_limits(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(object): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::body_assets::limits_for(&state.db, object, user(&claims, bot.as_ref())?).await?,
+    ))
+}
+pub async fn post_flow_v2_body_asset(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(object): Path<Uuid>,
+    request: axum::extract::Request,
+) -> Result<impl IntoResponse, ApiError> {
+    use axum::extract::FromRequest;
+    let actor = user(&claims, bot.as_ref())?;
+    let key = body_asset_intent(request.headers())?;
+    let limits = crate::flow::body_assets::admit_upload(&state.db, object, actor).await?;
+    let multipart = axum::extract::Multipart::from_request(request, &state)
+        .await
+        .map_err(|_| ApiError::invalid_update("body assets require valid multipart/form-data"))?;
+    let upload = crate::flow::body_assets::decode_multipart(multipart, limits.max_bytes).await?;
+    Ok(ApiResponse::success(
+        crate::flow::body_assets::upload(&state.db, object, actor, upload, &key).await?,
+    ))
+}
+pub async fn post_flow_v2_body_asset_base64(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(object): Path<Uuid>,
+    request: axum::extract::Request,
+) -> Result<impl IntoResponse, ApiError> {
+    use axum::extract::FromRequest;
+    let actor = user(&claims, bot.as_ref())?;
+    let key = body_asset_intent(request.headers())?;
+    let limits = crate::flow::body_assets::admit_upload(&state.db, object, actor).await?;
+    let Json(input) = Json::<crate::flow::body_assets::Base64Upload>::from_request(request, &state)
+        .await
+        .map_err(|_| ApiError::invalid_update("invalid body asset JSON"))?;
+    let upload = crate::flow::body_assets::decode_base64(&input, limits.max_bytes)?;
+    Ok(ApiResponse::success(
+        crate::flow::body_assets::upload(&state.db, object, actor, upload, &key).await?,
+    ))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BodyAssetCopy {
+    source_object_id: Uuid,
+    asset_id: Uuid,
+}
+pub async fn post_flow_v2_body_asset_copy(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(object): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(input): Json<BodyAssetCopy>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::body_assets::copy_into(
+            &state.db,
+            object,
+            input.source_object_id,
+            input.asset_id,
+            user(&claims, bot.as_ref())?,
+            &body_asset_intent(&headers)?,
+        )
+        .await?,
+    ))
+}
+pub async fn get_flow_v2_body_asset_metadata(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((object, asset)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::body_assets::metadata(&state.db, object, asset, user(&claims, bot.as_ref())?).await?,
+    ))
+}
+fn body_asset_response(asset: crate::flow::body_assets::AssetBytes) -> Result<Response, ApiError> {
+    use axum::http::{HeaderMap, HeaderValue, header};
+    let mut headers = HeaderMap::new();
+    for (key, value) in [
+        (header::CONTENT_TYPE, asset.metadata.content_type),
+        (header::CONTENT_DISPOSITION, asset.disposition),
+        (header::CONTENT_LENGTH, asset.bytes.len().to_string()),
+        (header::CACHE_CONTROL, "private, no-store".into()),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff".into()),
+    ] {
+        headers.insert(key, HeaderValue::from_str(&value).map_err(|_| ApiError::internal())?);
+    }
+    headers.insert(
+        "x-flow-asset-sha256",
+        HeaderValue::from_str(&asset.metadata.sha256).map_err(|_| ApiError::internal())?,
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static("Content-Disposition, Content-Type, Content-Length, X-Flow-Asset-SHA256"),
+    );
+    Ok((headers, asset.bytes).into_response())
+}
+pub async fn get_flow_v2_body_asset(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((object, asset)): Path<(Uuid, Uuid)>,
+) -> Result<Response, ApiError> {
+    body_asset_response(crate::flow::body_assets::read(&state.db, object, asset, user(&claims, bot.as_ref())?).await?)
+}
+pub async fn delete_flow_v2_body_asset(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((object, asset)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::body_assets::discard(
+            &state.db,
+            object,
+            asset,
+            user(&claims, bot.as_ref())?,
+            &body_asset_intent(&headers)?,
+        )
+        .await?,
+    ))
+}
+pub async fn get_flow_v2_public_body_asset(
+    State(state): State<AppState>,
+    Path((token, asset)): Path<(String, Uuid)>,
+    super::ShareClientIp(ip): super::ShareClientIp,
+) -> Result<Response, ApiError> {
+    crate::flow::shares::enforce_public_share_rate_limit(&state.db, ip).await?;
+    body_asset_response(crate::flow::scope_shares::read_public_body_asset(&state.db, &token, asset).await?)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChildReservationInput {
+    title: String,
+}
+pub async fn post_flow_v2_child_reservation(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(object): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(input): Json<ChildReservationInput>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::child_pages::reserve(
+            &state.db,
+            object,
+            user(&claims, bot.as_ref())?,
+            &input.title,
+            &body_asset_intent(&headers)?,
+        )
+        .await?,
+    ))
+}
+pub async fn get_flow_v2_child_reservation(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((object, reservation)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::child_pages::status(&state.db, object, reservation, user(&claims, bot.as_ref())?).await?,
+    ))
+}
+pub async fn delete_flow_v2_child_reservation(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((object, reservation)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::child_pages::cancel(
+            &state.db,
+            object,
+            reservation,
+            user(&claims, bot.as_ref())?,
+            &body_asset_intent(&headers)?,
+        )
+        .await?,
+    ))
+}
+
+pub async fn post_flow_v2_block_share(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(source): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(input): Json<crate::flow::block_shares::CreateInput>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::block_shares::create(
+            &state.db,
+            user(&claims, bot.as_ref())?,
+            source,
+            &body_asset_intent(&headers)?,
+            input,
+        )
+        .await?,
+    ))
+}
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockShareContextQuery {
+    pub workspace_id: Option<Uuid>,
+    pub project_id: Option<Uuid>,
+}
+pub async fn get_flow_v2_block_share(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(share): Path<Uuid>,
+    Query(context): Query<BlockShareContextQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::block_shares::read_in_context(
+            &state.db,
+            user(&claims, bot.as_ref())?,
+            share,
+            context.workspace_id,
+            context.project_id,
+        )
+        .await?,
+    ))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockShareDiscoveryQuery {
+    pub workspace_id: Uuid,
+    pub project_id: Option<Uuid>,
+    pub cursor: Option<Uuid>,
+}
+pub async fn get_flow_v2_block_shares(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Query(context): Query<BlockShareDiscoveryQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::block_shares::discover_page(
+            &state.db,
+            user(&claims, bot.as_ref())?,
+            context.workspace_id,
+            context.project_id,
+            context.cursor,
+        )
+        .await?,
+    ))
+}
+pub async fn patch_flow_v2_block_share(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(share): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(input): Json<collab_core::block_projection::SharedPatch>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::block_shares::patch(
+            &state.db,
+            user(&claims, bot.as_ref())?,
+            share,
+            &body_asset_intent(&headers)?,
+            input,
+        )
+        .await?,
+    ))
+}
+pub async fn get_flow_v2_block_share_asset(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((share, alias)): Path<(Uuid, Uuid)>,
+) -> Result<Response, ApiError> {
+    use axum::http::{HeaderMap, HeaderValue, header};
+    let asset = crate::flow::block_shares::read_asset(&state.db, user(&claims, bot.as_ref())?, share, alias).await?;
+    let mut headers = HeaderMap::new();
+    for (key, value) in [
+        (header::CONTENT_TYPE, asset.content_type),
+        (header::CONTENT_DISPOSITION, asset.disposition),
+        (header::CONTENT_LENGTH, asset.bytes.len().to_string()),
+        (header::CACHE_CONTROL, "private, no-store".into()),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff".into()),
+        (
+            axum::http::HeaderName::from_static("x-flow-share-id"),
+            asset.share_id.to_string(),
+        ),
+        (
+            axum::http::HeaderName::from_static("x-flow-asset-alias"),
+            asset.asset_alias.to_string(),
+        ),
+        (axum::http::HeaderName::from_static("x-flow-asset-sha256"), asset.sha256),
+    ] {
+        headers.insert(key, HeaderValue::from_str(&value).map_err(|_| ApiError::internal())?);
+    }
+    headers.insert(header::ACCESS_CONTROL_EXPOSE_HEADERS,HeaderValue::from_static("Content-Disposition, Content-Type, Content-Length, X-Flow-Asset-SHA256, X-Flow-Share-ID, X-Flow-Asset-Alias"));
+    Ok((headers, asset.bytes).into_response())
+}
+
+pub async fn get_flow_v2_source_block_shares(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(source): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::block_shares::list_source(&state.db, user(&claims, bot.as_ref())?, source).await?,
+    ))
+}
+pub async fn post_flow_v2_suspend_block_share(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((source, share)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::block_shares::suspend(
+            &state.db,
+            user(&claims, bot.as_ref())?,
+            source,
+            share,
+            &body_asset_intent(&headers)?,
+        )
+        .await?,
+    ))
+}
+pub async fn post_flow_v2_revoke_block_share(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((source, share)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::block_shares::revoke(
+            &state.db,
+            user(&claims, bot.as_ref())?,
+            source,
+            share,
+            &body_asset_intent(&headers)?,
+        )
+        .await?,
+    ))
+}
+pub async fn post_flow_v2_republish_block_share(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((source, share)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+    Json(input): Json<crate::flow::block_shares::CreateInput>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::block_shares::republish(
+            &state.db,
+            user(&claims, bot.as_ref())?,
+            source,
+            share,
+            &body_asset_intent(&headers)?,
+            input,
+        )
+        .await?,
+    ))
+}
+pub async fn delete_flow_v2_block_share_placement(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((share, placement)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::block_shares::remove_placement(
+            &state.db,
+            user(&claims, bot.as_ref())?,
+            share,
+            placement,
+            &body_asset_intent(&headers)?,
+        )
+        .await?,
+    ))
+}
+
+pub async fn get_flow_v2_block_share_placements(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Query(query): Query<BlockShareDiscoveryQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(ApiResponse::success(
+        crate::flow::block_shares::list_target_placements(
+            &state.db,
+            user(&claims, bot.as_ref())?,
+            query.workspace_id,
+            query.project_id,
+            query.cursor,
+        )
+        .await?,
+    ))
 }

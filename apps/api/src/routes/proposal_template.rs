@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -58,8 +58,8 @@ pub struct ProposalTemplateRow {
     pub is_default: bool,
     pub is_active: bool,
     pub created_by: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 pub async fn list_proposal_templates(
@@ -147,7 +147,7 @@ pub async fn create_proposal_template(
     }
 
     let template_id = format!("TPL-{}", Uuid::new_v4());
-    let now = Utc::now();
+    let now = Timestamp::now();
     let is_default = req.is_default.unwrap_or(false);
     let is_active = req.is_active.unwrap_or(true);
 
@@ -289,7 +289,7 @@ pub async fn update_proposal_template(
             tx.execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "UPDATE proposal_templates SET is_default = false, updated_at = $2 WHERE project_id = $1",
-                vec![existing.project_id.into(), Utc::now().into()],
+                vec![existing.project_id.into(), Timestamp::now().into()],
             ))
             .await?;
         }
@@ -305,7 +305,7 @@ pub async fn update_proposal_template(
     }
 
     set_parts.push(format!("updated_at = ${idx}"));
-    values.push(Utc::now().into());
+    values.push(Timestamp::now().into());
     idx += 1;
 
     values.push(id.clone().into());

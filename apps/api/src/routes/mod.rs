@@ -27,6 +27,7 @@ pub mod member;
 pub mod my;
 pub mod notification;
 pub mod plugin;
+pub mod plugin_package;
 pub mod project;
 pub mod project_type;
 pub mod proposal;

@@ -5,9 +5,9 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use platform::app::AppState;
+use platform::timestamp::Timestamp;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::Serialize;
@@ -202,7 +202,7 @@ struct DeliveryRecord {
     error: Option<String>,
     duration_ms: Option<i64>,
     success: bool,
-    delivered_at: DateTime<Utc>,
+    delivered_at: Timestamp,
 }
 
 pub fn trigger_webhooks(state: AppState, ctx: TriggerContext) {
@@ -241,7 +241,7 @@ async fn trigger_webhooks_inner(state: AppState, ctx: TriggerContext) -> Result<
                 let fallback_payload = json!({
                     "id": delivery_id.to_string(),
                     "event": ctx.event.as_str(),
-                    "timestamp": Utc::now().to_rfc3339(),
+                    "timestamp": Timestamp::now().to_rfc3339(),
                 });
                 let _ = record_delivery(
                     &state,
@@ -255,7 +255,7 @@ async fn trigger_webhooks_inner(state: AppState, ctx: TriggerContext) -> Result<
                         error: Some(format!("build payload failed: {err}")),
                         duration_ms: None,
                         success: false,
-                        delivered_at: Utc::now(),
+                        delivered_at: Timestamp::now(),
                     },
                 )
                 .await;
@@ -338,7 +338,7 @@ async fn build_payload(
     Ok(WebhookPayload {
         id: delivery_id.to_string(),
         event: ctx.event.as_str().to_string(),
-        timestamp: Utc::now().to_rfc3339(),
+        timestamp: Timestamp::now().to_rfc3339(),
         workspace: PayloadWorkspace {
             id: workspace.id.to_string(),
             name: workspace.name,
@@ -526,10 +526,10 @@ async fn build_event_data(
                 name: String,
                 description: String,
                 status: String,
-                start_date: Option<chrono::NaiveDate>,
-                end_date: Option<chrono::NaiveDate>,
-                created_at: DateTime<Utc>,
-                updated_at: DateTime<Utc>,
+                start_date: Option<time::Date>,
+                end_date: Option<time::Date>,
+                created_at: Timestamp,
+                updated_at: Timestamp,
             }
 
             let sprint = SprintRow::find_by_statement(Statement::from_sql_and_values(
@@ -596,8 +596,8 @@ async fn fetch_issue_payload(
         priority: String,
         assignee_id: Option<Uuid>,
         sprint_id: Option<Uuid>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
+        created_at: Timestamp,
+        updated_at: Timestamp,
     }
 
     #[derive(Debug, FromQueryResult)]
@@ -665,8 +665,8 @@ async fn fetch_comment_payload(
         content: String,
         author_id: Option<Uuid>,
         author_name: Option<String>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
+        created_at: Timestamp,
+        updated_at: Timestamp,
     }
 
     #[derive(Debug, FromQueryResult)]
@@ -879,7 +879,7 @@ async fn deliver_webhook(
                 )),
                 duration_ms: Some(0),
                 success: false,
-                delivered_at: Utc::now(),
+                delivered_at: Timestamp::now(),
             };
             if let Err(record_err) = record_delivery(state, record).await {
                 tracing::warn!(webhook_id = %webhook.id, error = %record_err, "webhook delivery record not stored");
@@ -924,7 +924,7 @@ async fn deliver_webhook(
         error,
         duration_ms: Some(duration_ms),
         success,
-        delivered_at: Utc::now(),
+        delivered_at: Timestamp::now(),
     };
     if let Err(record_err) = record_delivery(state, record).await {
         tracing::warn!(webhook_id = %webhook.id, error = %record_err, "webhook delivery record not stored");
@@ -935,7 +935,7 @@ async fn deliver_webhook(
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE webhooks SET last_triggered_at = $1 WHERE id = $2",
-            vec![Utc::now().into(), webhook.id.into()],
+            vec![Timestamp::now().into(), webhook.id.into()],
         ))
         .await
     {
@@ -1050,7 +1050,7 @@ async fn record_delivery(state: &AppState, rec: DeliveryRecord) -> Result<(), se
         push("delivered_at", rec.delivered_at.into());
     }
     if columns.contains("created_at") {
-        push("created_at", Utc::now().into());
+        push("created_at", Timestamp::now().into());
     }
     if columns.contains("retry_count") {
         push("retry_count", 0_i32.into());

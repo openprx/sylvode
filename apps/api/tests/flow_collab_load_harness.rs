@@ -96,9 +96,9 @@ use axum::middleware as axum_middleware;
 use axum::routing::{get, post};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use chrono::{DateTime, NaiveDateTime, Utc};
 use collab_core::{CollabEngine, LoroCollabEngine};
 use futures_util::{SinkExt, StreamExt};
+use platform::timestamp::Timestamp;
 use platform::{
     app::AppState,
     auth::JwtManager,
@@ -107,6 +107,7 @@ use platform::{
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use time::PrimitiveDateTime;
 use tokio_tungstenite::tungstenite::Message as TMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
@@ -289,7 +290,7 @@ fn emit_environment_not_satisfied(reason_code: &str, detail: &str) {
     let value = json!({
         "schema_version": "sylvode.flow.collab-load-harness-environment.v1",
         "source_head": option_env!("GIT_HASH").unwrap_or("runtime-test-build"),
-        "generated_at": Utc::now().to_rfc3339(),
+        "generated_at": Timestamp::now().to_rfc3339(),
         "environment_gate": {
             "status": "not_satisfied",
             "reason_code": reason_code,
@@ -804,14 +805,14 @@ async fn rest_bootstrap(addr: SocketAddr, token: &str, object_id: Uuid) -> Surfa
 #[derive(Debug, Clone)]
 struct LoggedStatement {
     /// When the statement *finished* (`PostgreSQL` logs the duration line on completion).
-    at: DateTime<Utc>,
+    at: Timestamp,
     duration_ms: f64,
     sql: String,
 }
 
 impl LoggedStatement {
-    fn started_at(&self) -> DateTime<Utc> {
-        self.at - chrono::Duration::microseconds((self.duration_ms * 1000.0).round() as i64)
+    fn started_at(&self) -> Timestamp {
+        self.at - time::Duration::microseconds((self.duration_ms * 1000.0).round() as i64)
     }
 }
 
@@ -826,7 +827,7 @@ impl LoggedTransaction {
         let (Some(first), Some(last)) = (self.statements.first(), self.statements.last()) else {
             return 0.0;
         };
-        (last.at - first.started_at()).num_microseconds().unwrap_or(0) as f64 / 1000.0
+        (last.at - first.started_at()).as_seconds_f64() * 1000.0
     }
 
     /// Wall time inside this transaction during which no SQL was executing — the application
@@ -834,7 +835,7 @@ impl LoggedTransaction {
     fn app_gaps_ms(&self) -> Vec<f64> {
         self.statements
             .windows(2)
-            .map(|pair| (pair[1].started_at() - pair[0].at).num_microseconds().unwrap_or(0) as f64 / 1000.0)
+            .map(|pair| (pair[1].started_at() - pair[0].at).as_seconds_f64() * 1000.0)
             .map(|gap| gap.max(0.0))
             .collect()
     }
@@ -908,7 +909,7 @@ impl LoggedTransaction {
 /// classify (the `FOR UPDATE` row lock, the tail `SELECT`) arrive as blanks and the run silently
 /// measures nothing. The map is built from the whole harvested log, including the lines that
 /// precede the measurement window, because a connection prepares each statement once.
-fn parse_pg_log(raw: &str, from: DateTime<Utc>) -> BTreeMap<i32, Vec<LoggedStatement>> {
+fn parse_pg_log(raw: &str, from: Timestamp) -> BTreeMap<i32, Vec<LoggedStatement>> {
     let mut per_pid: BTreeMap<i32, Vec<LoggedStatement>> = BTreeMap::new();
     let mut prepared: HashMap<(i32, String), String> = HashMap::new();
     let mut pending: Option<ParsedLogLine> = None;
@@ -943,18 +944,32 @@ fn parse_pg_log(raw: &str, from: DateTime<Utc>) -> BTreeMap<i32, Vec<LoggedState
     per_pid
 }
 
+fn parse_log_timestamp(stamp: &str) -> Option<Timestamp> {
+    const WITH_FRACTION: time::format_description::StaticFormatDescription =
+        time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond]");
+    const WITHOUT_FRACTION: time::format_description::StaticFormatDescription =
+        time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+    let format = if stamp.contains('.') {
+        WITH_FRACTION
+    } else {
+        WITHOUT_FRACTION
+    };
+    PrimitiveDateTime::parse(stamp.trim(), format)
+        .ok()
+        .map(|value| Timestamp::from_utc(value.assume_utc()))
+}
+
 /// True when the line opens a new server log record (`%m [%p] `), whether or not it is a
 /// `duration:` line — anything else is a continuation of the previous record's body.
 fn is_log_line_start(line: &str) -> bool {
     line.split_once(" UTC [").is_some_and(|(stamp, rest)| {
-        NaiveDateTime::parse_from_str(stamp.trim(), "%Y-%m-%d %H:%M:%S%.f").is_ok()
-            && rest.split_once("] ").is_some_and(|(pid, _)| pid.parse::<i32>().is_ok())
+        parse_log_timestamp(stamp).is_some() && rest.split_once("] ").is_some_and(|(pid, _)| pid.parse::<i32>().is_ok())
     })
 }
 
 fn flush_log_line(
     parsed: ParsedLogLine,
-    from: DateTime<Utc>,
+    from: Timestamp,
     prepared: &mut HashMap<(i32, String), String>,
     per_pid: &mut BTreeMap<i32, Vec<LoggedStatement>>,
 ) {
@@ -988,7 +1003,7 @@ fn flush_log_line(
 /// statement duration in milliseconds, and the SQL body (empty on a `bind`/`execute` of an
 /// already-parsed named statement).
 struct ParsedLogLine {
-    at: DateTime<Utc>,
+    at: Timestamp,
     pid: i32,
     prepared_name: Option<String>,
     duration_ms: f64,
@@ -997,9 +1012,7 @@ struct ParsedLogLine {
 
 fn parse_pg_log_line(line: &str) -> Option<ParsedLogLine> {
     let (stamp, rest) = line.split_once(" UTC [")?;
-    let at = NaiveDateTime::parse_from_str(stamp.trim(), "%Y-%m-%d %H:%M:%S%.f")
-        .ok()?
-        .and_utc();
+    let at = parse_log_timestamp(stamp)?;
     let (pid_raw, rest) = rest.split_once("] ")?;
     let pid: i32 = pid_raw.parse().ok()?;
     let rest = rest.strip_prefix("LOG:  duration: ")?;
@@ -1807,13 +1820,15 @@ fn reconstruction_covers_accepted_updates(reconstruction: &Reconstruction, accep
     reconstruction.committed_writes() >= accepted_total && reconstruction.unterminated == 0
 }
 
-fn reconstruct(raw: &str, log_start: DateTime<Utc>, window_start: DateTime<Utc>) -> Reconstruction {
+fn reconstruct(raw: &str, log_start: Timestamp, window_start: Timestamp) -> Reconstruction {
+    const UTC_SECOND: time::format_description::StaticFormatDescription =
+        time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
     let per_pid = parse_pg_log(raw, log_start);
     let parsed_statements = per_pid.values().map(Vec::len).sum();
     let mut statement_counts_per_second = BTreeMap::new();
     for statement in per_pid.values().flatten() {
         *statement_counts_per_second
-            .entry(statement.at.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .entry(statement.at.format(UTC_SECOND).expect("UTC second formats"))
             .or_insert(0) += 1;
     }
     let unresolved_statements = per_pid
@@ -2031,7 +2046,7 @@ async fn ten_client_load_harness_round_trip_p95_and_lock_hold_p95() {
     // Everything logged from here on is harvested, but only transactions that *begin* after
     // `window_start` below are measured. The earlier lines still matter: they carry the `parse`
     // bodies that name the prepared statements the measured window reuses.
-    let log_start = Utc::now();
+    let log_start = Timestamp::now();
     if !logging_enabled {
         report.fail("could not enable log_min_duration_statement on the scratch database: the lock-hold measurement has no authority to read");
     }
@@ -2069,7 +2084,7 @@ async fn ten_client_load_harness_round_trip_p95_and_lock_hold_p95() {
     };
 
     // The measurement window opens here: everything logged from now on belongs to the load.
-    let window_start = Utc::now();
+    let window_start = Timestamp::now();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // ---- concurrent REST/WS parity probes, running *during* the write load ----
@@ -2432,13 +2447,12 @@ mod harness_self_checks {
         calibrated_gap_resolution_status, client_tier_key, drop_each_nth_log_line, group_transactions, parse_pg_log,
         percentile_ms, reconstruct, reconstruction_covers_accepted_updates, round_trip_budget_violation,
     };
-    use chrono::{DateTime, TimeZone, Utc};
+    use platform::timestamp::Timestamp;
 
-    fn at(seconds: i64, millis: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 8, 30, 22, 0, seconds.try_into().unwrap_or(0))
-            .single()
-            .expect("a valid timestamp")
-            + chrono::Duration::milliseconds(i64::from(millis))
+    fn at(seconds: i64, millis: u32) -> Timestamp {
+        Timestamp::from_utc(time::macros::datetime!(2026-08-30 22:00:00 UTC))
+            + time::Duration::seconds(seconds)
+            + time::Duration::milliseconds(i64::from(millis))
     }
 
     fn statement(seconds: i64, millis: u32, duration_ms: f64, sql: &str) -> LoggedStatement {
@@ -2634,7 +2648,7 @@ mod harness_self_checks {
 2026-08-30 22:00:00.005 UTC [42] LOG:  duration: 0.020 ms  execute sqlx_s_2: 
 2026-08-30 22:00:00.010 UTC [42] LOG:  duration: 1.000 ms  statement: COMMIT
 ";
-        let per_pid = parse_pg_log(raw, at(0, 0) - chrono::Duration::seconds(60));
+        let per_pid = parse_pg_log(raw, at(0, 0) - time::Duration::seconds(60));
         let statements = per_pid.get(&42).expect("the backend was parsed");
         assert!(
             statements.iter().all(|statement| !statement.sql.is_empty()),
@@ -2687,11 +2701,11 @@ mod harness_self_checks {
             ));
         }
         let raw = lines.join("\n");
-        let complete = reconstruct(&raw, at(0, 0) - chrono::Duration::seconds(60), at(0, 0));
+        let complete = reconstruct(&raw, at(0, 0) - time::Duration::seconds(60), at(0, 0));
         assert!(reconstruction_covers_accepted_updates(&complete, 10));
         let mutated = drop_each_nth_log_line(&raw, 10);
         assert_eq!(mutated.lines().count(), 27);
-        let incomplete = reconstruct(&mutated, at(0, 0) - chrono::Duration::seconds(60), at(0, 0));
+        let incomplete = reconstruct(&mutated, at(0, 0) - time::Duration::seconds(60), at(0, 0));
         assert!(
             !reconstruction_covers_accepted_updates(&incomplete, 10),
             "dropping 10% of authoritative log lines must make the coverage verdict red"

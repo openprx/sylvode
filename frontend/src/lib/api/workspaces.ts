@@ -10,6 +10,11 @@ export interface Workspace {
 }
 
 export interface WorkspaceMember {
+	/** Existing authenticated member-list response, not a global directory. */
+	email?: string;
+	name?: string;
+	entity_type?: string;
+	agent_type?: string | null;
 	user_id: string;
 	workspace_id: string;
 	role: 'owner' | 'admin' | 'member';

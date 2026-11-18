@@ -10,8 +10,8 @@ use super::{
 };
 use crate::error::{ApiError, ApiErrorKind};
 use crate::flow::json_value::FlowJson;
-use chrono::{DateTime, Utc};
 use platform::app::AppState;
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -23,7 +23,7 @@ struct StoredEdge {
     relation_type: String,
     position_key: String,
     properties: Value,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 }
 pub async fn execute(
     state: &AppState,

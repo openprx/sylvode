@@ -67,8 +67,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use chrono::Utc;
 use collab_core::{CollabEngine, LoroCollabEngine, NodeId, NodeKind, Operation};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -207,7 +207,7 @@ fn emit(value: &Value) {
 fn emit_not_satisfied(reason_code: &str, detail: &str) {
     emit(&json!({
         "schema_version": "sylvode.flow.subtree-budget-measurement.v1",
-        "generated_at": Utc::now().to_rfc3339(),
+        "generated_at": Timestamp::now().to_rfc3339(),
         "environment_gate": {
             "status": "not_satisfied",
             "reason_code": reason_code,
@@ -1448,7 +1448,7 @@ async fn move_subtree_nodes_max_cost_curve() {
 
     let report = json!({
         "schema_version": "sylvode.flow.subtree-budget-measurement.v1",
-        "generated_at": Utc::now().to_rfc3339(),
+        "generated_at": Timestamp::now().to_rfc3339(),
         "environment_gate": {
             "status": "satisfied",
             "declared_dedicated_pg_container": std::env::var(DEDICATED_PG_CONTAINER_ENV).ok(),

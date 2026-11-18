@@ -38,8 +38,8 @@ use std::fmt::Write as _;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
-use chrono::{DateTime, Utc};
 use platform::app::AppState;
+use platform::timestamp::Timestamp;
 use ring::{
     aead::{self, Aad, LessSafeKey, Nonce, UnboundKey},
     rand::{SecureRandom, SystemRandom},
@@ -639,7 +639,7 @@ struct RelationReadRow {
     source_object_id: Uuid,
     position_key: String,
     properties: Value,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     source_workspace_id: Option<Uuid>,
     target_workspace_id: Option<Uuid>,
     other_id: Option<Uuid>,
@@ -660,7 +660,7 @@ fn cursor_key(secret: &str) -> Result<LessSafeKey, ApiError> {
 }
 
 #[allow(clippy::print_stderr)]
-pub(crate) fn encode_cursor(secret: &str, created_at: DateTime<Utc>, id: Uuid) -> Result<String, ApiError> {
+pub(crate) fn encode_cursor(secret: &str, created_at: Timestamp, id: Uuid) -> Result<String, ApiError> {
     #[cfg(test)]
     if std::env::var_os("OPENPR_FLOW_TEST_MUTATION_RELATION_CURSOR_PLAINTEXT").is_some() {
         eprintln!("WP28_MUTATION_RELATION_CURSOR_PLAINTEXT_ACTIVE");
@@ -682,7 +682,7 @@ pub(crate) fn encode_cursor(secret: &str, created_at: DateTime<Utc>, id: Uuid) -
     Ok(BASE64_URL.encode(token))
 }
 
-pub(crate) fn decode_cursor(secret: &str, raw: &str) -> Result<(DateTime<Utc>, Uuid), ApiError> {
+pub(crate) fn decode_cursor(secret: &str, raw: &str) -> Result<(Timestamp, Uuid), ApiError> {
     let token = BASE64_URL
         .decode(raw)
         .map_err(|_| ApiError::invalid_update("cursor is not valid"))?;
@@ -706,9 +706,7 @@ pub(crate) fn decode_cursor(secret: &str, raw: &str) -> Result<(DateTime<Utc>, U
         .split_once('|')
         .ok_or_else(|| ApiError::invalid_update("cursor is not valid"))?;
     Ok((
-        DateTime::parse_from_rfc3339(created_at)
-            .map_err(|_| ApiError::invalid_update("cursor is not valid"))?
-            .with_timezone(&Utc),
+        Timestamp::parse_rfc3339(created_at).map_err(|_| ApiError::invalid_update("cursor is not valid"))?,
         id.parse()
             .map_err(|_| ApiError::invalid_update("cursor is not valid"))?,
     ))
@@ -719,7 +717,7 @@ async fn fetch_relation_batch<C: ConnectionTrait>(
     object_id: Uuid,
     direction: RelationDirection,
     relation_type: Option<&str>,
-    after: Option<(DateTime<Utc>, Uuid)>,
+    after: Option<(Timestamp, Uuid)>,
     limit: u64,
 ) -> Result<Vec<RelationReadRow>, ApiError> {
     let mut values: Vec<sea_orm::Value> = vec![object_id.into()];
@@ -783,6 +781,18 @@ async fn record_relation_integrity(state: &AppState, workspace_id: Uuid, relatio
     )
 }
 
+async fn check_relation_integrity(state: &AppState, workspace_id: Uuid, row: &RelationReadRow) -> Result<(), ApiError> {
+    if row.workspace_id != workspace_id
+        || row.source_workspace_id != Some(workspace_id)
+        || row.target_workspace_id != Some(workspace_id)
+        || row.other_id.is_none()
+        || row.other_title.is_none()
+    {
+        return Err(record_relation_integrity(state, workspace_id, row.id).await);
+    }
+    Ok(())
+}
+
 /// Lists relations for an already-authorized root object.
 ///
 /// Candidate rows are fetched without caller filters, authorized, and only then matched against
@@ -824,14 +834,7 @@ pub async fn list_relations(
         for row in &batch {
             examined = examined.saturating_add(1);
             check_relation_scan_budget(examined)?;
-            if row.workspace_id != access.workspace_id()
-                || row.source_workspace_id != Some(access.workspace_id())
-                || row.target_workspace_id != Some(access.workspace_id())
-                || row.other_id.is_none()
-                || row.other_title.is_none()
-            {
-                return Err(record_relation_integrity(state, access.workspace_id(), row.id).await);
-            }
+            check_relation_integrity(state, access.workspace_id(), row).await?;
         }
         let other_ids: Vec<Uuid> = batch.iter().filter_map(|row| row.other_id).collect();
         let Some(visible) =
@@ -916,9 +919,7 @@ mod tests {
 
     #[test]
     fn opaque_cursor_round_trips_and_rejects_tampering_or_another_key() {
-        let created_at = DateTime::parse_from_rfc3339("2026-09-09T12:34:56Z")
-            .expect("fixture time parses")
-            .with_timezone(&Utc);
+        let created_at = Timestamp::parse_rfc3339("2026-09-09T12:34:56Z").expect("fixture time parses");
         let relation_id = Uuid::new_v4();
         let cursor = encode_cursor("cursor-secret-a", created_at, relation_id).expect("cursor encrypts");
         assert_eq!(
@@ -1001,8 +1002,11 @@ mod database_tests {
     use serde_json::{Value, json};
     use uuid::Uuid;
 
-    use super::{BASE64_URL, CURSOR_VERSION, ListRelationsParams, RelationDirection, decode_cursor, list_relations};
-    use crate::error::{ApiError, ApiErrorKind};
+    use super::{
+        BASE64_URL, CURSOR_VERSION, ListRelationsParams, RelationDirection, RelationReadRow, check_relation_integrity,
+        decode_cursor, list_relations,
+    };
+    use crate::error::ApiErrorKind;
     use crate::flow::collab::authz::PermissionLevel;
     use crate::flow::command::{CreateObjectInput, ExecuteCommandInput, create_object, execute_command};
     use crate::flow::event_origin::{CommandOrigin, EventSurface};
@@ -1223,7 +1227,7 @@ mod database_tests {
 
     #[derive(FromQueryResult)]
     struct RelationCursorProbe {
-        created_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
     }
 
     async fn event(state: &AppState, event_type: &str) -> EventProbe {
@@ -1954,30 +1958,72 @@ mod database_tests {
     }
 
     #[tokio::test]
-    async fn corrupted_cross_workspace_relation_fails_closed_and_records_integrity() {
+    async fn inconsistent_relation_query_result_records_integrity_and_returns_no_data() {
+        let scratch = scratch_or_skip!("relation_read_integrity");
+        let state = state_for(scratch.db.clone());
+        let (workspace, _, _) = seed_workspace(&state).await;
+        let row = RelationReadRow {
+            id: Uuid::new_v4(),
+            workspace_id: workspace,
+            relation_type: "link".into(),
+            source_object_id: Uuid::new_v4(),
+            position_key: "m".into(),
+            properties: json!({}),
+            created_at: platform::timestamp::Timestamp::now(),
+            source_workspace_id: Some(workspace),
+            target_workspace_id: Some(Uuid::new_v4()),
+            other_id: Some(Uuid::new_v4()),
+            other_object_type: Some("page".into()),
+            other_title: Some("private".into()),
+            other_lifecycle_status: Some("active".into()),
+            other_project_id: None,
+        };
+        let error = check_relation_integrity(&state, workspace, &row)
+            .await
+            .expect_err("a foreign target makes the complete relation row invalid");
+        assert_eq!(error.kind(), ApiErrorKind::InvalidUpdate);
+        assert!(String::from_utf8_lossy(&error_wire(error).await).contains("cross_workspace_relation"));
+        let alerts = CountRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM flow_integrity_records
+             WHERE workspace_id=$1 AND kind='cross_workspace_relation' AND subject_id=$2",
+            vec![workspace.into(), row.id.to_string().into()],
+        ))
+        .one(&state.db)
+        .await
+        .expect("integrity query runs")
+        .expect("count row");
+        assert_eq!(alerts.count, 1);
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn database_rejects_cross_workspace_relation_without_exposing_foreign_target() {
         let scratch = scratch_or_skip!("integrity");
         let state = state_for(scratch.db.clone());
         let (workspace_a, owner_a, _) = seed_workspace(&state).await;
         let (workspace_b, owner_b, _) = seed_workspace(&state).await;
         let source = page(&state, workspace_a, owner_a, "Source").await;
         let target = page(&state, workspace_b, owner_b, "Foreign target").await;
-        state
+
+        let error = state
             .db
-            .execute_unprepared("ALTER TABLE flow_relations DROP CONSTRAINT flow_relations_target_workspace_fk")
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO flow_relations (id,workspace_id,relation_type,source_object_id,target_object_id)
+                 VALUES ($1,$2,'link',$3,$4)",
+                vec![Uuid::new_v4().into(), workspace_a.into(), source.into(), target.into()],
+            ))
             .await
-            .expect("fixture deliberately removes the target workspace guard");
-        let relation_id = Uuid::new_v4();
-        exec(
+            .expect_err("the migrated database rejects a foreign target");
+        assert!(
+            matches!(error.sql_err(), Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(_))),
+            "{error}"
+        );
+
+        let page = list_relations(
             &state,
-            "INSERT INTO flow_relations (id,workspace_id,relation_type,source_object_id,target_object_id) \
-             VALUES ($1,$2,'corrupt',$3,$4)",
-            vec![relation_id.into(), workspace_a.into(), source.into(), target.into()],
-        )
-        .await;
-        let access = read_access(&state, workspace_a, source, owner_a).await;
-        let err = list_relations(
-            &state,
-            &access,
+            &read_access(&state, workspace_a, source, owner_a).await,
             ListRelationsParams {
                 direction: RelationDirection::Both,
                 relation_type: None,
@@ -1986,29 +2032,9 @@ mod database_tests {
             },
         )
         .await
-        .expect_err("corruption must fail the whole page");
-        assert_eq!(err.kind(), ApiErrorKind::InvalidUpdate);
-        // The refusal names its cause so a client can branch without reading `message`.
-        let reason = match &err {
-            ApiError::Typed { details, .. } => details
-                .as_ref()
-                .and_then(|details| details.get("reason"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
-            _ => None,
-        };
-        assert_eq!(reason.as_deref(), Some("cross_workspace_relation"), "{err:?}");
-        let alerts = CountRow::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT count(*) AS count FROM flow_integrity_records WHERE workspace_id=$1 AND kind='cross_workspace_relation' \
-             AND subject_kind='flow_relation' AND subject_id=$2",
-            vec![workspace_a.into(), relation_id.to_string().into()],
-        ))
-        .one(&state.db)
-        .await
-        .expect("integrity query runs")
-        .expect("count row");
-        assert_eq!(alerts.count, 1);
+        .expect("the source's relations remain readable")
+        .expect("epoch is stable");
+        assert!(page.items.is_empty());
         scratch.drop_self().await;
     }
 }

@@ -25,8 +25,9 @@
 		error: 'bg-red-500'
 	};
 
-	const dotClass = $derived(DOT_CLASS[state]);
-	const label = $derived($t(`flow.sync.${state}`));
+	const displayedState = $derived(state === 'saved' && pending > 0 ? 'saving' : state);
+	const dotClass = $derived(DOT_CLASS[displayedState]);
+	const label = $derived($t(`flow.sync.${displayedState}`));
 	const pendingLabel = $derived(
 		pending > 0 ? $t('flow.sync.pending', { values: { count: pending } }) : ''
 	);
@@ -37,7 +38,7 @@
 	role="status"
 	aria-live="polite"
 	data-testid="flow-sync-indicator"
-	data-state={state}
+	data-state={displayedState}
 	data-pending={pending}
 >
 	<span class={`h-2 w-2 rounded-full ${dotClass}`} aria-hidden="true"></span>

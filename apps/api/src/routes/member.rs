@@ -121,7 +121,7 @@ pub async fn add_member(
         ));
     }
 
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
 
     // Add member
     tx.execute(Statement::from_sql_and_values(
@@ -300,7 +300,7 @@ pub async fn list_members(
         entity_type: String,
         agent_type: Option<String>,
         role: String,
-        created_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
     }
 
     let members = MemberRow::find_by_statement(Statement::from_sql_and_values(

@@ -62,6 +62,10 @@ async function downloadUiArtifact(
   expectedText: string,
 ) {
   const panel = page.getByTestId("flow-panel-export");
+  if (!(await panel.isVisible())) {
+    await page.getByTestId("flow-more").click();
+    await page.getByTestId("flow-open-info").click({ timeout: 10_000 });
+  }
   await panel
     .getByRole("combobox", { name: "Format", exact: true })
     .selectOption(format);
@@ -492,63 +496,93 @@ test("personal and directly shared collections keep typed record operations and 
     captureTickets(page);
     await page.goto("/flow");
     await page.getByTestId("flow-nav-new").click();
-    await page
-      .getByRole("menuitem", { name: "New Collection", exact: true })
-      .click();
-    await page
-      .getByTestId("flow-create-collection-name")
-      .fill(`Personal collection ${run}`);
-    await page.getByTestId("flow-create-collection-field").fill("Name");
-    const creation = page.waitForResponse(
-      (response) =>
-        response.url().endsWith("/api/v2/flow/objects") &&
-        response.request().method() === "POST",
-    );
-    await page.getByTestId("flow-create-collection-submit").click();
-    const createdResponse = await creation;
-    const created = await unwrap<{ object: ObjectView }>(createdResponse);
-    const collection = created.object;
-    const creationBody = createdResponse.request().postDataJSON();
-    expect(creationBody.scope_id).toBe(home.scope.id);
-    expect(creationBody.workspace_id).toBeUndefined();
-    expect(creationBody.initial_fields[0].field_type).toBe("text");
-    const fieldId = creationBody.initial_fields[0].field_id;
-    await expect(page.getByTestId("collection-table")).toBeVisible();
-    const recordCreation = page.waitForResponse(
-      (response) =>
-        response
-          .url()
-          .endsWith(`/api/v2/flow/collections/${collection.id}/records`) &&
-        response.request().method() === "POST",
-    );
-    await page.getByTestId("collection-new-record").click();
-    const record = (await unwrap<{ object: ObjectView }>(await recordCreation))
-      .object;
-    const row = page.locator(
-      `[data-testid="collection-row"][data-record-id="${record.id}"]`,
-    );
-    const cell = row.locator(`[data-field-id="${fieldId}"]`);
-    await cell.dblclick();
-    const patch = page.waitForResponse(
-      (response) =>
-        response
-          .url()
-          .endsWith(`/api/v2/flow/objects/${collection.id}/commands`) &&
-        response.request().method() === "POST",
-    );
-    await cell.getByRole("textbox").fill(`Typed owner ${run}`);
-    await cell.getByRole("textbox").press("Enter");
-    const accepted = await patch;
-    await unwrap(accepted);
-    expect(accepted.request().postDataJSON().command.type).toBe("record_patch");
-    await expect(cell).toContainText(`Typed owner ${run}`);
-    await page.goto(`/flow/${record.id}`);
-    await expect(page.getByTestId("flow-record-route")).toBeVisible();
     await expect(
-      page
-        .getByTestId("record-panel")
-        .getByRole("textbox", { name: "Name", exact: true }),
-    ).toHaveValue(`Typed owner ${run}`);
+      page.getByRole("menuitem", { name: "New Collection", exact: true }),
+    ).toHaveCount(0);
+    const fieldId = crypto.randomUUID();
+    const created = await unwrap<{ object: ObjectView }>(
+      await page.request.post("/api/v2/flow/objects", {
+        headers: auth,
+        data: {
+          scope_id: home.scope.id,
+          object_type: "collection",
+          title: `Personal collection ${run}`,
+          initial_fields: [
+            {
+              field_id: fieldId,
+              label: "Name",
+              field_type: "text",
+              config: {},
+              index: 0,
+            },
+          ],
+          idempotency_key: crypto.randomUUID(),
+        },
+      }),
+    );
+    const collection = created.object;
+    expect(collection.scope_id).toBe(home.scope.id);
+    const url = `/api/v2/flow/collections/${collection.id}/records`;
+    const record = (
+      await unwrap<{ object: ObjectView }>(
+        await page.request.post(url, {
+          headers: auth,
+          data: {
+            values_by_field_id: {},
+            idempotency_key: crypto.randomUUID(),
+          },
+        }),
+      )
+    ).object;
+    type Rows = {
+      items: Array<{
+        record: { id: string; frontier: string };
+        values_by_field_id: Record<string, unknown>;
+      }>;
+    };
+    const readRecord = async (
+      browserPage: Page,
+      headers: Record<string, string>,
+    ) => {
+      const data = await unwrap<Rows>(
+        await browserPage.request.get(url, { headers }),
+      );
+      expect(data.items).toHaveLength(1);
+      expect(data.items[0].record.id).toBe(record.id);
+      return data.items[0];
+    };
+    const patch = async (
+      browserPage: Page,
+      headers: Record<string, string>,
+      value: string,
+    ) => {
+      const row = await readRecord(browserPage, headers);
+      return unwrap(
+        await browserPage.request.post(
+          `/api/v2/flow/objects/${collection.id}/commands`,
+          {
+            headers,
+            data: {
+              command: {
+                type: "record_patch",
+                payload: {
+                  record_id: record.id,
+                  properties: { [fieldId]: value },
+                },
+              },
+              expected_frontier: row.record.frontier,
+              idempotency_key: crypto.randomUUID(),
+            },
+          },
+        ),
+      );
+    };
+    await patch(page, auth, `Typed owner ${run}`);
+    await page.goto(`/flow/${record.id}`);
+    await expect(page.getByTestId("flow-typed-unavailable")).toContainText(
+      "Existing Collection and Record data is preserved.",
+    );
+    await expect(page.getByTestId("record-panel")).toHaveCount(0);
     const before = await unwrap<ObjectView>(
       await request.get(`/api/v2/flow/objects/${record.id}`, { headers: auth }),
     );
@@ -574,28 +608,15 @@ test("personal and directly shared collections keep typed record operations and 
     const guestPage = await signIn(visitorContext, visitor);
     captureTickets(guestPage);
     await guestPage.goto(`/flow/${collection.id}`);
-    const guestRow = guestPage.locator(
-      `[data-testid="collection-row"][data-record-id="${record.id}"]`,
+    await expect(guestPage.getByTestId("flow-typed-unavailable")).toBeVisible();
+    await expect(guestPage.getByTestId("collection-table")).toHaveCount(0);
+    expect(
+      (await readRecord(guestPage, visitorAuth)).values_by_field_id[fieldId],
+    ).toBe(`Typed owner ${run}`);
+    await patch(guestPage, visitorAuth, `Typed guest ${run}`);
+    expect((await readRecord(page, auth)).values_by_field_id[fieldId]).toBe(
+      `Typed guest ${run}`,
     );
-    const guestCell = guestRow.locator(`[data-field-id="${fieldId}"]`);
-    await expect(guestCell).toContainText(`Typed owner ${run}`);
-    await guestCell.dblclick();
-    const guestPatch = guestPage.waitForResponse(
-      (response) =>
-        response
-          .url()
-          .endsWith(`/api/v2/flow/objects/${collection.id}/commands`) &&
-        response.request().method() === "POST",
-    );
-    await guestCell.getByRole("textbox").fill(`Typed guest ${run}`);
-    await guestCell.getByRole("textbox").press("Enter");
-    await unwrap(await guestPatch);
-    await page.getByTestId("collection-refresh").click();
-    await expect(
-      page
-        .getByTestId("record-panel")
-        .getByRole("textbox", { name: "Name", exact: true }),
-    ).toHaveValue(`Typed guest ${run}`);
     const after = await unwrap<ObjectView>(
       await request.get(`/api/v2/flow/objects/${record.id}`, {
         headers: visitorAuth,

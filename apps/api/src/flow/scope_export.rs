@@ -5,7 +5,7 @@ use super::{
 };
 use crate::error::ApiError;
 use crate::flow::json_value::FlowJson;
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -22,7 +22,7 @@ pub struct ExportRow {
     pub request_hash: String,
     pub package_sha256: Option<String>,
     pub size_bytes: Option<i64>,
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<Timestamp>,
     pub artifact_id: Option<Uuid>,
     pub source_authz_revision: Option<i64>,
     pub policy_collection_id: Option<Uuid>,
@@ -35,7 +35,7 @@ pub struct ExportRow {
 }
 const SELECT: &str = "SELECT id,scope_id,workspace_id,scope_kind,object_id,actor_id,format,status,request_hash,package_sha256,size_bytes,expires_at,artifact_id,source_authz_revision,policy_collection_id,policy_schema_seq,included_record_ids,audience_authorities,artifact_resource_ids,artifact_schema_revisions,warnings FROM flow_export_jobs";
 pub fn receipt(row: &ExportRow) -> Value {
-    json!({"job_id":row.id,"scope_id":row.scope_id,"object_id":row.object_id,"scope_kind":row.scope_kind,"status":row.status,"format":row.format,"checksum":row.package_sha256,"size":row.size_bytes,"expires_at":row.expires_at.map(|d|d.to_rfc3339()),"warnings":row.warnings,"download_url":format!("/api/v2/flow/exports/{}/artifact",row.id)})
+    json!({"job_id":row.id,"scope_id":row.scope_id,"object_id":row.object_id,"scope_kind":row.scope_kind,"status":row.status,"format":row.format,"checksum":row.package_sha256,"size":row.size_bytes,"expires_at":row.expires_at.map(platform::timestamp::Timestamp::to_rfc3339),"warnings":row.warnings,"download_url":format!("/api/v2/flow/exports/{}/artifact",row.id)})
 }
 pub async fn get<C: ConnectionTrait + TransactionTrait>(db: &C, job: Uuid, user: Uuid) -> Result<ExportRow, ApiError> {
     let row = ExportRow::find_by_statement(Statement::from_sql_and_values(
@@ -252,7 +252,7 @@ async fn create_inner(
     let size = i64::try_from(bytes.len()).map_err(|_| ApiError::invalid_update("export artifact too large"))?;
     let artifact = Uuid::new_v4();
     let job = Uuid::new_v4();
-    let expiry = Utc::now() + chrono::Duration::hours(24);
+    let expiry = Timestamp::now() + time::Duration::hours(24);
     tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_package_artifacts(id,workspace_id,scope_id,actor_kind,actor_id,purpose,package_sha256,size_bytes,package_bytes,expires_at) VALUES($1,$8,$2,'user',$3,'export',$4,$5,$6,$7)",vec![artifact.into(),identity.scope_id.into(),user.into(),hash.clone().into(),size.into(),bytes.into(),expiry.into(),identity.workspace_id.into()])).await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_export_jobs(id,workspace_id,scope_id,object_id,scope_kind,format,at_seq,include_history,actor_kind,actor_id,idempotency_key,request_hash,status,artifact_id,package_sha256,size_bytes,expires_at) VALUES($1,$15,$2,$3,$14,$4,$5,$13,'user',$6,$7,$8,'completed',$9,$10,$11,$12)",vec![job.into(),identity.scope_id.into(),if scope_selection.is_some(){None}else{Some(object)}.into(),format.into(),at_seq.into(),user.into(),key.into(),request_hash.into(),artifact.into(),hash.into(),size.into(),expiry.into(),include_history.into(),if scope_selection.is_some(){"scope"}else{"object"}.into(),identity.workspace_id.into()])).await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_export_jobs SET source_authz_revision=$2,policy_collection_id=$3,policy_schema_seq=$4,included_record_ids=$5,audience_authorities=$6 WHERE id=$1",vec![job.into(),plan.proofs.first().map(|p|p.revision).into(),plan.collection.into(),plan.schema_seq.into(),plan.records.clone().into(),plan.audiences.clone().into()])).await?;
@@ -298,7 +298,7 @@ pub async fn download(db: &DatabaseConnection, job: Uuid, user: Uuid) -> Result<
     let row = get(db, job, user).await?;
     let object = job_authorization_object(db, &row, user).await?;
     let proof = scope::authorize(db, object, user, PermissionLevel::View).await?;
-    if row.expires_at.is_none_or(|t| t <= Utc::now()) {
+    if row.expires_at.is_none_or(|t| t <= Timestamp::now()) {
         return Err(ApiError::not_found("export artifact expired"));
     }
     let artifact=db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT package_bytes,package_sha256 FROM flow_package_artifacts WHERE id=$1 AND scope_id=$2 AND actor_id=$3 AND expires_at>now()",vec![row.artifact_id.into(),row.scope_id.into(),user.into()])).await?.ok_or_else(||ApiError::not_found("export artifact not found"))?;

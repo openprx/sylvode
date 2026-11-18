@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -51,8 +51,8 @@ struct TrustScoreRankRow {
     level: String,
     vote_weight: f64,
     consecutive_rejections: i32,
-    cooldown_until: Option<DateTime<Utc>>,
-    updated_at: DateTime<Utc>,
+    cooldown_until: Option<Timestamp>,
+    updated_at: Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -65,8 +65,8 @@ struct UserTrustScoreRow {
     level: String,
     vote_weight: f64,
     consecutive_rejections: i32,
-    cooldown_until: Option<DateTime<Utc>>,
-    updated_at: DateTime<Utc>,
+    cooldown_until: Option<Timestamp>,
+    updated_at: Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -85,7 +85,7 @@ struct UserTrustHistoryRow {
     reason: String,
     is_appealed: bool,
     appeal_result: Option<String>,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 }
 
 #[derive(Debug, Serialize)]
@@ -191,7 +191,7 @@ fn build_user_trust_payload(target_user_id: Uuid, rows: Vec<UserTrustScoreRow>) 
                 vote_weight: row.vote_weight,
                 can_veto,
                 consecutive_rejections: row.consecutive_rejections,
-                cooldown_until: row.cooldown_until.map(|v| v.to_rfc3339()),
+                cooldown_until: row.cooldown_until.map(platform::timestamp::Timestamp::to_rfc3339),
                 updated_at: row.updated_at.to_rfc3339(),
             }
         })

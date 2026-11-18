@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
-use chrono::Utc;
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use rand::Rng;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
@@ -177,11 +177,10 @@ pub async fn create_bot(
     let perms = normalize_bot_permissions(req.permissions.unwrap_or_else(|| vec!["read".to_string()]))?;
     let transport_surface = normalize_transport_surface(req.transport_surface)?;
 
-    let expires_at: Option<chrono::DateTime<Utc>> = match req.expires_at {
+    let expires_at: Option<platform::timestamp::Timestamp> = match req.expires_at {
         Some(ref s) => Some(
-            chrono::DateTime::parse_from_rfc3339(s)
-                .map_err(|_| ApiError::BadRequest("invalid expires_at format".to_string()))?
-                .with_timezone(&Utc),
+            platform::timestamp::Timestamp::parse_rfc3339(s)
+                .map_err(|_| ApiError::BadRequest("invalid expires_at format".to_string()))?,
         ),
         None => None,
     };
@@ -192,7 +191,7 @@ pub async fn create_bot(
     let token_prefix: String = raw_token.chars().take(8).collect();
 
     let bot_id = Uuid::new_v4();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let perms_json = serde_json::to_value(&perms).unwrap_or_else(|_| serde_json::json!(["read"]));
     let workspace_role = workspace_role_from_permissions(&perms);
     let bot_email = format!("{bot_id}@bot.openpr.local");
@@ -261,7 +260,7 @@ pub async fn create_bot(
         token_prefix,
         permissions: perms,
         transport_surface,
-        expires_at: expires_at.map(|t| t.to_rfc3339()),
+        expires_at: expires_at.map(platform::timestamp::Timestamp::to_rfc3339),
         created_at: now.to_rfc3339(),
     }))
 }
@@ -292,9 +291,9 @@ pub async fn list_bots(
         permissions: serde_json::Value,
         transport_surface: String,
         is_active: bool,
-        last_used_at: Option<chrono::DateTime<Utc>>,
-        expires_at: Option<chrono::DateTime<Utc>>,
-        created_at: chrono::DateTime<Utc>,
+        last_used_at: Option<platform::timestamp::Timestamp>,
+        expires_at: Option<platform::timestamp::Timestamp>,
+        created_at: platform::timestamp::Timestamp,
     }
 
     let bots = BotRow::find_by_statement(Statement::from_sql_and_values(
@@ -325,8 +324,8 @@ pub async fn list_bots(
                 permissions: perms,
                 transport_surface: b.transport_surface,
                 is_active: b.is_active,
-                last_used_at: b.last_used_at.map(|t| t.to_rfc3339()),
-                expires_at: b.expires_at.map(|t| t.to_rfc3339()),
+                last_used_at: b.last_used_at.map(platform::timestamp::Timestamp::to_rfc3339),
+                expires_at: b.expires_at.map(platform::timestamp::Timestamp::to_rfc3339),
                 created_at: b.created_at.to_rfc3339(),
             }
         })
@@ -371,7 +370,7 @@ pub async fn revoke_bot(
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE workspace_bots SET is_active = false, updated_at = $1 WHERE id = $2",
-            vec![Utc::now().into(), bot_id.into()],
+            vec![Timestamp::now().into(), bot_id.into()],
         ))
         .await?;
 

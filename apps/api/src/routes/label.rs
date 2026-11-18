@@ -112,7 +112,7 @@ pub async fn create_label(
     }
 
     let label_id = Uuid::new_v4();
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
     let color = req.color.unwrap_or_else(|| "#gray".to_string());
     let description = req.description.unwrap_or_default();
 
@@ -165,7 +165,7 @@ pub async fn list_labels(
         name: String,
         color: String,
         description: String,
-        created_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
     }
 
     let labels = LabelRow::find_by_statement(Statement::from_sql_and_values(
@@ -285,7 +285,7 @@ pub async fn update_label(
         name: String,
         color: String,
         description: String,
-        created_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
     }
 
     let updated = LabelRow::find_by_statement(Statement::from_sql_and_values(
@@ -415,7 +415,7 @@ pub async fn add_label_to_issue(
         return Err(ApiError::Conflict("label already added to issue".to_string()));
     }
 
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
 
     state
         .db
@@ -488,7 +488,7 @@ pub async fn get_issue_labels(
         name: String,
         color: String,
         description: String,
-        created_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
     }
 
     let labels = LabelRow::find_by_statement(Statement::from_sql_and_values(
@@ -619,7 +619,7 @@ pub async fn list_project_labels(
         name: String,
         color: String,
         description: String,
-        created_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
     }
 
     let labels = LabelRow::find_by_statement(Statement::from_sql_and_values(

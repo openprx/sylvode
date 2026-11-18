@@ -165,7 +165,7 @@ where
     for update in &boot.tail_updates {
         engine.import_update(&update.bytes).map_err(|_| ApiError::internal())?;
     }
-    if engine.frontier().as_bytes() != boot.head_frontier.as_slice() {
+    if !engine.matches_frontier(&boot.head_frontier) {
         return Err(ApiError::resync_required("resync_required", None));
     }
     let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;

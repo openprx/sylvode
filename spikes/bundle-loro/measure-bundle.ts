@@ -123,7 +123,7 @@ async function main(): Promise<void> {
   const BUDGET_BYTES = 2 * 1024 * 1024;
   const report = {
     candidate: CANDIDATE,
-    engine_versions: { "loro-crdt": "1.14.1", "loro-prosemirror": "0.4.3" },
+    engine_versions: { "loro-crdt": "1.18.0", "loro-prosemirror": "0.4.3" },
     excluded_shared_chunk_prefixes: [VENDOR_CHUNK_PREFIX],
     main_entry: mainEntry.fileName,
     flow_entry_chunk: flowRootFileName,

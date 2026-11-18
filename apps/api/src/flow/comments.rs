@@ -5,7 +5,7 @@
 //! someone else's row only when the caller has `full_access`. Replies are one level deep and stay
 //! on the same object. Mentions are an explicit user-id list; notifications require current object access and never create membership.
 
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -36,6 +36,8 @@ pub struct NewComment {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FlowCommentView {
+    #[serde(default)]
+    pub anchor_status: Option<String>,
     pub id: Uuid,
     pub object_id: Uuid,
     pub block_id: Option<String>,
@@ -64,9 +66,9 @@ pub(crate) struct CommentRow {
     author_id: Option<Uuid>,
     body: String,
     pub(crate) mentions: Value,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    resolved_at: Option<DateTime<Utc>>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+    resolved_at: Option<Timestamp>,
     resolved_by: Option<Uuid>,
 }
 
@@ -79,6 +81,7 @@ struct ParentRow {
 }
 
 pub async fn list_comments(db: &DatabaseConnection, object_id: Uuid) -> Result<FlowCommentList, ApiError> {
+    super::block_anchors::baseline_for_read(db, object_id).await?;
     let limit = i64::try_from(LIST_CAP.saturating_add(1)).unwrap_or(i64::MAX);
     let rows = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -96,11 +99,12 @@ pub async fn list_comments(db: &DatabaseConnection, object_id: Uuid) -> Result<F
     .all(db)
     .await?;
     let truncated = u64::try_from(rows.len()).unwrap_or(u64::MAX) > LIST_CAP;
-    let items = rows
+    let mut items: Vec<_> = rows
         .into_iter()
         .take(usize::try_from(LIST_CAP).unwrap_or(usize::MAX))
         .map(view_of)
         .collect();
+    super::block_anchors::decorate(db, &mut items).await?;
     Ok(FlowCommentList { items, truncated })
 }
 
@@ -175,7 +179,7 @@ pub(crate) async fn create_comment_on<C: ConnectionTrait>(
         None => (None, normalize_block_id(input.block_id)?),
     };
     let id = Uuid::new_v4();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mentions_json = json!(mentions.iter().map(Uuid::to_string).collect::<Vec<_>>());
     let row = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -200,7 +204,10 @@ pub(crate) async fn create_comment_on<C: ConnectionTrait>(
     .one(db)
     .await?
     .ok_or_else(ApiError::internal)?;
-    Ok(view_of(row))
+    super::block_anchors::bind_new(db, id, object_id, row.block_id.as_deref(), row.parent_id).await?;
+    let mut view = view_of(row);
+    super::block_anchors::decorate(db, std::slice::from_mut(&mut view)).await?;
+    Ok(view)
 }
 
 pub(crate) async fn update_comment_on<C: ConnectionTrait>(
@@ -224,7 +231,7 @@ pub(crate) async fn update_comment_on<C: ConnectionTrait>(
         None => parse_mentions(&existing.mentions),
     };
     let mentions_json = json!(next_mentions.iter().map(Uuid::to_string).collect::<Vec<_>>());
-    let now = Utc::now();
+    let now = Timestamp::now();
     let row = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE flow_comments SET body = $3, mentions = $4::jsonb, updated_at = $5 \
@@ -242,7 +249,9 @@ pub(crate) async fn update_comment_on<C: ConnectionTrait>(
     .one(db)
     .await?
     .ok_or_else(|| ApiError::not_found("flow comment not found".to_string()))?;
-    Ok(view_of(row))
+    let mut view = view_of(row);
+    super::block_anchors::decorate(db, std::slice::from_mut(&mut view)).await?;
+    Ok(view)
 }
 
 pub(crate) async fn delete_comment_on<C: ConnectionTrait>(
@@ -257,7 +266,7 @@ pub(crate) async fn delete_comment_on<C: ConnectionTrait>(
     if !owns && !privileged {
         return Err(ApiError::forbidden("you cannot delete this comment".to_string()));
     }
-    let now = Utc::now();
+    let now = Timestamp::now();
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -291,7 +300,7 @@ pub(crate) async fn set_resolved_on<C: ConnectionTrait>(
             "edit permission is required to resolve a comment".to_string(),
         ));
     }
-    let now = Utc::now();
+    let now = Timestamp::now();
     let (resolved_at, resolved_by) = if resolved {
         (Some(now), Some(actor.user_id))
     } else {
@@ -314,7 +323,9 @@ pub(crate) async fn set_resolved_on<C: ConnectionTrait>(
     .one(db)
     .await?
     .ok_or_else(|| ApiError::not_found("flow comment not found".to_string()))?;
-    Ok(view_of(row))
+    let mut view = view_of(row);
+    super::block_anchors::decorate(db, std::slice::from_mut(&mut view)).await?;
+    Ok(view)
 }
 
 pub(crate) async fn load_visible<C: ConnectionTrait>(
@@ -402,6 +413,7 @@ pub(crate) fn parse_mentions(value: &Value) -> Vec<Uuid> {
 
 fn view_of(row: CommentRow) -> FlowCommentView {
     FlowCommentView {
+        anchor_status: None,
         id: row.id,
         object_id: row.object_id,
         block_id: row.block_id,
@@ -411,7 +423,7 @@ fn view_of(row: CommentRow) -> FlowCommentView {
         mentions: parse_mentions(&row.mentions),
         created_at: row.created_at.to_rfc3339(),
         updated_at: row.updated_at.to_rfc3339(),
-        resolved_at: row.resolved_at.map(|stamp| stamp.to_rfc3339()),
+        resolved_at: row.resolved_at.map(platform::timestamp::Timestamp::to_rfc3339),
         resolved_by: row.resolved_by,
     }
 }

@@ -1,3 +1,4 @@
+use platform::timestamp::Timestamp;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -16,11 +17,16 @@ pub struct Model {
     pub voting_rule: VotingRule,
     pub cycle_template: CycleTemplate,
     pub template_id: Option<String>,
-    pub created_at: DateTimeWithTimeZone,
-    pub submitted_at: Option<DateTimeWithTimeZone>,
-    pub voting_started_at: Option<DateTimeWithTimeZone>,
-    pub voting_ended_at: Option<DateTimeWithTimeZone>,
-    pub archived_at: Option<DateTimeWithTimeZone>,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub created_at: Timestamp,
+    #[serde(default, with = "platform::timestamp::with_offset::option")]
+    pub submitted_at: Option<Timestamp>,
+    #[serde(with = "platform::timestamp::with_offset::option")]
+    pub voting_started_at: Option<Timestamp>,
+    #[serde(default, with = "platform::timestamp::with_offset::option")]
+    pub voting_ended_at: Option<Timestamp>,
+    #[serde(with = "platform::timestamp::with_offset::option")]
+    pub archived_at: Option<Timestamp>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

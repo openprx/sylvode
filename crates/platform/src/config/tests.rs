@@ -1054,3 +1054,18 @@ fn a_conversion_reap_interval_outside_one_second_to_one_day_is_refused() {
         );
     }
 }
+
+#[test]
+fn flow_body_asset_limit_is_bounded_and_configurable() {
+    let defaulted = parse("").unwrap();
+    assert_eq!(defaulted.flow.body_asset_max_bytes, 52_428_800);
+    let configured = parse("[flow]\nbody_asset_max_bytes = 4096\n").unwrap();
+    assert_eq!(configured.flow.body_asset_max_bytes, 4096);
+    for value in [0, 52_428_801] {
+        assert!(
+            issues(&format!("[flow]\nbody_asset_max_bytes = {value}\n"))
+                .iter()
+                .any(|issue| issue.contains("flow.body_asset_max_bytes"))
+        );
+    }
+}

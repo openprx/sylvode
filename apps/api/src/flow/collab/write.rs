@@ -490,6 +490,10 @@ pub(crate) struct Prepared {
     pub(crate) state_json: Value,
     pub(crate) plain_text: String,
     pub(crate) decoded_bytes_hint: u64,
+    pub(crate) minimum_editor_model: u32,
+    pub(crate) asset_references: Vec<crate::flow::body_assets::AssetReference>,
+    pub(crate) child_references: Vec<crate::flow::child_pages::ChildReference>,
+    pub(crate) logical_blocks: Vec<crate::flow::block_registry::PreparedBlock>,
 }
 
 /// Maps an [`isolated_apply`](collab_core::isolation::isolated_apply) refusal to the rejection
@@ -699,10 +703,16 @@ pub(crate) async fn hydrate_and_apply(
         tracing::error!(error = %err, "collab write: title read failed after a successful isolated apply");
         ApiError::internal()
     })?;
+    let logical_blocks = crate::flow::block_registry::prepare(&semantic)?;
+    let asset_references = crate::flow::body_assets::typed_references(&semantic)?;
+    let child_references = crate::flow::child_pages::typed_references(&semantic)?;
     let state_json = projection::state_json(&semantic).map_err(|_| ApiError::internal())?;
     let plain_text = projection::plain_text(&semantic);
     let content_hash_hex = content_hash(bytes);
 
+    let minimum_editor_model = candidate
+        .minimum_editor_model()
+        .map_err(|e| crate::flow::command::map_collab_error(&e))?;
     Ok(HydrateOutcome::Prepared(Box::new(Prepared {
         observed,
         candidate,
@@ -712,6 +722,10 @@ pub(crate) async fn hydrate_and_apply(
         state_json,
         plain_text,
         decoded_bytes_hint,
+        minimum_editor_model,
+        asset_references,
+        child_references,
+        logical_blocks,
     })))
 }
 
@@ -768,6 +782,9 @@ async fn stage_locked_writes(
     prepared: &Prepared,
     dispatch_max_attempts: i32,
 ) -> Result<StagedOutcome, ApiError> {
+    if prepared.minimum_editor_model >= 4 {
+        crate::flow::scope::require_editor_model_readers(tx, prepared.minimum_editor_model).await?;
+    }
     set_locked_phase_statement_budgets(tx, 1).await?;
 
     // [layer 1] the commit-time epoch fence, held to commit. Only a genuine epoch mismatch
@@ -976,6 +993,32 @@ pub(crate) async fn stage_one_document(
     .await?
     .ok_or_else(ApiError::internal)?;
 
+    crate::flow::body_assets::reconcile_accepted(
+        tx,
+        prepared.observed.object_id,
+        new_head_seq,
+        &prepared.asset_references,
+    )
+    .await?;
+    crate::flow::child_pages::reconcile_accepted(
+        tx,
+        prepared.observed.object_id,
+        if request.actor_is_bot {
+            None
+        } else {
+            Some(request.actor_id)
+        },
+        new_head_seq,
+        &prepared.child_references,
+    )
+    .await?;
+    crate::flow::block_registry::reconcile_accepted(
+        tx,
+        prepared.observed.object_id,
+        new_head_seq,
+        &prepared.logical_blocks,
+    )
+    .await?;
     Ok(StagedOutcome::Ready(StagedWrite {
         event_id: accepted_event.event_id,
         new_head_seq,
@@ -1317,6 +1360,32 @@ pub async fn accept_update(
     exclude_session_id: Option<Uuid>,
     request: UpdateRequest,
 ) -> Result<AcceptOutcome, ApiError> {
+    accept_update_model(
+        db,
+        cache,
+        coordinator,
+        registry,
+        snapshot_advancer,
+        dispatch_max_attempts,
+        exclude_session_id,
+        request,
+        5,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn accept_update_model(
+    db: &DatabaseConnection,
+    cache: &WarmCache,
+    coordinator: &DocumentCoordinator,
+    registry: &SessionRegistry,
+    snapshot_advancer: &SnapshotAdvancer,
+    dispatch_max_attempts: i32,
+    exclude_session_id: Option<Uuid>,
+    request: UpdateRequest,
+    editor_model: u32,
+) -> Result<AcceptOutcome, ApiError> {
     if let Err(err) = InputLimits::default().validate_update(&request.bytes) {
         return Ok(reject_from_collab_error(Some(request.update_id), &err));
     }
@@ -1473,6 +1542,14 @@ pub async fn accept_update(
                 HydrateOutcome::Rejected(outcome) => return Ok(outcome),
             }
         };
+
+        let minimum = prepared
+            .candidate
+            .minimum_editor_model()
+            .map_err(|e| crate::flow::command::map_collab_error(&e))?;
+        if editor_model < minimum {
+            return Err(crate::flow::scope_editor::model_error(editor_model, minimum));
+        }
 
         #[cfg(test)]
         pause_two_writers_after_prepare(request.document_id).await;
@@ -3635,7 +3712,7 @@ mod database_tests {
             let bytes = build_update_from_current(state, document_id, |engine| {
                 if create_this_chunk {
                     engine
-                        .apply_operation(&Operation::CreateNode {
+                        .apply_content_operation(&Operation::CreateNode {
                             id: id.clone(),
                             parent: None,
                             index: 0,
@@ -3644,7 +3721,7 @@ mod database_tests {
                         .expect("create must succeed locally");
                 }
                 engine
-                    .apply_operation(&Operation::InsertText {
+                    .apply_content_operation(&Operation::InsertText {
                         id,
                         index,
                         text: "a".repeat(this_chunk),
@@ -3785,6 +3862,16 @@ mod database_tests {
         let snapshot_advancer = SnapshotAdvancer::new();
         let limits = crate::flow::collab::limits::document_limits();
 
+        let initial_blocks = crate::flow::document::load_head_engine(&state.db, document_id)
+            .await
+            .expect("new page snapshot loads")
+            .semantic_snapshot()
+            .expect("new page semantics load")
+            .nodes
+            .values()
+            .filter(|node| node.kind == NodeKind::Block && !node.deleted)
+            .count();
+
         let accepted_exact = match submit_create_nodes_in_chunks(
             &state,
             &cache,
@@ -3796,7 +3883,10 @@ mod database_tests {
             owner_id,
             "blk",
             NodeKind::Block,
-            limits.document_block_count_max,
+            limits
+                .document_block_count_max
+                .checked_sub(initial_blocks)
+                .expect("bootstrap page is below the block ceiling"),
             CREATE_NODE_CHUNK,
             "block-count-exact",
         )
@@ -3894,7 +3984,7 @@ mod database_tests {
 
         let plus_one_bytes = build_update_from_current(&state, document_id, |engine| {
             engine
-                .apply_operation(&Operation::InsertText {
+                .apply_content_operation(&Operation::InsertText {
                     id: NodeId::from("blk-text"),
                     index: 0,
                     text: "b".to_string(),
@@ -3991,7 +4081,7 @@ mod database_tests {
 
         let plus_one_bytes = build_update_from_current(&state, document_id, |engine| {
             engine
-                .apply_operation(&Operation::CreateNode {
+                .apply_content_operation(&Operation::CreateNode {
                     id: NodeId::from("blk-doc-one-too-many"),
                     parent: None,
                     index: 0,
@@ -3999,7 +4089,7 @@ mod database_tests {
                 })
                 .expect("create must succeed locally");
             engine
-                .apply_operation(&Operation::InsertText {
+                .apply_content_operation(&Operation::InsertText {
                     id: NodeId::from("blk-doc-one-too-many"),
                     index: 0,
                     text: "z".to_string(),
@@ -4059,7 +4149,7 @@ mod database_tests {
         for _ in 0..8 {
             let bytes = build_update_from_current(state, document_id, |engine| {
                 engine
-                    .apply_operation(&Operation::CreateNode {
+                    .apply_content_operation(&Operation::CreateNode {
                         id: NodeId::from(block_id.to_string()),
                         parent: None,
                         index: 0,
@@ -4067,7 +4157,7 @@ mod database_tests {
                     })
                     .expect("create must succeed locally");
                 engine
-                    .apply_operation(&Operation::InsertText {
+                    .apply_content_operation(&Operation::InsertText {
                         id: NodeId::from(block_id.to_string()),
                         index: 0,
                         text: "a".repeat(text_len),

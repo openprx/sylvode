@@ -82,7 +82,7 @@ pub async fn get_my_issues(
         state: String,
         priority: String,
         assignee_id: Option<Uuid>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     #[derive(Debug, FromQueryResult)]
@@ -210,7 +210,7 @@ pub async fn get_my_activities(
         author_name: Option<String>,
         action: String,
         detail: serde_json::Value,
-        created_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
     }
 
     #[derive(Debug, FromQueryResult)]

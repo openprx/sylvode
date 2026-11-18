@@ -16,6 +16,8 @@
 // semantic diff.
 
 import { apiClient, type ApiResult, type UploadProgress } from './client';
+import { bodyBinaryResult } from '../flow/body/bytes';
+import type { BodyAssetKind, BodyAssetLimits, BodyAssetReceipt } from '../flow/body/assets';
 
 export type { UploadProgress };
 
@@ -36,6 +38,12 @@ export interface FlowObjectView {
 	export_unavailable_reason?: string;
 	history_export_supported?: boolean;
 	package_snapshot_history_retained?: boolean;
+	editor_model?: 'plain_v1' | 'rich_page_v4' | 'rich_page_v5';
+	minimum_editor_model?: 1 | 4 | 5;
+	editor_structure_state?: 'ready' | 'initialization_required';
+	body_asset_authentication?: 'user_session';
+	child_page_authentication?: 'user_session';
+	historical_asset_reads_supported?: boolean;
 	editor_state?: 'ready' | 'migration_required' | 'unsupported';
 	editor_initialization_supported?: boolean;
 	record_context_supported?: boolean;
@@ -134,6 +142,7 @@ export interface FlowHistoryResponse {
 }
 
 export interface CreateFlowObjectInput {
+	editor_model?: 4 | 5;
 	object_type: FlowObjectType;
 	project_id?: string;
 	parent_object_id?: string;
@@ -217,6 +226,7 @@ export interface ListFlowObjectsQuery {
 }
 
 export interface CreateTicketInput {
+	editor_model?: 4 | 5;
 	authorization_notifications?: boolean;
 	scope_id?: string;
 	object_id?: string;
@@ -718,6 +728,9 @@ export interface FlowProjectionLag {
  * command form of a query is refused). */
 export type FlowCommandType =
 	| 'initialize_editor_doc'
+	| 'insert_body_asset'
+	| 'replace_body_asset'
+	| 'link_child_page'
 	| 'link'
 	| 'unlink'
 	| 'set_title'
@@ -884,6 +897,7 @@ export interface CreateCollectionRecordInput {
 }
 
 export interface FlowComment {
+	anchor_status?: 'bound' | 'orphaned' | null;
 	id: string;
 	object_id: string;
 	block_id?: string | null;
@@ -928,10 +942,29 @@ export interface CreatedFlowShareLink {
 }
 
 export interface FlowPublicBlock {
+	asset_id?: string;
+	alt?: string;
+	caption?: string;
+	name?: string;
+	mime?: string;
+	child_page_id?: string;
+	inline_spans?: import('../flow/inline-runs').PageInlineSpan[];
+	checked?: boolean;
+	order?: number;
+	collapsed?: boolean;
 	kind: string;
 	text: string;
 	level?: number | null;
 	indent: number;
+}
+
+export interface FlowChildReservation {
+	state: 'pending' | 'expired' | 'cancelled' | 'finalized';
+	reservation_id: string;
+	child_page_id: string;
+	source_object_id: string;
+	title: string;
+	expires_at: string;
 }
 
 export interface FlowPublicShare {
@@ -1180,7 +1213,75 @@ function buildQuery(params: Record<string, string | number | boolean | undefined
 	return qs ? `?${qs}` : '';
 }
 
+export interface PortablePagePackagePreview {
+	title: string;
+	block_count: number;
+	asset_count: number;
+	asset_bytes: number;
+	linked_page_count: number;
+	package_sha256: string;
+	blocks: Array<{ kind: string; text: string }>;
+	assets: Array<{ filename: string; size: number }>;
+}
+
+function portablePagePackagePath(objectId: string): string {
+	return `/api/v2/flow/objects/${encodeURIComponent(objectId)}/portable-page-package`;
+}
+
+export interface PortableGraphPagePreview {
+	source_object_id: string;
+	source_parent_id: string | null;
+	title: string;
+	version_count: number;
+	source_sequences: number[];
+	excerpts?: string[];
+	asset_count: number;
+}
+
+export interface PortableGraphFormPreview {
+	source_form_id: string;
+	name: string;
+}
+
+export type PortableGraphReference = {
+	source_object_id: string;
+	mapping: 'new';
+} & (
+	| { kind: 'form'; target_form_id: string }
+	| { kind: 'relation'; target_object_id: string; relation_type: string }
+	| { kind: 'child_page'; target_object_id: string }
+);
+
+export interface PortableGraphPreview {
+	package_sha256: string;
+	pages: PortableGraphPagePreview[];
+	forms: PortableGraphFormPreview[];
+	include_history: boolean;
+	references: PortableGraphReference[];
+}
+
+export interface PortableGraphReceipt {
+	pages: Array<{
+		source_object_id: string;
+		object_id: string;
+		document_id: string;
+		versions: Array<{ source_seq: number; local_seq: number; source_recorded_at: string | null }>;
+	}>;
+	include_history: boolean;
+	forms: Array<{ source_form_id: string; form_id: string }>;
+}
+
+function portableGraphPackagePath(objectId: string): string {
+	return `/api/v2/flow/objects/${encodeURIComponent(objectId)}/portable-graph-package`;
+}
+
 export interface FlowCapabilities {
+	portable_page_packages_supported?: boolean;
+	portable_graph_packages_supported?: boolean;
+	/** Missing or false is unsupported; independent projection protocol requires reader5. */
+	block_shares_supported?: boolean;
+	block_share_source_revoke_supported?: boolean;
+	block_transfers_supported?: boolean;
 	api_version: number;
 	schema_version: number;
 	scope_native_legacy: boolean;
@@ -1197,6 +1298,7 @@ export interface FlowCapabilities {
 	personal_package_snapshot_history?: 'retained';
 	personal_package_typed_raw?: false;
 	external_mounts: boolean;
+	mount_permission_updates_supported?: boolean;
 	minimum_reader_version: number;
 }
 export interface FlowScopeHome {
@@ -1243,6 +1345,17 @@ export const flowApi = {
 	): Promise<ApiResult<FlowMount>> {
 		return apiClient.post(`/api/v2/flow/objects/${objectId}/mounts`, input);
 	},
+	updateMount(
+		objectId: string,
+		mountId: string,
+		input: {
+			expected_level: FlowMount['level'];
+			level: FlowMount['level'];
+			idempotency_key: string;
+		}
+	): Promise<ApiResult<FlowMount>> {
+		return apiClient.patch(`/api/v2/flow/objects/${objectId}/mounts/${mountId}`, input);
+	},
 	removeMount(objectId: string, mountId: string): Promise<ApiResult<{ removed: boolean }>> {
 		return apiClient.delete(`/api/v2/flow/objects/${objectId}/mounts/${mountId}`);
 	},
@@ -1261,6 +1374,7 @@ export const flowApi = {
 	): Promise<ApiResult<AcceptedChange>> {
 		return apiClient.post<AcceptedChange>(`/api/v2/flow/objects`, {
 			...input,
+			...(input.object_type === 'page' ? { editor_model: 5 } : {}),
 			scope_id: workspaceId
 		});
 	},
@@ -1298,10 +1412,18 @@ export const flowApi = {
 
 	getObject(
 		objectId: string,
-		query: { at_seq?: number; render?: 'semantic_json' | 'markdown' } = {}
+		query: { at_seq?: number; render?: 'semantic_json' | 'markdown' } = {},
+		signal?: AbortSignal
 	): Promise<ApiResult<FlowObjectView>> {
 		const qs = buildQuery({ at_seq: query.at_seq, render: query.render });
-		return apiClient.get<FlowObjectView>(`/api/v2/flow/objects/${objectId}${qs}`);
+		return apiClient.request<FlowObjectView>(
+			'GET',
+			`/api/v2/flow/objects/${objectId}${qs}`,
+			undefined,
+			true,
+			{},
+			signal
+		);
 	},
 
 	getHistory(
@@ -1313,7 +1435,10 @@ export const flowApi = {
 	},
 
 	createTicket(input: CreateTicketInput): Promise<ApiResult<CollabTicket>> {
-		return apiClient.post<CollabTicket>('/api/v2/flow/collab/tickets', input);
+		return apiClient.post<CollabTicket>('/api/v2/flow/collab/tickets', {
+			...input,
+			editor_model: 5
+		});
 	},
 
 	getCollabDiagnostics(objectId: string): Promise<ApiResult<CollabDiagnostics>> {
@@ -1433,6 +1558,57 @@ export const flowApi = {
 		input: CreateObjectExportInput
 	): Promise<ApiResult<FlowExportJob>> {
 		return apiClient.post<FlowExportJob>(`/api/v2/flow/objects/${objectId}/exports`, input);
+	},
+
+	exportPortablePage(objectId: string) {
+		return apiClient.getBinary(portablePagePackagePath(objectId));
+	},
+
+	previewPortablePage(objectId: string, archive: Blob, mode: 'export' | 'import' = 'import') {
+		return apiClient.request<PortablePagePackagePreview>(
+			'POST',
+			`${portablePagePackagePath(objectId)}/preview${mode === 'export' ? '?mode=export' : ''}`,
+			archive,
+			true,
+			{ 'Content-Type': 'application/zip' }
+		);
+	},
+
+	importPortablePage(objectId: string, archive: Blob, sha256: string, key: string) {
+		return apiClient.request<{ object_id: string; document_id: string; asset_count: number }>(
+			'POST',
+			portablePagePackagePath(objectId),
+			archive,
+			true,
+			{ 'Content-Type': 'application/zip', 'X-Package-SHA256': sha256, 'Idempotency-Key': key }
+		);
+	},
+
+	exportPortableGraph(
+		objectId: string,
+		input: { page_ids: string[]; form_ids: string[]; include_history: boolean }
+	) {
+		return apiClient.postBinary(`${portableGraphPackagePath(objectId)}/export`, input);
+	},
+
+	previewPortableGraph(objectId: string, archive: Blob, mode: 'export' | 'import' = 'import') {
+		return apiClient.request<PortableGraphPreview>(
+			'POST',
+			`${portableGraphPackagePath(objectId)}/preview${mode === 'export' ? '?mode=export' : ''}`,
+			archive,
+			true,
+			{ 'Content-Type': 'application/zip' }
+		);
+	},
+
+	importPortableGraph(objectId: string, archive: Blob, sha256: string, key: string) {
+		return apiClient.request<PortableGraphReceipt>(
+			'POST',
+			portableGraphPackagePath(objectId),
+			archive,
+			true,
+			{ 'Content-Type': 'application/zip', 'X-Package-SHA256': sha256, 'Idempotency-Key': key }
+		);
 	},
 
 	getExportJob(jobId: string): Promise<ApiResult<FlowExportJob>> {
@@ -1618,7 +1794,11 @@ export const flowApi = {
 		objectId: string,
 		known: { known_seq?: number; known_frontier?: string } = {}
 	): Promise<ApiResult<FlowBootstrap>> {
-		const qs = buildQuery({ known_seq: known.known_seq, known_frontier: known.known_frontier });
+		const qs = buildQuery({
+			known_seq: known.known_seq,
+			known_frontier: known.known_frontier,
+			editor_model: 5
+		});
 		return apiClient.get<FlowBootstrap>(`/api/v2/flow/objects/${objectId}/bootstrap${qs}`);
 	},
 
@@ -1826,6 +2006,91 @@ export const flowApi = {
 	getPublicShare(token: string): Promise<ApiResult<FlowPublicShare>> {
 		return apiClient.get<FlowPublicShare>(
 			`/api/v2/flow/public-shares/${encodeURIComponent(token)}`
+		);
+	},
+
+	bodyAssetLimits(objectId: string, signal?: AbortSignal): Promise<ApiResult<BodyAssetLimits>> {
+		return apiClient.request(
+			'GET',
+			`/api/v2/flow/objects/${objectId}/body-assets/limits`,
+			undefined,
+			true,
+			{},
+			signal
+		);
+	},
+	uploadBodyAsset(
+		objectId: string,
+		kind: BodyAssetKind,
+		file: File,
+		key: string,
+		signal: AbortSignal,
+		progress: (value: UploadProgress) => void
+	): Promise<ApiResult<BodyAssetReceipt>> {
+		const data = new FormData();
+		data.set('kind', kind);
+		data.set('file', file, file.name);
+		return apiClient.postFormDataWithProgress(
+			`/api/v2/flow/objects/${objectId}/body-assets`,
+			data,
+			{ 'Idempotency-Key': key },
+			signal,
+			progress
+		);
+	},
+	bodyAsset(objectId: string, assetId: string, signal?: AbortSignal) {
+		return apiClient
+			.getBinary(`/api/v2/flow/objects/${objectId}/body-assets/${assetId}`, true, signal)
+			.then(bodyBinaryResult);
+	},
+	publicBodyAsset(token: string, assetId: string, signal?: AbortSignal) {
+		return apiClient
+			.getBinary(
+				`/api/v2/flow/public-shares/${encodeURIComponent(token)}/body-assets/${assetId}`,
+				true,
+				signal
+			)
+			.then(bodyBinaryResult);
+	},
+	discardBodyAsset(objectId: string, assetId: string): Promise<ApiResult<unknown>> {
+		return apiClient.deleteWithHeaders(`/api/v2/flow/objects/${objectId}/body-assets/${assetId}`, {
+			'Idempotency-Key': `discard-asset:${assetId}`
+		});
+	},
+	prepareChildPage(
+		objectId: string,
+		title: string,
+		key: string,
+		signal?: AbortSignal
+	): Promise<ApiResult<FlowChildReservation>> {
+		return apiClient.request(
+			'POST',
+			`/api/v2/flow/objects/${objectId}/child-reservations`,
+			{ title },
+			true,
+			{ 'Idempotency-Key': key },
+			signal
+		);
+	},
+	childReservationStatus(
+		objectId: string,
+		reservationId: string,
+		signal?: AbortSignal
+	): Promise<ApiResult<FlowChildReservation>> {
+		return apiClient.request(
+			'GET',
+			`/api/v2/flow/objects/${objectId}/child-reservations/${reservationId}`,
+			undefined,
+			true,
+			{},
+			signal
+		);
+	},
+
+	cancelChildReservation(objectId: string, reservationId: string): Promise<ApiResult<unknown>> {
+		return apiClient.deleteWithHeaders(
+			`/api/v2/flow/objects/${objectId}/child-reservations/${reservationId}`,
+			{ 'Idempotency-Key': `cancel-child:${reservationId}` }
 		);
 	},
 

@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import { t } from 'svelte-i18n';
 	import ConvertWizard from './ConvertWizard.svelte';
+	import ConvertPageToForm from './ConvertPageToForm.svelte';
 	import { workspacesApi, type Workspace } from '#lib/api/workspaces.js';
 	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
 	import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
@@ -13,6 +14,8 @@
 	} from '#lib/flow/convert-availability.js';
 	const repository = getContext<FlowObjectRepository>(FLOW_REPOSITORY_CONTEXT);
 	const commands = new FlowCommandService();
+	let sourceTitle = $state('');
+	let createForm = $state(false);
 	let workspaces = $state<Workspace[]>([]),
 		destination = $state('');
 	let availability = $state<ConversionAvailability>({ mode: 'unavailable' });
@@ -27,6 +30,8 @@
 		failed = false;
 		workspaces = [];
 		destination = '';
+		createForm = false;
+		sourceTitle = '';
 		availability = { mode: 'unavailable' };
 		try {
 			const source = await repository.get(objectId);
@@ -35,6 +40,7 @@
 				failed = true;
 				return;
 			}
+			sourceTitle = source.data.title;
 			availability = conversionAvailability(source.data);
 			if (availability.mode === 'unavailable') return;
 			const allowed = availability;
@@ -46,6 +52,8 @@
 				allowed.mode === 'same_workspace'
 					? visible.filter((workspace) => workspace.id === allowed.workspaceId)
 					: visible;
+			if (allowed.mode === 'same_workspace' && workspaces.length === 1)
+				destination = allowed.workspaceId;
 		} catch {
 			if (current === generation) failed = true;
 		} finally {
@@ -71,7 +79,9 @@
 
 <div class="flex-1 overflow-y-auto p-4 md:p-6">
 	<div class="mx-auto max-w-3xl space-y-4">
-		<p class="text-sm text-slate-500">{$t('flow.personal.destinationNote')}</p>
+		<h1 class="text-xl font-semibold">{$t('flow.createForm.convertTitle')}</h1>
+		{#if sourceTitle}<p class="text-sm font-medium">{sourceTitle}</p>{/if}
+		<p class="text-sm text-slate-600 dark:text-slate-300">{$t('flow.personal.destinationNote')}</p>
 		{#if loading}<p role="status">{$t('common.loading')}</p>
 		{:else if failed}<p role="alert">{$t('flow.personal.conversionAvailabilityFailed')}</p>
 			<button
@@ -108,12 +118,28 @@
 			{#if workspaces.length === 0}<p class="text-sm text-slate-500">
 					{$t('flow.personal.noDestination')}
 				</p>{/if}
-			{#if validDestination && page.params.objectId}{#key `${destination}/${page.params.objectId}`}<ConvertWizard
-						workspaceId={destination}
-						objectId={page.params.objectId}
-						{repository}
-						{commands}
-					/>{/key}{/if}
+			{#if validDestination && page.params.objectId}
+				<label class="flex min-h-11 items-center gap-2 text-sm">
+					<input type="checkbox" bind:checked={createForm} />{$t('flow.createForm.new')}
+				</label>
+				{#key `${destination}/${page.params.objectId}/${createForm}`}
+					{#if createForm}
+						<ConvertPageToForm
+							workspaceId={destination}
+							objectId={page.params.objectId}
+							{repository}
+							{commands}
+						/>
+					{:else}
+						<ConvertWizard
+							workspaceId={destination}
+							objectId={page.params.objectId}
+							{repository}
+							{commands}
+						/>
+					{/if}
+				{/key}
+			{/if}
 		{/if}
 	</div>
 </div>

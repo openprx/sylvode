@@ -198,7 +198,7 @@ pub async fn build_candidate(db: &DatabaseConnection, document_id: Uuid) -> Resu
             ApiError::internal()
         })?;
     }
-    if engine.frontier().as_bytes() != boot.head_frontier.as_slice() {
+    if !engine.matches_frontier(&boot.head_frontier) {
         tracing::error!(
             %document_id,
             "snapshot advancement: replayed frontier does not match the bootstrap loader's verified head_frontier"
@@ -225,7 +225,7 @@ pub async fn build_candidate(db: &DatabaseConnection, document_id: Uuid) -> Resu
         tracing::error!(error = %err, %document_id, "snapshot advancement: candidate snapshot failed to round-trip decode");
         ApiError::internal()
     })?;
-    if reloaded.frontier().as_bytes() != boot.head_frontier.as_slice() {
+    if !reloaded.matches_frontier(&boot.head_frontier) {
         tracing::error!(%document_id, "snapshot advancement: candidate snapshot round-trip frontier mismatch");
         return Err(ApiError::internal());
     }
@@ -1464,7 +1464,7 @@ mod database_tests {
             .semantic_snapshot()
             .expect("semantic_snapshot succeeds")
             .semantic_hash();
-        let frontier_before = engine_before.frontier().as_bytes().to_vec();
+        assert!(engine_before.matches_frontier(&boot_before.head_frontier));
 
         // ---- simulate an API restart ----
         // A genuinely independent connection (`Database::connect` again, not `state.db.clone()`)
@@ -1493,15 +1493,15 @@ mod database_tests {
             .semantic_snapshot()
             .expect("semantic_snapshot succeeds")
             .semantic_hash();
-        let frontier_after = engine_after.frontier().as_bytes().to_vec();
+        assert!(engine_after.matches_frontier(&boot_after.head_frontier));
 
         assert_eq!(
             hash_before, hash_after,
             "restart recovery must reproduce the exact same semantic hash, character for character"
         );
         assert_eq!(
-            frontier_before, frontier_after,
-            "restart recovery must also reproduce the exact same frontier"
+            boot_before.head_frontier, boot_after.head_frontier,
+            "restart recovery must retain the exact persisted frontier token"
         );
         assert_eq!(boot_before.head_seq, boot_after.head_seq);
         assert_eq!(boot_before.snapshot_seq, boot_after.snapshot_seq);
@@ -1582,7 +1582,11 @@ mod database_tests {
             .semantic_snapshot()
             .expect("semantic state reads")
             .semantic_hash();
-        let expected_frontier = engine.frontier().as_bytes().to_vec();
+        let expected_frontier = bootstrap::load(&state.db, document_id)
+            .await
+            .expect("persisted frontier reads")
+            .head_frontier;
+        assert!(engine.matches_frontier(&expected_frontier));
         let expected_head = 3;
         assert_eq!(total_update_rows(&state, document_id).await, expected_head);
 
@@ -1612,7 +1616,8 @@ mod database_tests {
         for update in &old_view.tail_updates {
             old_engine.import_update(&update.bytes).expect("old tail replays");
         }
-        assert_eq!(old_engine.frontier().as_bytes(), expected_frontier);
+        assert_eq!(old_view.head_frontier, expected_frontier);
+        assert!(old_engine.matches_frontier(&old_view.head_frontier));
         assert_eq!(
             old_engine
                 .semantic_snapshot()
@@ -1759,7 +1764,7 @@ mod database_tests {
         for tail in &boot.tail_updates {
             verify_engine.import_update(&tail.bytes).expect("tail replays");
         }
-        assert_eq!(verify_engine.frontier().as_bytes(), boot.head_frontier.as_slice());
+        assert!(verify_engine.matches_frontier(&boot.head_frontier));
 
         scratch.drop_self().await;
     }

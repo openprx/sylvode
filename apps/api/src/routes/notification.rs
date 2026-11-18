@@ -27,8 +27,8 @@ pub struct NotificationResponse {
     pub related_comment_id: Option<Uuid>,
     pub related_project_id: Option<Uuid>,
     pub is_read: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub read_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub read_at: Option<platform::timestamp::Timestamp>,
     pub issue_title: Option<String>,
 }
 
@@ -183,7 +183,7 @@ pub async fn mark_notification_read(
 ) -> Result<impl IntoResponse, ApiError> {
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
 
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
 
     let result = state
         .db
@@ -208,7 +208,7 @@ pub async fn mark_all_read(
 ) -> Result<impl IntoResponse, ApiError> {
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
 
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
 
     state
         .db

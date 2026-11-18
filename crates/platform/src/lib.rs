@@ -4,3 +4,4 @@ pub mod config;
 pub mod deprecation;
 pub mod error;
 pub mod logging;
+pub mod timestamp;

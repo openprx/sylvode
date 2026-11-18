@@ -23,7 +23,7 @@
 //! that function's router reaches the application only through `seal`. A Flow route registered
 //! anywhere else turns it red. So does a route that is Flow by its path and names a handler of
 //! another module (or the reverse), and so does a handler that is not written out as
-//! `routes::<module>::<handler>`, because an alias would hide a Flow handler from every check
+//! `routes::<module>::...::<handler>`, because an alias would hide a Flow handler from every check
 //! here. The binary's own test module drives every registered route through the real router and
 //! checks the same thing on the responses.
 //!
@@ -192,6 +192,9 @@ fn matching_brace(chars: &[char], open: usize) -> usize {
 /// structural.
 fn blank_cfg_test_items(code: &str) -> String {
     const MARKER: &str = "#[cfg(test)]";
+    if code.trim_start().starts_with("#![cfg(test)]") {
+        return code.chars().map(|ch| if ch == '\n' { '\n' } else { ' ' }).collect();
+    }
     let mut chars: Vec<char> = code.chars().collect();
     let marker: Vec<char> = MARKER.chars().collect();
     let mut i = 0;
@@ -309,6 +312,14 @@ fn last() { let _ = ApiError::Database(err); }
     );
     assert_eq!(found[0].0, 7);
     assert_eq!(found[3].0, 18);
+    assert!(legacy_mentions("// fixture module\n#![cfg(test)]\nfn fixture() { ApiError::Internal; }").is_empty());
+    assert!(
+        occurrences(
+            &production_code("#![cfg(test)]\nfn fixture() { app.route(); }"),
+            ".route("
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -397,17 +408,19 @@ const METHOD_ROUTERS: &[&str] = &[
     "get", "post", "put", "patch", "delete", "head", "options", "trace", "connect", "any", "fallback",
 ];
 
-/// The `routes` module of a handler written as `routes::<module>::<handler>`, else `None`.
+/// The `routes` module of a handler written as `routes::<module>::...::<handler>`, else `None`.
 fn handler_module(handler: &str) -> Option<&str> {
     let mut parts = handler.split("::");
     let is_ident = |part: &str| !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-    match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some("routes"), Some(module), Some(name), None) if is_ident(module) && is_ident(name) => Some(module),
-        _ => None,
+    if parts.next()? != "routes" {
+        return None;
     }
+    let module = parts.next()?;
+    let handler = parts.next()?;
+    (is_ident(module) && is_ident(handler) && parts.all(is_ident)).then_some(module)
 }
 
-/// The handlers that are not written as `routes::<module>::<handler>`, as `(path, handler)`:
+/// The handlers that are not written as `routes::<module>::...::<handler>`, as `(path, handler)`:
 /// the liveness and readiness probes, which are functions of `main.rs` itself and so cannot be
 /// handlers of `routes::flow` / `routes::collab`. Nothing else may be added without a reason of
 /// that kind.
@@ -537,7 +550,7 @@ fn flow_wiring_findings(main: &str) -> Vec<String> {
                     continue;
                 }
                 findings.push(format!(
-                    "{} is served by `{handler}`, which is not written as `routes::<module>::<handler>`",
+                    "{} is served by `{handler}`, which is not written as `routes::<module>::...::<handler>`",
                     route.path
                 ));
                 continue;
@@ -647,7 +660,7 @@ fn the_wiring_check_sees_a_flow_route_registered_outside_the_boundary() {
         (
             "        .route(\"/api/v1/nested\", get(routes::flow::nested::thing))\n",
             "",
-            "which is not written as",
+            "a path without a `flow` / `collab` segment",
         ),
         (
             "",

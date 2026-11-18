@@ -11,8 +11,8 @@ use crate::flow::json_value::FlowJson;
 use std::collections::{BTreeMap, BTreeSet};
 
 use axum::http::Extensions;
-use chrono::{DateTime, Utc};
 use platform::app::AppState;
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -346,7 +346,7 @@ struct ReferenceRow {
     target_type: String,
     target_id: Uuid,
     display: Value,
-    removed_at: Option<DateTime<Utc>>,
+    removed_at: Option<Timestamp>,
 }
 
 struct BridgeActor {
@@ -848,7 +848,7 @@ pub struct ConversionPreviewInput {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConversionPreviewResponse {
     pub preview_id: Uuid,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     pub source_frontier: String,
     pub target_schema_version: i32,
     pub mapping: Value,
@@ -912,7 +912,7 @@ struct PreviewRow {
     target_schema_version: i32,
     mapping: Value,
     permission_snapshot: Value,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
 }
 
 fn mapping_uuid(mapping: &Value, key: &str) -> Result<Uuid, ApiError> {
@@ -1002,6 +1002,26 @@ fn conversion_warnings(schema: &Value, mapping: &Value) -> Vec<String> {
     warnings
 }
 
+fn validate_new_form_mapping(mapping: &Value) -> Result<(), ApiError> {
+    if let Some(key) = mapping.get("key") {
+        let key = key
+            .as_str()
+            .ok_or_else(|| ApiError::invalid_update("form key must be text"))?;
+        crate::forms::schema::normalize_key(key).map_err(ApiError::invalid_update)?;
+    }
+    if let Some(name) = mapping.get("name")
+        && name.as_str().is_none_or(|value| value.trim().is_empty())
+    {
+        return Err(ApiError::invalid_update("form name must be non-empty text"));
+    }
+    if let Some(schema) = mapping.get("schema") {
+        let normalized =
+            crate::forms::schema::ensure_schema_field_ids(schema.clone()).map_err(ApiError::invalid_update)?;
+        crate::forms::schema::validate_schema(&normalized).map_err(ApiError::invalid_update)?;
+    }
+    Ok(())
+}
+
 pub async fn preview_conversion(
     state: &AppState,
     extensions: &Extensions,
@@ -1037,6 +1057,7 @@ pub async fn preview_conversion(
                 {
                     return Err(ApiError::policy_rejected("target form creation is not permitted"));
                 }
+                validate_new_form_mapping(&input.mapping)?;
                 (
                     project_id,
                     None,
@@ -1116,7 +1137,7 @@ pub async fn preview_conversion(
     }
 
     let preview_id = Uuid::new_v4();
-    let expires_at = Utc::now() + chrono::Duration::minutes(15);
+    let expires_at = Timestamp::now() + time::Duration::minutes(15);
     let permission_snapshot = serde_json::to_value(&permission).map_err(|_| ApiError::internal())?;
     state
         .db
@@ -1503,7 +1524,7 @@ pub const STALE_STARTED_REASON: &str = "stale_started";
 /// Idempotent: a reaped job is no longer `started`, so a second sweep finds nothing. Rows another
 /// transaction holds (a run in progress) are skipped, not waited for. Returns how many jobs it
 /// reaped.
-pub async fn reap_stale_conversion_jobs(state: &AppState, older_than: chrono::Duration) -> Result<u64, ApiError> {
+pub async fn reap_stale_conversion_jobs(state: &AppState, older_than: time::Duration) -> Result<u64, ApiError> {
     #[derive(FromQueryResult)]
     struct Stale {
         id: Uuid,
@@ -1517,7 +1538,7 @@ pub async fn reap_stale_conversion_jobs(state: &AppState, older_than: chrono::Du
         "SELECT id, preview_id, idempotency_key FROM flow_conversion_jobs \
          WHERE status='started' AND started_at < now() - make_interval(secs => $1) \
          ORDER BY started_at, id FOR UPDATE SKIP LOCKED",
-        vec![older_than.num_seconds().into()],
+        vec![older_than.whole_seconds().into()],
     ))
     .all(&tx)
     .await?;
@@ -1585,8 +1606,8 @@ pub async fn run_conversion_reaper(
 
 /// The stale-`started` threshold as a duration ([`CONVERSION_STARTED_STALE_AFTER_SECS`]).
 #[must_use]
-pub const fn conversion_started_stale_after() -> chrono::Duration {
-    chrono::Duration::seconds(CONVERSION_STARTED_STALE_AFTER_SECS)
+pub const fn conversion_started_stale_after() -> time::Duration {
+    time::Duration::seconds(CONVERSION_STARTED_STALE_AFTER_SECS)
 }
 
 /// Runs a claimed job. Any failure after the claim leaves the job `failed` with a stable `error`
@@ -1978,7 +1999,7 @@ pub async fn commit_conversion(
     if let Some(job_id) = existing_commit_job(&state.db, &preview, &input.idempotency_key).await? {
         return load_job(&state.db, job_id).await;
     }
-    if preview.expires_at <= Utc::now() {
+    if preview.expires_at <= Timestamp::now() {
         return Err(policy_rejected_reason(
             "conversion preview expired",
             PREVIEW_EXPIRED_REASON,
@@ -2183,7 +2204,7 @@ pub struct RecordLineageReference {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<Timestamp>,
 }
 
 /// One conversion job that created a form record, as the record detail reports it.
@@ -2212,7 +2233,7 @@ pub struct RecordLineageConversion {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lineage_id: Option<Option<Uuid>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<Timestamp>,
 }
 
 /// The `flow_lineage` field of the form record detail: live Flow references to the record and
@@ -2239,7 +2260,7 @@ pub async fn record_flow_lineage(
         id: Uuid,
         source_object_id: Uuid,
         display: Value,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
     }
     #[derive(FromQueryResult)]
     struct ConversionLineageRow {
@@ -2248,7 +2269,7 @@ pub async fn record_flow_lineage(
         actor_id: Uuid,
         status: String,
         lineage_id: Option<Uuid>,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
     }
     #[derive(FromQueryResult)]
     struct TitleRow {
@@ -2825,6 +2846,7 @@ pub async fn preview_scope_conversion(
             if !matches!(actor.role.as_str(), "owner" | "admin") || !project_exists(&tx, destination, project).await? {
                 return Err(ApiError::policy_rejected("target form creation is not permitted"));
             }
+            validate_new_form_mapping(&input.mapping)?;
             (
                 project,
                 None,
@@ -2883,7 +2905,7 @@ pub async fn preview_scope_conversion(
         return serde_json::from_value(value).map_err(|_| ApiError::internal());
     }
     let id = Uuid::new_v4();
-    let expiry = Utc::now() + chrono::Duration::minutes(15);
+    let expiry = Timestamp::now() + time::Duration::minutes(15);
     let storage_key = format!("scope:{}:{}", identity.scope_id, input.idempotency_key);
     tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_conversion_previews(id,scope_id,workspace_id,actor_id,actor_kind,source_object_id,source_frontier,target_type,target_project_id,target_form_id,target_schema_version,mapping,permission_snapshot,idempotency_key,request_key,expires_at) VALUES($1,$2,$3,$4,'user',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",vec![id.into(),identity.scope_id.into(),destination.into(),user.into(),input.source_object_id.into(),input.source_frontier.clone().into(),input.target_type.into(),project.into(),form.into(),version.into(),input.mapping.clone().into(),serde_json::to_value(&permission).map_err(|_|ApiError::internal())?.into(),storage_key.into(),input.idempotency_key.clone().into(),expiry.into()])).await?;
     let result = ConversionPreviewResponse {
@@ -3089,7 +3111,7 @@ pub async fn commit_scope_conversion(
     if let Some(id) = existing_commit_job(&state.db, &preview, &input.idempotency_key).await? {
         return load_job(&state.db, id).await;
     }
-    if preview.expires_at <= Utc::now() {
+    if preview.expires_at <= Timestamp::now() {
         return Err(policy_rejected_reason(
             "conversion preview expired",
             PREVIEW_EXPIRED_REASON,

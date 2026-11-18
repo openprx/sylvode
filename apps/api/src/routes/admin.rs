@@ -110,8 +110,8 @@ struct UserRow {
     entity_type: String,
     agent_type: Option<String>,
     agent_config: Option<Value>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
+    created_at: platform::timestamp::Timestamp,
+    updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -120,7 +120,7 @@ struct UserWorkspaceRow {
     workspace_slug: String,
     workspace_name: String,
     workspace_role: String,
-    joined_at: chrono::DateTime<chrono::Utc>,
+    joined_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -231,7 +231,7 @@ pub async fn create_user(
     }
 
     let user_id = Uuid::new_v4();
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
     state
         .db
         .execute(Statement::from_sql_and_values(
@@ -403,7 +403,7 @@ pub async fn update_user(
     }
 
     set_parts.push(format!("updated_at = ${param_idx}"));
-    values.push(chrono::Utc::now().into());
+    values.push(platform::timestamp::Timestamp::now().into());
     param_idx += 1;
     values.push(user_id.into());
 

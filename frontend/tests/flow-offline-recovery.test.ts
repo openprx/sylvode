@@ -142,7 +142,8 @@ async function offlineEdits(
 	ctx.connectivity.goOffline();
 	await waitFor(() => ctx.states.at(-1) === 'offline', 'indicator shows offline');
 	for (const text of texts) edit(ctx.entry.doc, text);
-	await waitFor(() => ctx.pending() === texts.length, `${texts.length} pending`);
+	assertEqual(ctx.pending(), texts.length, 'all edits count as pending immediately');
+	await ctx.entry.offline.idle();
 	return (await ctx.store.list(OBJECT_ID)).map((e) => e.updateId);
 }
 

@@ -10,15 +10,16 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use chrono::{Duration, Utc};
 use hmac::{Hmac, Mac};
 use image::{ImageFormat, ImageReader};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::Sha256;
 use std::{collections::BTreeSet, convert::Infallible, io::Cursor};
+use time::Duration;
 use uuid::Uuid;
 
 use crate::{
@@ -67,7 +68,7 @@ pub struct SignatureDownloadQuery {
 #[derive(Debug, Serialize)]
 pub struct SignatureSignedDownloadResponse {
     pub url: String,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: platform::timestamp::Timestamp,
 }
 
 /// Query parameters accepted by every uploaded-object download route.
@@ -197,7 +198,7 @@ pub async fn uploads_access_middleware(
         &object_key,
         expires,
         signature,
-        Utc::now().timestamp(),
+        Timestamp::now().unix_timestamp(),
     )?;
     req.extensions_mut().insert(SignedUploadAccess);
     Ok(next.run(req).await)
@@ -383,7 +384,7 @@ pub async fn create_uploaded_signature_signed_url(
     ensure_signature_file_name(&file_name)?;
     access.authorize(&state, &format!("signatures/{file_name}")).await?;
     let _ = read_signature_object(&file_name).await?;
-    let expires_at = Utc::now() + Duration::minutes(SIGNATURE_SIGNED_DOWNLOAD_TTL_MINUTES);
+    let expires_at = Timestamp::now() + Duration::minutes(SIGNATURE_SIGNED_DOWNLOAD_TTL_MINUTES);
     Ok(ApiResponse::success(signature_signed_download_response(
         state.cfg.jwt_secret.expose(),
         &file_name,
@@ -398,7 +399,7 @@ pub async fn download_signed_uploaded_signature(
     Query(query): Query<SignatureDownloadQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     ensure_signature_file_name(&file_name)?;
-    if query.expires < Utc::now().timestamp() {
+    if query.expires < Timestamp::now().unix_timestamp() {
         return Err(ApiError::Unauthorized("signature download link expired".to_string()));
     }
     let expected = sign_signature_download(state.cfg.jwt_secret.expose(), &file_name, query.expires)?;
@@ -971,9 +972,9 @@ pub(crate) fn verify_upload_download_signature(
 fn signature_signed_download_response(
     secret: &str,
     file_name: &str,
-    expires_at: chrono::DateTime<chrono::Utc>,
+    expires_at: platform::timestamp::Timestamp,
 ) -> Result<SignatureSignedDownloadResponse, ApiError> {
-    let expires = expires_at.timestamp();
+    let expires = expires_at.unix_timestamp();
     let signature = sign_signature_download(secret, file_name, expires)?;
     Ok(SignatureSignedDownloadResponse {
         url: format!("/api/v1/uploads/signatures/{file_name}/download?expires={expires}&signature={signature}"),
@@ -996,8 +997,8 @@ mod tests {
     use super::*;
     use crate::services::object_storage::{test_object_storage, test_should_create_bucket};
     use axum::body::to_bytes;
-    use chrono::Utc;
     use image::{ImageBuffer, Rgba};
+    use platform::timestamp::Timestamp;
     use platform::{
         app::AppState,
         auth::TokenType,
@@ -1363,7 +1364,8 @@ mod tests {
 
     #[test]
     fn signature_signed_download_response_uses_hmac_and_expiry() {
-        let expires_at = chrono::DateTime::from_timestamp(1_800_000_000, 0).expect("timestamp should be valid");
+        let expires_at =
+            platform::timestamp::Timestamp::from_unix_timestamp(1_800_000_000, 0).expect("timestamp should be valid");
         let response = signature_signed_download_response("secret", "signature-guest-123.png", expires_at)
             .expect("signed signature URL should be generated");
 
@@ -1426,10 +1428,7 @@ mod tests {
         }
 
         let source_bytes = test_png(512, 256);
-        let boundary = format!(
-            "sylvode-minio-upload-{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
+        let boundary = format!("sylvode-minio-upload-{}", Timestamp::now().unix_timestamp_nanos());
         let body = multipart_body(&boundary, "source.png", "image/png", &source_bytes);
         let mut headers = HeaderMap::new();
         headers.insert(

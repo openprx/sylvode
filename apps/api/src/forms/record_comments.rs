@@ -37,9 +37,9 @@ pub struct FormRecordCommentResponse {
     pub author_email: Option<String>,
     pub body: String,
     pub metadata: Value,
-    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub archived_at: Option<platform::timestamp::Timestamp>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

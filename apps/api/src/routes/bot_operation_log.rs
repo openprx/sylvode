@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{DbBackend, FromQueryResult, Statement, Value};
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ pub struct BotOperationLogResponse {
     pub error_message: Option<String>,
     pub duration_ms: i64,
     pub request_id: Uuid,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Serialize)]
@@ -72,7 +72,7 @@ fn normalize_tool_name(value: &str) -> Result<String, ApiError> {
     }
 }
 
-fn decode_cursor(value: &str) -> Result<(DateTime<Utc>, Uuid), ApiError> {
+fn decode_cursor(value: &str) -> Result<(Timestamp, Uuid), ApiError> {
     let decoded = URL_SAFE_NO_PAD
         .decode(value)
         .map_err(|_| ApiError::BadRequest("invalid cursor".to_string()))?;
@@ -80,14 +80,13 @@ fn decode_cursor(value: &str) -> Result<(DateTime<Utc>, Uuid), ApiError> {
     let (created_at, id) = decoded
         .split_once('|')
         .ok_or_else(|| ApiError::BadRequest("invalid cursor".to_string()))?;
-    let created_at = DateTime::parse_from_rfc3339(created_at)
-        .map_err(|_| ApiError::BadRequest("invalid cursor".to_string()))?
-        .with_timezone(&Utc);
+    let created_at =
+        Timestamp::parse_rfc3339(created_at).map_err(|_| ApiError::BadRequest("invalid cursor".to_string()))?;
     let id = Uuid::parse_str(id).map_err(|_| ApiError::BadRequest("invalid cursor".to_string()))?;
     Ok((created_at, id))
 }
 
-fn encode_cursor(created_at: DateTime<Utc>, id: Uuid) -> String {
+fn encode_cursor(created_at: Timestamp, id: Uuid) -> String {
     URL_SAFE_NO_PAD.encode(format!("{}|{id}", created_at.to_rfc3339()))
 }
 
@@ -181,12 +180,12 @@ pub async fn list_bot_operation_logs(
 #[cfg(test)]
 mod tests {
     use super::{decode_cursor, encode_cursor, normalize_tool_name};
-    use chrono::Utc;
+    use platform::timestamp::Timestamp;
     use uuid::Uuid;
 
     #[test]
     fn cursor_round_trips_without_exposing_query_data() {
-        let timestamp = Utc::now();
+        let timestamp = Timestamp::now();
         let id = Uuid::new_v4();
         let encoded = encode_cursor(timestamp, id);
         let decoded = decode_cursor(&encoded).ok();

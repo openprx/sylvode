@@ -103,7 +103,7 @@ pub struct GrantItem {
     pub principal_id: Uuid,
     pub level: String,
     pub granted_by: Option<Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize)]
@@ -308,7 +308,7 @@ struct GrantRow {
     principal_id: Uuid,
     level: String,
     granted_by: Option<Uuid>,
-    created_at: chrono::DateTime<chrono::Utc>,
+    created_at: platform::timestamp::Timestamp,
 }
 
 async fn grants_on<C: ConnectionTrait>(conn: &C, object_ids: &[Uuid]) -> Result<Vec<GrantRow>, ApiError> {

@@ -29,6 +29,30 @@ pub struct MountInput {
     pub level: String,
     pub idempotency_key: String,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeMountInput {
+    pub expected_level: String,
+    pub level: String,
+    pub idempotency_key: String,
+}
+
+fn valid_level(level: &str) -> bool {
+    matches!(level, "view" | "comment" | "edit")
+}
+
+async fn require_enabled<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
+    scope::require_personal_write(db).await?;
+    if !scope::capabilities(db).await?.external_mounts {
+        return Err(ApiError::typed_with_details(
+            crate::error::ApiErrorKind::FeatureDisabled,
+            "external mounts are not enabled",
+            json!({"reason":"external_mounts_disabled"}),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn list(db: &DatabaseConnection, user: Uuid, object: Uuid) -> Result<Vec<MountView>, ApiError> {
     let proof = scope::authorize(db, object, user, PermissionLevel::FullAccess).await?;
     let rows=MountView::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT m.id,m.source_object_id,m.destination_workspace_id,m.destination_project_id,m.grant_level AS level,CASE WHEN o.lifecycle_status='active' THEN 'active' ELSE 'source_archived' END AS status FROM flow_mounts m JOIN flow_objects o ON o.id=m.source_object_id WHERE m.source_object_id=$1 ORDER BY m.created_at,m.id",vec![object.into()])).all(db).await?;
@@ -43,10 +67,7 @@ pub async fn create(
     object: Uuid,
     input: MountInput,
 ) -> Result<MountView, ApiError> {
-    if !matches!(input.level.as_str(), "view" | "comment" | "edit")
-        || input.idempotency_key.trim().is_empty()
-        || input.idempotency_key.len() > 128
-    {
+    if !valid_level(&input.level) || input.idempotency_key.trim().is_empty() || input.idempotency_key.len() > 128 {
         return Err(ApiError::invalid_update(
             "invalid mount capability or operation identity",
         ));
@@ -58,14 +79,7 @@ pub async fn create(
         ));
     }
     let tx = db.begin().await?;
-    scope::require_personal_write(&tx).await?;
-    if !scope::capabilities(&tx).await?.external_mounts {
-        return Err(ApiError::typed_with_details(
-            crate::error::ApiErrorKind::FeatureDisabled,
-            "external mounts are not enabled",
-            json!({"reason":"external_mounts_disabled"}),
-        ));
-    }
+    require_enabled(&tx).await?;
     // Membership mutations take the same workspace row first, even before Flow settings exist.
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -98,7 +112,15 @@ pub async fn create(
         vec![identity.scope_id.into()],
     ))
     .await?;
-    scope::authorize(&tx, object, user, PermissionLevel::FullAccess).await?;
+    if !scope::authorize(&tx, object, user, PermissionLevel::FullAccess)
+        .await?
+        .resource_active
+    {
+        return Err(ApiError::not_found("mount source unavailable"));
+    }
+    if let Some(project) = input.destination_project_id {
+        ensure_project(&tx, input.destination_workspace_id, project).await?;
+    }
     let body = json!({"operation":"mount_create","object_id":object,"destination_workspace_id":input.destination_workspace_id,"destination_project_id":input.destination_project_id,"level":input.level});
     if let Some(result) =
         super::scope_commands::lock_and_replay(&tx, identity.scope_id, user, &input.idempotency_key, &body).await?
@@ -141,6 +163,127 @@ pub async fn create(
     tx.commit().await?;
     Ok(mount)
 }
+async fn ensure_project<C: ConnectionTrait>(db: &C, workspace: Uuid, project: Uuid) -> Result<(), ApiError> {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM projects WHERE id=$1 AND workspace_id=$2",
+        vec![project.into(), workspace.into()],
+    ))
+    .await?
+    .ok_or_else(|| ApiError::not_found("mount destination unavailable"))?;
+    Ok(())
+}
+
+/// Change a placement under the same authority fence as creation. The previous level is CAS-bound
+/// so two controllers reviewing the same placement cannot unknowingly overwrite each other.
+pub async fn change(
+    db: &DatabaseConnection,
+    user: Uuid,
+    object: Uuid,
+    mount: Uuid,
+    input: ChangeMountInput,
+) -> Result<MountView, ApiError> {
+    if !valid_level(&input.expected_level)
+        || !valid_level(&input.level)
+        || input.idempotency_key.trim().is_empty()
+        || input.idempotency_key.len() > 128
+    {
+        return Err(ApiError::invalid_update("invalid mount permission change"));
+    }
+    let identity = scope::identity(db, object).await?;
+    scope::authorize(db, object, user, PermissionLevel::FullAccess).await?;
+    let binding = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT destination_workspace_id FROM flow_mounts WHERE source_object_id=$1 AND id=$2",
+            vec![object.into(), mount.into()],
+        ))
+        .await?
+        .ok_or_else(|| ApiError::not_found("placement not found"))?;
+    let destination: Uuid = binding.try_get("", "destination_workspace_id")?;
+    let body = json!({"operation":"mount_change","object_id":object,"mount_id":mount,
+        "expected_level":input.expected_level,"level":input.level});
+    let tx = db.begin().await?;
+    require_enabled(&tx).await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM workspaces WHERE id=$1 FOR SHARE",
+        vec![destination.into()],
+    ))
+    .await?;
+    authz::lock_epoch_for_share(&tx, destination).await?;
+    if !destination_can_manage(&tx, destination, user).await? {
+        return Err(ApiError::forbidden("destination publishing permission required"));
+    }
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT scope_id FROM flow_scope_settings WHERE scope_id=$1 FOR UPDATE",
+        vec![identity.scope_id.into()],
+    ))
+    .await?;
+    if !scope::authorize(&tx, object, user, PermissionLevel::FullAccess)
+        .await?
+        .resource_active
+    {
+        return Err(ApiError::not_found("mount source unavailable"));
+    }
+    if let Some(result) =
+        super::scope_commands::lock_and_replay(&tx, identity.scope_id, user, &input.idempotency_key, &body).await?
+    {
+        tx.commit().await?;
+        return serde_json::from_value(result).map_err(|_| ApiError::internal());
+    }
+    let view = MountView::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE flow_mounts SET grant_level=$5
+         WHERE source_object_id=$1 AND id=$2 AND destination_workspace_id=$3 AND grant_level=$4
+         RETURNING id,source_object_id,destination_workspace_id,destination_project_id,
+                   grant_level AS level,'active'::text AS status",
+        vec![
+            object.into(),
+            mount.into(),
+            destination.into(),
+            input.expected_level.into(),
+            input.level.into(),
+        ],
+    ))
+    .one(&tx)
+    .await?
+    .ok_or_else(|| {
+        ApiError::policy_rejected_with_details(
+            "Mount permission changed",
+            json!({"reason":"mount_permission_changed","write_state":"not_applied"}),
+        )
+    })?;
+    scope::advance_revision(&tx, identity.scope_id).await?;
+    let event = super::scope_event::insert(
+        &tx,
+        identity.scope_id,
+        user,
+        "flow.object.mount_permission_changed",
+        "flow_object",
+        object,
+        &input.idempotency_key,
+        json!({"object_id":object,"mount_id":mount,"level":view.level}),
+        json!({"idempotency_body":body}),
+        None,
+    )
+    .await?;
+    super::scope_commands::record(
+        &tx,
+        identity.scope_id,
+        user,
+        &input.idempotency_key,
+        body,
+        object,
+        event,
+        serde_json::to_value(&view).map_err(|_| ApiError::internal())?,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(view)
+}
+
 pub async fn destination_can_manage<C: ConnectionTrait>(db: &C, workspace: Uuid, user: Uuid) -> Result<bool, ApiError> {
     Ok(db
         .query_one(Statement::from_sql_and_values(

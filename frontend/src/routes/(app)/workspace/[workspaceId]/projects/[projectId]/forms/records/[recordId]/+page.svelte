@@ -1,4 +1,9 @@
 <script lang="ts">
+	import { writable } from 'svelte/store';
+	import CreatorPluginLink from '#lib/components/plugins/CreatorPluginLink.svelte';
+	import RecordPluginPanels from '#lib/components/plugins/RecordPluginPanels.svelte';
+	import RecordPluginActions from '#lib/components/plugins/RecordPluginActions.svelte';
+	import type { RecordPluginActionSurface } from '#lib/plugins/placements.js';
 	import {
 		Activity,
 		ArrowLeft,
@@ -58,14 +63,20 @@
 		'attachments',
 		'events'
 	]);
+	const recordPluginActions: RecordPluginActionSurface = writable(null);
 	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 	const projectId = requireRouteParam(page.params.projectId, 'projectId');
 	const recordId = requireRouteParam(page.params.recordId, 'recordId');
 	let loading = $state(true);
 	let errorMessage = $state('');
 	let record = $state<FormRecordDetail | null>(null);
-	const flowLineage = $derived(record ? flowLineageView(record.flow_lineage) : null);
 	let form = $state<UniversalForm | null>(null);
+	const pluginRecordInRoute = $derived(
+		record?.id === page.params.recordId &&
+			record?.project_id === page.params.projectId &&
+			form?.workspace_id === page.params.workspaceId
+	);
+	const flowLineage = $derived(record ? flowLineageView(record.flow_lineage) : null);
 	let permissions = $state<FormPermissions | null>(null);
 	let links = $state<FormRecordLink[]>([]);
 	let children = $state<FormChildRecord[]>([]);
@@ -606,6 +617,11 @@
 		return JSON.stringify(value ?? {}, null, 2);
 	}
 
+	async function refreshRecord() {
+		const response = await formsApi.getRecord(recordId);
+		if (response.code === 0 && response.data) record = response.data;
+	}
+
 	async function loadDetail() {
 		loading = true;
 		errorMessage = '';
@@ -773,6 +789,17 @@
 						<span>{$t('forms.updatedAt', { values: { date: formatDate(record.updated_at) } })}</span
 						>
 						<span>v{record.schema_version ?? form.schema_version}</span>
+						{#if pluginRecordInRoute}
+							{#if form.key === 'order_line'}
+								<CreatorPluginLink
+									{workspaceId}
+									{projectId}
+									formKey={form.key}
+									slot="form.record.actions"
+								/>
+							{/if}
+							<RecordPluginActions recordId={record.id} surface={recordPluginActions} />
+						{/if}
 					</div>
 				</div>
 			</header>
@@ -874,6 +901,23 @@
 				data-durable-record-detail-page-composition={`${record.id}:${pageWidgetRegion}`}
 			>
 				<main class="space-y-4" data-durable-record-detail-layout={record.id}>
+					{#if pluginRecordInRoute}
+						{#if form.key === 'order_line'}
+							<CreatorPluginLink
+								{workspaceId}
+								{projectId}
+								formKey={form.key}
+								slot="form.record.detail"
+							/>
+						{/if}
+						{#key record.id}
+							<RecordPluginPanels
+								recordId={record.id}
+								surface={recordPluginActions}
+								onApplied={() => void refreshRecord()}
+							/>
+						{/key}
+					{/if}
 					{#each detailLayoutSections() as section}
 						<details
 							class={detailLayoutSectionContainerClass(section.density)}

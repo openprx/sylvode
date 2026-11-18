@@ -27,8 +27,8 @@ pub struct FormPermissionPolicyResponse {
     pub subject_type: String,
     pub subject_id: String,
     pub policy: Value,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize)]
@@ -510,7 +510,7 @@ mod tests {
         form_permissions_response, permission_policy_field_allows, permission_policy_fields,
         permission_policy_record_scope, role_record_scope_predicate_sql, validate_permission_policy,
     };
-    use chrono::Utc;
+    use platform::timestamp::Timestamp;
     use serde_json::json;
     use uuid::Uuid;
 
@@ -628,8 +628,8 @@ mod tests {
                 "record_scope": "owned",
                 "fields": {"unit_price": {"read": false, "write": false}}
             }),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
         };
 
         let response = form_permissions_response(form_id, "member".to_string(), false, vec![policy]);
@@ -654,8 +654,8 @@ mod tests {
                 "record_scope": "owned",
                 "fields": {"salary": {"read": false, "write": false}}
             }),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
         }
     }
 

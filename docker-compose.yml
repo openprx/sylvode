@@ -1,7 +1,7 @@
 version: "3.9"
 
-# The api, worker and mcp-server binaries read NO environment variables. Every setting they use
-# comes from a TOML configuration file, mounted read-only at /app/config/sylvode.toml and named
+# Application settings come from a TOML configuration file, mounted read-only at
+# /app/config/sylvode.toml and named
 # explicitly with --config. `scripts/start.sh` generates both files; `config/sylvode.example.toml`
 # is the annotated reference.
 #
@@ -13,9 +13,8 @@ version: "3.9"
 # carries only [logging] and [mcp]. The lazy validation of [database] and [auth] is what makes an
 # MCP-only file a complete configuration.
 #
-# The environment blocks below are for images that are configured by environment (postgres), and
-# the ${...} interpolations are docker-compose's own mechanism for ports, host binding and the
-# runtime base image. Neither is application configuration.
+# Compose passes the API its two optional plugin rollout flags. Other environment values
+# configure the PostgreSQL image or Compose itself, including host ports and base images.
 
 services:
   postgres:
@@ -49,6 +48,9 @@ services:
         RUNTIME_BASE: ${SYLVODE_RUNTIME_BASE:-debian:bookworm-slim}
         APP_BIN: api
     command: ["/app/api", "--config", "/app/config/sylvode.toml"]
+    environment:
+      SV_FORM_PLUGIN_PACKAGES_ENABLED: "${SV_FORM_PLUGIN_PACKAGES_ENABLED:-0}"
+      SV_FORM_PLUGIN_LAYOUTS_ENABLED: "${SV_FORM_PLUGIN_LAYOUTS_ENABLED:-0}"
     ports:
       - "${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_API_PORT:-8081}:8080"
     volumes:

@@ -213,6 +213,21 @@ TOML
     false
   fi
 
+  # The personal-scope and mount specs target a rolled-out instance. Only touch the
+  # disposable database created above, after all three real readers have registered.
+  local rollout_ready
+  for _ in $(seq 1 100); do
+    rollout_ready=$(psql "$database_url" -X -Atq -v ON_ERROR_STOP=1 -c "
+      UPDATE flow_runtime_capabilities
+         SET minimum_reader_version=5, personal_provisioning=true, personal_writes=true, external_mounts=true
+       WHERE singleton AND (SELECT count(DISTINCT component) = 3 AND min(reader_version) >= 5
+                              FROM flow_runtime_readers WHERE lease_expires_at > now())
+       RETURNING 1")
+    [[ $rollout_ready == 1 ]] && break
+    sleep 0.2
+  done
+  [[ $rollout_ready == 1 ]] || die "API, maintenance and worker reader-5 leases did not become ready"
+
   E2E_PROXY_BUILD_DIR="$BUILD_DIR" E2E_PROXY_API_ORIGIN="$api_origin" E2E_PROXY_PORT="$WEB_PORT" \
     bun "$ROOT_DIR/scripts/lib/e2e-web-proxy.ts" >"$STACK_DIR/proxy.log" 2>&1 &
   echo $! >"$STACK_DIR/proxy.pid"

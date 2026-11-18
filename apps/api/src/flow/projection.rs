@@ -7,9 +7,10 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use collab_core::{Frontier, SemanticSnapshot};
 use serde_json::Value;
+use std::fmt::Write as _;
 
 /// Current version of derived editor-CID and canonical navigator-order projections.
-pub const PROJECTION_MODEL_VERSION: u64 = 3;
+pub const PROJECTION_MODEL_VERSION: u64 = 5;
 
 /// Base64 encoding for an opaque [`Frontier`] on the wire. `Bootstrap.snapshot_base64`
 /// elsewhere in the contract sets the precedent that opaque CRDT bytes are base64 in JSON.
@@ -59,29 +60,137 @@ pub fn plain_text(snapshot: &SemanticSnapshot) -> String {
 /// content that is already present in the same accepted document.
 #[must_use]
 pub fn render_markdown(title: &str, snapshot: &SemanticSnapshot) -> String {
+    render_markdown_context(title, snapshot, None)
+}
+pub fn render_markdown_for_object(title: &str, snapshot: &SemanticSnapshot, object: uuid::Uuid) -> String {
+    render_markdown_context(title, snapshot, Some(object))
+}
+fn render_markdown_context(title: &str, snapshot: &SemanticSnapshot, object: Option<uuid::Uuid>) -> String {
     let mut rendered = String::new();
     if !title.is_empty() {
         rendered.push_str("# ");
-        rendered.push_str(title);
+        rendered.push_str(&collab_core::page_inline::markdown(title, &[]));
         rendered.push('\n');
     }
 
     let mut nodes: Vec<_> = snapshot.nodes.iter().filter(|(_, node)| !node.deleted).collect();
-    nodes.sort_by(|(id_a, node_a), (id_b, node_b)| {
-        node_a
-            .parent
-            .cmp(&node_b.parent)
-            .then(node_a.order_key.cmp(&node_b.order_key))
-            .then(id_a.cmp(id_b))
-    });
+    nodes.sort_by(|(id_a, node_a), (id_b, node_b)| node_a.order_key.cmp(&node_b.order_key).then(id_a.cmp(id_b)));
     for (_, node) in nodes {
-        if node.text.is_empty() {
+        let kind = node.properties.get("block_type").map(String::as_str);
+        if matches!(kind, Some("image" | "attachment")) {
+            if !rendered.is_empty() && !rendered.ends_with("\n\n") {
+                rendered.push('\n');
+            }
+            let label = node
+                .properties
+                .get(if kind == Some("image") { "alt" } else { "name" })
+                .filter(|value| !value.is_empty())
+                .map_or_else(
+                    || if kind == Some("image") { "Image" } else { "Attachment" },
+                    String::as_str,
+                );
+            let label = collab_core::page_inline::markdown(label, &[]);
+            if let Some(asset) = node
+                .properties
+                .get("asset_id")
+                .and_then(|value| uuid::Uuid::parse_str(value).ok())
+            {
+                if let Some(object) = object {
+                    let prefix = if kind == Some("image") { "!" } else { "" };
+                    let _ = writeln!(
+                        rendered,
+                        "{prefix}[{label}](/api/v2/flow/objects/{object}/body-assets/{asset})"
+                    );
+                } else {
+                    let _ = writeln!(rendered, "[{label}; asset reference {asset}]");
+                }
+            }
+            if let Some(caption) = node.properties.get("caption").filter(|caption| !caption.is_empty()) {
+                rendered.push_str(&collab_core::page_inline::markdown(caption, &[]));
+                rendered.push('\n');
+            }
+            continue;
+        }
+        if kind == Some("childPage") {
+            if let Some(child) = node.properties.get("child_page_id") {
+                let _ = writeln!(rendered, "\n[Linked Page reference {child}]");
+            }
+            continue;
+        }
+        if node.text.is_empty() && node.properties.get("block_type").is_none_or(|v| v != "divider") {
             continue;
         }
         if !rendered.is_empty() && !rendered.ends_with("\n\n") {
             rendered.push('\n');
         }
-        rendered.push_str(&node.text);
+        let spans = node
+            .properties
+            .get("inline_spans")
+            .and_then(|raw| serde_json::from_str::<Vec<collab_core::page_inline::InlineSpan>>(raw).ok())
+            .unwrap_or_default();
+        let code = node
+            .properties
+            .get("block_type")
+            .is_some_and(|kind| kind == "codeBlock");
+        let fence = if code {
+            "`".repeat(
+                node.text
+                    .split(|ch| ch != '`')
+                    .map(str::len)
+                    .max()
+                    .unwrap_or(0)
+                    .saturating_add(1)
+                    .max(3),
+            )
+        } else {
+            String::new()
+        };
+        let text = if code {
+            node.text.clone()
+        } else {
+            collab_core::page_inline::markdown(&node.text, &spans)
+        };
+        let indent = node
+            .properties
+            .get("indent")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(7);
+        rendered.push_str(&"  ".repeat(indent));
+        match node.properties.get("block_type").map(String::as_str) {
+            Some("heading") => {
+                let level = node
+                    .properties
+                    .get("level")
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(1)
+                    .clamp(1, 3);
+                rendered.push_str(&"#".repeat(level));
+                rendered.push(' ');
+            }
+            Some("divider") => rendered.push_str("---"),
+            Some("bulletItem") => rendered.push_str("- "),
+            Some("orderedItem") => {
+                rendered.push_str(node.properties.get("order").map_or("1", String::as_str));
+                rendered.push_str(". ");
+            }
+            Some("todoItem") => rendered.push_str(if node.properties.get("checked").is_some_and(|v| v == "true") {
+                "- [x] "
+            } else {
+                "- [ ] "
+            }),
+            Some("blockquote" | "toggle") => rendered.push_str("> "),
+            Some("codeBlock") => {
+                rendered.push_str(&fence);
+                rendered.push('\n');
+            }
+            _ => {}
+        }
+        rendered.push_str(&text);
+        if code {
+            rendered.push('\n');
+            rendered.push_str(&fence);
+        }
         rendered.push('\n');
     }
     rendered
@@ -130,6 +239,23 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn fenced_code_is_raw_and_uses_a_delimiter_longer_than_its_body_runs() {
+        let mut snapshot = SemanticSnapshot::default();
+        let text = "* _ ` [ ] < &amp;\n```\n````";
+        snapshot.nodes.insert(
+            "code".into(),
+            SemanticNode {
+                parent: None,
+                order_key: "0".into(),
+                kind: NodeKind::Block,
+                text: text.into(),
+                properties: BTreeMap::from([("block_type".into(), "codeBlock".into())]),
+                deleted: false,
+            },
+        );
+        assert_eq!(render_markdown("", &snapshot), format!("`````\n{text}\n`````\n"));
+    }
     #[test]
     fn markdown_contains_live_block_text_in_document_order() {
         let mut snapshot = SemanticSnapshot::default();

@@ -1,0 +1,39 @@
+{
+  "blocks": [
+    {
+      "indent": 0,
+      "inline_spans": [
+        {
+          "end": 17,
+          "mark": "bold",
+          "start": 7
+        }
+      ],
+      "kind": "paragraph",
+      "text": "Public 中文😀"
+    },
+    {
+      "alt": "图片😀",
+      "asset_id": "00000000-0000-4000-8000-000000000101",
+      "caption": "Caption <literal>",
+      "indent": 0,
+      "kind": "image",
+      "text": "图片😀 Caption <literal>"
+    },
+    {
+      "asset_id": "00000000-0000-4000-8000-000000000102",
+      "caption": "File & note",
+      "indent": 0,
+      "kind": "attachment",
+      "mime": "application/json",
+      "name": "说明.json",
+      "text": "说明.json File & note"
+    },
+    {
+      "indent": 0,
+      "kind": "childPage",
+      "text": ""
+    }
+  ],
+  "synthetic": true
+}

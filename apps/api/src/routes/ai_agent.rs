@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -31,9 +31,9 @@ pub struct AiAgentRow {
     pub reason_min_length: i32,
     pub is_active: bool,
     pub registered_by: Uuid,
-    pub last_active_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub config_updated_at: DateTime<Utc>,
+    pub last_active_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+    pub config_updated_at: Timestamp,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,7 +62,7 @@ pub struct UpdateAiAgentRequest {
     pub can_veto_human_consensus: Option<bool>,
     pub reason_min_length: Option<i32>,
     pub is_active: Option<bool>,
-    pub expected_config_updated_at: Option<DateTime<Utc>>,
+    pub expected_config_updated_at: Option<Timestamp>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -77,13 +77,13 @@ struct AiAgentVoteStatsRow {
     yes_votes: i64,
     no_votes: i64,
     abstain_votes: i64,
-    last_voted_at: Option<DateTime<Utc>>,
+    last_voted_at: Option<Timestamp>,
 }
 
 #[derive(Debug, FromQueryResult)]
 struct AiAgentCommentStatsRow {
     total_comments: i64,
-    last_commented_at: Option<DateTime<Utc>>,
+    last_commented_at: Option<Timestamp>,
 }
 
 fn valid_max_level(value: &str) -> bool {
@@ -186,7 +186,7 @@ pub async fn create_ai_agent(
                 req.can_veto_human_consensus.unwrap_or(false).into(),
                 reason_min_length.into(),
                 user_id.into(),
-                Utc::now().into(),
+                Timestamp::now().into(),
             ],
         ))
         .await;
@@ -500,7 +500,7 @@ pub async fn get_ai_agent_stats(
     .into_iter()
     .flatten()
     .max()
-    .map(|time| time.to_rfc3339());
+    .map(platform::timestamp::Timestamp::to_rfc3339);
 
     Ok(ApiResponse::success(json!({
         "id": agent.id,
@@ -510,8 +510,8 @@ pub async fn get_ai_agent_stats(
         "no_votes": vote_stats.no_votes,
         "abstain_votes": vote_stats.abstain_votes,
         "total_comments": comment_stats.total_comments,
-        "last_voted_at": vote_stats.last_voted_at.map(|time| time.to_rfc3339()),
-        "last_commented_at": comment_stats.last_commented_at.map(|time| time.to_rfc3339()),
+        "last_voted_at": vote_stats.last_voted_at.map(platform::timestamp::Timestamp::to_rfc3339),
+        "last_commented_at": comment_stats.last_commented_at.map(platform::timestamp::Timestamp::to_rfc3339),
         "last_active_at": latest_activity
     })))
 }

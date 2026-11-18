@@ -4,6 +4,7 @@
 	// `#lib/workspace/home`; the Flow flag comes from the shared fail-closed `flowFeatureStore`,
 	// which the app layout already refreshes for this workspace (no second flag request here).
 	import { onMount } from 'svelte';
+	import FlowSharedBlockList from '#lib/components/flow/FlowSharedBlockList.svelte';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
@@ -239,5 +240,6 @@
 				</div>
 			{/if}
 		</section>
+		<FlowSharedBlockList {workspaceId} canManageTarget={isAdmin} />
 	{/if}
 </div>

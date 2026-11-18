@@ -1,3 +1,4 @@
+use platform::timestamp::Timestamp;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -15,9 +16,12 @@ pub struct Model {
     pub active: bool,
     pub bot_user_id: Option<Uuid>,
     pub created_by: Uuid,
-    pub created_at: DateTimeWithTimeZone,
-    pub updated_at: DateTimeWithTimeZone,
-    pub last_triggered_at: Option<DateTimeWithTimeZone>,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub created_at: Timestamp,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub updated_at: Timestamp,
+    #[serde(default, with = "platform::timestamp::with_offset::option")]
+    pub last_triggered_at: Option<Timestamp>,
     pub metadata: Option<Json>,
 }
 
@@ -52,10 +56,13 @@ pub struct WebhookDelivery {
     pub response_status: Option<i32>,
     pub response_body: Option<String>,
     pub error: Option<String>,
-    pub delivered_at: Option<DateTimeWithTimeZone>,
-    pub created_at: DateTimeWithTimeZone,
+    #[serde(default, with = "platform::timestamp::with_offset::option")]
+    pub delivered_at: Option<Timestamp>,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub created_at: Timestamp,
     pub retry_count: i32,
-    pub next_retry_at: Option<DateTimeWithTimeZone>,
+    #[serde(default, with = "platform::timestamp::with_offset::option")]
+    pub next_retry_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,9 +99,12 @@ pub struct WebhookResponse {
     pub active: bool,
     pub bot_user_id: Option<Uuid>,
     pub created_by: Uuid,
-    pub created_at: DateTimeWithTimeZone,
-    pub updated_at: DateTimeWithTimeZone,
-    pub last_triggered_at: Option<DateTimeWithTimeZone>,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub created_at: Timestamp,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub updated_at: Timestamp,
+    #[serde(default, with = "platform::timestamp::with_offset::option")]
+    pub last_triggered_at: Option<Timestamp>,
 }
 
 impl From<Model> for WebhookResponse {

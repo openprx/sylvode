@@ -1,7 +1,7 @@
 //! `objects.export` through the production MCP tool dispatch honours Record field secrecy
 //! (`rest-api-v1.md` v0.6 "导出与字段保密"): the MCP tool posts to the same REST endpoint, so a
 //! `json` export of a secret Record carries the redacted `semantic_content` and a `package` export
-//! is refused with `policy_rejected{reason:"field_secrecy"}`.
+//! is refused with `unsupported_format{reason:"typed_package_roundtrip_unsupported"}`.
 #![allow(clippy::indexing_slicing)]
 #![allow(
     clippy::print_stderr,
@@ -318,11 +318,17 @@ async fn mcp_object_export_of_a_secret_record_is_redacted_and_its_package_refuse
         )
         .await;
     assert_eq!(refused.is_error, Some(true), "{:?}", refused.content);
-    let text = result_text(&refused)?;
-    assert!(
-        text.contains("policy_rejected") && text.contains("field_secrecy"),
-        "the MCP package export is refused with policy_rejected/field_secrecy: {text}"
+    let refusal: Value = serde_json::from_str(result_text(&refused)?)?;
+    assert_eq!(refusal.pointer("/error/code"), Some(&json!("unsupported_format")));
+    assert_eq!(
+        refusal.pointer("/error/details/reason"),
+        Some(&json!("typed_package_roundtrip_unsupported"))
     );
+    assert_eq!(
+        refusal.pointer("/error/details/unsupported_object_types"),
+        Some(&json!(["record"]))
+    );
+    assert!(!refusal.to_string().contains("SECRETDIAG"), "{refusal}");
 
     server_task.abort();
     scratch.drop_self().await;

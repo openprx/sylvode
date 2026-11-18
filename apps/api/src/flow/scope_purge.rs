@@ -114,7 +114,7 @@ pub async fn purge(state: &AppState, object: Uuid, actor: Uuid, key: &str) -> Re
 pub async fn retention_leaf(
     db: &sea_orm::DatabaseConnection,
     object: Uuid,
-    now: chrono::DateTime<chrono::Utc>,
+    now: platform::timestamp::Timestamp,
 ) -> Result<bool, ApiError> {
     let identity = match scope::identity(db, object).await {
         Ok(value) => value,

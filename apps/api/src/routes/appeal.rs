@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -49,8 +49,8 @@ pub struct AppealRow {
     pub status: String,
     pub reviewer_id: Option<Uuid>,
     pub review_note: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub resolved_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub resolved_at: Option<Timestamp>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -116,7 +116,7 @@ pub async fn create_appeal(
             appellant_id.into(),
             req.reason.trim().to_string().into(),
             req.evidence.into(),
-            Utc::now().into(),
+            Timestamp::now().into(),
         ],
     ))
     .one(&state.db)
@@ -365,7 +365,7 @@ pub async fn update_appeal(
             normalized.into(),
             reviewer_id.into(),
             req.review_note.into(),
-            Utc::now().into(),
+            Timestamp::now().into(),
         ],
     ))
     .one(&tx)

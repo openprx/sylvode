@@ -6,11 +6,12 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Duration, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use time::Duration;
 use uuid::Uuid;
 
 use crate::{
@@ -94,11 +95,11 @@ pub struct ProposalRow {
     pub cycle_template: String,
     pub template_id: Option<String>,
     pub workspace_id: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-    pub submitted_at: Option<DateTime<Utc>>,
-    pub voting_started_at: Option<DateTime<Utc>>,
-    pub voting_ended_at: Option<DateTime<Utc>>,
-    pub archived_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub submitted_at: Option<Timestamp>,
+    pub voting_started_at: Option<Timestamp>,
+    pub voting_ended_at: Option<Timestamp>,
+    pub archived_at: Option<Timestamp>,
 }
 
 /// Columns every `ProposalRow` query has to select, in the order the struct declares them.
@@ -118,7 +119,7 @@ pub struct ProposalCommentRow {
     pub author_type: String,
     pub comment_type: String,
     pub content: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -130,7 +131,7 @@ pub struct VoteRow {
     pub choice: String,
     pub weight: f64,
     pub reason: Option<String>,
-    pub voted_at: DateTime<Utc>,
+    pub voted_at: Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -140,7 +141,7 @@ pub struct ProposalIssueLinkRow {
     pub issue_id: Uuid,
     pub issue_title: String,
     pub issue_state: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Serialize)]
@@ -308,7 +309,7 @@ fn cycle_hours(cycle_template: &str) -> (i64, i64) {
     }
 }
 
-fn format_dt(value: DateTime<Utc>) -> String {
+fn format_dt(value: Timestamp) -> String {
     value.to_rfc3339()
 }
 
@@ -343,7 +344,7 @@ fn proposal_lookup_candidates(value: &str) -> Vec<String> {
     candidates
 }
 
-fn optional_dt(value: Option<DateTime<Utc>>) -> Option<String> {
+fn optional_dt(value: Option<Timestamp>) -> Option<String> {
     value.map(format_dt)
 }
 
@@ -659,7 +660,7 @@ fn voting_window_elapsed(proposal: &ProposalRow) -> bool {
     };
 
     let (_, voting_hours) = cycle_hours(&proposal.cycle_template);
-    Utc::now() >= voting_started_at + Duration::hours(voting_hours)
+    Timestamp::now() >= voting_started_at + Duration::hours(voting_hours)
 }
 
 /// Rejects a ballot-mutating request whose proposal has already run out of voting time.
@@ -765,7 +766,7 @@ async fn finalize_voting(state: &AppState, proposal: &ProposalRow) -> Result<(),
         vec![
             proposal.id.clone().into(),
             result.as_proposal_status().into(),
-            Utc::now().into(),
+            Timestamp::now().into(),
         ],
     ))
     .await?;
@@ -793,7 +794,7 @@ async fn finalize_voting(state: &AppState, proposal: &ProposalRow) -> Result<(),
                 Some(weighted_no).into(),
                 weighted_approval_rate.into(),
                 true.into(),
-                Utc::now().into(),
+                Timestamp::now().into(),
             ],
         ))
         .await;
@@ -809,7 +810,7 @@ async fn finalize_voting(state: &AppState, proposal: &ProposalRow) -> Result<(),
     }
 
     apply_trust_score_after_finalize_with_conn(state, &tx, proposal, result).await?;
-    sync_check_result_after_proposal_decision(&tx, &proposal.id, result.as_db_value(), Utc::now()).await?;
+    sync_check_result_after_proposal_decision(&tx, &proposal.id, result.as_db_value(), Timestamp::now()).await?;
     if matches!(result, DecisionResult::Approved) {
         let review_svc = ImpactReviewService::new(state.db.clone());
         review_svc.schedule_review_with_conn(&tx, &proposal.id, true).await?;
@@ -838,7 +839,7 @@ struct ProposalProjectRow {
 /// transition is a single conditional `UPDATE ... RETURNING`, and settlement is guarded by a
 /// per-proposal advisory lock plus the unique decision per proposal.
 pub async fn governance_tick(state: &AppState) -> Result<(), ApiError> {
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     let open_to_voting = VotingTransitionRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -1435,7 +1436,7 @@ pub async fn create_proposal(
     let workspace_id = resolve_new_proposal_workspace(&state, &actor, req.workspace_id, template_project_id).await?;
 
     let proposal_id = gen_prefixed_id("PROP");
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     state
         .db
@@ -1921,7 +1922,7 @@ pub async fn submit_proposal(
         return Err(ApiError::BadRequest("only draft proposal can be submitted".to_string()));
     }
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let (discussion_hours, _) = cycle_hours(&proposal.cycle_template);
     let discussion_ends_at = now + Duration::hours(discussion_hours);
 
@@ -1998,7 +1999,7 @@ pub async fn start_voting(
         return Err(ApiError::BadRequest("proposal must be in open status".to_string()));
     }
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let (_, voting_hours) = cycle_hours(&proposal.cycle_template);
     let voting_ends_at = now + Duration::hours(voting_hours);
 
@@ -2081,7 +2082,7 @@ pub async fn archive_proposal(
     let proposal = find_proposal_for_caller(&state, &claims, &id).await?;
     ensure_author_or_admin(&proposal, &actor)?;
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     state
         .db
         .execute(Statement::from_sql_and_values(
@@ -2194,7 +2195,7 @@ pub async fn create_vote(
         }
     }
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let reason = req.reason.map(|value| value.trim().to_string());
     let weight = resolve_vote_weight_for_proposal(&state, &id, &actor.user_id_str, actor.author_type).await?;
 
@@ -2498,7 +2499,7 @@ pub async fn create_proposal_comment(
             actor.author_type.into(),
             comment_type.into(),
             content.into(),
-            Utc::now().into(),
+            Timestamp::now().into(),
         ],
     ))
     .one(&state.db)
@@ -2732,7 +2733,7 @@ async fn link_issue_to_proposal(
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "INSERT INTO proposal_issue_links (proposal_id, issue_id, created_at) VALUES ($1, $2, $3)",
-            vec![proposal_id.to_string().into(), issue_id.into(), Utc::now().into()],
+            vec![proposal_id.to_string().into(), issue_id.into(), Timestamp::now().into()],
         ))
         .await;
 
