@@ -311,11 +311,10 @@ mod sql_tests {
         );
         assert!(read(db, recipient, share).await.is_err());
         input.expected_frontier = base64::engine::general_purpose::STANDARD.encode(
-            api::flow::document::load_head_engine(db, document)
+            &api::flow::collab::bootstrap::load(db, document)
                 .await
                 .unwrap()
-                .frontier()
-                .as_bytes(),
+                .head_frontier,
         );
         republish(db, owner, page, share, &Uuid::new_v4().to_string(), input.clone())
             .await
@@ -519,11 +518,10 @@ mod sql_tests {
             .layer(Extension(claims))
             .with_state(state);
         let frontier = base64::engine::general_purpose::STANDARD.encode(
-            api::flow::document::load_head_engine(db, document)
+            &api::flow::collab::bootstrap::load(db, document)
                 .await
                 .unwrap()
-                .frontier()
-                .as_bytes(),
+                .head_frontier,
         );
         for (cid, expected, image) in [
             (attachment_cid, attachment_bytes, false),
@@ -688,6 +686,10 @@ mod sql_tests {
         // A normal private sibling edit advances only the source head, never the share revision.
         let mut engine = api::flow::document::load_head_engine(db, document).await.unwrap();
         let base = engine.frontier();
+        let base_token = api::flow::collab::bootstrap::load(db, document)
+            .await
+            .unwrap()
+            .head_frontier;
         let semantic = engine.semantic_snapshot().unwrap();
         let (private, node) = semantic
             .nodes
@@ -711,7 +713,7 @@ mod sql_tests {
                 update: Uuid::new_v4(),
                 client: "private-fixture",
                 key: None,
-                expected: Some(base.as_bytes()),
+                expected: Some(&base_token),
                 command_body: None,
             },
         )
@@ -728,17 +730,20 @@ mod sql_tests {
             .unwrap();
         let mut reviewed = create_input.clone();
         reviewed.expected_frontier = base64::engine::general_purpose::STANDARD.encode(
-            api::flow::document::load_head_engine(db, document)
+            &api::flow::collab::bootstrap::load(db, document)
                 .await
                 .unwrap()
-                .frontier()
-                .as_bytes(),
+                .head_frontier,
         );
         republish(db, owner, page, share, &republish_key, reviewed.clone())
             .await
             .unwrap();
         let mut private_engine = api::flow::document::load_head_engine(db, document).await.unwrap();
         let private_base = private_engine.frontier();
+        let private_base_token = api::flow::collab::bootstrap::load(db, document)
+            .await
+            .unwrap()
+            .head_frontier;
         let private_semantic = private_engine.semantic_snapshot().unwrap();
         let (private, node) = private_semantic
             .nodes
@@ -761,7 +766,7 @@ mod sql_tests {
                 update: Uuid::new_v4(),
                 client: "private-replay-fixture",
                 key: None,
-                expected: Some(private_base.as_bytes()),
+                expected: Some(&private_base_token),
                 command_body: None,
             },
         )

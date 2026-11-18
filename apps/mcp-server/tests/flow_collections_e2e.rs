@@ -13,11 +13,9 @@ mod support;
 use api::{
     flow::{
         collab::bootstrap,
-        command::{
-            CreateObjectInput, ExecuteCommandInput, SetFlowFeatureInput, create_object, execute_command,
-            set_flow_feature,
-        },
+        command::{CreateObjectInput, SetFlowFeatureInput, create_object, set_flow_feature},
         event_origin::{CommandOrigin, EventSurface},
+        projection,
     },
     middleware::bot_auth::bot_or_user_auth_middleware,
     routes::flow::post_flow_object_command,
@@ -29,7 +27,7 @@ use axum::{
     middleware,
     routing::post,
 };
-use collab_core::{CollabEngine, LoroCollabEngine};
+use collab_core::{CollabEngine, LoroCollabEngine, NodeKind, Operation};
 use mcp_server::{
     client::{ClientConfig, OpenPrClient, TRANSPORT_LABEL_STDIO},
     protocol::{CallToolResult, ToolContent},
@@ -679,8 +677,12 @@ async fn seed_workspace(state: &AppState) -> TestResultValue<(Uuid, Uuid)> {
     Ok((workspace_id, owner_id))
 }
 
-/// A Page whose root blocks are `b1`, `b2`, `b3`, in that order. Returns `(page_id, document_id)`.
-async fn page_with_three_blocks(state: &AppState, workspace_id: Uuid, owner_id: Uuid) -> TestResultValue<(Uuid, Uuid)> {
+/// A historical Page whose root blocks are `b1`, `b2`, `b3`, in that order.
+async fn legacy_page_with_three_blocks(
+    state: &AppState,
+    workspace_id: Uuid,
+    owner_id: Uuid,
+) -> TestResultValue<(Uuid, Uuid)> {
     let page = create_object(
         state,
         CreateObjectInput {
@@ -698,26 +700,41 @@ async fn page_with_three_blocks(state: &AppState, workspace_id: Uuid, owner_id: 
     )
     .await?
     .object;
-    for (index, block) in ["b1", "b2", "b3"].into_iter().enumerate() {
-        execute_command(
-            state,
-            ExecuteCommandInput {
-                object_id: page.id,
-                actor_id: owner_id,
-                principal_kind: "user".to_string(),
-                role: "owner".to_string(),
-                command_type: "insert_block".to_string(),
-                payload: json!({"block_id": block, "index": index, "text": block}),
-                expected_frontier: None,
-                idempotency_key: Uuid::new_v4().to_string(),
-                message: None,
-                origin_client_id: "embed-after-block-fixture".to_string(),
-                origin: CommandOrigin::first_request_from(EventSurface::Rest),
-            },
-        )
-        .await
-        .map_err(|error| format!("insert_block {block} failed: {error:?}"))?;
+    // Relative embed placement is supported by the legacy tree renderer.
+    let mut legacy = LoroCollabEngine::new_empty(71);
+    legacy.set_title("Embed host")?;
+    for (block, index) in [("b1", 0), ("b2", 1), ("b3", 2)] {
+        legacy.apply_operation(&Operation::CreateNode {
+            id: block.into(),
+            parent: None,
+            index,
+            kind: NodeKind::Block,
+        })?;
     }
+    let snapshot = legacy.export_snapshot()?;
+    let checksum = bootstrap::content_hash(&snapshot);
+    let frontier = legacy.frontier().as_bytes().to_vec();
+    let state_json = projection::state_json(&legacy.semantic_snapshot()?)?;
+    let installed = state
+        .db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "WITH fixture AS (
+            UPDATE collab_documents SET snapshot=$2,snapshot_checksum=$3,snapshot_frontier=$4,head_frontier=$4
+            WHERE id=$1 AND head_seq=0 RETURNING object_id
+         )
+         UPDATE flow_object_projections SET state=$5,document_frontier=$4
+         WHERE object_id IN (SELECT object_id FROM fixture)",
+            vec![
+                page.document_id.into(),
+                snapshot.into(),
+                checksum.into(),
+                frontier.into(),
+                state_json.into(),
+            ],
+        ))
+        .await?;
+    assert_eq!(installed.rows_affected(), 1, "legacy page fixture was not installed");
     Ok((page.id, page.document_id))
 }
 
@@ -775,7 +792,7 @@ fn block_id_of(result: &Value) -> TestResultValue<String> {
         .to_string())
 }
 
-/// A Page with three blocks, the real `POST /flow/objects/{id}/commands` handler and a real
+/// A historical Page with three blocks, the real `POST /flow/objects/{id}/commands` handler and a real
 /// database. Through the MCP tool: `after_block_id` of the first block puts the new embed block
 /// right after it; without it the embed is appended as before; a block id the Page does not have
 /// is the server's `invalid_update`, passed through, and writes nothing. The shipped CLI does the
@@ -788,7 +805,7 @@ async fn mcp_and_cli_embed_a_collection_after_the_named_block_of_a_real_page() -
     };
     let state = state_for(scratch.db.clone());
     let (workspace_id, owner_id) = seed_workspace(&state).await?;
-    let (page_id, document_id) = page_with_three_blocks(&state, workspace_id, owner_id).await?;
+    let (page_id, document_id) = legacy_page_with_three_blocks(&state, workspace_id, owner_id).await?;
     assert_eq!(root_blocks(&state, document_id).await?, ["b1", "b2", "b3"]);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;

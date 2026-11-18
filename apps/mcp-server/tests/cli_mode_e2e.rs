@@ -473,7 +473,7 @@ async fn a_rejected_bot_token_is_reported_readably_without_leaking_the_backend()
         "the error does not report the verdict: {stderr}"
     );
     assert!(
-        stderr.contains("correct, enabled and not expired"),
+        stderr.contains("check that the caller bearer credential is correct and not expired"),
         "the error is not actionable — it does not say what to check about the token: {stderr}"
     );
     assert!(

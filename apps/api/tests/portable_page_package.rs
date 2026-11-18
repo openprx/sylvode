@@ -1,4 +1,5 @@
 //! Portable Page promotion with real `PostgreSQL` and the production isolated Loro apply worker.
+use api::flow::collab::bootstrap;
 use api::flow::{
     document, portable_graph_package as graph, portable_page_package as package, scope, scope_runtime, scope_write,
 };
@@ -76,6 +77,7 @@ async fn portable_page_copies_assets_and_links_atomically() {
     let (target, _) = *pages.get(1).expect("fixture has item 2");
     let mut engine = document::load_head_engine(db, source_doc).await.unwrap();
     let base = engine.frontier();
+    let head_token = bootstrap::load(db, source_doc).await.unwrap().head_frontier;
     let root = engine.semantic_snapshot().unwrap().nodes.keys().next().unwrap().clone();
     engine
         .apply_content_operation(&Operation::InsertText {
@@ -226,7 +228,7 @@ async fn portable_page_copies_assets_and_links_atomically() {
             update: Uuid::new_v4(),
             client: "transfer-fixture",
             key: None,
-            expected: Some(base.as_bytes()),
+            expected: Some(&head_token),
             command_body: None,
         },
     )
@@ -457,6 +459,7 @@ async fn portable_page_copies_assets_and_links_atomically() {
     for offset in 0..40 {
         let mut typing = document::load_head_engine(db, source_doc).await.unwrap();
         let base = typing.frontier();
+        let head_token = bootstrap::load(db, source_doc).await.unwrap().head_frontier;
         typing
             .apply_content_operation(&Operation::InsertText {
                 id: root.clone(),
@@ -473,7 +476,7 @@ async fn portable_page_copies_assets_and_links_atomically() {
                 update: Uuid::new_v4(),
                 client: "timeline-typing",
                 key: None,
-                expected: Some(base.as_bytes()),
+                expected: Some(&head_token),
                 command_body: None,
             },
         )
@@ -483,6 +486,7 @@ async fn portable_page_copies_assets_and_links_atomically() {
     }
     let mut engine = document::load_head_engine(db, source_doc).await.unwrap();
     let base = engine.frontier();
+    let head_token = bootstrap::load(db, source_doc).await.unwrap().head_frontier;
     let image_cid = engine.resolve_content_node_id(&"media-image".into());
     engine
         .apply_content_operation(&Operation::DeleteNode { id: image_cid })
@@ -498,7 +502,7 @@ async fn portable_page_copies_assets_and_links_atomically() {
                 update: Uuid::new_v4(),
                 client: "test",
                 key: None,
-                expected: Some(base.as_bytes()),
+                expected: Some(&head_token),
                 command_body: None
             },
         )

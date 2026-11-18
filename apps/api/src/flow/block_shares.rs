@@ -204,7 +204,6 @@ async fn publish(
         collab::authz::{self, PermissionLevel},
         scope,
     };
-    use collab_core::CollabEngine;
     let proof = scope::authorize(db, source, actor, PermissionLevel::FullAccess).await?;
     let identity = scope::identity(db, source).await?;
     if identity.object_type != "page" || !proof.resource_active {
@@ -231,7 +230,8 @@ async fn publish(
         .await?
         .ok_or_else(|| ApiError::not_found("source Page unavailable"))?
         .try_get::<Uuid>("", "id")?;
-    let engine = super::document::load_head_engine(db, document).await?;
+    let boot = super::collab::bootstrap::load(db, document).await?;
+    let engine = super::document::engine_from_boot(&boot)?;
     if !engine.has_editor_doc() {
         return Err(ApiError::policy_rejected_with_details(
             "enable Page editor before sharing body blocks",
@@ -245,7 +245,7 @@ async fn publish(
     let reviewed = base64::engine::general_purpose::STANDARD
         .decode(&input.expected_frontier)
         .map_err(|_| ApiError::invalid_update("invalid reviewed Page frontier"))?;
-    if reviewed != engine.frontier().as_bytes() {
+    if reviewed != boot.head_frontier || !engine.matches_frontier(&reviewed) {
         return Err(ApiError::policy_rejected("Page changed after selection review"));
     }
     let root = prepared
@@ -309,7 +309,6 @@ async fn publish(
             .cmp(&right.order_key)
             .then(left.physical_cid.cmp(&right.physical_cid))
     });
-    let frontier = engine.frontier().as_bytes().to_vec();
     let tx = db.begin().await?;
     let workspaces = input
         .audiences
@@ -350,7 +349,7 @@ async fn publish(
         ))
         .await?
         .ok_or_else(ApiError::internal)?;
-    if head.try_get::<Vec<u8>>("", "head_frontier")? != frontier {
+    if head.try_get::<Vec<u8>>("", "head_frontier")? != reviewed {
         return Err(ApiError::policy_rejected("source Page changed; select blocks again"));
     }
     let seq = head.try_get::<i64>("", "head_seq")?;
@@ -672,7 +671,6 @@ pub async fn read(db: &sea_orm::DatabaseConnection, actor: Uuid, share_id: Uuid)
         collab::authz::{self, PermissionLevel},
         scope,
     };
-    use collab_core::CollabEngine;
     if scope::capabilities(db).await?.minimum_reader_version < 5 {
         return Err(unavailable());
     }
@@ -742,7 +740,7 @@ pub async fn read(db: &sea_orm::DatabaseConnection, actor: Uuid, share_id: Uuid)
         return Err(unavailable());
     }
     let head=tx.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT d.head_frontier,d.head_seq,c.accepted_head FROM collab_documents d JOIN flow_block_checkpoints c ON c.page_id=d.object_id AND c.scope_id=$2 WHERE d.id=$1 FOR SHARE OF d,c",vec![document.into(),share.source_scope_id.into()])).await?.ok_or_else(unavailable)?;
-    if head.try_get::<Vec<u8>>("", "head_frontier")? != engine.frontier().as_bytes()
+    if !engine.matches_frontier(&head.try_get::<Vec<u8>>("", "head_frontier")?)
         || head.try_get::<i64>("", "head_seq")? != head.try_get::<i64>("", "accepted_head")?
     {
         return Err(unavailable());
@@ -1112,11 +1110,10 @@ mod sql_tests {
         );
         assert!(read(db, recipient, share).await.is_err());
         input.expected_frontier = base64::engine::general_purpose::STANDARD.encode(
-            super::super::document::load_head_engine(db, document)
+            &super::super::collab::bootstrap::load(db, document)
                 .await
                 .unwrap()
-                .frontier()
-                .as_bytes(),
+                .head_frontier,
         );
         republish(db, owner, page, share, &Uuid::new_v4().to_string(), input.clone())
             .await
@@ -1323,11 +1320,10 @@ mod sql_tests {
             .layer(Extension(claims))
             .with_state(state);
         let frontier = base64::engine::general_purpose::STANDARD.encode(
-            super::super::document::load_head_engine(db, document)
+            &super::super::collab::bootstrap::load(db, document)
                 .await
                 .unwrap()
-                .frontier()
-                .as_bytes(),
+                .head_frontier,
         );
         for (cid, expected, image) in [
             (attachment_cid, attachment_bytes, false),
@@ -1492,6 +1488,10 @@ mod sql_tests {
         // A normal private sibling edit advances only the source head, never the share revision.
         let mut engine = super::super::document::load_head_engine(db, document).await.unwrap();
         let base = engine.frontier();
+        let base_token = super::super::collab::bootstrap::load(db, document)
+            .await
+            .unwrap()
+            .head_frontier;
         let semantic = engine.semantic_snapshot().unwrap();
         let (private, node) = semantic
             .nodes
@@ -1515,7 +1515,7 @@ mod sql_tests {
                 update: Uuid::new_v4(),
                 client: "private-fixture",
                 key: None,
-                expected: Some(base.as_bytes()),
+                expected: Some(&base_token),
                 command_body: None,
             },
         )
@@ -1535,17 +1535,20 @@ mod sql_tests {
             .unwrap();
         let mut reviewed = create_input.clone();
         reviewed.expected_frontier = base64::engine::general_purpose::STANDARD.encode(
-            super::super::document::load_head_engine(db, document)
+            &super::super::collab::bootstrap::load(db, document)
                 .await
                 .unwrap()
-                .frontier()
-                .as_bytes(),
+                .head_frontier,
         );
         republish(db, owner, page, share, &republish_key, reviewed.clone())
             .await
             .unwrap();
         let mut private_engine = super::super::document::load_head_engine(db, document).await.unwrap();
         let private_base = private_engine.frontier();
+        let private_base_token = super::super::collab::bootstrap::load(db, document)
+            .await
+            .unwrap()
+            .head_frontier;
         let private_semantic = private_engine.semantic_snapshot().unwrap();
         let (private, node) = private_semantic
             .nodes
@@ -1568,7 +1571,7 @@ mod sql_tests {
                 update: Uuid::new_v4(),
                 client: "private-replay-fixture",
                 key: None,
-                expected: Some(private_base.as_bytes()),
+                expected: Some(&private_base_token),
                 command_body: None,
             },
         )
@@ -1872,7 +1875,8 @@ pub async fn patch(
             .await?
             .ok_or_else(unavailable)?
             .try_get::<Uuid>("", "id")?;
-        let mut engine = super::document::load_head_engine(db, document).await?;
+        let boot = super::collab::bootstrap::load(db, document).await?;
+        let mut engine = super::document::engine_from_boot(&boot)?;
         let base = engine.frontier();
         let before = engine.semantic_snapshot().map_err(|_| unavailable())?;
         let rows=db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT m.member_id,p.physical_cid FROM flow_block_share_members m JOIN flow_block_placements p ON p.logical_id=m.logical_id AND p.state='active' WHERE m.share_id=$1 AND p.page_id=$2",vec![share_id.into(),share.source_page_id.into()])).await?;
@@ -2004,7 +2008,7 @@ pub async fn patch(
                 update,
                 client: "block-share",
                 key: Some(&stable_key),
-                expected: Some(base.as_bytes()),
+                expected: Some(&boot.head_frontier),
                 command_body: Some(command_body),
             },
             permit,
@@ -2034,9 +2038,7 @@ pub async fn patch(
                     continue;
                 }
                 return Err(match error {
-                    ApiError::Database(db_error)
-                        if crate::error::classify_db_failure(&db_error) == crate::error::DbFailureClass::Transient =>
-                    {
+                    _ if error.is_database_failure() && !error.is_deterministic_database_failure() => {
                         shared_busy(false)
                     }
                     _ if matches!(

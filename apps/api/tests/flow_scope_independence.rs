@@ -3747,7 +3747,7 @@ async fn stale_model_two_navigator_refreshes_from_order_map_without_mutation() {
             .field("data")
             .field("semantic_content")
             .field("__flow_projection_model"),
-        json!(3)
+        json!(api::flow::projection::PROJECTION_MODEL_VERSION)
     );
     assert_eq!(*response.field("data").field("scope_id"), json!(personal.id));
     assert!(
