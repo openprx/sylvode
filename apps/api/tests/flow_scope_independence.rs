@@ -1711,25 +1711,10 @@ async fn legacy_v2_search_distinguishes_project_unprojected_and_all_visible() {
         ids.push(object);
     }
     let state = test_state(db.clone());
-    for (selector, expected) in [
-        (
-            json!({"unprojected":true}),
-            vec![ids.first().copied().expect("fixture element")],
-        ),
-        (
-            json!({"project_id":project}),
-            vec![ids.get(1).copied().expect("fixture element")],
-        ),
-        (json!({"all_visible":true}), ids.clone()),
-    ] {
-        let mut query = json!({"q":"needle"});
-        for (key, value) in selector.as_object().unwrap() {
-            query
-                .as_object_mut()
-                .expect("fixture object")
-                .insert(key.clone(), value.clone());
-        }
-        let response = api::routes::flow::get_flow_v2_search(
+    let unprojected = *ids.first().expect("unprojected fixture");
+    let projected = *ids.get(1).expect("project fixture");
+    let search = async |query| {
+        api::routes::flow::get_flow_v2_search(
             axum::extract::State(state.clone()),
             test_claims(owner),
             None,
@@ -1737,8 +1722,48 @@ async fn legacy_v2_search_distinguishes_project_unprojected_and_all_visible() {
             axum::extract::Query(serde_json::from_value(query).unwrap()),
         )
         .await
-        .unwrap()
-        .into_response();
+    };
+
+    // A missing project index row makes the project and all-visible frontiers stale. The
+    // unprojected selector must stay current because its one visible page has been rebuilt.
+    let rebuilt = api::flow::maintenance::rebuild_search(db, unprojected, Some(0), true)
+        .await
+        .unwrap();
+    assert!(rebuilt.changed && rebuilt.executed);
+    assert!(
+        search(json!({"q":"needle","unprojected":true,"object_type":"page","freshness":"require_current"}))
+            .await
+            .is_ok()
+    );
+    for selector in [json!({"project_id":project}), json!({"all_visible":true})] {
+        let mut query = json!({"q":"needle","object_type":"page","freshness":"require_current"});
+        query
+            .as_object_mut()
+            .unwrap()
+            .extend(selector.as_object().unwrap().clone());
+        let error = search(query)
+            .await
+            .expect_err("the selected scope includes an unindexed Page");
+        assert_eq!(error.kind(), api::error::ApiErrorKind::StaleFrontier);
+    }
+    let rebuilt = api::flow::maintenance::rebuild_search(db, projected, Some(0), true)
+        .await
+        .unwrap();
+    assert!(rebuilt.changed && rebuilt.executed);
+
+    for (selector, expected) in [
+        (json!({"unprojected":true}), vec![unprojected]),
+        (json!({"project_id":project}), vec![projected]),
+        (json!({"all_visible":true}), ids.clone()),
+    ] {
+        let mut query = json!({"q":"needle","object_type":"page","freshness":"require_current"});
+        for (key, value) in selector.as_object().unwrap() {
+            query
+                .as_object_mut()
+                .expect("fixture object")
+                .insert(key.clone(), value.clone());
+        }
+        let response = search(query).await.unwrap().into_response();
         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let mut found = body
