@@ -9,7 +9,10 @@ use super::command::map_collab_error;
 use crate::error::ApiError;
 
 pub async fn load_head_engine(db: &DatabaseConnection, document_id: Uuid) -> Result<LoroCollabEngine, ApiError> {
-    let boot = bootstrap::load(db, document_id).await?;
+    engine_from_boot(&bootstrap::load(db, document_id).await?)
+}
+
+pub(super) fn engine_from_boot(boot: &bootstrap::BootstrapResult) -> Result<LoroCollabEngine, ApiError> {
     let decoded = boot
         .snapshot
         .len()

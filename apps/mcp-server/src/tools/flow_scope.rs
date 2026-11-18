@@ -19,6 +19,11 @@ pub const TOOLS: &[&str] = &[
 ];
 const COMMANDS: &[&str] = &[
     "initialize_editor_doc",
+    "insert_body_asset",
+    "replace_body_asset",
+    "link_child_page",
+    "prepare_child_page",
+    "upload_body_asset",
     "link",
     "unlink",
     "set_title",
@@ -621,6 +626,19 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
                     ));
                 }
             }
+            if matches!(
+                kind,
+                "insert_body_asset"
+                    | "replace_body_asset"
+                    | "link_child_page"
+                    | "prepare_child_page"
+                    | "upload_body_asset"
+            ) && resource_type.as_deref() != Some("page")
+            {
+                return Err(CallToolResult::error(
+                    "body asset/child commands require an actual Page",
+                ));
+            }
             if kind == "create_collection_embed" && resource_type.as_deref() != Some("page") {
                 return Err(CallToolResult::error(
                     "Atomic Collection embedding requires an actual Page source",
@@ -630,14 +648,21 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
                 && command
                     .get("payload")
                     .and_then(Value::as_object)
-                    .is_some_and(serde_json::Map::is_empty)
+                    .is_some_and(|payload| {
+                        payload.is_empty()
+                            || (payload.len() == 1
+                                && payload
+                                    .get("model")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|model| matches!(model, "rich_page_v4" | "rich_page_v5")))
+                    })
                 && args
                     .get("expected_frontier")
                     .and_then(Value::as_str)
                     .is_some_and(|value| !value.is_empty());
             if kind == "initialize_editor_doc" && !valid_initialization {
                 return Err(CallToolResult::error(
-                    "Editor initialization requires a Page, an empty payload and the captured expected_frontier; client content is not accepted",
+                    "Editor initialization requires a Page, empty payload or supported model selector and captured expected_frontier; client content is not accepted",
                 ));
             }
             if matches!(resource_type.as_deref(), Some("collection" | "record"))
@@ -691,6 +716,41 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
     {
         policy_projects.insert(project);
     }
+    let mut path = path;
+    let mut body = body;
+    let idempotency_key = if name == "objects.command"
+        && args
+            .pointer("/command/type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| matches!(kind, "prepare_child_page" | "upload_body_asset"))
+    {
+        if legacy || resource_type.as_deref() != Some("page") {
+            return Err(CallToolResult::error(
+                "Page preparation/uploads require a user JWT and actual Page source",
+            ));
+        }
+        let kind = args
+            .pointer("/command/type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let source = object.ok_or_else(|| CallToolResult::error("object_id is required"))?;
+        path = format!(
+            "/api/v2/flow/objects/{source}/{}",
+            if kind == "prepare_child_page" {
+                "child-reservations"
+            } else {
+                "body-assets/base64"
+            }
+        );
+        body = Some(
+            args.pointer("/command/payload")
+                .cloned()
+                .ok_or_else(|| CallToolResult::error("command.payload is required"))?,
+        );
+        args.get("idempotency_key").and_then(Value::as_str).map(str::to_owned)
+    } else {
+        None
+    };
     let method = if body.is_some() {
         reqwest::Method::POST
     } else {
@@ -702,7 +762,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
         policy_projects: policy_projects.into_iter().collect(),
         policy_tools: operation_policy_tools(name, args),
         method,
-        idempotency_key: None,
+        idempotency_key,
         form_policy_args: Vec::new(),
         legacy_workspace_id: workspace,
         object_type: resource_type,
@@ -949,4 +1009,33 @@ pub async fn execute(client: &OpenPrClient, request: Request) -> CallToolResult 
         )
         .await,
     )
+}
+
+#[cfg(test)]
+mod page_v5_schema_tests {
+    use super::*;
+    #[test]
+    fn page_v5_typed_commands_are_in_existing_tool_schema_without_remote_create_alias() {
+        let definition = definitions()
+            .into_iter()
+            .find(|definition| definition.name == "objects.command")
+            .unwrap();
+        let kinds = definition
+            .input_schema
+            .pointer("/properties/command/properties/type/enum")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        for kind in [
+            "insert_body_asset",
+            "replace_body_asset",
+            "link_child_page",
+            "prepare_child_page",
+            "upload_body_asset",
+        ] {
+            assert!(kinds.iter().any(|value| value == kind));
+        }
+        assert!(!kinds.iter().any(|value| value == "create_child_page"));
+        validate_arguments("objects.command",&json!({"object_id":"11111111-1111-4111-8111-111111111111","command":{"type":"link_child_page","payload":{"block_id":"child","index":1,"child_page_id":"33333333-3333-4333-8333-333333333333"}},"idempotency_key":"typed-child"})).unwrap();
+    }
 }

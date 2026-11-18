@@ -1002,6 +1002,26 @@ fn conversion_warnings(schema: &Value, mapping: &Value) -> Vec<String> {
     warnings
 }
 
+fn validate_new_form_mapping(mapping: &Value) -> Result<(), ApiError> {
+    if let Some(key) = mapping.get("key") {
+        let key = key
+            .as_str()
+            .ok_or_else(|| ApiError::invalid_update("form key must be text"))?;
+        crate::forms::schema::normalize_key(key).map_err(ApiError::invalid_update)?;
+    }
+    if let Some(name) = mapping.get("name")
+        && name.as_str().is_none_or(|value| value.trim().is_empty())
+    {
+        return Err(ApiError::invalid_update("form name must be non-empty text"));
+    }
+    if let Some(schema) = mapping.get("schema") {
+        let normalized =
+            crate::forms::schema::ensure_schema_field_ids(schema.clone()).map_err(ApiError::invalid_update)?;
+        crate::forms::schema::validate_schema(&normalized).map_err(ApiError::invalid_update)?;
+    }
+    Ok(())
+}
+
 pub async fn preview_conversion(
     state: &AppState,
     extensions: &Extensions,
@@ -1037,6 +1057,7 @@ pub async fn preview_conversion(
                 {
                     return Err(ApiError::policy_rejected("target form creation is not permitted"));
                 }
+                validate_new_form_mapping(&input.mapping)?;
                 (
                     project_id,
                     None,
@@ -2825,6 +2846,7 @@ pub async fn preview_scope_conversion(
             if !matches!(actor.role.as_str(), "owner" | "admin") || !project_exists(&tx, destination, project).await? {
                 return Err(ApiError::policy_rejected("target form creation is not permitted"));
             }
+            validate_new_form_mapping(&input.mapping)?;
             (
                 project,
                 None,

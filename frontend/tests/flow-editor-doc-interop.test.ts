@@ -105,10 +105,41 @@ test('in-place server-like LoroText edit is visible to binding without replacing
 	assert.equal((blocks(doc).get(0) as LoroMap).id, blockId);
 });
 
-test('current shipped schema explicitly has no marks, links, embed, or child-page nodes', () => {
-	assert.deepEqual(Object.keys(schema.marks), []);
-	for (const kind of ['embed', 'childPage', 'link']) assert.equal(schema.nodes[kind], undefined);
-	assert.throws(() => schema.mark('link', { href: 'https://example.test' }));
+test('rich schema keeps native mark names and refuses unsupported embeds', () => {
+	assert.deepEqual(Object.keys(schema.marks), ['bold', 'italic', 'strike', 'code', 'link']);
+	assert.equal(schema.nodes.embed,undefined);for(const kind of ['image','attachment','childPage'])assert(schema.nodes[kind]?.spec.atom);
+	assert.equal(
+		schema.mark('link', { href: 'https://example.test' }).attrs.href,
+		'https://example.test'
+	);
+});
+
+test('native rich marks and everyday blocks survive snapshot with stable containers', () => {
+	const { doc } = fixture();
+	const mapping = new Map();
+	const initial = read(doc);
+	let state = EditorState.create({ schema, doc: initial });
+	const id = (blocks(doc).get(0) as LoroMap).id;
+	const tr = state.tr
+		.addMark(1, 8, schema.marks.bold.create())
+		.addMark(9, 11, schema.marks.link.create({ href: 'https://example.test' }));
+	state = state.apply(tr);
+	updateLoroToPmState(doc, mapping, state);
+	const rich = read(doc);
+	assert.equal((blocks(doc).get(0) as LoroMap).id, id);
+	const text = ((blocks(doc).get(0) as LoroMap).get('children') as LoroList).get(0) as LoroText;
+	assert(text.toDelta().some((run) => run.attributes?.bold));
+	assert(
+		text
+			.toDelta()
+			.some((run) => (run.attributes?.link as { href?: string })?.href === 'https://example.test')
+	);
+	const restored = new LoroDoc() as LoroDocType;
+	restored.import(doc.export({ mode: 'snapshot' }));
+	assert.deepEqual(read(restored).toJSON(), rich.toJSON());
+	assert.equal((blocks(restored).get(0) as LoroMap).id, id);
+	for (const kind of ['orderedItem', 'todoItem', 'blockquote', 'toggle', 'divider'])
+		assert(schema.nodes[kind]);
 });
 
 test('committed real-library fixture is consumable and Unicode offsets are UTF-16 in JS', async () => {
@@ -274,4 +305,13 @@ test('actual API command planner structure output renders updated heading and re
 			.map((b) => (b as LoroMap).id),
 		ids
 	);
+});
+
+test('duplicating one block creates a distinct CID without replacing the source',()=>{
+ const {doc}=fixture();const mapping=new Map();let node=read(doc);let state=EditorState.create({schema,doc:node});
+ updateLoroToPmState(doc,mapping,state);const original=(blocks(doc).get(0) as LoroMap).id;
+ const first=state.doc.firstChild!;state=state.apply(state.tr.insert(first.nodeSize,first));updateLoroToPmState(doc,mapping,state);
+ assert.equal((blocks(doc).get(0) as LoroMap).id,original);
+ assert.notEqual((blocks(doc).get(1) as LoroMap).id,original);
+ assert.equal(read(doc).child(1).textContent,first.textContent);
 });

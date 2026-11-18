@@ -212,6 +212,40 @@ struct WriteErrorRejection {
 }
 
 fn write_error_rejection(err: &ApiError) -> WriteErrorRejection {
+    if err.kind() == ApiErrorKind::UnsupportedProtocol {
+        let details = match err {
+            ApiError::Typed {
+                details: Some(details), ..
+            } => details.clone(),
+            _ => serde_json::json!({"reason":"unsupported_protocol"}),
+        };
+        return WriteErrorRejection {
+            code: RejectedCode::UnsupportedProtocol,
+            recoverable: false,
+            details,
+            action: ws_rejection_action(ApiErrorKind::UnsupportedProtocol),
+        };
+    }
+    let domain = match err.kind() {
+        ApiErrorKind::InvalidUpdate => Some(RejectedCode::InvalidUpdate),
+        ApiErrorKind::PolicyRejected => Some(RejectedCode::PolicyRejected),
+        ApiErrorKind::FeatureDisabled => Some(RejectedCode::FeatureDisabled),
+        ApiErrorKind::LimitExceeded => Some(RejectedCode::LimitExceeded),
+        _ => None,
+    };
+    if let Some(code) = domain {
+        return WriteErrorRejection {
+            code,
+            recoverable: err.kind().recoverable(),
+            details: match err {
+                ApiError::Typed {
+                    details: Some(details), ..
+                } => details.clone(),
+                _ => serde_json::json!({}),
+            },
+            action: ws_rejection_action(err.kind()),
+        };
+    }
     if err.kind() == ApiErrorKind::ServerRejected || err.is_deterministic_database_failure() {
         return WriteErrorRejection {
             code: RejectedCode::ServerRejected,
@@ -234,7 +268,7 @@ fn write_error_rejection(err: &ApiError) -> WriteErrorRejection {
 /// capability... 必须失败关闭,不得部分应用"). The wire shape carries no required/optional
 /// distinction, so every capability a client declares is treated as required — an empty list
 /// (every real client today, and this module's own tests) trivially passes.
-const KNOWN_CAPABILITIES: &[&str] = &["presence"];
+const KNOWN_CAPABILITIES: &[&str] = &["presence", "rich_page_v4", "rich_page_v5"];
 
 /// The first capability in `capabilities` this server does not recognize, if any.
 fn first_unknown_capability(capabilities: &[String]) -> Option<&str> {
@@ -597,6 +631,7 @@ struct DocumentContext {
 struct ConnectionAuthorization {
     checked_epoch: i64,
     may_write: bool,
+    editor_model: u32,
 }
 
 /// How many times one `update` may be re-sourced and retried after its commit-time epoch fence
@@ -812,11 +847,18 @@ async fn run_inner(
         .await;
         return;
     }
+    let editor_model = if capabilities.iter().any(|c| c == "rich_page_v5") {
+        5
+    } else if capabilities.iter().any(|c| c == "rich_page_v4") {
+        4
+    } else {
+        1
+    };
     send(
         &mut socket,
         &Frame::Hello {
             protocol_version: PROTOCOL_VERSION,
-            capabilities: vec!["presence".to_string()],
+            capabilities: vec!["presence".to_string(), "rich_page_v4".into(), "rich_page_v5".into()],
             client_id: "server".to_string(),
             session_id,
         },
@@ -869,6 +911,20 @@ async fn run_inner(
             .await;
             return;
         };
+
+        if editor_model < 5 {
+            let value = serde_json::json!({"snapshot_base64":BASE64.encode(&boot.snapshot),"tail_updates":boot.tail_updates.iter().map(|update|serde_json::json!({"bytes":BASE64.encode(&update.bytes)})).collect::<Vec<_>>()});
+            if super::super::scope_editor::require_bootstrap_model(&value, editor_model).is_err() {
+                reject_and_close(
+                    &mut socket,
+                    document_id,
+                    RejectedCode::UnsupportedProtocol,
+                    "editor_upgrade_required",
+                )
+                .await;
+                return;
+            }
+        }
 
         // Build the answer before registration so a commit cannot both appear in this direct
         // replay and be queued through the registry.
@@ -1006,6 +1062,7 @@ async fn run_inner(
     let mut authorization = ConnectionAuthorization {
         checked_epoch: ctx.checked_epoch,
         may_write: ctx.permission_level >= MINIMUM_COLLAB_WRITE_LEVEL,
+        editor_model,
     };
     let mut frame_limiter = RateLimiter::new(FRAMES_PER_CONNECTION_PER_SECOND, FRAME_BURST_MAX);
     let mut update_limiter = RateLimiter::new(UPDATES_PER_CONNECTION_PER_SECOND, UPDATE_BURST_MAX);
@@ -1067,6 +1124,7 @@ async fn run_inner(
                         // a stale duplicate below -- the ceiling bounds channel backlog, not any
                         // further in-process buffering.
                         registered.record_dequeued(encoded_len);
+                        if editor_model < 5 && matches!(*frame,Frame::Update{..}) && super::super::scope_editor::require_model(&state.db,ctx.object_id,editor_model).await.is_err() {reject_and_close(&mut socket,document_id,RejectedCode::UnsupportedProtocol,"editor_upgrade_required").await;return;}
                         handle_outbound_frame(
                             &state.db,
                             document_id,
@@ -1748,7 +1806,7 @@ async fn handle_client_frame(
                     .await;
                     return;
                 };
-                let outcome = write::accept_update(
+                let outcome = write::accept_update_model(
                     &state.db,
                     &collab.cache,
                     &collab.coordinator,
@@ -1797,6 +1855,7 @@ async fn handle_client_frame(
                                 .with_client_id(origin_client_id),
                         ),
                     },
+                    authorization.editor_model,
                 )
                 .await;
                 // `domain-model-v1.md` (`authz_epoch`, 2026-10-10): the epoch this connection
@@ -7166,5 +7225,21 @@ mod database_tests {
         }
 
         scratch.drop_self().await;
+    }
+}
+
+#[cfg(test)]
+mod editor_model_rejection_tests {
+    use super::*;
+    #[test]
+    fn legacy_transport_preserves_the_typed_editor_upgrade_refusal() {
+        let rejection = write_error_rejection(&crate::flow::scope_editor::model_error(1, 4));
+        assert_eq!(rejection.code, RejectedCode::UnsupportedProtocol);
+        assert!(!rejection.recoverable);
+        assert_eq!(
+            rejection.details,
+            serde_json::json!({"reason":"editor_upgrade_required","minimum_editor_model":4,"client_editor_model":1})
+        );
+        assert_eq!(rejection.action, WsRejectionAction::Close(4406));
     }
 }

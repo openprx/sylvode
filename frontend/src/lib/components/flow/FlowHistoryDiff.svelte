@@ -55,6 +55,10 @@
 						<span class="block break-words">{shown(line.after)}</span>
 					{:else if line.op === 'removed'}
 						<span class="block break-words line-through">{shown(line.before)}</span>
+					{:else if line.properties.some((change) => change.key === 'spans' && change.before === null && change.after === null) && line.before === line.after}
+						<span class="block break-words"
+							>{shown(line.after)} · {$t('flow.history.diff.formatting')}</span
+						>
 					{:else if line.op === 'title' || line.op === 'changed'}
 						<span class="block break-words">
 							{$t('flow.history.diff.arrow', {
@@ -63,15 +67,17 @@
 						</span>
 					{/if}
 					{#each line.properties as property (property.key)}
-						<span class="block break-words text-slate-500 dark:text-slate-400">
-							{$t('flow.history.diff.property', {
-								values: {
-									key: property.key,
-									before: shown(property.before),
-									after: shown(property.after)
-								}
-							})}
-						</span>
+						{#if property.key !== 'spans' || property.before !== null || property.after !== null}
+							<span class="block break-words text-slate-500 dark:text-slate-400">
+								{$t('flow.history.diff.property', {
+									values: {
+										key: property.key,
+										before: shown(property.before),
+										after: shown(property.after)
+									}
+								})}
+							</span>
+						{/if}
 					{/each}
 				</li>
 			{/each}

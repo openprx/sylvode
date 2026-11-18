@@ -151,6 +151,7 @@ export class FlowOfflineSync {
 	private queue: OutboxEntry[] = [];
 	private drafts: RecoveryDraftEntry[] = [];
 	private readonly pendingStore = writable(0);
+	private readonly recoveryStore = writable(false);
 	private readonly draftStore = writable<ReadonlyArray<RecoveryDraftEntry>>([]);
 	/** Serialises every pump/recovery pass; there is never more than one update in flight. */
 	private chain: Promise<void> = Promise.resolve();
@@ -184,6 +185,11 @@ export class FlowOfflineSync {
 	}
 
 	/** Intents that could not be replayed, with their reasons. */
+	/** The live Page can contain a prefix while an old outbox is replaying. */
+	get recovering(): Readable<boolean> {
+		return { subscribe: this.recoveryStore.subscribe };
+	}
+
 	get recoveryDraft(): Readable<ReadonlyArray<RecoveryDraftEntry>> {
 		return { subscribe: this.draftStore.subscribe };
 	}
@@ -201,6 +207,7 @@ export class FlowOfflineSync {
 		this.nextOrder = await this.store.nextOrder();
 		this.queue = await this.store.list(this.host.objectId);
 		this.drafts = await this.store.listDrafts(this.host.objectId);
+		this.recoveryStore.set(this.queue.length > 0);
 		this.publish();
 	}
 
@@ -272,7 +279,7 @@ export class FlowOfflineSync {
 
 	/** The session reached `snapshot` on a (re)connection. */
 	onConnected(): void {
-		if (this.queue.length > 0) this.scheduleRecovery();
+		if (this.queue.length > 0 || this.needsRebuild) this.scheduleRecovery();
 	}
 
 	/** The session was closed permanently (three consecutive `server_rejected`, close 4500). */
@@ -357,6 +364,7 @@ export class FlowOfflineSync {
 	private scheduleRecovery(): void {
 		if (this.recoveryQueued) return;
 		this.recoveryQueued = true;
+		this.recoveryStore.set(true);
 		void this.run(async () => {
 			this.recoveryQueued = false;
 			await this.recover();
@@ -444,6 +452,7 @@ export class FlowOfflineSync {
 	 */
 	private async recover(): Promise<void> {
 		if (this.disposed) return;
+		this.recoveryStore.set(true);
 		if (this.queue.length > 0) {
 			if (this.transport.isTerminal || !this.transport.isConnected) return;
 			const accepted = await this.host.bootstrap();
@@ -464,6 +473,7 @@ export class FlowOfflineSync {
 			else await this.host.rebuildFromSessionSnapshot();
 			this.needsRebuild = false;
 		}
+		if (!this.recoveryQueued) this.recoveryStore.set(false);
 		if (this.queue.length > 0) this.schedulePump();
 	}
 

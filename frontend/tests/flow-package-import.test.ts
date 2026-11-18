@@ -114,7 +114,13 @@ assert.deepEqual(
 );
 assert.deepEqual(calls[0].body, { filename: 'workspace.sylvode-flow.zip', size: 7 });
 assert.equal(calls[0].idempotencyKey, 'upload-key');
-assert.equal(calls[0].signal, controller.signal, 'upload cancellation signal must reach fetch');
+const uploadSignal = calls[0].signal;
+assert(uploadSignal, 'upload cancellation signal must reach fetch');
+assert.equal(uploadSignal.aborted, false);
+const reason = new Error('upload cancelled');
+controller.abort(reason);
+assert.equal(uploadSignal.aborted, true, 'caller cancellation must abort the fetch signal');
+assert.equal(uploadSignal.reason, reason, 'caller cancellation reason must reach fetch');
 assert.deepEqual(calls[1].body, {
 	artifact_id: 'artifact',
 	project_mapping: { source: 'target' },

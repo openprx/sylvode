@@ -1,4 +1,6 @@
 <script lang="ts">
+	import ProjectPluginSettingsLink from '#lib/components/plugins/ProjectPluginSettingsLink.svelte';
+	import FlowSharedBlockList from '#lib/components/flow/FlowSharedBlockList.svelte';
 	import { FileText, Power } from '@lucide/svelte';
 	import { onMount, onDestroy, getContext } from 'svelte';
 	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
@@ -644,6 +646,7 @@
 				{/if}
 			</div>
 			<div class="flex flex-wrap gap-2">
+				<ProjectPluginSettingsLink {workspaceId} {projectId} />
 				<Button variant="secondary" loading={exporting} onclick={handleExportProject}
 					>{$t('project.exportJson')}</Button
 				>
@@ -1190,4 +1193,8 @@
 			{/if}
 		</div>
 	{/if}
+	{#if project && project.workspace_id === workspaceId}<FlowSharedBlockList
+			{workspaceId}
+			{projectId}
+		/>{/if}
 </div>

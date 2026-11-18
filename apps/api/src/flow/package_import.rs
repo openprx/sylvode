@@ -835,6 +835,11 @@ fn preview_receipt(row: ExistingPreviewRow, plan: &PackagePlan) -> Result<Import
 
 pub(crate) fn parse_plan(bytes: &[u8], expected_hash: &str) -> Result<PackagePlan, ApiError> {
     let verified = verify_package(Cursor::new(bytes), Some(expected_hash))?;
+    if verified.manifest.schema == super::package::PORTABLE_PAGE_SCHEMA {
+        return Err(ApiError::unsupported_format(
+            "portable Page packages require a Page destination and the portable import command",
+        ));
+    }
     let mut objects = Vec::new();
     for member in &verified.manifest.members {
         if member.kind == "object" {
@@ -1133,8 +1138,8 @@ async fn lineage_targets<C: ConnectionTrait>(
         .collect())
 }
 
-async fn promote_objects<C: ConnectionTrait>(
-    tx: &C,
+async fn promote_objects(
+    tx: &sea_orm::DatabaseTransaction,
     package: &[u8],
     plan: &PackagePlan,
     mapping: &FrozenImportMapping,
@@ -1271,6 +1276,22 @@ async fn promote_objects<C: ConnectionTrait>(
                 },
             )
             .await?;
+            if object.object_type == "page" {
+                super::block_registry::reconcile_accepted(
+                    tx,
+                    target_object,
+                    object.accepted_seq,
+                    &super::block_registry::prepare(&semantic)?,
+                )
+                .await?;
+                super::body_assets::reconcile_accepted(
+                    tx,
+                    target_object,
+                    object.accepted_seq,
+                    &super::body_assets::typed_references(&semantic)?,
+                )
+                .await?;
+            }
             insert_package_lineage(
                 tx,
                 import_id,
@@ -1572,7 +1593,9 @@ pub(crate) fn package_semantic_hash(
     let semantic = match super::package::semantic_model(manifest)? {
         super::package::PackageSemanticModel::V1 => engine.legacy_package_semantic_snapshot_v1(),
         super::package::PackageSemanticModel::V2 => engine.legacy_package_semantic_snapshot_v2(),
-        super::package::PackageSemanticModel::V3 => engine.semantic_snapshot(),
+        super::package::PackageSemanticModel::V3 => engine.legacy_package_semantic_snapshot_v3(),
+        super::package::PackageSemanticModel::V4 => engine.legacy_package_semantic_snapshot_v4(),
+        super::package::PackageSemanticModel::V5 => engine.semantic_snapshot(),
     };
     Ok(semantic
         .map_err(|_| ApiError::checksum_mismatch("package semantic fingerprint cannot be decoded"))?
@@ -1726,6 +1749,8 @@ mod tests {
             include_bytes!("../../../../frontend/tests/fixtures/flow-navigator-order/browser-reedit.snapshot").to_vec();
         let engine = LoroCollabEngine::load(&snapshot).unwrap();
         let encoded_before = engine.export_snapshot().unwrap();
+        let frontier_before = engine.frontier();
+        let state_before = engine.root_state_json();
         assert!(super::super::package::require_supported_snapshot(&engine).is_err());
         let old_hash = engine.legacy_package_semantic_snapshot_v2().unwrap().semantic_hash();
         let current_hash = engine.semantic_snapshot().unwrap().semantic_hash();
@@ -1750,7 +1775,9 @@ mod tests {
         assert_eq!(package_semantic_hash(&engine, &manifest).unwrap(), current_hash);
         manifest.engine.semantic_model = Some("unknown_future_model".into());
         assert!(package_semantic_hash(&engine, &manifest).is_err());
-        // Binary members/frontiers are untouched; only the declared, versioned hash reader changes.
+        // Fingerprint readers may not materialize an editor structure root in a legacy snapshot.
+        assert_eq!(engine.root_state_json(), state_before);
+        assert_eq!(engine.frontier(), frontier_before);
         assert_eq!(engine.export_snapshot().unwrap(), encoded_before);
     }
 

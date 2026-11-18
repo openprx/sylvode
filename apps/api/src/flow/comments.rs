@@ -36,6 +36,8 @@ pub struct NewComment {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FlowCommentView {
+    #[serde(default)]
+    pub anchor_status: Option<String>,
     pub id: Uuid,
     pub object_id: Uuid,
     pub block_id: Option<String>,
@@ -79,6 +81,7 @@ struct ParentRow {
 }
 
 pub async fn list_comments(db: &DatabaseConnection, object_id: Uuid) -> Result<FlowCommentList, ApiError> {
+    super::block_anchors::baseline_for_read(db, object_id).await?;
     let limit = i64::try_from(LIST_CAP.saturating_add(1)).unwrap_or(i64::MAX);
     let rows = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -96,11 +99,12 @@ pub async fn list_comments(db: &DatabaseConnection, object_id: Uuid) -> Result<F
     .all(db)
     .await?;
     let truncated = u64::try_from(rows.len()).unwrap_or(u64::MAX) > LIST_CAP;
-    let items = rows
+    let mut items: Vec<_> = rows
         .into_iter()
         .take(usize::try_from(LIST_CAP).unwrap_or(usize::MAX))
         .map(view_of)
         .collect();
+    super::block_anchors::decorate(db, &mut items).await?;
     Ok(FlowCommentList { items, truncated })
 }
 
@@ -200,7 +204,10 @@ pub(crate) async fn create_comment_on<C: ConnectionTrait>(
     .one(db)
     .await?
     .ok_or_else(ApiError::internal)?;
-    Ok(view_of(row))
+    super::block_anchors::bind_new(db, id, object_id, row.block_id.as_deref(), row.parent_id).await?;
+    let mut view = view_of(row);
+    super::block_anchors::decorate(db, std::slice::from_mut(&mut view)).await?;
+    Ok(view)
 }
 
 pub(crate) async fn update_comment_on<C: ConnectionTrait>(
@@ -242,7 +249,9 @@ pub(crate) async fn update_comment_on<C: ConnectionTrait>(
     .one(db)
     .await?
     .ok_or_else(|| ApiError::not_found("flow comment not found".to_string()))?;
-    Ok(view_of(row))
+    let mut view = view_of(row);
+    super::block_anchors::decorate(db, std::slice::from_mut(&mut view)).await?;
+    Ok(view)
 }
 
 pub(crate) async fn delete_comment_on<C: ConnectionTrait>(
@@ -314,7 +323,9 @@ pub(crate) async fn set_resolved_on<C: ConnectionTrait>(
     .one(db)
     .await?
     .ok_or_else(|| ApiError::not_found("flow comment not found".to_string()))?;
-    Ok(view_of(row))
+    let mut view = view_of(row);
+    super::block_anchors::decorate(db, std::slice::from_mut(&mut view)).await?;
+    Ok(view)
 }
 
 pub(crate) async fn load_visible<C: ConnectionTrait>(
@@ -402,6 +413,7 @@ pub(crate) fn parse_mentions(value: &Value) -> Vec<Uuid> {
 
 fn view_of(row: CommentRow) -> FlowCommentView {
     FlowCommentView {
+        anchor_status: None,
         id: row.id,
         object_id: row.object_id,
         block_id: row.block_id,

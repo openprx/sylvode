@@ -61,6 +61,12 @@ pub struct Capabilities {
     pub api_version: i32,
     pub schema_version: i32,
     pub minimum_reader_version: i32,
+    pub block_shares_supported: bool,
+    pub block_share_source_revoke_supported: bool,
+    pub block_transfers_supported: bool,
+    pub portable_page_packages_supported: bool,
+    pub portable_graph_packages_supported: bool,
+    pub mount_permission_updates_supported: bool,
     pub scope_native_legacy: bool,
     pub personal_provisioning: bool,
     pub personal_writes: bool,
@@ -79,7 +85,7 @@ pub struct Capabilities {
 }
 pub async fn capabilities<C: ConnectionTrait>(db: &C) -> Result<Capabilities, ApiError> {
     Capabilities::find_by_statement(Statement::from_string(DbBackend::Postgres,
-  "SELECT 2::int AS api_version,1::int AS schema_version,minimum_reader_version,scope_native_legacy,personal_provisioning,personal_writes,external_mounts,personal_package_imports,personal_scope_package_exports,true AS personal_package_history_imports,true AS personal_package_history_exports,ARRAY['page','navigator']::text[] AS personal_package_object_types,ARRAY['object','scope']::text[] AS personal_package_export_selections,'replay_to_head'::text AS personal_package_import_history_mode,'retained'::text AS personal_package_snapshot_history,false AS personal_package_typed_raw,personal_forms_conversion,cross_workspace_forms_conversion FROM flow_runtime_capabilities WHERE singleton".to_string())).one(db).await?.ok_or_else(ApiError::internal)
+  "SELECT 2::int AS api_version,1::int AS schema_version,minimum_reader_version,(minimum_reader_version>=5) AS block_shares_supported,(minimum_reader_version>=5) AS block_share_source_revoke_supported,(minimum_reader_version=5 AND COALESCE((to_jsonb(flow_runtime_capabilities)->>'block_transfers_enabled')::bool,false) AND NOT EXISTS(SELECT 1 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version<5) AND (SELECT count(DISTINCT component)=3 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version>=5 AND component IN ('api','worker','maintenance'))) AS block_transfers_supported,(minimum_reader_version>=5 AND COALESCE((to_jsonb(flow_runtime_capabilities)->>'portable_page_packages_enabled')::bool,false) AND NOT EXISTS(SELECT 1 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version<minimum_reader_version) AND (SELECT count(DISTINCT component)=3 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version>=minimum_reader_version AND component IN ('api','worker','maintenance'))) AS portable_page_packages_supported,(minimum_reader_version>=5 AND COALESCE((to_jsonb(flow_runtime_capabilities)->>'portable_graph_packages_enabled')::bool,false) AND NOT EXISTS(SELECT 1 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version<minimum_reader_version) AND (SELECT count(DISTINCT component)=3 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version>=minimum_reader_version AND component IN ('api','worker','maintenance'))) AS portable_graph_packages_supported, external_mounts AS mount_permission_updates_supported,scope_native_legacy,personal_provisioning,personal_writes,external_mounts,personal_package_imports,personal_scope_package_exports,true AS personal_package_history_imports,true AS personal_package_history_exports,ARRAY['page','navigator']::text[] AS personal_package_object_types,ARRAY['object','scope']::text[] AS personal_package_export_selections,'replay_to_head'::text AS personal_package_import_history_mode,'retained'::text AS personal_package_snapshot_history,false AS personal_package_typed_raw,personal_forms_conversion,cross_workspace_forms_conversion FROM flow_runtime_capabilities WHERE singleton".to_string())).one(db).await?.ok_or_else(ApiError::internal)
 }
 pub async fn get<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<FlowScope, ApiError> {
     FlowScope::find_by_statement(Statement::from_sql_and_values(
@@ -146,6 +152,18 @@ pub async fn require_personal_write<C: ConnectionTrait>(db: &C) -> Result<(), Ap
     }
     require_reader_ready(db).await
 }
+/// Rich Page storage requires process-reader v3 independently of editor/client model4.
+pub async fn require_editor_reader_ready<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
+    require_editor_model_readers(db, 4).await
+}
+pub async fn require_editor_model_readers<C: ConnectionTrait>(db: &C, model: u32) -> Result<(), ApiError> {
+    let minimum = if model >= 5 { 4 } else { 3 };
+    if capabilities(db).await?.minimum_reader_version < minimum {
+        return Err(disabled("rich_editor_readers_not_ready"));
+    }
+    require_reader_ready(db).await
+}
+
 pub async fn require_reader_ready<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
     let caps = capabilities(db).await?;
 
@@ -298,7 +316,7 @@ pub async fn authorize<C: ConnectionTrait>(
     let end = chain.boundary_index.map_or(chain.ids.len(), |index| index + 1);
     let ids = chain.ids.get(..end).ok_or_else(ApiError::internal)?.to_vec();
     let rows=ScopePermissionGrant::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-      "SELECT g.level,NULL::uuid AS workspace_id,NULL::bigint AS authz_epoch FROM flow_object_grants g WHERE g.object_id=ANY($1) AND g.scope_id=$2 AND g.principal_kind='user' AND g.principal_id=$3 UNION ALL SELECT m.grant_level,m.destination_workspace_id,s.authz_epoch FROM flow_mounts m JOIN workspace_members wm ON wm.workspace_id=m.destination_workspace_id AND wm.user_id=$3 JOIN flow_workspace_settings s ON s.workspace_id=wm.workspace_id WHERE m.source_object_id=ANY($1)",vec![ids.into(),scope.id.into(),user.into()])).all(db).await?;
+      "SELECT g.level,NULL::uuid AS workspace_id,NULL::bigint AS authz_epoch FROM flow_object_grants g WHERE g.object_id=ANY($1) AND g.scope_id=$2 AND g.principal_kind='user' AND g.principal_id=$3 UNION ALL SELECT m.grant_level,m.destination_workspace_id,s.authz_epoch FROM flow_mounts m JOIN workspace_members wm ON wm.workspace_id=m.destination_workspace_id AND wm.user_id=$3 JOIN flow_workspace_settings s ON s.workspace_id=wm.workspace_id JOIN users recipient ON recipient.id=wm.user_id AND recipient.is_active AND recipient.entity_type='human' JOIN flow_objects mounted ON mounted.id=m.source_object_id AND mounted.lifecycle_status='active' WHERE m.source_object_id=ANY($1) AND $4",vec![ids.into(),scope.id.into(),user.into(),(object_row.lifecycle_status == "active" && scope.lifecycle_status == "active").into()])).all(db).await?;
     let mut level = PermissionLevel::Denied;
     let mut audiences = Vec::new();
     for row in rows {
@@ -547,6 +565,21 @@ pub(crate) async fn insert_object_with_identity(
     object: Uuid,
     document: Uuid,
 ) -> Result<Uuid, ApiError> {
+    insert_object_with_identity_model(tx, scope_id, user, kind, parent, title, schema, object, document, 1).await
+}
+#[allow(clippy::too_many_arguments)]
+async fn insert_object_with_identity_model(
+    tx: &DatabaseTransaction,
+    scope_id: Uuid,
+    user: Uuid,
+    kind: &str,
+    parent: Option<Uuid>,
+    title: &str,
+    schema: Option<&Value>,
+    object: Uuid,
+    document: Uuid,
+    editor_model: u32,
+) -> Result<Uuid, ApiError> {
     let mut engine = LoroCollabEngine::new_empty(rand::random());
     engine
         .set_title(title)
@@ -555,6 +588,11 @@ pub(crate) async fn insert_object_with_identity(
         engine
             .initialize_page_editor()
             .map_err(|e| super::command::map_collab_error(&e))?;
+        if editor_model >= 4 {
+            engine
+                .initialize_page_structure_model(editor_model)
+                .map_err(|e| super::command::map_collab_error(&e))?;
+        }
     }
     if let Some(schema) = schema {
         super::collections::apply_initial_collection_schema(&mut engine, schema)?;
@@ -592,6 +630,11 @@ pub(crate) async fn insert_object_with_identity(
         },
     )
     .await?;
+    if kind == "page" {
+        super::block_registry::reconcile_accepted(tx, object, 0, &super::block_registry::prepare(&semantic)?).await?;
+        super::body_assets::reconcile_accepted(tx, object, 0, &super::body_assets::typed_references(&semantic)?)
+            .await?;
+    }
     if kind == "collection" {
         super::collections::insert_scope_collection_projection(tx, object, document).await?;
         super::collections::sync_new_collection_projection(tx, object, &engine).await?;
@@ -600,6 +643,8 @@ pub(crate) async fn insert_object_with_identity(
 }
 #[derive(Debug, Deserialize)]
 pub struct CreateInput {
+    #[serde(default = "default_editor_model")]
+    pub editor_model: u32,
     pub scope_id: Uuid,
     pub object_type: String,
     pub parent_object_id: Option<Uuid>,
@@ -611,7 +656,15 @@ pub struct CreateInput {
     pub initial_fields: Vec<Value>,
     pub initial_view: Option<Value>,
 }
+const fn default_editor_model() -> u32 {
+    1
+}
 pub async fn create_personal(db: &DatabaseConnection, user: Uuid, input: CreateInput) -> Result<Value, ApiError> {
+    if !matches!(input.editor_model, 1 | 4 | 5) || (input.editor_model >= 4 && input.object_type != "page") {
+        return Err(ApiError::invalid_update(
+            "editor_model must be 1 or 4; model4 requires Page",
+        ));
+    }
     if !matches!(input.object_type.as_str(), "page" | "navigator" | "collection") || input.project_id.is_some() {
         return Err(ApiError::invalid_update(
             "personal creation requires page/navigator/collection with no legacy project",
@@ -634,9 +687,17 @@ pub async fn create_personal(db: &DatabaseConnection, user: Uuid, input: CreateI
     if proof.scope_id != input.scope_id || legacy_workspace(db, proof.scope_id).await?.is_some() {
         return Err(not_found());
     }
-    let body = json!({"operation":"create","object_type":input.object_type,"parent_object_id":parent,"title":input.title.trim(),"message":input.message,"initial_fields":input.initial_fields,"initial_view":input.initial_view});
+    let mut body = json!({"operation":"create","object_type":input.object_type,"parent_object_id":parent,"title":input.title.trim(),"message":input.message,"initial_fields":input.initial_fields,"initial_view":input.initial_view,"editor_model":input.editor_model});
+    if input.editor_model == 1
+        && let Some(body) = body.as_object_mut()
+    {
+        body.remove("editor_model");
+    }
     let tx = db.begin().await?;
     require_personal_write(&tx).await?;
+    if input.editor_model >= 4 {
+        require_editor_model_readers(&tx, input.editor_model).await?;
+    }
     fence(&tx, &proof).await?;
     if let Some(result) =
         super::scope_commands::lock_and_replay(&tx, input.scope_id, user, &input.idempotency_key, &body).await?
@@ -667,7 +728,7 @@ pub async fn create_personal(db: &DatabaseConnection, user: Uuid, input: CreateI
     if schema.is_some() && input.object_type != "collection" {
         return Err(ApiError::invalid_update("collection schema requires collection"));
     }
-    let object = insert_object(
+    let object = insert_object_with_identity_model(
         &tx,
         input.scope_id,
         user,
@@ -675,6 +736,9 @@ pub async fn create_personal(db: &DatabaseConnection, user: Uuid, input: CreateI
         Some(parent),
         input.title.trim(),
         schema.as_ref(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        input.editor_model,
     )
     .await?;
     let event = super::scope_event::insert(
@@ -782,5 +846,76 @@ pub async fn fence_many_with_workspaces(
     for proof in proofs {
         authorize(tx, proof.object_id, proof.principal_id, proof.level).await?;
     }
+    Ok(())
+}
+
+/// A reservation owns no Page until the source accepted-content transaction calls this.
+pub(crate) async fn insert_child_page(
+    tx: &DatabaseTransaction,
+    parent: &ObjectIdentity,
+    actor: Uuid,
+    object: Uuid,
+    title: &str,
+) -> Result<(), ApiError> {
+    authz::ensure_scope_parent_can_adopt_child(tx, parent.scope_id, parent.id).await?;
+    if parent.workspace_id.is_none() {
+        insert_object_with_identity_model(
+            tx,
+            parent.scope_id,
+            actor,
+            "page",
+            Some(parent.id),
+            title,
+            None,
+            object,
+            Uuid::new_v4(),
+            5,
+        )
+        .await?;
+        return Ok(());
+    }
+    let mut engine = LoroCollabEngine::new_empty(rand::random());
+    engine
+        .set_title(title)
+        .map_err(|error| super::command::map_collab_error(&error))?;
+    engine
+        .initialize_page_editor()
+        .map_err(|error| super::command::map_collab_error(&error))?;
+    engine
+        .initialize_page_structure_model(5)
+        .map_err(|error| super::command::map_collab_error(&error))?;
+    let document = Uuid::new_v4();
+    let snapshot = engine
+        .export_snapshot()
+        .map_err(|error| super::command::map_collab_error(&error))?;
+    let frontier = engine.frontier().as_bytes().to_vec();
+    let semantic = engine
+        .semantic_snapshot()
+        .map_err(|error| super::command::map_collab_error(&error))?;
+    tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_objects(id,scope_id,workspace_id,project_id,object_type,parent_id,created_by,governance_metadata) VALUES($1,$2,$3,$4,'page',$5,$6,'{}'::jsonb)",vec![object.into(),parent.scope_id.into(),parent.workspace_id.into(),parent.project_id.into(),parent.id.into(),actor.into()])).await?;
+    repository::insert_collab_document(
+        tx,
+        &repository::NewCollabDocument {
+            id: document,
+            object_id: object,
+            format_version: "loro-1".into(),
+            snapshot,
+            frontier: frontier.clone(),
+        },
+    )
+    .await?;
+    repository::insert_projection(
+        tx,
+        &repository::NewProjection {
+            object_id: object,
+            document_seq: 0,
+            document_frontier: frontier,
+            title: title.into(),
+            state: projection::state_json(&semantic).map_err(|_| ApiError::internal())?,
+            plain_text: String::new(),
+        },
+    )
+    .await?;
+    super::block_registry::reconcile_accepted(tx, object, 0, &super::block_registry::prepare(&semantic)?).await?;
     Ok(())
 }

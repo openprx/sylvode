@@ -1,4 +1,5 @@
 //! Real `PostgreSQL` optimistic-edit contracts for retained workspace tabs.
+#![cfg(test)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use super::{ai_agent, context::tenant_fixture, form, project, project_type};
 use axum::{

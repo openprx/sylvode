@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order amount</title>
+<style>
+  :root { color-scheme: light dark; font: 15px/1.5 system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; color: #172533; background: #f2f7f8; }
+  h1, p { margin: 0 0 .65rem; }
+  h1 { font-size: 1rem; }
+  output { display: block; margin: .5rem 0 1rem; font: 650 2rem/1.1 ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+  button { font: inherit; padding: .4rem .7rem; border: 1px solid #3b6576; border-radius: .35rem; color: #173847; background: #fff; }
+  button:enabled { cursor: pointer; }
+  button:disabled { opacity: .6; }
+  button:focus-visible { outline: 3px solid #176784; outline-offset: 2px; }
+  #status { min-height: 1.5em; margin: .75rem 0 0; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e1edf0; background: #19313a; }
+    button { color: #e1edf0; background: #223f49; border-color: #83a8b5; }
+    button:focus-visible { outline-color: #b2e2f1; }
+  }
+</style>
+<main>
+  <h1>Order amount</h1>
+  <p>Calculate the amount from this order line’s quantity and unit price.</p>
+  <output id="amount" aria-label="Order amount">—</output>
+  <div class="actions">
+    <button id="preview" type="button" disabled>Preview amount</button>
+    <button id="apply" type="button" hidden disabled>Save amount</button>
+  </div>
+  <p id="status" role="status">Connecting to the order record…</p>
+</main>
+<script>
+  const preview = document.querySelector('#preview');
+  const apply = document.querySelector('#apply');
+  const amount = document.querySelector('#amount');
+  const status = document.querySelector('#status');
+  let port;
+  let requestId;
+  let action;
+  let hasPreview = false;
+  function request(method) {
+    if (!port || requestId) return;
+    requestId = crypto.randomUUID();
+    action = method;
+    preview.disabled = apply.disabled = true;
+    status.textContent = method === 'amount.apply' ? 'Awaiting confirmation…' : 'Calculating…';
+    port.postMessage({ protocol: 1, type: 'request', request_id: requestId, method, input: {} });
+  }
+  preview.addEventListener('click', () => request('amount.preview'));
+  apply.addEventListener('click', () => request('amount.apply'));
+  window.addEventListener('message', function connect(event) {
+    if (event.source !== window.parent || event.origin !== 'null' ||
+        event.data?.type !== 'sylvode-plugin-connect' || event.data.protocol !== 1 ||
+        event.ports.length !== 1 || port) return;
+    window.removeEventListener('message', connect);
+    port = event.ports[0];
+    const grants = event.data.grants;
+    preview.disabled = !grants.includes('amount.preview');
+    apply.hidden = !grants.includes('amount.apply');
+    status.textContent = apply.hidden ? 'Preview access only.' : 'Ready to preview.';
+    port.onmessage = ({ data }) => {
+      if (data?.protocol !== 1 || data.type !== 'result' || data.request_id !== requestId) return;
+      requestId = undefined;
+      if (data.ok) {
+        amount.value = new Intl.NumberFormat(navigator.language, {
+          minimumFractionDigits: 2, maximumFractionDigits: 2
+        }).format(data.result.amount_cents / 100);
+        hasPreview = true;
+        status.textContent = action === 'amount.apply' ? 'Amount saved.' : 'Preview ready.';
+      } else {
+        status.textContent = data.message;
+      }
+      preview.disabled = !grants.includes('amount.preview');
+      apply.disabled = !hasPreview || apply.hidden;
+    };
+    port.postMessage({ protocol: 1, type: 'ready' });
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && port) port.postMessage({ protocol: 1, type: 'close' });
+  });
+</script>
+</html>

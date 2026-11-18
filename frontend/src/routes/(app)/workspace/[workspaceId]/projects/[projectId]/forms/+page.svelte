@@ -1,4 +1,10 @@
 <script lang="ts">
+	import { writable } from 'svelte/store';
+	import ProjectPluginSettingsLink from '#lib/components/plugins/ProjectPluginSettingsLink.svelte';
+	import CreatorPluginLink from '#lib/components/plugins/CreatorPluginLink.svelte';
+	import RecordPluginPanels from '#lib/components/plugins/RecordPluginPanels.svelte';
+	import RecordPluginActions from '#lib/components/plugins/RecordPluginActions.svelte';
+	import type { RecordPluginActionSurface } from '#lib/plugins/placements.js';
 	import { taskEditorAction } from '#lib/workbench/edit-surface.js';
 	import {
 		Activity,
@@ -141,6 +147,7 @@
 
 	type ZipFileInput = { path: string; data: string | Uint8Array };
 
+	const recordPluginActions: RecordPluginActionSurface = writable(null);
 	const workspaceId = $derived(requireRouteParam(page.params.workspaceId, 'workspaceId'));
 	const projectId = $derived(requireRouteParam(page.params.projectId, 'projectId'));
 
@@ -3424,7 +3431,9 @@
 	async function reloadSelectedRecord() {
 		if (!selectedRecord) return;
 
-		const response = await formsApi.getRecord(selectedRecord.id);
+		const recordId = selectedRecord.id;
+		const response = await formsApi.getRecord(recordId);
+		if (selectedRecord?.id !== recordId) return;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -12301,6 +12310,7 @@
 		</div>
 
 		<div class="flex flex-wrap gap-2">
+			<ProjectPluginSettingsLink {workspaceId} {projectId} />
 			<Button variant="secondary" onclick={() => loadForms()}>
 				<RefreshCw class="mr-2 h-4 w-4" aria-hidden="true" />
 				{$t('forms.refresh')}
@@ -20649,7 +20659,19 @@
 												</p>
 											</div>
 
-											<div class="flex shrink-0 items-center gap-2">
+											<div class="flex flex-wrap justify-end gap-2">
+												{#if selectedForm?.key === 'order_line'}
+													<CreatorPluginLink
+														{workspaceId}
+														{projectId}
+														formKey={selectedForm.key}
+														slot="form.record.actions"
+													/>
+												{/if}
+												<RecordPluginActions
+													recordId={selectedRecord.id}
+													surface={recordPluginActions}
+												/>
 												<Button
 													size="sm"
 													variant="secondary"
@@ -20672,6 +20694,24 @@
 											</div>
 										</div>
 									</div>
+
+									{#if selectedRecord.project_id === projectId}
+										{#if selectedForm?.key === 'order_line'}
+											<CreatorPluginLink
+												{workspaceId}
+												{projectId}
+												formKey={selectedForm.key}
+												slot="form.record.detail"
+											/>
+										{/if}
+										{#key selectedRecord.id}
+											<RecordPluginPanels
+												recordId={selectedRecord.id}
+												surface={recordPluginActions}
+												onApplied={() => void reloadSelectedRecord()}
+											/>
+										{/key}
+									{/if}
 
 									<div
 										class="divide-y divide-slate-100 dark:divide-slate-800"

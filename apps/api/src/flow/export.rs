@@ -18,7 +18,7 @@ use crate::error::{ApiError, ApiErrorKind};
 
 use super::collab::authz::{self, PermissionLevel};
 use super::event_policy::{
-    flow_event_payload_policy, redact_flow_event_metadata_for_delivery, redact_flow_event_payload_for_delivery,
+    flow_event_has_public_payload, redact_flow_event_metadata_for_delivery, redact_flow_event_payload_for_delivery,
 };
 use super::package::{
     ENGINE_CRATE_VERSION, ENGINE_NAME, ENGINE_WIRE_FORMAT_VERSION, ExportPackageManifest, ExportPolicy, PackageCounts,
@@ -539,7 +539,7 @@ async fn render_export(
             name: ENGINE_NAME.to_string(),
             crate_version: ENGINE_CRATE_VERSION.to_string(),
             wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
-            semantic_model: None,
+            semantic_model: Some(super::package::SEMANTIC_MODEL_V4.into()),
         },
         history: PackageHistory {
             included: request.include_history,
@@ -590,7 +590,11 @@ pub(crate) fn render_object_text_export(
         "json" => canonical_json(
             &json!({"object_id":id,"object_type":kind,"title":title,"semantic_content":semantic,"seq":seq,"frontier":frontier}),
         ),
-        "markdown" => Ok(format!("# {title}\n\n{plain_text}\n").into_bytes()),
+        "markdown" => {
+            let snapshot: collab_core::SemanticSnapshot =
+                serde_json::from_value(semantic.clone()).map_err(|_| ApiError::internal())?;
+            Ok(super::projection::render_markdown_for_object(title, &snapshot, id).into_bytes())
+        }
         "csv" => Ok(format!(
             "object_id,object_type,title,plain_text\n{},{},{},{}\n",
             csv_cell(&id.to_string()),
@@ -980,7 +984,7 @@ async fn load_history_events<C: ConnectionTrait>(
     .await?;
     Ok(rows
         .into_iter()
-        .filter(|row| flow_event_payload_policy(&row.event_type).is_some())
+        .filter(|row| flow_event_has_public_payload(&row.event_type))
         .collect())
 }
 

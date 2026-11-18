@@ -43,7 +43,7 @@
 
 import type { ApiResult } from '#lib/api/client.js';
 import type { FlowConversionJob, FlowObjectView } from '#lib/api/flow.js';
-import { formsApi, type FormRecord } from '#lib/api/forms.js';
+import { formsApi, type FormRecord, type UniversalForm } from '#lib/api/forms.js';
 import type { FlowCommandService } from './command-service';
 import { POLICY_REJECTED_REASONS, type PolicyRejectedReason } from './convert-wizard';
 import {
@@ -308,7 +308,7 @@ export type TargetView =
 	| { readonly id: string; readonly state: 'loading' }
 	| {
 			readonly id: string;
-			readonly state: 'record';
+			readonly state: 'record' | 'form';
 			readonly projectId: string;
 			readonly workspaceId?: string;
 			readonly title: string;
@@ -337,6 +337,7 @@ export interface ConversionJobSnapshot {
 export interface ConversionJobDeps {
 	readonly commands: Pick<FlowCommandService, 'convertStatus' | 'convertRetry'>;
 	readonly repository: Pick<FlowObjectRepository, 'get'>;
+	readonly getForm: (id: string) => Promise<ApiResult<UniversalForm>>;
 	readonly getRecord: (recordId: string) => Promise<ApiResult<FormRecord>>;
 	readonly sleep: (ms: number) => Promise<void>;
 	readonly newKey: () => string;
@@ -381,6 +382,7 @@ export class ConversionJobController {
 		this.deps = {
 			commands: deps.commands,
 			repository: deps.repository,
+			getForm: deps.getForm ?? ((id) => formsApi.get(id)),
 			getRecord: deps.getRecord ?? ((recordId) => formsApi.getRecord(recordId)),
 			sleep: deps.sleep ?? defaultSleep,
 			newKey: deps.newKey ?? newIdempotencyKey
@@ -570,23 +572,44 @@ export class ConversionJobController {
 		this.emit();
 	}
 
-	/** Each created id is looked up as a Forms record; one that is not a record this viewer can
-	 * read in this workspace stays a bare id. No link is ever built from a guess. */
+	/** Look up each typed conversion target through Forms access policy. */
 	private async resolveTargets(job: FlowConversionJob): Promise<void> {
 		const ids = [...job.created_target_ids];
-		const signature = JSON.stringify(ids);
+		const signature = JSON.stringify([job.target_type, ids]);
 		if (this.targetsFor === signature) return;
 		this.targetsFor = signature;
 		this.targets = ids.map((id) => ({ id, state: 'loading' }) as const);
 		this.emit();
-		const resolved = await Promise.all(ids.map((id) => this.resolveTarget(id)));
+		const resolved = await Promise.all(ids.map((id) => this.resolveTarget(id, job.target_type)));
 		if (this.targetsFor !== signature) return;
 		this.targets = resolved;
 		this.emit();
 	}
 
-	private async resolveTarget(id: string): Promise<TargetView> {
+	private async resolveTarget(
+		id: string,
+		type: FlowConversionJob['target_type']
+	): Promise<TargetView> {
 		try {
+			if (type === 'form') {
+				const result = await this.deps.getForm(id);
+				const form = result.code === 0 ? result.data : null;
+				if (
+					form?.id === id &&
+					form.workspace_id &&
+					form.project_id &&
+					(this.workspaceId === null || form.workspace_id === this.workspaceId)
+				) {
+					return {
+						id,
+						state: 'form',
+						workspaceId: form.workspace_id,
+						projectId: form.project_id,
+						title: form.name
+					};
+				}
+				return { id, state: 'unresolved' };
+			}
 			const result = await this.deps.getRecord(id);
 			const record = result.code === 0 ? result.data : null;
 			if (

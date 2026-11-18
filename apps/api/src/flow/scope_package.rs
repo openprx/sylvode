@@ -276,7 +276,7 @@ pub async fn render(
         let mut lines = Vec::new();
         for event in events {
             let kind = event.try_get::<String>("", "event_type")?;
-            if super::event_policy::flow_event_payload_policy(&kind).is_none() {
+            if !super::event_policy::flow_event_has_public_payload(&kind) {
                 continue;
             }
             let source = event.try_get::<Value>("", "source")?;
@@ -312,7 +312,7 @@ pub async fn render(
             name: ENGINE_NAME.into(),
             crate_version: ENGINE_CRATE_VERSION.into(),
             wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
-            semantic_model: Some(super::package::SEMANTIC_MODEL_V3.into()),
+            semantic_model: Some(super::package::SEMANTIC_MODEL_V4.into()),
         },
         history: PackageHistory {
             included: include_history,

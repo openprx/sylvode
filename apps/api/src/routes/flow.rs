@@ -1630,6 +1630,8 @@ pub async fn get_flow_object(
 
 #[derive(Debug, Deserialize)]
 pub struct GetFlowObjectBootstrapQuery {
+    #[serde(default)]
+    pub editor_model: Option<u32>,
     pub known_seq: Option<i64>,
     pub known_frontier: Option<String>,
 }
@@ -1676,6 +1678,10 @@ pub async fn get_flow_object_bootstrap(
         else {
             continue;
         };
+        crate::flow::scope_editor::require_bootstrap_model(
+            &serde_json::to_value(&bootstrap).map_err(|_| ApiError::internal())?,
+            params.editor_model.unwrap_or(1),
+        )?;
         return Ok(ApiResponse::success(bootstrap));
     }
     Err(policy::authorization_read_unstable())
@@ -3050,6 +3056,7 @@ mod flow_database_tests {
                 None,
                 Path(restricted_id),
                 FlowQuery(GetFlowObjectBootstrapQuery {
+                    editor_model: None,
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -3668,6 +3675,7 @@ mod flow_database_tests {
                 None,
                 Path(object_ids[1]),
                 FlowQuery(GetFlowObjectBootstrapQuery {
+                    editor_model: None,
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -3723,6 +3731,7 @@ mod flow_database_tests {
                             None,
                             Path(object_id),
                             FlowQuery(GetFlowObjectBootstrapQuery {
+                                editor_model: None,
                                 known_seq: None,
                                 known_frontier: None,
                             }),
@@ -3781,6 +3790,7 @@ mod flow_database_tests {
                             None,
                             Path(object_id),
                             FlowQuery(GetFlowObjectBootstrapQuery {
+                                editor_model: None,
                                 known_seq: None,
                                 known_frontier: None,
                             }),
@@ -7988,6 +7998,7 @@ mod flow_database_tests {
                 None,
                 Path(object_id),
                 FlowQuery(GetFlowObjectBootstrapQuery {
+                    editor_model: None,
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -8029,6 +8040,7 @@ mod flow_database_tests {
                 Some(bot_ctx),
                 Path(object_id),
                 FlowQuery(GetFlowObjectBootstrapQuery {
+                    editor_model: None,
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -15077,3 +15089,17 @@ pub async fn put_flow_object_inheritance(
     .await?;
     Ok(ApiResponse::success(view))
 }
+
+#[path = "flow_transfer.rs"]
+mod flow_transfer;
+pub use flow_transfer::{
+    cancel as cancel_page_transfer, commit as commit_page_transfer, prepare as prepare_page_transfer,
+    status as page_transfer_status, undo as undo_page_transfer,
+};
+
+#[path = "flow_portable_page.rs"]
+mod flow_portable_page;
+pub use flow_portable_page::{
+    export as export_portable_page, export_graph as export_portable_graph, import as import_portable_page,
+    import_graph as import_portable_graph, preview as preview_portable_page, preview_graph as preview_portable_graph,
+};

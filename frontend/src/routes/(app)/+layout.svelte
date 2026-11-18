@@ -1,9 +1,11 @@
 <script lang="ts">
+	import { PLUGIN_ADMIN_CONTEXT } from '#lib/plugins/context.js';
 	import { isFlowCanvasRoute } from '#lib/flow/page-layout.js';
 	import { createTaskEditSurface, TASK_EDIT_SURFACE } from '#lib/workbench/edit-surface.js';
 	import '#lib/i18n/index.js';
 	import { onMount, onDestroy, setContext } from 'svelte';
 	import { authStore, verifySession } from '#lib/stores/auth.js';
+	import { apiClient } from '#lib/api/client.js';
 	import { authApi } from '#lib/api/auth.js';
 	import { notificationsApi } from '#lib/api/notifications.js';
 	import SearchModal from '#lib/components/SearchModal.svelte';
@@ -19,6 +21,7 @@
 	import { t } from 'svelte-i18n';
 	import { projectOptionsStore } from '#lib/stores/project-options.js';
 	import { workspacesApi } from '#lib/api/workspaces.js';
+	import { FLOW_PROCESS_READER_COMPATIBILITY } from '#lib/flow/product-mode.js';
 	import { flowApi } from '#lib/api/flow.js';
 	import { flowFeatureStore } from '#lib/stores/flow-feature.js';
 	import {
@@ -100,8 +103,17 @@
 		}
 	}
 	$effect(() => {
-		if (loadingProfile) return;
 		const user = currentUserId;
+		projectOptionsStore.selectUser(user);
+		if (loadingProfile) {
+			if (flowTasks && flowTasks.userId !== user) {
+				flowTasks.dispose();
+				flowTasks = null;
+				workbench.activateUser(null);
+			}
+			return;
+		}
+		if (user) void projectOptionsStore.ensureLoaded();
 		workbench.activateUser(user);
 		if (flowTasks?.userId !== user) {
 			flowTasks?.dispose();
@@ -134,6 +146,8 @@
 		};
 	});
 	onDestroy(() => {
+		profileMounted = false;
+		profileRun++;
 		flowTasks?.dispose();
 		workbench.dispose();
 	});
@@ -141,9 +155,12 @@
 	async function handleLogout() {
 		workbench.capture();
 		if (workbench.hasDirty() && !window.confirm($t('workbench.leaveDirty'))) return;
-		await authApi.logout();
-		await authStore.logout();
-		goto('/auth/login');
+		const result = await authApi.logout();
+		if (!apiClient.isAuthResultCurrent(result)) return;
+		const cleared = authStore.logout();
+		const epoch = apiClient.getAuthSessionEpoch();
+		await cleared;
+		if (apiClient.isAuthSessionEpoch(epoch)) goto(resolve('/(auth)/auth/login'));
 	}
 
 	let personalFlowAvailable = $state(false);
@@ -160,9 +177,13 @@
 		showWorkspaceAdminLinks({ workspaceRole, instanceAdmin: isAdmin })
 	);
 
+	setContext(PLUGIN_ADMIN_CONTEXT, () => isWorkspaceAdmin);
+
 	const appPageTitle = $derived.by(() => {
 		const pathname = page.url.pathname;
 
+		if (pathname === '/plugins' || pathname.startsWith('/plugins/'))
+			return $t('plugins.library.title');
 		if (pathname === '/flow' || pathname.startsWith('/flow/')) return $t('nav.flow');
 		if (pathname === '/workspace') return $t('pageTitle.workspace');
 		if (isWorkspaceHomePath(pathname)) {
@@ -227,6 +248,10 @@
 			return $t('pageTitle.projectBoard');
 		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/cycles$/.test(pathname))
 			return $t('pageTitle.projectCycles');
+		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/settings\/plugins\/creator$/.test(pathname))
+			return $t('plugins.creator.title');
+		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/settings\/plugins$/.test(pathname))
+			return $t('plugins.projectSettings');
 		if (/^\/workspace\/[^/]+\/projects\/[^/]+\/forms$/.test(pathname))
 			return $t('pageTitle.projectForms');
 		if (/^\/workspace\/[^/]+\/projects\/[^/]+$/.test(pathname))
@@ -287,29 +312,55 @@
 		void roleTracker.select(currentWorkspaceId, currentUserId);
 	});
 
+	let profileMounted = $state(false);
+	let profileActor = $state<string | null | undefined>(undefined);
+	let profileRun = 0;
+	async function loadCurrentProfile(): Promise<void> {
+		const run = ++profileRun;
+		loadingProfile = true;
+		// A failed session check ends the session but keeps this user's local Flow data; only
+		// the user's own sign-out (`handleLogout`) deletes it.
+		let verifiedEpoch = apiClient.getAuthSessionEpoch();
+		const verification = await verifySession(
+			() => authApi.me(),
+			(epoch) => (verifiedEpoch = epoch)
+		);
+		if (
+			run !== profileRun ||
+			verification === 'superseded' ||
+			!apiClient.isAuthSessionEpoch(verifiedEpoch)
+		)
+			return;
+		if (verification === 'ended') {
+			goto(resolve('/(auth)/auth/login'));
+			return;
+		}
+
+		projectOptionsStore.selectUser($authStore.user?.id ?? null);
+		await Promise.all([
+			fetchUnreadCount(),
+			projectOptionsStore.ensureLoaded(),
+			flowApi.getCapabilities().then((result) => {
+				if (run !== profileRun || !apiClient.isAuthSessionEpoch(verifiedEpoch)) return;
+				personalFlowAvailable =
+					result.code === 0 &&
+					result.data?.api_version === 2 &&
+					result.data.minimum_reader_version <= FLOW_PROCESS_READER_COMPATIBILITY;
+			})
+		]);
+
+		if (run !== profileRun || !apiClient.isAuthSessionEpoch(verifiedEpoch)) return;
+		loadingProfile = false;
+	}
+	$effect(() => {
+		const actor = currentUserId;
+		if (profileMounted && profileActor !== actor) {
+			profileActor = actor;
+			void loadCurrentProfile();
+		}
+	});
 	onMount(() => {
-		void (async () => {
-			// A failed session check ends the session but keeps this user's local Flow data; only
-			// the user's own sign-out (`handleLogout`) deletes it.
-			if ((await verifySession(() => authApi.me())) === 'ended') {
-				goto('/auth/login');
-				return;
-			}
-
-			await Promise.all([
-				fetchUnreadCount(),
-				projectOptionsStore.ensureLoaded(),
-				flowApi.getCapabilities().then((result) => {
-					personalFlowAvailable =
-						result.code === 0 &&
-						result.data?.api_version === 2 &&
-						result.data.minimum_reader_version <= 2;
-				})
-			]);
-
-			loadingProfile = false;
-		})();
-
+		profileMounted = true;
 		pollTimer = setInterval(() => {
 			void fetchUnreadCount();
 		}, 30000);
@@ -364,7 +415,7 @@
 	}
 
 	$effect(() => {
-		page.url.pathname;
+		void page.url.pathname;
 		sidebarOpen = false;
 	});
 </script>
@@ -531,6 +582,34 @@
 							</span>
 						</a>
 					{/if}
+					<a
+						href={resolve('/(app)/plugins')}
+						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 {isActive(
+							'/plugins'
+						)
+							? 'bg-slate-100 text-blue-600 dark:bg-slate-800'
+							: 'text-slate-700 dark:text-slate-300'}"
+						aria-current={isActive('/plugins') ? 'page' : undefined}
+						data-testid="global-plugins-link"
+					>
+						<span class="inline-flex items-center gap-3">
+							<svg
+								class="h-5 w-5 shrink-0 {isActive('/plugins') ? 'text-blue-600' : 'text-slate-400'}"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.5"
+								viewBox="0 0 24 24"
+								aria-hidden="true"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M9 4v5m6-5v5M7 9h10v2a5 5 0 0 1-10 0V9Zm5 7v4"
+								/>
+							</svg>
+							<span>{$t('nav.plugins')}</span>
+						</span>
+					</a>
 					<a
 						href="/my-work"
 						class="block rounded-md px-4 py-2 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-800 {isActive(

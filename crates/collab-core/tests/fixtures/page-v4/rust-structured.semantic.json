@@ -1,0 +1,31 @@
+{
+  "nodes": {
+    "cid:18@516965638428657800:Map": {
+      "parent": "cid:50@71001:Map",
+      "order_key": "00000001",
+      "kind": "block",
+      "text": "New",
+      "properties": {
+        "block_type": "paragraph",
+        "content_source": "editor_doc",
+        "indent": "1",
+        "logical_id": "new-indexed",
+        "structure_model": "rich_page_v4"
+      },
+      "deleted": false
+    },
+    "cid:50@71001:Map": {
+      "parent": null,
+      "order_key": "00000000",
+      "kind": "block",
+      "text": "let x = 1;\n",
+      "properties": {
+        "block_type": "codeBlock",
+        "content_source": "editor_doc",
+        "indent": "0",
+        "structure_model": "rich_page_v4"
+      },
+      "deleted": false
+    }
+  }
+}

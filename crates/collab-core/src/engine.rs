@@ -275,6 +275,7 @@ impl LoroCollabEngine {
     /// engine this crate can hand a caller), but is surfaced rather than assumed away.
     pub fn fork(&self) -> Result<Self, CollabError> {
         let doc = self.doc.fork();
+        crate::page_inline::configure(&doc);
         let tree = Self::attach_tree(&doc);
         let meta = Self::attach_meta(&doc);
         let mut engine = Self {
@@ -293,6 +294,7 @@ impl LoroCollabEngine {
     #[must_use]
     pub fn new_empty(replica_seed: u64) -> Self {
         let doc = LoroDoc::new();
+        crate::page_inline::configure(&doc);
         // PeerID 0 is reserved by loro's internals for some sentinel comparisons; keep every
         // replica's seed in the non-zero range while staying deterministic.
         let peer_id = replica_seed.wrapping_add(1).max(1);
@@ -349,6 +351,47 @@ impl LoroCollabEngine {
             .map_err(|error| CollabError::OperationFailed {
                 reason: error.to_string(),
             })?;
+        // SnapshotAt may omit metadata of deleted placement nodes, while the immutable
+        // physical carriers remain in the editor list. Replay that exact causal range to
+        // retain tombstones required by the canonical structure validator.
+        let doc = match crate::editor_structure::placements(&doc) {
+            Err(CollabError::OperationFailed { reason }) if reason == "editor_structure_unindexed_physical_block" => {
+                let spans = vv
+                    .iter()
+                    .map(|(&peer, &end)| loro::IdSpan::new(peer, 0, end))
+                    .collect::<Vec<_>>();
+                let updates = self
+                    .doc
+                    .export(loro::ExportMode::updates_in_range(spans))
+                    .map_err(|error| CollabError::OperationFailed {
+                        reason: error.to_string(),
+                    })?;
+                InputLimits::default().validate_snapshot(&updates)?;
+                let mut historical = Self::new_empty(0);
+                historical
+                    .doc
+                    .import(&updates)
+                    .map_err(|error| CollabError::DecodeFailed {
+                        input: "historical operations",
+                        reason: error.to_string(),
+                    })?;
+                historical.rebuild_id_cache()?;
+                if historical.doc.state_vv() != vv || historical.doc.oplog_vv() != vv {
+                    return Err(CollabError::OperationFailed {
+                        reason: "historical frontier not retained".into(),
+                    });
+                }
+                crate::editor_structure::placements(&historical.doc)?;
+                return Ok(historical);
+            }
+            Err(error) => return Err(error),
+            Ok(_) => doc,
+        };
+        if doc.oplog_vv() != vv {
+            return Err(CollabError::OperationFailed {
+                reason: "historical frontier not retained".into(),
+            });
+        }
         let tree = Self::attach_tree(&doc);
         let meta = Self::attach_meta(&doc);
         let mut fork = Self {
@@ -372,6 +415,7 @@ impl LoroCollabEngine {
     /// `DecodeFailed` when `frontier` is not an encoded version vector, or `OperationFailed`
     /// when that version is not in this document's retained history.
     pub fn revert_to_frontier(&mut self, frontier: &Frontier) -> Result<(), CollabError> {
+        let prior_model = self.minimum_editor_model()?;
         let vv = if frontier.is_empty() {
             VersionVector::default()
         } else {
@@ -386,6 +430,14 @@ impl LoroCollabEngine {
             .map_err(|error| CollabError::OperationFailed {
                 reason: error.to_string(),
             })?;
+        if prior_model >= 5 {
+            self.doc
+                .get_map(crate::editor_structure::META)
+                .insert("model", "rich_page_v5")
+                .map_err(|error| CollabError::OperationFailed {
+                    reason: error.to_string(),
+                })?;
+        }
         self.doc.commit();
         self.rebuild_id_cache()?;
         Ok(())
@@ -552,6 +604,98 @@ impl LoroCollabEngine {
 
     /// Prose-command intent is explicit: typed embed planners use tree metadata blocks and
     /// must not accidentally create editor paragraphs. Text CID edits share the same path below.
+    pub fn minimum_editor_model(&self) -> Result<u32, CollabError> {
+        let structured = self.has_editor_structure();
+        if structured {
+            crate::editor_structure::placements(&self.doc)?;
+        }
+        // Root map accessors register missing roots; a model query must leave legacy documents untouched.
+        let model5 = matches!(
+            self.doc.get_by_str_path(crate::editor_structure::META),
+            Some(ValueOrContainer::Container(Container::Map(meta)))
+                if matches!(meta.get("model"), Some(ValueOrContainer::Value(LoroValue::String(model)))
+                    if model.as_ref() == "rich_page_v5")
+        );
+        let physical_media=self.has_editor_doc() && crate::editor_structure::physical(&self.doc)?.iter().any(|map| matches!(map.get("nodeName"),Some(ValueOrContainer::Value(LoroValue::String(kind))) if crate::editor_media::is_atom(kind.as_ref())));
+        let blocks = crate::editor_doc_bridge::editor_blocks(&self.doc)?.unwrap_or_default();
+        if model5 || physical_media || blocks.iter().any(|block| crate::editor_media::is_atom(&block.kind)) {
+            return Ok(5);
+        }
+        Ok(
+            if structured
+                || blocks.iter().any(|block| {
+                    !block.inline_spans.is_empty()
+                        || !matches!(
+                            block.kind.as_str(),
+                            "paragraph" | "heading" | "bulletItem" | "codeBlock"
+                        )
+                })
+            {
+                4
+            } else {
+                1
+            },
+        )
+    }
+    pub fn initialize_page_structure_model(&mut self, model: u32) -> Result<bool, CollabError> {
+        if !matches!(model, 4 | 5) {
+            return Err(CollabError::OperationFailed {
+                reason: "editor_model_unsupported".into(),
+            });
+        }
+        // Requested client capability is not a document minimum. Actual reference carriers
+        // raise the floor; an ordinary v4 structure remains readable by a v4 client.
+        self.initialize_page_structure()
+    }
+    pub fn has_editor_structure(&self) -> bool {
+        crate::editor_structure::ready(&self.doc)
+    }
+    pub fn initialize_page_structure(&mut self) -> Result<bool, CollabError> {
+        let floor = self.minimum_editor_model()?;
+        let changed = crate::editor_structure::initialize(&self.doc)?;
+        if floor >= 5 {
+            self.doc
+                .get_map(crate::editor_structure::META)
+                .insert("model", "rich_page_v5")
+                .map_err(|error| CollabError::OperationFailed {
+                    reason: error.to_string(),
+                })?;
+        }
+        if changed {
+            self.doc.commit();
+        }
+        Ok(changed)
+    }
+
+    pub fn insert_page_atom(
+        &mut self,
+        id: &str,
+        parent: Option<&str>,
+        index: usize,
+        kind: &str,
+        attrs: &Value,
+    ) -> Result<String, CollabError> {
+        if !self.has_editor_doc() {
+            return Err(CollabError::OperationFailed {
+                reason: "explicit_editor_initialization_required".into(),
+            });
+        }
+        self.initialize_page_structure_model(5)?;
+        let cid = crate::editor_doc_bridge::insert_atom(&self.doc, id, parent, index, kind, attrs)?;
+        self.doc.commit();
+        Ok(cid)
+    }
+    pub fn replace_page_asset(&mut self, id: &str, kind: &str, attrs: &Value) -> Result<(), CollabError> {
+        crate::editor_doc_bridge::replace_atom(&self.doc, id, kind, attrs)?;
+        self.doc.commit();
+        Ok(())
+    }
+    pub fn apply_page_marks(&mut self, id: &str, edits: &[crate::page_inline::MarkEdit]) -> Result<(), CollabError> {
+        crate::editor_doc_bridge::apply_editor_marks(&self.doc, id, edits)?;
+        self.doc.commit();
+        Ok(())
+    }
+
     pub fn apply_content_operation(&mut self, operation: &Operation) -> Result<(), CollabError> {
         if let Operation::CreateNode { id, .. } = operation
             && self.id_to_tree.contains_key(id)
@@ -669,6 +813,23 @@ impl LoroCollabEngine {
     /// # Errors
     /// Propagates the underlying engine's read failure, if any.
     pub fn semantic_snapshot(&self) -> Result<SemanticSnapshot, CollabError> {
+        let mut snapshot = self.legacy_package_semantic_snapshot_v3()?;
+        crate::prose_projection::project_editor_prose(&self.doc, &mut snapshot)?;
+        Ok(snapshot)
+    }
+
+    /// Frozen v4 prose/Tree reader. A model5 document must declare the v5 package model.
+    pub fn legacy_package_semantic_snapshot_v4(&self) -> Result<SemanticSnapshot, CollabError> {
+        if self.minimum_editor_model()? > 4 {
+            return Err(CollabError::OperationFailed {
+                reason: "v4_reader_requires_model4_document".into(),
+            });
+        }
+        let mut snapshot = self.legacy_package_semantic_snapshot_v3()?;
+        crate::prose_projection::project_editor_prose(&self.doc, &mut snapshot)?;
+        Ok(snapshot)
+    }
+    pub fn legacy_package_semantic_snapshot_v3(&self) -> Result<SemanticSnapshot, CollabError> {
         let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
         let order = self.navigator_order();
         for (id, node) in &mut snapshot.nodes {
@@ -693,7 +854,7 @@ impl LoroCollabEngine {
                 node.order_key.clone_from(key);
             }
         }
-        crate::prose_projection::project_editor_prose(&self.doc, &mut snapshot)?;
+        crate::prose_projection::project_legacy_editor_prose(&self.doc, &mut snapshot)?;
         Ok(snapshot)
     }
 
@@ -703,7 +864,7 @@ impl LoroCollabEngine {
     /// Propagates tree or editor-prose decoding errors without changing the document.
     pub fn legacy_package_semantic_snapshot_v2(&self) -> Result<SemanticSnapshot, CollabError> {
         let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
-        crate::prose_projection::project_editor_prose(&self.doc, &mut snapshot)?;
+        crate::prose_projection::project_legacy_editor_prose(&self.doc, &mut snapshot)?;
         Ok(snapshot)
     }
 
@@ -804,6 +965,7 @@ impl LoroCollabEngine {
     /// unchanged), so the caller must discard it -- as the isolated-apply worker, whose engine
     /// lives for one request, does.
     pub fn import_update_causally_complete(&mut self, update: &[u8]) -> Result<Diff, CollabError> {
+        let prior_model = self.minimum_editor_model()?;
         InputLimits::default().validate_update(update)?;
         let before = self.doc.state_vv();
         let status = self.doc.import(update).map_err(|e| CollabError::DecodeFailed {
@@ -815,6 +977,11 @@ impl LoroCollabEngine {
         }
         let after = self.doc.state_vv();
         self.rebuild_id_cache()?;
+        if prior_model >= 5 && self.minimum_editor_model()? < 5 {
+            return Err(CollabError::OperationFailed {
+                reason: "editor_model_floor_downgrade".into(),
+            });
+        }
         Ok(Diff {
             changed: before != after,
         })
@@ -827,6 +994,7 @@ impl CollabEngine for LoroCollabEngine {
     fn load(snapshot: &[u8]) -> Result<Self, Self::Error> {
         InputLimits::default().validate_snapshot(snapshot)?;
         let doc = LoroDoc::new();
+        crate::page_inline::configure(&doc);
         doc.import(snapshot).map_err(|e| CollabError::DecodeFailed {
             input: "snapshot",
             reason: e.to_string(),
@@ -845,6 +1013,7 @@ impl CollabEngine for LoroCollabEngine {
     }
 
     fn import_update(&mut self, update: &[u8]) -> Result<Diff, Self::Error> {
+        let prior_model = self.minimum_editor_model()?;
         InputLimits::default().validate_update(update)?;
         let before = self.doc.state_vv();
         self.doc.import(update).map_err(|e| CollabError::DecodeFailed {
@@ -853,6 +1022,11 @@ impl CollabEngine for LoroCollabEngine {
         })?;
         let after = self.doc.state_vv();
         self.rebuild_id_cache()?;
+        if prior_model >= 5 && self.minimum_editor_model()? < 5 {
+            return Err(CollabError::OperationFailed {
+                reason: "editor_model_floor_downgrade".into(),
+            });
+        }
         Ok(Diff {
             changed: before != after,
         })

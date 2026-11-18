@@ -9,11 +9,13 @@
 		permittedActions = null,
 		activeTool = $bindable(null),
 		syncState,
-		pending = 0
+		pending = 0,
+		onManageSharedBlocks
 	}: {
 		object: FlowObjectView;
 		syncState?: SyncState;
 		pending?: number;
+		onManageSharedBlocks?: () => void;
 		permittedActions?: readonly string[] | null;
 		activeTool?: 'info' | 'comments' | 'relations' | 'history' | null;
 	} = $props();
@@ -67,6 +69,16 @@
 		<div
 			class="absolute right-0 z-40 min-w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
 		>
+			{#if onManageSharedBlocks}<button
+					type="button"
+					class={`${button} block w-full text-left`}
+					data-testid="flow-manage-shared-blocks"
+					onclick={() => {
+						if (more) more.open = false;
+						onManageSharedBlocks?.();
+					}}>{$t('flow.shared.manageSource')}</button
+				>{/if}
+
 			{#each MORE_TOOLS as tool (tool.id)}<button
 					type="button"
 					class={`${button} block w-full text-left`}

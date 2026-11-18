@@ -164,6 +164,12 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
             to_title: title,
             legacy_package_semantic_hash_v1: Some(engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
             legacy_package_semantic_hash_v2: Some(engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
+            legacy_package_semantic_hash_v3: Some(engine.legacy_package_semantic_snapshot_v3()?.semantic_hash()),
+            legacy_package_semantic_hash_v4: if engine.minimum_editor_model()? <= 4 {
+                Some(engine.legacy_package_semantic_snapshot_v4()?.semantic_hash())
+            } else {
+                None
+            },
             package_reference_remap_required: Some(wire::package_reference_remap_required(&engine)?),
             validated_head_snapshot_base64: Some(base64::engine::general_purpose::STANDARD.encode(snapshot)),
         });
@@ -204,6 +210,12 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
         to_title,
         legacy_package_semantic_hash_v1: Some(to_engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
         legacy_package_semantic_hash_v2: Some(to_engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
+        legacy_package_semantic_hash_v3: Some(to_engine.legacy_package_semantic_snapshot_v3()?.semantic_hash()),
+        legacy_package_semantic_hash_v4: if to_engine.minimum_editor_model()? <= 4 {
+            Some(to_engine.legacy_package_semantic_snapshot_v4()?.semantic_hash())
+        } else {
+            None
+        },
         package_reference_remap_required: Some(wire::package_reference_remap_required(&to_engine)?),
         validated_head_snapshot_base64: None,
     })

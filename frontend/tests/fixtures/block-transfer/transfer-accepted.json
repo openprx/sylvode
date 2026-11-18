@@ -1,0 +1,40 @@
+{
+  "kind": "move",
+  "receipt": {
+    "affected_share_count": 0,
+    "changed_page_ids": [
+      "b128c7ac-06dc-41e8-9138-10e32eba59b6",
+      "464e69df-5784-4455-a2ac-5f44ebf538e9"
+    ],
+    "mappings": [
+      {
+        "identity": "preserved",
+        "source_block_cid": "cid:2@5662560400469006932:Map",
+        "target_block_cid": "cid:0@17914772395004844648:Map"
+      },
+      {
+        "identity": "preserved",
+        "source_block_cid": "cid:15@4537253072566857161:Map",
+        "target_block_cid": "cid:27@17914772395004844648:Map"
+      }
+    ],
+    "source": {
+      "accepted_seq": 2,
+      "frontier": "A+jJl8aKoYGjeQLUtJip7JXdyk4cyduW85T04/s+fA==",
+      "object_id": "b128c7ac-06dc-41e8-9138-10e32eba59b6"
+    },
+    "source_placeholder_cid": null,
+    "target": {
+      "accepted_seq": 1,
+      "frontier": "AqGRgdu7momW5wEc6LTzobrSg8/4AWw=",
+      "object_id": "464e69df-5784-4455-a2ac-5f44ebf538e9"
+    },
+    "undo": {
+      "expected_source_frontier": "A+jJl8aKoYGjeQLUtJip7JXdyk4cyduW85T04/s+fA==",
+      "expected_target_frontier": "AqGRgdu7momW5wEc6LTzobrSg8/4AWw=",
+      "state": "available"
+    }
+  },
+  "state": "accepted",
+  "transfer_id": "4762840e-9a61-4021-b98d-b07313d6cd08"
+}

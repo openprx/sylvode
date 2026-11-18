@@ -37,6 +37,13 @@ export function taskResource(href: string): TaskResource | null {
 		)
 			url.searchParams.delete(key);
 	const path = url.pathname;
+	const shared = path.match(/^\/shared-blocks\/([^/]+)$/);
+	if (shared)
+		return {
+			key: `shared-block:${shared[1]}`,
+			title: 'workbench.sharedBlock',
+			url: path + url.search + url.hash
+		};
 	const flow = path.match(/^\/(?:workspace\/[^/]+\/)?flow\/([^/]+)$/);
 	if (flow && !['package', 'conversions'].includes(flow[1]))
 		return { key: `flow:${flow[1]}`, title: 'Flow', url: path + url.search + url.hash };
@@ -71,6 +78,8 @@ export class TaskWorkbench {
 	private snapshots = new Map<string, unknown>();
 	private hooks = new Map<string, TaskViewHooks>();
 	private releases = new Map<string, () => void>();
+	private auxiliary = new Map<string, Map<string, { dirty(): boolean; dispose(): void }>>();
+	private intrinsicDirty = new Map<string, boolean>();
 	private refreshing = false;
 	private freshRestore = false;
 	onViewReady: ((key: string) => void) | null = null;
@@ -79,6 +88,10 @@ export class TaskWorkbench {
 	}
 	activateUser(userId: string | null): void {
 		if (this.current.userId === userId) return;
+		for (const slots of this.auxiliary.values())
+			for (const value of slots.values()) value.dispose();
+		this.auxiliary.clear();
+		this.intrinsicDirty.clear();
 		for (const release of this.releases.values()) release();
 		for (const hook of this.hooks.values()) hook.dispose?.();
 		this.snapshots.clear();
@@ -249,6 +262,8 @@ export class TaskWorkbench {
 	}
 
 	markDirty(key: string, dirty: boolean): void {
+		this.intrinsicDirty.set(key, dirty);
+		dirty = dirty || this.auxiliaryDirty(key);
 		this.store.update((state) => ({
 			...state,
 			tabs: state.tabs.map((tab) => (tab.key === key ? { ...tab, dirty } : tab))
@@ -295,7 +310,8 @@ export class TaskWorkbench {
 	hasDirty(): boolean {
 		return (
 			this.current.tabs.some((tab) => tab.dirty) ||
-			[...this.hooks.values()].some((hook) => hook.dirty())
+			[...this.hooks.values()].some((hook) => hook.dirty()) ||
+			[...this.auxiliary.keys()].some((key) => this.auxiliaryDirty(key))
 		);
 	}
 	close(
@@ -308,8 +324,14 @@ export class TaskWorkbench {
 		const state = this.current;
 		const index = state.tabs.findIndex((tab) => tab.key === key);
 		if (index < 0) return { kind: 'missing' };
-		if (!discardDraft && (state.tabs[index]?.dirty || this.hooks.get(key)?.dirty()))
+		if (
+			!discardDraft &&
+			(state.tabs[index]?.dirty || this.hooks.get(key)?.dirty() || this.auxiliaryDirty(key))
+		)
 			return { kind: 'confirm' };
+		for (const value of this.auxiliary.get(key)?.values() ?? []) value.dispose();
+		this.auxiliary.delete(key);
+		this.intrinsicDirty.delete(key);
 		this.releases.get(key)?.();
 		this.releases.delete(key);
 		this.hooks.get(key)?.dispose?.();
@@ -328,6 +350,42 @@ export class TaskWorkbench {
 			wasActive: state.active === key
 		};
 	}
+	/** Non-document task resources, such as source publication drafts. No extra Page/session pin. */
+	retainAuxiliary(
+		key: string,
+		slot: string,
+		value: { dirty(): boolean; dispose(): void }
+	): boolean {
+		if (!this.current.userId || !this.current.tabs.some((tab) => tab.key === key)) return false;
+		let slots = this.auxiliary.get(key);
+		if (slots?.has(slot)) return false;
+		if (!slots) {
+			slots = new Map();
+			this.auxiliary.set(key, slots);
+		}
+		if (!this.intrinsicDirty.has(key))
+			this.intrinsicDirty.set(
+				key,
+				this.current.tabs.find((tab) => tab.key === key)?.dirty ?? false
+			);
+		slots.set(slot, value);
+		this.refreshAuxiliaryDirty(key);
+		return true;
+	}
+	private auxiliaryDirty(key: string): boolean {
+		return [...(this.auxiliary.get(key)?.values() ?? [])].some((value) => value.dirty());
+	}
+	refreshAuxiliaryDirty(key: string): void {
+		const dirty =
+			(this.hooks.get(key)?.dirty() ?? this.intrinsicDirty.get(key) ?? false) ||
+			this.auxiliaryDirty(key);
+		if (this.current.tabs.find((tab) => tab.key === key)?.dirty === dirty) return;
+		this.store.update((state) => ({
+			...state,
+			tabs: state.tabs.map((tab) => (tab.key === key ? { ...tab, dirty } : tab))
+		}));
+	}
+
 	retain(key: string, release: () => void): boolean {
 		if (this.releases.has(key)) return false;
 		this.releases.set(key, release);

@@ -185,7 +185,7 @@ fn formula_arg_decimal(arg: &Value, values: &Map<String, Value>) -> Result<Decim
     Err("formula args must be field names or decimal string constants".to_string())
 }
 
-fn value_to_decimal(value: &Value) -> Result<Decimal, String> {
+pub(crate) fn value_to_decimal(value: &Value) -> Result<Decimal, String> {
     if let Some(value) = value.as_str() {
         return Decimal::from_str(value.trim()).map_err(|_| "decimal string is invalid".to_string());
     }

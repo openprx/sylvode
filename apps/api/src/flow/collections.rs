@@ -3299,8 +3299,7 @@ mod tests {
         );
     }
 
-    fn normalized_non_comment_source(path: &std::path::Path) -> String {
-        let source = std::fs::read_to_string(path).expect("source file reads");
+    fn normalized_non_comment_source(source: &str) -> String {
         source
             .lines()
             .filter(|line| !line.trim_start().starts_with("//"))
@@ -3387,7 +3386,18 @@ mod tests {
                 .expect("production source stays below workspace")
                 .to_string_lossy()
                 .replace('\\', "/");
-            let source = normalized_non_comment_source(&path);
+            let source = std::fs::read_to_string(&path).expect("source file reads");
+            // An inner cfg(test) on the module excludes the entire file from a production build.
+            // A path suffix or an individual test item is insufficient.
+            if source
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty() && !line.starts_with("//"))
+                == Some("#![cfg(test)]")
+            {
+                continue;
+            }
+            let source = normalized_non_comment_source(&source);
             let normalized_sql = source.replace('"', "");
             let mutates_forms = forbidden_forms
                 .iter()

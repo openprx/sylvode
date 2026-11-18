@@ -1,7 +1,18 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { t } from 'svelte-i18n';
-	import { flowApi, publicAppearanceUrl, type FlowAppearance, type FlowPublicBlock } from '#lib/api/flow.js';
+	import {
+		flowApi,
+		publicAppearanceUrl,
+		type FlowAppearance,
+		type FlowPublicBlock
+	} from '#lib/api/flow.js';
+	import { pageVisibleBlocks } from '#lib/flow/inline-runs.js';
+	import FlowInlineText from './FlowInlineText.svelte';
+	import FlowBodyAsset from './FlowBodyAsset.svelte';
+	import FlowBodyChild from './FlowBodyChild.svelte';
+	import { publicBodyAssetProvider } from '#lib/flow/body/providers.js';
+	import { publicBodyAtom } from '#lib/flow/body/presentation.js';
 	import { galleryBackground } from '#lib/flow/appearance.js';
 
 	let title = $state('');
@@ -9,6 +20,9 @@
 	let appearance = $state<FlowAppearance | null>(null);
 	let status = $state<'loading' | 'ready' | 'missing'>('loading');
 	let token = $state('');
+	const bodyProvider = $derived(publicBodyAssetProvider(token));
+	let collapsed = $state<ReadonlySet<number>>(new Set());
+	const visibleBlocks = $derived(pageVisibleBlocks(blocks, collapsed));
 
 	const cover = $derived(appearance?.cover ?? null);
 	const gallery = $derived(cover?.kind === 'gallery' ? galleryBackground(cover.gallery_id) : null);
@@ -34,6 +48,11 @@
 			if (result.code === 0 && result.data) {
 				title = result.data.title;
 				blocks = result.data.blocks ?? [];
+				collapsed = new Set(
+					blocks.flatMap((block, index) =>
+						block.kind === 'toggle' && block.collapsed ? [index] : []
+					)
+				);
 				appearance = result.data.appearance ?? null;
 				status = 'ready';
 			} else {
@@ -51,18 +70,31 @@
 	{#if status === 'loading'}
 		<p class="mx-auto max-w-3xl px-4 py-10 text-slate-500">{$t('flow.publicShare.loading')}</p>
 	{:else if status === 'missing'}
-		<p class="mx-auto max-w-3xl px-4 py-10 text-slate-700 dark:text-slate-200">{$t('flow.publicShare.missing')}</p>
+		<p class="mx-auto max-w-3xl px-4 py-10 text-slate-700 dark:text-slate-200">
+			{$t('flow.publicShare.missing')}
+		</p>
 	{:else}
 		{#if cover}
 			<div class="h-48 w-full overflow-hidden" data-testid="flow-public-cover">
 				{#if gallery}
-					<div class="h-[200%] w-full" style:background={gallery} style:transform={`translateY(-${position * 50}%)`}></div>
+					<div
+						class="h-[200%] w-full"
+						style:background={gallery}
+						style:transform={`translateY(-${position * 50}%)`}
+					></div>
 				{:else if coverUrl}
-					<img src={coverUrl} alt="" class="h-[200%] w-full object-cover" style:object-position={`center ${position * 100}%`} />
+					<img
+						src={coverUrl}
+						alt=""
+						class="h-[200%] w-full object-cover"
+						style:object-position={`center ${position * 100}%`}
+					/>
 				{/if}
 			</div>
 		{/if}
-		<article class="flow-canvas prose prose-slate mx-auto max-w-3xl px-16 pt-8 pb-16 dark:prose-invert">
+		<article
+			class="flow-canvas prose prose-slate mx-auto max-w-3xl px-16 pt-8 pb-16 dark:prose-invert"
+		>
 			{#if emoji}
 				<p class="text-5xl">{emoji}</p>
 			{:else if iconUrl}
@@ -72,25 +104,89 @@
 				{title || $t('flow.publicShare.untitled')}
 			</h1>
 			<p class="text-xs text-slate-500">{$t('flow.publicShare.readOnly')}</p>
-			{#each blocks as block, index (`${block.kind}-${index}`)}
+			{#each visibleBlocks as { block, index, order } (`${block.kind}-${index}`)}
+				{@const body = publicBodyAtom(block)}
 				{#if block.kind === 'heading'}
 					{#if block.level === 1}
-						<h1 style={indentStyle(block.indent)}>{block.text}</h1>
+						<h1 style={indentStyle(block.indent)}>
+							<FlowInlineText text={block.text} spans={block.inline_spans} />
+						</h1>
 					{:else if block.level === 3}
-						<h3 style={indentStyle(block.indent)}>{block.text}</h3>
+						<h3 style={indentStyle(block.indent)}>
+							<FlowInlineText text={block.text} spans={block.inline_spans} />
+						</h3>
 					{:else}
-						<h2 style={indentStyle(block.indent)}>{block.text}</h2>
+						<h2 style={indentStyle(block.indent)}>
+							<FlowInlineText text={block.text} spans={block.inline_spans} />
+						</h2>
 					{/if}
 				{:else if block.kind === 'bulletItem'}
-					<div class="flow-bullet-item" style={indentStyle(block.indent)}>{block.text}</div>
+					<div class="flow-bullet-item" style={indentStyle(block.indent)}>
+						<FlowInlineText text={block.text} spans={block.inline_spans} />
+					</div>
+				{:else if block.kind === 'orderedItem'}
+					<div style={indentStyle(block.indent)}>
+						<span aria-hidden="true">{order}. </span><FlowInlineText
+							text={block.text}
+							spans={block.inline_spans}
+						/>
+					</div>
+				{:else if block.kind === 'todoItem'}
+					<div class:line-through={block.checked} style={indentStyle(block.indent)}>
+						<input
+							type="checkbox"
+							checked={block.checked}
+							disabled
+							aria-label={block.text}
+						/><FlowInlineText text={block.text} spans={block.inline_spans} />
+					</div>
+				{:else if block.kind === 'blockquote'}
+					<blockquote style={indentStyle(block.indent)}>
+						<FlowInlineText text={block.text} spans={block.inline_spans} />
+					</blockquote>
+				{:else if block.kind === 'toggle'}
+					<div class="flex items-start gap-1" style={indentStyle(block.indent)}>
+						<button
+							type="button"
+							class="px-1"
+							aria-label={collapsed.has(index) ? 'Expand section' : 'Collapse section'}
+							aria-expanded={!collapsed.has(index)}
+							onclick={() => {
+								const next = new Set(collapsed);
+								if (next.has(index)) next.delete(index);
+								else next.add(index);
+								collapsed = next;
+							}}>{collapsed.has(index) ? '▸' : '▾'}</button
+						><span><FlowInlineText text={block.text} spans={block.inline_spans} /></span>
+					</div>
+				{:else if block.kind === 'divider'}<hr style={indentStyle(block.indent)} />
 				{:else if block.kind === 'codeBlock'}
 					<pre style={indentStyle(block.indent)}><code>{block.text}</code></pre>
+				{:else if body?.kind === 'image' || body?.kind === 'attachment'}<div
+						style={indentStyle(block.indent)}
+					>
+						<FlowBodyAsset
+							kind={body.kind}
+							assetId={body.assetId}
+							provider={bodyProvider}
+							alt={body.alt}
+							caption={body.caption}
+							name={body.name}
+						/>
+					</div>
+				{:else if body?.kind === 'childPage'}<div style={indentStyle(block.indent)}>
+						<FlowBodyChild childId="" publicView />
+					</div>
 				{:else if block.kind === 'embed'}
-					<p class="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-500 dark:border-slate-700">
+					<p
+						class="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-500 dark:border-slate-700"
+					>
 						{$t('flow.publicShare.embed')}
 					</p>
 				{:else}
-					<p style={indentStyle(block.indent)}>{block.text}</p>
+					<p style={indentStyle(block.indent)}>
+						<FlowInlineText text={block.text} spans={block.inline_spans} />
+					</p>
 				{/if}
 			{/each}
 		</article>

@@ -344,7 +344,17 @@ async fn validate_snapshots(bytes: &[u8], plan: &shared::PackagePlan) -> Result<
                     ApiError::unsupported_protocol("isolated worker lacks the v2 package fingerprint reader")
                 })?
             }
-            super::package::PackageSemanticModel::V3 => validated.to_snapshot.semantic_hash(),
+            super::package::PackageSemanticModel::V3 => {
+                validated.legacy_package_semantic_hash_v3.clone().ok_or_else(|| {
+                    ApiError::unsupported_protocol("isolated worker lacks the v3 package fingerprint reader")
+                })?
+            }
+            super::package::PackageSemanticModel::V4 => {
+                validated.legacy_package_semantic_hash_v4.clone().ok_or_else(|| {
+                    ApiError::unsupported_protocol("isolated worker lacks the v4 compatible package reader")
+                })?
+            }
+            super::package::PackageSemanticModel::V5 => validated.to_snapshot.semantic_hash(),
         };
         if hash != object.semantic_hash {
             return Err(ApiError::checksum_mismatch(
@@ -627,6 +637,22 @@ pub async fn commit(
             },
         )
         .await?;
+        if object.object_type == "page" {
+            super::block_registry::reconcile_accepted(
+                &tx,
+                target,
+                object.accepted_seq,
+                &super::block_registry::prepare(&valid.semantic)?,
+            )
+            .await?;
+            super::body_assets::reconcile_accepted(
+                &tx,
+                target,
+                object.accepted_seq,
+                &super::body_assets::typed_references(&valid.semantic)?,
+            )
+            .await?;
+        }
         ImportLineage {
             tx: &tx,
             scope_id,
@@ -857,6 +883,12 @@ mod tests {
         let proof = collab_core::isolation::wire::ReplayDiffResult {
             semantic_diff: collab_core::SemanticDiff::default(),
             to_snapshot: engine.semantic_snapshot().unwrap(),
+            legacy_package_semantic_hash_v4: Some(
+                engine.legacy_package_semantic_snapshot_v4().unwrap().semantic_hash(),
+            ),
+            legacy_package_semantic_hash_v3: Some(
+                engine.legacy_package_semantic_snapshot_v3().unwrap().semantic_hash(),
+            ),
             from_title: engine.title().unwrap(),
             to_title: engine.title().unwrap(),
             package_reference_remap_required: Some(

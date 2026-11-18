@@ -33,6 +33,7 @@ import {
 } from './support/collab-fakes';
 import { IndexedDbOutboxStore, type OutboxEntry } from '../src/lib/flow/outbox';
 import type { FlowObjectView } from '../src/lib/api/flow';
+import { get } from 'svelte/store';
 import type { FlowError } from '../src/lib/flow/types';
 
 const suite = new Suite('flow_outbox');
@@ -252,7 +253,7 @@ await suite.checkAsync(
 			scope_id: 'canonical-source-scope',
 			object_id: OBJECT_ID
 		};
-		const idb = await freshIndexedDb();
+		await freshIndexedDb();
 		const restore = await installFakes(server);
 		const { FlowObjectRepository } = await import('../src/lib/flow/object-repository');
 		const repository = new FlowObjectRepository({
@@ -326,9 +327,29 @@ await suite.checkAsync(
 			].sort(),
 			'pre-scope persisted field set'
 		);
+		let allowReplay = false;
+		server.policy = () =>
+			allowReplay
+				? { kind: 'accept' }
+				: {
+						kind: 'reject',
+						reject: {
+							code: 'server_draining',
+							recoverable: true,
+							details: { reason: 'contention', retry_after_ms: 10 }
+						}
+					};
 		const second = await open(server, idb, '99999999-9999-4999-8999-999999999999');
 		try {
-			await waitFor(() => second.pending() === 0 && server.accepted.length === 1, 'replayed', 5000);
+			assertEqual(
+				get(second.entry.offline.recovering),
+				true,
+				'recovery begins before the Page becomes interactive'
+			);
+			allowReplay = true;
+			await waitFor(() => !get(second.entry.offline.recovering), 'replay ready', 5000);
+			assertEqual(second.pending(), 0, 'no pending entries once recovery completes');
+			assertEqual(server.accepted.length, 1, 'replayed once');
 			assertEqual(server.accepted[0].updateId, stored.updateId, 'under the original id');
 			assertEqual(
 				server.updatesSeen[0].updateId,

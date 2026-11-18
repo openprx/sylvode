@@ -268,6 +268,10 @@ export class RemotePresenceMap {
 		return this.list().length;
 	}
 
+	remove(sessionId: string): void {
+		if (this.entries.delete(sessionId)) this.publish();
+	}
+
 	clear(): void {
 		if (this.entries.size === 0) return;
 		this.entries.clear();

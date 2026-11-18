@@ -2698,24 +2698,23 @@ mod database_tests {
         let mut resubmissions = 0_u32;
         loop {
             let head_before = head_seq(&state.db, document_id).await;
-            let result = probe
-                .scope(execute_command(
-                    state,
-                    ExecuteCommandInput {
-                        origin: CommandOrigin::first_request_from(EventSurface::Rest),
-                        object_id,
-                        actor_id: fx.owner_id,
-                        principal_kind: "user".to_string(),
-                        role: "owner".to_string(),
-                        command_type: "set_title".to_string(),
-                        payload: json!({"title": "mixed injection content"}),
-                        expected_frontier: None,
-                        idempotency_key: idempotency_key.to_string(),
-                        message: None,
-                        origin_client_id: "mixed-content".to_string(),
-                    },
-                ))
-                .await;
+            let result = Box::pin(probe.scope(execute_command(
+                state,
+                ExecuteCommandInput {
+                    origin: CommandOrigin::first_request_from(EventSurface::Rest),
+                    object_id,
+                    actor_id: fx.owner_id,
+                    principal_kind: "user".to_string(),
+                    role: "owner".to_string(),
+                    command_type: "set_title".to_string(),
+                    payload: json!({"title": "mixed injection content"}),
+                    expected_frontier: None,
+                    idempotency_key: idempotency_key.to_string(),
+                    message: None,
+                    origin_client_id: "mixed-content".to_string(),
+                },
+            )))
+            .await;
             let locked_phases = probe.take_samples().len();
             let retry_after_ms = result
                 .as_ref()
@@ -3843,8 +3842,14 @@ mod database_tests {
             let idempotency_key = Uuid::new_v4().to_string();
             tokio::spawn(async move {
                 start.wait().await;
-                run_content_write_resubmitting_contention(&state, &fx, content, content_document, &idempotency_key)
-                    .await
+                Box::pin(run_content_write_resubmitting_contention(
+                    &state,
+                    &fx,
+                    content,
+                    content_document,
+                    &idempotency_key,
+                ))
+                .await
             })
         };
         let subscription_task = {

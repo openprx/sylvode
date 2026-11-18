@@ -185,3 +185,23 @@ pub async fn read_public_asset(
         bytes,
     })
 }
+
+pub async fn read_public_body_asset(
+    db: &DatabaseConnection,
+    token: &str,
+    asset: Uuid,
+) -> Result<super::body_assets::AssetBytes, ApiError> {
+    let first = grant(db, token).await?;
+    let revision = scope::revision(db, first.scope_id).await?;
+    let (bytes, head) = super::body_assets::read_public_current(db, first.scope_id, first.object_id, asset).await?;
+    let current = grant(db, token).await?;
+    if current.link_id != first.link_id
+        || current.object_id != first.object_id
+        || current.scope_id != first.scope_id
+        || scope::revision(db, first.scope_id).await? != revision
+    {
+        return Err(shares::missing());
+    }
+    super::body_assets::confirm_public_current(db, first.scope_id, first.object_id, asset, head).await?;
+    Ok(bytes)
+}

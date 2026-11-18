@@ -3668,6 +3668,31 @@ async fn update_record_for_form(
     is_bot: bool,
     req: UpdateRecordRequest,
 ) -> Result<RecordResponse, ApiError> {
+    update_record_for_form_internal(state, form, record, actor_id, role, is_bot, req, None).await
+}
+
+pub(crate) async fn update_record_for_plugin(
+    state: &AppState,
+    form: &FormResponse,
+    record: RecordResponse,
+    actor_id: Uuid,
+    role: &str,
+    req: UpdateRecordRequest,
+    plugin: &super::plugin_package::ApplyCommit,
+) -> Result<RecordResponse, ApiError> {
+    update_record_for_form_internal(state, form, record, actor_id, role, false, req, Some(plugin)).await
+}
+
+async fn update_record_for_form_internal(
+    state: &AppState,
+    form: &FormResponse,
+    record: RecordResponse,
+    actor_id: Uuid,
+    role: &str,
+    is_bot: bool,
+    req: UpdateRecordRequest,
+    plugin: Option<&super::plugin_package::ApplyCommit>,
+) -> Result<RecordResponse, ApiError> {
     let idempotency_key = normalize_optional_idempotency_key(req.idempotency_key)?;
     if let Some(record) = find_idempotent_record(state, form, idempotency_key.as_deref(), "form.record.updated").await?
     {
@@ -3691,17 +3716,28 @@ async fn update_record_for_form(
     )?;
     let previous_values = record.values.clone();
     let tx = state.db.begin().await?;
+    if let Some(plugin) = plugin
+        && !plugin.begin(state, &tx).await?
+    {
+        tx.commit().await?;
+        return Ok(record);
+    }
     // Schema validation and the record CAS observe one stable form revision. Designer UPDATEs
     // take the conflicting row lock; no parent/schema token is silently refreshed for a draft.
     let locked = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT schema_version FROM project_forms WHERE id=$1 FOR SHARE",
+            "SELECT schema_version,archived_at FROM project_forms WHERE id=$1 FOR SHARE",
             vec![form.id.into()],
         ))
         .await?
         .ok_or_else(|| ApiError::NotFound("form not found".into()))?;
-    if locked.try_get::<i32>("", "schema_version")? != form.schema_version {
+    if locked.try_get::<i32>("", "schema_version")? != form.schema_version
+        || (plugin.is_some()
+            && locked
+                .try_get::<Option<chrono::DateTime<Utc>>>("", "archived_at")?
+                .is_some())
+    {
         return Err(ApiError::VersionConflict("record_version_conflict"));
     }
 
@@ -3768,6 +3804,7 @@ async fn update_record_for_form(
             UPDATE form_records
             SET title = $1, values = $2, source = $3, schema_version = $4, updated_by = $5, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
             WHERE id = $6
+              AND (NOT $9::bool OR archived_at IS NULL)
               AND ($7::timestamptz IS NULL OR updated_at=$7)
               AND ($8::int IS NULL OR EXISTS(SELECT 1 FROM project_forms f WHERE f.id=form_records.form_id AND f.schema_version=$8))
         ",
@@ -3780,6 +3817,7 @@ async fn update_record_for_form(
             record_id.into(),
             req.expected_updated_at.into(),
             req.expected_schema_version.into(),
+            plugin.is_some().into(),
         ],
     ))
     .await?;
@@ -3811,6 +3849,9 @@ async fn update_record_for_form(
             payload,
         )
         .await?;
+    }
+    if let Some(plugin) = plugin {
+        plugin.finish(&tx, &previous_values, &values).await?;
     }
     tx.commit().await?;
     run_event_handler_hooks(
@@ -6044,7 +6085,7 @@ fn import_preview_response(form: &FormResponse, rows: Vec<ImportRecordPreviewRow
     }
 }
 
-async fn require_form_action(
+pub(crate) async fn require_form_action(
     state: &AppState,
     claims: &JwtClaims,
     bot: Option<&BotAuthContext>,
@@ -6130,7 +6171,7 @@ async fn find_project_workspace(state: &AppState, project_id: Uuid) -> Result<Pr
     .ok_or_else(|| ApiError::NotFound("project not found".to_string()))
 }
 
-async fn find_form(state: &AppState, form_id: Uuid) -> Result<FormResponse, ApiError> {
+pub(crate) async fn find_form(state: &AppState, form_id: Uuid) -> Result<FormResponse, ApiError> {
     find_form_with_conn(&state.db, form_id).await
 }
 

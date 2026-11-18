@@ -10,7 +10,7 @@ interface AuthState {
 	error: string | null;
 }
 
-function createAuthStore() {
+export function createAuthStore(client = apiClient) {
 	// 从 localStorage 恢复 user
 	let initialUser: User | null = null;
 	if (typeof window !== 'undefined') {
@@ -30,9 +30,39 @@ function createAuthStore() {
 		error: null
 	});
 
+	let redirect: ReturnType<typeof setTimeout> | null = null;
+	const off = client.onExternalAuth((value) => {
+		if (redirect) clearTimeout(redirect);
+		if (
+			value.consistent &&
+			value.profile &&
+			typeof value.profile === 'object' &&
+			'id' in value.profile
+		) {
+			set({ user: value.profile as User, loading: false, error: null });
+			return;
+		}
+		set({ user: null, loading: false, error: null });
+		const epoch = client.getAuthSessionEpoch();
+		redirect = setTimeout(() => {
+			if (
+				client.isAuthSessionEpoch(epoch) &&
+				!get({ subscribe }).user &&
+				typeof window !== 'undefined' &&
+				window.location.pathname !== '/auth/login'
+			)
+				window.location.href = '/auth/login';
+		}, 50);
+	});
+
 	return {
 		subscribe,
+		dispose: () => {
+			off();
+			if (redirect) clearTimeout(redirect);
+		},
 		setUser: (user: User | null) => {
+			client.bindAuthActor(user?.id ?? null);
 			update((state) => ({ ...state, user, loading: false }));
 			// 持久化到 localStorage
 			if (typeof window !== 'undefined') {
@@ -53,7 +83,7 @@ function createAuthStore() {
 		 * user's own Flow IndexedDB databases stay, so their unsent intents replay on their next
 		 * sign-in. They are per user (`lib/flow/local-data.ts`), so another account never sees them. */
 		endSession: (): void => {
-			apiClient.clearAuth();
+			client.clearAuth();
 			if (typeof window !== 'undefined') {
 				localStorage.removeItem('auth_user');
 			}
@@ -64,7 +94,7 @@ function createAuthStore() {
 		 * see `clearFlowLocalData`). */
 		logout: (): Promise<void> => {
 			const userId = get({ subscribe })?.user?.id;
-			apiClient.clearAuth();
+			client.clearAuth();
 			if (typeof window !== 'undefined') {
 				localStorage.removeItem('auth_user');
 			}
@@ -84,13 +114,21 @@ export const isAuthenticated = derived(authStore, ($auth) => $auth.user !== null
  * expired session, a network failure, a 5xx) only ends the local session -- it is not the user
  * signing out, so local Flow data is kept. */
 export async function verifySession(
-	me: () => Promise<ApiResult<{ user: User }>>
-): Promise<'signed_in' | 'ended'> {
+	me: () => Promise<ApiResult<{ user: User }>>,
+	decision?: (epoch: number) => void
+): Promise<'signed_in' | 'ended' | 'superseded'> {
+	const epoch = apiClient.getAuthSessionEpoch();
 	const response = await me();
+	if (!apiClient.isAuthResultCurrent(response, epoch)) {
+		decision?.(epoch);
+		return 'superseded';
+	}
 	if (response.code !== 0) {
 		authStore.endSession();
+		decision?.(apiClient.getAuthSessionEpoch());
 		return 'ended';
 	}
 	if (response.data) authStore.setUser(response.data.user);
+	decision?.(apiClient.getAuthSessionEpoch());
 	return 'signed_in';
 }

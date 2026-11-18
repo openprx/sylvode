@@ -10,7 +10,20 @@ name.
 
 ## [Unreleased]
 
+## [0.2.539] - 2026-11-18
+
 ### Added
+
+- **Personal plugin library** at `/plugins`. Create or import a private, immutable plugin version, run its Web/WASM interface with personal input, and request admission to one or more projects. Each project reviews the submitted version and manages its own activation, permissions and layout.
+- Paired Web and WASM releases, a template-based Form plugin Creator, two configurable record interface positions, and project administration for permissions, versions, rollback and operation history.
+- Flow Page authoring, inline media and child links, block sharing, cross-page move/copy with undo, multi-object portable ZIPs with mapped references and retained history, mount permissions, and conversion from explicit Page fields to a runnable Form.
+
+### Upgrade notes
+
+- Apply the included database migrations through `0101`. Keep the API and its bundled `collab-isolated-apply-worker` together. Review the feature settings before enabling the new workflows.
+- Set `SV_FORM_PLUGIN_PACKAGES_ENABLED=1` to enable paired packages and the personal plugin library. Set `SV_FORM_PLUGIN_LAYOUTS_ENABLED=1` for multi-position packages. Existing project-installed packages retain their bindings.
+- When downgrading to an API that predates personal library links, set `SV_FORM_PLUGIN_PACKAGES_ENABLED=0` on that older API if library links exist. It cannot enforce their revocation state.
+
 
 - Independent personal Flow scopes, scope-aware sharing, lifecycle, durable events and bounded import/export compatibility.
 - Page-focused Flow navigation and editor tools, plus an eight-tab workspace with retained drafts, drag ordering and safe refresh.
@@ -1373,7 +1386,8 @@ First public release of the MCP server binaries.
   HTTP, stdio (including Content-Length framing) and SSE.
 - Workspace bot tokens (`opr_` prefix) and their management endpoints.
 
-[Unreleased]: https://github.com/openprx/sylvode/compare/v0.2.21...HEAD
+[Unreleased]: https://github.com/openprx/sylvode/compare/v0.2.539...HEAD
+[0.2.539]: https://github.com/openprx/sylvode/compare/v0.2.21...v0.2.539
 [0.2.21]: https://github.com/openprx/sylvode/compare/v0.2.8...v0.2.21
 [0.2.8]: https://github.com/openprx/sylvode/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/openprx/sylvode/compare/v0.2.2...v0.2.7

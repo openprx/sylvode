@@ -1,3 +1,4 @@
+import { FLOW_PROCESS_READER_COMPATIBILITY } from '#lib/flow/product-mode.js';
 import { routeFailure } from '#lib/flow/route-failure.js';
 import { flowApi } from '#lib/api/flow.js';
 import type { LayoutLoad } from './$types';
@@ -7,13 +8,14 @@ export const load: LayoutLoad = async ({ params }) => {
 	if (
 		capabilities.code !== 0 ||
 		capabilities.data?.api_version !== 2 ||
-		capabilities.data.minimum_reader_version > 2
+		capabilities.data.minimum_reader_version > FLOW_PROCESS_READER_COMPATIBILITY
 	)
 		return {
 			flowEnabled: false,
 			...routeFailure(capabilities),
 			error:
-				capabilities.data?.minimum_reader_version && capabilities.data.minimum_reader_version > 2
+				capabilities.data?.minimum_reader_version &&
+				capabilities.data.minimum_reader_version > FLOW_PROCESS_READER_COMPATIBILITY
 					? 'upgrade'
 					: capabilities.message
 		};

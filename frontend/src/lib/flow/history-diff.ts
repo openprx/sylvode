@@ -55,6 +55,7 @@ interface WireNode {
 	properties?: unknown;
 	parent?: unknown;
 	order_key?: unknown;
+	spans?: unknown;
 	deleted?: unknown;
 }
 
@@ -122,11 +123,15 @@ export function semanticDiffLines(semanticDiff: unknown): DiffLine[] | null {
 		const after = (asRecord(change?.after) ?? {}) as WireNode;
 		const properties = propertyChanges(before, after);
 		const sameText = text(before) === text(after);
+		const formattingChanged =
+			JSON.stringify(before.spans ?? []) !== JSON.stringify(after.spans ?? []);
+		const positionChanged = before.parent !== after.parent || before.order_key !== after.order_key;
+		if (formattingChanged) properties.push({ key: 'spans', before: null, after: null });
 		lines.push({
 			op:
 				after.deleted === true
 					? 'removed'
-					: sameText && properties.length === 0
+					: sameText && properties.length === 0 && positionChanged && !formattingChanged
 						? 'moved'
 						: 'changed',
 			kind: kind(after) ?? kind(before),
