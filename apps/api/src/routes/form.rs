@@ -7,8 +7,8 @@ use axum::{
     http::{HeaderName, HeaderValue, header},
     response::{IntoResponse, Redirect, Response},
 };
-use chrono::{Duration, Utc};
 use hmac::{Hmac, Mac};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use sha2::Sha256;
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
+use time::Duration;
 use uuid::Uuid;
 
 use crate::{
@@ -150,7 +151,7 @@ pub struct AttachmentDownloadQuery {
 #[derive(Debug, Serialize)]
 pub struct AttachmentSignedDownloadResponse {
     pub url: String,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Deserialize)]
@@ -225,7 +226,7 @@ pub struct UpdateRecordRequest {
     pub title: Option<String>,
     pub source: Option<Value>,
     pub idempotency_key: Option<String>,
-    pub expected_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub expected_updated_at: Option<platform::timestamp::Timestamp>,
     pub expected_schema_version: Option<i32>,
 }
 
@@ -276,13 +277,13 @@ struct SignatureRetentionCleanupCandidate {
     detail_layout: Value,
     schema_version: i32,
     form_created_by: Option<Uuid>,
-    form_archived_at: Option<chrono::DateTime<chrono::Utc>>,
-    form_created_at: chrono::DateTime<chrono::Utc>,
-    form_updated_at: chrono::DateTime<chrono::Utc>,
+    form_archived_at: Option<platform::timestamp::Timestamp>,
+    form_created_at: platform::timestamp::Timestamp,
+    form_updated_at: platform::timestamp::Timestamp,
     record_id: Uuid,
     record_values: Value,
     record_source: Value,
-    record_updated_at: chrono::DateTime<chrono::Utc>,
+    record_updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,7 +299,7 @@ pub struct UpdateViewRequest {
     pub name: Option<String>,
     pub view_type: Option<String>,
     pub config: Option<Value>,
-    pub expected_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub expected_updated_at: Option<platform::timestamp::Timestamp>,
 }
 
 #[derive(Debug, Serialize, FromQueryResult, Clone)]
@@ -316,9 +317,9 @@ pub struct FormResponse {
     pub detail_layout: Value,
     pub schema_version: i32,
     pub created_by: Option<Uuid>,
-    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub archived_at: Option<platform::timestamp::Timestamp>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult, Clone)]
@@ -330,7 +331,7 @@ pub struct FormSchemaVersionResponse {
     pub detail_layout: Value,
     pub changed_by: Option<Uuid>,
     pub change_summary: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -354,9 +355,9 @@ pub struct RecordResponse {
     pub schema_version: Option<i32>,
     pub created_by: Option<Uuid>,
     pub updated_by: Option<Uuid>,
-    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub archived_at: Option<platform::timestamp::Timestamp>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 /// `GET /form-records/{record_id}`: the record plus its read-only Flow lineage.
@@ -394,9 +395,9 @@ pub struct ViewResponse {
     pub view_type: String,
     pub config: Value,
     pub created_by: Option<Uuid>,
-    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub archived_at: Option<platform::timestamp::Timestamp>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize)]
@@ -428,7 +429,7 @@ pub struct BusinessEventResponse {
     pub correlation_id: Option<Uuid>,
     pub causation_id: Option<Uuid>,
     pub idempotency_key: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -474,9 +475,9 @@ pub struct FormAttachmentResponse {
     pub thumbnail_url: Option<String>,
     pub media_metadata: Value,
     pub created_by: Option<Uuid>,
-    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub archived_at: Option<platform::timestamp::Timestamp>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult, Clone)]
@@ -492,9 +493,9 @@ pub struct FormImportMappingTemplateResponse {
     pub transforms: Value,
     pub shared: bool,
     pub created_by: Option<Uuid>,
-    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub archived_at: Option<platform::timestamp::Timestamp>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult, Clone)]
@@ -508,10 +509,10 @@ pub struct FormImportJobResponse {
     pub result: Option<Value>,
     pub error: Option<String>,
     pub created_by: Option<Uuid>,
-    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub started_at: Option<platform::timestamp::Timestamp>,
+    pub completed_at: Option<platform::timestamp::Timestamp>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult, Clone)]
@@ -525,10 +526,10 @@ pub struct FormExportJobResponse {
     pub result: Option<Value>,
     pub error: Option<String>,
     pub created_by: Option<Uuid>,
-    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub started_at: Option<platform::timestamp::Timestamp>,
+    pub completed_at: Option<platform::timestamp::Timestamp>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult, Clone)]
@@ -542,10 +543,10 @@ pub struct FormAttachmentPackageJobResponse {
     pub result: Option<Value>,
     pub error: Option<String>,
     pub created_by: Option<Uuid>,
-    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub started_at: Option<platform::timestamp::Timestamp>,
+    pub completed_at: Option<platform::timestamp::Timestamp>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -1782,12 +1783,11 @@ pub async fn download_form_attachment_package_job(
     let stored_file_name = attachment_package_job_result_string(result, "stored_file_name")?;
     let file_name = attachment_package_job_result_string(result, "file_name")?;
     let expires_at = attachment_package_job_result_string(result, "expires_at")?;
-    let expires_at = chrono::DateTime::parse_from_rfc3339(&expires_at)
-        .map_err(|_| ApiError::BadRequest("attachment package job expiry is invalid".to_string()))?
-        .with_timezone(&Utc);
+    let expires_at = platform::timestamp::Timestamp::parse_rfc3339(&expires_at)
+        .map_err(|_| ApiError::BadRequest("attachment package job expiry is invalid".to_string()))?;
     let artifact_key = attachment_package_artifact_key(&stored_file_name);
     let object_storage = ObjectStorage::from_runtime_config()?;
-    if Utc::now() > expires_at {
+    if Timestamp::now() > expires_at {
         let _ = object_storage.delete(&artifact_key).await;
         return Err(ApiError::BadRequest(
             "attachment package job artifact expired".to_string(),
@@ -2481,7 +2481,7 @@ async fn cleanup_expired_attachment_package_artifact(
     let object = result
         .as_object_mut()
         .ok_or_else(|| ApiError::BadRequest("attachment package job result must be an object".to_string()))?;
-    object.insert("artifact_deleted_at".to_string(), json!(Utc::now()));
+    object.insert("artifact_deleted_at".to_string(), json!(Timestamp::now()));
     object.insert("artifact_deleted_by".to_string(), json!("worker"));
     if let Some(error) = cleanup_error {
         object.insert("artifact_cleanup_error".to_string(), json!(error));
@@ -2563,7 +2563,7 @@ async fn cleanup_expired_signature_record(
         created_at: candidate.form_created_at,
         updated_at: candidate.form_updated_at,
     };
-    let now = Utc::now();
+    let now = Timestamp::now();
     let cleanup =
         cleanup_expired_signature_values(&form.schema, candidate.record_values, candidate.record_updated_at, now)
             .await?;
@@ -3142,8 +3142,8 @@ pub async fn create_form_attachment_signed_url(
     let form = find_form(&state, attachment.form_id).await?;
     require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
     let ttl_minutes = attachment_signed_url_ttl_minutes(&form.schema, &attachment.field_key);
-    let expires_at = Utc::now() + Duration::minutes(ttl_minutes);
-    let expires = expires_at.timestamp();
+    let expires_at = Timestamp::now() + Duration::minutes(ttl_minutes);
+    let expires = expires_at.unix_timestamp();
     let signature = sign_attachment_download(state.cfg.jwt_secret.expose(), attachment_id, expires)?;
     Ok(ApiResponse::success(AttachmentSignedDownloadResponse {
         url: format!("/api/v1/form-attachments/{attachment_id}/download?expires={expires}&signature={signature}"),
@@ -3160,7 +3160,7 @@ pub async fn download_signed_form_attachment(
     if attachment.archived_at.is_some() {
         return Err(ApiError::NotFound("form attachment not found".to_string()));
     }
-    if query.expires < Utc::now().timestamp() {
+    if query.expires < Timestamp::now().unix_timestamp() {
         return Err(ApiError::Unauthorized("attachment download link expired".to_string()));
     }
     let expected = sign_attachment_download(state.cfg.jwt_secret.expose(), attachment_id, query.expires)?;
@@ -3735,7 +3735,7 @@ async fn update_record_for_form_internal(
     if locked.try_get::<i32>("", "schema_version")? != form.schema_version
         || (plugin.is_some()
             && locked
-                .try_get::<Option<chrono::DateTime<Utc>>>("", "archived_at")?
+                .try_get::<Option<platform::timestamp::Timestamp>>("", "archived_at")?
                 .is_some())
     {
         return Err(ApiError::VersionConflict("record_version_conflict"));
@@ -5437,7 +5437,7 @@ async fn attachment_package_entries(
         "form_id": form.id,
         "form_key": form.key,
         "view_id": view_id,
-        "exported_at": Utc::now(),
+        "exported_at": Timestamp::now(),
         "attachment_count": attachments.len(),
         "binary_file_count": binary_file_count,
         "attachments": manifest_attachments,
@@ -5468,7 +5468,7 @@ async fn write_attachment_package_artifact(
     let artifact_storage_key = attachment_package_artifact_key(&stored_file_name);
     let byte_size = package.zip.len();
     let artifact_storage = object_storage.put(&artifact_storage_key, &package.zip).await?;
-    let generated_at = Utc::now();
+    let generated_at = Timestamp::now();
     let expires_at = generated_at + Duration::hours(ATTACHMENT_PACKAGE_JOB_RETENTION_HOURS);
     Ok(json!({
         "file_name": package.file_name,
@@ -7284,7 +7284,7 @@ mod tests {
             correlation_id: None,
             causation_id: None,
             idempotency_key: None,
-            created_at: chrono::Utc::now(),
+            created_at: platform::timestamp::Timestamp::now(),
         }
     }
 
@@ -7634,7 +7634,7 @@ mod tests {
     }
 
     fn test_form_response(schema: serde_json::Value) -> super::FormResponse {
-        let now = chrono::Utc::now();
+        let now = platform::timestamp::Timestamp::now();
         super::FormResponse {
             id: Uuid::new_v4(),
             workspace_id: Uuid::new_v4(),

@@ -3525,6 +3525,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0101_form_plugin_library.sql",
         include_str!("../../../migrations/0101_form_plugin_library.sql"),
     ),
+    (
+        "0102_flow_integrity_cross_workspace_attempts.sql",
+        include_str!("../../../migrations/0102_flow_integrity_cross_workspace_attempts.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4032,6 +4036,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0101_form_plugin_library.sql",
         SchemaProbe::Relation("form_plugin_library"),
+    ),
+    (
+        "0102_flow_integrity_cross_workspace_attempts.sql",
+        SchemaProbe::Rerunnable,
     ),
 ];
 
@@ -4588,6 +4596,7 @@ mod tests {
                 "0099_form_plugin_packages.sql",
                 "0100_form_plugin_layouts.sql",
                 "0101_form_plugin_library.sql",
+                "0102_flow_integrity_cross_workspace_attempts.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -5844,13 +5853,14 @@ mod proposal_scope_database_tests {
     use api::routes::proposal::{ListProposalsQuery, get_proposal, governance_tick, list_proposals};
     use axum::extract::{Extension, Query, State};
     use axum::response::IntoResponse;
-    use chrono::{Duration, Utc};
+    use platform::timestamp::Timestamp;
     use platform::{
         app::AppState,
         auth::{JwtClaims, TokenType},
         config::{AppConfig, Secret},
     };
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use time::Duration;
     use uuid::Uuid;
 
     macro_rules! scratch_or_skip {
@@ -5978,8 +5988,8 @@ mod proposal_scope_database_tests {
                     user_id.to_string().into(),
                     "content that is comfortably longer than the fifty character minimum".into(),
                     workspace_id.into(),
-                    Utc::now().into(),
-                    (Utc::now() - Duration::hours(48)).into(),
+                    Timestamp::now().into(),
+                    (Timestamp::now() - Duration::hours(48)).into(),
                 ],
             ))
             .await

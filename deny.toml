@@ -31,11 +31,6 @@ ignore = [
     # appears in the workspace. The fix needs rust_decimal to move to rkyv 0.8, so this
     # cannot be resolved here; revisit when sea-orm ships a rust_decimal with rkyv >=0.8.17.
 
-    # proc-macro-error2 is unmaintained. It is a build-time proc-macro dependency only, so
-    # nothing from it is linked into the shipped binaries and it cannot be reached at
-    # runtime. Pulled in transitively; no supported replacement is available to us until the
-    # crates that depend on it migrate.
-    "RUSTSEC-2026-0173",
 
     # atomic-polyfill is unmaintained. Build-graph-only through wasmtime's Cranelift backend
     # (wasmtime -> cranelift-codegen -> postcard -> heapless -> atomic-polyfill). It exists to
@@ -44,15 +39,7 @@ ignore = [
     # is dropped upstream.
     "RUSTSEC-2023-0089",
 
-    # im / sized-chunks / bitmaps are unmaintained and are shipped through
-    # api -> collab-core -> loro -> loro-internal -> im (and sized-chunks -> bitmaps).
-    # Keep these existing advisory exceptions visible as production supply-chain debt;
-    # revisit them when the selected Loro engine removes the transitive dependencies.
-    # The retained smallstr exception originated in the yrs evaluation spike; smallstr
-    # is absent from the current locked graph. No advisory exception is added here.
-    "RUSTSEC-2026-0247",
-    "RUSTSEC-2026-0248",
-    "RUSTSEC-2026-0251",
+    # Only the Yrs comparison spike uses smallstr; no release binary depends on it.
     "RUSTSEC-2026-0215",
 ]
 

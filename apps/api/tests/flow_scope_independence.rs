@@ -2194,6 +2194,10 @@ async fn personal_page_package_has_scope_provenance_real_snapshots_and_stable_jo
     assert_eq!(format, "package");
     let verified = api::flow::package::verify_package(std::io::Cursor::new(bytes.clone()), Some(&hash)).unwrap();
     assert_eq!(verified.manifest.schema, api::flow::package::SCOPE_PACKAGE_SCHEMA);
+    assert_eq!(
+        api::flow::package::semantic_model(&verified.manifest).unwrap(),
+        api::flow::package::PackageSemanticModel::V4,
+    );
     assert_eq!(verified.manifest.source.scope_id, Some(personal.id.to_string()));
     assert_eq!(verified.manifest.source.workspace_id, None);
     assert_eq!(verified.manifest.counts.objects, 1);
@@ -2215,7 +2219,7 @@ async fn personal_page_package_has_scope_provenance_real_snapshots_and_stable_jo
         .unwrap();
         let engine = <collab_core::LoroCollabEngine as collab_core::CollabEngine>::load(&data).unwrap();
         assert_eq!(
-            engine.semantic_snapshot().unwrap().semantic_hash(),
+            engine.legacy_package_semantic_snapshot_v4().unwrap().semantic_hash(),
             metadata.field("semantic_hash").as_str().unwrap()
         );
     }
@@ -3271,13 +3275,13 @@ async fn personal_forms_conversion_commits_native_target_with_scoped_job_and_rep
     let abandoned_id = Uuid::new_v4();
     db.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_conversion_jobs(id,workspace_id,preview_id,actor_id,actor_kind,source_object_id,source_frontier,target_type,target_schema_version,status,idempotency_key,request_key,started_at) VALUES($1,$2,$3,$4,'user',$5,$6,'form',0,'started',$7,'abandoned-claim',now()-interval '2 hours')",vec![abandoned_id.into(),workspace.into(),abandoned.preview_id.into(),owner.into(),source.into(),frontier.into(),format!("scope:{}:abandoned-claim",personal.id).into()])).await.unwrap();
     assert_eq!(
-        bridge::reap_stale_conversion_jobs(&state, chrono::Duration::hours(1))
+        bridge::reap_stale_conversion_jobs(&state, time::Duration::hours(1))
             .await
             .unwrap(),
         1
     );
     assert_eq!(
-        bridge::reap_stale_conversion_jobs(&state, chrono::Duration::hours(1))
+        bridge::reap_stale_conversion_jobs(&state, time::Duration::hours(1))
             .await
             .unwrap(),
         0
@@ -3312,7 +3316,7 @@ async fn retention_skips_nonleaf_and_destination_deletion_preserves_personal_sou
     let child = Uuid::parse_str(child.field("object").field("id").as_str().unwrap()).unwrap();
     db.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_objects SET lifecycle_status='archived',archived_at=now()-interval '40 days',permanent_cleanup_after=now()-interval '1 day' WHERE id=$1",vec![parent.into()])).await.unwrap();
     assert!(
-        !api::flow::scope_purge::retention_leaf(db, parent, chrono::Utc::now())
+        !api::flow::scope_purge::retention_leaf(db, parent, platform::timestamp::Timestamp::now())
             .await
             .unwrap()
     );
@@ -3323,12 +3327,12 @@ async fn retention_skips_nonleaf_and_destination_deletion_preserves_personal_sou
     let leaf = Uuid::parse_str(leaf.field("object").field("id").as_str().unwrap()).unwrap();
     db.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_objects SET lifecycle_status='archived',archived_at=now()-interval '40 days',permanent_cleanup_after=now()-interval '1 day' WHERE id=$1",vec![leaf.into()])).await.unwrap();
     assert!(
-        api::flow::scope_purge::retention_leaf(db, leaf, chrono::Utc::now())
+        api::flow::scope_purge::retention_leaf(db, leaf, platform::timestamp::Timestamp::now())
             .await
             .unwrap()
     );
     assert!(
-        !api::flow::scope_purge::retention_leaf(db, leaf, chrono::Utc::now())
+        !api::flow::scope_purge::retention_leaf(db, leaf, platform::timestamp::Timestamp::now())
             .await
             .unwrap()
     );

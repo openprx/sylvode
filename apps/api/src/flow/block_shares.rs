@@ -1407,6 +1407,7 @@ mod sql_tests {
     }
 
     #[cfg(target_os = "linux")]
+    #[allow(clippy::too_many_arguments, reason = "keep test actors and fixture IDs explicit")]
     async fn verify_linux_patch(
         db: &sea_orm::DatabaseConnection,
         owner: Uuid,
@@ -1432,7 +1433,10 @@ mod sql_tests {
         };
         let saved = patch(db, recipient, share, &key, request.clone()).await.unwrap();
         assert_eq!(saved.projection.revision, before.projection.revision + 1);
-        assert_eq!(saved.receipt.accepted_revision, saved.projection.revision as i64);
+        assert_eq!(
+            saved.receipt.accepted_revision,
+            i64::try_from(saved.projection.revision).expect("fixture revision fits i64")
+        );
         let engine = super::super::document::load_head_engine(db, document).await.unwrap();
         let semantic = engine.semantic_snapshot().unwrap();
         assert_eq!(
@@ -1497,7 +1501,7 @@ mod sql_tests {
         engine
             .apply_content_operation(&Operation::InsertText {
                 id: private.clone(),
-                index: node.text.len() as u32,
+                index: u32::try_from(node.text.len()).expect("fixture text length fits u32"),
                 text: " private activity".into(),
             })
             .unwrap();
@@ -1530,7 +1534,6 @@ mod sql_tests {
             .await
             .unwrap();
         let mut reviewed = create_input.clone();
-        use base64::Engine as _;
         reviewed.expected_frontier = base64::engine::general_purpose::STANDARD.encode(
             super::super::document::load_head_engine(db, document)
                 .await
@@ -1552,7 +1555,7 @@ mod sql_tests {
         private_engine
             .apply_content_operation(&Operation::InsertText {
                 id: private.clone(),
-                index: node.text.len() as u32,
+                index: u32::try_from(node.text.len()).expect("fixture text length fits u32"),
                 text: " confirm replay".into(),
             })
             .unwrap();

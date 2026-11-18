@@ -43,6 +43,34 @@ pub enum PackageSemanticModel {
     V4,
     V5,
 }
+/// Both raw exporters fingerprint the accepted head with this manifest-declared reader.
+pub(crate) const RAW_PACKAGE_SEMANTIC_MODEL: PackageSemanticModel = PackageSemanticModel::V4;
+
+impl PackageSemanticModel {
+    pub(crate) const fn wire_name(self) -> Option<&'static str> {
+        match self {
+            Self::V1 => None,
+            Self::V2 => Some(SEMANTIC_MODEL_V2),
+            Self::V3 => Some(SEMANTIC_MODEL_V3),
+            Self::V4 => Some(SEMANTIC_MODEL_V4),
+            Self::V5 => Some(SEMANTIC_MODEL_V5),
+        }
+    }
+
+    pub(crate) fn semantic_hash(self, engine: &collab_core::LoroCollabEngine) -> Result<String, ApiError> {
+        let semantic = match self {
+            Self::V1 => engine.legacy_package_semantic_snapshot_v1(),
+            Self::V2 => engine.legacy_package_semantic_snapshot_v2(),
+            Self::V3 => engine.legacy_package_semantic_snapshot_v3(),
+            Self::V4 => engine.legacy_package_semantic_snapshot_v4(),
+            Self::V5 => engine.semantic_snapshot(),
+        };
+        Ok(semantic
+            .map_err(|_| ApiError::checksum_mismatch("package semantic fingerprint cannot be decoded"))?
+            .semantic_hash())
+    }
+}
+
 pub fn semantic_model(manifest: &ExportPackageManifest) -> Result<PackageSemanticModel, ApiError> {
     match (manifest.schema.as_str(), manifest.engine.semantic_model.as_deref()) {
         (PACKAGE_SCHEMA, None) => Ok(PackageSemanticModel::V1),
@@ -59,7 +87,7 @@ pub fn semantic_model(manifest: &ExportPackageManifest) -> Result<PackageSemanti
 }
 pub const FLOW_SCHEMA_VERSION: u32 = 1;
 pub const ENGINE_NAME: &str = "loro";
-pub const ENGINE_CRATE_VERSION: &str = "1.13.9";
+pub const ENGINE_CRATE_VERSION: &str = "1.18.0";
 pub const ENGINE_WIRE_FORMAT_VERSION: u32 = 1;
 
 pub fn inner_reference_refusal() -> ApiError {
@@ -610,7 +638,7 @@ fn validate_manifest_compatibility(manifest: &ExportPackageManifest) -> Result<(
         ));
     }
     if manifest.engine.name != ENGINE_NAME
-        || manifest.engine.crate_version != ENGINE_CRATE_VERSION
+        || !matches!(manifest.engine.crate_version.as_str(), "1.13.9" | ENGINE_CRATE_VERSION)
         || manifest.engine.wire_format_version != ENGINE_WIRE_FORMAT_VERSION
     {
         return Err(ApiError::unsupported_format(
@@ -667,8 +695,8 @@ fn validate_manifest_compatibility(manifest: &ExportPackageManifest) -> Result<(
         || semver::Version::parse(&manifest.producer.version).is_err()
         || manifest.producer.source_head.len() != 40
         || !is_lower_hex(&manifest.producer.source_head)
-        || chrono::DateTime::parse_from_rfc3339(&manifest.created_at).is_err()
-        || chrono::DateTime::parse_from_rfc3339(&manifest.export_policy.permission_snapshot_at).is_err()
+        || platform::timestamp::Timestamp::parse_rfc3339(&manifest.created_at).is_err()
+        || platform::timestamp::Timestamp::parse_rfc3339(&manifest.export_policy.permission_snapshot_at).is_err()
     {
         return Err(ApiError::unsupported_format(
             "manifest producer or timestamp metadata is invalid",

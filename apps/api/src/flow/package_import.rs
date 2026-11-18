@@ -4,12 +4,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Cursor, Read};
 
 use base64::Engine as _;
-use chrono::{DateTime, Duration, Utc};
 use collab_core::{CollabEngine, LoroCollabEngine};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use time::Duration;
 use uuid::Uuid;
 
 use crate::error::{ApiError, ServerDrainingReason};
@@ -200,7 +201,7 @@ pub struct ImportPreviewReceipt {
     pub conflict_details: Vec<ImportConflict>,
     pub warnings: Vec<String>,
     pub estimated_changes: BTreeMap<String, u64>,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,8 +219,8 @@ pub struct ImportReport {
     pub document_mapping: BTreeMap<Uuid, Uuid>,
     pub detached_references: Vec<Uuid>,
     pub warnings: Vec<String>,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: DateTime<Utc>,
+    pub started_at: Timestamp,
+    pub finished_at: Timestamp,
     pub actor: Uuid,
     pub audit_event_id: Uuid,
 }
@@ -272,7 +273,7 @@ struct ArtifactRow {
     actor_id: Uuid,
     package_sha256: String,
     package_bytes: Vec<u8>,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -284,7 +285,7 @@ struct PreviewRow {
     mapping_hash: String,
     mapping: Value,
     request: Value,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
     committed_import_id: Option<Uuid>,
 }
 
@@ -298,7 +299,7 @@ struct ExistingPreviewRow {
     warnings: Value,
     estimated_changes: Value,
     request_hash: String,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -306,7 +307,7 @@ struct ExistingArtifactRow {
     id: Uuid,
     package_sha256: String,
     request_hash: Option<String>,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
 }
 
 pub async fn upload_package_artifact(
@@ -316,7 +317,7 @@ pub async fn upload_package_artifact(
     bytes: Vec<u8>,
     expected_package_sha256: Option<&str>,
     idempotency_key: &str,
-) -> Result<(Uuid, String, DateTime<Utc>), ApiError> {
+) -> Result<(Uuid, String, Timestamp), ApiError> {
     enforce_admin(principal)?;
     validate_key(idempotency_key)?;
     let verified = verify_package(Cursor::new(&bytes), expected_package_sha256)?;
@@ -343,7 +344,7 @@ pub async fn upload_package_artifact(
         return Ok((existing.id, existing.package_sha256, existing.expires_at));
     }
     let id = Uuid::new_v4();
-    let expires_at = Utc::now() + Duration::minutes(IMPORT_ARTIFACT_TTL_MINUTES);
+    let expires_at = Timestamp::now() + Duration::minutes(IMPORT_ARTIFACT_TTL_MINUTES);
     let size = i64::try_from(bytes.len()).map_err(|_| ApiError::internal())?;
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -374,7 +375,7 @@ pub async fn upload_inline_base64_artifact(
     encoded: &[u8],
     expected_package_sha256: Option<&str>,
     idempotency_key: &str,
-) -> Result<(Uuid, String, DateTime<Utc>), ApiError> {
+) -> Result<(Uuid, String, Timestamp), ApiError> {
     let mut stager = BoundedImportStager::new(Vec::new(), std::io::sink());
     stager.stage_inline_base64_archive(Cursor::new(encoded))?;
     stager.finish_archive()?;
@@ -455,7 +456,7 @@ pub async fn preview_package_import(
     let mapping_json = serde_json::to_value(&mapping).map_err(|_| ApiError::internal())?;
     let mapping_hash = sha256_json(&mapping_json)?;
     let preview_id = Uuid::new_v4();
-    let expires_at = Utc::now() + Duration::minutes(IMPORT_ARTIFACT_TTL_MINUTES);
+    let expires_at = Timestamp::now() + Duration::minutes(IMPORT_ARTIFACT_TTL_MINUTES);
     let package_id = parse_manifest_uuid(&plan.verified.manifest)?;
     let estimated_changes = estimated_changes(&plan);
     let summary = manifest_summary(&plan);
@@ -586,7 +587,7 @@ pub async fn commit_package_import(
     validate_projects(&tx, request.workspace_id, &mapping.project_map, &plan).await?;
 
     let import_id = Uuid::new_v4();
-    let started_at = Utc::now();
+    let started_at = Timestamp::now();
     let request_json = json!({
         "preview_id": request.preview_id,
         "package_sha256": request.package_sha256,
@@ -642,7 +643,7 @@ pub async fn commit_package_import(
     .await?;
     #[cfg(test)]
     fail_promotion_at(request.preview_id, PromotionFaultPoint::EventInserted)?;
-    let finished_at = Utc::now();
+    let finished_at = Timestamp::now();
     let report = ImportReport {
         import_id,
         package_id: parse_manifest_uuid(&plan.verified.manifest)?,
@@ -758,7 +759,7 @@ async fn load_artifact_tx<C: ConnectionTrait>(
     .one(conn)
     .await?
     .ok_or_else(|| ApiError::not_found("import artifact not found".to_string()))?;
-    if row.actor_kind != principal.kind || row.actor_id != principal.id || row.expires_at <= Utc::now() {
+    if row.actor_kind != principal.kind || row.actor_id != principal.id || row.expires_at <= Timestamp::now() {
         return Err(ApiError::not_found("import artifact not found".to_string()));
     }
     Ok(row)
@@ -771,7 +772,9 @@ async fn load_preview<C: ConnectionTrait>(conn: &C, request: &CommitImportReques
          FROM flow_import_previews WHERE id=$1 AND workspace_id=$2 FOR UPDATE",
         vec![request.preview_id.into(), request.workspace_id.into()],
     )).one(conn).await?.ok_or_else(|| ApiError::not_found("import preview not found".to_string()))?;
-    if row.actor_kind != request.principal.kind || row.actor_id != request.principal.id || row.expires_at <= Utc::now()
+    if row.actor_kind != request.principal.kind
+        || row.actor_id != request.principal.id
+        || row.expires_at <= Timestamp::now()
     {
         return Err(ApiError::not_found("import preview not found".to_string()));
     }
@@ -1245,7 +1248,7 @@ async fn promote_objects(
                     "object lifecycle or engine is unsupported",
                 ));
             }
-            let archived_at = (lifecycle == "archived").then_some(Utc::now());
+            let archived_at = (lifecycle == "archived").then_some(Timestamp::now());
             let governance = sanitize_governance(&object.governance_metadata)?;
             tx.execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -1590,16 +1593,7 @@ pub(crate) fn package_semantic_hash(
     engine: &LoroCollabEngine,
     manifest: &ExportPackageManifest,
 ) -> Result<String, ApiError> {
-    let semantic = match super::package::semantic_model(manifest)? {
-        super::package::PackageSemanticModel::V1 => engine.legacy_package_semantic_snapshot_v1(),
-        super::package::PackageSemanticModel::V2 => engine.legacy_package_semantic_snapshot_v2(),
-        super::package::PackageSemanticModel::V3 => engine.legacy_package_semantic_snapshot_v3(),
-        super::package::PackageSemanticModel::V4 => engine.legacy_package_semantic_snapshot_v4(),
-        super::package::PackageSemanticModel::V5 => engine.semantic_snapshot(),
-    };
-    Ok(semantic
-        .map_err(|_| ApiError::checksum_mismatch("package semantic fingerprint cannot be decoded"))?
-        .semantic_hash())
+    super::package::semantic_model(manifest)?.semantic_hash(engine)
 }
 
 #[cfg(test)]

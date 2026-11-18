@@ -21,7 +21,7 @@ use crate::{
 #[derive(Debug, Deserialize)]
 pub struct CreateImpactReviewRequest {
     pub reviewer_id: Option<Uuid>,
-    pub scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub scheduled_at: Option<platform::timestamp::Timestamp>,
 }
 
 #[derive(Debug, Deserialize)]

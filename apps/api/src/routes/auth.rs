@@ -512,13 +512,13 @@ fn jwt_manager(state: &AppState) -> JwtManager {
 
 fn user_response_from_row(row: &QueryResult) -> Result<UserResponse, ApiError> {
     let created_at = row
-        .try_get::<chrono::DateTime<chrono::Utc>>("", "created_at")
+        .try_get::<platform::timestamp::Timestamp>("", "created_at")
         .ok()
-        .map(|value| value.to_rfc3339());
+        .map(platform::timestamp::Timestamp::to_rfc3339);
     let updated_at = row
-        .try_get::<chrono::DateTime<chrono::Utc>>("", "updated_at")
+        .try_get::<platform::timestamp::Timestamp>("", "updated_at")
         .ok()
-        .map(|value| value.to_rfc3339());
+        .map(platform::timestamp::Timestamp::to_rfc3339);
 
     Ok(UserResponse {
         id: row.try_get::<String>("", "id").map_err(|_| ApiError::Internal)?,

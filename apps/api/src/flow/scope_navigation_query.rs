@@ -3,7 +3,7 @@ use super::json_value::FlowJson;
 use super::{collab::authz::PermissionLevel, scope};
 use crate::error::{ApiError, ApiErrorKind};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -23,15 +23,15 @@ struct Cursor {
     user: Uuid,
     kind: String,
     revision: i64,
-    stamp: DateTime<Utc>,
+    stamp: Timestamp,
     id: Uuid,
 }
 #[derive(FromQueryResult)]
 struct Row {
     id: Uuid,
-    stamp: DateTime<Utc>,
+    stamp: Timestamp,
 }
-fn cursor(raw: &str, scope: Uuid, user: Uuid, kind: &str, revision: i64) -> Result<(DateTime<Utc>, Uuid), ApiError> {
+fn cursor(raw: &str, scope: Uuid, user: Uuid, kind: &str, revision: i64) -> Result<(Timestamp, Uuid), ApiError> {
     if raw.len() > 2048 {
         return Err(ApiError::invalid_update("invalid navigation cursor"));
     }
@@ -206,7 +206,7 @@ mod tests {
         let u = Uuid::new_v4();
         let r = Row {
             id: Uuid::new_v4(),
-            stamp: Utc::now(),
+            stamp: Timestamp::now(),
         };
         let c = encode(s, u, "trash", 3, &r).unwrap();
         assert_eq!(cursor(&c, s, u, "trash", 3).unwrap(), (r.stamp, r.id));

@@ -29,7 +29,7 @@ use super::limits::{
 };
 use super::registry::{ConnectionLimit, OutboundEvent, PresenceLimit, RegistrationError};
 use super::runtime;
-use super::ticket::ConsumedTicket;
+use super::ticket::{ConsumedTicket, workspace_member_role};
 use super::write::{self, AcceptOutcome, UpdateRequest};
 use super::{COLLAB_SESSION_PRINCIPAL_KIND, MINIMUM_COLLAB_SESSION_LEVEL, MINIMUM_COLLAB_WRITE_LEVEL};
 use crate::error::{ApiError, ApiErrorKind, REPEATED_FAILURE_CLOSE_STREAK};
@@ -706,25 +706,6 @@ async fn fetch_document_object_id(
     .one(db)
     .await
     .map(|row| row.map(|r| r.object_id))
-}
-
-async fn fetch_role(
-    db: &sea_orm::DatabaseConnection,
-    workspace_id: Uuid,
-    user_id: Uuid,
-) -> Result<Option<String>, sea_orm::DbErr> {
-    #[derive(FromQueryResult)]
-    struct Row {
-        role: String,
-    }
-    Row::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
-        vec![workspace_id.into(), user_id.into()],
-    ))
-    .one(db)
-    .await
-    .map(|row| Some(row.map_or_else(|| "__flow_guest".to_string(), |r| r.role)))
 }
 
 fn encode(frame: &Frame) -> Option<Message> {
@@ -1594,6 +1575,27 @@ async fn reverify_open(state: &AppState, consumed: &ConsumedTicket) -> Result<Do
     if let Some(signal) = runtime::runtime().workspace_drain_signal(consumed.workspace_id) {
         return Err(OpenReverifyFailure::Draining(signal));
     }
+    // `ADR-0012` §3.1: `checked_epoch` is "the epoch permission was computed against", and every
+    // update this connection later commits is fenced against it (`write::run_locked_phase` ->
+    // `authz::fence_epoch_for_share`). It therefore has to be read no later than the permission
+    // read it fences. Reading it afterwards -- as this did -- meant a revocation committing
+    // between the two reads was folded into `checked_epoch` itself, so the commit-time fence
+    // compared the post-revocation epoch against itself and every subsequent write on this
+    // connection sailed through on permission that had already been taken away. The fence only
+    // compares epochs, so the order of these two reads is the entire barrier.
+    let checked_epoch = match authz::read_epoch(&state.db, consumed.workspace_id).await {
+        Ok(epoch) => epoch,
+        Err(err) if err.kind() == ApiErrorKind::NotFound => {
+            return Err(OpenReverifyFailure::Rejected {
+                code: RejectedCode::FeatureDisabled,
+                reason: "flow is not enabled",
+            });
+        }
+        Err(err) => {
+            tracing::warn!(workspace_id = %consumed.workspace_id, %err, "collab open epoch lookup failed");
+            return Err(OpenReverifyFailure::Indeterminate("epoch lookup failed"));
+        }
+    };
     let flow_enabled = match crate::flow::repository::fetch_flow_enabled(&state.db, consumed.workspace_id).await {
         Ok(flow_enabled) => flow_enabled,
         Err(err) => {
@@ -1607,7 +1609,7 @@ async fn reverify_open(state: &AppState, consumed: &ConsumedTicket) -> Result<Do
             reason: "flow is not enabled",
         });
     }
-    let role = match fetch_role(&state.db, consumed.workspace_id, consumed.user_id).await {
+    let role = match workspace_member_role(&state.db, consumed.workspace_id, consumed.user_id).await {
         Ok(Some(role)) => role,
         Ok(None) => {
             return Err(OpenReverifyFailure::Rejected {
@@ -1618,21 +1620,6 @@ async fn reverify_open(state: &AppState, consumed: &ConsumedTicket) -> Result<Do
         Err(err) => {
             tracing::warn!(workspace_id = %consumed.workspace_id, user_id = %consumed.user_id, %err, "collab open membership lookup failed");
             return Err(OpenReverifyFailure::Indeterminate("membership lookup failed"));
-        }
-    };
-    // `ADR-0012` §3.1: `checked_epoch` is "the epoch permission was computed against", and every
-    // update this connection later commits is fenced against it (`write::run_locked_phase` ->
-    // `authz::fence_epoch_for_share`). It therefore has to be read no later than the permission
-    // read it fences. Reading it afterwards -- as this did -- meant a revocation committing
-    // between the two reads was folded into `checked_epoch` itself, so the commit-time fence
-    // compared the post-revocation epoch against itself and every subsequent write on this
-    // connection sailed through on permission that had already been taken away. The fence only
-    // compares epochs, so the order of these two reads is the entire barrier.
-    let checked_epoch = match authz::read_epoch(&state.db, consumed.workspace_id).await {
-        Ok(epoch) => epoch,
-        Err(err) => {
-            tracing::warn!(workspace_id = %consumed.workspace_id, %err, "collab open epoch lookup failed");
-            return Err(OpenReverifyFailure::Indeterminate("epoch lookup failed"));
         }
     };
     let level = match authz::effective_permission(
@@ -4517,7 +4504,7 @@ mod tests {
         }
 
         /// `limits-v1.md`: "Entry key 固定为 `(document_id,session_id)`：同 key frame 只刷新 payload/
-        /// expiry，不增加计数". Reported forty times from one session, the document must still hold
+        /// expiry，不增加计数". Repeatedly reported from one session, the document must still hold
         /// exactly one entry -- an append-instead-of-upsert would both inflate the count and walk
         /// into `presence_entries_per_document_max`.
         #[tokio::test]
@@ -4532,10 +4519,9 @@ mod tests {
             let ticket = issue_ticket(addr, &token, workspace_id, document_id, "presence-inplace").await;
             let (mut ws, _, _, _) = open_session_full(addr, &ticket, "presence-inplace", document_id).await;
 
-            // Forty is deliberately past `presence_entries_per_document_max` (100) / 2 and well
-            // past `presence_entries_per_connection_max` (8): an append implementation trips a
-            // ceiling long before the fortieth report, so this fails loudly either way.
-            for cursor in 0..40i64 {
+            // Twenty reports exceed the per-connection entry limit (8). Each synchronization
+            // sends a ping too, so keep the fixture within the independent frame-rate burst.
+            for cursor in 0..20i64 {
                 send_frame(&mut ws, &presence_frame(document_id, cursor, Some(30))).await;
                 sync(&mut ws).await;
                 assert_eq!(
@@ -6782,6 +6768,12 @@ mod database_tests {
             vec![workspace_id.into()],
         )
         .await;
+        exec(
+            state,
+            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
+            vec![workspace_id.into(), owner_id.into()],
+        )
+        .await;
         (workspace_id, owner_id)
     }
 
@@ -6813,12 +6805,6 @@ mod database_tests {
         let scratch = scratch_or_skip!("stale-open-recheck");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        exec(
-            &state,
-            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
-            vec![workspace_id.into(), owner_id.into()],
-        )
-        .await;
         let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let consumed = ConsumedTicket {
             user_id: owner_id,
@@ -6931,8 +6917,9 @@ mod database_tests {
             )
             .await
             .expect("accept_update does not hit a hard database error");
-            let AcceptOutcome::Accepted(accepted) = outcome else {
-                panic!("expected Accepted for commit {i}");
+            let accepted = match outcome {
+                AcceptOutcome::Accepted(accepted) => accepted,
+                AcceptOutcome::Rejected(rejected) => panic!("expected Accepted for commit {i}, got {rejected:?}"),
             };
             committed.push(accepted);
         }

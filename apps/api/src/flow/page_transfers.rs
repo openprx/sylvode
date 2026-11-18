@@ -59,7 +59,7 @@ struct OperationRow {
     asset_mapping: Value,
     receipt: Option<Value>,
     copied_placements: Option<Value>,
-    expires_at: chrono::DateTime<chrono::Utc>,
+    expires_at: platform::timestamp::Timestamp,
     failure_reason: Option<String>,
     commit_key: Option<String>,
     commit_body: Option<Value>,
@@ -530,7 +530,7 @@ pub async fn prepare(
     }
     let digest = selection_digest(&selected, &metadata.reviewed_shares)?;
     let assets = review_assets(&tx, &source_identity, &selected, a.head_seq).await?;
-    let expires = chrono::Utc::now() + chrono::Duration::minutes(15);
+    let expires = platform::timestamp::Timestamp::now() + time::Duration::minutes(15);
     let inserted = tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_page_block_transfers(id,actor_id,source_object_id,target_object_id,kind,state,prepare_key,prepare_body,source_frontier,target_frontier,selection_digest,selection_metadata,asset_mapping,expires_at) VALUES($1,$2,$3,$4,$5,'prepared',$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (actor_id, source_object_id, prepare_key) DO NOTHING",vec![id.into(),actor.into(),source.into(),input.target_object_id.into(),if input.kind==wire::Kind::Move{"move"}else{"copy"}.into(),key.to_string().into(),body.into(),source_token.into(),target_token.into(),digest.into(),serde_json::to_value(metadata).map_err(|_|ApiError::internal())?.into(),serde_json::to_value(assets).map_err(|_|ApiError::internal())?.into(),expires.into()])).await?;
     if inserted.rows_affected() == 0 {
         tx.rollback().await?;
@@ -890,7 +890,7 @@ async fn commit_once(
         }
         return get(db, actor, id).await;
     }
-    if row.expires_at <= chrono::Utc::now() {
+    if row.expires_at <= platform::timestamp::Timestamp::now() {
         return get_status(db, actor, id).await;
     }
     if row.selection_digest != input.selection_digest

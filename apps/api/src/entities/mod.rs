@@ -33,3 +33,8 @@ pub mod work_item;
 pub mod work_item_label;
 pub mod workspace;
 pub mod workspace_member;
+
+// The API represents SQL dates as ISO calendar dates, without a time or offset.
+pub(crate) const ISO_DATE_FORMAT: time::format_description::StaticFormatDescription =
+    time::macros::format_description!("[year]-[month]-[day]");
+time::serde::format_description!(pub(crate) iso_date, Date, super::ISO_DATE_FORMAT);

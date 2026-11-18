@@ -8,7 +8,7 @@ import { defineConfig } from "vite";
  * 1. `build.target = 'es2022'` -- the browser-target build item; this repo's real
  *    `frontend/vite.config.ts` inherits SvelteKit's default target, which is also es2022+, so
  *    this spike pins the same floor explicitly.
- * 2. Top-level await: handled by NOT needing to be handled -- `loro-crdt@1.14.1`'s browser entry
+ * 2. Top-level await: handled by NOT needing to be handled -- `loro-crdt@1.18.0`'s browser entry
  *    (`node_modules/loro-crdt/browser/loro_wasm.js`) deliberately uses a synchronous
  *    `XMLHttpRequest` load instead of `await fetch`/`instantiateStreaming`, specifically to avoid
  *    top-level await (see that file's own comment: "Vite/Rolldown can otherwise create circular

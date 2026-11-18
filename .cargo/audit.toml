@@ -16,21 +16,12 @@ ignore = [
     # a rkyv archive (decimals cross every boundary as strings). Needs rust_decimal on
     # rkyv >=0.8.17 upstream before it can be resolved here.
     "RUSTSEC-2026-0235",
-    # proc-macro-error2 unmaintained: build-time proc-macro only, never linked into the
-    # shipped binaries. Pulled in transitively; waiting on its dependents to migrate.
-    "RUSTSEC-2026-0173",
     # atomic-polyfill unmaintained: build-graph-only through wasmtime's Cranelift backend
     # (wasmtime -> cranelift-codegen -> postcard -> heapless). It emulates atomics on
     # single-core targets; Sylvode builds only targets with native atomics, so those paths are
     # never compiled in. Resolvable only when heapless 0.7 is dropped upstream.
     "RUSTSEC-2023-0089",
-    # im / sized-chunks / bitmaps are production dependencies through
-    # api -> collab-core -> loro -> loro-internal -> im. Retain these existing
-    # unmaintained advisory exceptions as supply-chain debt pending upstream removal.
-    # smallstr originated in the yrs spike and is absent from the current locked graph.
-    "RUSTSEC-2026-0247",
-    "RUSTSEC-2026-0248",
-    "RUSTSEC-2026-0251",
+    # Only the Yrs comparison spike uses smallstr; no release binary depends on it.
     "RUSTSEC-2026-0215",
 ]
 informational_warnings = ["unmaintained"]

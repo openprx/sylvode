@@ -52,7 +52,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, header},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -775,8 +775,8 @@ pub struct ReplayDeliveriesRequest {
     pub event_type: Option<String>,
     pub subscriber_kind: Option<String>,
     pub subscriber_id: Option<Uuid>,
-    pub from: DateTime<Utc>,
-    pub to: DateTime<Utc>,
+    pub from: Timestamp,
+    pub to: Timestamp,
     pub dry_run: bool,
     pub confirm: bool,
     pub idempotency_key: String,
@@ -871,7 +871,7 @@ pub async fn post_flow_delivery_replay(
         to: req.to,
         dry_run: req.dry_run,
     };
-    let result = match crate::events::dispatcher::replay_deliveries(&state.db, &request, Utc::now()).await {
+    let result = match crate::events::dispatcher::replay_deliveries(&state.db, &request, Timestamp::now()).await {
         Ok(result) => result,
         Err(error) => {
             let _ = state
@@ -4757,7 +4757,7 @@ mod flow_database_tests {
     async fn member_add_role_change_and_remove_advance_epoch_in_their_transactions() {
         #[derive(FromQueryResult, PartialEq, Eq, Debug)]
         struct SettingsAuditStamp {
-            updated_at: chrono::DateTime<chrono::Utc>,
+            updated_at: platform::timestamp::Timestamp,
             updated_by: Option<Uuid>,
         }
 
@@ -6283,9 +6283,16 @@ mod flow_database_tests {
                 DbBackend::Postgres,
                 "SELECT count(*) AS n FROM pg_trigger t \
                  JOIN pg_class c ON c.oid=t.tgrelid \
+                 JOIN pg_proc p ON p.oid=t.tgfoid \
                  WHERE NOT t.tgisinternal AND c.relname IN \
                  ('flow_bridge_references','flow_conversion_previews','flow_conversion_jobs',\
-                  'flow_object_lineage','project_forms','form_records')",
+                  'flow_object_lineage','project_forms','form_records') \
+                 AND NOT (t.tgname=p.proname AND (\
+                    (c.relname='flow_bridge_references' AND p.proname='flow_reference_bind_source_scope') OR \
+                    (c.relname IN ('flow_conversion_previews','flow_conversion_jobs','flow_object_lineage') \
+                       AND p.proname='flow_conversion_bind_source_scope') OR \
+                    (c.relname IN ('flow_conversion_previews','flow_conversion_jobs') \
+                       AND p.proname='flow_conversion_bind_request_key')))",
             ))
             .await
             .expect("pg_trigger probe")
@@ -6987,10 +6994,18 @@ mod flow_database_tests {
         assert_eq!(diff["data"]["to_seq"], 2);
         assert_eq!(diff["data"]["semantic_diff"]["title"]["before"], "Created at seq zero");
         assert_eq!(diff["data"]["semantic_diff"]["title"]["after"], "Current title");
-        assert_eq!(
-            diff["data"]["semantic_diff"]["nodes"]["added"]["logical-block"]["text"],
-            "semantic text"
+        let added = diff["data"]["semantic_diff"]["nodes"]["added"]
+            .as_object()
+            .expect("added semantic nodes");
+        let (block_id, block) = added
+            .iter()
+            .find(|(_, node)| node["text"] == "semantic text")
+            .expect("diff retains the inserted editor block");
+        assert!(
+            block_id.starts_with("cid:"),
+            "editor content uses persistent carrier IDs"
         );
+        assert_eq!(block["properties"]["logical_id"], "logical-block");
         assert_eq!(diff["data"]["rendered"], "# Current title\n\nsemantic text\n");
         assert!(
             diff["data"]["rendered"]
@@ -8415,6 +8430,51 @@ mod flow_database_tests {
         .n
     }
 
+    /// Install an era-appropriate sequence-zero Page before testing the legacy semantic
+    /// operations contract. The production fixture router always initializes new EditorDocs.
+    async fn install_legacy_page_fixture(state: &AppState, document_id: Uuid, title: &str) {
+        use collab_core::{CollabEngine, LoroCollabEngine};
+
+        let mut engine = LoroCollabEngine::new_empty(rand::random());
+        engine.set_title(title).expect("legacy Page title writes");
+        let snapshot = engine.export_snapshot().expect("legacy snapshot exports");
+        let frontier = engine.frontier().as_bytes().to_vec();
+        let checksum = crate::flow::collab::bootstrap::content_hash(&snapshot);
+        let byte_count = i64::try_from(snapshot.len()).expect("fixture snapshot is small");
+        exec(
+            state,
+            "UPDATE collab_documents
+             SET snapshot = $2, snapshot_checksum = $3, snapshot_frontier = $4,
+                 head_frontier = $4, byte_count = $5
+             WHERE id = $1 AND head_seq = 0",
+            vec![
+                document_id.into(),
+                snapshot.into(),
+                checksum.into(),
+                frontier.clone().into(),
+                byte_count.into(),
+            ],
+        )
+        .await;
+        let semantic = engine.semantic_snapshot().expect("legacy fixture projects");
+        exec(
+            state,
+            "UPDATE flow_object_projections
+             SET document_frontier = $2, state = $3, plain_text = $4
+             WHERE object_id = (SELECT object_id FROM collab_documents WHERE id = $1)
+               AND document_seq = 0",
+            vec![
+                document_id.into(),
+                frontier.into(),
+                crate::flow::projection::state_json(&semantic)
+                    .expect("legacy state serializes")
+                    .into(),
+                crate::flow::projection::plain_text(&semantic).into(),
+            ],
+        )
+        .await;
+    }
+
     fn semantic_patch_payload_with_serialized_bytes(target: u64) -> Value {
         let base = json!({
             "operations": [{"op": "set_property", "id": "semantic-block", "key": "fixture", "value": "ok"}],
@@ -8463,6 +8523,7 @@ mod flow_database_tests {
         let object_id =
             Uuid::parse_str(create_body["data"]["object"]["id"].as_str().expect("object id")).expect("object UUID");
         let document_id = document_id_for(&state, object_id).await;
+        install_legacy_page_fixture(&state, document_id, "Semantic Patch Bytes Test").await;
         let insert = run_command(
             &state,
             &claims,
@@ -8598,6 +8659,7 @@ mod flow_database_tests {
         )
         .expect("object id is a uuid");
         let document_id = document_id_for(&state, object_id).await;
+        install_legacy_page_fixture(&state, document_id, "Tree Depth Limit Test").await;
 
         // A chain of `insert_block` commands, each parented on the previous one. The root block
         // (no parent) is depth 0; `tree_depth_max` more commands after it reach exactly
@@ -8738,6 +8800,7 @@ mod flow_database_tests {
         )
         .expect("object id is a uuid");
         let document_id = document_id_for(&state, object_id).await;
+        install_legacy_page_fixture(&state, document_id, "Batch Count Limit Test").await;
 
         let insert_body = run_command(
             &state,
@@ -9534,6 +9597,14 @@ mod flow_database_tests {
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let claims = claims_for(owner_id);
         let bot_id = Uuid::new_v4();
+        exec(
+            &state,
+            "INSERT INTO workspace_bots
+             (id, workspace_id, name, token_hash, token_prefix, permissions, transport_surface, is_active)
+             VALUES ($1,$2,'fixture bot',$3,'fixture','[\"read\",\"write\",\"admin\"]'::jsonb,'mcp_stdio',true)",
+            vec![bot_id.into(), workspace_id.into(), bot_id.to_string().into()],
+        )
+        .await;
         let bot = |tool: &str| {
             Extension(crate::middleware::bot_auth::BotAuthContext {
                 bot_id,
@@ -10136,14 +10207,14 @@ mod flow_database_tests {
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let member_id = seed_member(&state, workspace_id).await;
-        let now = chrono::Utc::now();
+        let now = platform::timestamp::Timestamp::now();
         let request = ReplayDeliveriesRequest {
             mode: crate::events::dispatcher::ReplayMode::Rebuild,
             event_type: None,
             subscriber_kind: Some("webhook".to_string()),
             subscriber_id: None,
-            from: now - chrono::Duration::hours(2),
-            to: now - chrono::Duration::hours(1),
+            from: now - time::Duration::hours(2),
+            to: now - time::Duration::hours(1),
             dry_run: true,
             confirm: true,
             idempotency_key: "replay-route-key".to_string(),
@@ -12074,14 +12145,14 @@ mod flow_database_tests {
         let scratch = scratch_or_skip!("typed-drift-vs-stale");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let now = chrono::Utc::now();
+        let now = platform::timestamp::Timestamp::now();
         let request = ReplayDeliveriesRequest {
             mode: crate::events::dispatcher::ReplayMode::Rebuild,
             event_type: None,
             subscriber_kind: Some("webhook".to_string()),
             subscriber_id: None,
-            from: now - chrono::Duration::hours(2),
-            to: now - chrono::Duration::hours(1),
+            from: now - time::Duration::hours(2),
+            to: now - time::Duration::hours(1),
             dry_run: true,
             confirm: true,
             idempotency_key: "typed-replay-key".to_string(),

@@ -6,8 +6,8 @@ use std::{
     io::{Cursor, Read},
 };
 
-use chrono::Utc;
 use collab_core::{CollabEngine, LoroCollabEngine, Operation, SemanticSnapshot};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -387,7 +387,7 @@ pub async fn export(db: &DatabaseConnection, object: Uuid, actor: Uuid) -> Resul
         kind: "page_content".into(),
         bytes: content,
     });
-    let now = Utc::now().to_rfc3339();
+    let now = Timestamp::now().to_rfc3339();
     let manifest = ExportPackageManifest {
         schema: PORTABLE_PAGE_SCHEMA.into(),
         package_id: Uuid::new_v4().to_string(),

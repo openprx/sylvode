@@ -8,6 +8,7 @@ use platform::{
     app::{AppState, FlowPermissionCacheSlot, connect_db},
     config::{AppConfig, OpenPrConfig},
     logging,
+    timestamp::Timestamp,
 };
 use reqwest::header::CONTENT_TYPE;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
@@ -442,11 +443,11 @@ async fn record_dispatch_failure(
     task: &AiTaskDispatchRow,
     error: String,
 ) -> anyhow::Result<()> {
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let should_retry = task.attempts < task.max_attempts;
 
     if should_retry {
-        let next_retry_at = now + chrono::Duration::seconds(i64::from(task.attempts.max(1) * 30));
+        let next_retry_at = now + time::Duration::seconds(i64::from(task.attempts.max(1) * 30));
         db.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r"
@@ -662,7 +663,7 @@ async fn insert_task_event(
             task_id.into(),
             event_type.to_string().into(),
             payload.into(),
-            chrono::Utc::now().into(),
+            Timestamp::now().into(),
         ],
     ))
     .await?;

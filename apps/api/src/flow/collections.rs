@@ -958,11 +958,25 @@ fn invalid_field_value(field_id: Uuid, message: &str) -> ApiError {
 fn is_typed_date(raw: &str) -> bool {
     let year_ok = raw.len() >= 10 && raw.as_bytes().iter().take(4).all(u8::is_ascii_digit) && !raw.starts_with("0000");
     year_ok
-        && (chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").is_ok()
-            || chrono::DateTime::parse_from_rfc3339(raw).is_ok()
-            || chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S%.f").is_ok()
-            || chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S%.f").is_ok()
-            || chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M").is_ok())
+        && (time::Date::parse(raw, time::macros::format_description!("[year]-[month]-[day]")).is_ok()
+            || platform::timestamp::Timestamp::parse_rfc3339(raw).is_ok()
+            || time::PrimitiveDateTime::parse(
+                raw,
+                time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]"),
+            )
+            .is_ok()
+            || [
+                time::macros::format_description!(
+                    version = 2,
+                    "[year]-[month]-[day]T[hour]:[minute]:[second][optional [.[subsecond]]]"
+                ),
+                time::macros::format_description!(
+                    version = 2,
+                    "[year]-[month]-[day] [hour]:[minute]:[second][optional [.[subsecond]]]"
+                ),
+            ]
+            .into_iter()
+            .any(|description| time::PrimitiveDateTime::parse(raw, description).is_ok()))
 }
 
 fn check_typed_value(field_type: &str, value: &Value) -> Result<(), TypedValueError> {
@@ -5666,6 +5680,41 @@ mod database_tests {
         scratch.drop_self().await;
     }
 
+    #[tokio::test]
+    async fn editor_block_embed_anchor_is_explicitly_refused_without_a_write() {
+        let scratch = scratch_or_skip!("surface_editor_embed_after");
+        let state = state_for(scratch.db.clone());
+        let (workspace, owner) = seed(&state).await;
+        let page = create_object_for(&state, workspace, owner, "page", "Editor embed host").await;
+        let inserted = command(
+            &state,
+            owner,
+            page,
+            "insert_block",
+            json!({"block_id": "editor-anchor", "index": 0, "text": "Editor block"}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect("editor block inserts");
+        let refused = command(
+            &state,
+            owner,
+            page,
+            "create_collection_embed",
+            json!({"title": "Editor embed", "after_block_id": "editor-anchor"}),
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .expect_err("current editor anchors do not support relative embed placement");
+        assert_eq!(
+            refusal_reason(&refused).1.as_deref(),
+            Some("editor_relative_embed_position_unsupported")
+        );
+        let head = repository::fetch_object_view(&state.db, page).await.unwrap().unwrap();
+        assert_eq!(head.document_seq, inserted.accepted_seq);
+        scratch.drop_self().await;
+    }
+
     async fn page_root_blocks(state: &AppState, page_id: Uuid) -> Vec<String> {
         let page = repository::fetch_object_view(&state.db, page_id)
             .await
@@ -5695,18 +5744,44 @@ mod database_tests {
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed(&state).await;
         let page_id = create_object_for(&state, workspace_id, owner_id, "page", "Embed host").await;
+        // The relative placement contract is supported by the legacy tree renderer.
+        // Attach a historical head to this freshly created fixture before driving commands.
+        let mut legacy = collab_core::LoroCollabEngine::new_empty(71);
+        legacy.set_title("Embed host").expect("fixture title succeeds");
         for (index, block) in ["b1", "b2"].into_iter().enumerate() {
-            command(
-                &state,
-                owner_id,
-                page_id,
-                "insert_block",
-                json!({"block_id": block, "index": index, "text": block}),
-                Uuid::new_v4().to_string(),
-            )
-            .await
-            .expect("block inserts");
+            legacy
+                .apply_operation(&Operation::CreateNode {
+                    id: block.into(),
+                    parent: None,
+                    index: u32::try_from(index).expect("fixture index fits"),
+                    kind: NodeKind::Block,
+                })
+                .expect("legacy block fixture inserts");
         }
+        let snapshot = legacy.export_snapshot().expect("fixture snapshot exports");
+        let frontier = legacy.frontier().as_bytes().to_vec();
+        let semantic = legacy.semantic_snapshot().expect("fixture semantics");
+        let projection = crate::flow::projection::state_json(&semantic).expect("fixture projection");
+        state
+            .db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "WITH fixture AS (
+                UPDATE collab_documents SET snapshot=$2,snapshot_checksum=$3,snapshot_frontier=$4,head_frontier=$4
+                WHERE object_id=$1 AND head_seq=0 RETURNING object_id
+             )
+             UPDATE flow_object_projections SET state=$5,document_frontier=$4
+             WHERE object_id IN (SELECT object_id FROM fixture)",
+                vec![
+                    page_id.into(),
+                    snapshot.clone().into(),
+                    bootstrap::content_hash(&snapshot).into(),
+                    frontier.into(),
+                    projection.into(),
+                ],
+            ))
+            .await
+            .expect("legacy fixture installs");
         assert_eq!(page_root_blocks(&state, page_id).await, ["b1", "b2"]);
 
         let key = Uuid::new_v4().to_string();

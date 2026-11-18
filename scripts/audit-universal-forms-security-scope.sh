@@ -12,6 +12,7 @@ Verifies the universal forms delivery security-audit scope:
   - cargo audit succeeds with the repository audit policy
   - the ignore set matches individually documented advisory policy
   - SQLite stays absent from all resolved normal/build/dev targets and features
+  - none of the five release targets uses atomic-polyfill or the evaluation-only smallstr
   - workspace feature resolution pulls in neither sqlx-mysql nor rsa
   - the workspace enables sqlx-postgres through SeaORM
 
@@ -150,15 +151,27 @@ if jq empty "$AUDIT_JSON" >/dev/null; then
   # 2023-0089 atomic-polyfill: build-graph only, through wasmtime's Cranelift backend. It emulates
   # atomics for single-core targets and is never compiled for the targets we build.
   #
-  # The im family is production Loro supply-chain debt; smallstr is absent.
+  # The Yrs comparison spike still depends on smallstr; release targets do not.
   # 2026-0459 is lock-only SQLite, with the mandatory all-target/all-feature
   # normal/build/dev reachability guard above. It is not a patched SQLite claim.
   equals "cargo audit ignore list matches the reviewed advisories" \
     "$(jq -r '.settings.ignore | sort | join(" ")' "$AUDIT_JSON")" \
-    "RUSTSEC-2023-0071 RUSTSEC-2023-0089 RUSTSEC-2026-0173 RUSTSEC-2026-0215 RUSTSEC-2026-0235 RUSTSEC-2026-0247 RUSTSEC-2026-0248 RUSTSEC-2026-0251 RUSTSEC-2026-0459"
+    "RUSTSEC-2023-0071 RUSTSEC-2023-0089 RUSTSEC-2026-0215 RUSTSEC-2026-0235 RUSTSEC-2026-0459"
 else
   fail "cargo audit JSON is valid"
 fi
+
+# The two unmaintained exceptions are limited to embedded targets and evaluation
+# spikes. Fail if either crate becomes a normal or build dependency of a release.
+for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+  release_tree="$(cd "$ROOT_DIR" && cargo tree --locked --target "$target" -e normal,build --prefix none \
+    -p api -p worker -p mcp-server -p collab-core)"
+  if rg -q '^(atomic-polyfill|smallstr) v' <<<"$release_tree"; then
+    fail "unmaintained exception reached a release binary or its build on $target"
+  else
+    pass "unmaintained exceptions excluded from release binaries and their builds on $target"
+  fi
+done
 
 features_tree="$(cd "$ROOT_DIR" && cargo tree -e features --workspace 2>&1)"
 

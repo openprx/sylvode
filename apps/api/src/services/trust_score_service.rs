@@ -1,7 +1,8 @@
-use chrono::{Duration, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde_json::Value;
 use std::collections::HashSet;
+use time::Duration;
 use uuid::Uuid;
 
 use crate::{
@@ -302,11 +303,11 @@ impl TrustScoreService {
             old_rejections
         };
         let cooldown_until = if new_rejections >= 3 {
-            Some(Utc::now() + Duration::days(7))
+            Some(Timestamp::now() + Duration::days(7))
         } else {
             None
         };
-        let cooldown_until_str = cooldown_until.map(|v| v.to_rfc3339());
+        let cooldown_until_str = cooldown_until.map(platform::timestamp::Timestamp::to_rfc3339);
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -327,7 +328,7 @@ impl TrustScoreService {
                 new_weight.into(),
                 new_rejections.into(),
                 cooldown_until_str.into(),
-                Utc::now().into(),
+                Timestamp::now().into(),
             ],
         ))
         .await?;
@@ -352,7 +353,7 @@ impl TrustScoreService {
                 old_level.clone().into(),
                 new_level.as_db_str().into(),
                 reason.to_string().into(),
-                Utc::now().into(),
+                Timestamp::now().into(),
             ],
         ))
         .await?;
@@ -375,7 +376,7 @@ impl TrustScoreService {
                     "level": new_level.as_db_str(),
                     "vote_weight": new_weight,
                     "consecutive_rejections": new_rejections,
-                    "cooldown_until": cooldown_until.map(|v| v.to_rfc3339()),
+                    "cooldown_until": cooldown_until.map(platform::timestamp::Timestamp::to_rfc3339),
                 })),
                 metadata: Some(serde_json::json!({
                     "event_type": event_type.as_str(),
@@ -436,7 +437,7 @@ impl TrustScoreService {
                 user_type.into(),
                 project_id.into(),
                 domain.to_string().into(),
-                Utc::now().into(),
+                Timestamp::now().into(),
             ],
         ))
         .await?;
@@ -478,7 +479,7 @@ impl TrustScoreService {
                     user_id.into(),
                     project_id.into(),
                     domain.to_string().into(),
-                    Utc::now().into(),
+                    Timestamp::now().into(),
                 ],
             ))
             .await?;

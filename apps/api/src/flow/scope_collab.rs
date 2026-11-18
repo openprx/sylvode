@@ -7,7 +7,7 @@ struct TicketIdentityMatch {
 
 #[derive(FromQueryResult)]
 struct TicketExpiry {
-    expires_at: chrono::DateTime<chrono::Utc>,
+    expires_at: platform::timestamp::Timestamp,
 }
 
 use super::{

@@ -5,7 +5,7 @@
 
 use std::fmt::Write as _;
 
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{
     AccessMode, ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, IsolationLevel, Statement,
     TransactionTrait,
@@ -27,9 +27,9 @@ pub struct ObjectViewRow {
     pub lifecycle_status: String,
     pub governance_metadata: Value,
     pub appearance: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub archived_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub archived_at: Option<Timestamp>,
     pub document_id: Uuid,
     pub document_seq: i64,
     pub document_frontier: Vec<u8>,
@@ -198,7 +198,7 @@ pub struct ListFilter {
     pub title_prefix: Option<String>,
     pub include_archived: bool,
     /// Keyset cursor: `(created_at, id)` of the last row of the previous page, exclusive.
-    pub after: Option<(DateTime<Utc>, Uuid)>,
+    pub after: Option<(Timestamp, Uuid)>,
     /// Already clamped to `1..=100` by the handler.
     pub limit: u64,
 }
@@ -255,7 +255,7 @@ pub async fn list_objects<C: ConnectionTrait>(conn: &C, filter: &ListFilter) -> 
 #[derive(Debug, FromQueryResult)]
 pub struct ProjectionLagRow {
     pub object_id: Uuid,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub head_seq: i64,
     pub projection_seq: i64,
 }
@@ -263,7 +263,7 @@ pub struct ProjectionLagRow {
 pub struct ProjectionLagFilter {
     pub workspace_id: Uuid,
     pub project_id: Option<Uuid>,
-    pub after: Option<(DateTime<Utc>, Uuid)>,
+    pub after: Option<(Timestamp, Uuid)>,
     pub limit: u64,
 }
 
@@ -539,7 +539,7 @@ pub async fn set_objects_lifecycle<C: ConnectionTrait>(
     conn: &C,
     object_ids: &[Uuid],
     lifecycle_status: &str,
-    archived_at: Option<DateTime<Utc>>,
+    archived_at: Option<Timestamp>,
     updated_by: Option<Uuid>,
 ) -> Result<u64, ApiError> {
     if object_ids.is_empty() {
@@ -704,7 +704,7 @@ pub struct NavigatorNodeRow {
     pub parent_id: Uuid,
     pub object_type: String,
     pub title: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub appearance: Value,
 }
 
@@ -901,7 +901,7 @@ pub struct FlowSettingsRow {
     pub flow_enabled: bool,
     pub default_member_level: String,
     pub authz_epoch: i64,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
     pub updated_by: Option<Uuid>,
 }
 
@@ -1001,7 +1001,7 @@ pub struct HistoryRow {
     pub origin_surface: String,
     pub message: Option<String>,
     pub semantic_summary: Value,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 /// `collab_updates` joined with the `business_events` row its `event_id` points at.
@@ -1064,10 +1064,10 @@ pub struct ImportJobRow {
     pub idempotency_key: String,
     pub request_body_hash: String,
     pub audit_event_id: Option<Uuid>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub finished_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub started_at: Option<Timestamp>,
+    pub finished_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 const IMPORT_JOB_SELECT: &str = r"

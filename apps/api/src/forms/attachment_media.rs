@@ -584,8 +584,8 @@ mod tests {
         routes::upload,
         services::object_storage::{test_object_storage, test_should_create_bucket},
     };
-    use chrono::Utc;
     use image::{ImageBuffer, ImageFormat, Rgb};
+    use platform::timestamp::Timestamp;
     use serde_json::json;
     use std::io::Cursor;
 
@@ -970,7 +970,7 @@ mod tests {
 
         let source_name = format!(
             "minio-derivative-source-{}.png",
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            Timestamp::now().unix_timestamp_nanos()
         );
         let source_bytes = test_png(256, 128);
         storage

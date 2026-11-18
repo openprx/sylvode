@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 collab-shared = { path = "../collab-shared" }
-loro = "=1.13.9"
+loro = "=1.18.0"
 
 [lints]
 workspace = true

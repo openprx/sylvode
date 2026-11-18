@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -63,8 +63,8 @@ pub struct CheckResultRow {
     pub proposal_id: Option<String>,
     pub created_by: Option<Uuid>,
     pub created_by_kind: String,
-    pub created_at: chrono::DateTime<Utc>,
-    pub updated_at: chrono::DateTime<Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -212,7 +212,7 @@ pub async fn create_project_check_result(
     let result = ensure_json_object(req.result.unwrap_or_else(|| json!({})), "result")?;
     let status = default_status_for(&action_class, &risk_level);
     let check_result_id = Uuid::new_v4();
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     let tx = state.db.begin().await?;
     tx.execute(Statement::from_sql_and_values(
@@ -334,7 +334,7 @@ pub async fn create_proposal_from_result(
         }
     }))?;
     let proposal_id = format!("PROP-{}", Uuid::new_v4());
-    let now = Utc::now();
+    let now = Timestamp::now();
     let submit = req.submit.unwrap_or(false);
     let status = if submit { "open" } else { "draft" };
     let submitted_at = submit.then_some(now);
@@ -449,7 +449,7 @@ pub async fn create_proposal_from_result(
         "status": status,
         "check_result_id": check_result_id,
         "created_at": now.to_rfc3339(),
-        "submitted_at": submitted_at.map(|value| value.to_rfc3339()),
+        "submitted_at": submitted_at.map(platform::timestamp::Timestamp::to_rfc3339),
     })))
 }
 
@@ -745,7 +745,7 @@ pub async fn sync_check_result_after_proposal_decision<C: ConnectionTrait>(
     db: &C,
     proposal_id: &str,
     decision_result: &str,
-    decided_at: chrono::DateTime<Utc>,
+    decided_at: platform::timestamp::Timestamp,
 ) -> Result<(), ApiError> {
     let Some(status) = check_result_status_for_decision(decision_result) else {
         return Ok(());
@@ -804,7 +804,7 @@ pub async fn sync_check_result_after_proposal_decision<C: ConnectionTrait>(
 async fn apply_approved_check_results<C: ConnectionTrait>(
     db: &C,
     proposal_id: &str,
-    decided_at: DateTime<Utc>,
+    decided_at: Timestamp,
 ) -> Result<(), ApiError> {
     let rows = CheckResultApplyRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -885,7 +885,7 @@ async fn apply_approved_effect<C: ConnectionTrait>(
     db: &C,
     row: &CheckResultApplyRow,
     effect: &ApprovedEffect,
-    applied_at: DateTime<Utc>,
+    applied_at: Timestamp,
 ) -> Result<Value, ApiError> {
     match effect.tool.as_str() {
         "comments.create" => apply_comment_create_effect(db, row, &effect.arguments, applied_at).await,
@@ -900,7 +900,7 @@ async fn apply_comment_create_effect<C: ConnectionTrait>(
     db: &C,
     row: &CheckResultApplyRow,
     args: &Value,
-    applied_at: DateTime<Utc>,
+    applied_at: Timestamp,
 ) -> Result<Value, ApiError> {
     let work_item_id = required_uuid_arg(args, "work_item_id")?;
     let content = required_string_arg(args, "content")?;
@@ -944,7 +944,7 @@ async fn apply_work_item_update_effect<C: ConnectionTrait>(
     db: &C,
     row: &CheckResultApplyRow,
     args: &Value,
-    applied_at: DateTime<Utc>,
+    applied_at: Timestamp,
 ) -> Result<Value, ApiError> {
     let work_item_id = required_uuid_arg(args, "work_item_id")?;
     let mut sets = Vec::new();
@@ -1104,7 +1104,7 @@ fn optional_uuid_arg(args: &Value, key: &str) -> Result<Option<Uuid>, ApiError> 
         .map_err(|_| ApiError::BadRequest(format!("{key} must be a valid UUID")))
 }
 
-fn optional_datetime_arg(args: &Value, key: &str) -> Result<Option<DateTime<Utc>>, ApiError> {
+fn optional_datetime_arg(args: &Value, key: &str) -> Result<Option<Timestamp>, ApiError> {
     let Some(value) = args.get(key) else {
         return Ok(None);
     };
@@ -1116,8 +1116,8 @@ fn optional_datetime_arg(args: &Value, key: &str) -> Result<Option<DateTime<Utc>
             "{key} must be an RFC3339 datetime string or null"
         )));
     };
-    chrono::DateTime::parse_from_rfc3339(raw)
-        .map(|value| Some(value.with_timezone(&Utc)))
+    platform::timestamp::Timestamp::parse_rfc3339(raw)
+        .map(Some)
         .map_err(|_| ApiError::BadRequest(format!("{key} must be a valid RFC3339 datetime")))
 }
 

@@ -509,7 +509,11 @@ pub async fn post_flow_v2_command(
             &tx,
             &[object],
             if archived { "archived" } else { "active" },
-            if archived { Some(chrono::Utc::now()) } else { None },
+            if archived {
+                Some(platform::timestamp::Timestamp::now())
+            } else {
+                None
+            },
             Some(actor),
         )
         .await?;
@@ -748,7 +752,7 @@ pub async fn get_flow_v2_history(
     ).await?;
     let mut items = Vec::new();
     for row in rows {
-        items.push(json!({"seq":row.try_get::<i64>("","seq")?,"actor":row.try_get::<Option<Uuid>>("","actor")?,"origin":row.try_get::<String>("","origin")?,"message":row.try_get::<Option<String>>("","message")?,"semantic_summary":row.try_get::<Value>("","semantic_summary")?,"created_at":row.try_get::<chrono::DateTime<chrono::Utc>>("","created_at")?.to_rfc3339()}));
+        items.push(json!({"seq":row.try_get::<i64>("","seq")?,"actor":row.try_get::<Option<Uuid>>("","actor")?,"origin":row.try_get::<String>("","origin")?,"message":row.try_get::<Option<String>>("","message")?,"semantic_summary":row.try_get::<Value>("","semantic_summary")?,"created_at":row.try_get::<platform::timestamp::Timestamp>("","created_at")?.to_rfc3339()}));
     }
     if !scope::proof_current(&state.db, &proof).await? {
         return Err(crate::flow::policy::authorization_read_unstable());
@@ -783,7 +787,7 @@ pub async fn get_flow_v2_grants(
         if proof.level < PermissionLevel::FullAccess {
             break;
         }
-        grants.push(json!({"principal_kind":row.try_get::<String>("","principal_kind")?,"principal_id":row.try_get::<Uuid>("","principal_id")?,"level":row.try_get::<String>("","level")?,"granted_by":row.try_get::<Option<Uuid>>("","granted_by")?,"created_at":row.try_get::<chrono::DateTime<chrono::Utc>>("","created_at")?.to_rfc3339()}));
+        grants.push(json!({"principal_kind":row.try_get::<String>("","principal_kind")?,"principal_id":row.try_get::<Uuid>("","principal_id")?,"level":row.try_get::<String>("","level")?,"granted_by":row.try_get::<Option<Uuid>>("","granted_by")?,"created_at":row.try_get::<platform::timestamp::Timestamp>("","created_at")?.to_rfc3339()}));
     }
     if !scope::proof_current(&state.db, &proof).await? {
         return Err(crate::flow::policy::authorization_read_unstable());
@@ -1812,7 +1816,7 @@ pub async fn get_flow_v2_asset(
 
 #[derive(Deserialize)]
 pub struct ScopeShareCreate {
-    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    expires_at: Option<platform::timestamp::Timestamp>,
 }
 pub async fn get_flow_v2_share_links(
     State(state): State<AppState>,

@@ -20,7 +20,7 @@ name.
 
 ### Upgrade notes
 
-- Apply the included database migrations through `0101`. Keep the API and its bundled `collab-isolated-apply-worker` together. Review the feature settings before enabling the new workflows.
+- Apply the included database migrations through `0102`. Keep the API and its bundled `collab-isolated-apply-worker` together. Review the feature settings before enabling the new workflows.
 - Set `SV_FORM_PLUGIN_PACKAGES_ENABLED=1` to enable paired packages and the personal plugin library. Set `SV_FORM_PLUGIN_LAYOUTS_ENABLED=1` for multi-position packages. Existing project-installed packages retain their bindings.
 - When downgrading to an API that predates personal library links, set `SV_FORM_PLUGIN_PACKAGES_ENABLED=0` on that older API if library links exist. It cannot enforce their revocation state.
 
@@ -37,6 +37,7 @@ name.
 
 ### Security
 
+- Replaced Chrono with `time` and updated Loro to 1.18.0 (Rust and WebAssembly), which uses the maintained `imbl` implementation. Updated SeaORM's derive dependency to `sea-bae` 0.2.2. The lockfile no longer includes Chrono, im, bitmaps, sized-chunks or proc-macro-error2. Removed the four obsolete advisory exceptions.
 - Updated quinn-udp to 0.5.16 for RUSTSEC-2026-0538. The lock-only SQLx SQLite advisory RUSTSEC-2026-0459 is explicitly excepted only while a mandatory all-target/all-feature normal/build/dev dependency guard proves SQLite unreachable; SQLite itself was not upgraded or declared patched.
 
 - Patched RustSec findings in the lockfile: rustls 0.23.46, rustls-webpki 0.103.16,

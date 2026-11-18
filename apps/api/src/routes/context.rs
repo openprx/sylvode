@@ -22,8 +22,8 @@ pub struct ProjectContextProject {
     pub type_key: String,
     pub type_settings: Value,
     pub workflow_id: Option<Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -46,8 +46,8 @@ pub struct ProjectContextResource {
     pub locator: Value,
     pub permission_policy: Value,
     pub sync_status: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -59,7 +59,7 @@ pub struct ProjectContextGovernance {
     pub audit_report_cron: String,
     pub trust_update_mode: String,
     pub config: Value,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -91,7 +91,7 @@ pub struct ProjectContextDecision {
     pub result: String,
     pub approval_rate: Option<f64>,
     pub total_votes: i32,
-    pub decided_at: chrono::DateTime<chrono::Utc>,
+    pub decided_at: platform::timestamp::Timestamp,
 }
 
 pub async fn get_project_context(

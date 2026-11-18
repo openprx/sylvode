@@ -3712,7 +3712,7 @@ mod database_tests {
             let bytes = build_update_from_current(state, document_id, |engine| {
                 if create_this_chunk {
                     engine
-                        .apply_operation(&Operation::CreateNode {
+                        .apply_content_operation(&Operation::CreateNode {
                             id: id.clone(),
                             parent: None,
                             index: 0,
@@ -3721,7 +3721,7 @@ mod database_tests {
                         .expect("create must succeed locally");
                 }
                 engine
-                    .apply_operation(&Operation::InsertText {
+                    .apply_content_operation(&Operation::InsertText {
                         id,
                         index,
                         text: "a".repeat(this_chunk),
@@ -3862,6 +3862,16 @@ mod database_tests {
         let snapshot_advancer = SnapshotAdvancer::new();
         let limits = crate::flow::collab::limits::document_limits();
 
+        let initial_blocks = crate::flow::document::load_head_engine(&state.db, document_id)
+            .await
+            .expect("new page snapshot loads")
+            .semantic_snapshot()
+            .expect("new page semantics load")
+            .nodes
+            .values()
+            .filter(|node| node.kind == NodeKind::Block && !node.deleted)
+            .count();
+
         let accepted_exact = match submit_create_nodes_in_chunks(
             &state,
             &cache,
@@ -3873,7 +3883,10 @@ mod database_tests {
             owner_id,
             "blk",
             NodeKind::Block,
-            limits.document_block_count_max,
+            limits
+                .document_block_count_max
+                .checked_sub(initial_blocks)
+                .expect("bootstrap page is below the block ceiling"),
             CREATE_NODE_CHUNK,
             "block-count-exact",
         )
@@ -3971,7 +3984,7 @@ mod database_tests {
 
         let plus_one_bytes = build_update_from_current(&state, document_id, |engine| {
             engine
-                .apply_operation(&Operation::InsertText {
+                .apply_content_operation(&Operation::InsertText {
                     id: NodeId::from("blk-text"),
                     index: 0,
                     text: "b".to_string(),
@@ -4068,7 +4081,7 @@ mod database_tests {
 
         let plus_one_bytes = build_update_from_current(&state, document_id, |engine| {
             engine
-                .apply_operation(&Operation::CreateNode {
+                .apply_content_operation(&Operation::CreateNode {
                     id: NodeId::from("blk-doc-one-too-many"),
                     parent: None,
                     index: 0,
@@ -4076,7 +4089,7 @@ mod database_tests {
                 })
                 .expect("create must succeed locally");
             engine
-                .apply_operation(&Operation::InsertText {
+                .apply_content_operation(&Operation::InsertText {
                     id: NodeId::from("blk-doc-one-too-many"),
                     index: 0,
                     text: "z".to_string(),
@@ -4136,7 +4149,7 @@ mod database_tests {
         for _ in 0..8 {
             let bytes = build_update_from_current(state, document_id, |engine| {
                 engine
-                    .apply_operation(&Operation::CreateNode {
+                    .apply_content_operation(&Operation::CreateNode {
                         id: NodeId::from(block_id.to_string()),
                         parent: None,
                         index: 0,
@@ -4144,7 +4157,7 @@ mod database_tests {
                     })
                     .expect("create must succeed locally");
                 engine
-                    .apply_operation(&Operation::InsertText {
+                    .apply_content_operation(&Operation::InsertText {
                         id: NodeId::from(block_id.to_string()),
                         index: 0,
                         text: "a".repeat(text_len),

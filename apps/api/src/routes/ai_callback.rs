@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use chrono::Utc;
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -94,9 +94,9 @@ impl From<AiTaskRow> for AiTaskResponse {
             error_message: value.error_message,
             attempts: value.attempts,
             max_attempts: value.max_attempts,
-            next_retry_at: value.next_retry_at.map(|v| v.to_rfc3339()),
-            started_at: value.started_at.map(|v| v.to_rfc3339()),
-            completed_at: value.completed_at.map(|v| v.to_rfc3339()),
+            next_retry_at: value.next_retry_at.map(platform::timestamp::Timestamp::to_rfc3339),
+            started_at: value.started_at.map(platform::timestamp::Timestamp::to_rfc3339),
+            completed_at: value.completed_at.map(platform::timestamp::Timestamp::to_rfc3339),
             created_at: value.created_at.to_rfc3339(),
             updated_at: value.updated_at.to_rfc3339(),
         }
@@ -118,7 +118,7 @@ pub async fn complete_task(
     }
 
     let previous_status = task.status.clone();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let updated = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
@@ -213,7 +213,7 @@ pub async fn fail_task(
     }
 
     let previous_status = task.status.clone();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let message = req
         .error_message
         .clone()
@@ -283,7 +283,7 @@ pub async fn fail_task(
             "payload": req.payload.clone(),
             "attempts": task.attempts,
             "max_attempts": task.max_attempts,
-            "next_retry_at": task.next_retry_at.map(|v| v.to_rfc3339()),
+            "next_retry_at": task.next_retry_at.map(platform::timestamp::Timestamp::to_rfc3339),
         }),
     )
     .await?;
@@ -302,7 +302,7 @@ pub async fn fail_task(
             "payload": req.payload.clone(),
             "attempts": task.attempts,
             "max_attempts": task.max_attempts,
-            "next_retry_at": task.next_retry_at.map(|v| v.to_rfc3339()),
+            "next_retry_at": task.next_retry_at.map(platform::timestamp::Timestamp::to_rfc3339),
         }),
         Some(previous_status.as_str()),
     )

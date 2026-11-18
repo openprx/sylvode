@@ -2,13 +2,14 @@
 // Local SQL row types stay beside the queries whose column shapes they mirror.
 #![allow(clippy::items_after_statements, clippy::useless_let_if_seq)]
 
-use chrono::{Duration, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
     FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, Statement, TransactionTrait,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
+use time::Duration;
 use uuid::Uuid;
 
 use crate::{
@@ -45,7 +46,7 @@ struct SummaryRow {
 
 #[derive(Debug, Clone, FromQueryResult)]
 struct TimestampRow {
-    value: chrono::DateTime<chrono::Utc>,
+    value: platform::timestamp::Timestamp,
 }
 
 impl ImpactReviewService {
@@ -112,7 +113,7 @@ impl ImpactReviewService {
         &self,
         proposal_id: &str,
         reviewer_id: Option<Uuid>,
-        scheduled_at: Option<chrono::DateTime<Utc>>,
+        scheduled_at: Option<platform::timestamp::Timestamp>,
     ) -> Result<impact_review::Model, ApiError> {
         let tx = self.db.begin().await?;
         let mut review = self.schedule_review_with_conn(&tx, proposal_id, false).await?;
@@ -122,7 +123,7 @@ impl ImpactReviewService {
                 active.reviewer_id = Set(Some(reviewer_id));
             }
             if let Some(scheduled_at) = scheduled_at {
-                active.scheduled_at = Set(Some(scheduled_at.into()));
+                active.scheduled_at = Set(Some(scheduled_at));
             }
             review = active.update(&tx).await?;
         }
@@ -173,8 +174,7 @@ impl ImpactReviewService {
 
         let scheduled_at = Some(
             self.compute_scheduled_at_with_conn(db, &proposal.id, proposal.voting_ended_at)
-                .await?
-                .into(),
+                .await?,
         );
 
         let review = impact_review::ActiveModel {
@@ -184,7 +184,7 @@ impl ImpactReviewService {
             status: Set(ReviewStatus::Pending),
             is_auto_triggered: Set(is_auto_triggered),
             scheduled_at: Set(scheduled_at),
-            created_at: Set(Utc::now().into()),
+            created_at: Set(Timestamp::now()),
             ..Default::default()
         }
         .insert(db)
@@ -198,8 +198,8 @@ impl ImpactReviewService {
         &self,
         db: &C,
         proposal_id: &str,
-        voting_ended_at: Option<chrono::DateTime<chrono::FixedOffset>>,
-    ) -> Result<chrono::DateTime<chrono::Utc>, ApiError> {
+        voting_ended_at: Option<platform::timestamp::Timestamp>,
+    ) -> Result<platform::timestamp::Timestamp, ApiError> {
         #[derive(Debug, Clone, FromQueryResult)]
         struct ProjectIdRow {
             project_id: Uuid,
@@ -229,8 +229,7 @@ impl ImpactReviewService {
             30
         };
 
-        let from_voting = voting_ended_at.map_or_else(Utc::now, |at| at.with_timezone(&Utc))
-            + Duration::days(i64::from(auto_review_days));
+        let from_voting = voting_ended_at.unwrap_or_else(Timestamp::now) + Duration::days(i64::from(auto_review_days));
         let all_closed_at = TimestampRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r"
@@ -568,7 +567,7 @@ impl ImpactReviewService {
         if let Some(rating) = rating {
             active.rating = Set(Some(rating));
             active.status = Set(ReviewStatus::Completed);
-            active.conducted_at = Set(Some(Utc::now().into()));
+            active.conducted_at = Set(Some(Timestamp::now()));
         }
         if let Some(goal_achievements) = goal_achievements {
             active.goal_achievements = Set(Some(goal_achievements));
@@ -785,7 +784,7 @@ impl ImpactReviewService {
                 lesson_learned: Set(None),
                 will_change: Set(None),
                 follow_up_improvement: Set(follow_up),
-                created_at: Set(Utc::now().into()),
+                created_at: Set(Timestamp::now()),
                 ..Default::default()
             }
             .insert(db)

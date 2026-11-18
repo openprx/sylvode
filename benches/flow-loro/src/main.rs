@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
     let report = serde_json::json!({
         "ok": true,
         "engine": "collab-core::LoroCollabEngine",
-        "loro": "1.13.9",
+        "loro": "1.18.0",
         "apply_samples": APPLY_SAMPLES,
         "replay_samples": REPLAY_SAMPLES,
         "sizes": sizes,

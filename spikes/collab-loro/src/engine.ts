@@ -6,7 +6,7 @@ const TREE_CONTAINER_NAME = "tree";
 const EXTERNAL_ID_KEY = "externalId";
 
 /**
- * Real loro-crdt@1.14.1 implementation of the shared EngineAdapter +
+ * Real loro-crdt@1.18.0 implementation of the shared EngineAdapter +
  * ScenarioAdapter contracts (spikes/collab-shared/src/testing.ts). Every
  * method below calls a real LoroDoc / LoroText / LoroTree API -- see the
  * delivery report for the exact API surface used and where it was verified

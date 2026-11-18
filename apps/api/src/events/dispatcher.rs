@@ -26,8 +26,8 @@
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use chrono::{DateTime, Utc};
 use platform::app::AppState;
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -311,12 +311,12 @@ pub struct DispatchTickReport {
 /// `false` before the first tick this process has ever run, or once the gap since the last started
 /// tick exceeds the budget — either one is exactly the signal `ADR-0011`'s "dispatcher 不在线即整体
 /// 告警" needs a caller (e.g. a `/readyz` route) to alert on.
-pub fn dispatcher_is_live(now: DateTime<Utc>, max_silence_ms: i64) -> bool {
+pub fn dispatcher_is_live(now: Timestamp, max_silence_ms: i64) -> bool {
     let last = LAST_TICK_STARTED_AT_UNIX_MS.load(Ordering::Relaxed);
     let last = if last == 0 {
         None
     } else {
-        DateTime::from_timestamp_millis(last)
+        Timestamp::from_unix_timestamp_millis(last)
     };
     dispatcher_is_live_since(last, now, max_silence_ms)
 }
@@ -328,12 +328,8 @@ pub fn dispatcher_is_live(now: DateTime<Utc>, max_silence_ms: i64) -> bool {
 /// happened" — by advancing a virtual clock through the argument, without racing every *other* test
 /// in the same binary that calls [`run_tick`] and therefore mutates the one shared global this
 /// function's public wrapper reads.
-pub fn dispatcher_is_live_since(
-    last_tick_started_at: Option<DateTime<Utc>>,
-    now: DateTime<Utc>,
-    max_silence_ms: i64,
-) -> bool {
-    last_tick_started_at.is_some_and(|last| (now - last).num_milliseconds() <= max_silence_ms)
+pub fn dispatcher_is_live_since(last_tick_started_at: Option<Timestamp>, now: Timestamp, max_silence_ms: i64) -> bool {
+    last_tick_started_at.is_some_and(|last| (now - last).whole_milliseconds() <= i128::from(max_silence_ms))
 }
 
 /// `oldest_pending_age` threshold check over a completed tick's report: `true` iff either half of
@@ -355,8 +351,11 @@ static LAST_TICK_STARTED_AT_UNIX_MS: AtomicI64 = AtomicI64::new(0);
 
 pub async fn run_tick(state: &AppState, client: &reqwest::Client, batch: usize) -> DispatchTickReport {
     let batch = batch.max(1);
-    let now = Utc::now();
-    LAST_TICK_STARTED_AT_UNIX_MS.store(now.timestamp_millis(), Ordering::Relaxed);
+    let now = Timestamp::now();
+    LAST_TICK_STARTED_AT_UNIX_MS.store(
+        i64::try_from(now.unix_timestamp_millis()).unwrap_or(i64::MAX),
+        Ordering::Relaxed,
+    );
     let mut report = DispatchTickReport::default();
     for _ in 0..batch {
         match expand_independent_source(&state.db).await {
@@ -432,12 +431,12 @@ pub async fn run_tick(state: &AppState, client: &reqwest::Client, batch: usize) 
 
 #[derive(Debug, FromQueryResult)]
 struct OldestPendingRow {
-    oldest_created_at: Option<DateTime<Utc>>,
+    oldest_created_at: Option<Timestamp>,
 }
 
 /// `oldest_pending_age`, dispatch half: age of the oldest still-unresolved (`status = 'pending'`)
 /// `event_dispatch` row. `None` when there is no such row.
-async fn oldest_pending_dispatch_age_ms(db: &DatabaseConnection, now: DateTime<Utc>) -> Result<Option<i64>, ApiError> {
+async fn oldest_pending_dispatch_age_ms(db: &DatabaseConnection, now: Timestamp) -> Result<Option<i64>, ApiError> {
     let row = OldestPendingRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT MIN(created_at) AS oldest_created_at FROM event_dispatch WHERE status = 'pending'",
@@ -447,13 +446,13 @@ async fn oldest_pending_dispatch_age_ms(db: &DatabaseConnection, now: DateTime<U
     .await?;
     Ok(row
         .and_then(|r| r.oldest_created_at)
-        .map(|oldest| (now - oldest).num_milliseconds().max(0)))
+        .map(|oldest| i64::try_from((now - oldest).whole_milliseconds().max(0)).unwrap_or(i64::MAX)))
 }
 
 /// `oldest_pending_age`, delivery half: age of the oldest still-undelivered `event_deliveries` row
 /// (`pending`/`sealed`/`leased` — everything short of a terminal state counts as "未投递"). `None`
 /// when there is no such row.
-async fn oldest_pending_delivery_age_ms(db: &DatabaseConnection, now: DateTime<Utc>) -> Result<Option<i64>, ApiError> {
+async fn oldest_pending_delivery_age_ms(db: &DatabaseConnection, now: Timestamp) -> Result<Option<i64>, ApiError> {
     let row = OldestPendingRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT MIN(created_at) AS oldest_created_at FROM event_deliveries WHERE status IN ('pending', 'sealed', 'leased')",
@@ -463,7 +462,7 @@ async fn oldest_pending_delivery_age_ms(db: &DatabaseConnection, now: DateTime<U
     .await?;
     Ok(row
         .and_then(|r| r.oldest_created_at)
-        .map(|oldest| (now - oldest).num_milliseconds().max(0)))
+        .map(|oldest| i64::try_from((now - oldest).whole_milliseconds().max(0)).unwrap_or(i64::MAX)))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1299,7 +1298,7 @@ struct BusinessEventRow {
     metadata: Value,
     correlation_id: Option<Uuid>,
     causation_id: Option<Uuid>,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 }
 
 async fn fetch_business_event<C: ConnectionTrait>(
@@ -1329,7 +1328,7 @@ async fn fetch_business_event<C: ConnectionTrait>(
 fn envelope_json(
     event: &BusinessEventRow,
     event_id_override: Option<Uuid>,
-    created_at_override: Option<DateTime<Utc>>,
+    created_at_override: Option<Timestamp>,
     payload_override: Option<Value>,
 ) -> Value {
     let raw_payload = payload_override.unwrap_or_else(|| event.payload.clone());
@@ -1457,7 +1456,7 @@ async fn build_delivery_body(db: &DatabaseConnection, delivery: &DeliveryLeaseRo
 /// independent `now()` calls (one in the test's `UPDATE`, one in this `DELETE`) would always have
 /// drifted apart by at least the round-trip between them, which makes "exactly at the boundary"
 /// unobservable. `run_tick` passes real wall-clock time; nothing else changes for production use.
-async fn reap_dispatch_retention(db: &DatabaseConnection, now: DateTime<Utc>) -> Result<u64, ApiError> {
+async fn reap_dispatch_retention(db: &DatabaseConnection, now: Timestamp) -> Result<u64, ApiError> {
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -1482,7 +1481,7 @@ async fn reap_dispatch_retention(db: &DatabaseConnection, now: DateTime<Utc>) ->
 }
 
 /// See [`reap_dispatch_retention`]'s doc comment for why `now` is an explicit argument.
-async fn reap_delivery_retention(db: &DatabaseConnection, now: DateTime<Utc>) -> Result<u64, ApiError> {
+async fn reap_delivery_retention(db: &DatabaseConnection, now: Timestamp) -> Result<u64, ApiError> {
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -1507,7 +1506,7 @@ async fn reap_delivery_retention(db: &DatabaseConnection, now: DateTime<Utc>) ->
 /// the delivery it names has not been retention-reaped -- and deleting it here would destroy the
 /// `(subscriber_kind, subscriber_id, source_event_id)` dedup evidence a still-live delivery
 /// depends on, so `delivery_id IS NULL` is not an optimization, it is the entire safety property.
-async fn reap_delivery_source_tombstones(db: &DatabaseConnection, now: DateTime<Utc>) -> Result<u64, ApiError> {
+async fn reap_delivery_source_tombstones(db: &DatabaseConnection, now: Timestamp) -> Result<u64, ApiError> {
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -1549,7 +1548,7 @@ async fn reap_delivery_source_tombstones(db: &DatabaseConnection, now: DateTime<
 /// real database below; wiring it to an operator-facing REST/CLI surface is `events-v1.md`'s
 /// fuller v0.8 `mode=requeue_failed` admin replay feature (`"v0.8 的 admin replay ... 全程不经过
 /// event_dispatch"`), out of this task's scope.
-pub async fn requeue_failed(db: &DatabaseConnection, workspace_id: Uuid, now: DateTime<Utc>) -> Result<u64, ApiError> {
+pub async fn requeue_failed(db: &DatabaseConnection, workspace_id: Uuid, now: Timestamp) -> Result<u64, ApiError> {
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -1585,15 +1584,15 @@ pub struct ReplayRequest {
     pub event_type: Option<String>,
     pub subscriber_kind: Option<String>,
     pub subscriber_id: Option<Uuid>,
-    pub from: DateTime<Utc>,
-    pub to: DateTime<Utc>,
+    pub from: Timestamp,
+    pub to: Timestamp,
     pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ReplayWindow {
-    pub from: DateTime<Utc>,
-    pub to: DateTime<Utc>,
+    pub from: Timestamp,
+    pub to: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1626,13 +1625,13 @@ struct RequeueCandidate {
     status: String,
 }
 
-fn validate_replay_window(request: &ReplayRequest, now: DateTime<Utc>) -> Result<(), ApiError> {
+fn validate_replay_window(request: &ReplayRequest, now: Timestamp) -> Result<(), ApiError> {
     if request.from >= request.to || request.to > now {
         return Err(ApiError::BadRequest(
             "replay window must be non-empty, half-open, and not extend into the future".to_string(),
         ));
     }
-    let oldest = now - chrono::Duration::days(REPLAY_MAX_WINDOW_DAYS);
+    let oldest = now - time::Duration::days(REPLAY_MAX_WINDOW_DAYS);
     if request.from <= oldest {
         return Err(ApiError::BadRequest(
             "replay window is outside replay_max_window_days".to_string(),
@@ -1653,7 +1652,7 @@ fn validate_replay_window(request: &ReplayRequest, now: DateTime<Utc>) -> Result
 pub async fn replay_deliveries(
     db: &DatabaseConnection,
     request: &ReplayRequest,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<ReplayResult, ApiError> {
     validate_replay_window(request, now)?;
     let window = ReplayWindow {
@@ -1822,7 +1821,7 @@ pub async fn replay_deliveries(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 mod dispatcher_database_tests {
-    use chrono::{DateTime, Utc};
+    use platform::timestamp::Timestamp;
     use platform::{
         app::AppState,
         config::{AppConfig, Secret},
@@ -1927,7 +1926,7 @@ mod dispatcher_database_tests {
             }),
             correlation_id: None,
             causation_id: None,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
         };
 
         let envelope = envelope_json(&event, None, None, None);
@@ -2202,7 +2201,7 @@ mod dispatcher_database_tests {
         timestamp_column: &'static str,
         id_column: &'static str,
         id: Uuid,
-        offset: chrono::Duration,
+        offset: time::Duration,
     ) {
         exec(
             db,
@@ -2210,7 +2209,7 @@ mod dispatcher_database_tests {
                 "UPDATE {table} SET {timestamp_column} = now() - ($2::bigint * interval '1 millisecond') \
                  WHERE {id_column} = $1"
             ),
-            vec![id.into(), offset.num_milliseconds().into()],
+            vec![id.into(), i64::try_from(offset.whole_milliseconds()).unwrap().into()],
         )
         .await;
     }
@@ -2227,7 +2226,7 @@ mod dispatcher_database_tests {
         timestamp_column: &'static str,
         id_column: &'static str,
         id: Uuid,
-        value: chrono::DateTime<Utc>,
+        value: platform::timestamp::Timestamp,
     ) {
         exec(
             db,
@@ -2893,7 +2892,16 @@ mod dispatcher_database_tests {
             vec![event_id.into()],
         )
         .await;
-        let now = Utc::now();
+        let now = Timestamp::now();
+        set_timestamp(
+            &scratch.db,
+            "business_events",
+            "created_at",
+            "id",
+            event_id,
+            now - time::Duration::seconds(30),
+        )
+        .await;
         let replay = replay_deliveries(
             &scratch.db,
             &ReplayRequest {
@@ -2902,7 +2910,7 @@ mod dispatcher_database_tests {
                 event_type: Some("flow.object.created".to_string()),
                 subscriber_kind: Some("webhook".to_string()),
                 subscriber_id: Some(webhook_id),
-                from: now - chrono::Duration::minutes(1),
+                from: now - time::Duration::minutes(1),
                 to: now,
                 dry_run: false,
             },
@@ -2953,7 +2961,7 @@ mod dispatcher_database_tests {
         struct RetryRow {
             status: String,
             attempts: i32,
-            next_attempt_at: DateTime<Utc>,
+            next_attempt_at: Timestamp,
         }
         for attempt in 1_i64..=10 {
             exec(
@@ -2962,13 +2970,13 @@ mod dispatcher_database_tests {
                 vec![delivery_id.into()],
             )
             .await;
-            let before: DateTime<Utc> = get_col(&scratch.db, "SELECT clock_timestamp() AS ts", vec![], "ts").await;
+            let before: Timestamp = get_col(&scratch.db, "SELECT clock_timestamp() AS ts", vec![], "ts").await;
             let outcome = TEST_ALLOW_PRIVATE_DELIVERY_TARGET
                 .scope(true, send_one(&state, &client))
                 .await
                 .expect("delivery attempt runs");
             assert_eq!(outcome, Some(false), "HTTP 503 is a handled failed attempt");
-            let after: DateTime<Utc> = get_col(&scratch.db, "SELECT clock_timestamp() AS ts", vec![], "ts").await;
+            let after: Timestamp = get_col(&scratch.db, "SELECT clock_timestamp() AS ts", vec![], "ts").await;
             let row = RetryRow::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "SELECT status,attempts,next_attempt_at FROM event_deliveries WHERE id=$1",
@@ -2978,7 +2986,7 @@ mod dispatcher_database_tests {
             .await
             .expect("retry row query runs")
             .expect("retry row remains present");
-            let expected = chrono::Duration::milliseconds((attempt * 30_000).min(300_000));
+            let expected = time::Duration::milliseconds((attempt * 30_000).min(300_000));
             assert!(
                 row.next_attempt_at >= before + expected && row.next_attempt_at <= after + expected,
                 "attempt {attempt} wrote {} outside the database-observed [{}, {}] schedule",
@@ -3693,14 +3701,14 @@ mod dispatcher_database_tests {
         // in Rust and use it for both the row's `expanded_at` and the reaper's `now` argument, so
         // "exactly at the boundary" is not at the mercy of two independent Postgres `now()` calls
         // drifting apart between the `UPDATE` and the `DELETE`.
-        let reference_now = Utc::now();
+        let reference_now = Timestamp::now();
         set_timestamp(
             &scratch.db,
             "event_dispatch",
             "expanded_at",
             "id",
             dispatch_id,
-            reference_now - chrono::Duration::hours(24),
+            reference_now - time::Duration::hours(24),
         )
         .await;
         let reaped_at_boundary = super::reap_dispatch_retention(&scratch.db, reference_now)
@@ -3727,7 +3735,7 @@ mod dispatcher_database_tests {
             "expanded_at",
             "id",
             dispatch_id,
-            reference_now - chrono::Duration::hours(24) - chrono::Duration::milliseconds(1),
+            reference_now - time::Duration::hours(24) - time::Duration::milliseconds(1),
         )
         .await;
         let reaped_past_boundary = super::reap_dispatch_retention(&scratch.db, reference_now)
@@ -3799,22 +3807,21 @@ mod dispatcher_database_tests {
 
     #[test]
     fn dispatcher_liveness_pure_boundary_via_virtual_clock() {
-        let last_tick = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-            .expect("fixed timestamp parses")
-            .with_timezone(&Utc);
+        let last_tick =
+            platform::timestamp::Timestamp::parse_rfc3339("2026-01-01T00:00:00Z").expect("fixed timestamp parses");
 
         assert!(
             !dispatcher_is_live_since(None, last_tick, DISPATCHER_LIVENESS_MAX_SILENCE_MS),
             "before any tick has ever happened, liveness must be false regardless of `now`"
         );
 
-        let exactly_at_budget = last_tick + chrono::Duration::milliseconds(DISPATCHER_LIVENESS_MAX_SILENCE_MS);
+        let exactly_at_budget = last_tick + time::Duration::milliseconds(DISPATCHER_LIVENESS_MAX_SILENCE_MS);
         assert!(
             dispatcher_is_live_since(Some(last_tick), exactly_at_budget, DISPATCHER_LIVENESS_MAX_SILENCE_MS),
             "exactly at the silence budget, the dispatcher must still be reported live"
         );
 
-        let one_ms_past_budget = exactly_at_budget + chrono::Duration::milliseconds(1);
+        let one_ms_past_budget = exactly_at_budget + time::Duration::milliseconds(1);
         assert!(
             !dispatcher_is_live_since(Some(last_tick), one_ms_past_budget, DISPATCHER_LIVENESS_MAX_SILENCE_MS),
             "one millisecond past the silence budget, the dispatcher must be reported stale"
@@ -3827,7 +3834,7 @@ mod dispatcher_database_tests {
         let state = state_for(scratch.db.clone());
         run_tick(&state, &reqwest::Client::new(), 1).await;
         assert!(
-            dispatcher_is_live(Utc::now(), DISPATCHER_LIVENESS_MAX_SILENCE_MS),
+            dispatcher_is_live(Timestamp::now(), DISPATCHER_LIVENESS_MAX_SILENCE_MS),
             "the process-global wrapper must report live immediately after any run_tick call in \
              this process (this assertion only ever requires *some* recent tick, so it cannot be \
              made to fail by other tests concurrently ticking the same process)"
@@ -3849,7 +3856,7 @@ mod dispatcher_database_tests {
         )
         .await;
 
-        let fresh_age = oldest_pending_dispatch_age_ms(&scratch.db, Utc::now())
+        let fresh_age = oldest_pending_dispatch_age_ms(&scratch.db, Timestamp::now())
             .await
             .expect("query runs")
             .expect("one pending row exists");
@@ -3859,17 +3866,18 @@ mod dispatcher_database_tests {
         );
 
         // Advance the virtual clock by backdating the row's own `created_at`, not by sleeping.
-        backdate(
+        let now = Timestamp::now();
+        set_timestamp(
             &scratch.db,
             "event_dispatch",
             "created_at",
             "id",
             dispatch_id,
-            chrono::Duration::milliseconds(OLDEST_PENDING_AGE_ALERT_MS + 1),
+            now - time::Duration::milliseconds(OLDEST_PENDING_AGE_ALERT_MS + 1),
         )
         .await;
 
-        let aged = oldest_pending_dispatch_age_ms(&scratch.db, Utc::now())
+        let aged = oldest_pending_dispatch_age_ms(&scratch.db, now)
             .await
             .expect("query runs")
             .expect("still one pending row");
@@ -3912,17 +3920,18 @@ mod dispatcher_database_tests {
             "id",
         )
         .await;
-        backdate(
+        let now = Timestamp::now();
+        set_timestamp(
             &scratch.db,
             "event_deliveries",
             "created_at",
             "id",
             delivery_id,
-            chrono::Duration::milliseconds(OLDEST_PENDING_AGE_ALERT_MS + 1),
+            now - time::Duration::milliseconds(OLDEST_PENDING_AGE_ALERT_MS + 1),
         )
         .await;
 
-        let age = oldest_pending_delivery_age_ms(&scratch.db, Utc::now())
+        let age = oldest_pending_delivery_age_ms(&scratch.db, now)
             .await
             .expect("query runs")
             .expect("one undelivered row exists");
@@ -3936,7 +3945,7 @@ mod dispatcher_database_tests {
             vec![delivery_id.into()],
         )
         .await;
-        let age_after_terminal = oldest_pending_delivery_age_ms(&scratch.db, Utc::now())
+        let age_after_terminal = oldest_pending_delivery_age_ms(&scratch.db, Timestamp::now())
             .await
             .expect("query runs");
         assert_eq!(
@@ -4098,7 +4107,7 @@ mod dispatcher_database_tests {
             "next_attempt_at",
             "id",
             dispatch_id,
-            chrono::Duration::milliseconds(1),
+            time::Duration::milliseconds(1),
         )
         .await;
 
@@ -4686,7 +4695,7 @@ mod dispatcher_database_tests {
             "id",
         )
         .await;
-        let same_created_at: DateTime<Utc> = get_col(
+        let same_created_at: Timestamp = get_col(
             &scratch.db,
             "SELECT created_at FROM event_dispatch WHERE event_id = $1",
             vec![event_2.into()],
@@ -4812,16 +4821,16 @@ mod dispatcher_database_tests {
         )
         .await;
 
-        let now = Utc::now();
-        let old_created_at = now - chrono::Duration::days(super::DELIVERY_SOURCE_RETENTION_DAYS + 1);
-        let fresh_created_at = now - chrono::Duration::days(super::DELIVERY_SOURCE_RETENTION_DAYS - 1);
+        let now = Timestamp::now();
+        let old_created_at = now - time::Duration::days(super::DELIVERY_SOURCE_RETENTION_DAYS + 1);
+        let fresh_created_at = now - time::Duration::days(super::DELIVERY_SOURCE_RETENTION_DAYS - 1);
 
         async fn insert_source_row(
             db: &DatabaseConnection,
             workspace_id: Uuid,
             delivery_id: Option<Uuid>,
             source_event_id: Uuid,
-            created_at: DateTime<Utc>,
+            created_at: Timestamp,
         ) -> Uuid {
             let id = Uuid::new_v4();
             exec(
@@ -5004,7 +5013,7 @@ mod dispatcher_database_tests {
         )
         .await;
 
-        let revived = requeue_failed(&scratch.db, workspace_id, Utc::now())
+        let revived = requeue_failed(&scratch.db, workspace_id, Timestamp::now())
             .await
             .expect("requeue_failed runs");
         assert_eq!(
@@ -5017,7 +5026,7 @@ mod dispatcher_database_tests {
             status: String,
             document_id: Option<Uuid>,
             attempts: i32,
-            terminated_at: Option<DateTime<Utc>>,
+            terminated_at: Option<Timestamp>,
         }
         async fn fetch(db: &DatabaseConnection, id: Uuid) -> Row {
             Row::find_by_statement(Statement::from_sql_and_values(
@@ -5313,11 +5322,11 @@ mod dispatcher_database_tests {
             "created_at",
             "id",
             stale_pending_delivery,
-            chrono::Duration::days(3650),
+            time::Duration::days(3650),
         )
         .await;
 
-        let reference_now = Utc::now();
+        let reference_now = Timestamp::now();
 
         // Exactly at the 30-day boundary: must survive.
         set_timestamp(
@@ -5326,7 +5335,7 @@ mod dispatcher_database_tests {
             "terminated_at",
             "id",
             dispatched_delivery,
-            reference_now - chrono::Duration::days(30),
+            reference_now - time::Duration::days(30),
         )
         .await;
         let reaped_at_boundary = super::reap_delivery_retention(&scratch.db, reference_now)
@@ -5350,7 +5359,7 @@ mod dispatcher_database_tests {
             "terminated_at",
             "id",
             dispatched_delivery,
-            reference_now - chrono::Duration::days(30) - chrono::Duration::milliseconds(1),
+            reference_now - time::Duration::days(30) - time::Duration::milliseconds(1),
         )
         .await;
         let reaped_past_boundary = super::reap_delivery_retention(&scratch.db, reference_now)
@@ -5432,7 +5441,7 @@ mod dispatcher_database_tests {
         )
         .await;
 
-        let reference_now = Utc::now();
+        let reference_now = Timestamp::now();
 
         // `dispatch_expanded_retention_days` = 14: 14 days old survives, 15 is reaped. The `failed`
         // row (still fresh at `reference_now`) must be unaffected by either pass.
@@ -5442,7 +5451,7 @@ mod dispatcher_database_tests {
             "expanded_at",
             "id",
             expanded_dispatch,
-            reference_now - chrono::Duration::days(14),
+            reference_now - time::Duration::days(14),
         )
         .await;
         assert_eq!(
@@ -5457,7 +5466,7 @@ mod dispatcher_database_tests {
             "expanded_at",
             "id",
             expanded_dispatch,
-            reference_now - chrono::Duration::days(15),
+            reference_now - time::Duration::days(15),
         )
         .await;
         assert_eq!(
@@ -5475,7 +5484,7 @@ mod dispatcher_database_tests {
             "expanded_at",
             "id",
             failed_dispatch,
-            reference_now - chrono::Duration::days(15),
+            reference_now - time::Duration::days(15),
         )
         .await;
         assert_eq!(
@@ -5494,7 +5503,7 @@ mod dispatcher_database_tests {
             "expanded_at",
             "id",
             failed_dispatch,
-            reference_now - chrono::Duration::days(91),
+            reference_now - time::Duration::days(91),
         )
         .await;
         assert_eq!(
@@ -5747,7 +5756,7 @@ mod dispatcher_database_tests {
         // Dead-letter rows must remain queryable immediately, and are not touched by the reaper
         // until their own (`delivery_retention_days`) window elapses.
         assert_eq!(
-            super::reap_delivery_retention(&scratch.db, Utc::now())
+            super::reap_delivery_retention(&scratch.db, Timestamp::now())
                 .await
                 .expect("reaper runs"),
             0
@@ -6318,7 +6327,7 @@ mod dispatcher_database_tests {
             &["flow.object.created"],
         )
         .await;
-        let now = Utc::now();
+        let now = Timestamp::now();
         let event_id = commit_dispatch_work(
             &scratch.db,
             workspace_id,
@@ -6337,7 +6346,7 @@ mod dispatcher_database_tests {
         exec(
             &scratch.db,
             "UPDATE business_events SET created_at=$2 WHERE id=$1",
-            vec![event_id.into(), (now - chrono::Duration::days(29)).into()],
+            vec![event_id.into(), (now - time::Duration::days(29)).into()],
         )
         .await;
         let request = ReplayRequest {
@@ -6346,8 +6355,8 @@ mod dispatcher_database_tests {
             event_type: Some("flow.object.created".to_string()),
             subscriber_kind: Some("webhook".to_string()),
             subscriber_id: Some(webhook_id),
-            from: now - chrono::Duration::days(REPLAY_MAX_WINDOW_DAYS) + chrono::Duration::milliseconds(1),
-            to: now - chrono::Duration::days(28),
+            from: now - time::Duration::days(REPLAY_MAX_WINDOW_DAYS) + time::Duration::milliseconds(1),
+            to: now - time::Duration::days(28),
             dry_run: true,
         };
 
@@ -6386,13 +6395,13 @@ mod dispatcher_database_tests {
         exec(
             &scratch.db,
             "UPDATE event_delivery_sources SET created_at=$2 WHERE delivery_id=$1",
-            vec![delivery_id.into(), (now - chrono::Duration::days(40)).into()],
+            vec![delivery_id.into(), (now - time::Duration::days(40)).into()],
         )
         .await;
         exec(
             &scratch.db,
             "UPDATE event_deliveries SET status='dispatched', terminated_at=$2 WHERE id=$1",
-            vec![delivery_id.into(), (now - chrono::Duration::days(31)).into()],
+            vec![delivery_id.into(), (now - time::Duration::days(31)).into()],
         )
         .await;
         assert_eq!(reap_delivery_retention(&scratch.db, now).await.expect("reaper runs"), 1);
@@ -6434,9 +6443,9 @@ mod dispatcher_database_tests {
         );
 
         let mut exact_boundary = request;
-        exact_boundary.from = now - chrono::Duration::days(REPLAY_MAX_WINDOW_DAYS);
+        exact_boundary.from = now - time::Duration::days(REPLAY_MAX_WINDOW_DAYS);
         assert!(replay_deliveries(&scratch.db, &exact_boundary, now).await.is_err());
-        exact_boundary.from += chrono::Duration::milliseconds(1);
+        exact_boundary.from += time::Duration::milliseconds(1);
         assert!(replay_deliveries(&scratch.db, &exact_boundary, now).await.is_ok());
 
         scratch.drop_self().await;
@@ -6481,14 +6490,23 @@ mod dispatcher_database_tests {
         )
         .await;
 
-        let now = Utc::now();
+        let now = Timestamp::now();
+        set_timestamp(
+            &scratch.db,
+            "business_events",
+            "created_at",
+            "id",
+            event_id,
+            now - time::Duration::seconds(30),
+        )
+        .await;
         let request = ReplayRequest {
             workspace_id,
             mode: ReplayMode::Rebuild,
             event_type: Some("flow.object.created".to_string()),
             subscriber_kind: Some("webhook".to_string()),
             subscriber_id: Some(webhook_id),
-            from: now - chrono::Duration::minutes(1),
+            from: now - time::Duration::minutes(1),
             to: now,
             dry_run: false,
         };
@@ -6588,7 +6606,7 @@ mod dispatcher_database_tests {
             &["flow.object.created"],
         )
         .await;
-        let now = Utc::now();
+        let now = Timestamp::now();
         let event_id = commit_dispatch_work(
             &scratch.db,
             workspace_id,
@@ -6607,7 +6625,7 @@ mod dispatcher_database_tests {
         exec(
             &scratch.db,
             "UPDATE business_events SET created_at=$2 WHERE id=$1",
-            vec![event_id.into(), (now - chrono::Duration::days(120)).into()],
+            vec![event_id.into(), (now - time::Duration::days(120)).into()],
         )
         .await;
         let delivery_id = Uuid::new_v4();
@@ -6622,7 +6640,7 @@ mod dispatcher_database_tests {
                 workspace_id.into(),
                 webhook_id.into(),
                 Uuid::new_v4().into(),
-                (now - chrono::Duration::days(1)).into(),
+                (now - time::Duration::days(1)).into(),
             ],
         )
         .await;
@@ -6645,7 +6663,7 @@ mod dispatcher_database_tests {
             event_type: Some("flow.object.created".to_string()),
             subscriber_kind: Some("webhook".to_string()),
             subscriber_id: Some(webhook_id),
-            from: now - chrono::Duration::days(2),
+            from: now - time::Duration::days(2),
             to: now,
             dry_run: false,
         };

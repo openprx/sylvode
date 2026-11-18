@@ -516,7 +516,7 @@ pub async fn discard(
 /// Only expired, never-referenced staged blobs qualify; any historical ref prevents deletion.
 pub async fn reap_unused(
     db: &DatabaseConnection,
-    older_than: chrono::DateTime<chrono::Utc>,
+    older_than: platform::timestamp::Timestamp,
     batch: u32,
 ) -> Result<u64, ApiError> {
     require_ready(db).await?;
@@ -524,7 +524,7 @@ pub async fn reap_unused(
 }
 async fn reap_rows(
     db: &DatabaseConnection,
-    older_than: chrono::DateTime<chrono::Utc>,
+    older_than: platform::timestamp::Timestamp,
     batch: u32,
 ) -> Result<u64, ApiError> {
     if !(1..=32).contains(&batch) {
@@ -874,9 +874,13 @@ mod sql_tests {
         assert_eq!(state.try_get::<String>("", "state").unwrap(), "retained");
         assert_eq!(state.try_get::<i64>("", "first_referenced_seq").unwrap(), 1);
         assert_eq!(
-            reap_rows(db, chrono::Utc::now() + chrono::Duration::minutes(1), 32)
-                .await
-                .unwrap(),
+            reap_rows(
+                db,
+                platform::timestamp::Timestamp::now() + time::Duration::minutes(1),
+                32
+            )
+            .await
+            .unwrap(),
             1
         );
         let remaining = db

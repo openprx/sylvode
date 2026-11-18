@@ -6,7 +6,7 @@
       "name": "frontend",
       "dependencies": {
         "lib0": "0.2.117",
-        "loro-crdt": "1.14.1",
+        "loro-crdt": "1.18.0",
         "loro-prosemirror": "0.4.3",
         "prosemirror-commands": "1.7.1",
         "prosemirror-keymap": "1.2.3",
@@ -380,7 +380,7 @@
 
     "lodash.merge": ["lodash.merge@4.6.2", "", {}, "sha512-0KpjqXRVvrYyCsX1swR/XTK0va6VQkQM6MNo7PqW77ByjAhoARA8EfrP1N4+KlKj8YS0ZUCtRT/YUuhyYDujIQ=="],
 
-    "loro-crdt": ["loro-crdt@1.14.1", "", {}, "sha512-1BQ7neoQeJdCbD8gxlLHsy8tqCLYIJGrXSZic4s3t7toIsiFfks8Z0nGWvuEWr5miZ7giJx19x5ffkBaw+g9KQ=="],
+    "loro-crdt": ["loro-crdt@1.18.0", "", {}, "sha512-e/96j7B6MUMVc+AilrY6c/Q4+0uNGhBIqhRosadqeEM1d9+IMpxYKy2mL22NIj6ILuZfP0fF5cYTkipxgbddHg=="],
 
     "loro-prosemirror": ["loro-prosemirror@0.4.3", "", { "dependencies": { "lib0": "^0.2.42", "prosemirror-model": "^1.18.1", "prosemirror-state": "^1.4.1", "prosemirror-view": "^1.28.0" }, "peerDependencies": { "loro-crdt": "^1.10.2" } }, "sha512-stAWIWs54LfXx0mvCzXF02XpEv9AKgrhSBPt44eT4SsrBEWZaq0jTFuzs8EyBmipBBcuC2ooRRX4NQjwSeQl9Q=="],
 

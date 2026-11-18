@@ -175,7 +175,7 @@ async fn version(db: &DatabaseConnection, table: &str, id: Uuid) -> String {
     .await
     .unwrap()
     .unwrap()
-    .try_get::<chrono::DateTime<chrono::Utc>>("", "updated_at")
+    .try_get::<platform::timestamp::Timestamp>("", "updated_at")
     .unwrap()
     .to_rfc3339()
 }
@@ -354,7 +354,7 @@ async fn assistant_version(db: &DatabaseConnection, id: &str) -> String {
     .await
     .unwrap()
     .unwrap()
-    .try_get::<chrono::DateTime<chrono::Utc>>("", "config_updated_at")
+    .try_get::<platform::timestamp::Timestamp>("", "config_updated_at")
     .unwrap()
     .to_rfc3339()
 }

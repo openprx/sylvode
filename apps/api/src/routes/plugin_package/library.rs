@@ -17,7 +17,7 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, FromQueryResult, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -34,8 +34,8 @@ struct PersonalPackage {
     manifest: Value,
     package_sha256: String,
     installed_by: Uuid,
-    installed_at: DateTime<Utc>,
-    archived_at: Option<DateTime<Utc>>,
+    installed_at: Timestamp,
+    archived_at: Option<Timestamp>,
     project_links: Value,
 }
 
@@ -361,7 +361,7 @@ struct PendingRequest {
     owner_id: Uuid,
     manifest: Value,
     package_sha256: String,
-    submitted_at: DateTime<Utc>,
+    submitted_at: Timestamp,
 }
 
 pub async fn requests(

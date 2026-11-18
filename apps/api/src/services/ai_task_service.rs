@@ -1,6 +1,7 @@
-use chrono::{DateTime, Duration, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::{Value, json};
+use time::Duration;
 use uuid::Uuid;
 
 use crate::{
@@ -24,11 +25,11 @@ pub struct AiTaskRow {
     pub idempotency_key: Option<String>,
     pub attempts: i32,
     pub max_attempts: i32,
-    pub next_retry_at: Option<DateTime<Utc>>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub next_retry_at: Option<Timestamp>,
+    pub started_at: Option<Timestamp>,
+    pub completed_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 pub struct CreateAiTaskInput {
@@ -53,7 +54,7 @@ pub async fn create_ai_task<C: ConnectionTrait>(
     db: &C,
     input: CreateAiTaskInput,
 ) -> Result<Option<AiTaskRow>, ApiError> {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let max_attempts = input.max_attempts.max(1);
 
     let created = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
@@ -167,7 +168,7 @@ pub async fn insert_ai_task_event<C: ConnectionTrait>(
             task_id.into(),
             event_type.to_string().into(),
             payload.into(),
-            Utc::now().into(),
+            Timestamp::now().into(),
         ],
     ))
     .await?;
@@ -217,7 +218,7 @@ pub async fn insert_ai_task_business_event<C: ConnectionTrait>(
                 "error_message": task.error_message,
                 "attempts": task.attempts,
                 "max_attempts": task.max_attempts,
-                "next_retry_at": task.next_retry_at.map(|v| v.to_rfc3339()),
+                "next_retry_at": task.next_retry_at.map(platform::timestamp::Timestamp::to_rfc3339),
                 "event_payload": event_payload
             }),
             metadata: json!({
@@ -238,10 +239,10 @@ pub async fn insert_ai_task_business_event<C: ConnectionTrait>(
     Ok(())
 }
 
-pub fn next_retry_time(attempts: i32) -> DateTime<Utc> {
+pub fn next_retry_time(attempts: i32) -> Timestamp {
     let safe_attempts = attempts.max(1);
     let backoff_seconds = (safe_attempts * 30).min(30 * 20);
-    Utc::now() + Duration::seconds(i64::from(backoff_seconds))
+    Timestamp::now() + Duration::seconds(i64::from(backoff_seconds))
 }
 
 pub fn valid_task_type(value: &str) -> bool {

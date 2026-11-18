@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -122,7 +122,7 @@ struct Package {
     #[allow(clippy::struct_field_names)]
     package_sha256: String,
     installed_by: Uuid,
-    installed_at: DateTime<Utc>,
+    installed_at: Timestamp,
     #[serde(skip_serializing_if = "Option::is_none")]
     library_source_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -160,7 +160,7 @@ struct BindingActivity {
     key: String,
     request_id: Uuid,
     actor_id: Uuid,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     previous_package_id: Option<Uuid>,
     previous_version: Option<String>,
     previous_grants: Vec<String>,
@@ -674,14 +674,14 @@ struct Receipt {
     generation: i64,
     capability: String,
     preview_request_id: Option<Uuid>,
-    record_updated_at: DateTime<Utc>,
+    record_updated_at: Timestamp,
     schema_version: i32,
     status: String,
     amount_cents: Option<i64>,
     error_kind: Option<String>,
     duration_ms: Option<i64>,
     fuel_consumed: Option<i64>,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 }
 
 const RECEIPT_FIELDS: &str = "i.request_id,i.actor_id,i.record_id,i.package_id,p.key,p.version,
@@ -714,7 +714,7 @@ pub(crate) struct Execution {
     form_id: Uuid,
     record_id: Uuid,
     created_by: Option<Uuid>,
-    record_updated_at: DateTime<Utc>,
+    record_updated_at: Timestamp,
     schema_version: i32,
     capability: String,
     request_id: Uuid,
@@ -1108,7 +1108,7 @@ pub async fn invoke(
             ))
             .await?
             .ok_or_else(|| ApiError::not_found("active Form record not found"))?;
-        if current.try_get::<DateTime<Utc>>("", "updated_at")? != execution.record_updated_at
+        if current.try_get::<Timestamp>("", "updated_at")? != execution.record_updated_at
             || current.try_get::<i32>("", "schema_version")? != execution.schema_version
         {
             return Err(ApiError::VersionConflict("form_plugin_preview_stale"));

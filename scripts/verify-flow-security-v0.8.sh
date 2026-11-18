@@ -87,13 +87,13 @@ def locked(crate):
     match=re.search(rf'\[\[package\]\]\nname = "{re.escape(crate)}"\nversion = "([^"]+)"',lock)
     return match.group(1) if match else None
 pins={
- "loro":{"manifest":"=1.13.9","resolved":locked("loro"),"exact":bool(re.search(r'loro\s*=\s*"=1\.13\.9"',collab))},
+ "loro":{"manifest":"=1.18.0","resolved":locked("loro"),"exact":bool(re.search(r'loro\s*=\s*"=1\.18\.0"',collab))},
  "wasmtime":{"manifest":"47","resolved":locked("wasmtime"),"locked":bool(re.search(r'wasmtime\s*=\s*"47"',cargo))},
  "loro-crdt":{"manifest":frontend.get("dependencies",{}).get("loro-crdt")},
  "loro-prosemirror":{"manifest":frontend.get("dependencies",{}).get("loro-prosemirror")},
  "prosemirror":{name:version for name,version in frontend.get("dependencies",{}).items() if name.startswith("prosemirror-")},
 }
-pins_ok=(pins["loro"]["exact"] and pins["loro"]["resolved"]=="1.13.9"
+pins_ok=(pins["loro"]["exact"] and pins["loro"]["resolved"]=="1.18.0"
          and pins["wasmtime"]["locked"] and pins["wasmtime"]["resolved"] is not None
          and all(isinstance(frontend["dependencies"].get(name),str)
                  and not frontend["dependencies"][name].startswith(("^","~",">","<","*"))

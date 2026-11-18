@@ -24,8 +24,8 @@ struct PriorScopeCreate {
 }
 
 use crate::flow::json_value::FlowJson;
-use chrono::{DateTime, Utc};
 use collab_core::{CollabEngine, LoroCollabEngine};
+use platform::timestamp::Timestamp;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, FromQueryResult, Statement, TransactionTrait,
 };
@@ -429,9 +429,9 @@ struct PersonalView {
     lifecycle_status: String,
     governance_metadata: Value,
     appearance: Value,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    archived_at: Option<DateTime<Utc>>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+    archived_at: Option<Timestamp>,
     document_id: Uuid,
     document_seq: i64,
     frontier: Vec<u8>,
@@ -445,7 +445,7 @@ pub async fn object_view<C: ConnectionTrait>(db: &C, object: Uuid, user: Uuid) -
  SELECT o.id,o.scope_id,o.workspace_id,o.project_id,o.parent_id,o.object_type,o.lifecycle_status,o.governance_metadata,o.appearance,o.created_at,o.updated_at,o.archived_at,d.id AS document_id,d.head_seq AS document_seq,d.head_frontier AS frontier,p.title,p.state AS semantic_content,p.document_seq AS projection_seq
  FROM flow_objects o JOIN collab_documents d ON d.object_id=o.id JOIN flow_object_projections p ON p.object_id=o.id WHERE o.id=$1",vec![object.into()])).one(db).await?.ok_or_else(not_found)?;
     let actions = super::collab::frame::permitted_actions(proof.level, proof.resource_active);
-    let mut value = json!({"id":row.id,"scope_id":row.scope_id,"project_id":row.project_id,"parent_id":row.parent_id,"object_type":row.object_type,"lifecycle_status":row.lifecycle_status,"governance_metadata":row.governance_metadata,"appearance":row.appearance,"title":row.title,"semantic_content":row.semantic_content,"document_id":row.document_id,"document_seq":row.document_seq,"frontier":projection::encode_frontier(&collab_core::Frontier::from_bytes(row.frontier)),"projection_seq":row.projection_seq,"projection_lag":row.document_seq-row.projection_seq,"created_at":row.created_at.to_rfc3339(),"updated_at":row.updated_at.to_rfc3339(),"archived_at":row.archived_at.map(|t|t.to_rfc3339()),"permitted_actions":actions});
+    let mut value = json!({"id":row.id,"scope_id":row.scope_id,"project_id":row.project_id,"parent_id":row.parent_id,"object_type":row.object_type,"lifecycle_status":row.lifecycle_status,"governance_metadata":row.governance_metadata,"appearance":row.appearance,"title":row.title,"semantic_content":row.semantic_content,"document_id":row.document_id,"document_seq":row.document_seq,"frontier":projection::encode_frontier(&collab_core::Frontier::from_bytes(row.frontier)),"projection_seq":row.projection_seq,"projection_lag":row.document_seq-row.projection_seq,"created_at":row.created_at.to_rfc3339(),"updated_at":row.updated_at.to_rfc3339(),"archived_at":row.archived_at.map(platform::timestamp::Timestamp::to_rfc3339),"permitted_actions":actions});
     let secrecy = super::collections::has_collection_secrecy(db, object).await?
         || !super::collections::secret_record_ids(db, &[object]).await?.is_empty();
     let mut formats = vec!["json", "markdown", "csv"];

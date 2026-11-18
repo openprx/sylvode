@@ -5,7 +5,7 @@
 //! someone else's row only when the caller has `full_access`. Replies are one level deep and stay
 //! on the same object. Mentions are an explicit user-id list; notifications require current object access and never create membership.
 
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -66,9 +66,9 @@ pub(crate) struct CommentRow {
     author_id: Option<Uuid>,
     body: String,
     pub(crate) mentions: Value,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    resolved_at: Option<DateTime<Utc>>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+    resolved_at: Option<Timestamp>,
     resolved_by: Option<Uuid>,
 }
 
@@ -179,7 +179,7 @@ pub(crate) async fn create_comment_on<C: ConnectionTrait>(
         None => (None, normalize_block_id(input.block_id)?),
     };
     let id = Uuid::new_v4();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mentions_json = json!(mentions.iter().map(Uuid::to_string).collect::<Vec<_>>());
     let row = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -231,7 +231,7 @@ pub(crate) async fn update_comment_on<C: ConnectionTrait>(
         None => parse_mentions(&existing.mentions),
     };
     let mentions_json = json!(next_mentions.iter().map(Uuid::to_string).collect::<Vec<_>>());
-    let now = Utc::now();
+    let now = Timestamp::now();
     let row = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE flow_comments SET body = $3, mentions = $4::jsonb, updated_at = $5 \
@@ -266,7 +266,7 @@ pub(crate) async fn delete_comment_on<C: ConnectionTrait>(
     if !owns && !privileged {
         return Err(ApiError::forbidden("you cannot delete this comment".to_string()));
     }
-    let now = Utc::now();
+    let now = Timestamp::now();
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -300,7 +300,7 @@ pub(crate) async fn set_resolved_on<C: ConnectionTrait>(
             "edit permission is required to resolve a comment".to_string(),
         ));
     }
-    let now = Utc::now();
+    let now = Timestamp::now();
     let (resolved_at, resolved_by) = if resolved {
         (Some(now), Some(actor.user_id))
     } else {
@@ -423,7 +423,7 @@ fn view_of(row: CommentRow) -> FlowCommentView {
         mentions: parse_mentions(&row.mentions),
         created_at: row.created_at.to_rfc3339(),
         updated_at: row.updated_at.to_rfc3339(),
-        resolved_at: row.resolved_at.map(|stamp| stamp.to_rfc3339()),
+        resolved_at: row.resolved_at.map(platform::timestamp::Timestamp::to_rfc3339),
         resolved_by: row.resolved_by,
     }
 }

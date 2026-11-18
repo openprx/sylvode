@@ -200,7 +200,11 @@ mod tests {
     #[test]
     fn an_unwritable_stderr_does_not_fail_the_shell_caller() {
         let dir = scratch("stderr");
-        for redirect in ["exec 2>&-", "exec 2>/dev/full"] {
+        let mut redirects = vec!["exec 2>&-"];
+        if std::path::Path::new("/dev/full").exists() {
+            redirects.push("exec 2>/dev/full");
+        }
+        for redirect in redirects {
             let (code, stdout, _) = shell(
                 &dir,
                 &format!(

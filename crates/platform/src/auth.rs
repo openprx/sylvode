@@ -1,4 +1,4 @@
-use chrono::Utc;
+use crate::timestamp::Timestamp;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -89,7 +89,7 @@ impl JwtManager {
         token_type: TokenType,
         ttl_seconds: i64,
     ) -> AuthResult<String> {
-        let now = Utc::now().timestamp();
+        let now = Timestamp::now().unix_timestamp();
         let iat = usize::try_from(now).unwrap_or(0);
         let exp = usize::try_from(now + ttl_seconds).unwrap_or(0);
         let claims = JwtClaims {
@@ -162,9 +162,9 @@ mod tests {
     fn test_access_token_claims_fields() {
         // 验证 access token 的 sub/email/token_type/iat/exp 字段均正确写入
         let mgr = make_manager();
-        let before = usize::try_from(chrono::Utc::now().timestamp()).expect("current timestamps fit in usize");
+        let before = usize::try_from(Timestamp::now().unix_timestamp()).expect("current timestamps fit in usize");
         let token = mgr.issue_access_token("uid-42", "check@fields.com").expect("签发失败");
-        let after = usize::try_from(chrono::Utc::now().timestamp()).expect("current timestamps fit in usize");
+        let after = usize::try_from(Timestamp::now().unix_timestamp()).expect("current timestamps fit in usize");
 
         let claims = mgr.verify_access_token(&token).expect("验证失败");
 

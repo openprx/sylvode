@@ -3,7 +3,7 @@ use axum::{
     extract::{Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -42,8 +42,8 @@ pub struct ListGovernanceAuditLogsQuery {
     pub action: Option<String>,
     pub resource_type: Option<String>,
     pub actor_id: Option<Uuid>,
-    pub start_at: Option<DateTime<Utc>>,
-    pub end_at: Option<DateTime<Utc>>,
+    pub start_at: Option<Timestamp>,
+    pub end_at: Option<Timestamp>,
     pub page: Option<i64>,
     pub per_page: Option<i64>,
 }
@@ -59,8 +59,8 @@ pub struct GovernanceConfigRow {
     pub trust_update_mode: String,
     pub config: Value,
     pub updated_by: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -74,7 +74,7 @@ pub struct GovernanceAuditLogRow {
     pub old_value: Option<Value>,
     pub new_value: Option<Value>,
     pub metadata: Option<Value>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -154,7 +154,7 @@ pub async fn update_governance_config(
         .trim()
         .to_string();
     let new_config = req.config.unwrap_or_else(|| old_row.config.clone());
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     let tx = state.db.begin().await?;
 
@@ -412,7 +412,7 @@ async fn load_or_init_config(
                 ) VALUES ($1, true, 30, 7, '0 0 1 * *', 'review_based', '{}'::jsonb, $2, $2)
                 ON CONFLICT (project_id) DO NOTHING
             ",
-            vec![project_id.into(), Utc::now().into()],
+            vec![project_id.into(), Timestamp::now().into()],
         ))
         .await?;
 

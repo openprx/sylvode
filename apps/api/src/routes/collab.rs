@@ -16,7 +16,7 @@ use axum::{
     http::HeaderMap,
     response::IntoResponse,
 };
-use chrono::Utc;
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -422,7 +422,7 @@ pub async fn verify_collab(
     .await?
     .ok_or_else(|| ApiError::not_found("collab document not found".to_string()))?;
 
-    let started_at = Utc::now();
+    let started_at = Timestamp::now();
     let mut warnings = Vec::new();
     let (status, observed_head_seq) = if let Ok(boot) = bootstrap::load(&state.db, doc.id).await {
         if let Some(expected) = req.expected_head_seq
@@ -449,7 +449,7 @@ pub async fn verify_collab(
         changes: Vec::new(),
         warnings,
         started_at: started_at.to_rfc3339(),
-        finished_at: Some(Utc::now().to_rfc3339()),
+        finished_at: Some(Timestamp::now().to_rfc3339()),
         audit_event_id: None,
     }))
 }
@@ -1259,7 +1259,7 @@ mod collab_database_tests {
         let base_frontier = engine_a.frontier();
         let node_id = NodeId::from("blk-two-tabs");
         engine_a
-            .apply_operation(&Operation::CreateNode {
+            .apply_content_operation(&Operation::CreateNode {
                 id: node_id.clone(),
                 parent: None,
                 index: 0,
@@ -1267,7 +1267,7 @@ mod collab_database_tests {
             })
             .expect("create succeeds");
         engine_a
-            .apply_operation(&Operation::InsertText {
+            .apply_content_operation(&Operation::InsertText {
                 id: node_id.clone(),
                 index: 0,
                 text: "hello from A".to_string(),
@@ -1349,7 +1349,7 @@ mod collab_database_tests {
         assert_eq!(
             semantic_b
                 .nodes
-                .get(&node_id)
+                .get(&engine_b.resolve_content_node_id(&node_id))
                 .expect("the node A created is present on B")
                 .text,
             "hello from A"
@@ -1603,41 +1603,6 @@ mod collab_database_tests {
             vec![workspace_id.into(), enabled.into()],
         )
         .await;
-    }
-
-    /// A workspace + owner member with **no** `flow_workspace_settings` row at all — unlike
-    /// [`seed_workspace`], which always inserts one. Nothing in the product provisions that row
-    /// except `PUT /workspaces/{id}/features/flow` (`flow::command::set_flow_feature` ->
-    /// `repository::ensure_flow_settings_row`), so "the admin has never touched the Flow toggle"
-    /// is a real, and in a rollout the *most common*, state — and it is a different state from an
-    /// explicit `flow_enabled = false`.
-    async fn seed_bare_workspace(state: &AppState) -> (Uuid, Uuid) {
-        let workspace_id = Uuid::new_v4();
-        let owner_id = Uuid::new_v4();
-        exec(
-            state,
-            "INSERT INTO users (id, email, password_hash, name, role, is_active) \
-             VALUES ($1, $2, '!', 'test', 'user', true)",
-            vec![owner_id.into(), format!("{owner_id}@collab.test").into()],
-        )
-        .await;
-        exec(
-            state,
-            "INSERT INTO workspaces (id, slug, name, created_by) VALUES ($1, $2, 'collab ws bare', $3)",
-            vec![
-                workspace_id.into(),
-                format!("ws-{workspace_id}").into(),
-                owner_id.into(),
-            ],
-        )
-        .await;
-        exec(
-            state,
-            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
-            vec![workspace_id.into(), owner_id.into()],
-        )
-        .await;
-        (workspace_id, owner_id)
     }
 
     async fn count_tickets(state: &AppState, workspace_id: Uuid) -> i64 {
@@ -2172,10 +2137,15 @@ mod collab_database_tests {
     async fn a_never_provisioned_workspace_cannot_obtain_a_collab_ticket() {
         let scratch = scratch_or_skip!("ticket-never-provisioned");
         let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_bare_workspace(&state).await;
-        // Object creation deliberately does not provision the row either, so the workspace is
-        // still bare when the ticket is requested.
+        let (workspace_id, owner_id) = seed_workspace(&state).await;
         let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        // Retain an existing document to isolate the refusal caused by missing Flow settings.
+        exec(
+            &state,
+            "DELETE FROM flow_workspace_settings WHERE workspace_id = $1",
+            vec![workspace_id.into()],
+        )
+        .await;
 
         #[derive(FromQueryResult)]
         struct N {

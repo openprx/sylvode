@@ -1,6 +1,7 @@
 // The explicit public type contract remains stable without broadening or replacing its API.
 #![allow(clippy::should_implement_trait)]
 
+use platform::timestamp::Timestamp;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +39,8 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub user_id: Uuid,
     pub role: String,
-    pub created_at: DateTimeWithTimeZone,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub created_at: Timestamp,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

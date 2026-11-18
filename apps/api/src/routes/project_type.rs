@@ -32,8 +32,8 @@ pub struct ProjectTypeResponse {
     pub enabled_capabilities: JsonValue,
     pub field_schema: JsonValue,
     pub artifact_schema: JsonValue,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -46,8 +46,8 @@ pub struct ProjectResourceResponse {
     pub permission_policy: JsonValue,
     pub sync_status: String,
     pub created_by: Option<Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,7 +91,7 @@ pub struct UpdateProjectResourceRequest {
     pub locator: Option<JsonValue>,
     pub permission_policy: Option<JsonValue>,
     pub sync_status: Option<String>,
-    pub expected_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub expected_updated_at: Option<platform::timestamp::Timestamp>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -308,7 +308,7 @@ pub async fn create_project_type(
         return Err(ApiError::BadRequest("project type name is required".to_string()));
     }
 
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
     let enabled_capabilities = req
         .enabled_capabilities
         .map(|value| ensure_json_array(value, "enabled_capabilities"))
@@ -461,7 +461,7 @@ pub async fn update_project_type(
     }
 
     updates.push(format!("updated_at = ${param_idx}"));
-    values.push(chrono::Utc::now().into());
+    values.push(platform::timestamp::Timestamp::now().into());
     param_idx += 1;
     values.push(key.clone().into());
 
@@ -536,7 +536,7 @@ pub async fn create_project_resource(
     }
 
     let resource_id = Uuid::new_v4();
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
     let tx = state.db.begin().await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,

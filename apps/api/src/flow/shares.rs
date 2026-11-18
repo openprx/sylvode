@@ -6,11 +6,12 @@
 
 use std::net::IpAddr;
 
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use platform::timestamp::Timestamp;
 use rand::RngCore;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use time::Duration as SignedDuration;
 use uuid::Uuid;
 
 use super::appearance::{self, PageAppearance};
@@ -61,16 +62,16 @@ pub struct PublicShareView {
 struct LinkRow {
     id: Uuid,
     token_prefix: String,
-    expires_at: Option<DateTime<Utc>>,
-    revoked_at: Option<DateTime<Utc>>,
-    created_at: DateTime<Utc>,
+    expires_at: Option<Timestamp>,
+    revoked_at: Option<Timestamp>,
+    created_at: Timestamp,
     created_by: Option<Uuid>,
 }
 
 #[derive(Debug, FromQueryResult)]
 struct HitRow {
     hit_count: i32,
-    window_started: DateTime<Utc>,
+    window_started: Timestamp,
 }
 
 /// The next hit in a fixed window. `allowed` is true while `count` is still within `limit`.
@@ -125,9 +126,9 @@ pub async fn enforce_public_share_rate_limit(db: &DatabaseConnection, ip: IpAddr
     if observed <= limit {
         return Ok(());
     }
-    let elapsed = Utc::now().signed_duration_since(row.window_started);
-    let remain = ChronoDuration::seconds(READ_WINDOW_SECS) - elapsed;
-    let retry_after_ms = u64::try_from(remain.num_milliseconds().max(0)).unwrap_or(0);
+    let elapsed = Timestamp::now() - row.window_started;
+    let remain = SignedDuration::seconds(READ_WINDOW_SECS) - elapsed;
+    let retry_after_ms = u64::try_from(remain.whole_milliseconds().max(0)).unwrap_or(0);
     Err(ApiError::limit_exceeded(
         "public share read rate limit exceeded",
         "flow_public_share_reads",
@@ -162,7 +163,7 @@ pub async fn create_link(
     object: Uuid,
     user: Uuid,
     _level: PermissionLevel,
-    expires: Option<DateTime<Utc>>,
+    expires: Option<Timestamp>,
 ) -> Result<CreatedShareLink, ApiError> {
     if super::scope::identity(db, object).await?.workspace_id != Some(workspace) {
         return Err(missing());
@@ -176,14 +177,14 @@ pub(crate) async fn create_link_on<C: ConnectionTrait>(
     scope_id: Uuid,
     object_id: Uuid,
     actor_id: Uuid,
-    expires_at: Option<DateTime<Utc>>,
+    expires_at: Option<Timestamp>,
 ) -> Result<CreatedShareLink, ApiError> {
     let expires_at = validate_expiry(expires_at)?;
     let token = mint_token();
     let token_hash = hash_token(&token);
     let token_prefix = prefix_of(&token);
     let id = Uuid::new_v4();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let row = LinkRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "INSERT INTO flow_share_links ( \
@@ -218,7 +219,7 @@ pub async fn revoke_link<C: ConnectionTrait>(
     level: PermissionLevel,
 ) -> Result<ShareLinkView, ApiError> {
     require_manage(level)?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let row = LinkRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE flow_share_links SET revoked_at = COALESCE(revoked_at, $3) \
@@ -253,17 +254,17 @@ fn require_manage(level: PermissionLevel) -> Result<(), ApiError> {
     }
 }
 
-pub(crate) fn validate_expiry(expires_at: Option<DateTime<Utc>>) -> Result<Option<DateTime<Utc>>, ApiError> {
+pub(crate) fn validate_expiry(expires_at: Option<Timestamp>) -> Result<Option<Timestamp>, ApiError> {
     let Some(expires_at) = expires_at else {
         return Ok(None);
     };
-    let now = Utc::now();
+    let now = Timestamp::now();
     if expires_at <= now {
         return Err(ApiError::invalid_update(
             "share link expiry must be in the future".to_string(),
         ));
     }
-    let latest = now + ChronoDuration::days(SHARE_EXPIRY_DAYS);
+    let latest = now + SignedDuration::days(SHARE_EXPIRY_DAYS);
     if expires_at > latest {
         return Err(ApiError::invalid_update(
             "share link expiry must be within 366 days".to_string(),
@@ -306,8 +307,8 @@ fn view_of(row: LinkRow) -> ShareLinkView {
     ShareLinkView {
         id: row.id,
         token_prefix: row.token_prefix,
-        expires_at: row.expires_at.map(|stamp| stamp.to_rfc3339()),
-        revoked_at: row.revoked_at.map(|stamp| stamp.to_rfc3339()),
+        expires_at: row.expires_at.map(platform::timestamp::Timestamp::to_rfc3339),
+        revoked_at: row.revoked_at.map(platform::timestamp::Timestamp::to_rfc3339),
         created_at: row.created_at.to_rfc3339(),
         created_by: row.created_by,
     }

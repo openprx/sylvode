@@ -6,9 +6,9 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use chrono::Utc;
 use hmac::{Hmac, Mac};
 use platform::config::{S3Config, Secret, StorageBackend, StorageConfig};
+use platform::timestamp::Timestamp;
 use reqwest::{Client, Method, StatusCode, Url, header::HeaderMap};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -313,9 +313,15 @@ impl S3ObjectStorage {
             Url::parse(&url).map_err(|_| ApiError::BadRequest("S3 endpoint URL is invalid".to_string()))?;
         let host = s3_host_header(&parsed_url)?;
         let payload_hash = hex_sha256(body);
-        let now = Utc::now();
-        let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
-        let date = now.format("%Y%m%d").to_string();
+        let now = Timestamp::now();
+        let amz_date = now
+            .format(time::macros::format_description!(
+                "[year][month][day]T[hour][minute][second]Z"
+            ))
+            .map_err(|_| ApiError::Internal)?;
+        let date = now
+            .format(time::macros::format_description!("[year][month][day]"))
+            .map_err(|_| ApiError::Internal)?;
         let authorization = s3_authorization(S3AuthorizationInput {
             method: method.as_str(),
             canonical_uri,
@@ -664,7 +670,7 @@ mod tests {
 
         let key = format!(
             "acceptance/minio-roundtrip-{}.txt",
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            Timestamp::now().unix_timestamp_nanos()
         );
         let body = b"sylvode minio acceptance";
 

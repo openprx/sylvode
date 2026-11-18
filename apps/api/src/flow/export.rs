@@ -5,13 +5,14 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::Cursor;
 
 use base64::Engine as _;
-use chrono::{DateTime, Duration, Utc};
 use collab_core::{CollabEngine, LoroCollabEngine};
+use platform::timestamp::Timestamp;
 use sea_orm::{AccessMode, ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, IsolationLevel, Statement};
 use sea_orm::{TransactionTrait, Value as DbValue};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use time::Duration;
 use uuid::Uuid;
 
 use crate::error::{ApiError, ApiErrorKind};
@@ -110,9 +111,9 @@ struct ExportObjectRow {
     projection_seq: i64,
     projection_frontier: Vec<u8>,
     title: String,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    archived_at: Option<DateTime<Utc>>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+    archived_at: Option<Timestamp>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -132,7 +133,7 @@ struct ExportRelationRow {
     target_object_id: Uuid,
     position_key: String,
     properties: Value,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -143,7 +144,7 @@ struct ExportLineageRow {
     target_object_id: Option<Uuid>,
     target_document_id: Option<Uuid>,
     result: String,
-    imported_at: DateTime<Utc>,
+    imported_at: Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -156,7 +157,7 @@ struct ExportEventRow {
     source: Value,
     payload: Value,
     metadata: Value,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -169,7 +170,7 @@ struct ExistingJob {
     status: String,
     package_sha256: Option<String>,
     size_bytes: Option<i64>,
-    expires_at: Option<DateTime<Utc>>,
+    expires_at: Option<Timestamp>,
     error: Option<String>,
     warnings: Value,
 }
@@ -185,7 +186,7 @@ struct ExportAccessRow {
     status: String,
     package_sha256: Option<String>,
     size_bytes: Option<i64>,
-    expires_at: Option<DateTime<Utc>>,
+    expires_at: Option<Timestamp>,
     error: Option<String>,
     package_bytes: Option<Vec<u8>>,
     source_authz_revision: Option<i64>,
@@ -341,16 +342,42 @@ async fn render_export(
             ));
         }
         let updates = load_updates(&tx, object).await?;
-        let (full_snapshot, semantic_hash) = reconstruct_and_verify(object, &updates)?;
-        if request.format == "package" {
-            let engine = LoroCollabEngine::load(&full_snapshot)
-                .map_err(|_| ApiError::checksum_mismatch("package snapshot cannot be inspected"))?;
-            super::package::require_supported_snapshot(&engine)?;
+        let engine = reconstruct_and_verify(object, &updates)?;
+        if request.format != "package" {
+            // A secret Record exports the records query's redacted content: `{}` for the semantic
+            // content and no plain text (decided here, not left to what the projection happens to
+            // hold).
+            let redacted = secret.contains(&object.id);
+            let canonical = engine
+                .semantic_snapshot()
+                .map_err(|_| ApiError::checksum_mismatch("accepted export semantics cannot be decoded"))?;
+            let semantic_content = if redacted {
+                super::collections::redacted_semantic_content()
+            } else {
+                super::projection::state_json(&canonical).map_err(|_| ApiError::internal())?
+            };
+            let canonical_plain = super::projection::plain_text(&canonical);
+            let plain_text = if redacted { "" } else { canonical_plain.as_str() };
+            rendered_object = Some(render_object_text_export(
+                object.id,
+                &object.object_type,
+                &object.title,
+                &semantic_content,
+                object.head_seq,
+                &base64::engine::general_purpose::STANDARD.encode(&object.head_frontier),
+                plain_text,
+                &request.format,
+            )?);
+            continue;
         }
+        super::package::require_supported_snapshot(&engine)?;
+        let semantic_hash = super::package::RAW_PACKAGE_SEMANTIC_MODEL.semantic_hash(&engine)?;
         let exported_snapshot = if request.include_history {
             object.snapshot.clone()
         } else {
-            full_snapshot
+            engine
+                .export_snapshot()
+                .map_err(|_| ApiError::checksum_mismatch("canonical head snapshot cannot be exported"))?
         };
         let object_json = json!({
             "source_object_id": object.id,
@@ -370,39 +397,8 @@ async fn render_export(
             "projection_seq": object.projection_seq,
             "created_at": object.created_at.to_rfc3339(),
             "updated_at": object.updated_at.to_rfc3339(),
-            "archived_at": object.archived_at.map(|value| value.to_rfc3339()),
+            "archived_at": object.archived_at.map(platform::timestamp::Timestamp::to_rfc3339),
         });
-        if matches!(request.scope, ExportScope::Object(_)) {
-            // A secret Record exports the records query's redacted content: `{}` for the semantic
-            // content and no plain text (decided here, not left to what the projection happens to
-            // hold).
-            let redacted = secret.contains(&object.id);
-            let canonical = collab_core::LoroCollabEngine::load(&exported_snapshot)
-                .map_err(|_| ApiError::checksum_mismatch("accepted export snapshot cannot be decoded"))?
-                .semantic_snapshot()
-                .map_err(|_| ApiError::checksum_mismatch("accepted export semantics cannot be decoded"))?;
-            let semantic_content = if redacted {
-                super::collections::redacted_semantic_content()
-            } else {
-                super::projection::state_json(&canonical).map_err(|_| ApiError::internal())?
-            };
-            let canonical_plain = super::projection::plain_text(&canonical);
-            let plain_text = if redacted { "" } else { canonical_plain.as_str() };
-            rendered_object = Some(if request.format == "package" {
-                Vec::new()
-            } else {
-                render_object_text_export(
-                    object.id,
-                    &object.object_type,
-                    &object.title,
-                    &semantic_content,
-                    object.head_seq,
-                    &base64::engine::general_purpose::STANDARD.encode(&object.head_frontier),
-                    plain_text,
-                    &request.format,
-                )?
-            });
-        }
         members.push(PackageMemberInput {
             path: format!("objects/{}/object.json", object.id),
             kind: "object".to_string(),
@@ -514,7 +510,7 @@ async fn render_export(
 
     let projects = load_projects(&tx, workspace_id, &objects).await?;
     let roots = selected_roots(&objects, &selected);
-    let now = Utc::now();
+    let now = Timestamp::now();
     let manifest = ExportPackageManifest {
         schema: super::package::PACKAGE_SCHEMA.to_string(),
         package_id: Uuid::new_v4().to_string(),
@@ -539,7 +535,9 @@ async fn render_export(
             name: ENGINE_NAME.to_string(),
             crate_version: ENGINE_CRATE_VERSION.to_string(),
             wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
-            semantic_model: Some(super::package::SEMANTIC_MODEL_V4.into()),
+            semantic_model: super::package::RAW_PACKAGE_SEMANTIC_MODEL
+                .wire_name()
+                .map(str::to_owned),
         },
         history: PackageHistory {
             included: request.include_history,
@@ -626,7 +624,7 @@ pub async fn download_package_export(
 ) -> Result<(Vec<u8>, String, String), ApiError> {
     let row = export_access_row(db, job_id).await?;
     authorize_export_access(db, &row, principal).await?;
-    if row.expires_at.is_none_or(|expires| expires <= Utc::now()) {
+    if row.expires_at.is_none_or(|expires| expires <= Timestamp::now()) {
         return Err(ApiError::not_found("export artifact expired".to_string()));
     }
     Ok((
@@ -699,7 +697,7 @@ struct StoredJob<'a> {
     status: &'a str,
     package_sha256: Option<&'a str>,
     size_bytes: Option<i64>,
-    expires_at: Option<DateTime<Utc>>,
+    expires_at: Option<Timestamp>,
     error: Option<&'a str>,
     warnings: &'a Value,
 }
@@ -877,10 +875,7 @@ async fn load_updates<C: ConnectionTrait>(
     .map_err(Into::into)
 }
 
-fn reconstruct_and_verify(
-    object: &ExportObjectRow,
-    updates: &[ExportUpdateRow],
-) -> Result<(Vec<u8>, String), ApiError> {
+fn reconstruct_and_verify(object: &ExportObjectRow, updates: &[ExportUpdateRow]) -> Result<LoroCollabEngine, ApiError> {
     if sha256_hex(&object.snapshot) != object.snapshot_checksum {
         return Err(ApiError::checksum_mismatch(
             "canonical snapshot checksum mismatch during export",
@@ -928,14 +923,7 @@ fn reconstruct_and_verify(
             "canonical head and projection frontier disagree during export",
         ));
     }
-    let semantic_hash = engine
-        .legacy_package_semantic_snapshot_v1()
-        .map_err(|_| ApiError::checksum_mismatch("canonical semantic snapshot cannot be decoded"))?
-        .semantic_hash();
-    let snapshot = engine
-        .export_snapshot()
-        .map_err(|_| ApiError::checksum_mismatch("canonical head snapshot cannot be exported"))?;
-    Ok((snapshot, semantic_hash))
+    Ok(engine)
 }
 
 async fn load_relations<C: ConnectionTrait>(
@@ -1131,7 +1119,7 @@ async fn persist_export(
     enforce_scope_principal(&effective, workspace_id)?;
     let job_id = Uuid::new_v4();
     let artifact_id = Uuid::new_v4();
-    let expires_at = Utc::now() + Duration::minutes(EXPORT_ARTIFACT_TTL_MINUTES);
+    let expires_at = Timestamp::now() + Duration::minutes(EXPORT_ARTIFACT_TTL_MINUTES);
     let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -1235,7 +1223,7 @@ async fn persist_failed_export(
     warnings: Vec<String>,
 ) -> Result<ExportJobReceipt, ApiError> {
     let job_id = Uuid::new_v4();
-    let expires_at = Utc::now() + Duration::minutes(EXPORT_ARTIFACT_TTL_MINUTES);
+    let expires_at = Timestamp::now() + Duration::minutes(EXPORT_ARTIFACT_TTL_MINUTES);
     let (object_id, project_id, scope_kind) = match request.scope {
         ExportScope::Object(id) => (Some(id), None, "object"),
         ExportScope::Workspace { project_id, .. } => (None, project_id, "workspace"),
@@ -1687,9 +1675,13 @@ mod tests {
             base64::engine::general_purpose::STANDARD.encode(&page.head_frontier)
         );
         assert_eq!(
+            super::super::package::semantic_model(&verified.manifest).unwrap(),
+            super::super::package::PackageSemanticModel::V4,
+        );
+        assert_eq!(
             object["semantic_hash"],
-            engine.semantic_snapshot().unwrap().semantic_hash(),
-            "exported metadata must fingerprint the reconstructed accepted head"
+            engine.legacy_package_semantic_snapshot_v4().unwrap().semantic_hash(),
+            "exported metadata must fingerprint the reconstructed accepted head with its declared reader"
         );
         assert!(
             zip::ZipArchive::new(Cursor::new(&package))
@@ -1782,7 +1774,7 @@ mod tests {
 
     #[tokio::test]
     async fn workspace_export_requires_admin_and_object_export_rechecks_effective_permission() {
-        let Some((scratch, _state, workspace_id, owner_id)) = fixture("flow_export_auth").await else {
+        let Some((scratch, _state, workspace_id, _owner_id)) = fixture("flow_export_auth").await else {
             eprintln!("SKIPPED (no database): set OPENPR_TEST_DATABASE_URL to run this test");
             return;
         };
@@ -1799,6 +1791,13 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
+        let other = seed_tenant(&scratch.db, "export_unprivileged").await;
+        exec(
+            &scratch.db,
+            "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES ($1,$2,'member')",
+            vec![workspace_id.into(), other.member_id.into()],
+        )
+        .await;
         let workspace_request = CreateExportRequest {
             object_types: None,
             scope: ExportScope::Workspace {
@@ -1810,12 +1809,19 @@ mod tests {
             include_history: false,
             idempotency_key: "denied-workspace".to_string(),
             source_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
-            principal: principal(owner_id, "member"),
+            principal: principal(other.member_id, "owner"),
         };
         assert!(matches!(
             create_package_export(&scratch.db, &workspace_request).await,
             Err(ref e) if e.kind() == crate::error::ApiErrorKind::Forbidden
         ));
+
+        exec(
+            &scratch.db,
+            "DELETE FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+            vec![workspace_id.into(), other.member_id.into()],
+        )
+        .await;
 
         let guest_request = CreateExportRequest {
             object_types: None,
@@ -1825,7 +1831,7 @@ mod tests {
             include_history: false,
             idempotency_key: "denied-object".to_string(),
             source_head: workspace_request.source_head,
-            principal: principal(owner_id, "__flow_guest"),
+            principal: principal(other.member_id, "owner"),
         };
         assert!(matches!(
             create_package_export(&scratch.db, &guest_request).await,

@@ -824,8 +824,8 @@ async fn create_object_inner(
         frontier: projection::encode_frontier(&frontier),
         projection_seq: 0,
         projection_lag: 0,
-        created_at: chrono::Utc::now().to_rfc3339(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        created_at: platform::timestamp::Timestamp::now().to_rfc3339(),
+        updated_at: platform::timestamp::Timestamp::now().to_rfc3339(),
         archived_at: None,
         appearance: super::appearance::PageAppearance::default(),
     };
@@ -2499,7 +2499,7 @@ async fn execute_lifecycle_command(
     }
 
     let archived_at = if target_status == "archived" {
-        Some(chrono::Utc::now())
+        Some(platform::timestamp::Timestamp::now())
     } else {
         None
     };
@@ -2531,7 +2531,7 @@ async fn execute_lifecycle_command(
     let required_tier = rechecked.required_permission_level(input.object_id)?;
     let permanent_cleanup_after =
         if kind == LifecycleCommandType::Archive && required_tier == authz::PermissionLevel::FullAccess {
-            archived_at.map(|at| at + chrono::Duration::days(OBJECT_PERMANENT_CLEANUP_RETENTION_DAYS))
+            archived_at.map(|at| at + time::Duration::days(OBJECT_PERMANENT_CLEANUP_RETENTION_DAYS))
         } else {
             None
         };
@@ -3641,7 +3641,7 @@ mod database_tests {
             serde_json::json!([page])
         );
         assert_eq!(dispatch_count(&scratch.db, page_archive.event_id).await, 1);
-        let page_cleanup: Option<chrono::DateTime<chrono::Utc>> = scratch
+        let page_cleanup: Option<platform::timestamp::Timestamp> = scratch
             .db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -3727,7 +3727,7 @@ mod database_tests {
         assert_eq!(archive_metadata["affected_object_ids"], serde_json::json!([collection]));
         assert_eq!(archive_metadata["cascade"], false);
         assert_eq!(dispatch_count(&scratch.db, collection_archive.event_id).await, 1);
-        let collection_cleanup: Option<chrono::DateTime<chrono::Utc>> = scratch
+        let collection_cleanup: Option<platform::timestamp::Timestamp> = scratch
             .db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -3760,7 +3760,7 @@ mod database_tests {
             assert_eq!(restored.affected_object_ids, vec![collection]);
         }
         assert_eq!(lifecycle_statuses(&scratch.db, &[collection]).await[0].1, "active");
-        let restored_cleanup: Option<chrono::DateTime<chrono::Utc>> = scratch
+        let restored_cleanup: Option<platform::timestamp::Timestamp> = scratch
             .db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,

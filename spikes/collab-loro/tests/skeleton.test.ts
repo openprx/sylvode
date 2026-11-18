@@ -6,7 +6,7 @@ describe("collab candidate skeleton", () => {
   test("locks the candidate and browser dependency versions", () => {
     expect(candidate).toBe("loro");
     expect(dependencyVersions).toEqual({
-      browserEngine: "1.14.1",
+      browserEngine: "1.18.0",
       prosemirrorBinding: "0.4.3",
       offlineAdapter: "project-internal",
       prosemirrorModel: "1.25.11",

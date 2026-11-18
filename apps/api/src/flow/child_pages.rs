@@ -1,7 +1,7 @@
 //! Prepared local intent, finalized only inside the accepted source Page content transaction.
 use super::{collab::authz::PermissionLevel, scope};
 use crate::error::ApiError;
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, FromQueryResult, Statement, TransactionTrait,
 };
@@ -14,7 +14,7 @@ pub struct Reservation {
     pub child_page_id: Uuid,
     pub source_object_id: Uuid,
     pub title: String,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     pub state: String,
 }
 #[derive(FromQueryResult)]
@@ -25,7 +25,7 @@ struct Row {
     actor_id: Uuid,
     child_page_id: Uuid,
     title: String,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
     state: String,
     expired: bool,
 }
@@ -87,7 +87,7 @@ pub async fn reserve(
         child_page_id: Uuid::new_v4(),
         source_object_id: source,
         title: title.into(),
-        expires_at: Utc::now() + chrono::Duration::minutes(15),
+        expires_at: Timestamp::now() + time::Duration::minutes(15),
         state: "pending".into(),
     };
     tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_child_page_reservations(id,scope_id,source_object_id,actor_id,child_page_id,title,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)",vec![result.reservation_id.into(),identity.scope_id.into(),source.into(),actor.into(),result.child_page_id.into(),result.title.clone().into(),result.expires_at.into()])).await?;
@@ -317,7 +317,7 @@ mod tests {
             actor_id: actor,
             child_page_id: Uuid::new_v4(),
             title: "Synthetic".into(),
-            expires_at: Utc::now(),
+            expires_at: Timestamp::now(),
             state: "pending".into(),
             expired: true,
         };

@@ -4,8 +4,8 @@ use std::{
     io::{Cursor, Read},
 };
 
-use chrono::{DateTime, Utc};
 use collab_core::{CollabEngine, Frontier, LoroCollabEngine, Operation, SemanticSnapshot};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -71,7 +71,7 @@ struct Page {
 #[serde(deny_unknown_fields)]
 struct Version {
     source_seq: i64,
-    source_recorded_at: Option<DateTime<Utc>>,
+    source_recorded_at: Option<Timestamp>,
     block_keys: Vec<String>,
     title: String,
     blocks: Vec<Block>,
@@ -374,7 +374,7 @@ pub async fn export(
         references,
     };
     validate(&graph, input.include_history)?;
-    let now = Utc::now().to_rfc3339();
+    let now = Timestamp::now().to_rfc3339();
     let roots = graph
         .pages
         .iter()
@@ -466,7 +466,7 @@ async fn export_versions(
         .map(|row| {
             Ok((
                 row.try_get::<i64>("", "seq")?,
-                row.try_get::<DateTime<Utc>>("", "created_at")?,
+                row.try_get::<Timestamp>("", "created_at")?,
             ))
         })
         .collect::<Result<BTreeMap<_, _>, sea_orm::DbErr>>()?;
@@ -524,7 +524,7 @@ fn capture_retained(
 fn capture_version(
     selected: &mut LoroCollabEngine,
     source_seq: i64,
-    source_recorded_at: Option<DateTime<Utc>>,
+    source_recorded_at: Option<Timestamp>,
 ) -> Result<Version, ApiError> {
     let build = || {
         if !selected.has_editor_doc() {

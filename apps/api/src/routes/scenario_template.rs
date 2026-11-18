@@ -34,8 +34,8 @@ struct ScenarioTemplateRow {
     pub ai_roles: JsonValue,
     pub governance_policy: JsonValue,
     pub sample_data: JsonValue,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,8 +55,8 @@ pub struct ScenarioTemplateResponse {
     pub governance_policy: JsonValue,
     pub sample_data: JsonValue,
     pub usage_guide: JsonValue,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 impl From<ScenarioTemplateRow> for ScenarioTemplateResponse {

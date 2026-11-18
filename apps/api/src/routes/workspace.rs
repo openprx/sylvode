@@ -77,7 +77,7 @@ pub async fn create_workspace(
 
     // Create workspace
     let workspace_id = Uuid::new_v4();
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
 
     state
         .db
@@ -128,8 +128,8 @@ pub async fn list_workspaces(
         slug: String,
         name: String,
         role: String,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let workspaces = WorkspaceRow::find_by_statement(Statement::from_sql_and_values(
@@ -191,8 +191,8 @@ pub async fn get_workspace(
         slug: String,
         name: String,
         role: String,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let workspace = WorkspaceRow::find_by_statement(Statement::from_sql_and_values(
@@ -301,7 +301,7 @@ pub async fn update_workspace(
     }
 
     updates.push(format!("updated_at = ${param_idx}"));
-    values.push(chrono::Utc::now().into());
+    values.push(platform::timestamp::Timestamp::now().into());
     param_idx += 1;
 
     values.push(workspace_id.into());
@@ -319,8 +319,8 @@ pub async fn update_workspace(
         id: Uuid,
         slug: String,
         name: String,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let workspace = WorkspaceRow::find_by_statement(Statement::from_sql_and_values(

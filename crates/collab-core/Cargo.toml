@@ -7,7 +7,7 @@ publish = false
 description = "Production Loro CRDT adapter for Sylvode Flow (selected in v0.3; see spikes/collab-loro for the evaluation evidence)"
 
 [dependencies]
-loro = "=1.13.9"
+loro = "=1.18.0"
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
