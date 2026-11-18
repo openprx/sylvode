@@ -1,11 +1,12 @@
 //! Private comments never move between Pages. A CID is never used to rebind a known anchor.
+use super::collab::bootstrap;
 use crate::error::ApiError;
-use collab_core::CollabEngine;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement};
 use uuid::Uuid;
 
 pub(crate) struct Prepared {
     document: Uuid,
+    head_seq: i64,
     frontier: Vec<u8>,
     blocks: Vec<super::block_registry::PreparedBlock>,
 }
@@ -32,7 +33,11 @@ pub(crate) async fn prepare(
         .await?
         .ok_or_else(ApiError::internal)?
         .try_get::<Uuid>("", "id")?;
-    let engine = super::document::load_head_engine(db, document).await?;
+    let boot = bootstrap::load(db, document).await?;
+    let engine = super::document::engine_from_boot(&boot)?;
+    if !engine.matches_frontier(&boot.head_frontier) {
+        return Err(ApiError::resync_required("comment anchor head did not replay", None));
+    }
     if !engine.has_editor_doc() {
         if anchored && !reply {
             return Err(ApiError::invalid_update(
@@ -43,7 +48,8 @@ pub(crate) async fn prepare(
     }
     Ok(Some(Prepared {
         document,
-        frontier: engine.frontier().as_bytes().to_vec(),
+        head_seq: boot.head_seq,
+        frontier: boot.head_frontier,
         blocks: super::block_registry::prepare(
             &engine
                 .semantic_snapshot()
@@ -67,14 +73,16 @@ pub(crate) async fn ensure(
         ))
         .await?
         .ok_or_else(ApiError::internal)?;
-    if head.try_get::<Vec<u8>>("", "head_frontier")? != prepared.frontier {
+    if head.try_get::<i64>("", "head_seq")? != prepared.head_seq
+        || head.try_get::<Vec<u8>>("", "head_frontier")? != prepared.frontier
+    {
         return Err(ApiError::server_draining(
             crate::error::ServerDrainingReason::Contention,
             200,
             "comment anchor busy; retry",
         ));
     }
-    super::block_registry::reconcile_accepted(tx, object, head.try_get("", "head_seq")?, &prepared.blocks).await
+    super::block_registry::reconcile_accepted(tx, object, prepared.head_seq, &prepared.blocks).await
 }
 
 /// Adopt the current legacy Page+identifier meaning exactly once under its accepted-head lock.
@@ -168,7 +176,11 @@ pub(crate) async fn baseline_for_read(db: &DatabaseConnection, page: Uuid) -> Re
             .await?
             .ok_or_else(ApiError::internal)?
             .try_get::<Uuid>("", "id")?;
-        let engine = super::document::load_head_engine(db, document).await?;
+        let boot = bootstrap::load(db, document).await?;
+        let engine = super::document::engine_from_boot(&boot)?;
+        if !engine.matches_frontier(&boot.head_frontier) {
+            return Err(ApiError::resync_required("comment baseline head did not replay", None));
+        }
         let blocks = super::block_registry::prepare(
             &engine
                 .semantic_snapshot()
@@ -204,12 +216,14 @@ pub(crate) async fn baseline_for_read(db: &DatabaseConnection, page: Uuid) -> Re
             ))
             .await?
             .ok_or_else(ApiError::internal)?;
-        if head.try_get::<Vec<u8>>("", "head_frontier")? != engine.frontier().as_bytes() {
+        if head.try_get::<i64>("", "head_seq")? != boot.head_seq
+            || head.try_get::<Vec<u8>>("", "head_frontier")? != boot.head_frontier
+        {
             tx.rollback().await?;
             continue;
         }
         let scope = super::scope::identity(&tx, page).await?.scope_id;
-        super::block_registry::reconcile(&tx, scope, page, head.try_get("", "head_seq")?, &blocks).await?;
+        super::block_registry::reconcile(&tx, scope, page, boot.head_seq, &blocks).await?;
         tx.commit().await?;
         return Ok(());
     }
@@ -281,7 +295,19 @@ pub(crate) async fn decorate<C: ConnectionTrait>(
 mod tests {
     use super::*;
     use crate::{routes::context::tenant_fixture::exec, scratch_or_skip};
+    use collab_core::{CollabEngine, LoroCollabEngine};
     use sea_orm::TransactionTrait;
+
+    fn reverse_two_peer_entries(wire: &[u8]) -> Vec<u8> {
+        // A Loro frontier encodes the peer-map length and then peer/counter varint pairs.
+        let (&count, payload) = wire.split_first().unwrap();
+        assert_eq!(count, 2, "the fixture must have two editing peers");
+        let fields = payload.split_inclusive(|byte| byte & 0x80 == 0).collect::<Vec<_>>();
+        let [first_peer, first_counter, second_peer, second_counter] = fields.as_slice() else {
+            panic!("expected two complete peer/counter pairs");
+        };
+        [&[count], *second_peer, *second_counter, *first_peer, *first_counter].concat()
+    }
     #[tokio::test]
     async fn private_anchors_never_follow_reused_cids_or_cascade_moved_identity() {
         let scratch = scratch_or_skip!(&format!("block_anchor_{}", Uuid::new_v4().simple()));
@@ -365,7 +391,11 @@ mod tests {
             .resolve_content_node_id(&"legacy-readable-alias".into())
             .to_string();
         let original_snapshot = source.export_snapshot().unwrap();
-        let original_frontier = source.frontier().as_bytes().to_vec();
+        let replayed = LoroCollabEngine::load(&original_snapshot).unwrap();
+        let replayed_wire = replayed.frontier();
+        let original_frontier = reverse_two_peer_entries(replayed_wire.as_bytes());
+        assert_ne!(original_frontier, replayed_wire.as_bytes());
+        assert!(replayed.matches_frontier(&original_frontier));
         exec(db,"UPDATE collab_documents SET snapshot=$2,snapshot_checksum=encode(digest($2,'sha256'),'hex'),byte_count=octet_length($2),snapshot_frontier=$3,head_frontier=$3 WHERE id=$1",vec![documents[0].into(),original_snapshot.clone().into(),original_frontier.clone().into()]).await;
         let legacy = Uuid::new_v4();
         let legacy_alias = Uuid::new_v4();
@@ -426,6 +456,35 @@ mod tests {
             original_frontier
         );
         assert_eq!(unchanged.try_get::<i64>("", "head_seq").unwrap(), 0);
+        let prepared = prepare(db, pages[0], true, false).await.unwrap().unwrap();
+        assert_eq!(prepared.frontier, original_frontier);
+        let tx = db.begin().await.unwrap();
+        ensure(&tx, pages[0], Some(&prepared)).await.unwrap();
+        exec(
+            &tx,
+            "UPDATE collab_documents SET head_seq=head_seq+1 WHERE id=$1",
+            vec![documents[0].into()],
+        )
+        .await;
+        let contention = crate::error::ApiErrorKind::ServerDraining(crate::error::ServerDrainingReason::Contention);
+        assert_eq!(
+            ensure(&tx, pages[0], Some(&prepared)).await.unwrap_err().kind(),
+            contention
+        );
+        tx.rollback().await.unwrap();
+
+        let tx = db.begin().await.unwrap();
+        exec(
+            &tx,
+            "UPDATE collab_documents SET head_frontier=$2 WHERE id=$1",
+            vec![documents[0].into(), replayed_wire.as_bytes().to_vec().into()],
+        )
+        .await;
+        assert_eq!(
+            ensure(&tx, pages[0], Some(&prepared)).await.unwrap_err().kind(),
+            contention
+        );
+        tx.rollback().await.unwrap();
         let sealed = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
