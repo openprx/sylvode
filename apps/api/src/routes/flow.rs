@@ -8430,51 +8430,6 @@ mod flow_database_tests {
         .n
     }
 
-    /// Install an era-appropriate sequence-zero Page before testing the legacy semantic
-    /// operations contract. The production fixture router always initializes new EditorDocs.
-    async fn install_legacy_page_fixture(state: &AppState, document_id: Uuid, title: &str) {
-        use collab_core::{CollabEngine, LoroCollabEngine};
-
-        let mut engine = LoroCollabEngine::new_empty(rand::random());
-        engine.set_title(title).expect("legacy Page title writes");
-        let snapshot = engine.export_snapshot().expect("legacy snapshot exports");
-        let frontier = engine.frontier().as_bytes().to_vec();
-        let checksum = crate::flow::collab::bootstrap::content_hash(&snapshot);
-        let byte_count = i64::try_from(snapshot.len()).expect("fixture snapshot is small");
-        exec(
-            state,
-            "UPDATE collab_documents
-             SET snapshot = $2, snapshot_checksum = $3, snapshot_frontier = $4,
-                 head_frontier = $4, byte_count = $5
-             WHERE id = $1 AND head_seq = 0",
-            vec![
-                document_id.into(),
-                snapshot.into(),
-                checksum.into(),
-                frontier.clone().into(),
-                byte_count.into(),
-            ],
-        )
-        .await;
-        let semantic = engine.semantic_snapshot().expect("legacy fixture projects");
-        exec(
-            state,
-            "UPDATE flow_object_projections
-             SET document_frontier = $2, state = $3, plain_text = $4
-             WHERE object_id = (SELECT object_id FROM collab_documents WHERE id = $1)
-               AND document_seq = 0",
-            vec![
-                document_id.into(),
-                frontier.into(),
-                crate::flow::projection::state_json(&semantic)
-                    .expect("legacy state serializes")
-                    .into(),
-                crate::flow::projection::plain_text(&semantic).into(),
-            ],
-        )
-        .await;
-    }
-
     fn semantic_patch_payload_with_serialized_bytes(target: u64) -> Value {
         let base = json!({
             "operations": [{"op": "set_property", "id": "semantic-block", "key": "fixture", "value": "ok"}],
@@ -8500,30 +8455,13 @@ mod flow_database_tests {
         let claims = claims_for(owner_id);
         let limit = crate::flow::collab::limits::SEMANTIC_PATCH_JSON_BYTES_MAX;
 
-        let create_body = body_json(to_response(
-            create_flow_object(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(workspace_id),
-                Json(CreateFlowObjectRequest {
-                    object_type: "page".to_string(),
-                    project_id: None,
-                    parent_object_id: None,
-                    title: "Semantic Patch Bytes Test".to_string(),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                    initial_fields: Vec::new(),
-                    initial_view: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        let object_id =
-            Uuid::parse_str(create_body["data"]["object"]["id"].as_str().expect("object id")).expect("object UUID");
+        // The workspace navigator's generic document tree uses these shared REST ceilings.
+        // A Page additionally enforces its own editor structure and attribute constraints.
+        let object_id = crate::flow::repository::fetch_workspace_navigator_root(&state.db, workspace_id)
+            .await
+            .expect("workspace navigator lookup succeeds")
+            .expect("workspace has a canonical navigator");
         let document_id = document_id_for(&state, object_id).await;
-        install_legacy_page_fixture(&state, document_id, "Semantic Patch Bytes Test").await;
         let insert = run_command(
             &state,
             &claims,
@@ -8631,35 +8569,13 @@ mod flow_database_tests {
         let claims = claims_for(owner_id);
         let limits = crate::flow::collab::limits::document_limits();
 
-        let create_body = body_json(to_response(
-            create_flow_object(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(workspace_id),
-                Json(CreateFlowObjectRequest {
-                    object_type: "page".to_string(),
-                    project_id: None,
-                    parent_object_id: None,
-                    title: "Tree Depth Limit Test".to_string(),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                    initial_fields: Vec::new(),
-                    initial_view: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(create_body["code"], 0, "{create_body}");
-        let object_id = Uuid::parse_str(
-            create_body["data"]["object"]["id"]
-                .as_str()
-                .expect("object id is a string"),
-        )
-        .expect("object id is a uuid");
+        // The workspace navigator's generic document tree uses these shared REST ceilings.
+        // A Page additionally enforces its own editor structure and attribute constraints.
+        let object_id = crate::flow::repository::fetch_workspace_navigator_root(&state.db, workspace_id)
+            .await
+            .expect("workspace navigator lookup succeeds")
+            .expect("workspace has a canonical navigator");
         let document_id = document_id_for(&state, object_id).await;
-        install_legacy_page_fixture(&state, document_id, "Tree Depth Limit Test").await;
 
         // A chain of `insert_block` commands, each parented on the previous one. The root block
         // (no parent) is depth 0; `tree_depth_max` more commands after it reach exactly
@@ -8772,35 +8688,13 @@ mod flow_database_tests {
         let claims = claims_for(owner_id);
         let limits = crate::flow::collab::limits::document_limits();
 
-        let create_body = body_json(to_response(
-            create_flow_object(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(workspace_id),
-                Json(CreateFlowObjectRequest {
-                    object_type: "page".to_string(),
-                    project_id: None,
-                    parent_object_id: None,
-                    title: "Batch Count Limit Test".to_string(),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                    initial_fields: Vec::new(),
-                    initial_view: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(create_body["code"], 0, "{create_body}");
-        let object_id = Uuid::parse_str(
-            create_body["data"]["object"]["id"]
-                .as_str()
-                .expect("object id is a string"),
-        )
-        .expect("object id is a uuid");
+        // The workspace navigator's generic document tree uses these shared REST ceilings.
+        // A Page additionally enforces its own editor structure and attribute constraints.
+        let object_id = crate::flow::repository::fetch_workspace_navigator_root(&state.db, workspace_id)
+            .await
+            .expect("workspace navigator lookup succeeds")
+            .expect("workspace has a canonical navigator");
         let document_id = document_id_for(&state, object_id).await;
-        install_legacy_page_fixture(&state, document_id, "Batch Count Limit Test").await;
 
         let insert_body = run_command(
             &state,

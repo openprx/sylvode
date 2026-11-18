@@ -201,7 +201,10 @@ pub async fn render(
             ));
         }
         let seq = view.field("document_seq").as_i64().ok_or_else(ApiError::internal)?;
-        if STANDARD.encode(engine.frontier().as_bytes()) != view.field("frontier").as_str().unwrap_or("") {
+        if !STANDARD
+            .decode(view.field("frontier").as_str().unwrap_or(""))
+            .is_ok_and(|frontier| engine.matches_frontier(&frontier))
+        {
             return Err(ApiError::resync_required(
                 "package document head changed during assembly",
                 None,

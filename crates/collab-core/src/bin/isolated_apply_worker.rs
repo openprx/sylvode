@@ -148,7 +148,7 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
                     })?;
             engine.import_update_causally_complete(&update)?;
         }
-        if request.from_frontier != request.to_frontier || engine.frontier().as_bytes() != request.to_frontier {
+        if request.from_frontier != request.to_frontier || !engine.matches_frontier(&request.to_frontier) {
             return Err(CollabError::OperationFailed {
                 reason: "package accepted frontier does not match replayed head".into(),
             });
@@ -175,23 +175,25 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
         });
     }
 
-    if engine.frontier().as_bytes() != request.snapshot_frontier {
+    if !engine.matches_frontier(&request.snapshot_frontier) {
         return Err(CollabError::OperationFailed {
             reason: "snapshot frontier does not match the retained history".to_string(),
         });
     }
+    let mut retained_frontier = request.snapshot_frontier;
     for update in request.updates {
-        if engine.frontier().as_bytes() != update.before_frontier {
+        if retained_frontier != update.before_frontier {
             return Err(CollabError::OperationFailed {
                 reason: "retained history before_frontier is discontinuous".to_string(),
             });
         }
         engine.import_update(&update.bytes)?;
-        if engine.frontier().as_bytes() != update.after_frontier {
+        if !engine.matches_frontier(&update.after_frontier) {
             return Err(CollabError::OperationFailed {
                 reason: "retained history after_frontier is discontinuous".to_string(),
             });
         }
+        retained_frontier = update.after_frontier;
     }
 
     let from_engine = engine.fork_at_frontier(&collab_core::Frontier::from_bytes(request.from_frontier))?;

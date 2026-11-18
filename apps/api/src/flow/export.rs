@@ -883,7 +883,7 @@ fn reconstruct_and_verify(object: &ExportObjectRow, updates: &[ExportUpdateRow])
     }
     let mut engine = LoroCollabEngine::load(&object.snapshot)
         .map_err(|_| ApiError::checksum_mismatch("canonical snapshot cannot be decoded during export"))?;
-    if engine.frontier().as_bytes() != object.snapshot_frontier {
+    if !engine.matches_frontier(&object.snapshot_frontier) {
         return Err(ApiError::checksum_mismatch(
             "canonical snapshot frontier mismatch during export",
         ));
@@ -895,9 +895,10 @@ fn reconstruct_and_verify(object: &ExportObjectRow, updates: &[ExportUpdateRow])
         ));
     }
     let mut expected_seq = object.snapshot_seq.saturating_add(1);
+    let mut retained_frontier = object.snapshot_frontier.as_slice();
     for update in updates {
         if update.seq != expected_seq
-            || update.before_frontier != engine.frontier().as_bytes()
+            || update.before_frontier != retained_frontier
             || sha256_hex(&update.bytes) != update.content_hash
             || update.bytes.len() > 65_536
         {
@@ -908,14 +909,15 @@ fn reconstruct_and_verify(object: &ExportObjectRow, updates: &[ExportUpdateRow])
         engine
             .import_update(&update.bytes)
             .map_err(|_| ApiError::checksum_mismatch("canonical update cannot be decoded during export"))?;
-        if update.after_frontier != engine.frontier().as_bytes() {
+        if !engine.matches_frontier(&update.after_frontier) {
             return Err(ApiError::checksum_mismatch(
                 "canonical update frontier mismatch during export",
             ));
         }
+        retained_frontier = &update.after_frontier;
         expected_seq = expected_seq.saturating_add(1);
     }
-    if engine.frontier().as_bytes() != object.head_frontier
+    if retained_frontier != object.head_frontier
         || object.projection_seq != object.head_seq
         || object.projection_frontier != object.head_frontier
     {
@@ -1663,7 +1665,7 @@ mod tests {
         );
         let exported_snapshot = package_entry(&package, &format!("documents/{}/snapshot.bin", page.document_id));
         let engine = LoroCollabEngine::load(&exported_snapshot).unwrap();
-        assert_eq!(engine.frontier().as_bytes(), page.head_frontier);
+        assert!(engine.matches_frontier(&page.head_frontier));
         let object: Value = serde_json::from_slice(&package_entry(
             &package,
             &format!("objects/{}/object.json", page.object_id),

@@ -1182,8 +1182,9 @@ async fn promote_objects(
             let semantic = engine
                 .semantic_snapshot()
                 .map_err(|_| ApiError::checksum_mismatch("import semantic state cannot be decoded"))?;
+            let accepted_frontier = decode_frontier(&object.accepted_frontier)?;
             if package_semantic_hash(&engine, &plan.verified.manifest)? != object.semantic_hash
-                || engine.frontier().as_bytes() != decode_frontier(&object.accepted_frontier)?
+                || !engine.matches_frontier(&accepted_frontier)
             {
                 return Err(ApiError::checksum_mismatch(
                     "imported document head fingerprint does not match object metadata",
@@ -1214,7 +1215,7 @@ async fn promote_objects(
                         ApiError::checksum_mismatch("reused import lineage points at an invalid document")
                     })?;
                     if existing.head_seq != object.accepted_seq
-                        || existing.head_frontier != decode_frontier(&object.accepted_frontier)?
+                        || !engine.matches_frontier(&existing.head_frontier)
                         || package_semantic_hash(&existing_engine, &plan.verified.manifest)? != object.semantic_hash
                     {
                         return Err(ApiError::stale_frontier(
@@ -1265,14 +1266,14 @@ async fn promote_objects(
                  (id,object_id,engine,format_version,snapshot,snapshot_frontier,snapshot_seq,head_frontier,head_seq,byte_count,update_count) \
                  VALUES ($1,$2,'loro',$3,$4,$5,$6,$5,$6,$7,0)",
                 vec![target_document.into(),target_object.into(),object.format_version.clone().into(),snapshot.into(),
-                    engine.frontier().as_bytes().to_vec().into(),object.accepted_seq.into(),byte_count.into()],
+                    accepted_frontier.clone().into(),object.accepted_seq.into(),byte_count.into()],
             )).await?;
             repository::insert_projection(
                 tx,
                 &repository::NewProjection {
                     object_id: target_object,
                     document_seq: object.accepted_seq,
-                    document_frontier: engine.frontier().as_bytes().to_vec(),
+                    document_frontier: accepted_frontier,
                     title: engine.title().map_err(|_| ApiError::internal())?,
                     state: projection::state_json(&semantic).map_err(|_| ApiError::internal())?,
                     plain_text: projection::plain_text(&semantic),
@@ -1892,20 +1893,26 @@ mod tests {
         )
         .await
         .unwrap();
-        #[derive(FromQueryResult)]
-        struct Bytes {
-            package_bytes: Vec<u8>,
-        }
-        Bytes::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT a.package_bytes FROM flow_export_jobs j JOIN flow_package_artifacts a ON a.id=j.artifact_id WHERE j.id=$1",
-            vec![receipt.job_id.into()],
-        ))
-        .one(&state.db)
+        assert_eq!(
+            receipt.status, "completed",
+            "source package export failed: {:?}",
+            receipt.error
+        );
+        let (bytes, checksum, format) = crate::flow::export::download_package_export(
+            &state.db,
+            receipt.job_id,
+            &ExportPrincipal {
+                id: source_owner,
+                kind: "user".to_string(),
+                role: "owner".to_string(),
+                workspace_export_capability: false,
+            },
+        )
         .await
-        .unwrap()
-        .unwrap()
-        .package_bytes
+        .expect("completed fixture artifact can be downloaded");
+        assert_eq!(checksum, receipt.checksum);
+        assert_eq!(format, "package");
+        bytes
     }
 
     fn principal(id: Uuid) -> ImportPrincipal {

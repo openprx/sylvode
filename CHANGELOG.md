@@ -37,7 +37,7 @@ name.
 
 ### Security
 
-- Replaced Chrono with `time` and updated Loro to 1.18.0 (Rust and WebAssembly), which uses the maintained `imbl` implementation. Updated SeaORM's derive dependency to `sea-bae` 0.2.2. The lockfile no longer includes Chrono, im, bitmaps, sized-chunks or proc-macro-error2. Removed the four obsolete advisory exceptions.
+- Replaced Chrono with `time` and updated Loro to 1.18.0 (Rust and WebAssembly), which uses the maintained `imbl` implementation. Updated SeaORM's derive dependency to `sea-bae` 0.2.2. The lockfile no longer includes Chrono, im, bitmaps, sized-chunks or proc-macro-error2. Removed the four obsolete advisory exceptions. Patched event-listener and rustix for RUSTSEC-2026-0221 and RUSTSEC-2026-0486.
 - Updated quinn-udp to 0.5.16 for RUSTSEC-2026-0538. The lock-only SQLx SQLite advisory RUSTSEC-2026-0459 is explicitly excepted only while a mandatory all-target/all-feature normal/build/dev dependency guard proves SQLite unreachable; SQLite itself was not upgraded or declared patched.
 
 - Patched RustSec findings in the lockfile: rustls 0.23.46, rustls-webpki 0.103.16,

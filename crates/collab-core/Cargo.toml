@@ -8,6 +8,7 @@ description = "Production Loro CRDT adapter for Sylvode Flow (selected in v0.3; 
 
 [dependencies]
 loro = "=1.18.0"
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

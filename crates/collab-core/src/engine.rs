@@ -17,7 +17,7 @@
 //! does.
 
 use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use loro::{
     Container, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer, VersionVector,
@@ -323,6 +323,28 @@ impl LoroCollabEngine {
             .get(META_TITLE)
             .and_then(|value| read_string_value(&value))
             .unwrap_or_default())
+    }
+
+    /// Validates an engine-derived version against a persisted Loro wire vector.
+    ///
+    /// Loro encodes its peer map in iteration order. Independent replay and snapshot decoding
+    /// may reorder entries without changing the causal version. Persisted receipt and CAS tokens
+    /// retain their original bytes, so this comparison is only for reconstructed engine state.
+    pub fn matches_frontier(&self, wire: &[u8]) -> bool {
+        let Ok((entries, remaining)) = postcard::take_from_bytes::<Vec<(u64, i32)>>(wire) else {
+            return false;
+        };
+        let version = self.doc.state_vv();
+        if !remaining.is_empty()
+            || entries.len() != version.len()
+            || !postcard::to_allocvec(&entries).is_ok_and(|encoded| encoded == wire)
+        {
+            return false;
+        }
+        let mut seen = HashSet::with_capacity(entries.len());
+        entries
+            .into_iter()
+            .all(|(peer, counter)| seen.insert(peer) && version.get(&peer) == Some(&counter))
     }
 
     /// Creates an independent read-only historical view at an opaque version-vector frontier.
@@ -1382,6 +1404,36 @@ mod tests {
                 .and_then(Value::as_str),
             Some("Visible")
         );
+    }
+
+    #[test]
+    fn replay_frontier_accepts_peer_order_only_and_rejects_malformed_or_different_vectors() {
+        let engine = LoroCollabEngine::new_empty(31);
+        engine.doc.set_peer_id(31).unwrap();
+        engine.doc.get_map("proof").insert("first", 1).unwrap();
+        engine.doc.commit();
+        engine.doc.set_peer_id(47).unwrap();
+        engine.doc.get_map("proof").insert("second", 2).unwrap();
+        engine.doc.commit();
+        let version = engine.doc.state_vv();
+        let first = (31_u64, *version.get(&31).unwrap());
+        let second = (47_u64, *version.get(&47).unwrap());
+        let forward = postcard::to_allocvec(&[first, second].as_slice()).unwrap();
+        let reverse = postcard::to_allocvec(&[second, first].as_slice()).unwrap();
+        assert_ne!(forward, reverse);
+        let after = LoroCollabEngine::load(&engine.export_snapshot().unwrap()).unwrap();
+        for state in [engine, after] {
+            assert!(state.matches_frontier(&forward));
+            assert!(state.matches_frontier(&reverse));
+            assert!(!state.matches_frontier(&postcard::to_allocvec(&[first, first].as_slice()).unwrap()));
+            assert!(
+                !state.matches_frontier(&postcard::to_allocvec(&[first, (47_u64, second.1 + 1)].as_slice()).unwrap())
+            );
+            let mut trailing = reverse.clone();
+            trailing.push(0);
+            assert!(!state.matches_frontier(&trailing));
+            assert!(!state.matches_frontier(&[2]));
+        }
     }
 
     #[test]
