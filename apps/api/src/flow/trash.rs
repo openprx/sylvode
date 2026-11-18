@@ -178,7 +178,7 @@ pub async fn purge_archived(
     let nodes = DescendantRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "WITH RECURSIVE tree AS ( \
-            SELECT id, lifecycle_status, 0 AS depth, ARRAY[id]::uuid[] AS path \
+            SELECT id, lifecycle_status, 0::bigint AS depth, ARRAY[id]::uuid[] AS path \
             FROM flow_objects \
             WHERE id = $1 AND workspace_id = $2 \
             UNION ALL \
@@ -203,7 +203,7 @@ pub async fn purge_archived(
     }
     let locked = DescendantRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id, lifecycle_status, 0 AS depth FROM flow_objects \
+        "SELECT id, lifecycle_status, 0::bigint AS depth FROM flow_objects \
          WHERE workspace_id = $1 AND id = ANY(string_to_array($2, ',')::uuid[]) \
          FOR UPDATE",
         vec![

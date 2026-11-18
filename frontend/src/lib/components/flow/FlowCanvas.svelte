@@ -1371,6 +1371,8 @@
 	:global(.flow-canvas .ProseMirror) {
 		min-height: 60vh;
 		outline: none;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 	:global(.flow-canvas .ProseMirror p:first-child:last-child:empty::before) {
 		content: attr(data-placeholder);

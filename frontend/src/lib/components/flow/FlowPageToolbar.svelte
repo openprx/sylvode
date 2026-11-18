@@ -67,7 +67,7 @@
 			data-testid="flow-more">{$t('flow.layout.more')} ···</summary
 		>
 		<div
-			class="absolute right-0 z-40 min-w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			class="absolute right-0 z-[45] min-w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
 		>
 			{#if onManageSharedBlocks}<button
 					type="button"

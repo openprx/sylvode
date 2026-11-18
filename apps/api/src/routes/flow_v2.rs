@@ -880,7 +880,7 @@ pub async fn get_flow_v2_search(
     bot: Option<Extension<BotAuthContext>>,
     Path(scope_id): Path<Uuid>,
     Query(query): Query<super::FlowSearchQuery>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let actor = user(&claims, bot.as_ref())?;
     let owner_scope = accessible_scope(&state, scope_id, actor).await?;
     let selectors =
@@ -913,6 +913,17 @@ pub async fn get_flow_v2_search(
     }
     if query.q.is_empty() || query.q.chars().count() > 256 {
         return Err(ApiError::invalid_update("q must contain1..256 characters"));
+    }
+    if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
+        return Ok(super::get_flow_search(
+            State(state),
+            Extension(claims),
+            bot,
+            Path(workspace),
+            super::FlowQuery(query),
+        )
+        .await?
+        .into_response());
     }
     let cursor = query
         .cursor
@@ -974,7 +985,8 @@ pub async fn get_flow_v2_search(
     }
     Ok(ApiResponse::success(
         json!({"items":items,"next_cursor":next,"index_frontier":{"indexed_seq":indexed,"head_seq":head,"lag":head-indexed,"stale":false}}),
-    ))
+    )
+    .into_response())
 }
 fn escape_html(text: &str) -> String {
     text.replace('&', "&amp;")

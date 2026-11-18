@@ -135,14 +135,15 @@ test("editor: markdown heading, bold, and a link", async ({
     await page.keyboard.press("Shift+ArrowLeft");
   }
   // Native selectionchange is asynchronous; wait until the editor acknowledges the range.
-  await expect(page.getByTestId("flow-selection-toolbar")).toBeVisible();
+  const formatToolbar = page.getByRole("toolbar", { name: "Text formatting" });
+  await expect(formatToolbar).toBeVisible();
   await page.keyboard.press("ControlOrMeta+b");
   await expect(editor.locator("p strong")).toHaveText("world");
-  await expect(page.getByTestId("flow-selection-toolbar")).toBeVisible();
+  await expect(formatToolbar).toBeVisible();
 
-  await page.getByTestId("flow-mark-link").click();
-  await page.getByTestId("flow-link-input").fill("https://example.com/flow");
-  await page.getByTestId("flow-link-apply").click();
+  await formatToolbar.getByRole("button", { name: "Link", exact: true }).click();
+  await formatToolbar.getByRole("textbox", { name: "Link address" }).fill("https://example.com/flow");
+  await formatToolbar.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(editor.locator("p a")).toHaveAttribute(
     "href",
     "https://example.com/flow",
@@ -200,15 +201,18 @@ test("navigator follows the list cursor past the first page", async ({
   }
 
   let held: ObjectView[] = [];
+  const requestedCursors: Array<string | null> = [];
   await page.route(
-    /\/api\/v1\/workspaces\/[^/]+\/flow\/objects(?:\?.*)?$/,
+    /\/api\/v2\/flow\/scopes\/[^/]+\/objects(?:\?.*)?$/,
     async (route) => {
       if (route.request().method() !== "GET") {
         await route.continue();
         return;
       }
       const url = new URL(route.request().url());
-      if (url.searchParams.has("cursor")) {
+      const cursor = url.searchParams.get("cursor");
+      requestedCursors.push(cursor);
+      if (cursor === "e2e-page-2") {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -226,8 +230,8 @@ test("navigator follows the list cursor past the first page", async ({
         next_cursor?: string;
       }>;
       if (json.code === 0 && json.data.items.length >= 2) {
-        held = json.data.items.slice(1);
-        json.data.items = json.data.items.slice(0, 1);
+        held = json.data.items.filter((item) => item.title === secondTitle);
+        json.data.items = json.data.items.filter((item) => item.title !== secondTitle);
         json.data.next_cursor = "e2e-page-2";
       }
       await route.fulfill({
@@ -241,9 +245,7 @@ test("navigator follows the list cursor past the first page", async ({
   await signInAs(page, ownerLogin);
   await page.goto(`/workspace/${workspace.id}/flow`);
   await expect(page.getByRole("treeitem", { name: firstTitle })).toBeVisible();
-  await expect(page.getByRole("treeitem", { name: secondTitle })).toHaveCount(
-    0,
-  );
-  await page.getByTestId("flow-nav-load-more").click();
   await expect(page.getByRole("treeitem", { name: secondTitle })).toBeVisible();
+  expect(held).toHaveLength(1);
+  expect(requestedCursors.slice(0, 2)).toEqual([null, "e2e-page-2"]);
 });

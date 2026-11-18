@@ -344,7 +344,7 @@ test('export a workspace package, import it into another workspace with a projec
 	};
 	const previews: Array<Envelope<PreviewWire>> = [];
 	page.on('response', async (res) => {
-		if (new URL(res.url()).pathname.endsWith('/flow/imports/preview')) {
+		if (/^\/api\/v2\/flow\/scopes\/[^/]+\/imports\/preview$/.test(new URL(res.url()).pathname)) {
 			previews.push((await res.json()) as Envelope<PreviewWire>);
 		}
 	});

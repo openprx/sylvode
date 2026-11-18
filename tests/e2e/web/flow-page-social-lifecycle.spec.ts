@@ -71,13 +71,12 @@ test('page: comment-only block actions, public appearance, archive, restore and 
     await expect(memberEditor).toHaveAttribute('contenteditable', 'false');
     await expect(memberEditor).toContainText('A page ready for review');
     await memberEditor.locator('p').hover();
-    const handle = memberPage.getByTestId('flow-block-handle');
-    await expect(handle.getByRole('button', { name: 'Comment on this block', exact: true })).toBeVisible();
-    await expect(handle.getByTestId('flow-block-menu-button')).toHaveCount(0);
+    await expect(memberPage.getByRole('button', { name: 'Comment on this block', exact: true })).toBeVisible();
+    await expect(memberPage.getByRole('button', {name: 'Block actions', exact: true})).toHaveCount(0);
     // Moving from the document into its gutter must not remove the anchored action.
-    await handle.getByRole('button', { name: 'Comment on this block', exact: true }).hover();
-    await expect(handle.getByRole('button', { name: 'Comment on this block', exact: true })).toBeVisible();
-    await handle.getByRole('button', { name: 'Comment on this block', exact: true }).click();
+    await memberPage.getByRole('button', { name: 'Comment on this block', exact: true }).hover();
+    await expect(memberPage.getByRole('button', { name: 'Comment on this block', exact: true })).toBeVisible();
+    await memberPage.getByRole('button', { name: 'Comment on this block', exact: true }).click();
     const comments = memberPage.getByTestId('flow-comments');
     await comments.getByRole('textbox').fill(`Anchored comment ${runId}`);
     await comments.getByRole('button', { name: 'Comment', exact: true }).click();

@@ -151,6 +151,7 @@ export class FlowOfflineSync {
 	private queue: OutboxEntry[] = [];
 	private drafts: RecoveryDraftEntry[] = [];
 	private readonly pendingStore = writable(0);
+	private persisting = 0;
 	private readonly recoveryStore = writable(false);
 	private readonly draftStore = writable<ReadonlyArray<RecoveryDraftEntry>>([]);
 	/** Serialises every pump/recovery pass; there is never more than one update in flight. */
@@ -231,9 +232,27 @@ export class FlowOfflineSync {
 		this.nextOrder += 1;
 		const enqueuedAt = this.now();
 		const peerId = this.host.peerId();
-		const next = this.enqueueChain.then(() =>
-			this.persist({ updateId, order, bytes, baseFrontier, intent, enqueuedAt, peerId })
-		);
+		this.persisting += 1;
+		this.publishPending();
+		const next = this.enqueueChain.then(async () => {
+			let persisted: OutboxEntry | null = null;
+			try {
+				persisted = await this.persist({
+					updateId,
+					order,
+					bytes,
+					baseFrontier,
+					intent,
+					enqueuedAt,
+					peerId
+				});
+			} finally {
+				this.persisting -= 1;
+				if (persisted) this.queue.push(persisted);
+				this.publishPending();
+			}
+			if (persisted) this.schedulePump();
+		});
 		this.enqueueChain = next.catch(() => undefined);
 		return next;
 	}
@@ -246,7 +265,7 @@ export class FlowOfflineSync {
 		intent: SemanticIntent;
 		enqueuedAt: number;
 		peerId: string;
-	}): Promise<void> {
+	}): Promise<OutboxEntry | null> {
 		const { updateId, order, bytes, baseFrontier, intent, enqueuedAt, peerId } = input;
 		const entry: OutboxEntry = {
 			updateId,
@@ -269,12 +288,10 @@ export class FlowOfflineSync {
 				details: violation.details
 			});
 			this.scheduleRecovery();
-			return;
+			return null;
 		}
 		await this.store.put(entry);
-		this.queue.push(entry);
-		this.publish();
-		this.schedulePump();
+		return entry;
 	}
 
 	/** The session reached `snapshot` on a (re)connection. */
@@ -331,7 +348,7 @@ export class FlowOfflineSync {
 
 	/** Resolves when every scheduled pass has finished (tests, and teardown). */
 	idle(): Promise<void> {
-		return this.chain;
+		return this.enqueueChain.then(() => this.chain);
 	}
 
 	dispose(): void {
@@ -574,8 +591,12 @@ export class FlowOfflineSync {
 		for (const entry of [...this.queue]) await this.toDraft(entry, reason);
 	}
 
+	private publishPending(): void {
+		this.pendingStore.set(this.queue.length + this.persisting);
+	}
+
 	private publish(): void {
-		this.pendingStore.set(this.queue.length);
+		this.publishPending();
 		this.draftStore.set([...this.drafts]);
 	}
 }

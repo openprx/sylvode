@@ -184,6 +184,8 @@
 
 		if (pathname === '/plugins' || pathname.startsWith('/plugins/'))
 			return $t('plugins.library.title');
+		if (/^\/flow\/[^/]+\/convert$/.test(pathname)) return $t('pageTitle.flowConvert');
+		if (/^\/flow\/conversions\/[^/]+$/.test(pathname)) return $t('pageTitle.flowConversion');
 		if (pathname === '/flow' || pathname.startsWith('/flow/')) return $t('nav.flow');
 		if (pathname === '/workspace') return $t('pageTitle.workspace');
 		if (isWorkspaceHomePath(pathname)) {

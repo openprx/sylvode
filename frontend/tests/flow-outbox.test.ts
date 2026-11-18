@@ -122,7 +122,8 @@ await suite.checkAsync(
 			ctx.connectivity.goOffline();
 			await waitFor(() => ctx.states.at(-1) === 'offline', 'offline');
 			edit(ctx.entry.doc, 'persist me');
-			await waitFor(() => ctx.pending() === 1, 'one pending');
+			assertEqual(ctx.pending(), 1, 'a local edit is pending before IndexedDB persists it');
+			await ctx.entry.offline.idle();
 			const rows = await rawOutbox(ctx.idb);
 			assertEqual(rows.length, 1, 'one row in IndexedDB');
 			const row = rows[0];
@@ -151,7 +152,8 @@ await suite.checkAsync(
 			ctx.connectivity.goOffline();
 			await waitFor(() => ctx.states.at(-1) === 'offline', 'offline');
 			for (const text of ['a', 'b', 'c', 'd']) edit(ctx.entry.doc, text);
-			await waitFor(() => ctx.pending() === 4, 'four pending');
+			assertEqual(ctx.pending(), 4, 'all four edits are immediately pending');
+			await ctx.entry.offline.idle();
 			assertEqual(ctx.states.at(-1), 'offline', 'still offline');
 			assertEqual(server.updatesSeen.length, 0, 'nothing sent offline');
 			const stored = (await ctx.store.list(OBJECT_ID)).map((e) => e.updateId);
@@ -306,7 +308,8 @@ await suite.checkAsync(
 		first.connectivity.goOffline();
 		await waitFor(() => first.states.at(-1) === 'offline', 'offline');
 		edit(first.entry.doc, 'survives a reload');
-		await waitFor(() => first.pending() === 1, 'pending');
+		assertEqual(first.pending(), 1, 'one pending edit');
+		await first.entry.offline.idle();
 		const [stored] = await first.store.list(OBJECT_ID);
 		await first.close();
 		// This is the exact pre-decoupling persistence schema: there is no workspace/scope key

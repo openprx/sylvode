@@ -4,7 +4,7 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
 
 /**
  * The Flow navigator (`/workspace/{id}/flow`) against a real API + PostgreSQL + search worker:
- * Flow search, the projection-lag badge and standalone Collection create
+ * Flow search, the projection-lag badge and Page-first creation
  * (`ui-surface-v1.md` "后续版本 UI 派生" v0.5/v0.6).
  *
  * Over REST an owner creates a workspace with Flow enabled and three Pages whose titles share one
@@ -21,10 +21,8 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  * - with the worker paused (SIGSTOP), renames one Page over REST: an `allow_stale` search shows
  *   that hit with the Stale badge, and `require_current` fails closed with `stale_frontier` and
  *   no fallback request;
- * - creates a Collection from the New menu (one default text field, board view): one
- *   `POST .../flow/objects` with `object_type=collection`, the server's collection read has that
- *   field and view, the navigator shows the new object, and the object page renders it with the
- *   registry's Collection renderer (its board view, disabled without a select field).
+ * - creates a Page using the New menu and keeps it after a reload. A typed Collection
+ *   retains its schema and saved view through the API and stays outside the Page navigator.
  *
  * Needs the stack from `scripts/e2e-web-stack.sh up`: BASE_URL serving the built frontend with
  * `/api` proxied to the API on the same origin, and the background worker the script starts on
@@ -61,7 +59,9 @@ type SearchData = {
 	index_frontier: { stale: boolean; lag: number };
 };
 
-async function unwrap<T>(response: Awaited<ReturnType<APIRequestContext['get']>>): Promise<T> {
+async function unwrap<T>(
+	response: Pick<Awaited<ReturnType<APIRequestContext['get']>>, 'ok' | 'url' | 'status' | 'json'>
+): Promise<T> {
 	expect(response.ok(), `${response.url()} answered HTTP ${response.status()}`).toBe(true);
 	const body = (await response.json()) as Envelope<T>;
 	expect(body.code, `${response.url()}: ${body.message}`).toBe(0);
@@ -124,7 +124,7 @@ function workerPid(): number {
 	return pid;
 }
 
-test('navigator: Flow search, lag badge and standalone Collection create', async ({
+test('navigator: Flow search, lag badge, Page create and typed Collection boundary', async ({
 	browser,
 	request
 }) => {
@@ -172,8 +172,12 @@ test('navigator: Flow search, lag badge and standalone Collection create', async
 		pages.push({ id: created.object.id, title });
 	}
 
+	const { scope } = await unwrap<{ scope: { id: string } }>(
+		await request.get(`/api/v2/flow/workspaces/${workspace.id}/scope`, { headers: auth })
+	);
+	const searchPath = `/api/v2/flow/scopes/${scope.id}/search`;
 	const searchUrl = (freshness: string) =>
-		`/api/v1/workspaces/${workspace.id}/flow/search?q=${WORD}&all_visible=true&freshness=${freshness}`;
+		`${searchPath}?q=${WORD}&all_visible=true&object_type=page&freshness=${freshness}`;
 	// The worker ticks every 5s; wait until it has indexed all three accepted projections.
 	await expect
 		.poll(
@@ -197,7 +201,7 @@ test('navigator: Flow search, lag badge and standalone Collection create', async
 	const searches: string[] = [];
 	page.on('request', (req: Request) => {
 		const url = new URL(req.url());
-		if (url.pathname === `/api/v1/workspaces/${workspace.id}/flow/search`) {
+		if (url.pathname === searchPath) {
 			searches.push(url.search);
 		}
 	});
@@ -217,7 +221,7 @@ test('navigator: Flow search, lag badge and standalone Collection create', async
 	const options = page.getByRole('listbox', { name: 'Search results' }).getByRole('option');
 	await expect(options).toHaveCount(3);
 	expect(searches, 'one request for the whole burst of keystrokes').toEqual([
-		`?q=${WORD}&all_visible=true&freshness=allow_stale&limit=20`
+		`?q=${WORD}&all_visible=true&object_type=page&freshness=allow_stale&limit=20`
 	]);
 	const listbox = page.getByRole('listbox', { name: 'Search results' });
 	await expect(listbox).toBeVisible();
@@ -242,13 +246,13 @@ test('navigator: Flow search, lag badge and standalone Collection create', async
 	expect(opened, 'the active option names a created page').toBeTruthy();
 	const objectRead = page.waitForRequest(
 		(req) =>
-			new URL(req.url()).pathname.startsWith(`/api/v1/flow/objects/${secondObjectId}`) &&
+			new URL(req.url()).pathname.startsWith(`/api/v2/flow/objects/${secondObjectId}`) &&
 			req.method() === 'GET'
 	);
 	await input.press('Enter');
 	await expect(page).toHaveURL(new RegExp(`/workspace/${workspace.id}/flow/${secondObjectId}$`));
 	await objectRead;
-	await expect(page.locator('input[aria-label="Page info"]')).toHaveValue(opened?.title ?? '');
+	await expect(page.getByRole('textbox', { name: 'Page title', exact: true })).toHaveValue(opened?.title ?? '');
 	await expect(page.getByTestId('flow-search-panel')).toHaveCount(0);
 
 	// ---- stale hit and require_current fail-closed (worker paused) ---------------------------
@@ -309,7 +313,7 @@ test('navigator: Flow search, lag badge and standalone Collection create', async
 		await expect(options).toHaveCount(0);
 		await page.waitForTimeout(500);
 		expect(searches, 'require_current is not retried as allow_stale').toEqual([
-			`?q=${WORD}&all_visible=true&freshness=require_current&limit=20`
+			`?q=${WORD}&all_visible=true&object_type=page&freshness=require_current&limit=20`
 		]);
 	} finally {
 		process.kill(pid, 'SIGCONT');
@@ -317,72 +321,42 @@ test('navigator: Flow search, lag badge and standalone Collection create', async
 	await input.fill('');
 	await expect(page.getByTestId('flow-search-panel')).toHaveCount(0);
 
-	// ---- standalone Collection create -------------------------------------------------------
+	// The current navigator makes Pages. Its accessible menu deliberately omits Collections.
 	const newButton = page.getByTestId('flow-nav-new');
 	const newBox = await newButton.boundingBox();
 	expect(newBox?.height ?? 0).toBeGreaterThanOrEqual(44);
-	expect(newBox?.width ?? 0).toBeGreaterThanOrEqual(44);
 	await newButton.click();
 	await expect(newButton).toHaveAttribute('aria-expanded', 'true');
-	await expect(page.getByRole('menuitem', { name: 'New Page' })).toBeFocused();
-	await page.keyboard.press('ArrowDown');
-	const collectionItem = page.getByRole('menuitem', { name: 'New Collection' });
-	await expect(collectionItem).toBeFocused();
-	await page.keyboard.press('Enter');
-
-	const dialog = page.getByTestId('flow-create-collection');
-	await expect(dialog).toBeVisible();
-	const collectionTitle = `Roadmap ${runId}`;
-	await page.getByTestId('flow-create-collection-name').fill(collectionTitle);
-	await expect(page.getByTestId('flow-create-collection-field')).toHaveValue('Name');
-	await page.getByTestId('flow-create-collection-view-board').check();
-	const createPost = page.waitForResponse(
-		(res) =>
-			new URL(res.url()).pathname === `/api/v1/workspaces/${workspace.id}/flow/objects` &&
-			res.request().method() === 'POST'
+	const newPage = page.getByRole('menuitem', { name: 'New Page' });
+	await expect(newPage).toBeFocused();
+	await expect(page.getByRole('menuitem', { name: 'New Collection' })).toHaveCount(0);
+	const pageCreate = page.waitForResponse(
+		(res) => new URL(res.url()).pathname === '/api/v2/flow/objects' && res.request().method() === 'POST'
 	);
-	await page.getByTestId('flow-create-collection-submit').click();
-	const createResponse = await createPost;
-	const created = (await createResponse.json()) as Envelope<{
-		object: { id: string; object_type: string };
-	}>;
-	expect(created.code).toBe(0);
-	expect(created.data.object.object_type).toBe('collection');
-	const collectionId = created.data.object.id;
-	const body = JSON.parse(createResponse.request().postData() ?? '{}') as {
-		object_type: string;
-		title: string;
-		idempotency_key: string;
-		initial_fields: Array<{
-			field_id: string;
-			label: string;
-			field_type: string;
-			index: number;
-		}>;
-		initial_view: { view_id: string; view_type: string; name: string };
+	await page.keyboard.press('Enter');
+	const createdPage = await unwrap<{ object: { id: string; object_type: string; title: string } }>(
+		await pageCreate
+	);
+	expect(createdPage.object.object_type).toBe('page');
+	await expect(page).toHaveURL(new RegExp(`/workspace/${workspace.id}/flow/${createdPage.object.id}$`));
+	await expect(page.getByRole('textbox', { name: 'Page title', exact: true })).toHaveValue(createdPage.object.title);
+	await page.reload();
+	await expect(page.getByRole('treeitem', { name: createdPage.object.title })).toHaveAttribute('aria-selected', 'true');
+
+	// Typed create preserves its schema and saved view on the retained API surface.
+	const collectionTitle = `Roadmap ${runId}`;
+	const body = {
+		object_type: 'collection',
+		title: collectionTitle,
+		idempotency_key: crypto.randomUUID(),
+		initial_fields: [{ field_id: crypto.randomUUID(), label: 'Name', field_type: 'text', index: 0 }],
+		initial_view: { view_id: crypto.randomUUID(), view_type: 'board', name: 'Board' }
 	};
-	expect(body.object_type).toBe('collection');
-	expect(body.title).toBe(collectionTitle);
-	expect(body.idempotency_key.length).toBeGreaterThan(0);
-	expect(body.initial_fields.map((f) => [f.label, f.field_type, f.index])).toEqual([
-		['Name', 'text', 0]
-	]);
-	expect(body.initial_view.view_type).toBe('board');
-	expect(body.initial_view.name).toBe('Board');
-
-	await expect(page).toHaveURL(new RegExp(`/workspace/${workspace.id}/flow/${collectionId}$`));
-	const tree = page.getByRole('tree');
-	const item = tree.getByRole('treeitem').filter({ hasText: collectionTitle });
-	await expect(item).toHaveCount(1);
-	await expect(item).toHaveAttribute('aria-selected', 'true');
-	await expect(item.getByTestId('flow-nav-collection-badge')).toHaveText('Collection');
-	// The object page renders it with the registry's Collection renderer: the board
-	// view, disabled until the Collection has a select field to group by.
-	await expect(page.getByTestId('flow-object-unsupported')).toHaveCount(0);
-	await expect(page.getByTestId('collection-renderer')).toBeVisible();
-	await expect(page.getByTestId('collection-board-disabled')).toBeVisible();
-	await expect(page.getByRole('heading', { level: 1, name: collectionTitle })).toBeVisible();
-
+	const created = await unwrap<{ object: { id: string; object_type: string } }>(
+		await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, { headers: auth, data: body })
+	);
+	expect(created.object.object_type).toBe('collection');
+	const collectionId = created.object.id;
 	const collection = await unwrap<{
 		object: { id: string; object_type: string; title: string };
 		// `flow/collections.rs::CollectionFieldView` / `CollectionViewView` serialize the type as `type`.
@@ -402,10 +376,9 @@ test('navigator: Flow search, lag badge and standalone Collection create', async
 		[body.initial_view.view_id, 'board', 'Board']
 	]);
 
-	// The new object survives a reload of the navigator (it is in the server's object list).
-	await page.reload();
-	await expect(
-		page.getByRole('tree').getByRole('treeitem').filter({ hasText: collectionTitle })
-	).toHaveCount(1);
+	await page.goto(`/workspace/${workspace.id}/flow/${collectionId}`);
+	await expect(page.getByTestId('flow-typed-unavailable')).toBeVisible();
+	await expect(page.getByTestId('collection-renderer')).toHaveCount(0);
+	await expect(page.getByRole('treeitem', { name: collectionTitle })).toHaveCount(0);
 	await context.close();
 });
