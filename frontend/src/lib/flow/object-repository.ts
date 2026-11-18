@@ -1,3 +1,7 @@
+import { apiClient, authSessionChanged } from '#lib/api/client.js';
+import { clearBodyClipboard } from './body/clipboard';
+import { PageBodyJobs, pageBodyJobs, disposePageBodyJobs } from './body/jobs';
+import { applyBodyIntent, bodyBlockPresent } from './body/doc-intents';
 // `ObjectRepository`: snapshot+tail load, engine lifecycle, IndexedDB accepted cache, reference
 // counting (`contracts/ui-surface-v1.md` "职责边界"). This is the ONLY place that constructs a
 // document's Loro engine doc ("同一 object 的 engine doc 只由 Repository 创建").
@@ -13,7 +17,14 @@
 // `loro-crdt` is imported dynamically, same rule as `editor-adapter.ts`: this keeps the engine
 // chunk out of every route that isn't Flow.
 
-import { get, readonly as readonlyStore, writable, type Readable } from 'svelte/store';
+import {
+	editorLocalUpdate,
+	registerEditorRecovery,
+	pauseEditorWrites,
+	holdEditorWrites
+} from './editor-batch';
+import { detachEditorUndo, releaseEditorSession } from './editor-session';
+import { get, derived, readonly as readonlyStore, writable, type Readable } from 'svelte/store';
 import {
 	flowApi,
 	clearFlowAppearanceCache,
@@ -194,9 +205,11 @@ export interface OpenFlowObjectResult {
 	/** Bumps whenever `doc` was replaced by a rebuild from the accepted snapshot; a canvas bound to
 	 * the old doc remounts on it. */
 	readonly docGeneration: Readable<number>;
+	readonly metadata?: Readable<FlowObjectView>;
 	readonly flowError: Readable<FlowError | null>;
 	/** Local updates waiting for the server (the indicator's pending count). */
 	readonly pending: Readable<number>;
+	readonly bodyPending?: Readable<number>;
 	/** Intents that could not be replayed, with their reasons. */
 	readonly recoveryDraft: Readable<ReadonlyArray<RecoveryDraftEntry>>;
 	/** The user may not write this object (`view`/`comment`, or revoked mid-session). */
@@ -223,19 +236,33 @@ const WRITABLE_LEVELS: ReadonlySet<string> = new Set(['edit', 'full_access']);
 
 class OpenEntry implements OpenFlowObjectResult {
 	readonly handle: ObjectHandle;
+	readonly ownerUserId: string | null;
+	readonly ownerAuthEpoch: number;
 	readonly session: LoroObjectSession;
 	readonly projection: LiveProjectionStore;
+	readonly metadataStore: ReturnType<typeof writable<FlowObjectView>>;
+	readonly metadata: Readable<FlowObjectView>;
+	metadataRefresh: Promise<unknown> | null = null;
 	readonly flowError: Readable<FlowError | null>;
 	readonly docGeneration: Readable<number>;
 	readonly pending: Readable<number>;
+	readonly bodyPendingStore = writable(0);
+	readonly bodyPending = readonlyStore(this.bodyPendingStore);
+	readonly localEnqueues = new Set<Promise<void>>();
+	localEnqueueFailed = false;
 	readonly recoveryDraft: Readable<ReadonlyArray<RecoveryDraftEntry>>;
 	readonly readOnly: Readable<boolean>;
+	readonly operationHeldStore = writable(false);
+	readonly operationHolds = new Set<string>();
 	readonly permittedActions: Readable<readonly string[] | null>;
 	readonly presence: Readable<ReadonlyArray<RemotePresence>>;
 	readonly offline: FlowOfflineSync;
 	readonly generationStore: ReturnType<typeof writable<number>>;
 	readonly readOnlyStore: ReturnType<typeof writable<boolean>>;
 	refCount = 1;
+	editorPaused = false;
+	readonly lifecycleAbort = new AbortController();
+	readonly reportEditorFailure: (error: FlowError) => void;
 	current: LoroDocType;
 	/** Docs replaced by a rebuild; freed on close, once nothing can still be bound to them. */
 	readonly retired: LoroDocType[] = [];
@@ -245,10 +272,13 @@ class OpenEntry implements OpenFlowObjectResult {
 	rebuildDone: (() => void) | null = null;
 
 	constructor(input: {
+		ownerUserId: string | null;
+		ownerAuthEpoch: number;
 		handle: ObjectHandle;
 		session: LoroObjectSession;
 		projection: LiveProjectionStore;
 		flowError: Readable<FlowError | null>;
+		reportEditorFailure: (error: FlowError) => void;
 		doc: LoroDocType;
 		offline: FlowOfflineSync;
 		generationStore: ReturnType<typeof writable<number>>;
@@ -256,15 +286,23 @@ class OpenEntry implements OpenFlowObjectResult {
 		permissionsStore: ReturnType<typeof writable<readonly string[] | null>>;
 	}) {
 		this.handle = input.handle;
+		this.metadataStore = writable(input.handle.object);
+		this.metadata = readonlyStore(this.metadataStore);
+		this.ownerUserId = input.ownerUserId;
+		this.ownerAuthEpoch = input.ownerAuthEpoch;
 		this.session = input.session;
 		this.projection = input.projection;
 		this.flowError = input.flowError;
+		this.reportEditorFailure = input.reportEditorFailure;
 		this.current = input.doc;
 		this.offline = input.offline;
 		this.generationStore = input.generationStore;
 		this.readOnlyStore = input.readOnlyStore;
 		this.docGeneration = readonlyStore(input.generationStore);
-		this.readOnly = readonlyStore(input.readOnlyStore);
+		this.readOnly = derived(
+			[input.readOnlyStore, this.operationHeldStore],
+			([permission, held]) => permission || held
+		);
 		this.permittedActions = readonlyStore(input.permissionsStore);
 		this.pending = input.offline.pending;
 		this.recoveryDraft = input.offline.recoveryDraft;
@@ -301,6 +339,7 @@ function fromBase64(value: string): Uint8Array {
 // TypeScript's structural typing would reject `open`'s covariant return.
 export class FlowObjectRepository {
 	private readonly open_ = new Map<string, OpenEntry>();
+	private readonly transferHolds = new Map<string, Set<string>>();
 	private readonly options: FlowObjectRepositoryOptions;
 	private outboxStore: Promise<OutboxStore> | null = null;
 	private outboxUser: string | null = null;
@@ -370,13 +409,20 @@ export class FlowObjectRepository {
 		 * `object_type` first does not read it twice. */
 		object?: FlowObjectView;
 	}): Promise<OpenFlowObjectResult> {
+		const authEpoch = apiClient.getAuthSessionEpoch();
 		const existing = this.open_.get(input.objectId);
 		if (existing) {
+			if (!apiClient.isAuthSessionEpoch(existing.ownerAuthEpoch))
+				throw { code: 'unauthenticated', recoverable: true } satisfies FlowError;
 			existing.refCount += 1;
 			return existing;
 		}
 		// The user whose local databases this open reads and writes, fixed for its lifetime.
 		const userId = this.currentUserId();
+		if (userId && typeof localStorage !== 'undefined') {
+			const { transferSessions } = await import('./block-transfer/session');
+			transferSessions(this, userId, () => this.currentUserId());
+		}
 
 		let object: FlowObjectView;
 		if (input.object && input.object.id === input.objectId) {
@@ -398,6 +444,8 @@ export class FlowObjectRepository {
 		}
 
 		const { LoroDoc } = await loadLoro();
+		if (!apiClient.isAuthSessionEpoch(authEpoch) || this.currentUserId() !== userId)
+			throw { code: 'unauthenticated', recoverable: true } satisfies FlowError;
 		const doc = new LoroDoc() as unknown as LoroDocType;
 
 		const projection = new LiveProjectionStore(objectToProjection(object));
@@ -447,6 +495,18 @@ export class FlowObjectRepository {
 					// change, so it never re-enters the outbox below.
 					if (notice.remoteBytes) liveDoc().import(notice.remoteBytes);
 					lastKnownFrontierBase64 = notice.headFrontier;
+					if (
+						entry &&
+						entry.handle.objectType === 'page' &&
+						getNamedMap(liveDoc(), 'flow_editor_structure_meta').get('model') === 'rich_page_v5' &&
+						(get(entry.metadataStore).minimum_editor_model ?? 1) < 5 &&
+						!entry.metadataRefresh
+					) {
+						const captured = entry;
+						captured.metadataRefresh = this.get(input.objectId).finally(
+							() => (captured.metadataRefresh = null)
+						);
+					}
 					projection.applyEngineDiff(
 						{ documentId: object.document_id } satisfies EngineDiff,
 						notice.headSeq
@@ -473,7 +533,8 @@ export class FlowObjectRepository {
 					permissionsStore.set([...actions]);
 					return entry ? entry.offline.onAuthorizationChange(actions.includes('edit')) : false;
 				},
-				onPermissionState: (readOnly: boolean) => readOnlyStore.set(readOnly),
+				onPermissionState: (readOnly: boolean) =>
+					readOnlyStore.set(readOnly || entry?.editorPaused === true),
 				onRevoked: (error: FlowError) => {
 					permissionsStore.set([]);
 					readOnlyStore.set(true);
@@ -483,7 +544,7 @@ export class FlowObjectRepository {
 				}
 			},
 			this.commandService,
-			this.options.session
+			{ ...this.options.session, authEpoch }
 		);
 
 		const handle: ObjectHandle = {
@@ -543,10 +604,13 @@ export class FlowObjectRepository {
 		await offline.load();
 
 		entry = new OpenEntry({
+			ownerUserId: userId,
+			ownerAuthEpoch: authEpoch,
 			handle,
 			session,
 			projection,
 			flowError: flowErrorStore,
+			reportEditorFailure: (error) => flowErrorStore.set(error),
 			doc,
 			offline,
 			generationStore,
@@ -575,7 +639,19 @@ export class FlowObjectRepository {
 
 		// The permission re-check runs beside the connect: a `view`/`comment` user gets a
 		// read-only canvas before the editor ever mounts (`ADR-0012`: "`view` 只读").
-		const [writable_] = await Promise.all([this.canWrite(input.objectId), session.connect(handle)]);
+		let writable_: boolean;
+		try {
+			[writable_] = await Promise.all([this.canWrite(input.objectId), session.connect(handle)]);
+			if (!apiClient.isAuthSessionEpoch(authEpoch) || this.currentUserId() !== userId)
+				throw { code: 'unauthenticated', recoverable: true } satisfies FlowError;
+		} catch (error) {
+			opened.lifecycleAbort.abort();
+			offline.dispose();
+			opened.unsubscribeLocal?.();
+			await session.dispose();
+			doc.free();
+			throw error;
+		}
 		if (!session.hasBoundAuthorization && !writable_) {
 			session.setPermissionReadOnly(true);
 			offline.setReadOnly(true);
@@ -583,6 +659,7 @@ export class FlowObjectRepository {
 		}
 
 		this.open_.set(input.objectId, opened);
+		for (const hold of this.transferHolds.get(input.objectId) ?? []) this.attachTransferHold(opened, hold);
 		return opened;
 	}
 
@@ -590,11 +667,446 @@ export class FlowObjectRepository {
 	private subscribeLocal(entry: OpenEntry, frontier: () => string): void {
 		entry.unsubscribeLocal?.();
 		const target = entry.doc;
-		const unsubscribe = target.subscribeLocalUpdates((bytes: Uint8Array) => {
-			void entry.offline.enqueue(bytes, frontier(), { kind: 'content_edit' });
+		if (entry.editorPaused) {
+			entry.unsubscribeLocal = null;
+			this.frontiers.set(entry.handle.objectId, frontier);
+			return;
+		}
+		const deliver = (bytes: Uint8Array) => {
+			if (!entry.editorPaused) {
+				const queued = entry.offline.enqueue(bytes, frontier(), { kind: 'content_edit' });
+				entry.localEnqueues.add(queued);
+				void queued
+					.catch(() => {
+						entry.localEnqueueFailed = true;
+						entry.reportEditorFailure({
+							code: 'network_error',
+							recoverable: true,
+							origin: 'client',
+							details: { reason: 'local_outbox_persistence' }
+						});
+					})
+					.finally(() => entry.localEnqueues.delete(queued));
+			}
+		};
+		const unsubscribe = target.subscribeLocalUpdates((bytes: Uint8Array) =>
+			editorLocalUpdate(target, bytes, deliver)
+		);
+		const recovery = registerEditorRecovery(target, (preimage) => {
+			if (entry.doc !== target) {
+				preimage.free();
+				return;
+			}
+			entry.editorPaused = true;
+			pauseEditorWrites(preimage);
+			entry.unsubscribeLocal?.();
+			entry.unsubscribeLocal = null;
+			entry.offline.setReadOnly(true);
+			entry.offline.dispose();
+			entry.session.setPermissionReadOnly(true);
+			void entry.session.dispose();
+			detachEditorUndo(target);
+			entry.readOnlyStore.set(true);
+			this.swapDoc(
+				entry,
+				preimage as LoroDocType,
+				get(entry.projection.object).documentSeq,
+				frontier
+			);
+			entry.reportEditorFailure({
+				code: 'invalid_update',
+				recoverable: false,
+				origin: 'client',
+				details: { reason: 'editor_transaction_aborted' }
+			});
 		});
-		entry.unsubscribeLocal = unsubscribe;
+		entry.unsubscribeLocal = () => {
+			unsubscribe();
+			recovery();
+		};
 		this.frontiers.set(entry.handle.objectId, frontier);
+	}
+
+	/** Read-only lifecycle observability; no document text or credentials are exposed. */
+	editorLifecycle(
+		objectId: string
+	): { refs: number; generation: number; retired: number; paused: boolean } | null {
+		const entry = this.open_.get(objectId);
+		return entry
+			? {
+					refs: entry.refCount,
+					generation: get(entry.generationStore),
+					retired: entry.retired.length,
+					paused: entry.editorPaused
+				}
+			: null;
+	}
+
+	bodyJobs(objectId: string): PageBodyJobs | null {
+		const entry = this.open_.get(objectId);
+		if (!entry) return null;
+		return pageBodyJobs(entry, () => {
+			const allowed = () =>
+				this.open_.get(objectId) === entry &&
+				this.currentUserId() === entry.ownerUserId &&
+				apiClient.isAuthSessionEpoch(entry.ownerAuthEpoch) &&
+				!entry.editorPaused &&
+				!get(entry.readOnly) &&
+				!entry.localEnqueueFailed;
+			const jobs = new PageBodyJobs(
+				{
+					objectId,
+					allowed,
+					ensure: () => this.ensureBodyStructure(entry, entry.doc),
+					insert: (bookmark, intent) => {
+						const doc = entry.doc;
+						return applyBodyIntent(
+							doc,
+							bookmark,
+							intent,
+							() => allowed() && entry.doc === doc
+						).catch(() => null);
+					},
+					saved: (signal) => this.waitBodySaved(entry, entry.doc, signal),
+					contains: (blockId) => bodyBlockPresent(entry.doc, blockId),
+					failureReason: () => {
+						const error = get(entry.flowError);
+						return error?.details && typeof error.details === 'object'
+							? String((error.details as { reason?: unknown }).reason ?? '')
+							: null;
+					},
+					prepare: (title, key, signal) =>
+						allowed()
+							? flowApi.prepareChildPage(objectId, title, key, signal)
+							: Promise.resolve(authSessionChanged()),
+					cancelReservation: (id) =>
+						this.currentUserId() === entry.ownerUserId &&
+						apiClient.isAuthSessionEpoch(entry.ownerAuthEpoch)
+							? flowApi.cancelChildReservation(objectId, id)
+							: Promise.resolve({ code: 401, message: 'Session changed', data: null }),
+					reservationStatus: (id, signal) =>
+						allowed()
+							? flowApi.childReservationStatus(objectId, id, signal)
+							: Promise.resolve(authSessionChanged()),
+					childReady: (id) => this.notifyObjectCreated(id, objectId)
+				},
+				{
+					limits: (id, signal) =>
+						allowed() ? flowApi.bodyAssetLimits(id, signal) : Promise.resolve(authSessionChanged()),
+					upload: (id, kind, file, key, signal, progress) =>
+						allowed()
+							? flowApi.uploadBodyAsset(id, kind, file, key, signal, progress)
+							: Promise.resolve(authSessionChanged()),
+					discard: (id, asset) =>
+						this.currentUserId() === entry.ownerUserId &&
+						apiClient.isAuthSessionEpoch(entry.ownerAuthEpoch)
+							? flowApi.discardBodyAsset(id, asset)
+							: Promise.resolve({ code: 401, message: 'Session changed', data: null })
+				}
+			);
+			jobs.subscribe((snapshot) => entry.bodyPendingStore.set(snapshot.pending));
+			return jobs;
+		});
+	}
+	private async ensureBodyStructure(entry: OpenEntry, doc: LoroDocType): Promise<boolean> {
+		if (
+			this.open_.get(entry.handle.objectId) !== entry ||
+			entry.doc !== doc ||
+			entry.editorPaused ||
+			!apiClient.isAuthSessionEpoch(entry.ownerAuthEpoch) ||
+			get(entry.readOnly)
+		)
+			return false;
+		if (getNamedMap(doc, 'flow_editor_structure_meta').get('initialized') === true) return true;
+		try {
+			await Promise.all([...entry.localEnqueues]);
+			if (
+				get(entry.pending) > 0 &&
+				!(await this.waitBodySaved(entry, doc, entry.lifecycleAbort.signal))
+			)
+				return false;
+			if (!apiClient.isAuthSessionEpoch(entry.ownerAuthEpoch)) return false;
+			const object = await flowApi.getObject(entry.handle.objectId);
+			if (
+				object.code !== 0 ||
+				!object.data ||
+				!apiClient.isAuthSessionEpoch(entry.ownerAuthEpoch) ||
+				this.open_.get(entry.handle.objectId) !== entry ||
+				entry.doc !== doc ||
+				get(entry.readOnly)
+			)
+				return false;
+			const result = await flowApi.executeCommand(entry.handle.objectId, {
+				command: { type: 'initialize_editor_doc', payload: { model: 'rich_page_v4' } },
+				expected_frontier: object.data.frontier,
+				idempotency_key: crypto.randomUUID()
+			});
+			if (result.code !== 0 || entry.doc !== doc || this.open_.get(entry.handle.objectId) !== entry)
+				return false;
+			await this.replaceWithAccepted(await this.bootstrap(entry.handle.objectId));
+			return (
+				entry.doc === doc &&
+				getNamedMap(doc, 'flow_editor_structure_meta').get('initialized') === true
+			);
+		} catch {
+			return false;
+		}
+	}
+	/** Counts only the current actor's existing outbox/jobs; no hidden Page is opened to sync it. */
+	async transferPendingSummary(objectId: string): Promise<{
+		known: boolean;
+		pending: number;
+		drafts: number;
+		bodyJobs: number;
+		enqueues: number;
+		open: boolean;
+		paused: boolean;
+	}> {
+		const actor = this.currentUserId(),
+			epoch = apiClient.getAuthSessionEpoch();
+		if (!actor)
+			return {
+				known: false,
+				pending: 0,
+				drafts: 0,
+				bodyJobs: 0,
+				enqueues: 0,
+				open: false,
+				paused: false
+			};
+		try {
+			const store = await this.outbox(actor),
+				[pending, drafts] = await Promise.all([store.list(objectId), store.listDrafts(objectId)]);
+			const entry = this.open_.get(objectId);
+			if (!apiClient.isAuthSessionEpoch(epoch) || this.currentUserId() !== actor)
+				return {
+					known: false,
+					pending: 0,
+					drafts: 0,
+					bodyJobs: 0,
+					enqueues: 0,
+					open: false,
+					paused: false
+				};
+			return {
+				known: true,
+				pending: Math.max(pending.length, entry ? get(entry.pending) : 0),
+				drafts: drafts.length,
+				bodyJobs: entry ? get(entry.bodyPending) : 0,
+				enqueues: entry?.localEnqueues.size ?? 0,
+				open: !!entry,
+				paused: entry?.editorPaused ?? false
+			};
+		} catch {
+			return {
+				known: false,
+				pending: 0,
+				drafts: 0,
+				bodyJobs: 0,
+				enqueues: 0,
+				open: false,
+				paused: false
+			};
+		}
+	}
+	/** Merge the accepted transfer head into the live CRDT; never replace a personal unsent draft. */
+	async mergeTransferAccepted(objectId: string): Promise<boolean> {
+		const entry = this.open_.get(objectId);
+		if (!entry) return false;
+		const doc = entry.doc,
+			epoch = entry.ownerAuthEpoch;
+		try {
+			const bootstrap = await this.bootstrap(objectId);
+			if (
+				this.open_.get(objectId) !== entry ||
+				entry.doc !== doc ||
+				!apiClient.isAuthSessionEpoch(epoch)
+			)
+				return false;
+			doc.import(fromBase64(bootstrap.snapshot_base64));
+			for (const update of bootstrap.tail_updates) doc.import(fromBase64(update.bytes));
+			entry.projection.applyEngineDiff(
+				{ documentId: entry.handle.documentId } satisfies EngineDiff,
+				bootstrap.head_seq
+			);
+			this.frontiers.set(objectId, () => bootstrap.head_frontier);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	transferEditingHeld(objectId: string): boolean { return !!this.transferHolds.get(objectId)?.size; }
+	openTransferEntry(objectId: string): OpenFlowObjectResult | null {
+		return this.open_.get(objectId) ?? null;
+	}
+	private attachTransferHold(entry: OpenEntry, operationId: string): void {
+		if (entry.operationHolds.has(operationId)) return;
+		entry.operationHolds.add(operationId);
+		entry.operationHeldStore.set(true);
+		let releaseDoc = holdEditorWrites(entry.doc, operationId);
+		const stop = entry.docGeneration.subscribe(() => {
+			releaseDoc(); releaseDoc = holdEditorWrites(entry.doc, operationId);
+		});
+		const release = () => {
+			stop(); releaseDoc(); entry.operationHolds.delete(operationId);
+			entry.operationHeldStore.set(entry.operationHolds.size > 0);
+		};
+		entry.lifecycleAbort.signal.addEventListener('abort', release, { once: true });
+		this.transferHoldReleases.set(`${entry.handle.objectId}:${operationId}`, () => {
+			entry.lifecycleAbort.signal.removeEventListener('abort', release); release();
+		});
+	}
+	private readonly transferHoldReleases = new Map<string, () => void>();
+	holdTransferEditing(objectIds: readonly string[], operationId: string): () => void {
+		for (const id of objectIds) {
+			let holds = this.transferHolds.get(id);
+			if (!holds) { holds = new Set(); this.transferHolds.set(id, holds); }
+			holds.add(operationId);
+			const entry = this.open_.get(id);
+			if (entry) this.attachTransferHold(entry, operationId);
+		}
+		return () => {
+			for (const id of objectIds) {
+				const holds = this.transferHolds.get(id); holds?.delete(operationId);
+				if (!holds?.size) this.transferHolds.delete(id);
+				const key = `${id}:${operationId}`;
+				this.transferHoldReleases.get(key)?.(); this.transferHoldReleases.delete(key);
+			}
+		};
+	}
+
+	blockShareManagementAllowed(objectId: string): boolean | null {
+		const entry = this.open_.get(objectId);
+		if (!entry) return null;
+		return (
+			entry.ownerUserId === this.currentUserId() &&
+			(get(entry.permittedActions) ?? entry.handle.object.permitted_actions ?? []).includes(
+				'manage'
+			)
+		);
+	}
+
+	/** Review only the original open source Page, after accepted local writes and a matching head. */
+	async reviewBlockShare(
+		objectId: string,
+		rootCid: string,
+		selection: 'block' | 'current_subtree',
+		signal: AbortSignal
+	): Promise<
+		| { ok: true; review: import('./shared-blocks/review').BlockShareReview }
+		| {
+				ok: false;
+				reason: 'not_saved' | 'source_changed' | 'unsupported' | 'limit' | 'unavailable';
+		  }
+	> {
+		const entry = this.open_.get(objectId);
+		if (!entry || get(entry.readOnly) || entry.editorPaused)
+			return { ok: false, reason: 'unavailable' };
+		const doc = entry.doc;
+		if (!doc.getMap('doc').get('children')) return { ok: false, reason: 'unsupported' };
+		if (!(await this.ensureBodyStructure(entry, doc)) || signal.aborted)
+			return { ok: false, reason: 'unavailable' };
+		try {
+			await Promise.all([...entry.localEnqueues]);
+		} catch {
+			return { ok: false, reason: 'not_saved' };
+		}
+		if (get(entry.pending) > 0 && !(await this.waitBodySaved(entry, doc, signal)))
+			return { ok: false, reason: 'not_saved' };
+		if (
+			signal.aborted ||
+			entry.localEnqueueFailed ||
+			!apiClient.isAuthSessionEpoch(entry.ownerAuthEpoch)
+		)
+			return { ok: false, reason: 'unavailable' };
+		// Clean Local is not a synchronization claim: a fresh native-VV/head equality below is mandatory.
+		const fresh = await flowApi.getObject(objectId, undefined, signal);
+		if (
+			signal.aborted ||
+			fresh.code !== 0 ||
+			!fresh.data ||
+			this.open_.get(objectId) !== entry ||
+			entry.doc !== doc ||
+			get(entry.readOnly)
+		)
+			return { ok: false, reason: 'unavailable' };
+		const { captureBlockShareReview, ShareReviewError } = await import('./shared-blocks/review');
+		try {
+			return {
+				ok: true,
+				review: captureBlockShareReview(doc, rootCid, selection, fresh.data.frontier)
+			};
+		} catch (error) {
+			return {
+				ok: false,
+				reason: error instanceof ShareReviewError ? error.reason : 'unsupported'
+			};
+		}
+	}
+	async blockShareReviewCurrent(
+		objectId: string,
+		review: import('./shared-blocks/review').BlockShareReview,
+		signal: AbortSignal
+	): Promise<boolean> {
+		const current = await this.reviewBlockShare(
+			objectId,
+			review.root_block_cid,
+			review.selection,
+			signal
+		);
+		return current.ok && current.review.expected_frontier === review.expected_frontier;
+	}
+
+	private async waitBodySaved(
+		entry: OpenEntry,
+		doc: LoroDocType,
+		signal: AbortSignal
+	): Promise<boolean> {
+		try {
+			await Promise.all([...entry.localEnqueues]);
+		} catch {
+			return false;
+		}
+		if (signal.aborted) return false;
+		return new Promise((resolve) => {
+			let settled = false;
+			const releases: (() => void)[] = [];
+			const finish = (value: boolean) => {
+				if (settled) return;
+				settled = true;
+				queueMicrotask(() => {
+					for (const release of releases) release();
+					signal.removeEventListener('abort', aborted);
+					entry.lifecycleAbort.signal.removeEventListener('abort', aborted);
+				});
+				resolve(value);
+			};
+			const aborted = () => finish(false);
+			const inspect = () => {
+				if (
+					this.open_.get(entry.handle.objectId) !== entry ||
+					entry.doc !== doc ||
+					entry.editorPaused ||
+					get(entry.readOnly) ||
+					entry.localEnqueueFailed ||
+					signal.aborted
+				)
+					return finish(false);
+				const state = get(entry.session.state);
+				if (state === 'saved' && get(entry.pending) === 0) finish(true);
+				else if (['error', 'auth_required', 'read_only'].includes(state)) finish(false);
+			};
+			signal.addEventListener('abort', aborted, { once: true });
+			entry.lifecycleAbort.signal.addEventListener('abort', aborted, { once: true });
+			releases.push(
+				entry.pending.subscribe(inspect),
+				entry.session.state.subscribe(inspect),
+				entry.docGeneration.subscribe(inspect),
+				entry.readOnly.subscribe(inspect)
+			);
+			inspect();
+		});
 	}
 
 	private readonly frontiers = new Map<string, () => string>();
@@ -688,13 +1200,21 @@ export class FlowObjectRepository {
 		if (!entry) return;
 		entry.refCount -= 1;
 		if (entry.refCount > 0) return;
+		entry.lifecycleAbort.abort();
 		this.open_.delete(objectId);
 		this.frontiers.delete(objectId);
+		disposePageBodyJobs(entry);
 		entry.offline.dispose();
 		entry.unsubscribeLocal?.();
 		await entry.session.dispose();
+		clearBodyClipboard(entry.doc);
+		releaseEditorSession(entry.doc);
 		entry.doc.free();
-		for (const retired of entry.retired) retired.free();
+		for (const retired of entry.retired) {
+			clearBodyClipboard(retired);
+			releaseEditorSession(retired);
+			retired.free();
+		}
 	}
 
 	/** App/account teardown: no cached document or socket may survive into another account. */
@@ -724,7 +1244,7 @@ export class FlowObjectRepository {
 	 * outside `loro-prosemirror`'s narrowed `{doc, data}` container names. */
 	setTitle(objectId: string, title: string): void {
 		const entry = this.open_.get(objectId);
-		if (!entry || entry.session.isReadOnly) return;
+		if (!entry || entry.session.isReadOnly || get(entry.readOnly)) return;
 		getNamedMap(entry.doc, 'meta').set('title', title);
 		entry.doc.commit();
 		entry.projection.updateObjectMeta({ title });
@@ -735,7 +1255,19 @@ export class FlowObjectRepository {
 	 * document content -- so a refused edit is never silently lost. */
 	async exportRecoveryDraft(objectId: string): Promise<Blob> {
 		const document = this.recoveryDraftDocument(objectId);
-		return new Blob([JSON.stringify(document, null, 2)], { type: 'application/json' });
+		const entry = this.open_.get(objectId);
+		const exported = entry?.editorPaused
+			? {
+					...document,
+					preserved_snapshot_base64: btoa(
+						Array.from(entry.doc.export({ mode: 'snapshot' }), (byte) =>
+							String.fromCharCode(byte)
+						).join('')
+					),
+					undo_history_reset: true
+				}
+			: document;
+		return new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
 	}
 
 	/** The same draft as copyable text, labelled through the caller's translator. */
@@ -824,8 +1356,14 @@ export class FlowObjectRepository {
 	/** One object's current server view (`GET /flow/objects/{id}`) without opening a collaboration
 	 * session or an engine doc. Used by surfaces that only need the accepted head (title, type,
 	 * `document_seq`, `frontier`), e.g. the conversion wizard. Returns the raw `ApiResult`. */
-	get(objectId: string): Promise<ApiResult<FlowObjectView>> {
-		return flowApi.getObject(objectId);
+	async get(objectId: string): Promise<ApiResult<FlowObjectView>> {
+		const result = await flowApi.getObject(objectId);
+		const entry = this.open_.get(objectId);
+		if (result.code === 0 && result.data && entry && this.currentUserId() === entry.ownerUserId) {
+			entry.metadataStore.set(result.data);
+			Object.assign(entry.handle.object, result.data);
+		}
+		return result;
 	}
 
 	// v0.8 workspace operations reads (`surface-coverage-v1.md`: admin health / lag / integrity

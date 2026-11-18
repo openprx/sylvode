@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -53,8 +53,8 @@ pub struct OperationReceipt {
     pub changes: Vec<Value>,
     /// Stable warning codes; never free text.
     pub warnings: Vec<&'static str>,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
+    pub started_at: Timestamp,
+    pub finished_at: Option<Timestamp>,
     /// `business_events.id` of the run's audit row: the execute's domain event, or a dry-run's
     /// `audit_only` preview event. Never null (`rest-api-v1.md`).
     pub audit_event_id: Uuid,
@@ -76,8 +76,8 @@ struct CompletedRun {
     dry_run: bool,
     expected_head_seq: i64,
     result: Value,
-    started_at: DateTime<Utc>,
-    finished_at: Option<DateTime<Utc>>,
+    started_at: Timestamp,
+    finished_at: Option<Timestamp>,
 }
 
 /// Idempotency key of an operation's audit row. One run owns at most one audit row, and a replay
@@ -302,14 +302,14 @@ struct PriorRun {
     result_redacted: Value,
     dry_run: bool,
     expected_head_seq: Option<i64>,
-    created_at: DateTime<Utc>,
-    finished_at: Option<DateTime<Utc>>,
+    created_at: Timestamp,
+    finished_at: Option<Timestamp>,
 }
 
 #[derive(Debug, FromQueryResult)]
 struct RunTimes {
-    created_at: DateTime<Utc>,
-    finished_at: Option<DateTime<Utc>>,
+    created_at: Timestamp,
+    finished_at: Option<Timestamp>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -1378,7 +1378,7 @@ pub async fn workspace_integrity(
         } else {
             Err(ApiError::internal())
         };
-        let checked_at = chrono::Utc::now();
+        let checked_at = platform::timestamp::Timestamp::now();
         let entry = match outcome {
             Ok(fingerprint) => {
                 let mut entry = serde_json::to_value(fingerprint).map_err(|_| ApiError::internal())?;
@@ -1427,7 +1427,7 @@ pub async fn workspace_integrity(
     Ok(with_next_cursor(
         json!({
             "status": if failed == 0 { "healthy" } else { "integrity_error" },
-            "checked_at": chrono::Utc::now(),
+            "checked_at": platform::timestamp::Timestamp::now(),
             "counts": {"total": total, "checked": total, "healthy": total - failed, "failed": failed},
             "documents": if include_documents { Value::Array(documents) } else { Value::Null },
         }),

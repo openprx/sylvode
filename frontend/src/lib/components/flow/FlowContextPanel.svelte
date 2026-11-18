@@ -5,6 +5,8 @@
 	// their reads are lazy and are not repeated on every tab switch.
 	import { t } from 'svelte-i18n';
 	import PackageExportWarnings from './PackageExportWarnings.svelte';
+	import PortablePagePackage from './PortablePagePackage.svelte';
+	import PortableGraphPackage from './PortableGraphPackage.svelte';
 	import { conversionAvailability } from '#lib/flow/convert-availability.js';
 	import { resolve } from '$app/paths';
 	import type {
@@ -39,8 +41,16 @@
 	interface Props {
 		object: FlowObjectView;
 		permittedActions?: readonly string[] | null;
+		portablePackagesReady?: boolean;
+		portableGraphReady?: boolean;
+		portableExportReady?: boolean;
+		historyRestoreReady?: boolean;
+		onHistoryRestored?: (objectId: string) => Promise<boolean>;
+		onPortablePageCreated?: (objectId: string) => void;
+		onGraphPagesCreated?: (objects: Array<{ id: string; parentId: string }>) => void;
 		commentBlockId?: string | null;
 		commentNonce?: number;
+		commentRevision?: string;
 		selectedTool?: 'info' | 'comments' | 'share' | 'relations' | 'history';
 		onclose?: () => void;
 	}
@@ -48,13 +58,26 @@
 	let {
 		object,
 		permittedActions = null,
+		portablePackagesReady = false,
+		portableGraphReady = false,
+		portableExportReady = false,
+		historyRestoreReady = true,
+		onHistoryRestored,
+		onPortablePageCreated,
+		onGraphPagesCreated,
 		commentBlockId = null,
 		commentNonce = 0,
+		commentRevision = '',
 		selectedTool,
 		onclose
 	}: Props = $props();
 
 	const currentActions = $derived(permittedActions ?? object.permitted_actions);
+	const portablePackageAvailable = $derived(
+		object.object_type === 'page' &&
+			object.lifecycle_status === 'active' &&
+			currentActions?.includes('view') === true
+	);
 	const TABS = ['info', 'comments', 'share', 'relations', 'history'] as const;
 	type Tab = (typeof TABS)[number];
 	const TAB_KEYS: Record<Tab, string> = {
@@ -106,43 +129,98 @@
 	let history = $state<FlowHistoryEntry[]>([]);
 	let historyLoading = $state(true);
 	let restoringSeq = $state<number | null>(null);
+	let selectedRestoreSeq = $state<number | null>(null);
+	let restoreReceipt = $state<{ targetSeq: number; headSeq: number; changed: boolean } | null>(
+		null
+	);
+	let restoreIntent: { seq: number; key: string } | null = null;
+	let restoreRefreshNeeded = $state(false);
+	let historyFailure = $state<string | null>(null);
+	let historyRequest = 0;
+	const canRestore = $derived(
+		object.object_type === 'page' &&
+			object.lifecycle_status === 'active' &&
+			currentActions?.includes('edit') === true
+	);
 	let restoreFailureKey = $state<string | null>(null);
 	let nextBeforeSeq = $state<number | undefined>(undefined);
 	let expanded = $state<Record<number, boolean>>({});
 	let diffLoader = $state(new HistoryDiffLoader(''));
 
 	async function loadHistory(before?: number) {
+		const objectId = object.id;
+		const request = ++historyRequest;
 		historyLoading = true;
-		const result = await commandService.getHistory(object.id, { before_seq: before, limit: 20 });
-		if (result.code === 0 && result.data) {
-			history = before ? [...history, ...result.data.items] : result.data.items;
-			nextBeforeSeq = result.data.next_before_seq;
+		historyFailure = null;
+		try {
+			const result = await commandService.getHistory(objectId, { before_seq: before, limit: 20 });
+			if (object.id !== objectId || historyRequest !== request) return;
+			if (result.code === 0 && result.data) {
+				history = before ? [...history, ...result.data.items] : result.data.items;
+				nextBeforeSeq = result.data.next_before_seq;
+			} else {
+				historyFailure = flowErrorDetailKey(flowErrorFromResult(result));
+			}
+		} catch {
+			if (object.id === objectId && historyRequest === request)
+				historyFailure = 'flow.history.loadFailed';
+		} finally {
+			if (object.id === objectId && historyRequest === request) historyLoading = false;
 		}
-		historyLoading = false;
 	}
 
 	async function restoreVersion(seq: number): Promise<void> {
-		if (restoringSeq !== null) return;
+		if (restoringSeq !== null || selectedRestoreSeq !== seq || !canRestore || !historyRestoreReady)
+			return;
+		const objectId = object.id;
 		restoringSeq = seq;
 		restoreFailureKey = null;
-		const result = await flowApi.restoreVersion(object.id, {
-			seq,
-			idempotency_key: crypto.randomUUID()
-		});
-		restoringSeq = null;
-		if (result.code !== 0) {
-			const details = result.details;
-			const reason =
-				typeof details === 'object' && details !== null && 'reason' in details
-					? (details as { reason?: unknown }).reason
-					: null;
-			restoreFailureKey =
-				reason === 'history_not_retained'
-					? 'flow.history.notRetained'
-					: flowErrorDetailKey(flowErrorFromResult(result));
-			return;
+		restoreReceipt = null;
+		restoreRefreshNeeded = false;
+		const intent = restoreIntent?.seq === seq ? restoreIntent : { seq, key: crypto.randomUUID() };
+		restoreIntent = intent;
+		try {
+			const result = await flowApi.restoreVersion(objectId, { seq, idempotency_key: intent.key });
+			if (object.id !== objectId || restoreIntent !== intent) return;
+			if (result.code !== 0 || !result.data) {
+				const details = result.details;
+				const reason =
+					typeof details === 'object' && details !== null && 'reason' in details
+						? details.reason
+						: null;
+				if (result.code >= 400 && result.code < 499) restoreIntent = null;
+				restoreFailureKey =
+					reason === 'history_not_retained'
+						? 'flow.history.notRetained'
+						: result.code !== 0
+							? flowErrorDetailKey(flowErrorFromResult(result))
+							: 'flow.history.restoreFailed';
+				return;
+			}
+			restoreIntent = null;
+			selectedRestoreSeq = null;
+			const { target_seq, head_seq, changed } = result.data;
+			if (changed && onHistoryRestored) {
+				const updated = await onHistoryRestored(objectId);
+				if (object.id !== objectId) return;
+				restoreRefreshNeeded = !updated;
+			}
+			restoreReceipt = { targetSeq: target_seq, headSeq: head_seq, changed };
+			diffLoader = new HistoryDiffLoader(objectId);
+			expanded = {};
+			await loadHistory();
+		} catch {
+			if (object.id === objectId) restoreFailureKey = 'flow.history.restoreFailed';
+		} finally {
+			if (object.id === objectId) restoringSeq = null;
 		}
-		await loadHistory();
+	}
+
+	async function refreshRestoredPage() {
+		if (!onHistoryRestored) return;
+		const objectId = object.id;
+		const updated = await onHistoryRestored(objectId);
+		if (object.id === objectId && updated) restoreRefreshNeeded = false;
 	}
 
 	// ---- export -----------------------------------------------------------------------------
@@ -159,11 +237,13 @@
 	const formats = $derived(
 		objectExportFormats(
 			object.object_type,
-			object.supported_export_formats ?? (object.workspace_id ? undefined : [])
+			object.supported_export_formats ??
+				((object.minimum_editor_model ?? 1) >= 5 ? [] : object.workspace_id ? undefined : [])
 		)
 	);
 	const historyExportSupported = $derived(
-		object.history_export_supported ?? Boolean(object.workspace_id)
+		object.history_export_supported ??
+			((object.minimum_editor_model ?? 1) >= 5 ? false : Boolean(object.workspace_id))
 	);
 	const exportUnavailableKey = $derived(
 		object.export_unavailable_reason === 'field_secrecy'
@@ -176,6 +256,13 @@
 		const objectId = object.id;
 		const scopeId = object.scope_id;
 		history = [];
+		selectedRestoreSeq = null;
+		restoringSeq = null;
+		restoreIntent = null;
+		restoreFailureKey = null;
+		restoreReceipt = null;
+		restoreRefreshNeeded = false;
+		historyFailure = null;
 		nextBeforeSeq = undefined;
 		expanded = {};
 		diffLoader = new HistoryDiffLoader(objectId);
@@ -190,6 +277,7 @@
 		needsFreshExport = false;
 		return () => {
 			controller.dispose();
+			historyRequest++;
 			if (exportController === controller) exportController = null;
 		};
 	});
@@ -200,7 +288,10 @@
 	});
 
 	$effect(() => {
-		if (activeTab === 'history') void loadHistory();
+		if (activeTab === 'history') {
+			void object.id;
+			void loadHistory();
+		}
 	});
 	async function startExport(): Promise<void> {
 		if (!exportController || !formats.includes(exportFormat)) return;
@@ -266,6 +357,16 @@
 	/** `FlowHistoryEntry.semantic_summary` is a structured JSON object server-side (`accepted_seq`,
 	 * `changed_block_ids`, ...), not a rendered string -- render the fields a human can act on. */
 	function formatSummary(summary: unknown): string {
+		if (
+			summary &&
+			typeof summary === 'object' &&
+			'imported' in summary &&
+			summary.imported === true &&
+			'source_seq' in summary &&
+			typeof summary.source_seq === 'number'
+		) {
+			return $t('flow.history.importedVersion', { values: { version: summary.source_seq } });
+		}
 		if (summary && typeof summary === 'object' && 'accepted_seq' in summary) {
 			const s = summary as { accepted_seq: number; changed_block_ids?: unknown[] };
 			const blocks = Array.isArray(s.changed_block_ids) ? s.changed_block_ids.length : 0;
@@ -376,10 +477,39 @@
 				</p>{/if}
 		{/if}
 
+		{#if portableGraphReady && portablePackageAvailable}
+			{#key object.id}
+				<PortableGraphPackage
+					{object}
+					canImport={currentActions?.includes('edit') === true}
+					exportReady={portableExportReady}
+					oncreated={onGraphPagesCreated}
+				/>
+			{/key}
+		{/if}
+		{#if portablePackagesReady && portablePackageAvailable}
+			{#key object.id}
+				<PortablePagePackage
+					objectId={object.id}
+					canImport={currentActions?.includes('edit') === true}
+					exportReady={portableExportReady}
+					oncreated={onPortablePageCreated}
+				/>
+			{/key}
+		{/if}
+
 		<div class="space-y-3 text-sm" data-testid="flow-panel-export">
 			<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
 				{$t('flow.panel.export.heading')}
 			</h2>
+			{#if (object.minimum_editor_model ?? 1) >= 5}<p class="text-xs text-slate-500">
+					{$t('flow.body.referenceExportOnly')}
+				</p>
+				{#if !formats.includes('package') && !((portablePackagesReady || portableGraphReady) && portablePackageAvailable)}<p
+						class="text-xs text-slate-500"
+					>
+						{$t('flow.body.rawPackageUnavailable')}
+					</p>{/if}{/if}
 			{#if formats.length > 0}
 				<label class="block">
 					<span class="mb-1 block text-xs text-slate-500 dark:text-slate-400"
@@ -502,6 +632,7 @@
 				objectId={object.id}
 				blockId={commentBlockId}
 				nonce={commentNonce}
+				revision={commentRevision}
 			/>
 		{/if}
 	</div>
@@ -558,6 +689,36 @@
 		<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
 			{$t('flow.history.title')}
 		</h2>
+		{#if object.historical_asset_reads_supported === false && (object.minimum_editor_model ?? 1) >= 5}<p
+				class="mb-3 text-xs text-slate-500"
+			>
+				{$t('flow.body.historyPreviewUnavailable')}
+			</p>{/if}
+		{#if historyFailure}
+			<p role="alert" class="text-sm text-red-700 dark:text-red-300">{$t(historyFailure)}</p>
+			<button type="button" class={linkButtonClass} onclick={() => loadHistory()}
+				>{$t('flow.mounts.retry')}</button
+			>
+		{/if}
+		{#if restoreReceipt}
+			<p role="status" class="mb-3 text-sm font-medium" data-testid="flow-history-restore-receipt">
+				{$t(
+					restoreReceipt.changed ? 'flow.history.restoreChanged' : 'flow.history.restoreUnchanged',
+					{
+						values: { version: restoreReceipt.targetSeq, head: restoreReceipt.headSeq }
+					}
+				)}
+			</p>
+		{/if}
+		{#if restoreRefreshNeeded}
+			<p role="status" class="mb-3 text-sm">{$t('flow.history.restoreRefreshNeeded')}</p>
+			<button type="button" class={linkButtonClass} onclick={refreshRestoredPage}
+				>{$t('flow.history.refreshPage')}</button
+			>
+		{/if}
+		{#if canRestore && !historyRestoreReady}<p class="mb-3 text-sm">
+				{$t('flow.history.restoreWait')}
+			</p>{/if}
 		{#if historyLoading && history.length === 0}
 			<p class="text-sm text-slate-500 dark:text-slate-400">{$t('common.loading')}</p>
 		{:else if history.length === 0}
@@ -568,7 +729,11 @@
 					<li
 						class="border-l-2 border-slate-200 pl-3 text-sm dark:border-slate-700"
 						data-testid="flow-history-entry"
+						data-version-seq={entry.seq}
 					>
+						<p class="font-medium">
+							{$t('flow.history.versionLabel', { values: { version: entry.seq } })}
+						</p>
 						{#if entry.message}
 							<p class="text-slate-800 dark:text-slate-100">{entry.message}</p>
 						{/if}
@@ -583,31 +748,56 @@
 								}
 							})}
 						</p>
-						{#if object.object_type === 'page'}
+						{#if canRestore}
+							{#if selectedRestoreSeq === entry.seq}
+								<p class="mt-2 text-sm" id={`${panelId}-restore-${entry.seq}`}>
+									{$t('flow.history.restoreConfirm', { values: { version: entry.seq } })}
+								</p>
+								<div class="flex flex-wrap gap-2">
+									<button
+										type="button"
+										class={linkButtonClass}
+										aria-describedby={`${panelId}-restore-${entry.seq}`}
+										data-testid="flow-history-confirm-restore"
+										disabled={restoringSeq !== null || !historyRestoreReady}
+										onclick={() => restoreVersion(entry.seq)}
+									>
+										{restoringSeq === entry.seq
+											? $t('flow.history.restoring')
+											: $t('flow.history.restore')}
+									</button>
+									<button
+										type="button"
+										class={linkButtonClass}
+										disabled={restoringSeq !== null}
+										onclick={() => (selectedRestoreSeq = null)}>{$t('common.cancel')}</button
+									>
+								</div>
+							{:else}
+								<button
+									type="button"
+									class={linkButtonClass}
+									disabled={restoringSeq !== null || !historyRestoreReady}
+									onclick={() => (selectedRestoreSeq = entry.seq)}
+									>{$t('flow.history.restore')}</button
+								>
+							{/if}
+						{/if}
+						{#if entry.seq > 0}
 							<button
 								type="button"
 								class={linkButtonClass}
-								disabled={restoringSeq !== null}
-								onclick={() => restoreVersion(entry.seq)}
+								aria-expanded={expanded[entry.seq] === true}
+								aria-controls={`flow-history-diff-${entry.seq}`}
+								onclick={() => (expanded[entry.seq] = !expanded[entry.seq])}
 							>
-								{restoringSeq === entry.seq
-									? $t('flow.history.restoring')
-									: $t('flow.history.restore')}
+								{expanded[entry.seq] ? $t('flow.history.diff.hide') : $t('flow.history.diff.show')}
 							</button>
-						{/if}
-						<button
-							type="button"
-							class={linkButtonClass}
-							aria-expanded={expanded[entry.seq] === true}
-							aria-controls={`flow-history-diff-${entry.seq}`}
-							onclick={() => (expanded[entry.seq] = !expanded[entry.seq])}
-						>
-							{expanded[entry.seq] ? $t('flow.history.diff.hide') : $t('flow.history.diff.show')}
-						</button>
-						{#if expanded[entry.seq]}
-							<div id={`flow-history-diff-${entry.seq}`}>
-								<FlowHistoryDiff seq={entry.seq} loader={diffLoader} />
-							</div>
+							{#if expanded[entry.seq]}
+								<div id={`flow-history-diff-${entry.seq}`}>
+									<FlowHistoryDiff seq={entry.seq} loader={diffLoader} />
+								</div>
+							{/if}
 						{/if}
 					</li>
 				{/each}

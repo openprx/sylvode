@@ -10,7 +10,7 @@ const META_PROPERTY_PREFIX = "prop:";
 /**
  * Rebuilds the same engine-independent `SemanticSnapshot` shape `collab-loro`'s Rust adapter
  * (`spikes/collab-loro/src/engine.rs::semantic_snapshot`) produces, but reading a real
- * `loro-crdt@1.14.1` `LoroDoc` (the browser/JS binding) instead of the Rust `loro@1.13.9` crate.
+ * `loro-crdt@1.18.0` `LoroDoc` (the browser/JS binding) instead of the Rust `loro@1.18.0` crate.
  *
  * Deliberately does NOT reuse `LoroScenarioAdapter` (`spikes/collab-loro/src/engine.ts`): that
  * class is the TS-only corpus-runner adapter and stores the external id under a DIFFERENT meta

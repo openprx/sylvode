@@ -90,3 +90,32 @@ test('admission fallback accepts only exact typed migration reasons', () => {
 	);
 	assert.equal(editorMigrationState({ code: 'unsupported_protocol', recoverable: false }), null);
 });
+
+test('legacy readonly projection keeps typed body nodes in parent preorder and never treats a child label as authorized target content', () => {
+	const asset = '11111111-1111-4111-8111-111111111111',
+		child = '22222222-2222-4222-8222-222222222222';
+	const row = (
+		parent: string | null,
+		order: string,
+		properties: Record<string, string>,
+		text = ''
+	) => ({ kind: 'block', parent, order_key: order, properties, text });
+	const blocks = legacyProseBlocks({
+		nodes: {
+			parent: row(null, '1', {}, 'Parent'),
+			image: row('parent', '0', { block_type: 'image', asset_id: asset, alt: 'Owned image' }),
+			child: row(null, '2', { block_type: 'childPage', child_page_id: child }),
+			hidden: row(null, '0', { embed_object_id: 'collection' }, 'must stay hidden')
+		}
+	});
+	assert.deepEqual(
+		blocks.map((block) => [block.id, block.kind, block.indent]),
+		[
+			['parent', 'paragraph', 0],
+			['image', 'image', 1],
+			['child', 'childPage', 0]
+		]
+	);
+	assert.equal(blocks[1].attrs.asset_id, asset);
+	assert.equal(blocks[2].attrs.child_page_id, child);
+});

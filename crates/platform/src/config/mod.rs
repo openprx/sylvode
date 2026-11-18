@@ -91,6 +91,10 @@ pub const DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS: i32 = 10;
 /// (`rest-api-v1.md` v0.7: the sweep runs at API startup and then every 60 seconds).
 pub const DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS: u64 = 60;
 
+/// The existing upload ceiling, also used by independently owned Page body assets.
+pub const DEFAULT_FLOW_BODY_ASSET_MAX_BYTES: u64 = 50 * 1024 * 1024;
+pub const MAX_FLOW_BODY_ASSET_BYTES: u64 = DEFAULT_FLOW_BODY_ASSET_MAX_BYTES;
+
 /// Upper bound accepted for `flow.conversion_reap_interval_secs` (one day).
 pub const MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS: u64 = 86_400;
 
@@ -496,6 +500,7 @@ pub struct FlowConfig {
     pub dispatch_max_attempts: i32,
     pub collab_allowed_origins: Vec<String>,
     pub conversion_reap_interval_secs: u64,
+    pub body_asset_max_bytes: u64,
 }
 
 impl Default for FlowConfig {
@@ -504,6 +509,7 @@ impl Default for FlowConfig {
             dispatch_max_attempts: DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS,
             collab_allowed_origins: Vec::new(),
             conversion_reap_interval_secs: DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
+            body_asset_max_bytes: DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
         }
     }
 }

@@ -1285,7 +1285,12 @@
 								</p>
 							{:else}
 								<a
-									href={resolve('/(app)/flow/[objectId]', { objectId: placement.objectId })}
+									href={integrationWorkspaceId
+										? resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
+												workspaceId: integrationWorkspaceId,
+												objectId: placement.objectId
+											})
+										: resolve('/(app)/flow/[objectId]', { objectId: placement.objectId })}
 									draggable={false}
 									aria-current={selectedObjectId === placement.objectId ? 'page' : undefined}
 									title={$t('flow.mounts.nonOwningHint')}

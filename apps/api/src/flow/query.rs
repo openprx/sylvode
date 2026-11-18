@@ -7,10 +7,10 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
-use chrono::{DateTime, Utc};
 use collab_core::isolation::IsolatedApplyError;
 use collab_core::{Frontier, NodeKind, SemanticSnapshot};
 use platform::app::AppState;
+use platform::timestamp::Timestamp;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -255,7 +255,7 @@ pub fn object_view_from_row(row: ObjectViewRow) -> FlowObjectView {
         projection_lag,
         created_at: row.created_at.to_rfc3339(),
         updated_at: row.updated_at.to_rfc3339(),
-        archived_at: row.archived_at.map(|t| t.to_rfc3339()),
+        archived_at: row.archived_at.map(platform::timestamp::Timestamp::to_rfc3339),
         appearance: super::appearance::parse_stored(&row.appearance),
     }
 }
@@ -568,7 +568,7 @@ pub async fn get_navigator(
             position: positions
                 .get(&row.id)
                 .cloned()
-                .unwrap_or_else(|| format!("{}:{}", row.created_at.timestamp_micros(), row.id)),
+                .unwrap_or_else(|| format!("{}:{}", row.created_at.unix_timestamp_micros(), row.id)),
             title: row.title,
             object_type: row.object_type,
             appearance: super::appearance::parse_stored(&row.appearance),
@@ -967,11 +967,11 @@ pub async fn get_flow_feature(state: &AppState, workspace_id: Uuid) -> Result<Fl
     Ok(feature_view_from_row(row))
 }
 
-fn encode_cursor(created_at: DateTime<Utc>, id: Uuid) -> String {
+fn encode_cursor(created_at: Timestamp, id: Uuid) -> String {
     BASE64_URL.encode(format!("{}|{id}", created_at.to_rfc3339()))
 }
 
-fn decode_cursor(raw: &str) -> Result<(DateTime<Utc>, Uuid), ApiError> {
+fn decode_cursor(raw: &str) -> Result<(Timestamp, Uuid), ApiError> {
     let bytes = BASE64_URL
         .decode(raw)
         .map_err(|_| ApiError::invalid_update("cursor is not valid".to_string()))?;
@@ -979,9 +979,8 @@ fn decode_cursor(raw: &str) -> Result<(DateTime<Utc>, Uuid), ApiError> {
     let (created_at_raw, id_raw) = text
         .split_once('|')
         .ok_or_else(|| ApiError::invalid_update("cursor is not valid".to_string()))?;
-    let created_at = DateTime::parse_from_rfc3339(created_at_raw)
-        .map_err(|_| ApiError::invalid_update("cursor is not valid".to_string()))?
-        .with_timezone(&Utc);
+    let created_at = Timestamp::parse_rfc3339(created_at_raw)
+        .map_err(|_| ApiError::invalid_update("cursor is not valid".to_string()))?;
     let id = Uuid::parse_str(id_raw).map_err(|_| ApiError::invalid_update("cursor is not valid".to_string()))?;
     Ok((created_at, id))
 }

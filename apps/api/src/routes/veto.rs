@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,7 @@ pub struct VetoerRow {
     pub project_id: Uuid,
     pub domain: String,
     pub granted_by: String,
-    pub granted_at: DateTime<Utc>,
+    pub granted_at: Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -71,10 +71,10 @@ pub struct VetoEventViewRow {
     pub domain: String,
     pub reason: String,
     pub status: String,
-    pub escalation_started_at: Option<DateTime<Utc>>,
+    pub escalation_started_at: Option<Timestamp>,
     pub escalation_result: Option<String>,
     pub escalation_votes: Option<serde_json::Value>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 pub async fn exercise_veto(
@@ -207,7 +207,7 @@ pub async fn start_escalation(
         Some(serde_json::json!({
             "proposal_id": event.proposal_id,
             "status": event.status,
-            "escalation_started_at": event.escalation_started_at.map(|v| v.to_rfc3339()),
+            "escalation_started_at": event.escalation_started_at.map(platform::timestamp::Timestamp::to_rfc3339),
         })),
     )
     .await?;
@@ -233,7 +233,7 @@ pub async fn start_escalation(
                     "veto": {
                         "id": event.id,
                         "status": event.status,
-                        "escalation_started_at": event.escalation_started_at.map(|v| v.to_rfc3339()),
+                        "escalation_started_at": event.escalation_started_at.map(platform::timestamp::Timestamp::to_rfc3339),
                     }
                 })),
             },
@@ -431,7 +431,7 @@ pub async fn create_vetoer(
                 req.project_id.into(),
                 domain.into(),
                 grant_mode.into(),
-                Utc::now().into(),
+                Timestamp::now().into(),
             ],
         ))
         .await;

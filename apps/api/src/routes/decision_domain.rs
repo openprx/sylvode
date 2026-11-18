@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ pub struct DecisionDomainRow {
     pub veto_threshold: i32,
     pub autonomous_threshold: i32,
     pub is_active: bool,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,7 +117,7 @@ pub async fn initialize_default_domains_for_project(state: &AppState, project_id
                     cycle.to_string().into(),
                     veto_threshold.into(),
                     autonomous_threshold.into(),
-                    Utc::now().into(),
+                    Timestamp::now().into(),
                 ],
             ))
             .await?;
@@ -244,7 +244,7 @@ pub async fn create_decision_domain(
     let autonomous_threshold = req.autonomous_threshold.unwrap_or(300).max(0);
     let domain_key = normalize_domain_key(&req.key);
     let domain_id = scoped_domain_id(project_id, &domain_key);
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     let insert = state
         .db

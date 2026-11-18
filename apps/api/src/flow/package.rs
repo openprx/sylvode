@@ -22,19 +22,62 @@ use super::import::{BoundedImportStager, effective_import_limits};
 
 pub const PACKAGE_SCHEMA: &str = "sylvode.flow.export-package.v1";
 pub const SCOPE_PACKAGE_SCHEMA: &str = "sylvode.flow.export-package.v2";
+pub const PORTABLE_PAGE_SCHEMA: &str = "sylvode.flow.portable-page-package.v1";
+pub const PORTABLE_GRAPH_SCHEMA: &str = "sylvode.flow.portable-graph-package.v1";
+pub const PORTABLE_GRAPH_PATH: &str = "graph/content.json";
+pub const PORTABLE_GRAPH_CONTENT_BYTES: u64 = 4 * 1024 * 1024;
+pub const PORTABLE_PAGE_PATH: &str = "page/content.json";
+pub const PORTABLE_PAGE_BYTES: usize = 32 * 1024 * 1024;
+pub const PORTABLE_PAGE_CONTENT_BYTES: u64 = 1024 * 1024;
+pub const PORTABLE_PAGE_ASSET_COUNT: usize = 128;
+
 pub const SEMANTIC_MODEL_V2: &str = "editor_cid_v2";
 pub const SEMANTIC_MODEL_V3: &str = "canonical_order_v3";
+pub const SEMANTIC_MODEL_V4: &str = "rich_page_v4";
+pub const SEMANTIC_MODEL_V5: &str = "rich_page_v5";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackageSemanticModel {
     V1,
     V2,
     V3,
+    V4,
+    V5,
 }
+/// Both raw exporters fingerprint the accepted head with this manifest-declared reader.
+pub(crate) const RAW_PACKAGE_SEMANTIC_MODEL: PackageSemanticModel = PackageSemanticModel::V4;
+
+impl PackageSemanticModel {
+    pub(crate) const fn wire_name(self) -> Option<&'static str> {
+        match self {
+            Self::V1 => None,
+            Self::V2 => Some(SEMANTIC_MODEL_V2),
+            Self::V3 => Some(SEMANTIC_MODEL_V3),
+            Self::V4 => Some(SEMANTIC_MODEL_V4),
+            Self::V5 => Some(SEMANTIC_MODEL_V5),
+        }
+    }
+
+    pub(crate) fn semantic_hash(self, engine: &collab_core::LoroCollabEngine) -> Result<String, ApiError> {
+        let semantic = match self {
+            Self::V1 => engine.legacy_package_semantic_snapshot_v1(),
+            Self::V2 => engine.legacy_package_semantic_snapshot_v2(),
+            Self::V3 => engine.legacy_package_semantic_snapshot_v3(),
+            Self::V4 => engine.legacy_package_semantic_snapshot_v4(),
+            Self::V5 => engine.semantic_snapshot(),
+        };
+        Ok(semantic
+            .map_err(|_| ApiError::checksum_mismatch("package semantic fingerprint cannot be decoded"))?
+            .semantic_hash())
+    }
+}
+
 pub fn semantic_model(manifest: &ExportPackageManifest) -> Result<PackageSemanticModel, ApiError> {
     match (manifest.schema.as_str(), manifest.engine.semantic_model.as_deref()) {
         (PACKAGE_SCHEMA, None) => Ok(PackageSemanticModel::V1),
         (SCOPE_PACKAGE_SCHEMA, None | Some(SEMANTIC_MODEL_V2)) => Ok(PackageSemanticModel::V2),
         (SCOPE_PACKAGE_SCHEMA, Some(SEMANTIC_MODEL_V3)) => Ok(PackageSemanticModel::V3),
+        (PACKAGE_SCHEMA | SCOPE_PACKAGE_SCHEMA, Some(SEMANTIC_MODEL_V4)) => Ok(PackageSemanticModel::V4),
+        (PACKAGE_SCHEMA | SCOPE_PACKAGE_SCHEMA, Some(SEMANTIC_MODEL_V5)) => Ok(PackageSemanticModel::V5),
         _ => Err(ApiError::typed_with_details(
             crate::error::ApiErrorKind::UnsupportedFormat,
             "package semantic model has no tested reader",
@@ -44,7 +87,7 @@ pub fn semantic_model(manifest: &ExportPackageManifest) -> Result<PackageSemanti
 }
 pub const FLOW_SCHEMA_VERSION: u32 = 1;
 pub const ENGINE_NAME: &str = "loro";
-pub const ENGINE_CRATE_VERSION: &str = "1.13.9";
+pub const ENGINE_CRATE_VERSION: &str = "1.18.0";
 pub const ENGINE_WIRE_FORMAT_VERSION: u32 = 1;
 
 pub fn inner_reference_refusal() -> ApiError {
@@ -254,8 +297,42 @@ pub fn build_package(
 /// Validates an archive without materializing expanded member bodies. Each body is decompressed in
 /// 64 KiB chunks, counted by the shared import limiter, and hashed before the manifest is trusted.
 pub fn verify_package<R: Read + Seek>(
+    reader: R,
+    expected_package_sha256: Option<&str>,
+) -> Result<VerifiedPackage, ApiError> {
+    verify_package_inner(reader, expected_package_sha256, false)
+}
+
+pub fn verify_portable_page(bytes: &[u8], expected: Option<&str>) -> Result<VerifiedPackage, ApiError> {
+    if bytes.len() > PORTABLE_PAGE_BYTES {
+        return Err(ApiError::unsupported_format(
+            "portable Page archive byte limit exceeded",
+        ));
+    }
+    let verified = verify_package_inner(Cursor::new(bytes), expected, true)?;
+    if verified.manifest.schema != PORTABLE_PAGE_SCHEMA {
+        return Err(ApiError::unsupported_format("archive is not a portable Page package"));
+    }
+    Ok(verified)
+}
+
+pub fn verify_portable_graph(bytes: &[u8], expected: Option<&str>) -> Result<VerifiedPackage, ApiError> {
+    if bytes.len() > PORTABLE_PAGE_BYTES {
+        return Err(ApiError::unsupported_format(
+            "portable graph archive byte limit exceeded",
+        ));
+    }
+    let verified = verify_package_inner(Cursor::new(bytes), expected, true)?;
+    if verified.manifest.schema != PORTABLE_GRAPH_SCHEMA {
+        return Err(ApiError::unsupported_format("archive is not a portable graph package"));
+    }
+    Ok(verified)
+}
+
+fn verify_package_inner<R: Read + Seek>(
     mut reader: R,
     expected_package_sha256: Option<&str>,
+    portable: bool,
 ) -> Result<VerifiedPackage, ApiError> {
     reader.seek(SeekFrom::Start(0)).map_err(|_| invalid_archive())?;
     let mut archive_hasher = Sha256::new();
@@ -282,7 +359,13 @@ pub fn verify_package<R: Read + Seek>(
     let mut raw = Vec::new();
     reader.read_to_end(&mut raw).map_err(|_| invalid_archive())?;
     let declared_entries = preflight_entry_count(&raw)?;
-    let entry_count_max = effective_import_limits().entry_count;
+    let entry_count_max = if portable {
+        effective_import_limits()
+            .entry_count
+            .min((PORTABLE_PAGE_ASSET_COUNT + 3) as u64)
+    } else {
+        effective_import_limits().entry_count
+    };
     if declared_entries > entry_count_max {
         return Err(ApiError::limit_exceeded(
             "import archive contains too many entries",
@@ -306,6 +389,7 @@ pub fn verify_package<R: Read + Seek>(
     let mut observed = BTreeMap::new();
     let mut manifest_bytes = None;
     let mut checksum_bytes = None;
+    let mut portable_expanded = 0u64;
     for index in 0..archive.len() {
         let mut file = archive.by_index(index).map_err(|_| invalid_archive())?;
         let path = strict_entry_path(file.name_raw())?;
@@ -330,6 +414,14 @@ pub fn verify_package<R: Read + Seek>(
             ));
         }
         let declared_size = file.size();
+        if portable
+            && (file.compression() != CompressionMethod::Stored
+                || declared_size > PORTABLE_PAGE_CONTENT_BYTES && !is_portable_asset_path(&path))
+        {
+            return Err(ApiError::unsupported_format(
+                "portable Page entries must be stored within member limits",
+            ));
+        }
         let declared_compressed = file.compressed_size();
         stager.begin_entry(declared_compressed)?;
         let mut hasher = Sha256::new();
@@ -346,6 +438,14 @@ pub fn verify_package<R: Read + Seek>(
             }
             let bytes = chunk.get(..read).ok_or_else(invalid_archive)?;
             expanded = expanded.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+            if portable {
+                portable_expanded = portable_expanded.saturating_add(read as u64);
+                if portable_expanded > PORTABLE_PAGE_BYTES as u64 {
+                    return Err(ApiError::unsupported_format(
+                        "portable Page expanded byte limit exceeded",
+                    ));
+                }
+            }
             stager.write_expanded_chunk(bytes)?;
             hasher.update(bytes);
             if let Some(control) = &mut body {
@@ -441,7 +541,9 @@ fn validate_member_path(path: &str) -> Result<(), ApiError> {
         MANIFEST_PATH | CHECKSUMS_PATH | "relations/relations.jsonl" | "lineage/lineage.jsonl" | "history/events.jsonl"
     ) || is_object_path(path)
         || is_snapshot_path(path)
-        || is_update_path(path);
+        || is_update_path(path)
+        || matches!(path, PORTABLE_PAGE_PATH | PORTABLE_GRAPH_PATH)
+        || is_portable_asset_path(path);
     if !known {
         return Err(ApiError::unsupported_format(
             "archive contains an unknown top-level or member entry",
@@ -480,6 +582,13 @@ fn valid_uuid_segment(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok() && !value.contains('/')
 }
 
+fn is_portable_asset_path(path: &str) -> bool {
+    path.strip_prefix("assets/")
+        .and_then(|part| part.strip_suffix(".bin"))
+        .and_then(|part| uuid::Uuid::parse_str(part).ok().map(|id| (part, id)))
+        .is_some_and(|(part, id)| !id.is_nil() && id.to_string() == part)
+}
+
 fn expected_kind(path: &str) -> Option<&'static str> {
     if is_object_path(path) {
         Some("object")
@@ -498,8 +607,12 @@ fn expected_kind(path: &str) -> Option<&'static str> {
 }
 
 fn validate_manifest_compatibility(manifest: &ExportPackageManifest) -> Result<(), ApiError> {
-    semantic_model(manifest)?;
-    let scope_native = manifest.schema == SCOPE_PACKAGE_SCHEMA;
+    let graph = manifest.schema == PORTABLE_GRAPH_SCHEMA;
+    let portable = manifest.schema == PORTABLE_PAGE_SCHEMA;
+    if !portable && !graph {
+        semantic_model(manifest)?;
+    }
+    let scope_native = manifest.schema == SCOPE_PACKAGE_SCHEMA || portable || graph;
     if manifest.schema != PACKAGE_SCHEMA && !scope_native {
         return Err(ApiError::unsupported_format(
             "package schema major has no tested adapter",
@@ -510,13 +623,22 @@ fn validate_manifest_compatibility(manifest: &ExportPackageManifest) -> Result<(
             "Flow schema version has no tested forward adapter",
         ));
     }
-    if scope_native && manifest.history.snapshot_history.as_deref() != Some("retained") {
+    if scope_native
+        && manifest.history.snapshot_history.as_deref()
+            != Some(if graph && manifest.history.included {
+                "typed_versions"
+            } else if portable || graph {
+                "excluded"
+            } else {
+                "retained"
+            })
+    {
         return Err(ApiError::unsupported_format(
             "v2 snapshot history semantics must be explicit",
         ));
     }
     if manifest.engine.name != ENGINE_NAME
-        || manifest.engine.crate_version != ENGINE_CRATE_VERSION
+        || !matches!(manifest.engine.crate_version.as_str(), "1.13.9" | ENGINE_CRATE_VERSION)
         || manifest.engine.wire_format_version != ENGINE_WIRE_FORMAT_VERSION
     {
         return Err(ApiError::unsupported_format(
@@ -573,12 +695,35 @@ fn validate_manifest_compatibility(manifest: &ExportPackageManifest) -> Result<(
         || semver::Version::parse(&manifest.producer.version).is_err()
         || manifest.producer.source_head.len() != 40
         || !is_lower_hex(&manifest.producer.source_head)
-        || chrono::DateTime::parse_from_rfc3339(&manifest.created_at).is_err()
-        || chrono::DateTime::parse_from_rfc3339(&manifest.export_policy.permission_snapshot_at).is_err()
+        || platform::timestamp::Timestamp::parse_rfc3339(&manifest.created_at).is_err()
+        || platform::timestamp::Timestamp::parse_rfc3339(&manifest.export_policy.permission_snapshot_at).is_err()
     {
         return Err(ApiError::unsupported_format(
             "manifest producer or timestamp metadata is invalid",
         ));
+    }
+    if portable
+        && (manifest.source.scope != "object"
+            || manifest.history.included
+            || !manifest.history.through_seq_by_document.is_empty()
+            || manifest.engine.semantic_model.as_deref() != Some(SEMANTIC_MODEL_V5)
+            || !manifest.projects.is_empty()
+            || manifest.counts
+                != (PackageCounts {
+                    objects: 1,
+                    documents: 1,
+                    ..PackageCounts::default()
+                }))
+    {
+        return Err(ApiError::unsupported_format("invalid portable Page package profile"));
+    }
+    if graph
+        && (manifest.source.scope != "scope"
+            || !manifest.history.through_seq_by_document.is_empty()
+            || manifest.engine.semantic_model.as_deref() != Some(SEMANTIC_MODEL_V5)
+            || !manifest.projects.is_empty())
+    {
+        return Err(ApiError::unsupported_format("invalid portable graph package profile"));
     }
     Ok(())
 }
@@ -595,7 +740,26 @@ fn validate_member_layout(manifest: &ExportPackageManifest, members: &[PackageMe
     let mut event_file = false;
     for member in members {
         validate_member_path(&member.path)?;
-        let Some(kind) = expected_kind(&member.path) else {
+        let kind = if manifest.schema == PORTABLE_PAGE_SCHEMA {
+            if member.path == PORTABLE_PAGE_PATH {
+                Some("page_content")
+            } else if is_portable_asset_path(&member.path) {
+                Some("page_asset")
+            } else {
+                None
+            }
+        } else if manifest.schema == PORTABLE_GRAPH_SCHEMA {
+            if member.path == PORTABLE_GRAPH_PATH {
+                Some("graph_content")
+            } else if is_portable_asset_path(&member.path) {
+                Some("page_asset")
+            } else {
+                None
+            }
+        } else {
+            expected_kind(&member.path)
+        };
+        let Some(kind) = kind else {
             return Err(ApiError::unsupported_format("manifest member has an unknown kind"));
         };
         if member.kind != kind || member.sha256.len() != 64 || !is_lower_hex(&member.sha256) {
@@ -632,6 +796,32 @@ fn validate_member_layout(manifest: &ExportPackageManifest, members: &[PackageMe
                 "history members are present when history.included is false",
             ));
         }
+    }
+    if manifest.schema == PORTABLE_PAGE_SCHEMA {
+        let content = members.iter().find(|member| member.path == PORTABLE_PAGE_PATH);
+        let total = members
+            .iter()
+            .fold(0u64, |total, member| total.saturating_add(member.bytes));
+        if members.len() > PORTABLE_PAGE_ASSET_COUNT + 1
+            || content.is_none_or(|member| member.bytes == 0 || member.bytes > PORTABLE_PAGE_CONTENT_BYTES)
+            || total > PORTABLE_PAGE_BYTES as u64
+        {
+            return Err(ApiError::unsupported_format("portable Page member limits exceeded"));
+        }
+        return Ok(());
+    }
+    if manifest.schema == PORTABLE_GRAPH_SCHEMA {
+        let content = members.iter().find(|member| member.path == PORTABLE_GRAPH_PATH);
+        let total = members
+            .iter()
+            .fold(0u64, |total, member| total.saturating_add(member.bytes));
+        if members.len() > PORTABLE_PAGE_ASSET_COUNT + 1
+            || content.is_none_or(|member| member.bytes == 0 || member.bytes > PORTABLE_GRAPH_CONTENT_BYTES)
+            || total > PORTABLE_PAGE_BYTES as u64
+        {
+            return Err(ApiError::unsupported_format("portable graph member limits exceeded"));
+        }
+        return Ok(());
     }
     if manifest.counts.objects != objects
         || manifest.counts.documents != documents

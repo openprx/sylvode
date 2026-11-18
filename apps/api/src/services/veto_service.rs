@@ -1,10 +1,11 @@
 // Local SQL row types stay beside the queries whose column shapes they mirror.
 #![allow(clippy::items_after_statements)]
 
-use chrono::{Duration, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::Serialize;
 use serde_json::{Value, json};
+use time::Duration;
 use uuid::Uuid;
 
 use crate::{
@@ -20,10 +21,10 @@ pub struct VetoEventRow {
     pub domain: String,
     pub reason: String,
     pub status: String,
-    pub escalation_started_at: Option<chrono::DateTime<Utc>>,
+    pub escalation_started_at: Option<platform::timestamp::Timestamp>,
     pub escalation_result: Option<String>,
     pub escalation_votes: Option<Value>,
-    pub created_at: chrono::DateTime<Utc>,
+    pub created_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -39,8 +40,8 @@ struct VetoerCountRow {
 
 #[derive(Debug, FromQueryResult)]
 struct ProposalTimingRow {
-    voting_started_at: Option<chrono::DateTime<Utc>>,
-    voting_ended_at: Option<chrono::DateTime<Utc>>,
+    voting_started_at: Option<platform::timestamp::Timestamp>,
+    voting_ended_at: Option<platform::timestamp::Timestamp>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -141,7 +142,7 @@ impl VetoService {
                 vetoer_id.into(),
                 normalized_domain.clone().into(),
                 reason.trim().to_string().into(),
-                Utc::now().into(),
+                Timestamp::now().into(),
             ],
         ))
         .one(&tx)
@@ -171,7 +172,7 @@ impl VetoService {
                 format!("DEC-{}", Uuid::new_v4()).into(),
                 proposal_id.to_string().into(),
                 inserted.id.into(),
-                Utc::now().into(),
+                Timestamp::now().into(),
             ],
         ))
         .await?;
@@ -204,7 +205,7 @@ impl VetoService {
         if veto.escalation_started_at.is_some() {
             return Err(ApiError::Conflict("escalation already started".to_string()));
         }
-        if Utc::now() > veto.created_at + Duration::hours(48) {
+        if Timestamp::now() > veto.created_at + Duration::hours(48) {
             return Err(ApiError::BadRequest(
                 "escalation window has expired (48h after veto)".to_string(),
             ));
@@ -220,7 +221,7 @@ impl VetoService {
                           status::text AS status, escalation_started_at,
                           escalation_result, escalation_votes, created_at
             ",
-            vec![veto.id.into(), Utc::now().into()],
+            vec![veto.id.into(), Timestamp::now().into()],
         ))
         .one(&tx)
         .await?
@@ -247,7 +248,7 @@ impl VetoService {
             return Err(ApiError::BadRequest("escalation has not started".to_string()));
         }
         let escalation_started_at = veto.escalation_started_at.ok_or(ApiError::Internal)?;
-        if Utc::now() > escalation_started_at + Duration::hours(48) {
+        if Timestamp::now() > escalation_started_at + Duration::hours(48) {
             return Err(ApiError::BadRequest(
                 "escalation voting window has expired (48h after escalation start)".to_string(),
             ));
@@ -352,7 +353,10 @@ impl VetoService {
         }
 
         let timing = proposal_timing_by_id(&tx, proposal_id).await?;
-        if timing.voting_ended_at.is_some_and(|ended_at| ended_at <= Utc::now()) {
+        if timing
+            .voting_ended_at
+            .is_some_and(|ended_at| ended_at <= Timestamp::now())
+        {
             return Err(ApiError::BadRequest(
                 "voting period has ended, veto cannot be withdrawn".to_string(),
             ));
@@ -608,7 +612,7 @@ async fn proposal_timing_by_id<C: ConnectionTrait>(db: &C, proposal_id: &str) ->
 
 async fn proposal_status_after_veto_release<C: ConnectionTrait>(db: &C, proposal_id: &str) -> Result<String, ApiError> {
     let timing = proposal_timing_by_id(db, proposal_id).await?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let in_voting_window = timing.voting_started_at.is_some()
         && timing
             .voting_ended_at
@@ -655,7 +659,7 @@ async fn sync_decision_after_veto_release<C: ConnectionTrait>(db: &C, proposal_i
             ) AS tally
             WHERE d.proposal_id = $1
         ",
-        vec![proposal_id.to_string().into(), Utc::now().into()],
+        vec![proposal_id.to_string().into(), Timestamp::now().into()],
     ))
     .await?;
     Ok(())

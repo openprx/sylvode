@@ -1,6 +1,6 @@
 /**
  * The one and only module in this package that touches the `loro` CRDT candidate: real
- * `loro-crdt@1.14.1` + `loro-prosemirror@0.4.3` + ProseMirror, wired up the way `ADR-0006`'s
+ * `loro-crdt@1.18.0` + `loro-prosemirror@0.4.3` + ProseMirror, wired up the way `ADR-0006`'s
  * editor-stack candidate actually would be, not a placeholder import. Reached only via the
  * dynamic `import("./flow-entry")` in `main.ts` -- Vite/Rollup therefore always places this
  * module (and everything it imports) in a chunk separate from the main entry graph, which is

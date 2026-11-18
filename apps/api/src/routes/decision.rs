@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ pub struct DecisionRow {
     pub yes_votes: i32,
     pub no_votes: i32,
     pub abstain_votes: i32,
-    pub decided_at: DateTime<Utc>,
+    pub decided_at: Timestamp,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,7 +232,7 @@ mod decision_scope_database_tests {
     use super::{ListDecisionsQuery, get_decision, get_proposal_decision, list_decisions};
     use axum::extract::{Extension, Path, Query, State};
     use axum::response::IntoResponse;
-    use chrono::Utc;
+    use platform::timestamp::Timestamp;
     use platform::{
         app::AppState,
         auth::{JwtClaims, TokenType},
@@ -438,7 +438,7 @@ mod decision_scope_database_tests {
                     author_id.to_string().into(),
                     "content that is comfortably longer than the fifty character minimum".into(),
                     workspace_id.into(),
-                    Utc::now().into(),
+                    Timestamp::now().into(),
                 ],
             ))
             .await
@@ -457,7 +457,7 @@ mod decision_scope_database_tests {
                 vec![
                     decision_id.clone().into(),
                     proposal_id.clone().into(),
-                    Utc::now().into(),
+                    Timestamp::now().into(),
                 ],
             ))
             .await

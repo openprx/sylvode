@@ -47,7 +47,7 @@ pub async fn document_fingerprint(db: &DatabaseConnection, document_id: Uuid) ->
             ApiError::internal()
         })?;
     }
-    if engine.frontier().as_bytes() != boot.head_frontier.as_slice() {
+    if !engine.matches_frontier(&boot.head_frontier) {
         tracing::error!(%document_id, "document fingerprint replay frontier mismatch");
         return Err(ApiError::resync_required("resync_required", None));
     }

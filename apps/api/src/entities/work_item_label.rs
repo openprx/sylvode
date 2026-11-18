@@ -1,3 +1,4 @@
+use platform::timestamp::Timestamp;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +9,8 @@ pub struct Model {
     pub work_item_id: Uuid,
     #[sea_orm(primary_key)]
     pub label_id: Uuid,
-    pub created_at: DateTimeWithTimeZone,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub created_at: Timestamp,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

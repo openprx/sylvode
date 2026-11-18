@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { expect, test, type APIRequestContext, type Page, type Request } from '@playwright/test';
 
 /**
- * Flow Page -> Universal Forms record conversion wizard (`/workspace/{id}/flow/{objectId}/convert`)
+ * Flow Page -> Universal Forms record conversion wizard (`/flow/{objectId}/convert`)
  * against a real API + PostgreSQL.
  *
  * Over REST the owner creates a workspace with Flow enabled, a project, a form with a required
@@ -18,7 +18,7 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  * shows a completed job whose created record carries the mapped values.
  *
  * After the commit the wizard lands on the conversion job page
- * (`/workspace/{id}/flow/conversions/{job_id}`, FP-N5). The page must reach the `completed`
+ * (`/flow/conversions/{job_id}`, FP-N5). The page must reach the `completed`
  * terminal status, show the source Page (linked, with its title), frontier, schema version and
  * lineage exactly as the API reports them, and link the created record to its Forms record page,
  * which the spec then opens. A random job id, another user's job id and a malformed id all get
@@ -130,6 +130,11 @@ async function signInAs(page: Page, session: LoginData): Promise<void> {
 	);
 }
 
+async function openPageInfo(page: Page): Promise<void> {
+	await page.getByTestId('flow-more').click();
+	await page.getByTestId('flow-open-info').click();
+}
+
 test('owner converts a Page into a Forms record through source, mapping, preview and confirm, recovering from a stale frontier', async ({
 	page,
 	request
@@ -212,30 +217,31 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	page.on('request', (req: Request) => {
 		if (req.method() !== 'POST') return;
 		const path = new URL(req.url()).pathname;
-		if (path === '/api/v1/flow/conversions/preview')
+		if (path === '/api/v2/flow/conversions/preview')
 			previewBodies.push(req.postDataJSON() as Record<string, unknown>);
-		if (path === '/api/v1/flow/conversions')
+		if (path === '/api/v2/flow/conversions')
 			commitBodies.push(req.postDataJSON() as Record<string, unknown>);
 	});
 	const previewResponse = () =>
 		page.waitForResponse(
 			(res) =>
 				res.request().method() === 'POST' &&
-				new URL(res.url()).pathname === '/api/v1/flow/conversions/preview'
+				new URL(res.url()).pathname === '/api/v2/flow/conversions/preview'
 		);
 	const commitResponse = () =>
 		page.waitForResponse(
 			(res) =>
 				res.request().method() === 'POST' &&
-				new URL(res.url()).pathname === '/api/v1/flow/conversions'
+				new URL(res.url()).pathname === '/api/v2/flow/conversions'
 		);
 
 	await signInAs(page, ownerLogin);
-	await page.goto(`/workspace/${workspace.id}/flow/${objectId}`);
+	await page.goto(`/flow/${objectId}`);
+	await openPageInfo(page);
 	const convertLink = page.getByRole('link', { name: 'Convert to Forms…' });
 	await expect(convertLink).toBeVisible();
 	await convertLink.click();
-	await expect(page).toHaveURL(new RegExp(`/workspace/${workspace.id}/flow/${objectId}/convert$`));
+	await expect(page).toHaveURL(new RegExp(`/flow/${objectId}/convert$`));
 	await expect(page).toHaveTitle('Sylvode - Convert to Forms');
 
 	const wizard = page.getByTestId('flow-convert');
@@ -297,6 +303,8 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	expect(previewBodies[0]).toEqual({
 		source_object_id: objectId,
 		source_frontier: before.frontier,
+		destination_workspace_id: workspace.id,
+		destination_project_id: project.id,
 		target_type: 'form_record',
 		mapping: {
 			target_form_id: form.id,
@@ -361,16 +369,16 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	const jobReadPromise = page.waitForResponse(
 		(res) =>
 			res.request().method() === 'GET' &&
-			/^\/api\/v1\/flow\/conversions\/[^/]+$/.test(new URL(res.url()).pathname)
+			/^\/api\/v2\/flow\/conversions\/[^/]+$/.test(new URL(res.url()).pathname)
 	);
 	await convert.click();
 	const committed = ((await (await commitPromise).json()) as Envelope<Job>).data;
 	await expect(page).toHaveURL(
-		new RegExp(`/workspace/${workspace.id}/flow/conversions/${committed.job_id}$`)
+		new RegExp(`/flow/conversions/${committed.job_id}$`)
 	);
 	// The landing page reads the job itself (FP-N5), through the contract path.
 	const jobRead = await jobReadPromise;
-	expect(new URL(jobRead.url()).pathname).toBe(`/api/v1/flow/conversions/${committed.job_id}`);
+	expect(new URL(jobRead.url()).pathname).toBe(`/api/v2/flow/conversions/${committed.job_id}`);
 	expect(((await jobRead.json()) as Envelope<Job>).data.status).toBe('completed');
 
 	// ---- wire: every commit field comes from its own preview response ----
@@ -393,7 +401,7 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 
 	// ---- server state ----
 	const job = await unwrap<Job>(
-		await request.get(`/api/v1/flow/conversions/${committed.job_id}`, { headers: auth })
+		await request.get(`/api/v2/flow/conversions/${committed.job_id}`, { headers: auth })
 	);
 	expect(job.status).toBe('completed');
 	expect(job.created_target_ids).toHaveLength(1);
@@ -427,7 +435,7 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	await expect(page.getByTestId('flow-conversion-job-id')).toHaveText(committed.job_id);
 	const sourceLink = page.getByTestId('flow-conversion-source-link');
 	await expect(sourceLink).toHaveText(renamed);
-	await expect(sourceLink).toHaveAttribute('href', `/workspace/${workspace.id}/flow/${objectId}`);
+	await expect(sourceLink).toHaveAttribute('href', `/flow/${objectId}`);
 	await expect(page.getByTestId('flow-conversion-frontier')).toHaveText(job.source_frontier);
 	await expect(page.getByTestId('flow-conversion-schema-version')).toHaveText(
 		String(job.target_schema_version)
@@ -565,7 +573,7 @@ async function convertOverRest(
 		})
 	);
 	const preview = await unwrap<Preview>(
-		await request.post('/api/v1/flow/conversions/preview', {
+		await request.post('/api/v2/flow/conversions/preview', {
 			headers: setup.auth,
 			data: {
 				source_object_id: setup.objectId,
@@ -580,7 +588,7 @@ async function convertOverRest(
 		})
 	);
 	const job = await unwrap<Job>(
-		await request.post('/api/v1/flow/conversions', {
+		await request.post('/api/v2/flow/conversions', {
 			headers: setup.auth,
 			data: {
 				preview_id: preview.preview_id,
@@ -648,7 +656,7 @@ async function failedJobOverRest(
 		await request.get(`/api/v1/flow/objects/${setup.objectId}`, { headers: setup.auth })
 	);
 	const preview = await unwrap<Preview>(
-		await request.post('/api/v1/flow/conversions/preview', {
+		await request.post('/api/v2/flow/conversions/preview', {
 			headers: setup.auth,
 			data: {
 				source_object_id: setup.objectId,
@@ -660,7 +668,7 @@ async function failedJobOverRest(
 		})
 	);
 	await setRecordCreate(request, setup, false);
-	const response = await request.post('/api/v1/flow/conversions', {
+	const response = await request.post('/api/v2/flow/conversions', {
 		headers: setup.auth,
 		data: {
 			preview_id: preview.preview_id,
@@ -689,7 +697,7 @@ test('a random, malformed or foreign conversion job id gets the same safe empty 
 	const reads: string[] = [];
 	page.on('request', (req: Request) => {
 		const path = new URL(req.url()).pathname;
-		if (path.startsWith('/api/v1/flow/conversions/') || path.startsWith('/api/v1/flow/objects/'))
+		if (path.startsWith('/api/v2/flow/conversions/') || path.startsWith('/api/v2/flow/objects/'))
 			reads.push(path);
 	});
 	await signInAs(page, owner.ownerLogin);
@@ -698,9 +706,9 @@ test('a random, malformed or foreign conversion job id gets the same safe empty 
 
 	for (const jobId of [crypto.randomUUID(), foreignJob.job_id]) {
 		const readPromise = page.waitForResponse(
-			(res) => new URL(res.url()).pathname === `/api/v1/flow/conversions/${jobId}`
+			(res) => new URL(res.url()).pathname === `/api/v2/flow/conversions/${jobId}`
 		);
-		await page.goto(`/workspace/${owner.workspaceId}/flow/conversions/${jobId}`);
+		await page.goto(`/flow/conversions/${jobId}`);
 		const read = (await (await readPromise).json()) as Envelope<null>;
 		expect(read.code).toBe(404);
 		await expect(page).toHaveTitle('Sylvode - Conversion Job');
@@ -713,14 +721,14 @@ test('a random, malformed or foreign conversion job id gets the same safe empty 
 		await expect(page.getByTestId('flow-convert')).toHaveCount(0);
 	}
 
-	await page.goto(`/workspace/${owner.workspaceId}/flow/conversions/not-a-job-id`);
+	await page.goto(`/flow/conversions/not-a-job-id`);
 	await expect(notFound).toBeVisible();
 	await expect(notFound).toContainText(empty);
 
 	// The navigator reads the owner's own workspace objects. Neither the `conversions` segment nor
 	// the foreign job's source Page is ever read as an object.
-	const objectReads = reads.filter((path) => path.startsWith('/api/v1/flow/objects/'));
-	expect(objectReads.filter((path) => path.startsWith('/api/v1/flow/objects/conversions'))).toEqual(
+	const objectReads = reads.filter((path) => path.startsWith('/api/v2/flow/objects/'));
+	expect(objectReads.filter((path) => path.startsWith('/api/v2/flow/objects/conversions'))).toEqual(
 		[]
 	);
 	expect(objectReads.filter((path) => path.includes(other.objectId))).toEqual([]);
@@ -746,7 +754,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 
 	// ---- 1. the wizard commit fails after its job exists: the wizard hands over to the job ----
 	await signInAs(page, setup.ownerLogin);
-	await page.goto(`/workspace/${setup.workspaceId}/flow/${setup.objectId}/convert`);
+	await page.goto(`/flow/${setup.objectId}/convert`);
 	const step = page.getByTestId('flow-convert-step');
 	const next = page.getByTestId('flow-convert-next');
 	await expect(step).toHaveText('Step 1 of 4: Source');
@@ -770,7 +778,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 	const wizardCommit = page.waitForResponse(
 		(res) =>
 			res.request().method() === 'POST' &&
-			new URL(res.url()).pathname === '/api/v1/flow/conversions'
+			new URL(res.url()).pathname === '/api/v2/flow/conversions'
 	);
 	await page.getByTestId('flow-convert-commit-button').click();
 	const refused = (await (await wizardCommit).json()) as FailedCommit;
@@ -779,7 +787,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 	const firstJobId = refused.details?.job_id ?? '';
 	expect(firstJobId).toMatch(UUID);
 	await expect(page).toHaveURL(
-		new RegExp(`/workspace/${setup.workspaceId}/flow/conversions/${firstJobId}$`)
+		new RegExp(`/flow/conversions/${firstJobId}$`)
 	);
 	await setRecordCreate(request, setup, true);
 
@@ -793,7 +801,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 	await expect(page.getByTestId('flow-conversion-targets-empty')).toBeVisible();
 	await expect(page.getByTestId('flow-conversion-lineage')).toHaveText('No lineage recorded yet.');
 	const firstFailed = await unwrap<Job>(
-		await request.get(`/api/v1/flow/conversions/${firstJobId}`, { headers: setup.auth })
+		await request.get(`/api/v2/flow/conversions/${firstJobId}`, { headers: setup.auth })
 	);
 	expect(firstFailed.status).toBe('failed');
 	expect(firstFailed.error).toBe('policy_rejected');
@@ -806,7 +814,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 		firstJobId
 	);
 
-	const retryPath = `/api/v1/flow/conversions/${firstJobId}/retry`;
+	const retryPath = `/api/v2/flow/conversions/${firstJobId}/retry`;
 	const retryBodies: Array<Record<string, unknown>> = [];
 	page.on('request', (req: Request) => {
 		if (req.method() === 'POST' && new URL(req.url()).pathname.endsWith('/retry'))
@@ -868,7 +876,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 		`/workspace/${setup.workspaceId}/projects/${setup.projectId}/forms/records/${retried.created_target_ids[0]}`
 	);
 	const afterRetry = await unwrap<Job>(
-		await request.get(`/api/v1/flow/conversions/${firstJobId}`, { headers: setup.auth })
+		await request.get(`/api/v2/flow/conversions/${firstJobId}`, { headers: setup.auth })
 	);
 	expect(afterRetry.status).toBe('completed');
 	expect(afterRetry.created_target_ids).toEqual(retried.created_target_ids);
@@ -884,10 +892,10 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 			}
 		})
 	);
-	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${second.jobId}`);
+	await page.goto(`/flow/conversions/${second.jobId}`);
 	await expect(status).toHaveAttribute('data-status', 'failed');
 	const staleResponse = page.waitForResponse(
-		(res) => new URL(res.url()).pathname === `/api/v1/flow/conversions/${second.jobId}/retry`
+		(res) => new URL(res.url()).pathname === `/api/v2/flow/conversions/${second.jobId}/retry`
 	);
 	await retry.click();
 	await page.getByTestId('flow-conversion-retry-confirm').click();
@@ -900,12 +908,12 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 	await expect(retry).toHaveCount(0);
 	await expect(page.getByTestId('flow-conversion-new')).toHaveAttribute(
 		'href',
-		`/workspace/${setup.workspaceId}/flow/${setup.objectId}/convert`
+		`/flow/${setup.objectId}/convert`
 	);
 	// The refused retry re-reads the job: its stored error is now the stale frontier.
 	await expect(storedError).toHaveAttribute('data-code', 'stale_frontier');
 	const stillStale = await unwrap<Job>(
-		await request.get(`/api/v1/flow/conversions/${second.jobId}`, { headers: setup.auth })
+		await request.get(`/api/v2/flow/conversions/${second.jobId}`, { headers: setup.auth })
 	);
 	expect(stillStale.status).toBe('failed');
 	expect(stillStale.error).toBe('stale_frontier');
@@ -926,10 +934,10 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 			}
 		})
 	);
-	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${third.jobId}`);
+	await page.goto(`/flow/conversions/${third.jobId}`);
 	await expect(status).toHaveAttribute('data-status', 'failed');
 	const schemaResponse = page.waitForResponse(
-		(res) => new URL(res.url()).pathname === `/api/v1/flow/conversions/${third.jobId}/retry`
+		(res) => new URL(res.url()).pathname === `/api/v2/flow/conversions/${third.jobId}/retry`
 	);
 	await retry.click();
 	await page.getByTestId('flow-conversion-retry-confirm').click();
@@ -943,7 +951,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 	);
 	await expect(retry).toHaveCount(0);
 	const stillSchema = await unwrap<Job>(
-		await request.get(`/api/v1/flow/conversions/${third.jobId}`, { headers: setup.auth })
+		await request.get(`/api/v2/flow/conversions/${third.jobId}`, { headers: setup.auth })
 	);
 	expect(stillSchema.status).toBe('failed');
 	expect(stillSchema.created_target_ids).toEqual([]);
@@ -963,14 +971,14 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 		.poll(
 			async () => {
 				const job = await unwrap<Job & { error_reason?: string }>(
-					await request.get(`/api/v1/flow/conversions/${reaped.jobId}`, { headers: setup.auth })
+					await request.get(`/api/v2/flow/conversions/${reaped.jobId}`, { headers: setup.auth })
 				);
 				return [job.status, job.error, job.error_reason ?? null];
 			},
 			{ message: 'the periodic reaper fails the stale started job', timeout: 20_000 }
 		)
 		.toEqual(['failed', 'server_rejected', 'stale_started']);
-	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${reaped.jobId}`);
+	await page.goto(`/flow/conversions/${reaped.jobId}`);
 	await expect(status).toHaveAttribute('data-status', 'failed');
 	await expect(storedError).toHaveAttribute('data-code', 'server_rejected');
 	await expect(storedError).toHaveAttribute('data-reason', 'stale_started');
@@ -979,7 +987,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 	);
 	await expect(retry).toBeEnabled();
 	const reapedRetry = page.waitForResponse(
-		(res) => new URL(res.url()).pathname === `/api/v1/flow/conversions/${reaped.jobId}/retry`
+		(res) => new URL(res.url()).pathname === `/api/v2/flow/conversions/${reaped.jobId}/retry`
 	);
 	await retry.click();
 	await page.getByTestId('flow-conversion-retry-confirm').click();
@@ -992,7 +1000,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 		"UPDATE flow_conversion_jobs SET error_code = 'server_rejected' WHERE id = :'id';",
 		refusedForGood.jobId
 	);
-	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${refusedForGood.jobId}`);
+	await page.goto(`/flow/conversions/${refusedForGood.jobId}`);
 	await expect(status).toHaveAttribute('data-status', 'failed');
 	await expect(storedError).toHaveAttribute('data-code', 'server_rejected');
 	await expect(retry).toHaveCount(0);
@@ -1035,7 +1043,8 @@ test('390x844: the navigator is a closed drawer and the object, convert and job 
 	}
 
 	// ---- object page ----
-	await page.goto(`/workspace/${setup.workspaceId}/flow/${setup.objectId}`);
+	await page.goto(`/flow/${setup.objectId}`);
+	await openPageInfo(page);
 	await expect(page.getByRole('link', { name: /Convert to Forms/ })).toBeVisible();
 	await expectFullWidthLayout('object');
 	// The context panel stacks under the canvas instead of being clipped at the right edge.
@@ -1060,7 +1069,7 @@ test('390x844: the navigator is a closed drawer and the object, convert and job 
 	await expect(drawer).toBeHidden();
 
 	// ---- convert wizard ----
-	await page.goto(`/workspace/${setup.workspaceId}/flow/${setup.objectId}/convert`);
+	await page.goto(`/flow/${setup.objectId}/convert`);
 	const next = page.getByTestId('flow-convert-next');
 	await expect(next).toBeVisible();
 	await expectFullWidthLayout('convert');
@@ -1071,7 +1080,7 @@ test('390x844: the navigator is a closed drawer and the object, convert and job 
 	}
 
 	// ---- conversion job page ----
-	await page.goto(`/workspace/${setup.workspaceId}/flow/conversions/${job.job_id}`);
+	await page.goto(`/flow/conversions/${job.job_id}`);
 	await expect(page.getByTestId('flow-conversion-status')).toHaveAttribute('data-status', 'completed');
 	await expectFullWidthLayout('job');
 	for (const [index, button] of (await content.getByRole('button').all()).entries()) {

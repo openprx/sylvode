@@ -64,8 +64,8 @@ pub struct PluginResponse {
     pub wasm_sha256: Option<String>,
     pub status: String,
     pub installed_by: Option<Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -93,7 +93,7 @@ pub struct PluginInvocationResponse {
     pub error_message: Option<String>,
     pub duration_ms: i64,
     pub fuel_consumed: Option<i64>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -757,7 +757,7 @@ mod invocation_record_database_tests {
         auth::{JwtClaims, TokenType},
         config::{AppConfig, Secret},
     };
-    use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
+    use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
     use serde_json::{Value, json};
     use uuid::Uuid;
 
@@ -943,8 +943,61 @@ mod invocation_record_database_tests {
         }
     }
 
-    /// A request cancelled while its plugin runs (a client that disconnects drops the handler)
-    /// still records the run: the guest is bounded by its own deadline and recorded as `timeout`.
+    async fn cancel_pending_record<T>(db: &DatabaseConnection, request: impl std::future::Future<Output = T>) {
+        let tx = db.begin().await.expect("open audit barrier");
+        tx.execute_unprepared("LOCK TABLE plugin_invocations IN ACCESS EXCLUSIVE MODE")
+            .await
+            .expect("lock invocation table");
+        let mut request = Box::pin(request);
+        let waiting = async {
+            loop {
+                let pending = db
+                    .query_one(Statement::from_string(
+                        DbBackend::Postgres,
+                        "SELECT 1 FROM pg_locks l JOIN pg_class c ON c.oid=l.relation
+                     WHERE l.database=(SELECT oid FROM pg_database WHERE datname=current_database())
+                       AND c.relname='plugin_invocations' AND c.relnamespace='public'::regnamespace
+                       AND l.mode='RowExclusiveLock' AND NOT l.granted",
+                    ))
+                    .await
+                    .expect("query invocation lock");
+                if pending.is_some() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        };
+        tokio::select! {
+            _ = &mut request => panic!("request finished before it could be cancelled"),
+            result = tokio::time::timeout(std::time::Duration::from_secs(20), waiting) => {
+                result.expect("the detached task reached its audit insert");
+            }
+        }
+        drop(request);
+        tx.commit().await.expect("release invocation audit barrier");
+    }
+
+    fn assert_cancelled_run_recorded(row: &Recorded) {
+        // Cancellation drops the HTTP waiter. The detached runtime still records whichever
+        // configured bound the guest hits first, which varies with available CPU.
+        match row.status.as_str() {
+            "timeout" => assert_eq!(row.event_status.as_deref(), Some("timeout"), "{row:?}"),
+            "failed" => {
+                assert_eq!(row.event_status.as_deref(), Some("failed"), "{row:?}");
+                assert_eq!(row.fuel_consumed, Some(1_000_000_000), "{row:?}");
+                assert!(
+                    row.error_message
+                        .as_deref()
+                        .is_some_and(|error| { error.contains("all fuel consumed") }),
+                    "{row:?}"
+                );
+            }
+            _ => panic!("a cancelled runaway guest must record a resource limit: {row:?}"),
+        }
+    }
+
+    /// A client disconnect drops the handler while a result is pending. The detached task
+    /// still persists the guest's execution deadline or fuel outcome and its event.
     #[tokio::test]
     async fn a_cancelled_invocation_is_still_recorded() {
         let scratch = scratch_or_skip!("plugin_cancelled_record");
@@ -960,17 +1013,11 @@ mod invocation_record_database_tests {
         )
         .await;
 
-        let cancelled =
-            tokio::time::timeout(std::time::Duration::from_millis(50), invoke(&state, &tenant, plugin_id)).await;
-        assert!(
-            cancelled.is_err(),
-            "the request must have been dropped before the run ended"
-        );
+        cancel_pending_record(&scratch.db, invoke(&state, &tenant, plugin_id)).await;
         wait_for_record(&scratch.db, plugin_id).await;
         let row = recorded(&scratch.db, plugin_id).await;
 
-        assert_eq!(row.status, "timeout", "{row:?}");
-        assert_eq!(row.event_status.as_deref(), Some("timeout"), "{row:?}");
+        assert_cancelled_run_recorded(&row);
         scratch.drop_self().await;
     }
 
@@ -990,8 +1037,8 @@ mod invocation_record_database_tests {
         )
         .await;
 
-        let cancelled = tokio::time::timeout(
-            std::time::Duration::from_millis(50),
+        cancel_pending_record(
+            &scratch.db,
             run_event_handler_hooks(
                 &state,
                 tenant.workspace_id,
@@ -1004,14 +1051,10 @@ mod invocation_record_database_tests {
             ),
         )
         .await;
-        assert!(
-            cancelled.is_err(),
-            "the write must have been dropped before the run ended"
-        );
         wait_for_record(&scratch.db, plugin_id).await;
         let row = recorded(&scratch.db, plugin_id).await;
 
-        assert_eq!(row.status, "timeout", "{row:?}");
+        assert_cancelled_run_recorded(&row);
         scratch.drop_self().await;
     }
 

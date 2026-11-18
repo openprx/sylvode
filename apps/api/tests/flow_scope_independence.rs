@@ -90,6 +90,7 @@ fn create(scope_id: Uuid, parent: Option<Uuid>, key: &str) -> scope::CreateInput
     scope::CreateInput {
         scope_id,
         object_type: "page".to_string(),
+        editor_model: 1,
         parent_object_id: parent,
         project_id: None,
         title: "Independent page".to_string(),
@@ -1710,25 +1711,10 @@ async fn legacy_v2_search_distinguishes_project_unprojected_and_all_visible() {
         ids.push(object);
     }
     let state = test_state(db.clone());
-    for (selector, expected) in [
-        (
-            json!({"unprojected":true}),
-            vec![ids.first().copied().expect("fixture element")],
-        ),
-        (
-            json!({"project_id":project}),
-            vec![ids.get(1).copied().expect("fixture element")],
-        ),
-        (json!({"all_visible":true}), ids.clone()),
-    ] {
-        let mut query = json!({"q":"needle"});
-        for (key, value) in selector.as_object().unwrap() {
-            query
-                .as_object_mut()
-                .expect("fixture object")
-                .insert(key.clone(), value.clone());
-        }
-        let response = api::routes::flow::get_flow_v2_search(
+    let unprojected = *ids.first().expect("unprojected fixture");
+    let projected = *ids.get(1).expect("project fixture");
+    let search = async |query| {
+        api::routes::flow::get_flow_v2_search(
             axum::extract::State(state.clone()),
             test_claims(owner),
             None,
@@ -1736,8 +1722,48 @@ async fn legacy_v2_search_distinguishes_project_unprojected_and_all_visible() {
             axum::extract::Query(serde_json::from_value(query).unwrap()),
         )
         .await
-        .unwrap()
-        .into_response();
+    };
+
+    // A missing project index row makes the project and all-visible frontiers stale. The
+    // unprojected selector must stay current because its one visible page has been rebuilt.
+    let rebuilt = api::flow::maintenance::rebuild_search(db, unprojected, Some(0), true)
+        .await
+        .unwrap();
+    assert!(rebuilt.changed && rebuilt.executed);
+    assert!(
+        search(json!({"q":"needle","unprojected":true,"object_type":"page","freshness":"require_current"}))
+            .await
+            .is_ok()
+    );
+    for selector in [json!({"project_id":project}), json!({"all_visible":true})] {
+        let mut query = json!({"q":"needle","object_type":"page","freshness":"require_current"});
+        query
+            .as_object_mut()
+            .unwrap()
+            .extend(selector.as_object().unwrap().clone());
+        let error = search(query)
+            .await
+            .expect_err("the selected scope includes an unindexed Page");
+        assert_eq!(error.kind(), api::error::ApiErrorKind::StaleFrontier);
+    }
+    let rebuilt = api::flow::maintenance::rebuild_search(db, projected, Some(0), true)
+        .await
+        .unwrap();
+    assert!(rebuilt.changed && rebuilt.executed);
+
+    for (selector, expected) in [
+        (json!({"unprojected":true}), vec![unprojected]),
+        (json!({"project_id":project}), vec![projected]),
+        (json!({"all_visible":true}), ids.clone()),
+    ] {
+        let mut query = json!({"q":"needle","object_type":"page","freshness":"require_current"});
+        for (key, value) in selector.as_object().unwrap() {
+            query
+                .as_object_mut()
+                .expect("fixture object")
+                .insert(key.clone(), value.clone());
+        }
+        let response = search(query).await.unwrap().into_response();
         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let mut found = body
@@ -2193,6 +2219,10 @@ async fn personal_page_package_has_scope_provenance_real_snapshots_and_stable_jo
     assert_eq!(format, "package");
     let verified = api::flow::package::verify_package(std::io::Cursor::new(bytes.clone()), Some(&hash)).unwrap();
     assert_eq!(verified.manifest.schema, api::flow::package::SCOPE_PACKAGE_SCHEMA);
+    assert_eq!(
+        api::flow::package::semantic_model(&verified.manifest).unwrap(),
+        api::flow::package::PackageSemanticModel::V4,
+    );
     assert_eq!(verified.manifest.source.scope_id, Some(personal.id.to_string()));
     assert_eq!(verified.manifest.source.workspace_id, None);
     assert_eq!(verified.manifest.counts.objects, 1);
@@ -2214,7 +2244,7 @@ async fn personal_page_package_has_scope_provenance_real_snapshots_and_stable_jo
         .unwrap();
         let engine = <collab_core::LoroCollabEngine as collab_core::CollabEngine>::load(&data).unwrap();
         assert_eq!(
-            engine.semantic_snapshot().unwrap().semantic_hash(),
+            engine.legacy_package_semantic_snapshot_v4().unwrap().semantic_hash(),
             metadata.field("semantic_hash").as_str().unwrap()
         );
     }
@@ -3011,7 +3041,7 @@ async fn personal_forms_conversion_commits_native_target_with_scoped_job_and_rep
         source_object_id: source,
         source_frontier: frontier.clone(),
         target_type: "form".into(),
-        mapping: json!({"target_project_id":project,"key":"converted_scope","name":"Scoped form","schema":{"version":"openpr.form.schema.v1","fields":[]}}),
+        mapping: json!({"target_project_id":project,"key":"converted_scope","name":"Scoped form","schema":{"version":"openpr.form.schema.v1","fields":[{"field_id":"portable_subject","key":"subject","label":"Subject","type":"text","required":true}]}}),
         idempotency_key: "conversion-preview".into(),
         destination_workspace_id: workspace,
         destination_project_id: Some(project),
@@ -3024,6 +3054,13 @@ async fn personal_forms_conversion_commits_native_target_with_scoped_job_and_rep
     db.execute_unprepared("UPDATE flow_runtime_capabilities SET personal_forms_conversion=true WHERE singleton")
         .await
         .unwrap();
+    let mut invalid = preview_input();
+    invalid.idempotency_key = "invalid-field-map".into();
+    *invalid
+        .mapping
+        .pointer_mut("/schema/fields")
+        .expect("fixture has schema fields") = json!([{"key":"broken","type":"missing-field-type"}]);
+    assert!(bridge::preview_scope_conversion(&state, owner, invalid).await.is_err());
     let preview = bridge::preview_scope_conversion(&state, owner, preview_input())
         .await
         .unwrap();
@@ -3081,6 +3118,38 @@ async fn personal_forms_conversion_commits_native_target_with_scoped_job_and_rep
         .unwrap();
     assert_eq!(target.try_get::<Uuid>("", "workspace_id").unwrap(), workspace);
     assert_eq!(target.try_get::<Uuid>("", "project_id").unwrap(), project);
+    let form_id = *job.created_target_ids.first().unwrap();
+    let submission = api::routes::form::create_form_record(
+        State(state.clone()),
+        test_claims(owner),
+        None,
+        Path(form_id),
+        Json(
+            serde_json::from_value(json!({"values":{"subject":"Submitted from the converted Form"},
+          "idempotency_key":"converted-runtime-submit"}))
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap()
+    .into_response();
+    assert!(submission.status().is_success());
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT values FROM form_records WHERE form_id=$1",
+            vec![form_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        *row.try_get::<serde_json::Value>("", "values")
+            .unwrap()
+            .pointer("/subject")
+            .expect("response has /subject"),
+        "Submitted from the converted Form"
+    );
     let ownership = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -3231,13 +3300,13 @@ async fn personal_forms_conversion_commits_native_target_with_scoped_job_and_rep
     let abandoned_id = Uuid::new_v4();
     db.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_conversion_jobs(id,workspace_id,preview_id,actor_id,actor_kind,source_object_id,source_frontier,target_type,target_schema_version,status,idempotency_key,request_key,started_at) VALUES($1,$2,$3,$4,'user',$5,$6,'form',0,'started',$7,'abandoned-claim',now()-interval '2 hours')",vec![abandoned_id.into(),workspace.into(),abandoned.preview_id.into(),owner.into(),source.into(),frontier.into(),format!("scope:{}:abandoned-claim",personal.id).into()])).await.unwrap();
     assert_eq!(
-        bridge::reap_stale_conversion_jobs(&state, chrono::Duration::hours(1))
+        bridge::reap_stale_conversion_jobs(&state, time::Duration::hours(1))
             .await
             .unwrap(),
         1
     );
     assert_eq!(
-        bridge::reap_stale_conversion_jobs(&state, chrono::Duration::hours(1))
+        bridge::reap_stale_conversion_jobs(&state, time::Duration::hours(1))
             .await
             .unwrap(),
         0
@@ -3272,7 +3341,7 @@ async fn retention_skips_nonleaf_and_destination_deletion_preserves_personal_sou
     let child = Uuid::parse_str(child.field("object").field("id").as_str().unwrap()).unwrap();
     db.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_objects SET lifecycle_status='archived',archived_at=now()-interval '40 days',permanent_cleanup_after=now()-interval '1 day' WHERE id=$1",vec![parent.into()])).await.unwrap();
     assert!(
-        !api::flow::scope_purge::retention_leaf(db, parent, chrono::Utc::now())
+        !api::flow::scope_purge::retention_leaf(db, parent, platform::timestamp::Timestamp::now())
             .await
             .unwrap()
     );
@@ -3283,12 +3352,12 @@ async fn retention_skips_nonleaf_and_destination_deletion_preserves_personal_sou
     let leaf = Uuid::parse_str(leaf.field("object").field("id").as_str().unwrap()).unwrap();
     db.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_objects SET lifecycle_status='archived',archived_at=now()-interval '40 days',permanent_cleanup_after=now()-interval '1 day' WHERE id=$1",vec![leaf.into()])).await.unwrap();
     assert!(
-        api::flow::scope_purge::retention_leaf(db, leaf, chrono::Utc::now())
+        api::flow::scope_purge::retention_leaf(db, leaf, platform::timestamp::Timestamp::now())
             .await
             .unwrap()
     );
     assert!(
-        !api::flow::scope_purge::retention_leaf(db, leaf, chrono::Utc::now())
+        !api::flow::scope_purge::retention_leaf(db, leaf, platform::timestamp::Timestamp::now())
             .await
             .unwrap()
     );
@@ -3703,7 +3772,7 @@ async fn stale_model_two_navigator_refreshes_from_order_map_without_mutation() {
             .field("data")
             .field("semantic_content")
             .field("__flow_projection_model"),
-        json!(3)
+        json!(api::flow::projection::PROJECTION_MODEL_VERSION)
     );
     assert_eq!(*response.field("data").field("scope_id"), json!(personal.id));
     assert!(
@@ -3727,5 +3796,108 @@ async fn stale_model_two_navigator_refreshes_from_order_map_without_mutation() {
     assert_eq!(count(db, "collab_updates").await, 0);
     assert_eq!(count(db, "workspaces").await, 0);
     assert_eq!(count(db, "workspace_members").await, 0);
+    scratch.close().await;
+}
+
+#[tokio::test]
+async fn real_mount_permission_changes_and_revocation_fence_existing_readers() {
+    use api::flow::scope_mounts::{self, ChangeMountInput, MountInput};
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let source_owner = user(db).await;
+    let member = user(db).await;
+    let target_admin = user(db).await;
+    let outsider = user(db).await;
+    let (personal, _) = scope::personal_home(db, source_owner).await.unwrap();
+    let created = scope::create_personal(db, source_owner, create(personal.id, None, "mount-change-page"))
+        .await
+        .unwrap();
+    let object = Uuid::parse_str(created.field("object").field("id").as_str().unwrap()).unwrap();
+    let workspace = Uuid::new_v4();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workspaces(id,slug,name,created_by) VALUES($1,$2,'Mount target',$3)",
+        vec![workspace.into(), workspace.to_string().into(), source_owner.into()],
+    ))
+    .await
+    .unwrap();
+    for (actor, role) in [(source_owner, "owner"), (member, "member"), (target_admin, "admin")] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,$3)",
+            vec![workspace.into(), actor.into(), role.into()],
+        ))
+        .await
+        .unwrap();
+    }
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET external_mounts=true")
+        .await
+        .unwrap();
+    let mount = scope_mounts::create(
+        db,
+        source_owner,
+        object,
+        MountInput {
+            destination_workspace_id: workspace,
+            destination_project_id: None,
+            level: "edit".into(),
+            idempotency_key: "mount-new".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let edit = scope::authorize(db, object, member, PermissionLevel::Edit)
+        .await
+        .unwrap();
+    assert!(scope::object_view(db, object, member).await.is_ok());
+    assert!(scope::object_view(db, object, outsider).await.is_err());
+    let change = |key: &str| ChangeMountInput {
+        expected_level: "edit".into(),
+        level: "view".into(),
+        idempotency_key: key.into(),
+    };
+    assert!(
+        scope_mounts::change(db, target_admin, object, mount.id, change("forbidden"))
+            .await
+            .is_err()
+    );
+    let changed = scope_mounts::change(db, source_owner, object, mount.id, change("mount-change"))
+        .await
+        .unwrap();
+    assert_eq!(changed.level, "view");
+    assert_eq!(
+        scope_mounts::change(db, source_owner, object, mount.id, change("mount-change"))
+            .await
+            .unwrap()
+            .id,
+        mount.id
+    );
+    assert!(
+        scope_mounts::change(db, source_owner, object, mount.id, change("stale-level"))
+            .await
+            .is_err()
+    );
+    assert!(!scope::proof_current(db, &edit).await.unwrap());
+    assert!(
+        scope::authorize(db, object, member, PermissionLevel::Edit)
+            .await
+            .is_err()
+    );
+    let read = scope::authorize(db, object, member, PermissionLevel::View)
+        .await
+        .unwrap();
+    api::routes::member::remove_member(
+        axum::extract::State(test_state(db.clone())),
+        test_claims(target_admin),
+        axum::extract::Path((workspace, member)),
+    )
+    .await
+    .unwrap();
+    assert!(!scope::proof_current(db, &read).await.unwrap());
+    assert!(scope::object_view(db, object, member).await.is_err());
+    scope_mounts::remove(db, target_admin, object, mount.id).await.unwrap();
+    scope_mounts::remove(db, target_admin, object, mount.id).await.unwrap();
+    assert!(scope::object_view(db, object, target_admin).await.is_err());
+    assert!(scope::object_view(db, object, source_owner).await.is_ok());
     scratch.close().await;
 }

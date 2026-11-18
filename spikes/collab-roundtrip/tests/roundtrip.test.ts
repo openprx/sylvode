@@ -56,7 +56,7 @@ for (const candidate of ["loro", "yrs-yjs"] as const) {
   });
 }
 
-test("loro: real Rust snapshot bytes import into loro-crdt@1.14.1 and hash to the same value", async () => {
+test("loro: real Rust snapshot bytes import into loro-crdt@1.18.0 and hash to the same value", async () => {
   const manifest = await readManifest("loro");
   const bytes = await readSnapshotBytes("loro");
 

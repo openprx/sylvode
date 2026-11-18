@@ -22,8 +22,8 @@ struct ProjectExportData {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -37,8 +37,8 @@ struct IssueExportData {
     pub issue_type: String,
     pub assignee_id: Option<Uuid>,
     pub reporter_id: Option<Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -47,8 +47,8 @@ struct CommentExportData {
     pub work_item_id: Uuid,
     pub content: String,
     pub created_by: Uuid,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
+    pub updated_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,7 +56,7 @@ struct ProjectExport {
     pub project: ProjectExportData,
     pub issues: Vec<IssueExportData>,
     pub comments: Vec<CommentExportData>,
-    pub exported_at: chrono::DateTime<chrono::Utc>,
+    pub exported_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize)]
@@ -131,7 +131,7 @@ pub async fn export_project(
         project,
         issues,
         comments,
-        exported_at: chrono::Utc::now(),
+        exported_at: platform::timestamp::Timestamp::now(),
     };
 
     let format = query.format.as_deref().unwrap_or("json");

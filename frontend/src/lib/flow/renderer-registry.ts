@@ -67,13 +67,21 @@ export function registryObjectType(value: string): ObjectType | null {
 		: null;
 }
 
-export type FlowBlockRendererType = 'paragraph' | 'heading' | 'bulletItem' | 'codeBlock';
+export type FlowBlockRendererType = import('./editor-schema').FlowBlock;
 
 const BLOCK_RENDERERS: ReadonlySet<FlowBlockRendererType> = new Set([
 	'paragraph',
 	'heading',
 	'bulletItem',
-	'codeBlock'
+	'codeBlock',
+	'orderedItem',
+	'todoItem',
+	'blockquote',
+	'toggle',
+	'divider',
+	'image',
+	'attachment',
+	'childPage'
 ]);
 
 export function isRegisteredBlockType(value: string): value is FlowBlockRendererType {

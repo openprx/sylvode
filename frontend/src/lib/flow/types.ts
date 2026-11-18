@@ -210,6 +210,10 @@ export interface ObjectHandle {
 export interface RelativeSelection {
 	readonly anchor: number;
 	readonly head: number;
+	readonly anchorBlockId?: string;
+	readonly headBlockId?: string;
+	readonly anchorOffset?: number;
+	readonly headOffset?: number;
 }
 
 export type EditorOrigin = 'local' | 'remote';

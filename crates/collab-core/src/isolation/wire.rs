@@ -125,6 +125,10 @@ pub struct ReplayDiffResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legacy_package_semantic_hash_v2: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_package_semantic_hash_v3: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_package_semantic_hash_v4: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package_reference_remap_required: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validated_head_snapshot_base64: Option<String>,
@@ -133,10 +137,11 @@ pub struct ReplayDiffResult {
 /// Known Flow reference containers need a typed identity-remapping adapter, never a UUID scan.
 pub fn package_reference_remap_required(engine: &crate::LoroCollabEngine) -> Result<bool, crate::CollabError> {
     let semantic = engine.semantic_snapshot()?;
-    Ok(!engine.navigator_order().is_empty()
+    Ok(engine.minimum_editor_model()? >= 5
+        || !engine.navigator_order().is_empty()
         || semantic.nodes.values().any(|node| {
             node.kind == crate::NodeKind::NavigatorNode
-                || ["embed_object_id", "child_page_id", "reference_id"]
+                || ["embed_object_id", "child_page_id", "reference_id", "asset_id"]
                     .iter()
                     .any(|key| node.properties.contains_key(*key))
         }))
@@ -378,6 +383,8 @@ mod tests {
             to_title: "after".to_string(),
             legacy_package_semantic_hash_v1: None,
             legacy_package_semantic_hash_v2: None,
+            legacy_package_semantic_hash_v3: None,
+            legacy_package_semantic_hash_v4: None,
             package_reference_remap_required: None,
             validated_head_snapshot_base64: None,
         };

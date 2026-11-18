@@ -1,3 +1,4 @@
+import { editorObservation } from './editor-batch';
 // Page slash-menu insertions that reach beyond plain text: the Collection embed
 // (`ui-surface-v1.md` "后续版本 UI 派生" v0.6) and the Forms Bridge Reference / Embed / Convert
 // entries (`versions/v0.7-forms-bridge.md` "Web 交互").
@@ -431,7 +432,9 @@ export class PageBlockTree {
 
 	subscribe(listener: (blocks: PageBlock[]) => void): () => void {
 		listener(this.blocks());
-		return this.doc.subscribe(() => listener(this.blocks()));
+		return this.doc.subscribe(() =>
+			editorObservation(this.doc, listener, () => listener(this.blocks()))
+		);
 	}
 
 	/** Appends a placeholder for `referenceId` unless one is already there (a replayed create

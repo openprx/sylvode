@@ -161,6 +161,21 @@ pub fn v0_6_command_cardinality_registry() -> Vec<(&'static str, ExistingDocumen
     registry
 }
 
+/// Current command ledger, including later Page body commands that advance the owning
+/// Page's existing document. Creating a linked child starts a new document and does not
+/// add to the contended existing set.
+pub fn current_command_cardinality_registry() -> Vec<(&'static str, ExistingDocumentCardinality)> {
+    let mut registry = v0_6_command_cardinality_registry();
+    for content in [
+        ContentCommandType::InsertBodyAsset,
+        ContentCommandType::ReplaceBodyAsset,
+        ContentCommandType::LinkChildPage,
+    ] {
+        registry.push((content.wire_name(), content.existing_document_cardinality()));
+    }
+    registry
+}
+
 /// The value a `REFERENCES users(id)` column may take for this actor: the actor's own id when it
 /// is a user, `None` when it is a bot.
 ///
@@ -220,8 +235,13 @@ struct CreateObjectIdempotencyBody {
     message: Option<String>,
     #[serde(default)]
     initial_collection_schema: Option<Value>,
+    #[serde(default = "default_editor_model")]
+    editor_model: u32,
 }
 
+const fn default_editor_model() -> u32 {
+    1
+}
 impl CreateObjectIdempotencyBody {
     fn from_input(
         input: &CreateObjectInput,
@@ -235,6 +255,7 @@ impl CreateObjectIdempotencyBody {
             title: normalized_title.to_string(),
             message: input.message.clone(),
             initial_collection_schema: initial_collection_schema.cloned(),
+            editor_model: 1,
         }
     }
 }
@@ -382,7 +403,7 @@ async fn replay_created_object(
 pub const CHILD_PROJECT_MUST_MATCH_PARENT: &str = "child_project_must_match_parent";
 
 pub async fn create_object(state: &AppState, input: CreateObjectInput) -> Result<AcceptedChange, ApiError> {
-    let mut change = create_object_inner(state, input, None).await?;
+    let mut change = create_object_inner(state, input, None, 1).await?;
     super::collections::redact_secret_record_change(&state.db, &mut change).await?;
     Ok(change)
 }
@@ -392,16 +413,30 @@ pub async fn create_object_with_collection_schema(
     input: CreateObjectInput,
     initial_collection_schema: Value,
 ) -> Result<AcceptedChange, ApiError> {
-    let mut change = create_object_inner(state, input, Some(initial_collection_schema)).await?;
+    let mut change = create_object_inner(state, input, Some(initial_collection_schema), 1).await?;
     super::collections::redact_secret_record_change(&state.db, &mut change).await?;
     Ok(change)
+}
+
+pub async fn create_object_with_editor_model(
+    state: &AppState,
+    input: CreateObjectInput,
+    model: u32,
+) -> Result<AcceptedChange, ApiError> {
+    create_object_inner(state, input, None, model).await
 }
 
 async fn create_object_inner(
     state: &AppState,
     input: CreateObjectInput,
     initial_collection_schema: Option<Value>,
+    editor_model: u32,
 ) -> Result<AcceptedChange, ApiError> {
+    if !matches!(editor_model, 1 | 4 | 5) || (editor_model >= 4 && input.object_type != "page") {
+        return Err(ApiError::invalid_update(
+            "editor_model must be 1 or 4; model4 requires Page",
+        ));
+    }
     runtime::runtime().ensure_workspace_accepting(input.workspace_id)?;
     validate(&input)?;
     let title = input.title.trim().to_string();
@@ -410,7 +445,10 @@ async fn create_object_inner(
             "initial_fields and initial_view require object_type=collection",
         ));
     }
-    let idempotency_body = CreateObjectIdempotencyBody::from_input(&input, &title, initial_collection_schema.as_ref());
+    let mut idempotency_body =
+        CreateObjectIdempotencyBody::from_input(&input, &title, initial_collection_schema.as_ref());
+
+    idempotency_body.editor_model = editor_model;
 
     // Idempotent replay: a caller retrying the exact same `idempotency_key` gets back the
     // original result instead of a unique-violation `Conflict`
@@ -550,6 +588,11 @@ async fn create_object_inner(
     })?;
     if input.object_type == "page" {
         engine.initialize_page_editor().map_err(|e| map_collab_error(&e))?;
+        if editor_model >= 4 {
+            engine
+                .initialize_page_structure_model(editor_model)
+                .map_err(|e| map_collab_error(&e))?;
+        }
     }
     if let Some(schema) = initial_collection_schema.as_ref() {
         super::collections::apply_initial_collection_schema(&mut engine, schema)?;
@@ -570,6 +613,8 @@ async fn create_object_inner(
     let document_id = Uuid::new_v4();
     let frontier_bytes = frontier.as_bytes().to_vec();
 
+    let initial_logical_blocks = super::block_registry::prepare(&semantic)?;
+    let initial_asset_references = super::body_assets::typed_references(&semantic)?;
     let tx = state.db.begin().await?;
 
     // Creation is a write to its parent's canonical hierarchy. The authority lock precedes
@@ -577,6 +622,9 @@ async fn create_object_inner(
     // commit; a revoke cannot commit between this check and creation.
     let _creation_epoch = authz::lock_epoch_for_share(&tx, input.workspace_id).await?;
     super::policy::require_flow_enabled_on(&tx, input.workspace_id).await?;
+    if editor_model >= 4 {
+        super::scope::require_editor_model_readers(&tx, editor_model).await?;
+    }
     let role = if input.actor_is_bot {
         #[derive(FromQueryResult)]
         struct BotPermissions {
@@ -753,6 +801,10 @@ async fn create_object_inner(
     }
     let event_id = outcome.event_id;
 
+    if input.object_type == "page" {
+        super::block_registry::reconcile_accepted(&tx, object_id, 0, &initial_logical_blocks).await?;
+        super::body_assets::reconcile_accepted(&tx, object_id, 0, &initial_asset_references).await?;
+    }
     tx.commit().await?;
 
     let object = FlowObjectView {
@@ -772,8 +824,8 @@ async fn create_object_inner(
         frontier: projection::encode_frontier(&frontier),
         projection_seq: 0,
         projection_lag: 0,
-        created_at: chrono::Utc::now().to_rfc3339(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        created_at: platform::timestamp::Timestamp::now().to_rfc3339(),
+        updated_at: platform::timestamp::Timestamp::now().to_rfc3339(),
         archived_at: None,
         appearance: super::appearance::PageAppearance::default(),
     };
@@ -1040,6 +1092,9 @@ enum ContentCommandType {
     DeleteBlock,
     MoveBlock,
     SemanticPatch,
+    InsertBodyAsset,
+    ReplaceBodyAsset,
+    LinkChildPage,
 }
 
 impl ContentCommandType {
@@ -1051,8 +1106,18 @@ impl ContentCommandType {
             "delete_block" => Some(Self::DeleteBlock),
             "move_block" => Some(Self::MoveBlock),
             "semantic_patch" => Some(Self::SemanticPatch),
+            "insert_body_asset" => Some(Self::InsertBodyAsset),
+            "replace_body_asset" => Some(Self::ReplaceBodyAsset),
+            "link_child_page" => Some(Self::LinkChildPage),
             _ => None,
         }
+    }
+
+    const fn requires_user_session(self) -> bool {
+        matches!(
+            self,
+            Self::InsertBodyAsset | Self::ReplaceBodyAsset | Self::LinkChildPage
+        )
     }
 
     const fn wire_name(self) -> &'static str {
@@ -1063,6 +1128,9 @@ impl ContentCommandType {
             Self::DeleteBlock => "delete_block",
             Self::MoveBlock => "move_block",
             Self::SemanticPatch => "semantic_patch",
+            Self::InsertBodyAsset => "insert_body_asset",
+            Self::ReplaceBodyAsset => "replace_body_asset",
+            Self::LinkChildPage => "link_child_page",
         }
     }
 
@@ -1079,7 +1147,10 @@ impl ContentCommandType {
             | Self::UpdateBlock
             | Self::DeleteBlock
             | Self::MoveBlock
-            | Self::SemanticPatch => ExistingDocumentCardinality::One,
+            | Self::SemanticPatch
+            | Self::InsertBodyAsset
+            | Self::ReplaceBodyAsset
+            | Self::LinkChildPage => ExistingDocumentCardinality::One,
         }
     }
 }
@@ -1588,6 +1659,27 @@ struct SetTitlePayload {
     title: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BodyAssetPayload {
+    block_id: String,
+    index: Option<u32>,
+    parent_block_id: Option<String>,
+    asset_id: Uuid,
+    kind: super::body_assets::AssetKind,
+    alt: Option<String>,
+    caption: Option<String>,
+    name: Option<String>,
+    mime: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChildLinkPayload {
+    block_id: String,
+    index: u32,
+    parent_block_id: Option<String>,
+    child_page_id: Uuid,
+}
 #[derive(Debug, Deserialize)]
 struct InsertBlockPayload {
     block_id: String,
@@ -1600,8 +1692,11 @@ struct InsertBlockPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UpdateBlockPayload {
     block_id: String,
+    #[serde(default)]
+    inline_marks: Vec<collab_core::page_inline::MarkEdit>,
     #[serde(default)]
     text: Option<String>,
     #[serde(default)]
@@ -1743,6 +1838,9 @@ pub(crate) fn apply_scope_content_command(
         "update_block" => ContentCommandType::UpdateBlock,
         "delete_block" => ContentCommandType::DeleteBlock,
         "move_block" => ContentCommandType::MoveBlock,
+        "insert_body_asset" => ContentCommandType::InsertBodyAsset,
+        "replace_body_asset" => ContentCommandType::ReplaceBodyAsset,
+        "link_child_page" => ContentCommandType::LinkChildPage,
         "semantic_patch" => {
             check_semantic_patch_json_bytes(payload)?;
             ContentCommandType::SemanticPatch
@@ -1757,6 +1855,7 @@ fn apply_content_command(
     kind: ContentCommandType,
     payload: &Value,
 ) -> Result<(), ApiError> {
+    let mut mark_edits = None;
     let ops: Vec<Operation> = match kind {
         ContentCommandType::SetTitle => {
             let payload: SetTitlePayload = parse_payload("set_title", payload)?;
@@ -1770,6 +1869,52 @@ fn apply_content_command(
                 )));
             }
             return engine.set_title(title).map_err(|err| map_collab_error(&err));
+        }
+        ContentCommandType::InsertBodyAsset | ContentCommandType::ReplaceBodyAsset => {
+            let payload: BodyAssetPayload = parse_payload("body_asset", payload)?;
+            let replacing = kind == ContentCommandType::ReplaceBodyAsset;
+            if replacing && (payload.index.is_some() || payload.parent_block_id.is_some()) {
+                return Err(ApiError::invalid_update(
+                    "asset replacement preserves its block placement",
+                ));
+            }
+            let kind = payload.kind.as_str();
+            let attrs = match payload.kind {
+                super::body_assets::AssetKind::Image => {
+                    json!({"asset_id":payload.asset_id,"alt":payload.alt.unwrap_or_default(),"caption":payload.caption.unwrap_or_default(),"indent":0})
+                }
+                super::body_assets::AssetKind::Attachment => {
+                    json!({"asset_id":payload.asset_id,"name":payload.name.unwrap_or_else(||"Attachment".into()),"mime":payload.mime.unwrap_or_else(||"application/octet-stream".into()),"caption":payload.caption.unwrap_or_default(),"indent":0})
+                }
+            };
+            if replacing {
+                return engine
+                    .replace_page_asset(&payload.block_id, kind, &attrs)
+                    .map_err(|error| map_collab_error(&error));
+            }
+            return engine
+                .insert_page_atom(
+                    &payload.block_id,
+                    payload.parent_block_id.as_deref(),
+                    payload.index.unwrap_or(0) as usize,
+                    kind,
+                    &attrs,
+                )
+                .map(|_| ())
+                .map_err(|error| map_collab_error(&error));
+        }
+        ContentCommandType::LinkChildPage => {
+            let payload: ChildLinkPayload = parse_payload("link_child_page", payload)?;
+            return engine
+                .insert_page_atom(
+                    &payload.block_id,
+                    payload.parent_block_id.as_deref(),
+                    payload.index as usize,
+                    "childPage",
+                    &json!({"child_page_id":payload.child_page_id,"indent":0}),
+                )
+                .map(|_| ())
+                .map_err(|error| map_collab_error(&error));
         }
         ContentCommandType::InsertBlock => {
             let payload: InsertBlockPayload = parse_payload("insert_block", payload)?;
@@ -1793,12 +1938,15 @@ fn apply_content_command(
         ContentCommandType::UpdateBlock => {
             let payload: UpdateBlockPayload = parse_payload("update_block", payload)?;
             let id = parse_node_id(&payload.block_id, "block_id")?;
-            if payload.text.is_none() && payload.properties.is_empty() {
+            if payload.text.is_none() && payload.properties.is_empty() && payload.inline_marks.is_empty() {
                 return Err(ApiError::invalid_update(
                     "update_block requires at least one of text or properties".to_string(),
                 ));
             }
             let mut ops = Vec::new();
+            if !payload.inline_marks.is_empty() {
+                mark_edits = Some((payload.block_id.clone(), payload.inline_marks));
+            }
             if let Some(text) = payload.text {
                 let existing = engine.semantic_snapshot().map_err(|err| map_collab_error(&err))?;
                 let canonical_id = engine.resolve_content_node_id(&id);
@@ -1806,20 +1954,40 @@ fn apply_content_command(
                     .nodes
                     .get(&canonical_id)
                     .ok_or_else(|| ApiError::invalid_update(format!("unknown node id '{id}'")))?;
-                let old_len = u32::try_from(node.text.len())
-                    .map_err(|_| ApiError::invalid_update("block text too large to update".to_string()))?;
+                // Preserve unchanged native text and marks instead of replacing the block.
+                let prefix: usize = node
+                    .text
+                    .chars()
+                    .zip(text.chars())
+                    .take_while(|(a, b)| a == b)
+                    .map(|(ch, _)| ch.len_utf8())
+                    .sum();
+                let old_tail = node.text.get(prefix..).ok_or_else(ApiError::internal)?;
+                let new_tail = text.get(prefix..).ok_or_else(ApiError::internal)?;
+                let suffix: usize = old_tail
+                    .chars()
+                    .rev()
+                    .zip(new_tail.chars().rev())
+                    .take_while(|(a, b)| a == b)
+                    .map(|(ch, _)| ch.len_utf8())
+                    .sum();
+                let old_len = u32::try_from(old_tail.len() - suffix)
+                    .map_err(|_| ApiError::invalid_update("block text too large to update"))?;
+                let index =
+                    u32::try_from(prefix).map_err(|_| ApiError::invalid_update("block text too large to update"))?;
                 if old_len > 0 {
                     ops.push(Operation::DeleteText {
                         id: id.clone(),
-                        index: 0,
+                        index,
                         len: old_len,
                     });
                 }
-                if !text.is_empty() {
+                let inserted = new_tail.get(..new_tail.len() - suffix).ok_or_else(ApiError::internal)?;
+                if !inserted.is_empty() {
                     ops.push(Operation::InsertText {
                         id: id.clone(),
-                        index: 0,
-                        text,
+                        index,
+                        text: inserted.to_owned(),
                     });
                 }
             }
@@ -1872,6 +2040,11 @@ fn apply_content_command(
             .map_err(|violation| map_collab_error(&CollabError::from(violation)))?;
         engine
             .apply_content_operation(&op)
+            .map_err(|err| map_collab_error(&err))?;
+    }
+    if let Some((id, edits)) = mark_edits {
+        engine
+            .apply_page_marks(&id, &edits)
             .map_err(|err| map_collab_error(&err))?;
     }
     Ok(())
@@ -2032,6 +2205,11 @@ async fn execute_content_command(
     checked_epoch: i64,
     kind: ContentCommandType,
 ) -> Result<AcceptedChange, ApiError> {
+    if input.actor_is_bot() && kind.requires_user_session() {
+        return Err(ApiError::unsupported_protocol(
+            "body asset and child commands require a user session; use a user JWT",
+        ));
+    }
     let expected_frontier = input
         .expected_frontier
         .as_deref()
@@ -2053,7 +2231,15 @@ async fn execute_content_command(
     if is_page && kind != ContentCommandType::SetTitle {
         engine.initialize_page_editor().map_err(|e| map_collab_error(&e))?;
     }
-    if let Err(err) = apply_content_command(&mut engine, kind, &input.payload) {
+    let normalized_payload = super::body_assets::normalize_command_payload(
+        &state.db,
+        input.object_id,
+        input.actor_id,
+        kind.wire_name(),
+        &input.payload,
+    )
+    .await?;
+    if let Err(err) = apply_content_command(&mut engine, kind, &normalized_payload) {
         // The concurrent same-key double submit `rest-api-v1.md` registers as a known residual
         // window: this request's `find_idempotent_event` guard (in `execute_command_authorized`)
         // ran *before* the other request committed and so missed, while the `bootstrap::load`
@@ -2313,7 +2499,7 @@ async fn execute_lifecycle_command(
     }
 
     let archived_at = if target_status == "archived" {
-        Some(chrono::Utc::now())
+        Some(platform::timestamp::Timestamp::now())
     } else {
         None
     };
@@ -2345,7 +2531,7 @@ async fn execute_lifecycle_command(
     let required_tier = rechecked.required_permission_level(input.object_id)?;
     let permanent_cleanup_after =
         if kind == LifecycleCommandType::Archive && required_tier == authz::PermissionLevel::FullAccess {
-            archived_at.map(|at| at + chrono::Duration::days(OBJECT_PERMANENT_CLEANUP_RETENTION_DAYS))
+            archived_at.map(|at| at + time::Duration::days(OBJECT_PERMANENT_CLEANUP_RETENTION_DAYS))
         } else {
             None
         };
@@ -2399,7 +2585,10 @@ async fn execute_lifecycle_command(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod cardinality_gate_tests {
-    use super::{ExistingDocumentCardinality, v0_4_command_cardinality_registry, v0_5_command_cardinality_registry};
+    use super::{
+        CommandKind, ExistingDocumentCardinality, authz::PermissionLevel, current_command_cardinality_registry,
+        v0_4_command_cardinality_registry, v0_5_command_cardinality_registry, v0_6_command_cardinality_registry,
+    };
 
     /// `command_contended_document_cardinality` (`ADR-0013` §1, v0.4): "v0.4 的竞争文档集合恒
     /// ≤ 1". Every command this package registers — content, lifecycle, and the two
@@ -2477,6 +2666,33 @@ mod cardinality_gate_tests {
                 Some(expected_cardinality),
                 "command '{expected_name}' is missing or has the wrong v0.5 cardinality"
             );
+        }
+    }
+
+    #[test]
+    fn current_page_body_commands_are_counted_once_and_require_an_editing_user() {
+        let registry = current_command_cardinality_registry();
+        let expected = ["insert_body_asset", "replace_body_asset", "link_child_page"];
+        assert_eq!(
+            registry.len(),
+            v0_6_command_cardinality_registry().len() + expected.len()
+        );
+        for name in expected {
+            assert_eq!(
+                registry
+                    .iter()
+                    .filter(|(registered, _)| *registered == name)
+                    .map(|(_, cardinality)| *cardinality)
+                    .collect::<Vec<_>>(),
+                [ExistingDocumentCardinality::One],
+            );
+            let kind = CommandKind::parse(name).expect("current Page body command parses");
+            let CommandKind::Content(content) = kind else {
+                panic!("{name} must be a Page content command");
+            };
+            assert_eq!(kind.required_permission_level(), PermissionLevel::Edit);
+            assert!(content.requires_user_session());
+            assert_eq!(kind.event_type(), "flow.content.accepted");
         }
     }
 
@@ -3425,7 +3641,7 @@ mod database_tests {
             serde_json::json!([page])
         );
         assert_eq!(dispatch_count(&scratch.db, page_archive.event_id).await, 1);
-        let page_cleanup: Option<chrono::DateTime<chrono::Utc>> = scratch
+        let page_cleanup: Option<platform::timestamp::Timestamp> = scratch
             .db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -3511,7 +3727,7 @@ mod database_tests {
         assert_eq!(archive_metadata["affected_object_ids"], serde_json::json!([collection]));
         assert_eq!(archive_metadata["cascade"], false);
         assert_eq!(dispatch_count(&scratch.db, collection_archive.event_id).await, 1);
-        let collection_cleanup: Option<chrono::DateTime<chrono::Utc>> = scratch
+        let collection_cleanup: Option<platform::timestamp::Timestamp> = scratch
             .db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -3544,7 +3760,7 @@ mod database_tests {
             assert_eq!(restored.affected_object_ids, vec![collection]);
         }
         assert_eq!(lifecycle_statuses(&scratch.db, &[collection]).await[0].1, "active");
-        let restored_cleanup: Option<chrono::DateTime<chrono::Utc>> = scratch
+        let restored_cleanup: Option<platform::timestamp::Timestamp> = scratch
             .db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -5259,6 +5475,48 @@ mod idempotency_race_database_tests {
 #[cfg(test)]
 mod editor_command_interop_tests {
     use super::*;
+    #[test]
+    fn inline_mark_command_is_strict_and_updates_existing_native_text() {
+        let mut engine = LoroCollabEngine::load(include_bytes!(
+            "../../../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot"
+        ))
+        .unwrap();
+        let before = engine.semantic_snapshot().unwrap();
+        let id = before
+            .nodes
+            .iter()
+            .find(|(_, node)| node.text == "Browser 😀 prose")
+            .unwrap()
+            .0
+            .to_string();
+        apply_scope_content_command(
+            &mut engine,
+            "update_block",
+            &json!({"block_id":id,"inline_marks":[{"start":0,"end":7,"mark":"bold"}]}),
+        )
+        .unwrap();
+        let rich = engine.semantic_snapshot().unwrap();
+        let node = rich
+            .nodes
+            .get(&NodeId::from(id.as_str()))
+            .expect("updated block exists");
+        assert_eq!(node.text, "Browser 😀 prose");
+        assert!(node.properties.contains_key("inline_spans"));
+        assert!(
+            apply_scope_content_command(&mut engine, "update_block", &json!({"block_id":id,"inline_markz":[]}))
+                .is_err()
+        );
+        let unchanged = engine.frontier();
+        assert!(
+            apply_scope_content_command(
+                &mut engine,
+                "update_block",
+                &json!({"block_id":id,"inline_marks":[{"start":9,"end":10,"mark":"link","href":"javascript:bad"}]})
+            )
+            .is_err()
+        );
+        assert_eq!(engine.frontier(), unchanged);
+    }
     #[test]
     fn prose_commands_create_and_update_explicit_alias_without_replacing_browser_blocks() {
         let bytes = std::fs::read(concat!(

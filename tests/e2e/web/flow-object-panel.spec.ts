@@ -194,19 +194,19 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	});
 	await page.goto(`/workspace/${workspace.id}/flow/${objectId}`);
 
-	const tabs = page.getByRole('tablist', { name: 'Page panel sections' });
-	await expect(tabs.getByRole('tab', { name: 'Info' })).toHaveAttribute('aria-selected', 'true');
-	await tabs.getByRole('tab', { name: 'Info' }).focus();
-	await page.keyboard.press('ArrowRight');
-	const commentsTab = tabs.getByRole('tab', { name: 'Comments' });
-	await expect(commentsTab).toBeFocused();
-	await expect(commentsTab).toHaveAttribute('aria-selected', 'true');
-	await page.keyboard.press('ArrowRight');
-	const shareTab = tabs.getByRole('tab', { name: 'Share' });
-	await expect(shareTab).toBeFocused();
-	await expect(shareTab).toHaveAttribute('aria-selected', 'true');
-	await expect(shareTab).toHaveAttribute('aria-controls', 'flow-panel-share');
+	const toolbar = page.getByTestId('flow-page-tools');
+	await toolbar.getByRole('button', { name: 'Comments' }).focus();
+	await page.keyboard.press('Enter');
+	await expect(page.getByTestId('flow-tool-panel')).toBeVisible();
+	await expect(toolbar.getByRole('button', { name: 'Comments' })).toHaveAttribute('aria-pressed', 'true');
+	await toolbar.getByRole('button', { name: 'Share' }).click();
+	const shareDialog = page.getByRole('dialog', { name: 'Share', exact: true });
+	await expect(shareDialog).toBeVisible();
 
+	const openTool = async (tool: 'relations' | 'history' | 'info') => {
+		await toolbar.getByTestId('flow-more').click();
+		await toolbar.getByTestId(`flow-open-${tool}`).click();
+	};
 	const share = page.getByTestId('flow-share-panel');
 	await expect(share.getByTestId('flow-share-effective')).toHaveText('Full access');
 	await expect(share.getByTestId('flow-share-inheritance')).toHaveText('On');
@@ -223,7 +223,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 		'view'
 	);
 	expect(puts).toHaveLength(1);
-	expect(puts[0].path).toBe(`/api/v1/flow/objects/${objectId}/grants`);
+	expect(puts[0].path).toBe(`/api/v2/flow/objects/${objectId}/grants`);
 	expect(puts[0].body).toMatchObject({
 		grants: [{ principal_kind: 'user', principal_id: memberLogin.user.id, level: 'view' }],
 		dry_run: false,
@@ -241,7 +241,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 		`${MEMBER_NAME}: Can edit → Can view`
 	);
 	expect(puts).toHaveLength(2);
-	expect(puts[1].path).toBe(`/api/v1/flow/objects/${objectId}/inheritance`);
+	expect(puts[1].path).toBe(`/api/v2/flow/objects/${objectId}/inheritance`);
 	expect(puts[1].body).toMatchObject({
 		inherit_from_parent: false,
 		dry_run: true,
@@ -250,7 +250,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	expect(puts[1].body).not.toHaveProperty('initial_grants');
 	// The dry run changed nothing on the server.
 	const during = await unwrap<{ inherit_from_parent: boolean }>(
-		await request.get(`/api/v1/flow/objects/${objectId}/grants`, { headers: auth })
+		await request.get(`/api/v2/flow/objects/${objectId}/grants`, { headers: auth })
 	);
 	expect(during.inherit_from_parent).toBe(true);
 
@@ -269,7 +269,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	const after = await unwrap<{
 		inherit_from_parent: boolean;
 		items: Array<{ principal_id: string; level: string }>;
-	}>(await request.get(`/api/v1/flow/objects/${objectId}/grants`, { headers: auth }));
+	}>(await request.get(`/api/v2/flow/objects/${objectId}/grants`, { headers: auth }));
 	expect(after.inherit_from_parent).toBe(false);
 	expect(after.items.map((item) => [item.principal_id, item.level])).toEqual([
 		[memberLogin.user.id, 'view']
@@ -294,7 +294,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	});
 	const withBot = await unwrap<{
 		items: Array<{ principal_kind: string; principal_id: string; level: string }>;
-	}>(await request.get(`/api/v1/flow/objects/${objectId}/grants`, { headers: auth }));
+	}>(await request.get(`/api/v2/flow/objects/${objectId}/grants`, { headers: auth }));
 	expect(
 		withBot.items
 			.map((item) => [item.principal_kind, item.principal_id, item.level])
@@ -307,7 +307,9 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	);
 
 	// Relations: lazy-loaded on first open, the link's target is shown and navigable.
-	await tabs.getByRole('tab', { name: 'Relations' }).click();
+	await page.keyboard.press('Escape');
+	await expect(shareDialog).not.toBeVisible();
+	await openTool('relations');
 	const relations = page.getByTestId('flow-relations-panel');
 	const relationRow = relations.getByTestId('flow-relation-row');
 	await expect(relationRow).toHaveCount(1);
@@ -315,12 +317,12 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	const targetLink = relationRow.getByRole('link', { name: targetTitle });
 	await expect(targetLink).toHaveAttribute(
 		'href',
-		`/workspace/${workspace.id}/flow/${target.object.id}`
+		`/flow/${target.object.id}`
 	);
 	await expect(relations.getByTestId('flow-relation-unavailable')).toHaveCount(0);
 
 	// History: the newest entry is the inserted block; its semantic diff shows the added text.
-	await tabs.getByRole('tab', { name: 'History' }).click();
+	await openTool('history');
 	const firstEntry = page.getByTestId('flow-history-entry').first();
 	const showChanges = firstEntry.getByRole('button', { name: 'Show changes' });
 	await expect(showChanges).toHaveAttribute('aria-expanded', 'false');
@@ -336,19 +338,19 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	await expect(firstEntry.getByTestId('flow-history-diff')).not.toContainText(`blk-${runId}`);
 
 	// Export: markdown, poll to completed, download and check the bytes' SHA-256.
-	await tabs.getByRole('tab', { name: 'Info' }).click();
+	await openTool('info');
 	const exportBox = page.getByTestId('flow-panel-export');
 	await expect(exportBox.getByRole('combobox', { name: 'Format', exact: true })).toHaveValue(
 		'markdown'
 	);
 	await expect(
 		exportBox.getByRole('combobox', { name: 'Format', exact: true }).locator('option')
-	).toHaveText(['JSON', 'Markdown', 'Sylvode package']);
-	await expect(exportBox.getByLabel('Include history')).toBeDisabled();
+	).toHaveText(['JSON', 'Markdown', 'CSV', 'Sylvode package']);
+	await expect(exportBox.getByLabel('Include history')).toHaveCount(0);
 	const exportResponse = page.waitForResponse(
 		(res) =>
 			res.request().method() === 'POST' &&
-			res.url().endsWith(`/api/v1/flow/objects/${objectId}/exports`)
+			res.url().endsWith(`/api/v2/flow/objects/${objectId}/exports`)
 	);
 	await exportBox.getByRole('button', { name: 'Export', exact: true }).click();
 	const exportReply = await exportResponse;
@@ -368,7 +370,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	const saved = readFileSync(savedPath);
 	expect(saved.toString('utf8')).toContain(pageTitle);
 	const job = await unwrap<{ status: string; checksum: string; format: string }>(
-		await request.get(`/api/v1/flow/exports/${exportJob.job_id}`, { headers: auth })
+		await request.get(`/api/v2/flow/exports/${exportJob.job_id}`, { headers: auth })
 	);
 	expect(job.status).toBe('completed');
 	expect(job.format).toBe('markdown');
@@ -385,10 +387,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 		if (req.method() === 'PUT') memberPuts.push(req.url());
 	});
 	await memberPage.goto(`/workspace/${workspace.id}/flow/${objectId}`);
-	await memberPage
-		.getByRole('tablist', { name: 'Page panel sections' })
-		.getByRole('tab', { name: 'Share' })
-		.click();
+	await memberPage.getByTestId('flow-share-open').click();
 	const memberShare = memberPage.getByTestId('flow-share-panel');
 	await expect(memberShare.getByTestId('flow-share-effective')).toHaveText('Can view');
 	await expect(memberShare.getByTestId('flow-share-inheritance')).toHaveText('Off');
@@ -401,7 +400,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 		items: unknown[];
 		inherited: unknown[];
 		effective_level: string;
-	}>(await request.get(`/api/v1/flow/objects/${objectId}/grants`, { headers: memberAuth }));
+	}>(await request.get(`/api/v2/flow/objects/${objectId}/grants`, { headers: memberAuth }));
 	expect(memberView).toMatchObject({ items: [], inherited: [], effective_level: 'view' });
 	const write = await request.post(`/api/v1/flow/objects/${objectId}/commands`, {
 		headers: memberAuth,

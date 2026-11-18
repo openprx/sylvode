@@ -1,19 +1,37 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { shareLevelKey } from '#lib/flow/share-panel.js';
 	import { t } from 'svelte-i18n';
 	import { flowApi, type FlowMount } from '#lib/api/flow.js';
 	import { workspacesApi, type Workspace } from '#lib/api/workspaces.js';
 	import { listWorkspaceProjects, type WorkspaceProjectOption } from '#lib/flow/package-export.js';
 	let { objectId }: { objectId: string } = $props();
+	const uid = $props.id();
 	let enabled = $state(false);
+	let updatesEnabled = $state(false);
+	let changing = $state<FlowMount | null>(null);
+	let nextLevel = $state<FlowMount['level']>('view');
+	let updateIntent: { signature: string; key: string } | null = null;
+	let conflict = $state(false);
 	let loading = $state(true);
 	let busy = $state(false);
 	let failed = $state(false);
+	let denied = $state(false);
+	let projectLoading = $state(false);
+	let projectGeneration = 0;
 	let mounts = $state<FlowMount[]>([]);
 	let workspaces = $state<Workspace[]>([]);
 	let projects = $state<WorkspaceProjectOption[]>([]);
 	let workspaceId = $state('');
 	let projectId = $state('');
+	const placed = $derived(
+		mounts.some(
+			(item) =>
+				item.destination_workspace_id === workspaceId &&
+				(item.destination_project_id ?? '') === projectId
+		)
+	);
+	let knownProjectNames = $state<Record<string, string>>({});
 	let level = $state<'view' | 'comment' | 'edit'>('view');
 	let removing = $state<string | null>(null);
 	let announcement = $state('');
@@ -23,6 +41,7 @@
 		const current = ++generation;
 		loading = true;
 		failed = false;
+		denied = false;
 		try {
 			const capabilities = await flowApi.getCapabilities();
 			if (current !== generation) return;
@@ -31,6 +50,7 @@
 				return;
 			}
 			enabled = capabilities.data?.external_mounts === true;
+			updatesEnabled = capabilities.data?.mount_permission_updates_supported === true;
 			if (!enabled) return;
 			const [placements, destinations] = await Promise.all([
 				flowApi.listMounts(objectId),
@@ -48,6 +68,14 @@
 	}
 	$effect(() => {
 		void objectId;
+		busy = false;
+		projectLoading = false;
+		knownProjectNames = {};
+		changing = null;
+		updateIntent = null;
+		conflict = false;
+		announcement = '';
+		denied = false;
 		intent = null;
 		removing = null;
 		workspaceId = '';
@@ -56,22 +84,39 @@
 		void load();
 		return () => {
 			generation++;
+			projectGeneration++;
 		};
 	});
 
 	async function selectWorkspace(value: string) {
+		const change = ++projectGeneration;
 		workspaceId = value;
 		projectId = '';
 		projects = [];
+		projectLoading = !!value;
+		denied = false;
 		if (!value) return;
-		const items = await listWorkspaceProjects(value);
-		if (workspaceId === value) projects = items;
+		try {
+			const items = await listWorkspaceProjects(value);
+			if (change !== projectGeneration) return;
+			projects = items;
+			knownProjectNames = {
+				...knownProjectNames,
+				...Object.fromEntries(items.map((item) => [item.id, item.label]))
+			};
+		} finally {
+			if (change === projectGeneration) projectLoading = false;
+		}
 	}
+
 	async function create(event: SubmitEvent) {
 		event.preventDefault();
-		if (busy || !workspaceId) return;
+		if (busy || !workspaceId || placed || projectLoading) return;
+		const current = generation;
 		busy = true;
 		failed = false;
+		denied = false;
+		announcement = '';
 		const signature = JSON.stringify([workspaceId, projectId, level]);
 		if (intent?.signature !== signature) intent = { signature, key: crypto.randomUUID() };
 		try {
@@ -81,36 +126,98 @@
 				level,
 				idempotency_key: intent.key
 			});
+			if (current !== generation) return;
 			if (result.code !== 0 || !result.data) {
-				failed = true;
+				denied = result.code === 403;
+				failed = !denied;
 				return;
 			}
 			intent = null;
-			await load();
+			mounts = [...mounts.filter((item) => item.id !== result.data!.id), result.data];
 			announcement = $t('flow.mounts.created');
 		} catch {
-			failed = true;
+			if (current === generation) failed = true;
 		} finally {
-			busy = false;
+			if (current === generation) busy = false;
+		}
+	}
+	function changeAccess(mount: FlowMount) {
+		changing = mount;
+		nextLevel = mount.level;
+		conflict = false;
+		announcement = '';
+	}
+
+	async function updateAccess(event: SubmitEvent) {
+		event.preventDefault();
+		if (!changing || !updatesEnabled || busy || nextLevel === changing.level) return;
+		const current = generation;
+		const mount = changing;
+		const signature = JSON.stringify([mount.id, mount.level, nextLevel]);
+		if (updateIntent?.signature !== signature)
+			updateIntent = { signature, key: crypto.randomUUID() };
+		busy = true;
+		denied = false;
+		failed = false;
+		conflict = false;
+		announcement = '';
+		try {
+			const result = await flowApi.updateMount(objectId, mount.id, {
+				expected_level: mount.level,
+				level: nextLevel,
+				idempotency_key: updateIntent.key
+			});
+			if (current !== generation) return;
+			if (result.code !== 0 || !result.data) {
+				const details = result.details;
+				conflict =
+					typeof details === 'object' &&
+					details !== null &&
+					'reason' in details &&
+					details.reason === 'mount_permission_changed';
+				denied = result.code === 403;
+				failed = !conflict && !denied;
+				if (conflict) {
+					changing = null;
+					updateIntent = null;
+					busy = false;
+					await load();
+				}
+				return;
+			}
+			const updated = result.data;
+			mounts = mounts.map((item) => (item.id === updated.id ? updated : item));
+			changing = null;
+			updateIntent = null;
+			announcement = $t('flow.mounts.accessUpdated');
+		} catch {
+			if (current === generation) failed = true;
+		} finally {
+			if (current === generation) busy = false;
 		}
 	}
 	async function remove(id: string) {
 		if (busy) return;
+		const current = generation;
 		busy = true;
 		failed = false;
+		denied = false;
+		announcement = '';
 		try {
 			const result = await flowApi.removeMount(objectId, id);
+			if (current !== generation) return;
 			if (result.code !== 0 || !result.data?.removed) {
-				failed = true;
+				denied = result.code === 403;
+				failed = !denied;
 				return;
 			}
 			mounts = mounts.filter((mount) => mount.id !== id);
 			removing = null;
 			announcement = $t('flow.mounts.removed');
 		} catch {
-			failed = true;
+			if (current === generation) failed = true;
 		} finally {
-			busy = false;
+			if (current === generation) busy = false;
 		}
 	}
 	const field =
@@ -119,10 +226,10 @@
 
 <section
 	class="mt-6 space-y-3 border-t border-slate-200 pt-4 dark:border-slate-700"
-	aria-labelledby="flow-mounts-title"
+	aria-labelledby={`${uid}-title`}
 	data-testid="flow-mounts"
 >
-	<h3 id="flow-mounts-title" class="text-sm font-semibold">{$t('flow.mounts.title')}</h3>
+	<h3 id={`${uid}-title`} class="text-sm font-semibold">{$t('flow.mounts.title')}</h3>
 	<p class="text-xs text-slate-500">{$t('flow.mounts.ownership')}</p>
 	{#if loading}<p role="status">{$t('flow.mounts.loading')}</p>
 	{:else if !enabled && !failed}<p class="text-sm text-slate-500">{$t('flow.mounts.disabled')}</p>
@@ -132,8 +239,60 @@
 				<li class="space-y-2 text-sm">
 					<span
 						>{workspaces.find((item) => item.id === mount.destination_workspace_id)?.name ??
-							mount.destination_workspace_id} · {$t(shareLevelKey(mount.level))}</span
+							mount.destination_workspace_id} · {mount.destination_project_id
+							? (knownProjectNames[mount.destination_project_id] ??
+								$t('flow.mounts.projectPlacement'))
+							: $t('flow.mounts.root')} · {$t(shareLevelKey(mount.level))}</span
 					>
+					{#if mount.status === 'active'}
+						<a
+							class="inline-flex min-h-11 items-center px-2 underline"
+							href={resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
+								workspaceId: mount.destination_workspace_id,
+								objectId
+							})}>{$t('flow.mounts.openDestination')}</a
+						>
+					{/if}
+					{#if updatesEnabled && mount.status === 'active'}
+						{#if changing?.id === mount.id}
+							<form class="space-y-2" aria-busy={busy} onsubmit={updateAccess}>
+								<label class="block" for={`${uid}-new-access`}>{$t('flow.mounts.newAccess')}</label>
+								<select
+									id={`${uid}-new-access`}
+									bind:value={nextLevel}
+									disabled={busy}
+									class={field}
+								>
+									{#each ['view', 'comment', 'edit'] as access (access)}
+										<option value={access}>{$t(shareLevelKey(access as FlowMount['level']))}</option
+										>
+									{/each}
+								</select>
+								<button
+									type="submit"
+									class="min-h-11 underline"
+									disabled={busy || mount.level === nextLevel}
+								>
+									{$t('flow.mounts.saveAccess')}
+								</button>
+								<button
+									type="button"
+									class="min-h-11 underline"
+									disabled={busy}
+									onclick={() => (changing = null)}
+								>
+									{$t('common.cancel')}
+								</button>
+							</form>
+						{:else}
+							<button
+								type="button"
+								class="min-h-11 px-2 underline"
+								disabled={busy}
+								onclick={() => changeAccess(mount)}>{$t('flow.mounts.changeAccess')}</button
+							>
+						{/if}
+					{/if}
 					{#if removing === mount.id}
 						<p>{$t('flow.mounts.confirm')}</p>
 						<button
@@ -152,15 +311,18 @@
 							type="button"
 							class="min-h-11 px-2 underline"
 							disabled={busy}
-							onclick={() => (removing = mount.id)}>{$t('flow.mounts.remove')}</button
+							onclick={() => {
+								changing = null;
+								removing = mount.id;
+							}}>{$t('flow.mounts.remove')}</button
 						>{/if}
 				</li>
 			{:else}<li class="text-sm text-slate-500">{$t('flow.mounts.empty')}</li>{/each}
 		</ul>
 		<form class="space-y-3" onsubmit={create} aria-busy={busy}>
-			<label class="block text-sm" for="mount-workspace">{$t('flow.mounts.workspace')}</label>
+			<label class="block text-sm" for={`${uid}-workspace`}>{$t('flow.mounts.workspace')}</label>
 			<select
-				id="mount-workspace"
+				id={`${uid}-workspace`}
 				class={field}
 				value={workspaceId}
 				disabled={busy}
@@ -173,16 +335,20 @@
 					>{/each}
 			</select>
 			{#if workspaceId}
-				<label class="block text-sm" for="mount-project">{$t('flow.mounts.project')}</label>
-				<select id="mount-project" class={field} bind:value={projectId} disabled={busy}
+				<label class="block text-sm" for={`${uid}-project`}>{$t('flow.mounts.project')}</label>
+				<select
+					id={`${uid}-project`}
+					class={field}
+					bind:value={projectId}
+					disabled={busy || projectLoading}
 					><option value="">{$t('flow.mounts.root')}</option
 					>{#each projects as project (project.id)}<option value={project.id}
 							>{project.label}</option
 						>{/each}</select
 				>
 			{/if}
-			<label class="block text-sm" for="mount-level">{$t('flow.mounts.level')}</label>
-			<select id="mount-level" class={field} bind:value={level} disabled={busy}
+			<label class="block text-sm" for={`${uid}-level`}>{$t('flow.mounts.level')}</label>
+			<select id={`${uid}-level`} class={field} bind:value={level} disabled={busy}
 				>{#each ['view', 'comment', 'edit'] as access (access)}<option value={access}
 						>{$t(shareLevelKey(access as 'view' | 'comment' | 'edit'))}</option
 					>{/each}</select
@@ -190,8 +356,11 @@
 			<button
 				type="submit"
 				class="min-h-11 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-50"
-				disabled={busy || !workspaceId}>{$t('flow.mounts.create')}</button
+				disabled={busy || !workspaceId || placed || projectLoading}
+				>{$t('flow.mounts.create')}</button
 			>
+			{#if placed}<p class="text-sm">{$t('flow.mounts.alreadyPlaced')}</p>{/if}
+			{#if projectLoading}<p role="status">{$t('common.loading')}</p>{/if}
 		</form>
 	{/if}
 	{#if failed}<div role="alert" class="text-sm text-red-700">
@@ -200,5 +369,11 @@
 				>{$t('flow.mounts.retry')}</button
 			>
 		</div>{/if}
-	<p class="sr-only" aria-live="polite">{announcement}</p>
+	{#if denied}<p role="alert" class="text-sm text-red-700 dark:text-red-300">
+			{$t('flow.mounts.permissionRequired')}
+		</p>{/if}
+	{#if conflict}<p role="alert" class="text-sm text-red-700 dark:text-red-300">
+			{$t('flow.mounts.accessChanged')}
+		</p>{/if}
+	<p role="status" class="text-sm">{announcement}</p>
 </section>

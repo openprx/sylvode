@@ -48,7 +48,7 @@ pub struct CommentSearchResult {
     pub project_id: Uuid,
     pub workspace_id: Uuid,
     pub author_id: Option<Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: platform::timestamp::Timestamp,
 }
 
 #[derive(Debug, Serialize)]
@@ -401,7 +401,7 @@ mod tests {
                 project_id: id,
                 workspace_id: id,
                 author_id: None,
-                created_at: chrono::DateTime::UNIX_EPOCH,
+                created_at: platform::timestamp::Timestamp::UNIX_EPOCH,
             }),
         ];
         assert_eq!(

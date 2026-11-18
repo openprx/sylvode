@@ -5,7 +5,7 @@ fn locks_candidate_metadata() {
     let metadata = metadata();
     assert_eq!(metadata.candidate, "loro");
     assert_eq!(metadata.rust_engine, "loro");
-    assert_eq!(metadata.rust_engine_version, "1.13.9");
+    assert_eq!(metadata.rust_engine_version, "1.18.0");
 }
 
 #[test]

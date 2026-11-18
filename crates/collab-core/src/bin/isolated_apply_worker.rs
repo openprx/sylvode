@@ -148,7 +148,7 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
                     })?;
             engine.import_update_causally_complete(&update)?;
         }
-        if request.from_frontier != request.to_frontier || engine.frontier().as_bytes() != request.to_frontier {
+        if request.from_frontier != request.to_frontier || !engine.matches_frontier(&request.to_frontier) {
             return Err(CollabError::OperationFailed {
                 reason: "package accepted frontier does not match replayed head".into(),
             });
@@ -164,28 +164,36 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
             to_title: title,
             legacy_package_semantic_hash_v1: Some(engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
             legacy_package_semantic_hash_v2: Some(engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
+            legacy_package_semantic_hash_v3: Some(engine.legacy_package_semantic_snapshot_v3()?.semantic_hash()),
+            legacy_package_semantic_hash_v4: if engine.minimum_editor_model()? <= 4 {
+                Some(engine.legacy_package_semantic_snapshot_v4()?.semantic_hash())
+            } else {
+                None
+            },
             package_reference_remap_required: Some(wire::package_reference_remap_required(&engine)?),
             validated_head_snapshot_base64: Some(base64::engine::general_purpose::STANDARD.encode(snapshot)),
         });
     }
 
-    if engine.frontier().as_bytes() != request.snapshot_frontier {
+    if !engine.matches_frontier(&request.snapshot_frontier) {
         return Err(CollabError::OperationFailed {
             reason: "snapshot frontier does not match the retained history".to_string(),
         });
     }
+    let mut retained_frontier = request.snapshot_frontier;
     for update in request.updates {
-        if engine.frontier().as_bytes() != update.before_frontier {
+        if retained_frontier != update.before_frontier {
             return Err(CollabError::OperationFailed {
                 reason: "retained history before_frontier is discontinuous".to_string(),
             });
         }
         engine.import_update(&update.bytes)?;
-        if engine.frontier().as_bytes() != update.after_frontier {
+        if !engine.matches_frontier(&update.after_frontier) {
             return Err(CollabError::OperationFailed {
                 reason: "retained history after_frontier is discontinuous".to_string(),
             });
         }
+        retained_frontier = update.after_frontier;
     }
 
     let from_engine = engine.fork_at_frontier(&collab_core::Frontier::from_bytes(request.from_frontier))?;
@@ -204,6 +212,12 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
         to_title,
         legacy_package_semantic_hash_v1: Some(to_engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
         legacy_package_semantic_hash_v2: Some(to_engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
+        legacy_package_semantic_hash_v3: Some(to_engine.legacy_package_semantic_snapshot_v3()?.semantic_hash()),
+        legacy_package_semantic_hash_v4: if to_engine.minimum_editor_model()? <= 4 {
+            Some(to_engine.legacy_package_semantic_snapshot_v4()?.semantic_hash())
+        } else {
+            None
+        },
         package_reference_remap_required: Some(wire::package_reference_remap_required(&to_engine)?),
         validated_head_snapshot_base64: None,
     })

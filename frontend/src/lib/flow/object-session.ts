@@ -94,6 +94,7 @@ interface SessionHooks {
 
 /** Test seams. Production uses the defaults. */
 export interface SessionOptions {
+	readonly authEpoch?: number;
 	readonly clock?: PresenceClock;
 	/** How long a sent `update` may go unanswered before the connection is treated as lost. */
 	readonly answerTimeoutMs?: number;
@@ -124,7 +125,7 @@ export interface PresenceRefusal {
 
 const PROTOCOL_VERSION = 1;
 /** `collab-protocol-v1.md` "hello: capabilities": the one capability this client uses. */
-export const CLIENT_CAPABILITIES = ['presence'] as const;
+export const CLIENT_CAPABILITIES = ['presence', 'rich_page_v4', 'rich_page_v5'] as const;
 const DEFAULT_ANSWER_TIMEOUT_MS = 20_000;
 /** How long `connect()` waits for the first `snapshot` before giving up on this attempt. */
 const CONNECT_TIMEOUT_MS = 15_000;
@@ -163,6 +164,7 @@ type PendingResolve = {
  * "narrowed to what this v0.4 delivery actually implements" convention. */
 export interface TicketIssuer {
 	createTicket(input: {
+		editor_model?: 4 | 5;
 		authorization_notifications?: boolean;
 		scope_id?: string;
 		object_id?: string;
@@ -174,6 +176,7 @@ export interface TicketIssuer {
 }
 
 export class LoroObjectSession implements ObjectSessionContract {
+	private readonly authEpoch: number;
 	private readonly hooks: SessionHooks;
 	private readonly commandService: TicketIssuer;
 	private readonly clientId: string;
@@ -252,6 +255,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 	private readonly connectivity: Connectivity | null;
 
 	constructor(hooks: SessionHooks, commandService: TicketIssuer, options: SessionOptions = {}) {
+		this.authEpoch = options.authEpoch ?? apiClient.getAuthSessionEpoch();
 		this.hooks = hooks;
 		this.commandService = commandService;
 		this.clientId =
@@ -398,8 +402,21 @@ export class LoroObjectSession implements ObjectSessionContract {
 		}
 	}
 
+	private sameAuthSession(): boolean {
+		if (apiClient.isAuthSessionEpoch(this.authEpoch)) return true;
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+		this.closeCurrentSocket(1000, 'auth_session_changed');
+		this.setState('auth_required');
+		this.firstSync?.reject({ code: 'unauthenticated', recoverable: true } satisfies FlowError);
+		return false;
+	}
+
 	private async openSocket(): Promise<void> {
-		if (this.disposed || !this.handle || this.terminal || this.revoked) return;
+		if (this.disposed || !this.handle || this.terminal || this.revoked || !this.sameAuthSession())
+			return;
 		if (this.isOffline()) {
 			// No network at all: wait for the `online` event instead of burning backoff steps on
 			// tickets that cannot be issued.
@@ -417,6 +434,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 
 		let ticketResult = await this.commandService.createTicket({
 			authorization_notifications: true,
+			editor_model: 5,
 			scope_id: this.handle.scopeId,
 			object_id: this.handle.objectId,
 			document_id: this.handle.documentId,
@@ -424,13 +442,15 @@ export class LoroObjectSession implements ObjectSessionContract {
 			origin: typeof window !== 'undefined' ? window.location.origin : 'sylvode-flow-web'
 		});
 
+		if (!this.sameAuthSession() || this.disposed) return;
 		if (ticketResult.code === 401) {
 			// `ui-surface-v1.md` "连接、refresh 与恢复状态机" step 3: "ticket 401：最多一次
 			// `ensureFreshAccessToken` + 新 ticket；仍失败进入 `auth_required`，停止自动 loop."
-			const refreshed = await apiClient.ensureFreshAccessToken();
-			if (refreshed) {
+			const refreshed = await apiClient.ensureFreshAccessToken(this.authEpoch);
+			if (refreshed && this.sameAuthSession() && !this.disposed) {
 				ticketResult = await this.commandService.createTicket({
 					authorization_notifications: true,
+					editor_model: 5,
 					scope_id: this.handle.scopeId,
 					object_id: this.handle.objectId,
 					document_id: this.handle.documentId,
@@ -440,6 +460,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 			}
 		}
 
+		if (!this.sameAuthSession() || this.disposed) return;
 		if (ticketResult.code === 401) {
 			this.setState('auth_required');
 			this.firstSync?.reject({ code: 'unauthenticated', recoverable: true });
@@ -520,7 +541,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 
 		let sentOpen = false;
 		socket.addEventListener('message', (event: MessageEvent<string>) => {
-			if (this.socket !== socket) return;
+			if (this.socket !== socket || !this.sameAuthSession()) return;
 			let frame: Record<string, unknown>;
 			try {
 				frame = JSON.parse(event.data) as Record<string, unknown>;
@@ -647,6 +668,10 @@ export class LoroObjectSession implements ObjectSessionContract {
 			}
 			case 'presence': {
 				if (typeof frame.session_id === 'string') {
+					if (frame.ttl_seconds === 0) {
+						this.remotePresence.remove(frame.session_id);
+						break;
+					}
 					this.remotePresence.receive(
 						frame.session_id,
 						frame.payload,
@@ -924,6 +949,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 	}
 
 	private sendFrame(frame: Record<string, unknown>): void {
+		if (!this.sameAuthSession()) return;
 		if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
 		this.socket.send(JSON.stringify(frame));
 	}
@@ -933,6 +959,8 @@ export class LoroObjectSession implements ObjectSessionContract {
 		_intent: SemanticIntent,
 		options: { updateId?: string } = {}
 	): Promise<void> {
+		if (!this.sameAuthSession())
+			throw { code: 'unauthenticated', recoverable: true } satisfies FlowError;
 		if (this.terminal) {
 			throw { code: 'server_rejected', recoverable: false, origin: 'client' } satisfies FlowError;
 		}
@@ -1148,6 +1176,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 	}
 
 	async reconnect(_reason: DisconnectReason): Promise<void> {
+		void _reason;
 		if (this.terminal || this.disposed || this.revoked) return;
 		if (this.reconnectTimer) {
 			clearTimeout(this.reconnectTimer);

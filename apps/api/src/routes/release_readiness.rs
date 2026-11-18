@@ -130,7 +130,7 @@ pub async fn get_project_release_readiness(
             ReadinessMetric { key: "governance_audit_events", value: audit_events },
             ReadinessMetric { key: "result_artifacts", value: result_artifacts },
         ],
-        "generated_at": chrono::Utc::now(),
+        "generated_at": platform::timestamp::Timestamp::now(),
     })))
 }
 

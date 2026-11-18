@@ -33,6 +33,7 @@ import {
 } from './support/collab-fakes';
 import { IndexedDbOutboxStore, type OutboxEntry } from '../src/lib/flow/outbox';
 import type { FlowObjectView } from '../src/lib/api/flow';
+import { get } from 'svelte/store';
 import type { FlowError } from '../src/lib/flow/types';
 
 const suite = new Suite('flow_outbox');
@@ -121,7 +122,8 @@ await suite.checkAsync(
 			ctx.connectivity.goOffline();
 			await waitFor(() => ctx.states.at(-1) === 'offline', 'offline');
 			edit(ctx.entry.doc, 'persist me');
-			await waitFor(() => ctx.pending() === 1, 'one pending');
+			assertEqual(ctx.pending(), 1, 'a local edit is pending before IndexedDB persists it');
+			await ctx.entry.offline.idle();
 			const rows = await rawOutbox(ctx.idb);
 			assertEqual(rows.length, 1, 'one row in IndexedDB');
 			const row = rows[0];
@@ -150,7 +152,8 @@ await suite.checkAsync(
 			ctx.connectivity.goOffline();
 			await waitFor(() => ctx.states.at(-1) === 'offline', 'offline');
 			for (const text of ['a', 'b', 'c', 'd']) edit(ctx.entry.doc, text);
-			await waitFor(() => ctx.pending() === 4, 'four pending');
+			assertEqual(ctx.pending(), 4, 'all four edits are immediately pending');
+			await ctx.entry.offline.idle();
 			assertEqual(ctx.states.at(-1), 'offline', 'still offline');
 			assertEqual(server.updatesSeen.length, 0, 'nothing sent offline');
 			const stored = (await ctx.store.list(OBJECT_ID)).map((e) => e.updateId);
@@ -252,7 +255,7 @@ await suite.checkAsync(
 			scope_id: 'canonical-source-scope',
 			object_id: OBJECT_ID
 		};
-		const idb = await freshIndexedDb();
+		await freshIndexedDb();
 		const restore = await installFakes(server);
 		const { FlowObjectRepository } = await import('../src/lib/flow/object-repository');
 		const repository = new FlowObjectRepository({
@@ -305,7 +308,8 @@ await suite.checkAsync(
 		first.connectivity.goOffline();
 		await waitFor(() => first.states.at(-1) === 'offline', 'offline');
 		edit(first.entry.doc, 'survives a reload');
-		await waitFor(() => first.pending() === 1, 'pending');
+		assertEqual(first.pending(), 1, 'one pending edit');
+		await first.entry.offline.idle();
 		const [stored] = await first.store.list(OBJECT_ID);
 		await first.close();
 		// This is the exact pre-decoupling persistence schema: there is no workspace/scope key
@@ -326,9 +330,29 @@ await suite.checkAsync(
 			].sort(),
 			'pre-scope persisted field set'
 		);
+		let allowReplay = false;
+		server.policy = () =>
+			allowReplay
+				? { kind: 'accept' }
+				: {
+						kind: 'reject',
+						reject: {
+							code: 'server_draining',
+							recoverable: true,
+							details: { reason: 'contention', retry_after_ms: 10 }
+						}
+					};
 		const second = await open(server, idb, '99999999-9999-4999-8999-999999999999');
 		try {
-			await waitFor(() => second.pending() === 0 && server.accepted.length === 1, 'replayed', 5000);
+			assertEqual(
+				get(second.entry.offline.recovering),
+				true,
+				'recovery begins before the Page becomes interactive'
+			);
+			allowReplay = true;
+			await waitFor(() => !get(second.entry.offline.recovering), 'replay ready', 5000);
+			assertEqual(second.pending(), 0, 'no pending entries once recovery completes');
+			assertEqual(server.accepted.length, 1, 'replayed once');
 			assertEqual(server.accepted[0].updateId, stored.updateId, 'under the original id');
 			assertEqual(
 				server.updatesSeen[0].updateId,

@@ -11,7 +11,7 @@ import { LoroScenarioAdapter } from "../src/engine";
 
 const factory = () => new LoroScenarioAdapter();
 
-describe("LoroScenarioAdapter against the shared corpus runner (real loro-crdt@1.14.1)", () => {
+describe("LoroScenarioAdapter against the shared corpus runner (real loro-crdt@1.18.0)", () => {
   test("same_text_range_edit: concurrent inserts into the same range converge to an identical semantic hash", async () => {
     const result = await runSameTextRangeEditCase(factory, "loro-corpus-seed-1");
     expect(result.status).toBe("passed");

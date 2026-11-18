@@ -461,8 +461,14 @@ async fn execute_inner(
                 return Err(ApiError::stale_frontier("Record changed before archive", None, None));
             }
         }
-        super::repository::set_objects_lifecycle(&tx, &[record], "archived", Some(chrono::Utc::now()), Some(user))
-            .await?;
+        super::repository::set_objects_lifecycle(
+            &tx,
+            &[record],
+            "archived",
+            Some(platform::timestamp::Timestamp::now()),
+            Some(user),
+        )
+        .await?;
         scope::advance_revision(&tx, identity.scope_id).await?;
         let event = super::scope_event::insert_for_object(
             &tx,

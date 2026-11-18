@@ -1,3 +1,4 @@
+use platform::timestamp::Timestamp;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -17,8 +18,10 @@ pub struct Model {
     pub related_comment_id: Option<Uuid>,
     pub related_project_id: Option<Uuid>,
     pub is_read: bool,
-    pub created_at: DateTimeWithTimeZone,
-    pub read_at: Option<DateTimeWithTimeZone>,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub created_at: Timestamp,
+    #[serde(default, with = "platform::timestamp::with_offset::option")]
+    pub read_at: Option<Timestamp>,
     pub metadata: Option<Json>,
 }
 
@@ -55,8 +58,10 @@ pub struct NotificationResponse {
     pub related_comment_id: Option<Uuid>,
     pub related_project_id: Option<Uuid>,
     pub is_read: bool,
-    pub created_at: DateTimeWithTimeZone,
-    pub read_at: Option<DateTimeWithTimeZone>,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub created_at: Timestamp,
+    #[serde(default, with = "platform::timestamp::with_offset::option")]
+    pub read_at: Option<Timestamp>,
 }
 
 impl From<Model> for NotificationResponse {

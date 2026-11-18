@@ -1,6 +1,6 @@
 #![allow(clippy::too_long_first_doc_paragraph)]
 
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::Value;
 use uuid::Uuid;
@@ -78,14 +78,14 @@ pub struct FlowDispatchSpec {
 #[derive(Debug, Clone, Copy)]
 pub struct FlowEventOutcome {
     pub event_id: Uuid,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub was_new: bool,
 }
 
 #[derive(Debug, FromQueryResult)]
 struct BusinessEventIdentityRow {
     id: Uuid,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 }
 
 /// `events-v1.md`'s "必须在同一 events module 增加 transaction-scoped `insert_flow_event(tx,

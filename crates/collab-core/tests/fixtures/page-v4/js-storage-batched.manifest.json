@@ -1,0 +1,17 @@
+{
+  "storageCommitExcluded": true,
+  "localRawChunks": 4,
+  "aggregateBytes": 286,
+  "afterUndo": {
+    "physical": 4,
+    "active": 3,
+    "sameCarrier": true
+  },
+  "afterRedo": {
+    "physical": 4,
+    "active": 4,
+    "dangling": 0,
+    "sameCarrier": true
+  },
+  "newCid": "cid:0@991010:Map"
+}

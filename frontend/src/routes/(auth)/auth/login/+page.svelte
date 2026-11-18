@@ -1,6 +1,8 @@
 <script lang="ts">
 	import '#lib/i18n/index.js';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
+	import { apiClient } from '#lib/api/client.js';
 	import { authApi } from '#lib/api/auth.js';
 	import { authStore } from '#lib/stores/auth.js';
 	import { toast } from '#lib/stores/toast.js';
@@ -18,13 +20,17 @@
 
 		loading = true;
 		const response = await authApi.login({ email, password });
+		if (!apiClient.isAuthResultCurrent(response)) {
+			loading = false;
+			return;
+		}
 
 		if (response.code !== 0) {
 			toast.error(response.message);
 		} else if (response.data) {
 			authStore.setUser(response.data.user);
 			toast.success($t('auth.loginSuccess'));
-			goto('/workspace');
+			goto(resolve('/(app)/workspace'));
 		}
 
 		loading = false;

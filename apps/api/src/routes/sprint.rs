@@ -8,12 +8,14 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
-use platform::{app::AppState, auth::JwtClaims};
+use platform::{app::AppState, auth::JwtClaims, timestamp::Timestamp};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
+use time::Date;
 use uuid::Uuid;
 
 use crate::{
+    entities::ISO_DATE_FORMAT,
     error::ApiError,
     response::{ApiResponse, PaginatedData},
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks},
@@ -120,21 +122,21 @@ pub async fn create_sprint(
     }
 
     let sprint_id = Uuid::new_v4();
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let description = req.description.unwrap_or_default();
 
-    let start_date: Option<chrono::NaiveDate> = if let Some(s) = req.start_date {
+    let start_date: Option<Date> = if let Some(s) = req.start_date {
         Some(
-            chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+            Date::parse(&s, ISO_DATE_FORMAT)
                 .map_err(|_| ApiError::BadRequest("invalid start_date format (use YYYY-MM-DD)".to_string()))?,
         )
     } else {
         None
     };
 
-    let end_date: Option<chrono::NaiveDate> = if let Some(e) = req.end_date {
+    let end_date: Option<Date> = if let Some(e) = req.end_date {
         Some(
-            chrono::NaiveDate::parse_from_str(&e, "%Y-%m-%d")
+            Date::parse(&e, ISO_DATE_FORMAT)
                 .map_err(|_| ApiError::BadRequest("invalid end_date format (use YYYY-MM-DD)".to_string()))?,
         )
     } else {
@@ -205,11 +207,11 @@ pub async fn list_sprints(
         project_id: Uuid,
         name: String,
         description: String,
-        start_date: Option<chrono::NaiveDate>,
-        end_date: Option<chrono::NaiveDate>,
+        start_date: Option<Date>,
+        end_date: Option<Date>,
         status: String,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: Timestamp,
+        updated_at: Timestamp,
     }
 
     let sprints = SprintRow::find_by_statement(Statement::from_sql_and_values(
@@ -317,7 +319,7 @@ pub async fn update_sprint(
     }
 
     if let Some(start) = req.start_date {
-        let date = chrono::NaiveDate::parse_from_str(&start, "%Y-%m-%d")
+        let date = Date::parse(&start, ISO_DATE_FORMAT)
             .map_err(|_| ApiError::BadRequest("invalid start_date format".to_string()))?;
         updates.push(format!("start_date = ${param_idx}"));
         values.push(date.into());
@@ -325,7 +327,7 @@ pub async fn update_sprint(
     }
 
     if let Some(end) = req.end_date {
-        let date = chrono::NaiveDate::parse_from_str(&end, "%Y-%m-%d")
+        let date = Date::parse(&end, ISO_DATE_FORMAT)
             .map_err(|_| ApiError::BadRequest("invalid end_date format".to_string()))?;
         updates.push(format!("end_date = ${param_idx}"));
         values.push(date.into());
@@ -343,7 +345,7 @@ pub async fn update_sprint(
     }
 
     updates.push(format!("updated_at = ${param_idx}"));
-    values.push(chrono::Utc::now().into());
+    values.push(Timestamp::now().into());
     param_idx += 1;
 
     values.push(sprint_id.into());
@@ -362,11 +364,11 @@ pub async fn update_sprint(
         project_id: Uuid,
         name: String,
         description: String,
-        start_date: Option<chrono::NaiveDate>,
-        end_date: Option<chrono::NaiveDate>,
+        start_date: Option<Date>,
+        end_date: Option<Date>,
         status: String,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: Timestamp,
+        updated_at: Timestamp,
     }
 
     let updated = SprintRow::find_by_statement(Statement::from_sql_and_values(

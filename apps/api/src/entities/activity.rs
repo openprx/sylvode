@@ -1,3 +1,4 @@
+use platform::timestamp::Timestamp;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +12,8 @@ pub struct Model {
     pub event_type: String,
     pub actor_id: Option<Uuid>,
     pub payload: serde_json::Value,
-    pub created_at: DateTimeWithTimeZone,
+    #[serde(with = "platform::timestamp::with_offset")]
+    pub created_at: Timestamp,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

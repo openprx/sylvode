@@ -6,11 +6,12 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use time::{Date, Duration, Month};
 use uuid::Uuid;
 
 use crate::{
@@ -28,11 +29,11 @@ struct ChainProposalRow {
     status: String,
     author_id: String,
     author_type: String,
-    created_at: DateTime<Utc>,
-    submitted_at: Option<DateTime<Utc>>,
-    voting_started_at: Option<DateTime<Utc>>,
-    voting_ended_at: Option<DateTime<Utc>>,
-    archived_at: Option<DateTime<Utc>>,
+    created_at: Timestamp,
+    submitted_at: Option<Timestamp>,
+    voting_started_at: Option<Timestamp>,
+    voting_ended_at: Option<Timestamp>,
+    archived_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -44,7 +45,7 @@ struct ChainDecisionRow {
     yes_votes: i32,
     no_votes: i32,
     abstain_votes: i32,
-    decided_at: DateTime<Utc>,
+    decided_at: Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -54,7 +55,7 @@ struct ChainVoteRow {
     choice: String,
     weight: f64,
     reason: Option<String>,
-    voted_at: DateTime<Utc>,
+    voted_at: Timestamp,
     trust_delta: Option<i64>,
 }
 
@@ -63,7 +64,7 @@ struct ChainIssueRow {
     issue_id: Uuid,
     issue_title: String,
     issue_state: String,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -73,14 +74,14 @@ struct ChainReviewRow {
     rating: Option<String>,
     reviewer_id: Option<Uuid>,
     trust_score_applied: bool,
-    scheduled_at: Option<DateTime<Utc>>,
-    conducted_at: Option<DateTime<Utc>>,
-    created_at: DateTime<Utc>,
+    scheduled_at: Option<Timestamp>,
+    conducted_at: Option<Timestamp>,
+    created_at: Timestamp,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
 struct TimelineRow {
-    timestamp: DateTime<Utc>,
+    timestamp: Timestamp,
     event_type: String,
     description: String,
     actor: Option<String>,
@@ -101,8 +102,8 @@ struct ProposalChainResponse {
 #[derive(Debug, Deserialize)]
 pub struct DecisionAnalyticsQuery {
     pub project_id: Option<Uuid>,
-    pub start_at: Option<DateTime<Utc>>,
-    pub end_at: Option<DateTime<Utc>>,
+    pub start_at: Option<Timestamp>,
+    pub end_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -136,16 +137,20 @@ struct DecisionDomainRow {
 
 #[derive(Debug, Deserialize)]
 pub struct GenerateAuditReportRequest {
-    pub period_start: Option<NaiveDate>,
-    pub period_end: Option<NaiveDate>,
+    #[serde(default, with = "crate::entities::iso_date::option")]
+    pub period_start: Option<Date>,
+    #[serde(default, with = "crate::entities::iso_date::option")]
+    pub period_end: Option<Date>,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
 struct AuditReportRow {
     id: String,
     project_id: Uuid,
-    period_start: NaiveDate,
-    period_end: NaiveDate,
+    #[serde(with = "crate::entities::iso_date")]
+    period_start: Date,
+    #[serde(with = "crate::entities::iso_date")]
+    period_end: Date,
     total_proposals: i32,
     approved_proposals: i32,
     rejected_proposals: i32,
@@ -157,7 +162,7 @@ struct AuditReportRow {
     domain_stats: Option<Value>,
     ai_participation_stats: Option<Value>,
     key_insights: Option<Value>,
-    generated_at: DateTime<Utc>,
+    generated_at: Timestamp,
     generated_by: String,
 }
 
@@ -181,7 +186,7 @@ struct AiLearningRow {
     lesson_learned: Option<String>,
     will_change: Option<String>,
     follow_up_improvement: Option<String>,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 }
 
 #[derive(Debug, Deserialize)]
@@ -287,8 +292,8 @@ pub(crate) async fn ensure_proposal_in_scope(
 
 fn filter_clause(
     project_id: Option<Uuid>,
-    start_at: Option<DateTime<Utc>>,
-    end_at: Option<DateTime<Utc>>,
+    start_at: Option<Timestamp>,
+    end_at: Option<Timestamp>,
 ) -> (String, Vec<sea_orm::Value>) {
     let mut where_parts: Vec<String> = vec![];
     let mut values: Vec<sea_orm::Value> = vec![];
@@ -785,8 +790,8 @@ pub async fn get_decision_analytics(
     Ok(ApiResponse::success(json!({
         "project_id": query.project_id,
         "time_range": {
-            "start_at": query.start_at.map(|v| v.to_rfc3339()),
-            "end_at": query.end_at.map(|v| v.to_rfc3339())
+            "start_at": query.start_at.map(Timestamp::to_rfc3339),
+            "end_at": query.end_at.map(Timestamp::to_rfc3339)
         },
         "overview": {
             "total_decisions": overview.total_decisions,
@@ -849,16 +854,8 @@ pub async fn create_project_audit_report(
     }
 
     let (period_start, period_end) = resolve_period(req.period_start, req.period_end)?;
-    let start_at = Utc.from_utc_datetime(
-        &period_start
-            .and_hms_opt(0, 0, 0)
-            .ok_or_else(|| ApiError::BadRequest("invalid period_start".to_string()))?,
-    );
-    let end_at = Utc.from_utc_datetime(
-        &period_end
-            .and_hms_opt(23, 59, 59)
-            .ok_or_else(|| ApiError::BadRequest("invalid period_end".to_string()))?,
-    );
+    let start_at = Timestamp::from_utc(period_start.midnight().assume_utc());
+    let end_at = Timestamp::from_utc(period_end.with_time(time::macros::time!(23:59:59)).assume_utc());
 
     let summary = DecisionOverviewRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -1135,7 +1132,7 @@ pub async fn create_project_audit_report(
     let report_id = format!(
         "AUDIT-{}-{:02}{:02}-{}",
         period_start.year(),
-        period_start.month(),
+        period_start.month() as u8,
         period_start.day(),
         &Uuid::new_v4().simple().to_string()[..8]
     );
@@ -1212,7 +1209,7 @@ pub async fn create_project_audit_report(
                 Some(domain_stats).into(),
                 Some(ai_participation_stats).into(),
                 Some(key_insights).into(),
-                Utc::now().into(),
+                Timestamp::now().into(),
                 user_id.to_string().into(),
             ],
         ))
@@ -1221,10 +1218,7 @@ pub async fn create_project_audit_report(
     get_project_audit_report(State(state), Extension(claims), Path((project_id, report_id))).await
 }
 
-fn resolve_period(
-    period_start: Option<NaiveDate>,
-    period_end: Option<NaiveDate>,
-) -> Result<(NaiveDate, NaiveDate), ApiError> {
+fn resolve_period(period_start: Option<Date>, period_end: Option<Date>) -> Result<(Date, Date), ApiError> {
     match (period_start, period_end) {
         (Some(start), Some(end)) => {
             if start > end {
@@ -1235,15 +1229,11 @@ fn resolve_period(
         (Some(start), None) => Ok((start, start + Duration::days(30))),
         (None, Some(end)) => Ok((end - Duration::days(30), end)),
         (None, None) => {
-            let now = Utc::now().date_naive();
-            let start = NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
-                .ok_or_else(|| ApiError::BadRequest("invalid date".to_string()))?;
-            let next_month = if now.month() == 12 {
-                NaiveDate::from_ymd_opt(now.year() + 1, 1, 1)
-            } else {
-                NaiveDate::from_ymd_opt(now.year(), now.month() + 1, 1)
-            }
-            .ok_or_else(|| ApiError::BadRequest("invalid date".to_string()))?;
+            let now = Timestamp::now().date();
+            let invalid_date = |_| ApiError::BadRequest("invalid date".to_string());
+            let start = Date::from_calendar_date(now.year(), now.month(), 1).map_err(invalid_date)?;
+            let next_year = now.year() + i32::from(now.month() == Month::December);
+            let next_month = Date::from_calendar_date(next_year, now.month().next(), 1).map_err(invalid_date)?;
             Ok((start, next_month - Duration::days(1)))
         }
     }

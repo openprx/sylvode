@@ -1,4 +1,4 @@
-import { apiClient, type ApiResult } from './client';
+import { apiClient, authSessionChanged, type ApiResult } from './client';
 
 export interface LoginRequest {
 	email: string;
@@ -52,14 +52,22 @@ export interface NotificationPreferences {
 
 export const authApi = {
 	async login(credentials: LoginRequest): Promise<ApiResult<LoginResponse>> {
-		const result = await apiClient.post<LoginResponse>('/api/v1/auth/login', credentials);
-		if (result.code === 0 && result.data?.tokens?.access_token) {
-			apiClient.setToken(result.data.tokens.access_token);
-			if (result.data.tokens.refresh_token) {
-				apiClient.setRefreshToken(result.data.tokens.refresh_token);
-			}
-		}
-		return result;
+		const epoch = apiClient.beginAuthSession();
+		const result = await apiClient.request<LoginResponse>(
+			'POST',
+			'/api/v1/auth/login',
+			credentials,
+			false
+		);
+		if (!apiClient.isAuthSessionEpoch(epoch))
+			return apiClient.bindAuthResult(authSessionChanged<LoginResponse>(), epoch);
+		if (result.code === 0 && result.data?.tokens?.access_token)
+			apiClient.installAuthSession(
+				result.data.tokens.access_token,
+				result.data.tokens.refresh_token ?? null,
+				result.data.user.id
+			);
+		return apiClient.bindAuthResult(result);
 	},
 
 	register(data: RegisterRequest): Promise<ApiResult<{ user: User }>> {
@@ -96,22 +104,20 @@ export const authApi = {
 	},
 
 	async logout(): Promise<ApiResult<null>> {
-		const result = await apiClient.post<null>('/api/v1/auth/logout');
+		const epoch = apiClient.beginAuthSession();
+		const result = await apiClient.request<null>('POST', '/api/v1/auth/logout', undefined, false);
+		if (!apiClient.isAuthSessionEpoch(epoch))
+			return apiClient.bindAuthResult(authSessionChanged<null>(), epoch);
 		apiClient.clearAuth();
-		return result;
+		return apiClient.bindAuthResult(result);
 	},
-
 	async refreshToken(): Promise<ApiResult<{ token: string }>> {
-		const result = await apiClient.post<LoginResponse>('/api/v1/auth/refresh');
-		if (result.code !== 0 || !result.data?.tokens?.access_token) {
-			return { code: result.code, message: result.message, data: null };
-		}
-
-		const token = result.data.tokens.access_token;
-		apiClient.setToken(token);
-		if (result.data.tokens.refresh_token) {
-			apiClient.setRefreshToken(result.data.tokens.refresh_token);
-		}
-		return { code: 0, message: result.message, data: { token } };
+		const epoch = apiClient.getAuthSessionEpoch();
+		const refreshed = await apiClient.ensureFreshAccessToken(epoch);
+		if (!apiClient.isAuthSessionEpoch(epoch)) return authSessionChanged();
+		const token = apiClient.getToken();
+		return refreshed && token
+			? { code: 0, message: 'ok', data: { token } }
+			: { code: 401, message: 'Session refresh failed', data: null };
 	}
 };

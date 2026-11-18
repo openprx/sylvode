@@ -52,7 +52,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, header},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -775,8 +775,8 @@ pub struct ReplayDeliveriesRequest {
     pub event_type: Option<String>,
     pub subscriber_kind: Option<String>,
     pub subscriber_id: Option<Uuid>,
-    pub from: DateTime<Utc>,
-    pub to: DateTime<Utc>,
+    pub from: Timestamp,
+    pub to: Timestamp,
     pub dry_run: bool,
     pub confirm: bool,
     pub idempotency_key: String,
@@ -871,7 +871,7 @@ pub async fn post_flow_delivery_replay(
         to: req.to,
         dry_run: req.dry_run,
     };
-    let result = match crate::events::dispatcher::replay_deliveries(&state.db, &request, Utc::now()).await {
+    let result = match crate::events::dispatcher::replay_deliveries(&state.db, &request, Timestamp::now()).await {
         Ok(result) => result,
         Err(error) => {
             let _ = state
@@ -1630,6 +1630,8 @@ pub async fn get_flow_object(
 
 #[derive(Debug, Deserialize)]
 pub struct GetFlowObjectBootstrapQuery {
+    #[serde(default)]
+    pub editor_model: Option<u32>,
     pub known_seq: Option<i64>,
     pub known_frontier: Option<String>,
 }
@@ -1676,6 +1678,10 @@ pub async fn get_flow_object_bootstrap(
         else {
             continue;
         };
+        crate::flow::scope_editor::require_bootstrap_model(
+            &serde_json::to_value(&bootstrap).map_err(|_| ApiError::internal())?,
+            params.editor_model.unwrap_or(1),
+        )?;
         return Ok(ApiResponse::success(bootstrap));
     }
     Err(policy::authorization_read_unstable())
@@ -3050,6 +3056,7 @@ mod flow_database_tests {
                 None,
                 Path(restricted_id),
                 FlowQuery(GetFlowObjectBootstrapQuery {
+                    editor_model: None,
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -3668,6 +3675,7 @@ mod flow_database_tests {
                 None,
                 Path(object_ids[1]),
                 FlowQuery(GetFlowObjectBootstrapQuery {
+                    editor_model: None,
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -3723,6 +3731,7 @@ mod flow_database_tests {
                             None,
                             Path(object_id),
                             FlowQuery(GetFlowObjectBootstrapQuery {
+                                editor_model: None,
                                 known_seq: None,
                                 known_frontier: None,
                             }),
@@ -3781,6 +3790,7 @@ mod flow_database_tests {
                             None,
                             Path(object_id),
                             FlowQuery(GetFlowObjectBootstrapQuery {
+                                editor_model: None,
                                 known_seq: None,
                                 known_frontier: None,
                             }),
@@ -4747,7 +4757,7 @@ mod flow_database_tests {
     async fn member_add_role_change_and_remove_advance_epoch_in_their_transactions() {
         #[derive(FromQueryResult, PartialEq, Eq, Debug)]
         struct SettingsAuditStamp {
-            updated_at: chrono::DateTime<chrono::Utc>,
+            updated_at: platform::timestamp::Timestamp,
             updated_by: Option<Uuid>,
         }
 
@@ -6273,9 +6283,16 @@ mod flow_database_tests {
                 DbBackend::Postgres,
                 "SELECT count(*) AS n FROM pg_trigger t \
                  JOIN pg_class c ON c.oid=t.tgrelid \
+                 JOIN pg_proc p ON p.oid=t.tgfoid \
                  WHERE NOT t.tgisinternal AND c.relname IN \
                  ('flow_bridge_references','flow_conversion_previews','flow_conversion_jobs',\
-                  'flow_object_lineage','project_forms','form_records')",
+                  'flow_object_lineage','project_forms','form_records') \
+                 AND NOT (t.tgname=p.proname AND (\
+                    (c.relname='flow_bridge_references' AND p.proname='flow_reference_bind_source_scope') OR \
+                    (c.relname IN ('flow_conversion_previews','flow_conversion_jobs','flow_object_lineage') \
+                       AND p.proname='flow_conversion_bind_source_scope') OR \
+                    (c.relname IN ('flow_conversion_previews','flow_conversion_jobs') \
+                       AND p.proname='flow_conversion_bind_request_key')))",
             ))
             .await
             .expect("pg_trigger probe")
@@ -6977,10 +6994,18 @@ mod flow_database_tests {
         assert_eq!(diff["data"]["to_seq"], 2);
         assert_eq!(diff["data"]["semantic_diff"]["title"]["before"], "Created at seq zero");
         assert_eq!(diff["data"]["semantic_diff"]["title"]["after"], "Current title");
-        assert_eq!(
-            diff["data"]["semantic_diff"]["nodes"]["added"]["logical-block"]["text"],
-            "semantic text"
+        let added = diff["data"]["semantic_diff"]["nodes"]["added"]
+            .as_object()
+            .expect("added semantic nodes");
+        let (block_id, block) = added
+            .iter()
+            .find(|(_, node)| node["text"] == "semantic text")
+            .expect("diff retains the inserted editor block");
+        assert!(
+            block_id.starts_with("cid:"),
+            "editor content uses persistent carrier IDs"
         );
+        assert_eq!(block["properties"]["logical_id"], "logical-block");
         assert_eq!(diff["data"]["rendered"], "# Current title\n\nsemantic text\n");
         assert!(
             diff["data"]["rendered"]
@@ -7988,6 +8013,7 @@ mod flow_database_tests {
                 None,
                 Path(object_id),
                 FlowQuery(GetFlowObjectBootstrapQuery {
+                    editor_model: None,
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -8029,6 +8055,7 @@ mod flow_database_tests {
                 Some(bot_ctx),
                 Path(object_id),
                 FlowQuery(GetFlowObjectBootstrapQuery {
+                    editor_model: None,
                     known_seq: None,
                     known_frontier: None,
                 }),
@@ -8428,28 +8455,12 @@ mod flow_database_tests {
         let claims = claims_for(owner_id);
         let limit = crate::flow::collab::limits::SEMANTIC_PATCH_JSON_BYTES_MAX;
 
-        let create_body = body_json(to_response(
-            create_flow_object(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(workspace_id),
-                Json(CreateFlowObjectRequest {
-                    object_type: "page".to_string(),
-                    project_id: None,
-                    parent_object_id: None,
-                    title: "Semantic Patch Bytes Test".to_string(),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                    initial_fields: Vec::new(),
-                    initial_view: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        let object_id =
-            Uuid::parse_str(create_body["data"]["object"]["id"].as_str().expect("object id")).expect("object UUID");
+        // The workspace navigator's generic document tree uses these shared REST ceilings.
+        // A Page additionally enforces its own editor structure and attribute constraints.
+        let object_id = crate::flow::repository::fetch_workspace_navigator_root(&state.db, workspace_id)
+            .await
+            .expect("workspace navigator lookup succeeds")
+            .expect("workspace has a canonical navigator");
         let document_id = document_id_for(&state, object_id).await;
         let insert = run_command(
             &state,
@@ -8558,33 +8569,12 @@ mod flow_database_tests {
         let claims = claims_for(owner_id);
         let limits = crate::flow::collab::limits::document_limits();
 
-        let create_body = body_json(to_response(
-            create_flow_object(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(workspace_id),
-                Json(CreateFlowObjectRequest {
-                    object_type: "page".to_string(),
-                    project_id: None,
-                    parent_object_id: None,
-                    title: "Tree Depth Limit Test".to_string(),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                    initial_fields: Vec::new(),
-                    initial_view: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(create_body["code"], 0, "{create_body}");
-        let object_id = Uuid::parse_str(
-            create_body["data"]["object"]["id"]
-                .as_str()
-                .expect("object id is a string"),
-        )
-        .expect("object id is a uuid");
+        // The workspace navigator's generic document tree uses these shared REST ceilings.
+        // A Page additionally enforces its own editor structure and attribute constraints.
+        let object_id = crate::flow::repository::fetch_workspace_navigator_root(&state.db, workspace_id)
+            .await
+            .expect("workspace navigator lookup succeeds")
+            .expect("workspace has a canonical navigator");
         let document_id = document_id_for(&state, object_id).await;
 
         // A chain of `insert_block` commands, each parented on the previous one. The root block
@@ -8698,33 +8688,12 @@ mod flow_database_tests {
         let claims = claims_for(owner_id);
         let limits = crate::flow::collab::limits::document_limits();
 
-        let create_body = body_json(to_response(
-            create_flow_object(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(workspace_id),
-                Json(CreateFlowObjectRequest {
-                    object_type: "page".to_string(),
-                    project_id: None,
-                    parent_object_id: None,
-                    title: "Batch Count Limit Test".to_string(),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                    initial_fields: Vec::new(),
-                    initial_view: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(create_body["code"], 0, "{create_body}");
-        let object_id = Uuid::parse_str(
-            create_body["data"]["object"]["id"]
-                .as_str()
-                .expect("object id is a string"),
-        )
-        .expect("object id is a uuid");
+        // The workspace navigator's generic document tree uses these shared REST ceilings.
+        // A Page additionally enforces its own editor structure and attribute constraints.
+        let object_id = crate::flow::repository::fetch_workspace_navigator_root(&state.db, workspace_id)
+            .await
+            .expect("workspace navigator lookup succeeds")
+            .expect("workspace has a canonical navigator");
         let document_id = document_id_for(&state, object_id).await;
 
         let insert_body = run_command(
@@ -9522,6 +9491,14 @@ mod flow_database_tests {
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let claims = claims_for(owner_id);
         let bot_id = Uuid::new_v4();
+        exec(
+            &state,
+            "INSERT INTO workspace_bots
+             (id, workspace_id, name, token_hash, token_prefix, permissions, transport_surface, is_active)
+             VALUES ($1,$2,'fixture bot',$3,'fixture','[\"read\",\"write\",\"admin\"]'::jsonb,'mcp_stdio',true)",
+            vec![bot_id.into(), workspace_id.into(), bot_id.to_string().into()],
+        )
+        .await;
         let bot = |tool: &str| {
             Extension(crate::middleware::bot_auth::BotAuthContext {
                 bot_id,
@@ -10124,14 +10101,14 @@ mod flow_database_tests {
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let member_id = seed_member(&state, workspace_id).await;
-        let now = chrono::Utc::now();
+        let now = platform::timestamp::Timestamp::now();
         let request = ReplayDeliveriesRequest {
             mode: crate::events::dispatcher::ReplayMode::Rebuild,
             event_type: None,
             subscriber_kind: Some("webhook".to_string()),
             subscriber_id: None,
-            from: now - chrono::Duration::hours(2),
-            to: now - chrono::Duration::hours(1),
+            from: now - time::Duration::hours(2),
+            to: now - time::Duration::hours(1),
             dry_run: true,
             confirm: true,
             idempotency_key: "replay-route-key".to_string(),
@@ -12062,14 +12039,14 @@ mod flow_database_tests {
         let scratch = scratch_or_skip!("typed-drift-vs-stale");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let now = chrono::Utc::now();
+        let now = platform::timestamp::Timestamp::now();
         let request = ReplayDeliveriesRequest {
             mode: crate::events::dispatcher::ReplayMode::Rebuild,
             event_type: None,
             subscriber_kind: Some("webhook".to_string()),
             subscriber_id: None,
-            from: now - chrono::Duration::hours(2),
-            to: now - chrono::Duration::hours(1),
+            from: now - time::Duration::hours(2),
+            to: now - time::Duration::hours(1),
             dry_run: true,
             confirm: true,
             idempotency_key: "typed-replay-key".to_string(),
@@ -15077,3 +15054,17 @@ pub async fn put_flow_object_inheritance(
     .await?;
     Ok(ApiResponse::success(view))
 }
+
+#[path = "flow_transfer.rs"]
+mod flow_transfer;
+pub use flow_transfer::{
+    cancel as cancel_page_transfer, commit as commit_page_transfer, prepare as prepare_page_transfer,
+    status as page_transfer_status, undo as undo_page_transfer,
+};
+
+#[path = "flow_portable_page.rs"]
+mod flow_portable_page;
+pub use flow_portable_page::{
+    export as export_portable_page, export_graph as export_portable_graph, import as import_portable_page,
+    import_graph as import_portable_graph, preview as preview_portable_page, preview_graph as preview_portable_graph,
+};

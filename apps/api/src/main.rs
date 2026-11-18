@@ -794,6 +794,108 @@ fn build_router(state: AppState) -> Router {
             )),
         )
         .route(
+            "/api/v1/me/form-plugin-packages",
+            get(routes::plugin_package::library::list).post(routes::plugin_package::library::save)
+                .layer(DefaultBodyLimit::max(480 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/me/form-plugin-packages/{package_id}",
+            axum::routing::delete(routes::plugin_package::library::archive)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/me/form-plugin-packages/{package_id}/panel",
+            get(routes::plugin_package::library::panel)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/me/form-plugin-packages/{package_id}/preview",
+            post(routes::plugin_package::library::preview)
+                .layer(DefaultBodyLimit::max(4 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/plugin-packages/library/{package_id}",
+            post(routes::plugin_package::library::attach).delete(routes::plugin_package::library::revoke)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/plugin-packages/library-requests",
+            get(routes::plugin_package::library::requests)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/plugin-packages/library-requests/{package_id}",
+            post(routes::plugin_package::library::decide)
+                .layer(DefaultBodyLimit::max(4 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/plugin-packages",
+            get(routes::plugin_package::list).post(routes::plugin_package::install)
+                .layer(DefaultBodyLimit::max(480 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/plugin-packages/{key}/binding",
+            post(routes::plugin_package::bind)
+                .layer(DefaultBodyLimit::max(4 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/plugin-packages/invocations",
+            get(routes::plugin_package::list_invocations)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/form-records/{record_id}/plugin-panels",
+            get(routes::plugin_package::discover)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/form-records/{record_id}/plugin-panels/{package_id}/invoke",
+            post(routes::plugin_package::invoke)
+                .layer(DefaultBodyLimit::max(4 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
             "/api/v1/projects/{project_id}/plugins",
             get(routes::plugin::list_project_plugins)
                 .post(routes::plugin::install_project_plugin)
@@ -1793,6 +1895,97 @@ fn build_router(state: AppState) -> Router {
 fn flow_surface_routes(auth_state: &AppState) -> Router<AppState> {
     let v2 = Router::new()
         .route(
+            "/api/v2/flow/objects/{id}/portable-page-package",
+            get(routes::flow::export_portable_page)
+                .post(routes::flow::import_portable_page)
+                .layer(DefaultBodyLimit::max(api::flow::package::PORTABLE_PAGE_BYTES))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{id}/portable-page-package/preview",
+            post(routes::flow::preview_portable_page)
+                .layer(DefaultBodyLimit::max(api::flow::package::PORTABLE_PAGE_BYTES))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{id}/portable-graph-package/export",
+            post(routes::flow::export_portable_graph)
+                .layer(DefaultBodyLimit::max(16 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{id}/portable-graph-package/preview",
+            post(routes::flow::preview_portable_graph)
+                .layer(DefaultBodyLimit::max(api::flow::package::PORTABLE_PAGE_BYTES))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{id}/portable-graph-package",
+            post(routes::flow::import_portable_graph)
+                .layer(DefaultBodyLimit::max(api::flow::package::PORTABLE_PAGE_BYTES))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{id}/block-transfers/prepare",
+            post(routes::flow::prepare_page_transfer)
+                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/block-transfers/{id}/commit",
+            post(routes::flow::commit_page_transfer)
+                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/block-transfers/{id}",
+            get(routes::flow::page_transfer_status)
+                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/block-transfers/{id}/cancel",
+            post(routes::flow::cancel_page_transfer)
+                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/block-transfers/{id}/undo",
+            post(routes::flow::undo_page_transfer)
+                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
             "/api/v2/flow/objects/{object_id}/relations",
             get(routes::flow::get_flow_v2_relations).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
@@ -1814,8 +2007,85 @@ fn flow_surface_routes(auth_state: &AppState) -> Router<AppState> {
             )),
         )
         .route(
+            "/api/v2/flow/objects/{object_id}/block-shares",
+            post(routes::flow::post_flow_v2_block_share)
+                .get(routes::flow::get_flow_v2_source_block_shares)
+                .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/block-shares/{share_id}/suspend",
+            post(routes::flow::post_flow_v2_suspend_block_share).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/block-shares/{share_id}/revoke",
+            post(routes::flow::post_flow_v2_revoke_block_share).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/block-shares/{share_id}/republish",
+            post(routes::flow::post_flow_v2_republish_block_share)
+                .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/block-shares/{share_id}/placements/{placement_id}",
+            delete(routes::flow::delete_flow_v2_block_share_placement).route_layer(
+                axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ),
+            ),
+        )
+        .route(
+            "/api/v2/flow/block-share-placements",
+            get(routes::flow::get_flow_v2_block_share_placements).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/block-shares",
+            get(routes::flow::get_flow_v2_block_shares).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/block-shares/{share_id}",
+            get(routes::flow::get_flow_v2_block_share)
+                .patch(routes::flow::patch_flow_v2_block_share)
+                .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/block-shares/{share_id}/assets/{asset_alias}",
+            get(routes::flow::get_flow_v2_block_share_asset).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
             "/api/v2/flow/public-shares/{token}",
             get(routes::flow::get_flow_v2_public_share),
+        )
+        .route(
+            "/api/v2/flow/public-shares/{token}/body-assets/{asset_id}",
+            get(routes::flow::get_flow_v2_public_body_asset),
         )
         .route(
             "/api/v2/flow/public-shares/{token}/assets/{asset_id}",
@@ -1836,6 +2106,70 @@ fn flow_surface_routes(auth_state: &AppState) -> Router<AppState> {
                 auth_state.clone(),
                 middleware::bot_auth::bot_or_user_auth_middleware,
             )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/child-reservations",
+            post(routes::flow::post_flow_v2_child_reservation).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/child-reservations/{reservation_id}",
+            get(routes::flow::get_flow_v2_child_reservation)
+                .delete(routes::flow::delete_flow_v2_child_reservation)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/body-assets",
+            post(routes::flow::post_flow_v2_body_asset)
+                .layer(DefaultBodyLimit::max(52_428_800 + 65_536))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/body-assets/base64",
+            post(routes::flow::post_flow_v2_body_asset_base64)
+                .layer(DefaultBodyLimit::max(69_905_068 + 65_536))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/body-assets/limits",
+            get(routes::flow::get_flow_v2_body_asset_limits).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/body-assets/copy",
+            post(routes::flow::post_flow_v2_body_asset_copy).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/body-assets/{asset_id}/metadata",
+            get(routes::flow::get_flow_v2_body_asset_metadata).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v2/flow/objects/{object_id}/body-assets/{asset_id}",
+            get(routes::flow::get_flow_v2_body_asset)
+                .delete(routes::flow::delete_flow_v2_body_asset)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
         )
         .route(
             "/api/v2/flow/objects/{object_id}/appearance",
@@ -2022,10 +2356,12 @@ fn flow_surface_routes(auth_state: &AppState) -> Router<AppState> {
         )
         .route(
             "/api/v2/flow/objects/{object_id}/mounts/{mount_id}",
-            delete(routes::flow::delete_flow_v2_mount).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
+            delete(routes::flow::delete_flow_v2_mount)
+                .patch(routes::flow::patch_flow_v2_mount)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
         )
         .route(
             "/api/v2/flow/objects/{object_id}/purge",
@@ -3153,6 +3489,46 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0092_ai_participant_config_version.sql",
         include_str!("../../../migrations/0092_ai_participant_config_version.sql"),
     ),
+    (
+        "0093_flow_page_body_assets.sql",
+        include_str!("../../../migrations/0093_flow_page_body_assets.sql"),
+    ),
+    (
+        "0094_flow_child_page_reservations.sql",
+        include_str!("../../../migrations/0094_flow_child_page_reservations.sql"),
+    ),
+    (
+        "0095_flow_logical_blocks.sql",
+        include_str!("../../../migrations/0095_flow_logical_blocks.sql"),
+    ),
+    (
+        "0096_flow_page_block_transfers.sql",
+        include_str!("../../../migrations/0096_flow_page_block_transfers.sql"),
+    ),
+    (
+        "0097_flow_portable_page_packages.sql",
+        include_str!("../../../migrations/0097_flow_portable_page_packages.sql"),
+    ),
+    (
+        "0098_flow_portable_graph_packages.sql",
+        include_str!("../../../migrations/0098_flow_portable_graph_packages.sql"),
+    ),
+    (
+        "0099_form_plugin_packages.sql",
+        include_str!("../../../migrations/0099_form_plugin_packages.sql"),
+    ),
+    (
+        "0100_form_plugin_layouts.sql",
+        include_str!("../../../migrations/0100_form_plugin_layouts.sql"),
+    ),
+    (
+        "0101_form_plugin_library.sql",
+        include_str!("../../../migrations/0101_form_plugin_library.sql"),
+    ),
+    (
+        "0102_flow_integrity_cross_workspace_attempts.sql",
+        include_str!("../../../migrations/0102_flow_integrity_cross_workspace_attempts.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -3212,6 +3588,10 @@ enum SchemaProbe {
     /// A constraint marker and a trigger must both exist. Used when one migration creates the
     /// static invariant and the mechanism that preserves it for future parent rows.
     ConstraintAndTrigger(&'static str, &'static str, &'static str, &'static str),
+    /// Complete independent block-sharing registry, private anchors and lifecycle fences.
+    BlockSharing,
+    PageBlockTransfers,
+    CrossWorkspaceIntegrity,
     /// No object is created that could be probed, but re-executing the file is a no-op, so it is
     /// executed rather than adopted.
     Rerunnable,
@@ -3289,6 +3669,41 @@ impl SchemaProbe {
                     ",
                 vec![table.into(), constraint.into(), marker.into(), trigger.into()],
             )),
+            Self::PageBlockTransfers => Some(Statement::from_string(DbBackend::Postgres,
+                "SELECT to_regclass('flow_page_transfer_pending') IS NOT NULL
+                  AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('flow_page_block_transfers') AND attname='copied_placements' AND atttypid='jsonb'::regtype AND NOT attisdropped)
+                  AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('flow_runtime_capabilities') AND attname='block_transfers_enabled' AND atttypid='boolean'::regtype AND attnotnull AND NOT attisdropped)
+                  AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('flow_page_block_transfers') AND pg_get_constraintdef(oid)='UNIQUE (actor_id, source_object_id, prepare_key)')
+                  AS present".to_owned(),
+            )),
+            Self::CrossWorkspaceIntegrity => Some(Statement::from_string(
+                DbBackend::Postgres,
+                "SELECT EXISTS (
+                   SELECT 1 FROM pg_trigger
+                   WHERE tgrelid = to_regclass('flow_integrity_records')
+                     AND tgname = 'flow_integrity_bind_owner'
+                     AND NOT tgisinternal
+                     AND tgenabled IN ('O', 'A')
+                     AND position('details_redacted' IN pg_get_triggerdef(oid)) > 0
+                     AND position('requesting_workspace_id' IN pg_get_functiondef(tgfoid)) > 0
+                     AND position('referenced_workspace_id' IN pg_get_functiondef(tgfoid)) > 0
+                 ) AS present",
+            )),
+            Self::BlockSharing => Some(Statement::from_sql_and_values(DbBackend::Postgres,
+                r"SELECT
+ (SELECT bool_and(to_regclass(name) IS NOT NULL) FROM unnest($1::text[]) AS objects(name))
+ AND (SELECT bool_and(EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass(required.relation_name) AND attname=required.column_name AND attnum>0 AND NOT attisdropped)) FROM unnest($2::text[],$3::text[]) AS required(relation_name,column_name))
+ AND (SELECT bool_and(EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass(required.relation_name) AND tgname=required.trigger_name AND NOT tgisinternal)) FROM unnest($4::text[],$5::text[]) AS required(relation_name,trigger_name))
+ AND (SELECT bool_and(EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass(required.relation_name) AND position(required.marker IN pg_get_constraintdef(oid))>0)) FROM unnest($6::text[],$7::text[]) AS required(relation_name,marker)) AS present",
+                vec![
+                    vec!["flow_logical_blocks","flow_block_placements","flow_block_checkpoints","flow_block_shares","flow_block_share_members","flow_block_share_placements","flow_block_share_audiences","flow_block_share_asset_aliases","flow_block_share_receipts","flow_block_comment_anchors","flow_block_alias_fences","flow_block_one_active_logical","flow_block_one_active_physical","flow_block_placement_target"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
+                    vec!["flow_block_checkpoints","flow_block_shares","flow_block_shares","flow_block_shares","flow_block_shares","flow_block_comment_anchors","flow_block_comment_anchors","flow_block_comment_anchors","flow_block_alias_fences","flow_block_share_audiences"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
+                    vec!["legacy_anchors_sealed","publisher_user_id","root_logical_id","source_root_cid","projection_hash","logical_id","origin_generation","origin_placement_id","ever_retired","placement_id"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
+                    vec!["flow_objects","flow_objects","flow_scopes","projects","workspaces","flow_block_placements","flow_block_placements"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
+                    vec!["flow_block_source_object_archive","flow_block_source_object_delete","flow_block_source_scope_archive","flow_block_target_project_delete","flow_block_target_workspace_delete","flow_block_alias_retire","flow_block_alias_prune"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
+                    vec!["flow_block_shares","flow_block_share_placements","flow_block_share_asset_aliases","flow_block_share_audiences"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
+                    vec!["FOREIGN KEY (root_logical_id)","UNIQUE (share_id)","FOREIGN KEY (source_scope_id, source_page_id, asset_id)","FOREIGN KEY (placement_id, share_id, workspace_id, project_key)"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
+                ])),
             Self::Rerunnable | Self::Superseded => None,
         }
     }
@@ -3601,6 +4016,44 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0092_ai_participant_config_version.sql",
         SchemaProbe::Column("ai_participants", "config_updated_at"),
+    ),
+    (
+        "0093_flow_page_body_assets.sql",
+        SchemaProbe::ConstraintContains(
+            "flow_page_asset_refs",
+            "flow_page_asset_refs_scope_id_object_id_asset_id_fkey",
+            "FOREIGN KEY (scope_id, object_id, asset_id)",
+        ),
+    ),
+    (
+        "0094_flow_child_page_reservations.sql",
+        SchemaProbe::Relation("flow_page_child_refs"),
+    ),
+    ("0095_flow_logical_blocks.sql", SchemaProbe::BlockSharing),
+    ("0096_flow_page_block_transfers.sql", SchemaProbe::PageBlockTransfers),
+    (
+        "0097_flow_portable_page_packages.sql",
+        SchemaProbe::Column("flow_runtime_capabilities", "portable_page_packages_enabled"),
+    ),
+    (
+        "0098_flow_portable_graph_packages.sql",
+        SchemaProbe::Column("flow_runtime_capabilities", "portable_graph_packages_enabled"),
+    ),
+    (
+        "0099_form_plugin_packages.sql",
+        SchemaProbe::Relation("form_plugin_packages"),
+    ),
+    (
+        "0100_form_plugin_layouts.sql",
+        SchemaProbe::Relation("form_plugin_layouts"),
+    ),
+    (
+        "0101_form_plugin_library.sql",
+        SchemaProbe::Relation("form_plugin_library"),
+    ),
+    (
+        "0102_flow_integrity_cross_workspace_attempts.sql",
+        SchemaProbe::CrossWorkspaceIntegrity,
     ),
 ];
 
@@ -4132,7 +4585,32 @@ mod tests {
                 "0074_flow_comments.sql",
                 "0075_flow_share_links.sql",
                 "0076_flow_page_appearance.sql",
-                "0077_flow_public_share_rate.sql"
+                "0077_flow_public_share_rate.sql",
+                "0078_flow_scope_expansion.sql",
+                "0079_flow_scope_constraint_cutover.sql",
+                "0080_flow_scope_secondary_ownership.sql",
+                "0081_flow_scope_typed_ownership.sql",
+                "0082_flow_scope_relations_mount_ancestry.sql",
+                "0083_flow_export_authority_snapshot.sql",
+                "0084_flow_legacy_export_authority.sql",
+                "0085_flow_ticket_authorization_notifications.sql",
+                "0086_flow_purge_tombstone_receipts.sql",
+                "0087_flow_reference_source_scope.sql",
+                "0088_flow_scope_import_ownership.sql",
+                "0089_flow_export_scope_selection.sql",
+                "0090_flow_conversion_source_scope.sql",
+                "0091_flow_operation_scope_ownership.sql",
+                "0092_ai_participant_config_version.sql",
+                "0093_flow_page_body_assets.sql",
+                "0094_flow_child_page_reservations.sql",
+                "0095_flow_logical_blocks.sql",
+                "0096_flow_page_block_transfers.sql",
+                "0097_flow_portable_page_packages.sql",
+                "0098_flow_portable_graph_packages.sql",
+                "0099_form_plugin_packages.sql",
+                "0100_form_plugin_layouts.sql",
+                "0101_form_plugin_library.sql",
+                "0102_flow_integrity_cross_workspace_attempts.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -4353,6 +4831,14 @@ mod tests {
             // Icon or cover for that same link. The handler returns bytes only while the page's
             // current appearance still references the asset.
             "/api/v1/flow/public-shares/{token}/assets/{asset_id}",
+            // Scoped WebSocket upgrades consume an origin-bound, one-time ticket before
+            // revalidating scoped document access.
+            "/api/v2/flow/collab/ws",
+            // Scoped public links authenticate against a hashed, unexpired, unrevoked token
+            // and return only sanitized content or assets currently referenced by that Page.
+            "/api/v2/flow/public-shares/{token}",
+            "/api/v2/flow/public-shares/{token}/assets/{asset_id}",
+            "/api/v2/flow/public-shares/{token}/body-assets/{asset_id}",
         ];
 
         let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
@@ -5389,13 +5875,14 @@ mod proposal_scope_database_tests {
     use api::routes::proposal::{ListProposalsQuery, get_proposal, governance_tick, list_proposals};
     use axum::extract::{Extension, Query, State};
     use axum::response::IntoResponse;
-    use chrono::{Duration, Utc};
+    use platform::timestamp::Timestamp;
     use platform::{
         app::AppState,
         auth::{JwtClaims, TokenType},
         config::{AppConfig, Secret},
     };
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use time::Duration;
     use uuid::Uuid;
 
     macro_rules! scratch_or_skip {
@@ -5523,8 +6010,8 @@ mod proposal_scope_database_tests {
                     user_id.to_string().into(),
                     "content that is comfortably longer than the fifty character minimum".into(),
                     workspace_id.into(),
-                    Utc::now().into(),
-                    (Utc::now() - Duration::hours(48)).into(),
+                    Timestamp::now().into(),
+                    (Timestamp::now() - Duration::hours(48)).into(),
                 ],
             ))
             .await

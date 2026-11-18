@@ -201,7 +201,10 @@ pub async fn render(
             ));
         }
         let seq = view.field("document_seq").as_i64().ok_or_else(ApiError::internal)?;
-        if STANDARD.encode(engine.frontier().as_bytes()) != view.field("frontier").as_str().unwrap_or("") {
+        if !STANDARD
+            .decode(view.field("frontier").as_str().unwrap_or(""))
+            .is_ok_and(|frontier| engine.matches_frontier(&frontier))
+        {
             return Err(ApiError::resync_required(
                 "package document head changed during assembly",
                 None,
@@ -212,7 +215,8 @@ pub async fn render(
             .as_str()
             .and_then(|v| Uuid::parse_str(v).ok())
             .filter(|id| selected.contains(id));
-        let object_json = json!({"source_object_id":object,"source_scope_id":plan.scope_id,"object_type":view.field("object_type"),"lifecycle_status":view.field("lifecycle_status"),"project_id":null,"parent_object_id":parent,"governance_metadata":view.field("governance_metadata"),"appearance":view.field("appearance"),"source_document_id":doc,"engine":ENGINE_NAME,"format_version":"loro-1","accepted_seq":seq,"accepted_frontier":view.field("frontier"),"semantic_hash":engine.semantic_snapshot().map_err(|e|super::command::map_collab_error(&e))?.semantic_hash(),"snapshot_sha256":super::collab::bootstrap::content_hash(&snapshot),"projection_seq":view.field("projection_seq"),"created_at":view.field("created_at"),"updated_at":view.field("updated_at"),"archived_at":view.field("archived_at")});
+        let semantic_hash = super::package::RAW_PACKAGE_SEMANTIC_MODEL.semantic_hash(&engine)?;
+        let object_json = json!({"source_object_id":object,"source_scope_id":plan.scope_id,"object_type":view.field("object_type"),"lifecycle_status":view.field("lifecycle_status"),"project_id":null,"parent_object_id":parent,"governance_metadata":view.field("governance_metadata"),"appearance":view.field("appearance"),"source_document_id":doc,"engine":ENGINE_NAME,"format_version":"loro-1","accepted_seq":seq,"accepted_frontier":view.field("frontier"),"semantic_hash":semantic_hash,"snapshot_sha256":super::collab::bootstrap::content_hash(&snapshot),"projection_seq":view.field("projection_seq"),"created_at":view.field("created_at"),"updated_at":view.field("updated_at"),"archived_at":view.field("archived_at")});
         members.push(PackageMemberInput {
             path: format!("objects/{object}/object.json"),
             kind: "object".into(),
@@ -276,11 +280,11 @@ pub async fn render(
         let mut lines = Vec::new();
         for event in events {
             let kind = event.try_get::<String>("", "event_type")?;
-            if super::event_policy::flow_event_payload_policy(&kind).is_none() {
+            if !super::event_policy::flow_event_has_public_payload(&kind) {
                 continue;
             }
             let source = event.try_get::<Value>("", "source")?;
-            let value = json!({"source_event_id":event.try_get::<Uuid>("","id")?,"event_type":kind,"aggregate_type":event.try_get::<String>("","aggregate_type")?,"aggregate_id":event.try_get::<String>("","aggregate_id")?,"actor":event.try_get::<Option<Uuid>>("","actor_id")?,"origin":source.get("surface"),"payload":super::event_policy::redact_flow_event_payload_for_delivery(&kind,&event.try_get::<Value>("","payload")?),"metadata":super::event_policy::redact_flow_event_metadata_for_delivery(&event.try_get::<Value>("","metadata")?),"created_at":event.try_get::<chrono::DateTime<chrono::Utc>>("","created_at")?.to_rfc3339()});
+            let value = json!({"source_event_id":event.try_get::<Uuid>("","id")?,"event_type":kind,"aggregate_type":event.try_get::<String>("","aggregate_type")?,"aggregate_id":event.try_get::<String>("","aggregate_id")?,"actor":event.try_get::<Option<Uuid>>("","actor_id")?,"origin":source.get("surface"),"payload":super::event_policy::redact_flow_event_payload_for_delivery(&kind,&event.try_get::<Value>("","payload")?),"metadata":super::event_policy::redact_flow_event_metadata_for_delivery(&event.try_get::<Value>("","metadata")?),"created_at":event.try_get::<platform::timestamp::Timestamp>("","created_at")?.to_rfc3339()});
             lines.extend(serde_jcs::to_vec(&value).map_err(|_| ApiError::internal())?);
             lines.push(b'\n');
             event_count += 1;
@@ -291,7 +295,7 @@ pub async fn render(
             bytes: lines,
         });
     }
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
     let manifest = ExportPackageManifest {
         schema: SCOPE_PACKAGE_SCHEMA.into(),
         package_id: Uuid::new_v4().to_string(),
@@ -312,7 +316,9 @@ pub async fn render(
             name: ENGINE_NAME.into(),
             crate_version: ENGINE_CRATE_VERSION.into(),
             wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
-            semantic_model: Some(super::package::SEMANTIC_MODEL_V3.into()),
+            semantic_model: super::package::RAW_PACKAGE_SEMANTIC_MODEL
+                .wire_name()
+                .map(str::to_owned),
         },
         history: PackageHistory {
             included: include_history,

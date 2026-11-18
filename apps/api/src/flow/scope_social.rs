@@ -98,6 +98,8 @@ pub async fn create_comment(
     let mut proofs = vec![actor.clone()];
     proofs.extend(recipients.clone());
     let identity = scope::identity(db, object).await?;
+    let anchor_context =
+        super::block_anchors::prepare(db, object, input.block_id.is_some(), input.parent_id.is_some()).await?;
     let operation = key(idempotency, "comment_create");
     let body = json!({"operation":"comment_create","object_id":object,"input":input});
     let tx = begin_write(db, &proofs).await?;
@@ -107,6 +109,7 @@ pub async fn create_comment(
         tx.commit().await?;
         return serde_json::from_value(result).map_err(|_| ApiError::internal());
     }
+    super::block_anchors::ensure(&tx, object, anchor_context.as_ref()).await?;
     let actor_context = CommentActor {
         user_id: user,
         level: actor.level,

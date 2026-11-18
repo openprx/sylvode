@@ -20,9 +20,10 @@ use uuid::Uuid;
 
 use super::secret::Secret;
 use super::{
-    AuditConfig, AuthConfig, ConfigError, DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
-    DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR,
-    DatabaseConfig, FlowConfig, LogFormat, LogOutput, LoggingConfig, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
+    AuditConfig, AuthConfig, ConfigError, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
+    DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS,
+    DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig,
+    LogFormat, LogOutput, LoggingConfig, MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
     MIN_JWT_SECRET_LEN, McpConfig, McpTransport, MigrationsConfig, OpenPrConfig, OutboundConfig, S3Config,
     ServerConfig, StorageBackend, StorageConfig,
 };
@@ -106,6 +107,7 @@ struct RawFlow {
     dispatch_max_attempts: Option<i32>,
     collab_allowed_origins: Option<Vec<String>>,
     conversion_reap_interval_secs: Option<u64>,
+    body_asset_max_bytes: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -520,10 +522,21 @@ impl RawFlow {
                         DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS
                     }
                 });
+        let body_asset_max_bytes = self
+            .body_asset_max_bytes
+            .map_or(DEFAULT_FLOW_BODY_ASSET_MAX_BYTES, |value| {
+                if (1..=MAX_FLOW_BODY_ASSET_BYTES).contains(&value) {
+                    value
+                } else {
+                    issues.push("flow.body_asset_max_bytes must be between 1 and 52428800");
+                    DEFAULT_FLOW_BODY_ASSET_MAX_BYTES
+                }
+            });
         FlowConfig {
             dispatch_max_attempts,
             collab_allowed_origins,
             conversion_reap_interval_secs,
+            body_asset_max_bytes,
         }
     }
 }

@@ -23,16 +23,19 @@ const initialState: ProjectOptionsState = {
 	error: null
 };
 
-function createProjectOptionsStore() {
+export function createProjectOptionsStore() {
 	const { subscribe, set, update } = writable<ProjectOptionsState>(initialState);
 	let inFlight: Promise<ProjectOption[]> | null = null;
+	let generation = 0;
+	let userId: string | null = null;
 
-	async function fetchProjectOptions(): Promise<ProjectOption[]> {
+	async function fetchProjectOptions(version: number): Promise<ProjectOption[]> {
 		const wsRes = await workspacesApi.list();
 		if (wsRes.code !== 0 || !wsRes.data) {
 			return [];
 		}
 
+		if (version !== generation) return [];
 		const workspaceItems = wsRes.data.items ?? [];
 		const projectResults = await Promise.all(
 			workspaceItems.map(async (workspace) => {
@@ -65,29 +68,45 @@ function createProjectOptionsStore() {
 			return inFlight;
 		}
 
+		if (force) generation++;
+		const version = generation;
 		update((state) => ({ ...state, loading: true, error: null }));
-		inFlight = (async () => {
+		const task = (async () => {
 			try {
-				const items = await fetchProjectOptions();
+				const items = await fetchProjectOptions(version);
+				if (version !== generation) return [];
 				update(() => ({ items, loading: false, loaded: true, error: null }));
 				return items;
 			} catch (error) {
+				if (version !== generation) return [];
 				const message = error instanceof Error ? error.message : 'Failed to load project options';
 				update((state) => ({ ...state, loading: false, error: message }));
 				return current.items;
 			} finally {
-				inFlight = null;
+				if (version === generation) inFlight = null;
 			}
 		})();
 
-		return inFlight;
+		inFlight = task;
+		return task;
 	}
 
 	return {
 		subscribe,
 		ensureLoaded,
 		refresh: () => ensureLoaded(true),
-		reset: () => set(initialState)
+		reset: () => {
+			generation++;
+			inFlight = null;
+			set(initialState);
+		},
+		selectUser: (id: string | null) => {
+			if (id === userId) return;
+			userId = id;
+			generation++;
+			inFlight = null;
+			set(initialState);
+		}
 	};
 }
 

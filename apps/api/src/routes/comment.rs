@@ -94,7 +94,7 @@ async fn create_mention_notifications<C: ConnectionTrait>(
     }
 
     let link = format!("/workspace/{workspace_id}/projects/{project_id}/issues/{issue_id}");
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
 
     for mention_user_id in mention_user_ids {
         let is_workspace_member = db
@@ -232,7 +232,7 @@ pub async fn create_comment(
     let mention_user_ids = normalize_mentions(req.mentions, user_id);
 
     let comment_id = Uuid::new_v4();
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
 
     let tx = state.db.begin().await?;
 
@@ -360,8 +360,8 @@ pub async fn list_comments(
         author_name: Option<String>,
         author_email: Option<String>,
         body: String,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let comments = CommentRow::find_by_statement(Statement::from_sql_and_values(
@@ -457,7 +457,7 @@ pub async fn update_comment(
 
     let mention_user_ids = normalize_mentions(req.mentions, user_id);
 
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
     let detail = serde_json::json!({
         "comment_id": comment_id.to_string(),
     });
@@ -520,8 +520,8 @@ pub async fn update_comment(
         author_name: Option<String>,
         author_email: Option<String>,
         body: String,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let updated = CommentRow::find_by_statement(Statement::from_sql_and_values(
@@ -621,7 +621,7 @@ pub async fn delete_comment(
         "content_preview": preview,
     });
     let detail_text = detail.to_string();
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
 
     let tx = state.db.begin().await?;
 

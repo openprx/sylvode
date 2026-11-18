@@ -77,7 +77,10 @@ use platform::{
     app::AppState,
     config::{AppConfig, Secret},
 };
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
+use sea_orm::{
+    ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQueryResult, Statement,
+    TransactionTrait,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -1379,13 +1382,9 @@ async fn section_retry_exhaustion(
         ));
     }
 
-    // ---- Genuine head-mismatch arm. Nothing here is left to the scheduler: `flow_objects` is the
-    // one table `bootstrap::load` reads that no other statement on the accept path touches (see
-    // [`HYDRATE_GATE_TABLE`]), so an `ACCESS EXCLUSIVE` lock on it parks a writer *after* it has
-    // read the head it will be checked against and *before* the row lock that checks it. Real
-    // production writes are committed through that window, so the victim's next `FOR UPDATE`
-    // provably finds a moved head. Both sides of the ceiling are exercised, because a bound is
-    // only demonstrated by showing where it does *not* fire either.
+    // The victim-only view parks the bootstrap query after the out-of-lock head observation
+    // and before FOR UPDATE. The competitor commits through production tables while it waits.
+    // Both sides of the rebase ceiling are exercised against these controlled head changes.
     let forced_events_before = count_scalar(
         db,
         "SELECT count(*) AS n FROM business_events WHERE workspace_id = $1",
@@ -1616,12 +1615,10 @@ async fn section_retry_exhaustion(
             "canonical_state_unchanged": canonical_unchanged,
         },
         "head_mismatch_exhaustion": {
-            "construction": "an ACCESS EXCLUSIVE lock on flow_objects -- the one table bootstrap::load \
-                             reads that no other statement on the accept path touches -- parks the \
-                             victim between its out-of-lock read_observed_head and its \
-                             SELECT ... FOR UPDATE, and a real production write is committed through \
-                             that window once per attempt, so every failed attempt is a constructed \
-                             head mismatch rather than an observed race",
+            "construction": "the victim's scratch-schema bootstrap read takes a shared advisory \
+                             lock held exclusively by the test. Only that read is parked, after the \
+                             observed head and before SELECT ... FOR UPDATE. A real production write \
+                             commits through that window once per attempt",
             "deterministic": true,
             "discriminator": "the statement parked at each rendezvous is asserted to be \
                               bootstrap::load's document read, and zero transactions hold a writer \
@@ -1652,27 +1649,40 @@ async fn section_retry_exhaustion(
 // Deterministic head-mismatch construction
 // ---------------------------------------------------------------------------------------------
 
-/// The one table `bootstrap::load` reads that no other statement on the accept path touches.
-///
-/// `accept_update`'s complete statement inventory, in execution order: `find_prior_update`
-/// (`collab_updates`, retries only), `read_observed_head` (`collab_documents`), `bootstrap::load`
-/// on a cache miss (`collab_documents JOIN flow_objects`, then `collab_updates`),
-/// `fence_epoch_for_share` (`flow_workspace_settings`), the locked `SELECT ... FOR UPDATE`
-/// (`collab_documents`), `insert_flow_event` (`business_events`, `event_dispatch`), the
-/// `collab_updates` insert, and the `collab_documents` / `flow_object_projections` updates.
-/// `flow_objects` appears exactly once in that list: in `bootstrap::load`'s first query, which
-/// runs **after** `read_observed_head` has pinned the head this attempt will be checked against
-/// and **before** the row lock that checks it. (The two `UPDATE`s against tables that carry a
-/// foreign key to `flow_objects` never write the referencing column, so `PostgreSQL` re-checks no
-/// constraint and takes no lock on it there.)
-///
-/// Holding `ACCESS EXCLUSIVE` on it therefore parks a writer precisely inside the window a head
-/// mismatch needs, for exactly as long as the lock is held, with **no timeout anywhere in the
-/// parked path**: `bootstrap::load`'s `REPEATABLE READ READ ONLY` transaction sets none, and the
-/// accept path's `SET LOCAL lock_timeout`/`statement_timeout` live inside the later write
-/// transaction, which has not been opened yet. That is what makes this construction a sequencing
-/// device rather than a race with a wider window.
-const HYDRATE_GATE_TABLE: &str = "flow_objects";
+/// The fixture-only lock namespace. The victim's bootstrap query requests the shared
+/// transaction lock. The controller holds and queues exclusive locks to order the attempts.
+const HYDRATE_GATE_CLASS: i32 = 1_522_110_093;
+const HYDRATE_GATE_KEY: i32 = 211;
+
+/// Give only the victim a lookup view that parks the exact bootstrap statement. The
+/// production tables and competing writer remain untouched. Other victim statements through
+/// the view, including its scope identity reads, do not acquire the gate.
+async fn victim_connection(db: &DatabaseConnection, scratch_url: &str) -> DatabaseConnection {
+    db.execute_unprepared(&format!(
+        "CREATE SCHEMA IF NOT EXISTS cache_evidence;
+         CREATE OR REPLACE FUNCTION cache_evidence.park_bootstrap() RETURNS boolean
+         LANGUAGE plpgsql VOLATILE AS $body$
+         BEGIN
+            IF starts_with(current_query(), '{HYDRATE_GATE_STATEMENT_PREFIX}') THEN
+                PERFORM pg_advisory_xact_lock_shared({HYDRATE_GATE_CLASS}, {HYDRATE_GATE_KEY});
+            END IF;
+            RETURN true;
+         END
+         $body$;
+         CREATE OR REPLACE VIEW cache_evidence.flow_objects AS
+           SELECT * FROM public.flow_objects WHERE cache_evidence.park_bootstrap()"
+    ))
+    .await
+    .expect("install victim-only bootstrap gate");
+    let mut options = ConnectOptions::new(scratch_url.to_owned());
+    options.max_connections(1);
+    let victim = Database::connect(options).await.expect("victim connects");
+    victim
+        .execute_unprepared("SET search_path TO cache_evidence, public")
+        .await
+        .expect("victim uses the bootstrap gate");
+    victim
+}
 
 /// The opening of `bootstrap::load`'s document read. Asserted against `pg_stat_activity` at every
 /// rendezvous, so the construction fails loudly instead of silently gating some other statement if
@@ -1693,14 +1703,19 @@ const DOCUMENT_WRITER_LOCK_PROBE: &str = "SELECT count(*) AS n FROM pg_locks \
        AND mode IN ('RowShareLock', 'RowExclusiveLock', 'ShareLock', 'ShareRowExclusiveLock', \
                     'ExclusiveLock', 'AccessExclusiveLock')";
 
-/// A `pg_locks` count of one lock mode against [`HYDRATE_GATE_TABLE`], granted or not, in this
-/// database only (`pg_locks` is cluster-wide, and a relation OID is only unique per database).
+/// The advisory gate's exact identity, separate from the production write locks.
+fn gate_lock_condition() -> String {
+    format!(
+        "locktype = 'advisory' AND classid = {HYDRATE_GATE_CLASS} AND objid = {HYDRATE_GATE_KEY} AND objsubid = 2
+         AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+    )
+}
+
 fn gate_lock_probe(mode: &str, granted: bool) -> String {
     format!(
-        "SELECT count(*) AS n FROM pg_locks \
-         WHERE locktype = 'relation' AND relation = '{HYDRATE_GATE_TABLE}'::regclass \
-           AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
-           AND mode = '{mode}' AND granted IS {}",
+        "SELECT count(*) AS n FROM pg_locks WHERE {}
+         AND mode = '{mode}' AND granted IS {}",
+        gate_lock_condition(),
         if granted { "TRUE" } else { "FALSE" }
     )
 }
@@ -1734,10 +1749,10 @@ async fn blocked_gate_statement(db: &DatabaseConnection) -> String {
         format!(
             "SELECT coalesce(a.query, '') AS query FROM pg_locks l \
              JOIN pg_stat_activity a ON a.pid = l.pid \
-             WHERE l.locktype = 'relation' AND l.relation = '{HYDRATE_GATE_TABLE}'::regclass \
-               AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
-               AND l.mode = 'AccessShareLock' AND l.granted IS FALSE \
-             LIMIT 1"
+             WHERE {} \
+               AND l.mode = 'ShareLock' AND l.granted IS FALSE \
+             LIMIT 1",
+            gate_lock_condition(),
         ),
         vec![],
     ))
@@ -1748,7 +1763,7 @@ async fn blocked_gate_statement(db: &DatabaseConnection) -> String {
     .map_or_else(String::new, |row| row.query)
 }
 
-/// An open transaction holding `ACCESS EXCLUSIVE` on [`HYDRATE_GATE_TABLE`], released on command.
+/// An open transaction holding the exclusive bootstrap advisory lock, released on command.
 struct HydrateGate {
     releaser: tokio::sync::oneshot::Sender<()>,
     finished: tokio::task::JoinHandle<()>,
@@ -1763,9 +1778,11 @@ impl HydrateGate {
         let finished = tokio::spawn(async move {
             let conn = Database::connect(&url).await.expect("hydrate gate connects");
             let tx = conn.begin().await.expect("hydrate gate transaction opens");
-            tx.execute_unprepared(&format!("LOCK TABLE {HYDRATE_GATE_TABLE} IN ACCESS EXCLUSIVE MODE"))
-                .await
-                .expect("hydrate gate takes ACCESS EXCLUSIVE");
+            tx.execute_unprepared(&format!(
+                "SELECT pg_advisory_xact_lock({HYDRATE_GATE_CLASS}, {HYDRATE_GATE_KEY})"
+            ))
+            .await
+            .expect("hydrate controller takes the exclusive advisory lock");
             let _ = wait.await;
             let _ = tx.rollback().await;
         });
@@ -1796,7 +1813,7 @@ struct ForcedMismatchRun {
 
 /// Forces exactly `forced` genuine head mismatches on one victim write, then lets it finish.
 ///
-/// The victim is parked at [`HYDRATE_GATE_TABLE`] once per attempt -- after it has read the head
+/// The victim is parked within bootstrap once per attempt -- after it has read the head
 /// it will be checked against, before it can take the row lock that checks it -- and a real
 /// production write is committed through that window each time. Nothing is retried until it
 /// happens to interleave: every rendezvous is observed in `pg_locks` before the head is moved, and
@@ -1814,14 +1831,12 @@ async fn force_head_mismatches(
     label: &str,
     violations: &mut Vec<String>,
 ) -> ForcedMismatchRun {
-    let blocked_share = gate_lock_probe("AccessShareLock", false);
-    let queued_exclusive = gate_lock_probe("AccessExclusiveLock", false);
-    let granted_exclusive = gate_lock_probe("AccessExclusiveLock", true);
+    let blocked_share = gate_lock_probe("ShareLock", false);
+    let queued_exclusive = gate_lock_probe("ExclusiveLock", false);
+    let granted_exclusive = gate_lock_probe("ExclusiveLock", true);
 
-    // One competitor instance, warmed **before** the gate goes up: with its warm cache hit,
-    // `hydrate_and_apply` never calls `bootstrap::load`, so this is the one writer that can still
-    // commit while the gate is held. (A cold competitor would park at the same gate, and the run
-    // would report that instead of deadlocking -- see the `parked_backends` check below.)
+    // The competitor uses production relations directly. Warming it also pins this evidence
+    // to the same hot-instance write branch as the original observer model.
     let competitor_db = Database::connect(scratch_url).await.expect("competitor connects");
     let competitor = Instance::new();
     let warmup_bytes = build_update(&head_state_bytes(db, document_id).await, &format!("{label}-warmup"));
@@ -1845,8 +1860,7 @@ async fn force_head_mismatches(
         )),
     }
 
-    // Every payload is built now: building one reads the document through `bootstrap::load`, which
-    // is exactly what the gate blocks.
+    // Prepare payloads before either connection is gated.
     let base = head_state_bytes(db, document_id).await;
     let competing_bytes: Vec<Vec<u8>> = (0..forced)
         .map(|round| build_update(&base, &format!("{label}-competitor-{round}")))
@@ -1860,7 +1874,7 @@ async fn force_head_mismatches(
         violations.push(format!("{label}: {err}"));
     }
 
-    let victim_db = Database::connect(scratch_url).await.expect("victim connects");
+    let victim_db = victim_connection(db, scratch_url).await;
     let spawned_bytes = victim_bytes.clone();
     let started = Instant::now();
     let victim = tokio::spawn(async move {
@@ -1887,8 +1901,7 @@ async fn force_head_mismatches(
                 break;
             }
         };
-        // Exactly one backend may be parked here. Two would mean the competitor missed its cache
-        // and parked too, which would make the next line wait on a writer that cannot run.
+        // Exactly one reader may wait on the dedicated lock used by the victim.
         let parked_backends = count_scalar(db, &blocked_share, vec![]).await;
         if parked_backends != 1 {
             violations.push(format!(

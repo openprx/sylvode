@@ -35,7 +35,7 @@ pub struct IssueTicketInput {
 pub struct IssuedTicket {
     /// The raw secret. Returned to the caller exactly once; never persisted.
     pub ticket: String,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: platform::timestamp::Timestamp,
 }
 
 fn validate_client_id(client_id: &str) -> Result<(), ApiError> {
@@ -50,6 +50,35 @@ fn validate_client_id(client_id: &str) -> Result<(), ApiError> {
 
 fn object_type_admits_collab_session(object_type: &str) -> bool {
     !matches!(object_type, "collection" | "record")
+}
+
+pub(super) async fn workspace_member_role<C: ConnectionTrait>(
+    conn: &C,
+    workspace_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<String>, sea_orm::DbErr> {
+    #[derive(FromQueryResult)]
+    struct RoleRow {
+        role: String,
+    }
+    Ok(RoleRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
+        vec![workspace_id.into(), user_id.into()],
+    ))
+    .one(conn)
+    .await?
+    .map(|row| row.role))
+}
+
+async fn require_workspace_member<C: ConnectionTrait>(
+    conn: &C,
+    workspace_id: Uuid,
+    user_id: Uuid,
+) -> Result<String, ApiError> {
+    workspace_member_role(conn, workspace_id, user_id)
+        .await?
+        .ok_or_else(|| ApiError::forbidden("not a member of this workspace"))
 }
 
 /// Issues a one-time ticket. Callers must already have rejected `BotAuthContext` (`ADR-0007`:
@@ -97,37 +126,14 @@ pub async fn issue(
 
     let tx = conn.begin().await?;
 
-    #[derive(FromQueryResult)]
-    struct RoleRow {
-        role: String,
-    }
-    let _prechecked_role = RoleRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
-        vec![input.workspace_id.into(), input.user_id.into()],
-    ))
-    .one(&tx)
-    .await?
-    .map_or_else(|| "__flow_guest".to_string(), |r| r.role);
-
-    // Check the rollout flag before trying to lock its settings row. A missing settings row is
-    // deliberately the same `feature_disabled` answer as an explicit false value; asking the
-    // epoch-lock helper first would instead turn absence into a distinguishable 404.
+    require_workspace_member(&tx, input.workspace_id, input.user_id).await?;
+    // An authorized member gets the rollout refusal before any document lookup. Check before
+    // taking the epoch lock because a workspace without settings is disabled.
     super::super::policy::require_flow_enabled_on(&tx, input.workspace_id).await?;
 
-    // Hold the same epoch row authorization writers take exclusively until the ticket insert
-    // commits. The first membership read above preserves the non-enumerating error order; this
-    // second read, after the lock, is authoritative and catches a removal/demotion that completed
-    // while the share lock was being acquired.
-    let _checked_epoch = super::authz::lock_epoch_for_share(&tx, input.workspace_id).await?;
-    let role = RoleRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
-        vec![input.workspace_id.into(), input.user_id.into()],
-    ))
-    .one(&tx)
-    .await?
-    .map_or_else(|| "__flow_guest".to_string(), |row| row.role);
+    // Re-read membership and rollout under the authorization lock held until the ticket commits.
+    super::authz::lock_epoch_for_share(&tx, input.workspace_id).await?;
+    let role = require_workspace_member(&tx, input.workspace_id, input.user_id).await?;
 
     // `ADR-0018` clarifies ADR-0007's "read+write ACL" wording as checking both ACLs rather than
     // requiring write authority: view and comment principals may obtain read-only sessions.
@@ -197,7 +203,7 @@ pub async fn issue(
     let ticket_hash = sha256_hex(&raw);
     #[derive(FromQueryResult)]
     struct ExpiryRow {
-        expires_at: chrono::DateTime<chrono::Utc>,
+        expires_at: platform::timestamp::Timestamp,
     }
     let expiry = ExpiryRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,

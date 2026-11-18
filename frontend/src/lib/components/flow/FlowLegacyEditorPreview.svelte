@@ -1,5 +1,9 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
+	import FlowBodyAsset from './FlowBodyAsset.svelte';
+	import { privateBodyAssetProvider } from '#lib/flow/body/providers.js';
+	import FlowBodyChild from './FlowBodyChild.svelte';
+	import FlowInlineText from './FlowInlineText.svelte';
 	import type { FlowObjectView } from '#lib/api/flow.js';
 	import type { FlowError } from '#lib/flow/types.js';
 	import { legacyProseBlocks, canEnableLegacyEditor } from '#lib/flow/legacy-editor.js';
@@ -17,6 +21,7 @@
 		onEnable: () => Promise<void>;
 		onRefresh: () => Promise<void>;
 	} = $props();
+	const bodyProvider = $derived(privateBodyAssetProvider(object.id));
 	const blocks = $derived(legacyProseBlocks(object.semantic_content));
 </script>
 
@@ -64,13 +69,24 @@
 		</p>{/if}
 	<div class="space-y-4 text-slate-900 dark:text-slate-100">
 		{#each blocks as block (block.id)}
-			<p
-				class="whitespace-pre-wrap break-words"
-				class:font-semibold={block.kind === 'heading'}
-				class:font-mono={block.kind === 'codeBlock'}
-			>
-				{block.text}
-			</p>
+			<div style={`margin-left:${block.indent * 1.5}rem`}>
+				{#if block.kind === 'image' || block.kind === 'attachment'}<FlowBodyAsset
+						kind={block.kind}
+						provider={bodyProvider}
+						assetId={block.attrs.asset_id}
+						alt={block.attrs.alt ?? ''}
+						caption={block.attrs.caption ?? ''}
+						name={block.attrs.name ?? ''}
+					/>
+				{:else if block.kind === 'childPage'}<FlowBodyChild childId={block.attrs.child_page_id} />
+				{:else}<p
+						class="whitespace-pre-wrap break-words"
+						class:font-semibold={block.kind === 'heading'}
+						class:font-mono={block.kind === 'codeBlock'}
+					>
+						<FlowInlineText text={block.text} spans={block.inline_spans} />
+					</p>{/if}
+			</div>
 		{:else}<p class="text-sm text-slate-500">{$t('flow.legacyEditor.empty')}</p>{/each}
 	</div>
 </section>

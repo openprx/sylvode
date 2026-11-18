@@ -1,3 +1,4 @@
+import { FLOW_PROCESS_READER_COMPATIBILITY } from '../src/lib/flow/product-mode';
 import { flowApi } from '../src/lib/api/flow';
 import { load } from '../src/routes/(app)/flow/+layout';
 import { Suite, assertEqual, finish } from './support/harness';
@@ -94,10 +95,20 @@ await suite.checkAsync(
 	}
 );
 await suite.checkAsync(
+	'reader4 capability envelope remains compatible with editor model5 client',
+	async () => {
+		defaults();
+		flowApi.getCapabilities = async () => ok({ ...capabilities, minimum_reader_version: 4 });
+		const result = await route({ objectId: 'object' });
+		assertEqual(result.flowEnabled, true, 'known server reader admitted');
+	}
+);
+await suite.checkAsync(
 	'client upgrade is handled before home provisioning or object reads',
 	async () => {
 		defaults();
-		flowApi.getCapabilities = async () => ok({ ...capabilities, minimum_reader_version: 3 });
+		flowApi.getCapabilities = async () =>
+			ok({ ...capabilities, minimum_reader_version: FLOW_PROCESS_READER_COMPATIBILITY + 1 });
 		const result = await route({ objectId: 'object' });
 		assertEqual(result.flowEnabled, false, 'unsupported reader safe');
 		assertEqual(result.error, 'upgrade', 'actionable state');

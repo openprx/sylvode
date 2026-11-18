@@ -1,0 +1,27 @@
+{
+  "display_context": {
+    "placement_id": "a26086be-55cc-4a38-86a4-31f48548e6fa",
+    "label": "Shared block",
+    "workspace_id": "60bf847b-5a76-45a1-809b-32547cac7686",
+    "workspace_name": "Share destination",
+    "project_id": "12b68d98-cab2-4e2d-8052-d03930a03eb1",
+    "project_name": "Share project"
+  },
+  "projection": {
+    "share_id": "2584c844-445d-4740-8119-c67078b8648c",
+    "revision": 1,
+    "members": [
+      {
+        "member_id": "ea685575-a045-489a-b56b-a46d08abdb06",
+        "parent_member_id": null,
+        "order": 0,
+        "content": {
+          "kind": "paragraph",
+          "text": "Selected 中文😀",
+          "spans": []
+        }
+      }
+    ]
+  },
+  "effective_permission": "edit"
+}

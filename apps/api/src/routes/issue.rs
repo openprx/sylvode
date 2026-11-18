@@ -219,15 +219,14 @@ pub async fn create_issue(
     }
 
     let issue_id = Uuid::new_v4();
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
     let description = req.description.unwrap_or_default();
 
     // Parse due_at if provided
-    let due_at: Option<chrono::DateTime<chrono::Utc>> = if let Some(due_str) = req.due_at {
+    let due_at: Option<platform::timestamp::Timestamp> = if let Some(due_str) = req.due_at {
         Some(
-            chrono::DateTime::parse_from_rfc3339(&due_str)
-                .map_err(|_| ApiError::BadRequest("invalid due_at format".to_string()))?
-                .with_timezone(&chrono::Utc),
+            platform::timestamp::Timestamp::parse_rfc3339(&due_str)
+                .map_err(|_| ApiError::BadRequest("invalid due_at format".to_string()))?,
         )
     } else {
         None
@@ -252,7 +251,7 @@ pub async fn create_issue(
     if let Some(dt) = due_at {
         values.push(dt.into());
     } else {
-        values.push(sea_orm::Value::from(None::<chrono::DateTime<chrono::Utc>>));
+        values.push(sea_orm::Value::from(None::<platform::timestamp::Timestamp>));
     }
     let due_param = "$8";
 
@@ -362,7 +361,7 @@ pub async fn create_issue(
         state: issue_state,
         priority: issue_priority,
         assignee_id: req.assignee_id,
-        due_at: due_at.map(|d| d.to_rfc3339()),
+        due_at: due_at.map(platform::timestamp::Timestamp::to_rfc3339),
         created_by: Some(user_id),
         created_at: now.to_rfc3339(),
         updated_at: now.to_rfc3339(),
@@ -529,10 +528,10 @@ pub async fn list_issues(
         state: String,
         priority: String,
         assignee_id: Option<Uuid>,
-        due_at: Option<chrono::DateTime<chrono::Utc>>,
+        due_at: Option<platform::timestamp::Timestamp>,
         created_by: Option<Uuid>,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
         proposal_id: Option<String>,
         governance_exempt: bool,
         governance_exempt_reason: Option<String>,
@@ -600,7 +599,7 @@ pub async fn list_issues(
             state: i.state,
             priority: i.priority,
             assignee_id: i.assignee_id,
-            due_at: i.due_at.map(|d| d.to_rfc3339()),
+            due_at: i.due_at.map(platform::timestamp::Timestamp::to_rfc3339),
             created_by: i.created_by,
             created_at: i.created_at.to_rfc3339(),
             updated_at: i.updated_at.to_rfc3339(),
@@ -646,10 +645,10 @@ pub async fn get_issue(
         state: String,
         priority: String,
         assignee_id: Option<Uuid>,
-        due_at: Option<chrono::DateTime<chrono::Utc>>,
+        due_at: Option<platform::timestamp::Timestamp>,
         created_by: Option<Uuid>,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
         proposal_id: Option<String>,
         governance_exempt: bool,
         governance_exempt_reason: Option<String>,
@@ -682,7 +681,7 @@ pub async fn get_issue(
         state: issue.state,
         priority: issue.priority,
         assignee_id: issue.assignee_id,
-        due_at: issue.due_at.map(|d| d.to_rfc3339()),
+        due_at: issue.due_at.map(platform::timestamp::Timestamp::to_rfc3339),
         created_by: issue.created_by,
         created_at: issue.created_at.to_rfc3339(),
         updated_at: issue.updated_at.to_rfc3339(),
@@ -807,9 +806,8 @@ pub async fn update_issue(
     }
 
     if let Some(due_str) = req.due_at.clone() {
-        let due_at = chrono::DateTime::parse_from_rfc3339(&due_str)
-            .map_err(|_| ApiError::BadRequest("invalid due_at format".to_string()))?
-            .with_timezone(&chrono::Utc);
+        let due_at = platform::timestamp::Timestamp::parse_rfc3339(&due_str)
+            .map_err(|_| ApiError::BadRequest("invalid due_at format".to_string()))?;
         updates.push(format!("due_at = ${param_idx}"));
         values.push(due_at.into());
         param_idx += 1;
@@ -825,7 +823,7 @@ pub async fn update_issue(
         return Err(ApiError::BadRequest("no fields to update".to_string()));
     }
 
-    let now = chrono::Utc::now();
+    let now = platform::timestamp::Timestamp::now();
     updates.push(format!("updated_at = ${param_idx}"));
     values.push(now.into());
     param_idx += 1;
@@ -850,10 +848,10 @@ pub async fn update_issue(
         state: String,
         priority: String,
         assignee_id: Option<Uuid>,
-        due_at: Option<chrono::DateTime<chrono::Utc>>,
+        due_at: Option<platform::timestamp::Timestamp>,
         created_by: Option<Uuid>,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
         proposal_id: Option<String>,
         governance_exempt: bool,
         governance_exempt_reason: Option<String>,
@@ -1146,7 +1144,7 @@ pub async fn update_issue(
         state: updated.state,
         priority: updated.priority,
         assignee_id: updated.assignee_id,
-        due_at: updated.due_at.map(|d| d.to_rfc3339()),
+        due_at: updated.due_at.map(platform::timestamp::Timestamp::to_rfc3339),
         created_by: updated.created_by,
         created_at: updated.created_at.to_rfc3339(),
         updated_at: updated.updated_at.to_rfc3339(),
@@ -1179,8 +1177,8 @@ pub async fn delete_issue(
         priority: String,
         assignee_id: Option<Uuid>,
         sprint_id: Option<Uuid>,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
     }
 
     let issue_ws = IssueWorkspace::find_by_statement(Statement::from_sql_and_values(
@@ -1280,10 +1278,10 @@ pub async fn get_issue_by_identifier(
         state: String,
         priority: String,
         assignee_id: Option<Uuid>,
-        due_at: Option<chrono::DateTime<chrono::Utc>>,
+        due_at: Option<platform::timestamp::Timestamp>,
         created_by: Option<Uuid>,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
         proposal_id: Option<String>,
         governance_exempt: bool,
         governance_exempt_reason: Option<String>,
@@ -1317,7 +1315,7 @@ pub async fn get_issue_by_identifier(
         state: issue.state,
         priority: issue.priority,
         assignee_id: issue.assignee_id,
-        due_at: issue.due_at.map(|d| d.to_rfc3339()),
+        due_at: issue.due_at.map(platform::timestamp::Timestamp::to_rfc3339),
         created_by: issue.created_by,
         created_at: issue.created_at.to_rfc3339(),
         updated_at: issue.updated_at.to_rfc3339(),

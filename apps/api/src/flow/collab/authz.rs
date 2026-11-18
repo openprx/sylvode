@@ -311,6 +311,14 @@ impl ChainNamespace {
         }
     }
 }
+#[derive(FromQueryResult)]
+struct AncestorRow {
+    id: Uuid,
+    parent_id: Option<Uuid>,
+    inherit_from_parent: bool,
+    is_system_navigator_root: bool,
+}
+
 async fn walk_chain<C: ConnectionTrait>(conn: &C, workspace_id: Uuid, object_id: Uuid) -> Result<ChainWalk, ApiError> {
     walk_chain_in(conn, workspace_id, object_id, ChainNamespace::LegacyWorkspace).await
 }
@@ -320,14 +328,6 @@ async fn walk_chain_in<C: ConnectionTrait>(
     object_id: Uuid,
     namespace: ChainNamespace,
 ) -> Result<ChainWalk, ApiError> {
-    #[derive(FromQueryResult)]
-    struct Row {
-        id: Uuid,
-        parent_id: Option<Uuid>,
-        inherit_from_parent: bool,
-        is_system_navigator_root: bool,
-    }
-
     // One `WITH RECURSIVE` round trip for the whole chain, replacing one `SELECT` per hop. This
     // walk runs on the commit-time content-write path that `ADR-0010` holds to a 25 ms
     // `document_lock_hold_ms_p95_max` budget, where 33 serial round trips are not affordable —
@@ -338,7 +338,7 @@ async fn walk_chain_in<C: ConnectionTrait>(
     // `MAX_CHAIN_NODES` yields up to `MAX_CHAIN_NODES + 1` rows, which is what lets an over-deep
     // or cyclic chain be *detected* below rather than come back looking like a valid short one.
     let probe_depth = i64::try_from(MAX_CHAIN_NODES).unwrap_or(i64::MAX);
-    let rows = Row::find_by_statement(Statement::from_sql_and_values(
+    let rows = AncestorRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!(
             "WITH RECURSIVE chain AS ( \
@@ -365,11 +365,15 @@ async fn walk_chain_in<C: ConnectionTrait>(
     .all(conn)
     .await?;
 
+    Ok(classify_ancestor_rows(rows))
+}
+
+fn classify_ancestor_rows(rows: Vec<AncestorRow>) -> ChainWalk {
     // `ORDER BY depth` keeps `chain[0]` the object itself with each later entry its parent —
     // `effective_permission`'s `chain.get(..=index)` ("the boundary node and everything below
     // it") depends on exactly this order.
     let Some(top) = rows.last() else {
-        return Ok(ChainWalk::Missing);
+        return ChainWalk::Missing;
     };
     // A cycle re-enters a node the walk has already visited. Checked before the length test
     // because a short cycle also *looks* over-deep: the recursion spins until the probe bound and
@@ -378,7 +382,7 @@ async fn walk_chain_in<C: ConnectionTrait>(
     let mut seen: Vec<Uuid> = Vec::with_capacity(rows.len());
     for row in &rows {
         if seen.contains(&row.id) {
-            return Ok(ChainWalk::Cyclic);
+            return ChainWalk::Cyclic;
         }
         seen.push(row.id);
     }
@@ -386,17 +390,17 @@ async fn walk_chain_in<C: ConnectionTrait>(
         .saturating_add(1)
         .saturating_add(usize::from(top.is_system_navigator_root));
     if rows.len() > allowed_nodes {
-        return Ok(ChainWalk::TooDeep);
+        return ChainWalk::TooDeep;
     }
     if top.parent_id.is_some() {
         // The walk did not reach a root: either the recursion bound cut a longer chain or a
         // `parent_id` cycle short, or the ancestor row it names is absent from this workspace
         // (`flow_objects_parent_workspace_fk` should make the latter impossible — treat a
         // violated invariant as a denial, never as a licence to judge on a partial chain).
-        return Ok(ChainWalk::Incomplete);
+        return ChainWalk::Incomplete;
     }
 
-    Ok(ChainWalk::Complete(
+    ChainWalk::Complete(
         rows.into_iter()
             .map(|row| ChainNode {
                 id: row.id,
@@ -404,7 +408,7 @@ async fn walk_chain_in<C: ConnectionTrait>(
                 is_system_navigator_root: row.is_system_navigator_root,
             })
             .collect(),
-    ))
+    )
 }
 
 /// Walks `object_id`'s ancestor chain via `parent_id`, starting at the object itself and ending at
@@ -429,7 +433,11 @@ async fn fetch_chain<C: ConnectionTrait>(
     workspace_id: Uuid,
     object_id: Uuid,
 ) -> Result<Vec<ChainNode>, ApiError> {
-    match walk_chain(conn, workspace_id, object_id).await? {
+    require_complete_chain(walk_chain(conn, workspace_id, object_id).await?)
+}
+
+fn require_complete_chain(chain: ChainWalk) -> Result<Vec<ChainNode>, ApiError> {
+    match chain {
         ChainWalk::Complete(chain) => Ok(chain),
         ChainWalk::Missing => Err(ApiError::not_found("flow object not found".to_string())),
         ChainWalk::TooDeep => Err(ApiError::forbidden(
@@ -713,6 +721,32 @@ pub async fn effective_permission<C: ConnectionTrait>(
     }
 }
 
+struct BatchNode {
+    id: Uuid,
+    parent_id: Option<Uuid>,
+    inherit_from_parent: bool,
+    depth: i32,
+    cycle: bool,
+    is_system_navigator_root: bool,
+}
+
+fn batch_chain_is_complete(chain: &[BatchNode]) -> bool {
+    let Some(top) = chain.last() else {
+        return false;
+    };
+    let allowed_nodes = TREE_DEPTH_MAX
+        .saturating_add(1)
+        .saturating_add(usize::from(top.is_system_navigator_root));
+    let max_storage_depth = chain
+        .iter()
+        .map(|node| usize::try_from(node.depth).unwrap_or(usize::MAX))
+        .max()
+        .unwrap_or(usize::MAX);
+    !chain.iter().any(|node| node.cycle)
+        && max_storage_depth.saturating_add(1) <= allowed_nodes
+        && top.parent_id.is_none()
+}
+
 /// Batch form of [`effective_permission`] for read-side candidate pages.
 ///
 /// One recursive CTE resolves every requested object's complete leaf-to-root chain, and one grant
@@ -801,14 +835,6 @@ pub async fn effective_permissions<C: ConnectionTrait>(
     .all(conn)
     .await?;
 
-    struct BatchNode {
-        id: Uuid,
-        parent_id: Option<Uuid>,
-        inherit_from_parent: bool,
-        depth: i32,
-        cycle: bool,
-        is_system_navigator_root: bool,
-    }
     let mut chains: HashMap<Uuid, Vec<BatchNode>> = HashMap::new();
     for row in rows {
         chains.entry(row.seed_id).or_default().push(BatchNode {
@@ -828,22 +854,7 @@ pub async fn effective_permissions<C: ConnectionTrait>(
             invalid_chains.insert(*object_id);
             continue;
         };
-        let Some(top) = chain.last() else {
-            invalid_chains.insert(*object_id);
-            continue;
-        };
-        let allowed_nodes = TREE_DEPTH_MAX
-            .saturating_add(1)
-            .saturating_add(usize::from(top.is_system_navigator_root));
-        let max_storage_depth = chain
-            .iter()
-            .map(|node| usize::try_from(node.depth).unwrap_or(usize::MAX))
-            .max()
-            .unwrap_or(usize::MAX);
-        if chain.iter().any(|node| node.cycle)
-            || max_storage_depth.saturating_add(1) > allowed_nodes
-            || top.parent_id.is_some()
-        {
+        if !batch_chain_is_complete(chain) {
             invalid_chains.insert(*object_id);
             continue;
         }
@@ -1213,7 +1224,10 @@ mod database_tests {
     use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQueryResult, Statement};
     use uuid::Uuid;
 
-    use super::{PermissionLevel, effective_permission, effective_permissions};
+    use super::{
+        AncestorRow, BatchNode, PermissionLevel, batch_chain_is_complete, classify_ancestor_rows, effective_permission,
+        effective_permissions, require_complete_chain,
+    };
     use crate::error::ApiError;
 
     /// Nodes in the deepest chain `ADR-0012` §3 permits, written as a literal on purpose: these
@@ -1476,31 +1490,59 @@ mod database_tests {
         scratch.drop_self().await;
     }
 
-    /// `flow_objects_parent_workspace_fk` normally makes a cross-workspace parent impossible, so
-    /// this drops the constraint to reproduce that invariant being violated. The point is what
-    /// the read path does when it *is* violated: `WHERE ... AND workspace_id = $2` finds no
-    /// ancestor row, and the old walk read that as "the chain ends here" — losing the boundary
-    /// above and falling back to the baseline.
+    #[test]
+    fn incomplete_ancestor_query_results_fail_closed() {
+        let missing_parent = Some(Uuid::new_v4());
+        let id = Uuid::new_v4();
+        let error = require_complete_chain(classify_ancestor_rows(vec![AncestorRow {
+            id,
+            parent_id: missing_parent,
+            inherit_from_parent: true,
+            is_system_navigator_root: false,
+        }]))
+        .err()
+        .expect("a missing parent cannot be treated as the root");
+        assert_eq!(error.kind(), crate::error::ApiErrorKind::Forbidden);
+
+        let mut candidate = BatchNode {
+            id,
+            parent_id: missing_parent,
+            inherit_from_parent: true,
+            depth: 0,
+            cycle: false,
+            is_system_navigator_root: false,
+        };
+        assert!(!batch_chain_is_complete(std::slice::from_ref(&candidate)));
+        candidate.parent_id = None;
+        assert!(batch_chain_is_complete(std::slice::from_ref(&candidate)));
+    }
+
     #[tokio::test]
-    async fn a_parent_in_another_workspace_is_rejected_not_treated_as_a_root() {
+    async fn database_rejects_cross_workspace_parent_and_keeps_original_ancestry() {
         let scratch = scratch_or_skip!("cross_workspace_parent");
         let fx = seed_workspace(&scratch.db).await;
         let other = seed_workspace(&scratch.db).await;
-
-        scratch
-            .db
-            .execute_unprepared("ALTER TABLE flow_objects DROP CONSTRAINT flow_objects_parent_workspace_fk")
-            .await
-            .expect("the composite parent FK can be dropped for this fixture");
-
-        // The boundary lives in the other workspace, so a walk that stops at the workspace edge
-        // never sees it and would hand back the `edit` baseline instead.
+        let root = insert_object(&scratch.db, fx.workspace_id, None, true).await;
+        let child = insert_object(&scratch.db, fx.workspace_id, Some(root), true).await;
         let foreign_root = insert_object(&scratch.db, other.workspace_id, None, false).await;
-        let child = insert_object(&scratch.db, fx.workspace_id, Some(foreign_root), true).await;
 
-        let result = member_level(&scratch.db, &fx, child).await;
-        assert_forbidden(&result, "parent in another workspace");
-
+        let error = scratch
+            .db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "UPDATE flow_objects SET parent_id = $1 WHERE id = $2",
+                vec![foreign_root.into(), child.into()],
+            ))
+            .await
+            .expect_err("cross-scope ancestry must be rejected by the migrated database");
+        assert!(
+            matches!(error.sql_err(), Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(_))),
+            "{error}"
+        );
+        assert_eq!(
+            member_level(&scratch.db, &fx, child).await.unwrap(),
+            PermissionLevel::Edit
+        );
         scratch.drop_self().await;
     }
 
@@ -1932,27 +1974,6 @@ mod database_tests {
         .await
         .expect("a cyclic candidate must not poison its healthy peer");
         assert_eq!(result[0], (cycle_b, PermissionLevel::Denied));
-        assert_eq!(result[1], (healthy, PermissionLevel::Edit));
-
-        scratch
-            .db
-            .execute_unprepared("ALTER TABLE flow_objects DROP CONSTRAINT flow_objects_parent_workspace_fk")
-            .await
-            .expect("the composite parent FK can be dropped for the broken-chain fixture");
-        let foreign = seed_workspace(&scratch.db).await;
-        let foreign_parent = insert_object(&scratch.db, foreign.workspace_id, None, true).await;
-        let broken_child = insert_object(&scratch.db, fx.workspace_id, Some(foreign_parent), true).await;
-        let result = effective_permissions(
-            &scratch.db,
-            fx.workspace_id,
-            &[broken_child, healthy],
-            "user",
-            fx.member_id,
-            "member",
-        )
-        .await
-        .expect("a broken candidate must not poison its healthy peer");
-        assert_eq!(result[0], (broken_child, PermissionLevel::Denied));
         assert_eq!(result[1], (healthy, PermissionLevel::Edit));
 
         scratch.drop_self().await;

@@ -10,9 +10,9 @@ use axum::extract::{ConnectInfo, FromRequestParts, Path, State};
 use axum::http::request::Parts;
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
-use chrono::{DateTime, Utc};
 use platform::app::AppState;
 use platform::auth::JwtClaims;
+use platform::timestamp::Timestamp;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -91,7 +91,7 @@ pub struct ResolveCommentBody {
 #[derive(Debug, Deserialize)]
 pub struct CreateShareLinkBody {
     #[serde(default)]
-    expires_at: Option<DateTime<Utc>>,
+    expires_at: Option<Timestamp>,
 }
 
 pub async fn get_flow_comments(

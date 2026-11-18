@@ -1,3 +1,5 @@
+/** Capability-envelope compatibility; distinct from the Page editor model (1/4/5). */
+export const FLOW_PROCESS_READER_COMPATIBILITY = 5;
 // Temporary product scope: retain typed data/services, expose only Page work in Flow UI.
 export const FLOW_COLLECTION_UI_ENABLED = false;
 export function pageOnlyParent(

@@ -30,7 +30,7 @@ pub const fn metadata() -> EngineMetadata {
     EngineMetadata {
         candidate: "loro",
         rust_engine: "loro",
-        rust_engine_version: "1.13.9",
+        rust_engine_version: "1.18.0",
     }
 }
 

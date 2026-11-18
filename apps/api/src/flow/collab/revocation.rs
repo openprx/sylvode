@@ -71,13 +71,7 @@ async fn current_roles(
     ))
     .all(&state.db)
     .await?;
-    let mut roles: HashMap<Uuid, String> = user_ids
-        .iter()
-        .copied()
-        .map(|id| (id, "__flow_guest".to_string()))
-        .collect();
-    roles.extend(rows.into_iter().map(|row| (row.user_id, row.role)));
-    Ok(roles)
+    Ok(rows.into_iter().map(|row| (row.user_id, row.role)).collect())
 }
 
 async fn current_roles_with_retry(

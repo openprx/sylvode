@@ -43,11 +43,49 @@ function normalizeEnvelope<T>(parsed: Partial<ApiResult<T>>): ApiResult<T> {
 	};
 }
 
-class ApiClient {
+/** Local cancellation only: an earlier legitimate server mutation may already have applied. */
+export function authSessionChanged<T>(): ApiResult<T> {
+	return {
+		code: 499,
+		message: 'Request stopped after the authentication session changed',
+		data: null,
+		error_code: 'request_aborted',
+		details: { reason: 'auth_session_changed', outcome: 'unknown' }
+	};
+}
+
+/** Used only to isolate client ownership; the server still verifies every token and permission. */
+export function authPrincipal(token: string | null): string | null {
+	if (!token) return null;
+	try {
+		const part = token.split('.')[1];
+		if (!part) return null;
+		const value = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+		return typeof value.sub === 'string' && value.sub.length ? value.sub : null;
+	} catch {
+		return null;
+	}
+}
+export interface ExternalAuthSnapshot {
+	principal: string | null;
+	profile: unknown;
+	consistent: boolean;
+}
+
+export class ApiClient {
 	private baseUrl: string;
 	private token: string | null = null;
 	private refreshTokenValue: string | null = null;
-	private refreshInFlight: Promise<boolean> | null = null;
+	private refreshInFlight: { epoch: number; promise: Promise<boolean> } | null = null;
+	private authEpoch = 0;
+	private epochAbort = new AbortController();
+	private principal: string | null = null;
+	private results = new WeakMap<object, number>();
+	private external = new Set<(value: ExternalAuthSnapshot) => void>();
+	private readonly storageChanged = (event: StorageEvent) => {
+		if (event.key === null || ['auth_token', 'refresh_token', 'auth_user'].includes(event.key))
+			this.syncStoredAuth();
+	};
 
 	constructor(baseUrl: string = API_BASE_URL) {
 		this.baseUrl = baseUrl;
@@ -60,10 +98,17 @@ class ApiClient {
 		if (typeof window !== 'undefined') {
 			this.token = localStorage.getItem('auth_token');
 			this.refreshTokenValue = localStorage.getItem('refresh_token');
+			this.principal = authPrincipal(this.token);
+			window.addEventListener('storage', this.storageChanged);
 		}
 	}
 
 	setToken(token: string | null) {
+		this.beginAuthSession();
+		this.principal = authPrincipal(token);
+		this.writeToken(token);
+	}
+	private writeToken(token: string | null): void {
 		this.token = token;
 		if (typeof window !== 'undefined') {
 			if (token) {
@@ -79,6 +124,10 @@ class ApiClient {
 	}
 
 	setRefreshToken(token: string | null) {
+		this.beginAuthSession();
+		this.writeRefreshToken(token);
+	}
+	private writeRefreshToken(token: string | null): void {
 		this.refreshTokenValue = token;
 		if (typeof window !== 'undefined') {
 			if (token) {
@@ -94,8 +143,82 @@ class ApiClient {
 	}
 
 	clearAuth() {
-		this.setToken(null);
-		this.setRefreshToken(null);
+		this.beginAuthSession();
+		this.principal = null;
+		this.writeToken(null);
+		this.writeRefreshToken(null);
+	}
+	beginAuthSession(): number {
+		this.authEpoch++;
+		this.epochAbort.abort();
+		this.epochAbort = new AbortController();
+		return this.authEpoch;
+	}
+	authSessionSignal(epoch = this.authEpoch): AbortSignal {
+		return this.isAuthSessionEpoch(epoch) ? this.epochAbort.signal : AbortSignal.abort();
+	}
+
+	getAuthSessionEpoch(): number {
+		return this.authEpoch;
+	}
+	isAuthSessionEpoch(epoch: number): boolean {
+		return epoch === this.authEpoch;
+	}
+	installAuthSession(access: string, refresh: string | null, principal?: string): void {
+		this.beginAuthSession();
+		this.principal = principal ?? authPrincipal(access);
+		this.writeToken(access);
+		this.writeRefreshToken(refresh);
+	}
+	bindAuthActor(principal: string | null): void {
+		if (this.principal !== principal) {
+			this.beginAuthSession();
+			this.principal = principal;
+		}
+	}
+	getAuthPrincipal(): string | null {
+		return this.principal;
+	}
+	bindAuthResult<T>(result: ApiResult<T>, epoch = this.authEpoch): ApiResult<T> {
+		this.results.set(result, epoch);
+		return result;
+	}
+	isAuthResultCurrent(result: object, fallbackEpoch?: number): boolean {
+		return (this.results.get(result) ?? fallbackEpoch) === this.authEpoch;
+	}
+	onExternalAuth(listener: (value: ExternalAuthSnapshot) => void): () => void {
+		this.external.add(listener);
+		return () => this.external.delete(listener);
+	}
+	private syncStoredAuth(): void {
+		const access = localStorage.getItem('auth_token'),
+			refresh = localStorage.getItem('refresh_token');
+		let profile: unknown = null;
+		try {
+			profile = JSON.parse(localStorage.getItem('auth_user') ?? 'null');
+		} catch {
+			/* Unknown identity aborts old work. */
+		}
+		const principal = authPrincipal(access),
+			profileId =
+				profile && typeof profile === 'object' && 'id' in profile
+					? (profile as { id: unknown }).id
+					: null;
+		const consistent = !!principal && principal === profileId;
+		if (!consistent || principal !== this.principal) this.beginAuthSession();
+		this.principal = principal;
+		this.token = access;
+		this.refreshTokenValue = refresh;
+		for (const listener of this.external) listener({ principal, profile, consistent });
+	}
+	dispose(): void {
+		this.epochAbort.abort();
+		this.external.clear();
+		if (typeof window !== 'undefined') window.removeEventListener('storage', this.storageChanged);
+	}
+
+	private requestSignal(signal?: AbortSignal): AbortSignal {
+		return signal ? AbortSignal.any([this.epochAbort.signal, signal]) : this.epochAbort.signal;
 	}
 
 	private redirectToLogin() {
@@ -104,7 +227,9 @@ class ApiClient {
 		}
 	}
 
-	private async performTokenRefresh(): Promise<boolean> {
+	private async performTokenRefresh(epoch: number): Promise<boolean> {
+		if (!this.isAuthSessionEpoch(epoch)) return false;
+		const signal = this.epochAbort.signal;
 		const refreshToken = this.getRefreshToken();
 		const body = refreshToken ? JSON.stringify({ refresh_token: refreshToken }) : undefined;
 		const url = `${this.baseUrl}/api/v1/auth/refresh`;
@@ -116,39 +241,53 @@ class ApiClient {
 				method: 'POST',
 				headers,
 				body,
+				signal,
 				credentials: 'include'
 			});
 			const parsed = (await res.json()) as Partial<
 				ApiResult<{
 					tokens?: { access_token?: string; refresh_token?: string };
+					user?: { id?: string };
 				}>
 			>;
 
 			if (
+				this.isAuthSessionEpoch(epoch) &&
+				!signal.aborted &&
 				parsed.code === 0 &&
 				parsed.data?.tokens?.access_token &&
 				typeof parsed.data.tokens.access_token === 'string'
 			) {
-				this.setToken(parsed.data.tokens.access_token);
+				const refreshedPrincipal =
+					parsed.data.user?.id ?? authPrincipal(parsed.data.tokens.access_token);
+				if (this.principal && refreshedPrincipal && this.principal !== refreshedPrincipal)
+					return false;
+				this.principal = this.principal ?? refreshedPrincipal ?? null;
+				this.writeToken(parsed.data.tokens.access_token);
 				if (typeof parsed.data.tokens.refresh_token === 'string') {
-					this.setRefreshToken(parsed.data.tokens.refresh_token);
+					this.writeRefreshToken(parsed.data.tokens.refresh_token);
 				}
 				return true;
 			}
-		} catch (_error) {
+		} catch {
 			return false;
 		}
 
 		return false;
 	}
 
-	private async refreshAccessTokenOnce(): Promise<boolean> {
-		if (!this.refreshInFlight) {
-			this.refreshInFlight = this.performTokenRefresh().finally(() => {
-				this.refreshInFlight = null;
-			});
-		}
-		return this.refreshInFlight;
+	private async refreshAccessTokenOnce(epoch = this.authEpoch): Promise<boolean> {
+		if (!this.isAuthSessionEpoch(epoch)) return false;
+		if (this.refreshInFlight?.epoch === epoch) return this.refreshInFlight.promise;
+		const flight: { epoch: number; promise: Promise<boolean> } = {
+			epoch,
+			promise: Promise.resolve(false)
+		};
+		flight.promise = this.performTokenRefresh(epoch).finally(() => {
+			if (this.refreshInFlight === flight) this.refreshInFlight = null;
+		});
+		this.refreshInFlight = flight;
+		return flight.promise;
 	}
 
 	getToken(): string | null {
@@ -164,8 +303,8 @@ class ApiClient {
 	 * paths share the same `refreshInFlight` promise and never issue two concurrent refreshes.
 	 * Resolves `true` only when the refresh actually produced a new access token.
 	 */
-	async ensureFreshAccessToken(): Promise<boolean> {
-		return this.refreshAccessTokenOnce();
+	async ensureFreshAccessToken(epoch = this.authEpoch): Promise<boolean> {
+		return this.refreshAccessTokenOnce(epoch);
 	}
 
 	async request<T>(
@@ -176,10 +315,13 @@ class ApiClient {
 		additionalHeaders: Record<string, string> = {},
 		signal?: AbortSignal
 	): Promise<ApiResult<T>> {
+		const epoch = this.authEpoch;
+		const requestSignal = this.requestSignal(signal);
 		const url = `${this.baseUrl}${endpoint}`;
 		const headers = new Headers();
 		const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
-		if (!isFormData) headers.set('Content-Type', 'application/json');
+		const isBlob = typeof Blob !== 'undefined' && body instanceof Blob;
+		if (!isFormData) headers.set('Content-Type', isBlob ? body.type : 'application/json');
 		if (this.token) {
 			headers.set('Authorization', `Bearer ${this.token}`);
 		}
@@ -189,28 +331,49 @@ class ApiClient {
 			const res = await fetch(url, {
 				method,
 				headers,
-				body: isFormData ? body : body ? JSON.stringify(body) : undefined,
-				signal,
+				body: isFormData || isBlob ? body : body ? JSON.stringify(body) : undefined,
+				signal: requestSignal,
 				credentials: 'include'
 			});
 
+			if (!this.isAuthSessionEpoch(epoch))
+				return this.bindAuthResult(authSessionChanged<T>(), epoch);
 			const parsed = (await res.json()) as Partial<ApiResult<T>>;
 			const result = normalizeEnvelope<T>(parsed);
+			if (!this.isAuthSessionEpoch(epoch))
+				return this.bindAuthResult(authSessionChanged<T>(), epoch);
 
-			if (result.code === 401) {
+			if (
+				result.code === 401 &&
+				!['/api/v1/auth/login', '/api/v1/auth/logout'].includes(endpoint)
+			) {
 				const isRefreshEndpoint = endpoint === '/api/v1/auth/refresh';
 				if (!isRefreshEndpoint && retryAfterRefresh) {
-					const refreshed = await this.refreshAccessTokenOnce();
+					const refreshed = await this.refreshAccessTokenOnce(epoch);
+					if (!this.isAuthSessionEpoch(epoch))
+						return this.bindAuthResult(authSessionChanged<T>(), epoch);
+					if (signal?.aborted)
+						return {
+							code: 499,
+							message: 'Request aborted',
+							data: null,
+							error_code: 'request_aborted',
+							details: { reason: 'request_cancelled', outcome: 'unknown' }
+						};
 					if (refreshed) {
 						return this.request<T>(method, endpoint, body, false, additionalHeaders, signal);
 					}
 				}
+				if (!this.isAuthSessionEpoch(epoch))
+					return this.bindAuthResult(authSessionChanged<T>(), epoch);
 				this.clearAuth();
 				this.redirectToLogin();
 			}
 
-			return result;
+			return this.bindAuthResult(result);
 		} catch (error) {
+			if (!this.isAuthSessionEpoch(epoch))
+				return this.bindAuthResult(authSessionChanged<T>(), epoch);
 			return {
 				code: 500,
 				message: error instanceof Error ? error.message : 'Network error',
@@ -264,9 +427,11 @@ class ApiClient {
 		onProgress: (progress: UploadProgress) => void,
 		retryAfterRefresh: boolean
 	): Promise<ApiResult<T>> {
+		const epoch = this.authEpoch;
+		const requestSignal = this.requestSignal(signal);
 		const result = await new Promise<ApiResult<T>>((resolve) => {
 			const failed = (message: string): ApiResult<T> => ({ code: 500, message, data: null });
-			if (signal?.aborted) {
+			if (requestSignal.aborted) {
 				resolve(failed('Request aborted'));
 				return;
 			}
@@ -276,12 +441,13 @@ class ApiClient {
 			if (this.token) xhr.setRequestHeader('Authorization', `Bearer ${this.token}`);
 			for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
 			xhr.upload.onprogress = (event) => {
-				onProgress({ loaded: event.loaded, total: event.lengthComputable ? event.total : null });
+				if (this.isAuthSessionEpoch(epoch))
+					onProgress({ loaded: event.loaded, total: event.lengthComputable ? event.total : null });
 			};
 			const onAbort = () => xhr.abort();
-			signal?.addEventListener('abort', onAbort, { once: true });
+			requestSignal.addEventListener('abort', onAbort, { once: true });
 			const settle = (value: ApiResult<T>) => {
-				signal?.removeEventListener('abort', onAbort);
+				requestSignal.removeEventListener('abort', onAbort);
 				resolve(value);
 			};
 			xhr.onload = () => {
@@ -295,8 +461,11 @@ class ApiClient {
 			xhr.onabort = () => settle(failed('Request aborted'));
 			xhr.send(data);
 		});
+		if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged<T>();
 		if (result.code === 401 && retryAfterRefresh) {
-			if (await this.refreshAccessTokenOnce()) {
+			const refreshed = await this.refreshAccessTokenOnce(epoch);
+			if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged<T>();
+			if (refreshed) {
 				return this.xhrFormData<T>(endpoint, data, headers, signal, onProgress, false);
 			}
 			this.clearAuth();
@@ -313,18 +482,39 @@ class ApiClient {
 	 * refresh-and-retry). A JSON response is a business rejection and comes back as its normalised
 	 * envelope with `data: null`; anything else is returned as a `Blob` plus the response headers.
 	 */
-	async getBinary(
+	getBinary(
 		endpoint: string,
-		retryAfterRefresh: boolean = true
+		retryAfterRefresh = true,
+		signal?: AbortSignal
 	): Promise<ApiResult<{ blob: Blob; headers: Headers }>> {
+		return this.requestBinary(endpoint, 'GET', undefined, retryAfterRefresh, signal);
+	}
+
+	postBinary(endpoint: string, input: unknown, signal?: AbortSignal) {
+		return this.requestBinary(endpoint, 'POST', JSON.stringify(input), true, signal);
+	}
+
+	private async requestBinary(
+		endpoint: string,
+		method: 'GET' | 'POST',
+		body: string | undefined,
+		retryAfterRefresh: boolean,
+		signal?: AbortSignal
+	): Promise<ApiResult<{ blob: Blob; headers: Headers }>> {
+		const epoch = this.authEpoch;
+		const requestSignal = this.requestSignal(signal);
 		const headers = new Headers();
 		if (this.token) headers.set('Authorization', `Bearer ${this.token}`);
+		if (body !== undefined) headers.set('Content-Type', 'application/json');
 		try {
 			const res = await fetch(`${this.baseUrl}${endpoint}`, {
-				method: 'GET',
+				method,
+				body,
+				signal: requestSignal,
 				headers,
 				credentials: 'include'
 			});
+			if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged();
 			const contentType = res.headers.get('Content-Type') ?? '';
 			// JSON is also a legitimate export format. Only the declared Flow artifact contract
 			// distinguishes those raw bytes from the platform's HTTP-200 error envelopes.
@@ -336,9 +526,12 @@ class ApiClient {
 				const result = normalizeEnvelope<{ blob: Blob; headers: Headers }>(
 					(await res.json()) as Partial<ApiResult<{ blob: Blob; headers: Headers }>>
 				);
+				if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged();
 				if (result.code === 401) {
-					if (retryAfterRefresh && (await this.refreshAccessTokenOnce())) {
-						return this.getBinary(endpoint, false);
+					const refreshed = retryAfterRefresh && (await this.refreshAccessTokenOnce(epoch));
+					if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged();
+					if (refreshed) {
+						return this.requestBinary(endpoint, method, body, false, signal);
 					}
 					this.clearAuth();
 					this.redirectToLogin();
@@ -346,8 +539,11 @@ class ApiClient {
 				return { ...result, data: null };
 			}
 			if (!res.ok) return { code: res.status, message: 'Download failed', data: null };
-			return { code: 0, message: 'ok', data: { blob: await res.blob(), headers: res.headers } };
+			const blob = await res.blob();
+			if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged();
+			return { code: 0, message: 'ok', data: { blob, headers: res.headers } };
 		} catch (error) {
+			if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged();
 			return {
 				code: 500,
 				message: error instanceof Error ? error.message : 'Network error',

@@ -7,7 +7,7 @@ use super::{collab::authz::PermissionLevel, package_import as shared, scope};
 use crate::error::ApiError;
 use crate::flow::json_value::FlowJson;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use chrono::{DateTime, Utc};
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -82,7 +82,7 @@ pub async fn upload(
         return Ok(result);
     }
     let artifact = Uuid::new_v4();
-    let expiry = Utc::now() + chrono::Duration::minutes(30);
+    let expiry = Timestamp::now() + time::Duration::minutes(30);
     let size = i64::try_from(bytes.len()).map_err(|_| ApiError::internal())?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_package_artifacts(id,scope_id,workspace_id,actor_kind,actor_id,purpose,package_sha256,idempotency_key,request_hash,size_bytes,package_bytes,expires_at) VALUES($1,$2,NULL,'user',$3,'import',$4,$5,$4,$6,$7,$8)",vec![artifact.into(),scope_id.into(),user.into(),verified.package_sha256.clone().into(),key.into(),size.into(),bytes.into(),expiry.into()])).await?;
     let event = super::scope_event::insert_object_audit(
@@ -230,7 +230,7 @@ pub async fn preview(
     let mapping = json!({"target_scope_id":scope_id,"scope_map":scope_map,"workspace_map":{},"object_map":objects,"document_map":documents,"relation_map":relations,"project_map":input.project_mapping,"external_reference_policy":input.external_reference_policy,"conflict_policy":input.conflict_policy});
     let mapping_hash = shared::sha256_json(&mapping)?;
     let preview = Uuid::new_v4();
-    let expiry = Utc::now() + chrono::Duration::minutes(30);
+    let expiry = Timestamp::now() + time::Duration::minutes(30);
     let summary = shared::manifest_summary(&plan);
     let estimated = shared::estimated_changes(&plan);
     let result = json!({"preview_id":preview,"package_id":plan.verified.manifest.package_id,"package_sha256":hash,"mapping_hash":mapping_hash,"manifest_summary":summary,"mapping":mapping,"conflicts":conflicts,"conflict_details":[],"warnings":["crdt_snapshot_history_retained","inner_reference_validation_before_promotion"],"estimated_changes":estimated,"expires_at":expiry.to_rfc3339()});
@@ -344,7 +344,17 @@ async fn validate_snapshots(bytes: &[u8], plan: &shared::PackagePlan) -> Result<
                     ApiError::unsupported_protocol("isolated worker lacks the v2 package fingerprint reader")
                 })?
             }
-            super::package::PackageSemanticModel::V3 => validated.to_snapshot.semantic_hash(),
+            super::package::PackageSemanticModel::V3 => {
+                validated.legacy_package_semantic_hash_v3.clone().ok_or_else(|| {
+                    ApiError::unsupported_protocol("isolated worker lacks the v3 package fingerprint reader")
+                })?
+            }
+            super::package::PackageSemanticModel::V4 => {
+                validated.legacy_package_semantic_hash_v4.clone().ok_or_else(|| {
+                    ApiError::unsupported_protocol("isolated worker lacks the v4 compatible package reader")
+                })?
+            }
+            super::package::PackageSemanticModel::V5 => validated.to_snapshot.semantic_hash(),
         };
         if hash != object.semantic_hash {
             return Err(ApiError::checksum_mismatch(
@@ -486,7 +496,7 @@ pub async fn commit(
         tx.commit().await?;
         return Ok(receipt);
     }
-    if row.try_get::<DateTime<Utc>>("", "expires_at")? <= Utc::now() {
+    if row.try_get::<Timestamp>("", "expires_at")? <= Timestamp::now() {
         return Err(ApiError::policy_rejected_with_details(
             "import preview expired",
             json!({"reason":"preview_expired"}),
@@ -540,7 +550,7 @@ pub async fn commit(
             "another import intent completed this preview; reload its report",
         ));
     }
-    if frozen.try_get::<DateTime<Utc>>("", "expires_at")? <= Utc::now() {
+    if frozen.try_get::<Timestamp>("", "expires_at")? <= Timestamp::now() {
         return Err(ApiError::policy_rejected_with_details(
             "import preview expired",
             json!({"reason":"preview_expired"}),
@@ -552,7 +562,7 @@ pub async fn commit(
         return Err(ApiError::policy_rejected("package objects already have import lineage"));
     }
     let job = Uuid::new_v4();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let source_scope = plan
         .verified
         .manifest
@@ -627,6 +637,22 @@ pub async fn commit(
             },
         )
         .await?;
+        if object.object_type == "page" {
+            super::block_registry::reconcile_accepted(
+                &tx,
+                target,
+                object.accepted_seq,
+                &super::block_registry::prepare(&valid.semantic)?,
+            )
+            .await?;
+            super::body_assets::reconcile_accepted(
+                &tx,
+                target,
+                object.accepted_seq,
+                &super::body_assets::typed_references(&valid.semantic)?,
+            )
+            .await?;
+        }
         ImportLineage {
             tx: &tx,
             scope_id,
@@ -704,7 +730,7 @@ pub async fn commit(
         json!({}),
     )
     .await?;
-    let report = json!({"import_id":job,"package_id":plan.verified.manifest.package_id,"package_sha256":hash,"source_scope_id":source_scope,"source_workspace_id":source_workspace,"target_scope_id":scope_id,"target_workspace_id":null,"status":"completed","mapping_hash":input.mapping_hash,"conflict_policy":input.conflict_policy,"counts":{"planned":plan.objects.len(),"created":created,"reused":reused,"relations":plan.relations.len()-detached.len()},"object_mapping":objects,"document_mapping":documents,"detached_references":detached,"warnings":["crdt_snapshot_history_retained","inner_reference_validation_before_promotion"],"started_at":now.to_rfc3339(),"finished_at":Utc::now().to_rfc3339(),"actor":user,"audit_event_id":event});
+    let report = json!({"import_id":job,"package_id":plan.verified.manifest.package_id,"package_sha256":hash,"source_scope_id":source_scope,"source_workspace_id":source_workspace,"target_scope_id":scope_id,"target_workspace_id":null,"status":"completed","mapping_hash":input.mapping_hash,"conflict_policy":input.conflict_policy,"counts":{"planned":plan.objects.len(),"created":created,"reused":reused,"relations":plan.relations.len()-detached.len()},"object_mapping":objects,"document_mapping":documents,"detached_references":detached,"warnings":["crdt_snapshot_history_retained","inner_reference_validation_before_promotion"],"started_at":now.to_rfc3339(),"finished_at":Timestamp::now().to_rfc3339(),"actor":user,"audit_event_id":event});
     tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_import_jobs SET status='completed',report=$2,audit_event_id=$3,finished_at=now(),updated_at=now() WHERE id=$1",vec![job.into(),report.into(),event.into()])).await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -857,6 +883,12 @@ mod tests {
         let proof = collab_core::isolation::wire::ReplayDiffResult {
             semantic_diff: collab_core::SemanticDiff::default(),
             to_snapshot: engine.semantic_snapshot().unwrap(),
+            legacy_package_semantic_hash_v4: Some(
+                engine.legacy_package_semantic_snapshot_v4().unwrap().semantic_hash(),
+            ),
+            legacy_package_semantic_hash_v3: Some(
+                engine.legacy_package_semantic_snapshot_v3().unwrap().semantic_hash(),
+            ),
             from_title: engine.title().unwrap(),
             to_title: engine.title().unwrap(),
             package_reference_remap_required: Some(

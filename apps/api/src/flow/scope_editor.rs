@@ -56,6 +56,54 @@ pub async fn require_admitted(db: &DatabaseConnection, object: Uuid) -> Result<(
     let unsupported = engine.initialize_page_editor().is_err();
     Err(admission_error(seq, &frontier, unsupported))
 }
+pub async fn require_model(db: &DatabaseConnection, object: Uuid, client: u32) -> Result<(), ApiError> {
+    if client >= 5 {
+        return Ok(());
+    }
+    let (document, _, _) = document(db, object).await?;
+    let engine = super::document::load_head_engine(db, document).await?;
+    let minimum = engine
+        .minimum_editor_model()
+        .map_err(|e| super::command::map_collab_error(&e))?;
+    if client < minimum {
+        return Err(model_error(client, minimum));
+    }
+    Ok(())
+}
+pub fn require_bootstrap_model(bootstrap: &Value, client: u32) -> Result<(), ApiError> {
+    if client >= 5 {
+        return Ok(());
+    }
+    let snapshot = STANDARD
+        .decode(bootstrap["snapshot_base64"].as_str().ok_or_else(ApiError::internal)?)
+        .map_err(|_| ApiError::internal())?;
+    let mut engine =
+        collab_core::LoroCollabEngine::load(&snapshot).map_err(|e| super::command::map_collab_error(&e))?;
+    if let Some(updates) = bootstrap["tail_updates"].as_array() {
+        for update in updates {
+            let bytes = STANDARD
+                .decode(update["bytes"].as_str().ok_or_else(ApiError::internal)?)
+                .map_err(|_| ApiError::internal())?;
+            engine
+                .import_update(&bytes)
+                .map_err(|e| super::command::map_collab_error(&e))?;
+        }
+    }
+    let minimum = engine
+        .minimum_editor_model()
+        .map_err(|e| super::command::map_collab_error(&e))?;
+    if client < minimum {
+        return Err(model_error(client, minimum));
+    }
+    Ok(())
+}
+pub fn model_error(client: u32, minimum: u32) -> ApiError {
+    ApiError::typed_with_details(
+        ApiErrorKind::UnsupportedProtocol,
+        "refresh to a client that supports this Page format",
+        json!({"reason":"editor_upgrade_required","minimum_editor_model":minimum,"client_editor_model":client}),
+    )
+}
 pub async fn decorate(db: &DatabaseConnection, object: Uuid, user: Uuid, view: &mut Value) -> Result<(), ApiError> {
     let page = view.get("object_type").and_then(Value::as_str) == Some("page");
     if !page && view.get("object_type").and_then(Value::as_str) != Some("navigator") {
@@ -95,6 +143,27 @@ pub async fn decorate(db: &DatabaseConnection, object: Uuid, user: Uuid, view: &
         }
         return Ok(());
     }
+    let minimum = engine
+        .minimum_editor_model()
+        .map_err(|e| super::command::map_collab_error(&e))?;
+    view["minimum_editor_model"] = json!(minimum);
+    view["editor_model"] = json!(if minimum >= 5 {
+        "rich_page_v5"
+    } else if minimum >= 4 {
+        "rich_page_v4"
+    } else {
+        "plain_v1"
+    });
+    view["body_asset_authentication"] = json!("user_session");
+    view["child_page_authentication"] = json!("user_session");
+    view["body_assets_supported"] = json!(scope::capabilities(db).await?.minimum_reader_version >= 4);
+    view["rendered_export_asset_mode"] = json!("authenticated_current_references_no_bytes");
+    view["historical_asset_reads_supported"] = json!(false);
+    view["editor_structure_state"] = json!(if engine.has_editor_structure() {
+        "ready"
+    } else {
+        "initialization_required"
+    });
     view["editor_state"] = json!(if engine.has_editor_doc() {
         "ready"
     } else if engine.initialize_page_editor().is_ok() {
@@ -133,16 +202,22 @@ pub async fn initialize(
             "only an active Page can initialize editor prose",
         ));
     }
-    if !payload.as_object().is_some_and(serde_json::Map::is_empty) {
+    let rich = payload == json!({"model":"rich_page_v4"}) || payload == json!({"model":"rich_page_v5"});
+    let model = if payload.get("model").and_then(Value::as_str) == Some("rich_page_v5") {
+        5
+    } else {
+        4
+    };
+    if !rich && !payload.as_object().is_some_and(serde_json::Map::is_empty) {
         return Err(ApiError::invalid_update(
-            "initialize_editor_doc accepts only an empty payload",
+            "initialize_editor_doc accepts an empty payload or model=rich_page_v4",
         ));
     }
     let expected_bytes = STANDARD
         .decode(expected)
         .map_err(|_| ApiError::invalid_update("invalid expected_frontier"))?;
     let body =
-        json!({"operation":"initialize_editor_doc","object_id":object,"expected_frontier":expected,"payload":{}});
+        json!({"operation":"initialize_editor_doc","object_id":object,"expected_frontier":expected,"payload":payload});
     if let Some(result) = super::scope_commands::replay(db, identity.scope_id, user, key, &body).await? {
         return Ok(result);
     }
@@ -173,9 +248,14 @@ pub async fn initialize(
             None,
         ));
     }
-    let changed = engine
+    let mut changed = engine
         .initialize_page_editor()
         .map_err(|_| admission_error(seq, &frontier, true))?;
+    if rich {
+        changed |= engine
+            .initialize_page_structure_model(model)
+            .map_err(|e| super::command::map_collab_error(&e))?;
+    }
     if !changed {
         let tx = db.begin().await?;
         require_write(&tx, &identity).await?;
@@ -238,4 +318,54 @@ pub async fn require_document_admitted(db: &DatabaseConnection, document: Uuid) 
         .await?
         .ok_or_else(|| ApiError::not_found("document not found"))?;
     require_admitted(db, row.try_get("", "object_id")?).await
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+    #[test]
+    fn client4_gate_rejects_active_and_undone_model5_carriers_but_client5_reads_them() {
+        let mut engine = collab_core::LoroCollabEngine::new_empty(9919);
+        engine.initialize_page_editor().unwrap();
+        engine.initialize_page_structure().unwrap();
+        let boot = |engine: &collab_core::LoroCollabEngine| json!({"snapshot_base64":STANDARD.encode(engine.export_snapshot().unwrap()),"tail_updates":[]});
+        require_bootstrap_model(&boot(&engine), 4).unwrap();
+        let cid = engine
+            .insert_page_atom(
+                "media",
+                None,
+                1,
+                "image",
+                &json!({"asset_id":"11111111-1111-4111-8111-111111111111","alt":"","caption":"","indent":0}),
+            )
+            .unwrap();
+        assert_eq!(
+            require_bootstrap_model(&boot(&engine), 4).unwrap_err().kind(),
+            ApiErrorKind::UnsupportedProtocol
+        );
+        require_bootstrap_model(&boot(&engine), 5).unwrap();
+        engine
+            .apply_content_operation(&collab_core::Operation::DeleteNode { id: cid.into() })
+            .unwrap();
+        assert_eq!(
+            require_bootstrap_model(&boot(&engine), 4).unwrap_err().kind(),
+            ApiErrorKind::UnsupportedProtocol
+        );
+        require_bootstrap_model(&boot(&engine), 5).unwrap();
+        assert!(engine.legacy_package_semantic_snapshot_v4().is_err());
+    }
+    #[test]
+    fn exact_bootstrap_model_admission_preserves_plain_and_rejects_old_rich_reader() {
+        let mut engine = collab_core::LoroCollabEngine::new_empty(998);
+        engine.initialize_page_editor().unwrap();
+        let boot = |engine: &collab_core::LoroCollabEngine| json!({"snapshot_base64":STANDARD.encode(engine.export_snapshot().unwrap()),"tail_updates":[]});
+        require_bootstrap_model(&boot(&engine), 1).unwrap();
+        engine.initialize_page_structure().unwrap();
+        let rich = boot(&engine);
+        let error = require_bootstrap_model(&rich, 1).unwrap_err();
+        assert_eq!(error.kind(), ApiErrorKind::UnsupportedProtocol);
+        require_bootstrap_model(&rich, 4).unwrap();
+        let minimum = engine.minimum_editor_model().unwrap();
+        assert_eq!(minimum, 4);
+    }
 }

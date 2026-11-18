@@ -309,7 +309,21 @@
 									data-target-id={target.id}
 									data-state={target.state}
 								>
-									{#if target.state === 'record'}
+									{#if target.state === 'form'}
+										<a
+											class={linkClass}
+											href={resolve(
+												`/(app)/workspace/[workspaceId]/projects/[projectId]/forms?form=${encodeURIComponent(target.id)}`,
+												{
+													workspaceId: target.workspaceId ?? workspaceId!,
+													projectId: target.projectId
+												}
+											)}
+											data-testid="flow-conversion-target-link"
+											>{target.title || $t('flow.bridge.job.field.targetUntitled')}</a
+										>
+										<span class="block {monoClass}">{target.id}</span>
+									{:else if target.state === 'record'}
 										<a
 											class={linkClass}
 											href={resolve(

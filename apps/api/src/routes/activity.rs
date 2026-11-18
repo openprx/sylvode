@@ -123,7 +123,7 @@ pub async fn get_workspace_activities(
         actor_name: Option<String>,
         actor_email: Option<String>,
         payload: serde_json::Value,
-        created_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
     }
 
     let activities = ActivityRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, &sql, values))
@@ -232,7 +232,7 @@ pub async fn get_project_activities(
         actor_name: Option<String>,
         actor_email: Option<String>,
         payload: serde_json::Value,
-        created_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
     }
 
     let activities = ActivityRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, &sql, values))
@@ -300,7 +300,7 @@ pub async fn get_issue_activities(
         author_name: Option<String>,
         action: String,
         detail: serde_json::Value,
-        created_at: chrono::DateTime<chrono::Utc>,
+        created_at: platform::timestamp::Timestamp,
     }
 
     let activities = ActivityRow::find_by_statement(Statement::from_sql_and_values(

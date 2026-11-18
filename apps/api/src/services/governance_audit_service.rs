@@ -1,4 +1,4 @@
-use chrono::Utc;
+use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DbBackend, Statement, Value as SeaValue};
 use serde_json::Value;
 use uuid::Uuid;
@@ -54,7 +54,7 @@ pub async fn write_governance_audit_log<C: ConnectionTrait>(
             old_value,
             new_value,
             metadata,
-            Utc::now().into(),
+            Timestamp::now().into(),
         ],
     ))
     .await?;

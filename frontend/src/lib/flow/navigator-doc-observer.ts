@@ -1,3 +1,4 @@
+import { editorObservation } from './editor-batch';
 // Follow the accepted navigator order map on the current document, including recovery replacement.
 interface NavigatorDocument {
 	subscribe(listener: (event: { by: 'local' | 'import' | 'checkout' }) => void): () => void;
@@ -16,8 +17,10 @@ export function observeNavigatorDocument(
 	const unsubscribeGeneration = binding.docGeneration.subscribe(() => {
 		unsubscribeDoc();
 		unsubscribeDoc = binding.doc.subscribe((event) => {
-			changed();
-			if (event.by !== 'local') remote();
+			editorObservation(binding.doc, changed, () => {
+				changed();
+				if (event.by !== 'local') remote();
+			});
 		});
 		changed();
 		if (initialized) remote();

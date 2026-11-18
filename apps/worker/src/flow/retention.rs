@@ -4,6 +4,7 @@
 //! edit-tier Page archive has `permanent_cleanup_after IS NULL` and is therefore invisible to
 //! this job.
 
+use platform::timestamp::Timestamp;
 use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use uuid::Uuid;
 
@@ -20,13 +21,13 @@ pub struct TickReport {
 }
 
 pub async fn run_tick(db: &DatabaseConnection, requested_batch_size: usize) -> anyhow::Result<TickReport> {
-    run_tick_at(db, requested_batch_size, chrono::Utc::now()).await
+    run_tick_at(db, requested_batch_size, Timestamp::now()).await
 }
 
 async fn run_tick_at(
     db: &DatabaseConnection,
     requested_batch_size: usize,
-    now: chrono::DateTime<chrono::Utc>,
+    now: Timestamp,
 ) -> anyhow::Result<TickReport> {
     if api::flow::rollback::control(db).await?.retention_paused {
         return Ok(TickReport::default());
@@ -70,7 +71,7 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    use super::{TickReport, run_tick_at};
+    use super::{TickReport, Timestamp, run_tick_at};
 
     const TEST_DATABASE_URL_ENV: &str = "OPENPR_TEST_DATABASE_URL";
 
@@ -239,7 +240,7 @@ mod tests {
             vec![],
         )
         .await;
-        let paused = run_tick_at(&scratch.db, 10, chrono::Utc::now() + chrono::Duration::days(31))
+        let paused = run_tick_at(&scratch.db, 10, Timestamp::now() + time::Duration::days(31))
             .await
             .expect("paused retention tick succeeds without work");
         assert_eq!(paused, TickReport::default());
@@ -263,7 +264,7 @@ mod tests {
             vec![],
         )
         .await;
-        let report = run_tick_at(&scratch.db, 10, chrono::Utc::now() + chrono::Duration::days(31))
+        let report = run_tick_at(&scratch.db, 10, Timestamp::now() + time::Duration::days(31))
             .await
             .expect("retention tick succeeds");
         assert_eq!(report.deleted, 1);
@@ -281,7 +282,7 @@ mod tests {
         assert_eq!(survivor.try_get::<Uuid>("", "id").expect("survivor id"), page);
         assert_eq!(
             survivor
-                .try_get::<Option<chrono::DateTime<chrono::Utc>>>("", "permanent_cleanup_after")
+                .try_get::<Option<Timestamp>>("", "permanent_cleanup_after")
                 .expect("cleanup deadline"),
             None
         );
