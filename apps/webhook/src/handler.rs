@@ -217,6 +217,8 @@ fn no_agent_outcome(target: &BotDispatchTarget) -> ai_task::TaskOutcome {
         exit_code: None,
         duration_ms: None,
         output: None,
+        // No agent will match on a retry either, unless the configuration changes.
+        retryable: false,
     }
 }
 
@@ -289,13 +291,31 @@ pub async fn handle_webhook(
         "form_key": target.form_key.as_deref(),
     });
 
+    // For a worker AI task, whether its outcome will be reported to the Sylvode API.
+    let task_bot = ai_task_bot(&payload);
+    let callback = |agent| task_bot.map(|bot| state.config.ai_task_callback_for(agent, bot).answer());
+
     if let Some(a) = select_agent(&state.config.agents, &target) {
         tracing::info!(agent = ?a.id, agent_type = ?a.agent_type, "Dispatching to agent");
         let result = dispatcher::dispatch(&state.config, &state.background, a, &payload).await;
         tracing::info!(agent = ?a.id, detail = ?result.detail, "Dispatch result");
-        Ok(Json(
-            json!({"status": "dispatched", "agent": a.id, "result": result.summary, "route": route}),
-        ))
+        if result.outcome == dispatcher::Outcome::Refused {
+            // The agent was not started; the worker fails the task on this answer.
+            return Ok(Json(json!({
+                "status": "refused",
+                "agent": a.id,
+                "reason": result.summary,
+                "route": route,
+                "ai_task_callback": callback(Some(a)),
+            })));
+        }
+        Ok(Json(json!({
+            "status": "dispatched",
+            "agent": a.id,
+            "result": result.summary,
+            "route": route,
+            "ai_task_callback": callback(Some(a)),
+        })))
     } else {
         tracing::warn!(
             bot_key = ?target.bot_key,
@@ -304,15 +324,29 @@ pub async fn handle_webhook(
             trigger_kind = ?target.trigger_kind,
             "No agent for bot task"
         );
-        // A worker AI task is `processing` in Sylvode from the moment it was delivered; with
-        // `[ai_task_callback]` enabled, fail it now instead of leaving it there for good.
+        let outcome = no_agent_outcome(&target);
+        let reason = outcome.summary.clone();
+        // A worker AI task is `processing` in Sylvode from the moment it was delivered. The worker
+        // fails it on this answer; with `[ai_task_callback]` enabled and a token of the task's bot
+        // configured, it is reported failed here too (whichever arrives first ends it).
         if let Some(completion) = ai_task::Completion::for_unmatched(&state.config, &payload) {
-            completion.report_in_background(no_agent_outcome(&target), &state.background);
+            completion.report_in_background(outcome, &state.background);
         }
-        Ok(Json(
-            json!({"status": "no_agent", "bot_key": target.bot_key, "route": route}),
-        ))
+        Ok(Json(json!({
+            "status": "no_agent",
+            "bot_key": target.bot_key,
+            "reason": reason,
+            "route": route,
+            "ai_task_callback": callback(None),
+        })))
     }
+}
+
+/// The bot of a worker AI task delivery (`ai_participant_id` next to a `task_id`), or `None` for
+/// any other delivery.
+fn ai_task_bot(payload: &Value) -> Option<&str> {
+    string_field(payload, "task_id")?;
+    string_field(payload, "ai_participant_id")
 }
 
 #[cfg(test)]

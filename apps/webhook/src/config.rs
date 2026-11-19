@@ -111,9 +111,18 @@ pub struct AiTaskCallbackConfig {
     /// Base URL of the Sylvode API, for example `http://127.0.0.1:8080`. Required when enabled.
     pub api_url: Option<String>,
     /// Bearer token: the `opr_` token of the bot that is the task's AI participant (the API only
-    /// lets the assigned participant, or a system administrator, end a task). An agent can
-    /// override it with `[agents.ai_task_callback].token`.
+    /// lets the assigned participant, or a system administrator, end a task). It works only for
+    /// the tasks of the bot that owns it. An agent can override it with
+    /// `[agents.ai_task_callback].token`, and `bots` gives other bots their own token.
     pub token: Option<String>,
+    /// The id of the bot that owns `token`. When set, `token` is used only for that bot's tasks;
+    /// when not set, it is used for every task no other token covers (and the API refuses it for
+    /// the tasks of any other bot).
+    pub bot_id: Option<String>,
+    /// Tokens of further bots, keyed by bot id (`[[ai_task_callback.bots]]`): used for the tasks
+    /// of that bot that no agent token covers, including tasks no agent matches.
+    #[serde(default)]
+    pub bots: Vec<AiTaskCallbackBotConfig>,
     /// The transport the token is registered with in Sylvode (`workspace_bots.transport_surface`).
     /// `rest` sends no surface header; any other value is sent as `X-Sylvode-MCP-Surface`.
     #[serde(default = "default_ai_task_surface")]
@@ -135,12 +144,25 @@ impl Default for AiTaskCallbackConfig {
             enabled: false,
             api_url: None,
             token: None,
+            bot_id: None,
+            bots: Vec::new(),
             surface: default_ai_task_surface(),
             max_attempts: default_ai_task_max_attempts(),
             retry_delay_ms: default_ai_task_retry_delay_ms(),
             max_output_chars: default_ai_task_max_output_chars(),
         }
     }
+}
+
+/// The callback token of one bot (`[[ai_task_callback.bots]]`).
+#[derive(Deserialize, Clone, Debug)]
+pub struct AiTaskCallbackBotConfig {
+    /// The bot's user id in Sylvode (a UUID), as the worker sends it in `ai_participant_id`.
+    pub bot_id: String,
+    /// The bot's `opr_` token.
+    pub token: String,
+    /// The transport the token is registered with; defaults to `ai_task_callback.surface`.
+    pub surface: Option<String>,
 }
 
 /// Per-agent overrides of [`AiTaskCallbackConfig`].
@@ -163,6 +185,29 @@ pub struct AiTaskCallbackTarget<'a> {
     pub api_url: &'a str,
     pub token: &'a str,
     pub surface: &'a str,
+}
+
+/// Whether and how the outcome of one worker AI task is reported.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AiTaskCallback<'a> {
+    /// The callback does not apply: it is disabled, safe mode is on, or the agent opts out.
+    Off,
+    /// Report with this target.
+    Report(AiTaskCallbackTarget<'a>),
+    /// The callback applies, but no configured token belongs to the task's bot. Calling the API
+    /// with another bot's token would only be refused, so nothing is called.
+    NoToken,
+}
+
+impl AiTaskCallback<'_> {
+    /// The value of `ai_task_callback` in the `/webhook` answer to a worker AI task.
+    pub const fn answer(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Report(_) => "report",
+            Self::NoToken => "no_token",
+        }
+    }
 }
 
 #[derive(Deserialize, Clone, Debug, Default)]
@@ -422,6 +467,23 @@ fn agent_ai_task_token<'a>(cfg: &'a AiTaskCallbackConfig, agent: &'a AgentConfig
         .as_ref()
         .and_then(|o| o.token.as_deref())
         .or(cfg.token.as_deref())
+}
+
+/// Whether `bot_id` (a configured id) names the task bot `task_bot` (the delivery's
+/// `ai_participant_id`): both are UUIDs and equal, whatever their case.
+fn same_bot(bot_id: &str, task_bot: &str) -> bool {
+    match (
+        uuid::Uuid::parse_str(bot_id.trim()),
+        uuid::Uuid::parse_str(task_bot.trim()),
+    ) {
+        (Ok(configured), Ok(task)) => configured == task,
+        _ => false,
+    }
+}
+
+/// Whether `token` is filled in: not blank and not a placeholder.
+fn usable_token(token: &str) -> bool {
+    !token.trim().is_empty() && !is_placeholder(token)
 }
 
 /// Refuses an `ai_task_callback.api_url` that is not an absolute `http(s)` URL without
@@ -745,7 +807,13 @@ impl Config {
                 Some((format!("agent `{}`: ai_task_callback.surface", agent.id), surface))
             }),
         );
-        for (key, surface) in surfaces {
+        let bot_surfaces = cfg.bots.iter().filter_map(|bot| {
+            Some((
+                format!("ai_task_callback.bots (bot {}): surface", bot.bot_id.trim()),
+                bot.surface.as_deref()?,
+            ))
+        });
+        for (key, surface) in surfaces.chain(bot_surfaces) {
             if !AI_TASK_SURFACES.contains(&surface) {
                 return Err(format!(
                     "{key} = \"{surface}\" is not a transport a Sylvode bot token can be registered with; \
@@ -753,6 +821,27 @@ impl Config {
                     AI_TASK_SURFACES.join(", ")
                 ));
             }
+        }
+        let bot_ids = cfg
+            .bot_id
+            .iter()
+            .map(|id| ("ai_task_callback.bot_id", id))
+            .chain(cfg.bots.iter().map(|bot| ("ai_task_callback.bots.bot_id", &bot.bot_id)));
+        let mut seen = Vec::new();
+        for (key, id) in bot_ids {
+            let Ok(parsed) = uuid::Uuid::parse_str(id.trim()) else {
+                return Err(format!(
+                    "{key} = \"{id}\" is not a bot id; use the bot's user id in Sylvode (a UUID, the \
+                     `ai_participant_id` of its tasks)"
+                ));
+            };
+            if seen.contains(&parsed) {
+                return Err(format!(
+                    "bot {parsed} has more than one AI task callback token (ai_task_callback.bot_id and \
+                     [[ai_task_callback.bots]]); keep one"
+                ));
+            }
+            seen.push(parsed);
         }
         if !cfg.enabled {
             return Ok(());
@@ -771,13 +860,36 @@ impl Config {
                 cfg.retry_delay_ms
             ));
         }
+        for bot in &cfg.bots {
+            if !usable_token(&bot.token) {
+                return Err(format!(
+                    "ai_task_callback is enabled but [[ai_task_callback.bots]] entry for bot {} has no usable \
+                     token: set it to that bot's opr_ token",
+                    bot.bot_id.trim()
+                ));
+            }
+        }
+        if cfg.bot_id.is_some() && !cfg.token.as_deref().is_some_and(usable_token) {
+            return Err(
+                "ai_task_callback.bot_id is set but ai_task_callback.token is not: set the token of that bot, \
+                 or remove bot_id"
+                    .to_string(),
+            );
+        }
+        // An agent may also report with the token of the task's bot from `bots`, so with any
+        // `bots` entry an agent without its own token is accepted; a task whose bot has no token
+        // is then answered `no_token` instead of being reported with the wrong one.
+        let has_bot_tokens = !cfg.bots.is_empty();
         for agent in self.agents.iter().filter(|agent| agent_reports_ai_tasks(agent)) {
+            let own_token = agent.ai_task_callback.as_ref().and_then(|o| o.token.as_deref());
             let token = agent_ai_task_token(cfg, agent).unwrap_or_default();
-            if token.trim().is_empty() || is_placeholder(token) {
+            let covered = usable_token(token) || (own_token.is_none() && has_bot_tokens);
+            if !covered {
                 return Err(format!(
                     "ai_task_callback is enabled but agent `{}` has no usable token: set \
-                     ai_task_callback.token or [agents.ai_task_callback].token to the opr_ token of the bot \
-                     that is the task's AI participant, or set [agents.ai_task_callback].enabled = false",
+                     ai_task_callback.token, [agents.ai_task_callback].token or a [[ai_task_callback.bots]] \
+                     entry to the opr_ token of the bot that is the task's AI participant (a token works only \
+                     for the tasks of the bot that owns it), or set [agents.ai_task_callback].enabled = false",
                     agent.id
                 ));
             }
@@ -785,42 +897,47 @@ impl Config {
         Ok(())
     }
 
-    /// Where and how `agent` reports the outcome of a worker AI task; `None` when it does not
-    /// (the feature is off, safe mode is on, or the agent opts out).
-    pub fn ai_task_callback_target<'a>(&'a self, agent: &'a AgentConfig) -> Option<AiTaskCallbackTarget<'a>> {
+    /// How the outcome of a worker AI task for bot `task_bot` is reported: by `agent`, or, with
+    /// `None`, for a task no agent matches.
+    ///
+    /// The token is the first that applies: the agent's own `[agents.ai_task_callback].token`, the
+    /// `[[ai_task_callback.bots]]` entry of the task's bot, then the global `token` (only for its
+    /// `bot_id` when that is set). Without one the answer is [`AiTaskCallback::NoToken`].
+    pub fn ai_task_callback_for<'a>(&'a self, agent: Option<&'a AgentConfig>, task_bot: &str) -> AiTaskCallback<'a> {
         let cfg = &self.ai_task_callback;
-        if self.safe_mode || !cfg.enabled || !agent_reports_ai_tasks(agent) {
-            return None;
+        if self.safe_mode || !cfg.enabled || agent.is_some_and(|agent| !agent_reports_ai_tasks(agent)) {
+            return AiTaskCallback::Off;
         }
-        let surface = agent
-            .ai_task_callback
-            .as_ref()
-            .and_then(|o| o.surface.as_deref())
-            .unwrap_or(cfg.surface.as_str());
-        Some(AiTaskCallbackTarget {
-            api_url: cfg.api_url.as_deref()?,
-            token: agent_ai_task_token(cfg, agent)?,
-            surface,
-        })
-    }
-
-    /// Where and how to fail a worker AI task that no agent matches: the global API URL, token and
-    /// surface. `None` when the feature is off, safe mode is on, or there is no usable global token
-    /// (agents may each carry their own, but an unmatched task has no agent).
-    pub fn ai_task_callback_unmatched_target(&self) -> Option<AiTaskCallbackTarget<'_>> {
-        let cfg = &self.ai_task_callback;
-        if self.safe_mode || !cfg.enabled {
-            return None;
+        let Some(api_url) = cfg.api_url.as_deref() else {
+            return AiTaskCallback::Off;
+        };
+        let agent_override = agent.and_then(|agent| agent.ai_task_callback.as_ref());
+        let agent_surface = agent_override.and_then(|o| o.surface.as_deref());
+        let target = |token: &'a str, surface: Option<&'a str>| {
+            AiTaskCallback::Report(AiTaskCallbackTarget {
+                api_url,
+                token,
+                surface: surface.unwrap_or(cfg.surface.as_str()),
+            })
+        };
+        if let Some(token) = agent_override
+            .and_then(|o| o.token.as_deref())
+            .filter(|t| usable_token(t))
+        {
+            return target(token, agent_surface);
         }
-        let token = cfg
-            .token
-            .as_deref()
-            .filter(|token| !token.trim().is_empty() && !is_placeholder(token))?;
-        Some(AiTaskCallbackTarget {
-            api_url: cfg.api_url.as_deref()?,
-            token,
-            surface: cfg.surface.as_str(),
-        })
+        if let Some(bot) = cfg
+            .bots
+            .iter()
+            .find(|bot| same_bot(&bot.bot_id, task_bot) && usable_token(&bot.token))
+        {
+            return target(&bot.token, bot.surface.as_deref());
+        }
+        let owner_matches = cfg.bot_id.as_deref().is_none_or(|owner| same_bot(owner, task_bot));
+        match cfg.token.as_deref().filter(|token| usable_token(token)) {
+            Some(token) if owner_matches => target(token, agent_surface),
+            _ => AiTaskCallback::NoToken,
+        }
     }
 
     /// Configurations that start but deserve a prominent warning in the log.
@@ -849,6 +966,16 @@ impl Config {
             warnings.push(
                 "security.webhook_secrets is empty and allow_unsigned = false: every /webhook request will be \
                  answered 401. Add the secret configured on the Sylvode webhook"
+                    .to_string(),
+            );
+        }
+        let callback = &self.ai_task_callback;
+        if callback.enabled && callback.bot_id.is_none() && callback.token.as_deref().is_some_and(usable_token) {
+            warnings.push(
+                "ai_task_callback.token works only for the tasks of the bot that owns it, and it is used for \
+                 every task no agent token or [[ai_task_callback.bots]] entry covers: the Sylvode API refuses \
+                 it (403) for any other bot's task. Set ai_task_callback.bot_id to the id of the bot that owns \
+                 it, and add a [[ai_task_callback.bots]] entry for every other bot this receiver serves"
                     .to_string(),
             );
         }
@@ -1449,6 +1576,75 @@ url = "http://127.0.0.1:9000/hook"
             let cfg = load_str(&token).expect("the example starts with a real token");
             assert!(cfg.ai_task_callback.enabled);
         }
+    }
+
+    /// `[[ai_task_callback.bots]]` and `ai_task_callback.bot_id`: shape checks, and that the start-up
+    /// log says plainly that the global token works only for the bot that owns it.
+    #[test]
+    fn per_bot_ai_task_tokens_are_validated() {
+        const BOT_A: &str = "0b7e2d4c-2f0a-4b8e-8f6c-3a1d9e5c7b20";
+        const BOT_B: &str = "5989a9a2-c7f1-4a74-ba05-cffe01e33ad4";
+        let base = |callback: &str, agent_extra: &str| {
+            format!(
+                "[server]\nlisten = \"127.0.0.1:0\"\n\n[security]\nwebhook_secrets = [\"a-real-random-secret\"]\n\n\
+                 [ai_task_callback]\nenabled = true\napi_url = \"http://127.0.0.1:8080\"\n{callback}\n\
+                 [[agents]]\nid = \"fixer\"\nname = \"Fixer\"\nagent_type = \"custom\"\n\
+                 [agents.custom]\ncommand = \"/bin/echo\"\n{agent_extra}"
+            )
+        };
+        let bot =
+            |id: &str, token: &str| format!("[[ai_task_callback.bots]]\nbot_id = \"{id}\"\ntoken = \"{token}\"\n");
+
+        // Bot tokens alone are enough for an agent without a token of its own.
+        let cfg = load_str(&base(&bot(BOT_B, "opr_b"), "")).expect("bot tokens alone start");
+        assert_eq!(cfg.ai_task_callback.bots.len(), 1);
+
+        let err = load_str(&base(&bot("Fixer", "opr_b"), "")).expect_err("a name is no bot id");
+        assert!(err.contains("is not a bot id"), "{err}");
+
+        let twice = format!("{}{}", bot(BOT_B, "opr_b"), bot(&BOT_B.to_uppercase(), "opr_b2"));
+        let err = load_str(&base(&twice, "")).expect_err("one token per bot");
+        assert!(err.contains("more than one"), "{err}");
+        let err = load_str(&base(
+            &format!("token = \"opr_a\"\nbot_id = \"{BOT_B}\"\n{}", bot(BOT_B, "opr_b")),
+            "",
+        ))
+        .expect_err("the global owner and an entry name the same bot");
+        assert!(err.contains("more than one"), "{err}");
+
+        let err = load_str(&base(&bot(BOT_B, "replace-with-the-bot-token"), "")).expect_err("placeholder");
+        assert!(err.contains("no usable"), "{err}");
+
+        let err = load_str(&base(&format!("bot_id = \"{BOT_A}\"\n{}", bot(BOT_B, "opr_b")), ""))
+            .expect_err("an owner without a token");
+        assert!(err.contains("bot_id is set but ai_task_callback.token is not"), "{err}");
+
+        // An explicit agent token that is a placeholder is still refused.
+        let err = load_str(&base(
+            &bot(BOT_B, "opr_b"),
+            "[agents.ai_task_callback]\ntoken = \"replace-with-the-bot-token\"\n",
+        ))
+        .expect_err("placeholder agent token");
+        assert!(err.contains("no usable token"), "{err}");
+
+        // Without bot_id the global token is used for every bot, and the log says it works only
+        // for its owner.
+        let legacy = load_str(&base("token = \"opr_a\"\n", "")).expect("legacy config starts");
+        assert!(
+            legacy
+                .startup_warnings()
+                .iter()
+                .any(|w| w.contains("works only for the tasks of the bot that owns it")),
+            "{:?}",
+            legacy.startup_warnings()
+        );
+        let owned = load_str(&base(&format!("token = \"opr_a\"\nbot_id = \"{BOT_A}\"\n"), "")).expect("owned token");
+        assert!(
+            !owned
+                .startup_warnings()
+                .iter()
+                .any(|w| w.contains("works only for the tasks of the bot that owns it"))
+        );
     }
 
     /// Unsigned requests on an interface other than loopback are refused unless acknowledged.
