@@ -24,6 +24,21 @@ cli_max_concurrency = 1
 http_timeout_secs = 15
 tunnel_reconnect_backoff_max_secs = 60
 
+# Optional: end worker AI tasks. The worker marks an AI task `processing` when it delivers it here
+# and only POST /api/v1/ai/callbacks/task/{task_id}/complete or .../fail ends that state; with this
+# enabled the agent that ran the task calls one of them (and a task no agent matches is failed).
+# Off by default. See apps/webhook/README.md, "AI task callbacks".
+[ai_task_callback]
+enabled = false
+# The API as the webhook container reaches it (the `api` service in docker-compose.yml).
+api_url = "http://api:8080"
+# Bearer token of the bot that is the tasks' AI participant.
+token = "replace-with-the-bot-token-of-the-ai-participant"
+surface = "rest"
+max_attempts = 3
+retry_delay_ms = 1000
+max_output_chars = 4000
+
 # Bot work: Sylvode marks a delivery with `bot_context.is_bot_task = true` when the webhook's
 # bot user is the assignee or is mentioned.
 [[agents]]
@@ -53,3 +68,8 @@ bot_agent_types = ["claude-code"]
 [agents.custom]
 command = "echo"
 args = ["{message}"]
+
+# Per-agent overrides of [ai_task_callback]: `enabled` (default true, false for `webhook`
+# agents), `token` and `surface`.
+# [agents.ai_task_callback]
+# token = "replace-with-the-bot-token-of-this-agents-bot"

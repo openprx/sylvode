@@ -1,4 +1,4 @@
-use crate::{AppState, compat, config::AgentConfig, dispatcher, replay::Refusal, signature};
+use crate::{AppState, ai_task, compat, config::AgentConfig, dispatcher, replay::Refusal, signature};
 use axum::{
     Json,
     extract::State,
@@ -185,6 +185,25 @@ fn select_agent<'a>(agents: &'a [AgentConfig], target: &BotDispatchTarget) -> Op
         .find(|agent| agent.route.is_some() && agent_matches_route(agent, target))
 }
 
+/// The outcome reported for a worker AI task that no configured agent matches.
+fn no_agent_outcome(target: &BotDispatchTarget) -> ai_task::TaskOutcome {
+    let summary = format!(
+        "sylvode-webhook has no agent for this AI task (bot {}, agent type {}, trigger kind {}); \
+         add an [[agents]] entry whose id, name or route matches the bot",
+        target.bot_key,
+        target.agent_type.as_deref().unwrap_or("unknown"),
+        target.trigger_kind.as_deref().unwrap_or("unknown"),
+    );
+    ai_task::TaskOutcome {
+        succeeded: false,
+        status: "error".to_string(),
+        summary,
+        exit_code: None,
+        duration_ms: None,
+        output: None,
+    }
+}
+
 pub async fn handle_webhook(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -269,6 +288,11 @@ pub async fn handle_webhook(
             trigger_kind = ?target.trigger_kind,
             "No agent for bot task"
         );
+        // A worker AI task is `processing` in Sylvode from the moment it was delivered; with
+        // `[ai_task_callback]` enabled, fail it now instead of leaving it there for good.
+        if let Some(completion) = ai_task::Completion::for_unmatched(&state.config, &payload) {
+            completion.report_in_background(no_agent_outcome(&target), &state.background);
+        }
         Ok(Json(
             json!({"status": "no_agent", "bot_key": target.bot_key, "route": route}),
         ))

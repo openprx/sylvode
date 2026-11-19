@@ -275,11 +275,13 @@ pub async fn post_with(url: &str, body: &str, headers: &[(&str, &str)]) -> (u16,
 /// One request the stub API received.
 #[derive(Debug, Clone)]
 pub struct Recorded {
+    pub path: String,
     pub headers: HeaderMap,
     pub body: Value,
 }
 
-/// An HTTP server that answers every POST with a JSON-RPC success and records the request.
+/// An HTTP server that records every POST and answers it with a success: the Sylvode API
+/// envelope `{"code":0,...}` on the AI task callback paths, a JSON-RPC result elsewhere.
 pub struct StubApi {
     pub addr: SocketAddr,
     received: tokio::sync::mpsc::UnboundedReceiver<Recorded>,
@@ -288,12 +290,19 @@ pub struct StubApi {
 
 async fn record(
     State(tx): State<tokio::sync::mpsc::UnboundedSender<Recorded>>,
+    uri: axum::http::Uri,
     headers: HeaderMap,
     body: Bytes,
 ) -> &'static str {
     let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
-    let _ = tx.send(Recorded { headers, body });
-    r#"{"jsonrpc":"2.0","id":1,"result":{"content":[]}}"#
+    let path = uri.path().to_owned();
+    let answer = if path.starts_with("/api/v1/ai/callbacks/task/") {
+        r#"{"code":0,"message":"success","data":{}}"#
+    } else {
+        r#"{"jsonrpc":"2.0","id":1,"result":{"content":[]}}"#
+    };
+    let _ = tx.send(Recorded { path, headers, body });
+    answer
 }
 
 impl StubApi {

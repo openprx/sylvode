@@ -5,6 +5,7 @@
 //! there is exactly one code path; the only difference is the [`Invocation`] each passes, which
 //! decides whether the one-line deprecation notice is written to stderr.
 
+mod ai_task;
 mod app;
 mod background;
 mod callback;

@@ -12,6 +12,9 @@ pub struct Config {
     pub tunnel: Option<TunnelConfig>,
     #[serde(default)]
     pub agents: Vec<AgentConfig>,
+    /// Terminal callbacks for worker AI tasks (`[ai_task_callback]`).
+    #[serde(default)]
+    pub ai_task_callback: AiTaskCallbackConfig,
     /// Safe mode, resolved once at start-up from `SYLVODE_WEBHOOK_SAFE_MODE` (or the legacy
     /// `OPENPR_WEBHOOK_SAFE_MODE`). Not read from the file.
     #[serde(skip)]
@@ -85,6 +88,76 @@ pub struct AgentConfig {
     pub custom: Option<CustomConfig>,
     pub cli: Option<CliAgentConfig>,
     pub message_template: Option<String>,
+    /// Per-agent overrides of `[ai_task_callback]` (`[agents.ai_task_callback]`).
+    #[serde(default)]
+    pub ai_task_callback: Option<AgentAiTaskCallbackConfig>,
+}
+
+/// Reports the outcome of a worker AI task back to the Sylvode API.
+///
+/// The Sylvode worker marks an AI task `processing` when it delivers it, and only
+/// `POST /api/v1/ai/callbacks/task/{task_id}/complete` or `.../fail` ends that state. With this
+/// enabled, an agent that ran such a task (a delivery carrying `task_id` and `ai_participant_id`)
+/// calls the matching endpoint once the run ends.
+#[derive(Deserialize, Clone, Debug)]
+pub struct AiTaskCallbackConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Base URL of the Sylvode API, for example `http://127.0.0.1:8080`. Required when enabled.
+    pub api_url: Option<String>,
+    /// Bearer token: the `opr_` token of the bot that is the task's AI participant (the API only
+    /// lets the assigned participant, or a system administrator, end a task). An agent can
+    /// override it with `[agents.ai_task_callback].token`.
+    pub token: Option<String>,
+    /// The transport the token is registered with in Sylvode (`workspace_bots.transport_surface`).
+    /// `rest` sends no surface header; any other value is sent as `X-Sylvode-MCP-Surface`.
+    #[serde(default = "default_ai_task_surface")]
+    pub surface: String,
+    /// Attempts per callback, including the first one (1 to 10).
+    #[serde(default = "default_ai_task_max_attempts")]
+    pub max_attempts: u32,
+    /// Delay before the first retry, doubled after each further failed attempt (up to 60000).
+    #[serde(default = "default_ai_task_retry_delay_ms")]
+    pub retry_delay_ms: u64,
+    /// At most this many trailing characters of the agent's output go into the callback.
+    #[serde(default = "default_ai_task_max_output_chars")]
+    pub max_output_chars: usize,
+}
+
+impl Default for AiTaskCallbackConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_url: None,
+            token: None,
+            surface: default_ai_task_surface(),
+            max_attempts: default_ai_task_max_attempts(),
+            retry_delay_ms: default_ai_task_retry_delay_ms(),
+            max_output_chars: default_ai_task_max_output_chars(),
+        }
+    }
+}
+
+/// Per-agent overrides of [`AiTaskCallbackConfig`].
+#[derive(Deserialize, Clone, Debug, Default)]
+pub struct AgentAiTaskCallbackConfig {
+    /// Whether this agent reports AI task outcomes. Defaults to true for every agent type except
+    /// `webhook`, which forwards the delivery to another receiver that owns the task.
+    pub enabled: Option<bool>,
+    pub token: Option<String>,
+    pub surface: Option<String>,
+}
+
+/// The transports a Sylvode bot token can be registered with (`EventSurface::BOT_CREDENTIAL_SURFACES`
+/// in the Sylvode API).
+pub const AI_TASK_SURFACES: [&str; 6] = ["rest", "mcp_http", "mcp_sse", "mcp_stdio", "cli", "cli_tools_call"];
+
+/// How one agent reports AI task outcomes, resolved from the global and per-agent settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AiTaskCallbackTarget<'a> {
+    pub api_url: &'a str,
+    pub token: &'a str,
+    pub surface: &'a str,
 }
 
 #[derive(Deserialize, Clone, Debug, Default)]
@@ -230,6 +303,27 @@ const fn default_tunnel_reconnect_backoff_max_secs() -> u64 {
     60
 }
 
+fn default_ai_task_surface() -> String {
+    "rest".into()
+}
+
+const fn default_ai_task_max_attempts() -> u32 {
+    3
+}
+
+const fn default_ai_task_retry_delay_ms() -> u64 {
+    1000
+}
+
+const fn default_ai_task_max_output_chars() -> usize {
+    4000
+}
+
+/// Upper bound of `ai_task_callback.max_attempts`.
+const MAX_AI_TASK_ATTEMPTS: u32 = 10;
+/// Upper bound of `ai_task_callback.retry_delay_ms`.
+const MAX_AI_TASK_RETRY_DELAY_MS: u64 = 60_000;
+
 /// The secret `config.example.toml` ships with. Start-up is refused while it is still in place.
 pub const EXAMPLE_SECRET_PLACEHOLDER: &str = "replace-with-the-secret-of-your-sylvode-webhook";
 
@@ -289,6 +383,44 @@ fn is_remote_plain_ws(url: &str) -> bool {
         |_| url.get(..5).is_some_and(|scheme| scheme.eq_ignore_ascii_case("ws://")),
         |parsed| parsed.scheme() == "ws" && !is_loopback_url(&parsed),
     )
+}
+
+/// Whether `agent` reports worker AI task outcomes when `[ai_task_callback]` is enabled.
+fn agent_reports_ai_tasks(agent: &AgentConfig) -> bool {
+    agent
+        .ai_task_callback
+        .as_ref()
+        .and_then(|o| o.enabled)
+        .unwrap_or(agent.agent_type != "webhook")
+}
+
+/// The token `agent` reports AI task outcomes with: its own, else the global one.
+fn agent_ai_task_token<'a>(cfg: &'a AiTaskCallbackConfig, agent: &'a AgentConfig) -> Option<&'a str> {
+    agent
+        .ai_task_callback
+        .as_ref()
+        .and_then(|o| o.token.as_deref())
+        .or(cfg.token.as_deref())
+}
+
+/// Refuses an `ai_task_callback.api_url` that is not an absolute `http(s)` URL without
+/// credentials, a query or a fragment (the endpoint paths are appended to it).
+fn validate_api_url(api_url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(api_url.trim()).map_err(|e| {
+        format!(
+            "ai_task_callback.api_url must be the base URL of the Sylvode API (for example http://127.0.0.1:8080): {e}"
+        )
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("ai_task_callback.api_url must use http:// or https://".to_string());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("ai_task_callback.api_url must not carry credentials; use ai_task_callback.token".to_string());
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("ai_task_callback.api_url must not have a query or a fragment".to_string());
+    }
+    Ok(())
 }
 
 /// Every trigger kind a Sylvode deployment sends, the closed set `route.trigger_kinds` may name.
@@ -387,7 +519,7 @@ impl Config {
     }
 
     /// Parses and validates a configuration, resolving commands against `path_var`.
-    fn from_toml(content: &str, path_var: Option<&std::ffi::OsStr>) -> Result<Self, String> {
+    pub fn from_toml(content: &str, path_var: Option<&std::ffi::OsStr>) -> Result<Self, String> {
         let mut config: Self = toml::from_str(content).map_err(|e| format!("failed to parse config: {e}"))?;
         config.resolve_commands(path_var)?;
         config.validate()?;
@@ -448,6 +580,7 @@ impl Config {
     fn validate(&self) -> Result<(), String> {
         self.validate_secrets()?;
         self.validate_tunnel()?;
+        self.validate_ai_task_callback()?;
         for agent in &self.agents {
             if let Some(route) = &agent.route {
                 for kind in &route.trigger_kinds {
@@ -574,6 +707,95 @@ impl Config {
         Ok(())
     }
 
+    /// Refuses an `[ai_task_callback]` that is enabled but cannot work: no usable API URL, a
+    /// surface the API does not know, out-of-range retry settings, or an agent that would report
+    /// without a token.
+    fn validate_ai_task_callback(&self) -> Result<(), String> {
+        let cfg = &self.ai_task_callback;
+        let surfaces = std::iter::once(("ai_task_callback.surface".to_string(), cfg.surface.as_str())).chain(
+            self.agents.iter().filter_map(|agent| {
+                let surface = agent.ai_task_callback.as_ref()?.surface.as_deref()?;
+                Some((format!("agent `{}`: ai_task_callback.surface", agent.id), surface))
+            }),
+        );
+        for (key, surface) in surfaces {
+            if !AI_TASK_SURFACES.contains(&surface) {
+                return Err(format!(
+                    "{key} = \"{surface}\" is not a transport a Sylvode bot token can be registered with; \
+                     valid values: {}",
+                    AI_TASK_SURFACES.join(", ")
+                ));
+            }
+        }
+        if !cfg.enabled {
+            return Ok(());
+        }
+        let api_url = cfg.api_url.as_deref().unwrap_or_default();
+        validate_api_url(api_url)?;
+        if !(1..=MAX_AI_TASK_ATTEMPTS).contains(&cfg.max_attempts) {
+            return Err(format!(
+                "ai_task_callback.max_attempts = {} is out of range; use 1 to {MAX_AI_TASK_ATTEMPTS}",
+                cfg.max_attempts
+            ));
+        }
+        if cfg.retry_delay_ms > MAX_AI_TASK_RETRY_DELAY_MS {
+            return Err(format!(
+                "ai_task_callback.retry_delay_ms = {} is out of range; use at most {MAX_AI_TASK_RETRY_DELAY_MS}",
+                cfg.retry_delay_ms
+            ));
+        }
+        for agent in self.agents.iter().filter(|agent| agent_reports_ai_tasks(agent)) {
+            let token = agent_ai_task_token(cfg, agent).unwrap_or_default();
+            if token.trim().is_empty() || is_placeholder(token) {
+                return Err(format!(
+                    "ai_task_callback is enabled but agent `{}` has no usable token: set \
+                     ai_task_callback.token or [agents.ai_task_callback].token to the opr_ token of the bot \
+                     that is the task's AI participant, or set [agents.ai_task_callback].enabled = false",
+                    agent.id
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Where and how `agent` reports the outcome of a worker AI task; `None` when it does not
+    /// (the feature is off, safe mode is on, or the agent opts out).
+    pub fn ai_task_callback_target<'a>(&'a self, agent: &'a AgentConfig) -> Option<AiTaskCallbackTarget<'a>> {
+        let cfg = &self.ai_task_callback;
+        if self.safe_mode || !cfg.enabled || !agent_reports_ai_tasks(agent) {
+            return None;
+        }
+        let surface = agent
+            .ai_task_callback
+            .as_ref()
+            .and_then(|o| o.surface.as_deref())
+            .unwrap_or(cfg.surface.as_str());
+        Some(AiTaskCallbackTarget {
+            api_url: cfg.api_url.as_deref()?,
+            token: agent_ai_task_token(cfg, agent)?,
+            surface,
+        })
+    }
+
+    /// Where and how to fail a worker AI task that no agent matches: the global API URL, token and
+    /// surface. `None` when the feature is off, safe mode is on, or there is no usable global token
+    /// (agents may each carry their own, but an unmatched task has no agent).
+    pub fn ai_task_callback_unmatched_target(&self) -> Option<AiTaskCallbackTarget<'_>> {
+        let cfg = &self.ai_task_callback;
+        if self.safe_mode || !cfg.enabled {
+            return None;
+        }
+        let token = cfg
+            .token
+            .as_deref()
+            .filter(|token| !token.trim().is_empty() && !is_placeholder(token))?;
+        Some(AiTaskCallbackTarget {
+            api_url: cfg.api_url.as_deref()?,
+            token,
+            surface: cfg.surface.as_str(),
+        })
+    }
+
     /// Configurations that start but deserve a prominent warning in the log.
     pub fn startup_warnings(&self) -> Vec<String> {
         let mut warnings = self.legacy_command_notices.clone();
@@ -589,6 +811,13 @@ impl Config {
                  {} can trigger agents. Use this only for local development",
                 self.server.listen
             ));
+            if self.ai_task_callback.enabled {
+                warnings.push(
+                    "ai_task_callback is enabled while signatures are not verified: anyone who can reach the \
+                     port can make this service complete or fail AI tasks with its bot tokens"
+                        .to_string(),
+                );
+            }
         } else if self.security.webhook_secrets.is_empty() {
             warnings.push(
                 "security.webhook_secrets is empty and allow_unsigned = false: every /webhook request will be \
@@ -1131,6 +1360,45 @@ url = "http://127.0.0.1:9000/hook"
             "every example agent that runs a command is gated by cli_enabled"
         );
         assert!(!cfg.features.cli_enabled);
+        assert!(!cfg.ai_task_callback.enabled, "AI task callbacks are off by default");
+    }
+
+    /// Both example files document `[ai_task_callback]` with its defaults and a placeholder token:
+    /// enabling it as shipped is refused, and it starts once a real token is filled in.
+    #[test]
+    fn the_examples_document_the_ai_task_callback() {
+        let examples = [
+            (
+                include_str!("../config.example.toml"),
+                super::EXAMPLE_SECRET_PLACEHOLDER,
+            ),
+            (
+                include_str!("../../../config/sylvode-webhook.example.toml"),
+                "replace_with_webhook_secret",
+            ),
+        ];
+        for (example, secret) in examples {
+            let filled = example.replace(secret, "a-real-random-secret");
+            let cfg = load_str(&filled).expect("the example starts with a real secret");
+            let callback = &cfg.ai_task_callback;
+            assert!(!callback.enabled);
+            assert_eq!(callback.surface, "rest");
+            assert_eq!(callback.max_attempts, 3);
+            assert_eq!(callback.retry_delay_ms, 1000);
+            assert_eq!(callback.max_output_chars, 4000);
+
+            let enabled = filled.replace(
+                "[ai_task_callback]\nenabled = false",
+                "[ai_task_callback]\nenabled = true",
+            );
+            assert_ne!(enabled, filled, "the example has an [ai_task_callback] section");
+            let err = load_str(&enabled).expect_err("a placeholder token is refused");
+            assert!(err.contains("no usable token"), "{err}");
+
+            let token = enabled.replace("replace-with-the-bot-token-of-the-ai-participant", "a-real-bot-token");
+            let cfg = load_str(&token).expect("the example starts with a real token");
+            assert!(cfg.ai_task_callback.enabled);
+        }
     }
 
     /// Unsigned requests on an interface other than loopback are refused unless acknowledged.

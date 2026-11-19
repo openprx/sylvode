@@ -47,6 +47,31 @@ heartbeat_secs = 20
 # (start-up is refused without it)
 require_inbound_sig = false
 
+# Optional: end worker AI tasks in Sylvode. The Sylvode worker marks an AI task `processing` when
+# it delivers it (a delivery with `task_id` and `ai_participant_id`), and only the API's
+# POST /api/v1/ai/callbacks/task/{task_id}/complete or .../fail ends that state. When enabled,
+# the agent that ran the task calls `complete` after a successful run and `fail` after any other
+# end; a task that no agent matches is failed at once (this needs the global token).
+# Off by default; safe mode turns it off too.
+[ai_task_callback]
+enabled = false
+# Base URL of the Sylvode API (no path, query or credentials). Required when enabled.
+api_url = "http://127.0.0.1:8080"
+# Bearer token of the bot that is the tasks' AI participant: the API lets only that bot (or a
+# system administrator) end a task. Required when enabled, here or per agent below.
+token = "replace-with-the-bot-token-of-the-ai-participant"
+# The transport the token is registered with in Sylvode: rest (no header), mcp_http, mcp_sse,
+# mcp_stdio, cli or cli_tools_call (sent as X-Sylvode-MCP-Surface and X-OpenPR-MCP-Surface).
+surface = "rest"
+# Attempts per callback, including the first (1 to 10). Transport errors, HTTP 5xx/429 and API
+# codes of 500 or more are retried; a refusal (for example code 400, task not processing) is not.
+max_attempts = 3
+# Delay before the first retry in milliseconds, doubled after each further failure (at most
+# 60000; the wait between two attempts never exceeds 30 seconds).
+retry_delay_ms = 1000
+# At most this many trailing characters of the agent's output go into the callback.
+max_output_chars = 4000
+
 # An openclaw agent runs a local command for every matching bot task and is not gated by
 # [features] or safe mode, so it is left commented out. Uncomment it once the secret above is set.
 #
@@ -132,3 +157,10 @@ mcp_config_path = "/path/to/mcp-config.json"
 # own config file (mcp-server serve --config ...), not from these variables.
 # [agents.cli.env_vars]
 # HTTPS_PROXY = "http://proxy.internal:3128"
+
+# Optional per-agent overrides of [ai_task_callback]. `enabled` defaults to true for every agent
+# type except `webhook` (a forwarding agent hands the task to another receiver, which owns it).
+# [agents.ai_task_callback]
+# enabled = true
+# token = "replace-with-the-bot-token-of-this-agents-bot"
+# surface = "mcp_stdio"

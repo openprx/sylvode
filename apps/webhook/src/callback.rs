@@ -4,11 +4,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// Identifies this dispatcher in the Sylvode API's bot operation ledger.
-const MCP_SURFACE_HEADER: &str = "X-Sylvode-MCP-Surface";
+pub const MCP_SURFACE_HEADER: &str = "X-Sylvode-MCP-Surface";
 /// Legacy name of [`MCP_SURFACE_HEADER`]. Sent alongside it with the identical value for the
 /// whole Sylvode 1.x line, so this service records the same surface against an API that only
 /// knows the legacy header and against one that knows both (ADR-0020 D3).
-const LEGACY_MCP_SURFACE_HEADER: &str = "X-OpenPR-MCP-Surface";
+pub const LEGACY_MCP_SURFACE_HEADER: &str = "X-OpenPR-MCP-Surface";
 /// The surface this dispatcher reports for a plain API callback.
 const CLI_SURFACE: &str = "cli";
 
