@@ -9,16 +9,32 @@ use std::time::{Duration, Instant};
 
 /// A fake `codex` that records its own pid and the pids of two grandchildren (one in a
 /// subshell), then waits for them.
+///
+/// A `SIGTERM` that arrives while it records is held until all three pids are written and then
+/// passed on to its whole process group, so a run that got to its first line always leaves the
+/// complete record of what has to be terminated. The script has been executed once before it is
+/// returned, so the first run the server starts does not pay for a first execution of a new file
+/// (which macOS can delay by seconds while it checks it).
 fn forking_codex(dir: &TempDir) -> std::path::PathBuf {
     let pids = dir.file("pids");
-    write_script(
+    let script = write_script(
         dir.path(),
         "codex",
         &format!(
-            "echo $$ >> '{p}'\nsleep 30 & echo $! >> '{p}'\n(sleep 30; true) & echo $! >> '{p}'\nwait",
+            "[ -n \"$CODEX_WARM_UP\" ] && exit 0\n\
+             trap 'term=1' TERM\n\
+             echo $$ >> '{p}'\nsleep 30 & echo $! >> '{p}'\n(sleep 30; true) & echo $! >> '{p}'\n\
+             trap - TERM\n\
+             [ -n \"$term\" ] && kill -TERM 0\n\
+             wait",
             p = pids.display()
         ),
     );
+    let warm_up = std::process::Command::new(&script)
+        .env("CODEX_WARM_UP", "1")
+        .status()
+        .expect("warm up the fake codex");
+    assert!(warm_up.success(), "{warm_up}");
     pids
 }
 
@@ -34,8 +50,17 @@ fn cli_config(api: &StubApi, timeout_secs: u64) -> String {
     )
 }
 
+/// How many deliveries [`a_timeout_terminates_the_whole_executor_tree_before_reporting`] makes
+/// before it gives up on the executor ever starting inside its one-second timeout.
+const TIMEOUT_TEST_ATTEMPTS: usize = 5;
+
 /// After `timeout_secs` the executor, and every process it started, is gone before the timeout
 /// callback reports the issue back to `update_state_on_fail`.
+///
+/// The property can only be checked on a run whose executor got to its first line before the
+/// timeout fired: one that did records its whole process tree (see [`forking_codex`]); one that did
+/// not records nothing and started nothing. Only the second case, which a loaded machine can cause,
+/// is retried with a new delivery; every run that recorded is checked in full.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_timeout_terminates_the_whole_executor_tree_before_reporting() {
     let bin = TempDir::new("bin");
@@ -44,25 +69,40 @@ async fn a_timeout_terminates_the_whole_executor_tree_before_reporting() {
     let server =
         Server::start(CANONICAL, &cli_config(&api, 1), &[("PATH", &path_with(bin.path()))]).expect("server starts");
 
-    let (status, answer) = post_signed(&server.url("/webhook"), &bot_task("Fixer", "Slow fix").to_string()).await;
-    assert_eq!(status, 200, "{answer}");
-    let start = api.next(Duration::from_secs(10)).await.expect("start callback");
-    assert_eq!(start.body["status"], "started");
-    assert_eq!(start.body["state"], "in_progress");
+    for attempt in 1..=TIMEOUT_TEST_ATTEMPTS {
+        // The previous run's process group is gone: its timeout callback has been received.
+        let _ = std::fs::remove_file(&pids);
+        let task = bot_task("Fixer", &format!("Slow fix {attempt}")).to_string();
+        let (status, answer) = post_signed(&server.url("/webhook"), &task).await;
+        assert_eq!(status, 200, "{answer}");
+        let start = api.next(Duration::from_secs(10)).await.expect("start callback");
+        assert_eq!(start.body["status"], "started");
+        assert_eq!(start.body["state"], "in_progress");
 
-    let begun = Instant::now();
-    let last = api.next(Duration::from_secs(20)).await.expect("timeout callback");
-    assert_eq!(last.body["status"], "timeout", "{:?}", last.body);
-    assert_eq!(last.body["state"], "todo");
-    assert!(begun.elapsed() < Duration::from_secs(10), "{:?}", begun.elapsed());
+        let begun = Instant::now();
+        let last = api.next(Duration::from_secs(20)).await.expect("timeout callback");
+        assert_eq!(last.body["status"], "timeout", "{:?}", last.body);
+        assert_eq!(last.body["state"], "todo");
+        assert!(begun.elapsed() < Duration::from_secs(10), "{:?}", begun.elapsed());
 
-    let started = wait_lines(&pids, 3, Duration::from_secs(1));
-    assert_eq!(started.len(), 3, "leader and two grandchildren recorded: {started:?}");
-    let survivors = wait_all_dead(&read_pids(&pids), Duration::from_secs(1));
-    assert!(
-        survivors.is_empty(),
-        "still running after the timeout callback: {survivors:?}"
-    );
+        let recorded = read_pids(&pids);
+        if recorded.is_empty() {
+            // Reported so that a run which needed a retry shows it in the test output.
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!("attempt {attempt}: the executor did not start before the timeout fired; retrying");
+            }
+            continue;
+        }
+        assert_eq!(recorded.len(), 3, "leader and two grandchildren recorded: {recorded:?}");
+        let survivors = wait_all_dead(&recorded, Duration::from_secs(1));
+        assert!(
+            survivors.is_empty(),
+            "still running after the timeout callback: {survivors:?}"
+        );
+        return;
+    }
+    panic!("the executor did not start inside its timeout in {TIMEOUT_TEST_ATTEMPTS} attempts");
 }
 
 /// SIGTERM while an executor runs: the process tree is terminated, the terminal callback
