@@ -62,6 +62,34 @@ fn text_children(map: &LoroMap) -> Result<Vec<LoroText>, CollabError> {
     }
     Ok(texts)
 }
+/// Constant-time lookups over a placement list, answering exactly what the linear scans
+/// `entries.iter().any(..)`, `entries.iter().find(..)` and a `BTreeMap` collected from
+/// `entries.iter().enumerate()` answer, including when a CID occurs more than once: `find` yields
+/// the first entry for a CID, the collected position map keeps the last index.
+struct PlacementIndex<'a> {
+    first: std::collections::HashMap<&'a str, &'a crate::editor_structure::Placement>,
+    last_position: std::collections::HashMap<&'a str, usize>,
+}
+impl<'a> PlacementIndex<'a> {
+    fn new(entries: &'a [crate::editor_structure::Placement]) -> Self {
+        let mut first = std::collections::HashMap::with_capacity(entries.len());
+        let mut last_position = std::collections::HashMap::with_capacity(entries.len());
+        for (index, entry) in entries.iter().enumerate() {
+            first.entry(entry.cid.as_str()).or_insert(entry);
+            last_position.insert(entry.cid.as_str(), index);
+        }
+        Self { first, last_position }
+    }
+    fn contains(&self, cid: &str) -> bool {
+        self.first.contains_key(cid)
+    }
+    fn first(&self, cid: &str) -> Option<&'a crate::editor_structure::Placement> {
+        self.first.get(cid).copied()
+    }
+    fn position(&self, cid: &str) -> Option<usize> {
+        self.last_position.get(cid).copied()
+    }
+}
 /// None means a legacy tree-only document. IDs are actual live map CIDs, not ordinals.
 pub fn editor_blocks(doc: &LoroDoc) -> Result<Option<Vec<EditorBlock>>, CollabError> {
     read_blocks(doc, false)
@@ -90,15 +118,14 @@ fn read_blocks(doc: &LoroDoc, legacy: bool) -> Result<Option<Vec<EditorBlock>>, 
     } else {
         crate::editor_structure::placements(doc)?
     };
+    let index = placements.as_deref().map(PlacementIndex::new);
     let mut blocks = Vec::new();
     for i in 0..list.len() {
         let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(i) else {
             return Err(invalid("editor_doc_unsupported_block_container"));
         };
-        if placements
-            .as_ref()
-            .is_some_and(|entries| !entries.iter().any(|entry| entry.cid == map.id().to_string()))
-        {
+        let cid = map.id().to_string();
+        if index.as_ref().is_some_and(|index| !index.contains(&cid)) {
             continue;
         }
         let kind = string(&map, "nodeName").ok_or_else(|| invalid("editor_block_missing_node_name"))?;
@@ -145,9 +172,9 @@ fn read_blocks(doc: &LoroDoc, legacy: bool) -> Result<Option<Vec<EditorBlock>>, 
             }
             offset += text.to_string().len();
         }
-        let logical_id = reverse_aliases.get(&map.id().to_string()).cloned();
+        let logical_id = reverse_aliases.get(&cid).cloned();
         blocks.push(EditorBlock {
-            id: map.id().to_string(),
+            id: cid,
             kind,
             text,
             attributes,
@@ -156,15 +183,10 @@ fn read_blocks(doc: &LoroDoc, legacy: bool) -> Result<Option<Vec<EditorBlock>>, 
             parent: None,
         });
     }
-    if let Some(placements) = placements {
-        let positions: std::collections::BTreeMap<_, _> = placements
-            .iter()
-            .enumerate()
-            .map(|(index, entry)| (entry.cid.as_str(), index))
-            .collect();
-        blocks.sort_by_key(|block| positions.get(block.id.as_str()).copied().unwrap_or(usize::MAX));
+    if let Some(index) = index {
+        blocks.sort_by_key(|block| index.position(&block.id).unwrap_or(usize::MAX));
         for block in &mut blocks {
-            if let Some(entry) = placements.iter().find(|entry| entry.cid == block.id) {
+            if let Some(entry) = index.first(&block.id) {
                 block.parent.clone_from(&entry.parent);
                 block
                     .attributes
@@ -774,6 +796,51 @@ pub fn replace_atom(doc: &LoroDoc, id: &str, kind: &str, attributes: &Value) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The index must answer exactly like the linear scans it replaced, including for duplicate
+    /// CIDs (first entry for `find`, last index for the collected position map) and absent ones.
+    #[test]
+    fn placement_index_matches_linear_scans_with_duplicates() {
+        use crate::editor_structure::Placement;
+        let entry = |cid: &str, depth: u32, counter: i32| Placement {
+            cid: cid.to_owned(),
+            parent: (depth > 0).then(|| format!("parent-of-{cid}")),
+            depth,
+            tree_id: loro::TreeID { peer: 7, counter },
+            position: usize::try_from(counter).unwrap_or(0),
+        };
+        let cases = [
+            vec![],
+            vec![entry("a", 0, 0)],
+            vec![entry("a", 0, 0), entry("b", 1, 1), entry("a", 2, 2)],
+            vec![entry("x", 3, 0), entry("x", 1, 1), entry("x", 0, 2), entry("y", 0, 3)],
+            vec![entry("", 0, 0), entry("b", 0, 1), entry("", 4, 2), entry("b", 2, 3)],
+        ];
+        for entries in &cases {
+            let index = PlacementIndex::new(entries);
+            let positions: std::collections::BTreeMap<_, _> = entries
+                .iter()
+                .enumerate()
+                .map(|(position, entry)| (entry.cid.as_str(), position))
+                .collect();
+            for cid in ["a", "b", "x", "y", "", "missing"] {
+                assert_eq!(
+                    index.contains(cid),
+                    entries.iter().any(|entry| entry.cid == cid),
+                    "{cid}"
+                );
+                let linear = entries.iter().find(|entry| entry.cid == cid);
+                assert_eq!(
+                    index
+                        .first(cid)
+                        .map(|entry| (entry.tree_id, entry.depth, entry.parent.clone())),
+                    linear.map(|entry| (entry.tree_id, entry.depth, entry.parent.clone())),
+                    "{cid}"
+                );
+                assert_eq!(index.position(cid), positions.get(cid).copied(), "{cid}");
+            }
+        }
+    }
     const SNAPSHOT: &[u8] = include_bytes!("../../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot");
     fn fixture() -> LoroDoc {
         let doc = LoroDoc::new();
