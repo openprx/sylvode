@@ -65,10 +65,31 @@ name.
   (disabled by default; per-agent `[agents.ai_task_callback]` overrides) the agent that ran a
   worker AI task calls `POST /api/v1/ai/callbacks/task/{id}/complete` after a successful run
   and `.../fail` otherwise, using the bot token; refusals are not retried, transport errors and
-  server errors are retried with a doubling delay. With the callback enabled and a global
-  token set, a worker AI task that no agent matches is failed at once with a message naming
-  the bot instead of staying `processing`. See `apps/webhook/README.md` and
-  `config/sylvode-webhook.example.toml`.
+  server errors are retried with a doubling delay. With the callback enabled, a worker AI task
+  that no agent matches is failed at once with a message naming the bot, using the token of
+  that bot (see **Webhook receiver: one callback token per bot**). See
+  `apps/webhook/README.md` and `config/sylvode-webhook.example.toml`.
+- **Webhook receiver: one callback token per bot.** A bot token can end only the tasks of its
+  own bot, so a receiver serving several bots needs several tokens. `[[ai_task_callback.bots]]`
+  (`bot_id`, `token`, optional `surface`) gives a bot its token, used for its tasks that no
+  agent token covers and for its tasks no agent matches; the new `ai_task_callback.bot_id`
+  names the owner of the global token, which is then used only for that bot. A task whose bot
+  has no token is no longer reported with another bot's token (which the API refused with
+  403): it is logged once at warn level and answered `"ai_task_callback": "no_token"`.
+  Callbacks now name their attempt (`?attempt=N`), the fail callback of a task the receiver
+  did not run sends `"retry": false`, and a matched agent that cannot start (safe mode,
+  `cli_enabled = false`, an incomplete agent section) is answered `refused` instead of
+  `dispatched`.
+- **Worker: processing timeout for AI tasks.** A delivered AI task that no callback ends within
+  the new `[ai_tasks] processing_timeout_secs` (default 3600, range 60 to 604800) is re-queued
+  while attempts remain and failed after the last one, with an error message naming the timeout
+  and the attempt. The sweep runs on every worker tick, claims rows with `FOR UPDATE SKIP
+  LOCKED` and is safe with several workers.
+- **AI task callbacks: attempt guard and `retry`.** `POST /api/v1/ai/callbacks/task/{id}/complete`
+  and `.../fail` accept an optional `?attempt=N`; with it, the call is accepted only while that
+  attempt is `processing` and refused with code 400 otherwise. `fail` accepts `"retry": false`
+  to fail the task at once instead of scheduling a retry. Who may call them is unchanged: the
+  task's own AI participant or a system administrator.
 - **Webhook signing secrets can be rotated.** The new
   `POST /api/v1/workspaces/{id}/webhooks/{webhook_id}/rotate-secret` (workspace admin or owner)
   replaces a webhook's signing secret with a generated one and returns it once. The web client
@@ -161,6 +182,22 @@ name.
 - **Flow: personal Flow and the shipped installation-wide Flow capabilities are on by default.** Migration `0106_flow_capabilities_default_on.sql` defaults `personal_provisioning`, `personal_writes`, `external_mounts`, `personal_forms_conversion`, `block_transfers_enabled`, `portable_page_packages_enabled` and `portable_graph_packages_enabled` on and raises `minimum_reader_version` to 5, so a fresh installation needs no manual SQL before users can open a personal Flow space and write Pages. `scope_native_legacy`, `personal_package_imports`, `personal_scope_package_exports` and `cross_workspace_forms_conversion` stay off. See `docs/runbooks/flow-runtime-capabilities.md`.
 
 ### Fixed
+
+- **A worker AI task no longer stays `processing` for good.** When one webhook receiver served
+  several bots, a task for a bot without an agent was answered `no_agent` and then failed with
+  the receiver's global token, which belonged to another bot; the API refused it (403) and
+  nothing else ever ended the task. The worker now fails a task the receiver declines in its
+  answer (`no_agent`, `ignored`, `refused`, or an HTTP 4xx other than 408, 409, 425 and 429) at
+  once, with an error message quoting the answer, and takes back every task left `processing`
+  past the processing timeout (see **Added**). Each such end writes the `retried` or `failed`
+  task event and business event with a `reason` (`receiver_declined`, `delivery_failed`,
+  `processing_timeout`), and a failed task sends `ai.task_failed`, which tasks the worker failed
+  after their last delivery attempt did not send before.
+- **AI task callbacks no longer race.** `complete` updated the task without checking that it was
+  still `processing`, so a complete and a fail arriving together, or a complete racing a worker
+  retry, could overwrite one another. Both callbacks are now a compare-and-set on the status and
+  attempt they checked, and the loser is refused with code 400 instead of overwriting the
+  winner.
 
 - **Spurious `stale_frontier` rejections in Flow.** Loro serializes a version vector in hash-map
   order, so the same causal version could encode to different bytes depending on whether a
@@ -265,6 +302,23 @@ name.
   read "Upgrading from 0.3.3" in `apps/webhook/CHANGELOG.md`, which lists the configurations
   that are now refused at start-up.
 - **Flow capabilities are switched on once.** Upgrading an existing database switches the capabilities listed above on once, including on installations that had them off; values that were already on and a higher `minimum_reader_version` are kept. To keep any of them off, switch it off right after the migration, before opening traffic (personal Flow: `UPDATE flow_runtime_capabilities SET external_mounts=false, personal_writes=false, personal_provisioning=false, updated_at=now() WHERE singleton;`). The choice survives restarts and migration replays; do not delete the `flow_capabilities_default_on` row in `flow_runtime_capability_rollouts`.
+- **Worker AI tasks: new end rules.** After the upgrade a task the receiver answers `no_agent`,
+  `ignored`, `refused` or with an HTTP 4xx (other than 408, 409, 425, 429) is failed on the
+  first delivery instead of being retried until its attempts run out; fix the receiver
+  configuration and assign the task again. Tasks that are `processing` when the new worker
+  starts, including tasks stuck by the defect above, are swept as soon as they are older than
+  `[ai_tasks] processing_timeout_secs`: re-queued (and delivered again) while attempts remain,
+  failed otherwise. To fail old stuck tasks instead of re-delivering them, call `.../fail` with
+  `"retry": false` for them after the new API is up and before the new worker starts. Set the timeout well above the longest run of any receiver's agents,
+  including the wait for a free `cli_max_concurrency` slot, or a slow run is delivered twice.
+  No database migration is needed.
+- **Webhook receiver serving several bots.** Set `ai_task_callback.bot_id` to the bot that owns
+  `ai_task_callback.token` and add a `[[ai_task_callback.bots]]` entry for each other bot;
+  start-up logs a warning while `bot_id` is not set. Integrations that read the `/webhook`
+  answer should expect `refused` (agent not started) besides `dispatched`, and the new
+  `reason` and `ai_task_callback` fields. Business events of attempts the worker ends now carry
+  `source.type = "worker"` and `event_payload.reason`; their `metadata` no longer carries
+  `worker_event`.
 - **Run the worker alongside the API.** Personal Flow and rich Page writes are refused with `scope_runtime_not_ready` until the API and the worker (worker and maintenance) have all registered reader-5 leases.
 
 ## [0.2.539] - 2026-11-18
