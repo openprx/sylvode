@@ -262,3 +262,34 @@ export function generateViewKey(name: string, now = Date.now(), random = Math.ra
 		.padStart(4, '0')}`;
 	return `${slug || 'view'}_${suffix}`;
 }
+
+// Record panel width, per user (not per form): people size the panel for their screen.
+
+export function readPanelWidth(
+	userId: string,
+	store: KeyValueStore | null = browserStore()
+): number | null {
+	if (!store || !userId) return null;
+	try {
+		const parsed: unknown = JSON.parse(
+			store.getItem(`sv-forms-panel-width:v1:${userId}`) ?? 'null'
+		);
+		const px = parsed && typeof parsed === 'object' ? (parsed as { px?: unknown }).px : null;
+		return typeof px === 'number' && Number.isFinite(px) && px > 0 ? px : null;
+	} catch {
+		return null;
+	}
+}
+
+export function writePanelWidth(
+	userId: string,
+	px: number,
+	store: KeyValueStore | null = browserStore()
+): void {
+	if (!store || !userId || !Number.isFinite(px)) return;
+	try {
+		store.setItem(`sv-forms-panel-width:v1:${userId}`, JSON.stringify({ px: Math.round(px) }));
+	} catch {
+		/* The width lasts until reload. */
+	}
+}

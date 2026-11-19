@@ -11,10 +11,12 @@ import {
 	clearArrangement,
 	generateViewKey,
 	normalizedViewConfig,
+	readPanelWidth,
 	readArrangement,
 	serverQueryFor,
 	suggestViewName,
 	writeArrangement,
+	writePanelWidth,
 	type StoredArrangement
 } from '../src/lib/forms/view-arrangement';
 import { Suite, assert, assertDeepEqual, assertEqual, finish } from './support/harness';
@@ -185,6 +187,15 @@ suite.check('generated keys satisfy the form_views key constraint', () => {
 		assert(/^[a-z][a-z0-9_]*$/.test(key), `${name} -> ${key}`);
 	}
 	assert(generateViewKey('A', 1, 0.1) !== generateViewKey('A', 2, 0.1), 'time makes keys unique');
+});
+
+suite.check('the panel width is kept per user', () => {
+	const store = new MemoryStore();
+	writePanelWidth('alice', 512.4, store);
+	assertEqual(readPanelWidth('alice', store), 512, 'alice');
+	assertEqual(readPanelWidth('bob', store), null, 'bob');
+	store.setItem('sv-forms-panel-width:v1:alice', '{"px":"wide"}');
+	assertEqual(readPanelWidth('alice', store), null, 'invalid');
 });
 
 finish(suite.result());
