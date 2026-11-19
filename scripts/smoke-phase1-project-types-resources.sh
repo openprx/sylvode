@@ -280,19 +280,26 @@ const updatedProject = await request(ownerToken, 'PUT', `/api/v1/projects/${proj
 assert(updatedProject.data?.name === 'Phase 1 Contract Project Updated', 'project should update');
 
 const repo = await request(ownerToken, 'POST', `/api/v1/projects/${projectId}/resources`, {
-  kind: 'repo',
+  kind: 'directory',
   name: 'Product Repository',
-  locator: { url: 'https://git.example/product' },
+  locator: { path: '/srv/product' },
 });
 const repoId = repo.data?.id;
-assert(repoId, 'repo resource should be created');
+assert(repoId && repo.data?.kind === 'directory', 'directory resource should be created');
 
 const equipment = await request(ownerToken, 'POST', `/api/v1/projects/${projectId}/resources`, {
-  kind: 'equipment',
+  kind: 'custom',
   name: 'Pump A17',
   locator: { asset_id: 'PUMP-A17' },
 });
-assert(equipment.data?.kind === 'equipment', 'equipment resource should be created');
+assert(equipment.data?.kind === 'custom', 'custom resource should be created');
+
+for (const removedKind of ['repo', 'document_library', 'crm_account', 'erp_order', 'equipment', 'site']) {
+  assertApiCode(await request(ownerToken, 'POST', `/api/v1/projects/${projectId}/resources`, {
+    kind: removedKind,
+    name: `Removed ${removedKind}`,
+  }), 400, `removed resource kind ${removedKind} should be rejected`);
+}
 
 await request(memberToken, 'GET', `/api/v1/projects/${projectId}/resources`);
 assertApiCode(await request(memberToken, 'POST', `/api/v1/projects/${projectId}/resources`, {

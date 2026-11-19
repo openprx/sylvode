@@ -1448,13 +1448,7 @@
 		"add": "添加",
 		"empty": "暂无项目资源。",
 		"noLocator": "无定位信息",
-		"kindRepo": "代码仓库",
 		"kindDirectory": "目录",
-		"kindDocumentLibrary": "文档库",
-		"kindCrmAccount": "CRM 客户",
-		"kindErpOrder": "ERP 订单",
-		"kindEquipment": "设备",
-		"kindSite": "站点",
 		"kindCustom": "自定义"
 	},
 	"connections": {

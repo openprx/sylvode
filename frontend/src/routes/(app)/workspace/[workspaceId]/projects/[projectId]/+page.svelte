@@ -34,7 +34,7 @@
 
 	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 	const projectId = requireRouteParam(page.params.projectId, 'projectId');
-	const locatorPlaceholder = 'Locator, e.g. {"url":"https://..."} or /path/to/repo';
+	const locatorPlaceholder = 'Locator, e.g. {"url":"https://..."} or /path/to/directory';
 
 	let project = $state<Project | null>(null);
 	let resources = $state<ProjectResource[]>([]);
@@ -57,7 +57,7 @@
 		>
 	>({});
 	let resourceForm = $state({
-		kind: 'repo' as ProjectResourceKind,
+		kind: 'directory' as ProjectResourceKind,
 		name: '',
 		locator: ''
 	});
@@ -423,13 +423,7 @@
 
 	function resourceKindLabel(kind: ProjectResourceKind): string {
 		const labels: Record<ProjectResourceKind, string> = {
-			repo: $t('resources.kindRepo'),
 			directory: $t('resources.kindDirectory'),
-			document_library: $t('resources.kindDocumentLibrary'),
-			crm_account: $t('resources.kindCrmAccount'),
-			erp_order: $t('resources.kindErpOrder'),
-			equipment: $t('resources.kindEquipment'),
-			site: $t('resources.kindSite'),
 			custom: $t('resources.kindCustom')
 		};
 		return labels[kind] ?? kind;
@@ -526,7 +520,7 @@
 			return;
 		}
 
-		resourceForm = { kind: 'repo', name: '', locator: '' };
+		resourceForm = { kind: 'directory', name: '', locator: '' };
 		toast.success('Project resource added');
 		await loadResources();
 	}
@@ -993,13 +987,7 @@
 					class="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
 					aria-label={$t('resources.resourceKind')}
 				>
-					<option value="repo">{$t('resources.kindRepo')}</option>
 					<option value="directory">{$t('resources.kindDirectory')}</option>
-					<option value="document_library">{$t('resources.kindDocumentLibrary')}</option>
-					<option value="crm_account">{$t('resources.kindCrmAccount')}</option>
-					<option value="erp_order">{$t('resources.kindErpOrder')}</option>
-					<option value="equipment">{$t('resources.kindEquipment')}</option>
-					<option value="site">{$t('resources.kindSite')}</option>
 					<option value="custom">{$t('resources.kindCustom')}</option>
 				</select>
 				<input
@@ -1059,15 +1047,7 @@
 													setResourceDraft(resource, 'kind', event.currentTarget.value)}
 												class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
 											>
-												<option value="repo">{$t('resources.kindRepo')}</option>
 												<option value="directory">{$t('resources.kindDirectory')}</option>
-												<option value="document_library"
-													>{$t('resources.kindDocumentLibrary')}</option
-												>
-												<option value="crm_account">{$t('resources.kindCrmAccount')}</option>
-												<option value="erp_order">{$t('resources.kindErpOrder')}</option>
-												<option value="equipment">{$t('resources.kindEquipment')}</option>
-												<option value="site">{$t('resources.kindSite')}</option>
 												<option value="custom">{$t('resources.kindCustom')}</option>
 											</select>
 										{:else}
