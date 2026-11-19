@@ -164,6 +164,31 @@ fn serve_blocking(config_path: &str) -> ExitCode {
     runtime.block_on(serve(config))
 }
 
+/// Logs how each `cli` agent's executor runs, and the MCP servers a claude-code agent is allowed
+/// by default. An MCP config that cannot be read now is only warned about: the executor reads it
+/// when a task runs, and the run fails then if it is still unreadable.
+fn log_cli_agent_permissions(config: &config::Config) {
+    for (agent, permissions) in config.cli_agent_permissions() {
+        tracing::info!(agent = %agent.id, "cli executor permissions: {}", permissions.describe());
+        let Some(cli) = agent.cli.as_ref() else { continue };
+        if !permissions.needs_mcp_servers() {
+            continue;
+        }
+        let Some(mcp_path) = cli.mcp_config_path.as_deref() else {
+            continue;
+        };
+        let resolved = crate::executor_permissions::resolve_mcp_config_path(mcp_path, cli.workdir.as_deref());
+        match crate::executor_permissions::mcp_server_names(&resolved) {
+            Ok(servers) => tracing::info!(
+                agent = %agent.id,
+                "allowed MCP servers from mcp_config_path: [{}]",
+                servers.join(", ")
+            ),
+            Err(e) => tracing::warn!(agent = %agent.id, "mcp_config_path cannot be used yet: {e}"),
+        }
+    }
+}
+
 /// How long shutdown may take in all, from the signal to the exit: the requests in flight and the
 /// background runs share it. It allows the process-group grace period, then a terminal callback
 /// of up to two requests (MCP sends a comment and a state update), plus slack.
@@ -175,6 +200,7 @@ async fn serve(config: config::Config) -> ExitCode {
     let listen = config.server.listen.clone();
     let bound = shutdown_bound(config.runtime.http_timeout_secs);
     tracing::info!("Loaded {} agent(s)", config.agents.len());
+    log_cli_agent_permissions(&config);
 
     let background = Background::new(config.runtime.cli_max_concurrency);
     let replay = tokio::sync::Mutex::new(crate::replay::ReplayGuard::new(config.security.max_delivery_age_secs));
