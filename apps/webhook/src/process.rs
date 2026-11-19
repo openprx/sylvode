@@ -126,7 +126,9 @@ enum Ended {
 enum Leader {
     /// Still running as far as is known.
     Running,
-    /// Exited, not reaped: a zombie that still pins the group id.
+    /// Exited, not reaped: a zombie that still pins the group id. Only Linux can observe this
+    /// state (`waitid` with `WNOWAIT`); elsewhere the leader is reaped as soon as it exits.
+    #[cfg(target_os = "linux")]
     ExitedUnreaped,
     /// Reaped, with the result of reaping it. The group id may be reused once the group is empty.
     Reaped(std::io::Result<ExitStatus>),
@@ -213,6 +215,7 @@ async fn terminate_tree(
             guard.disarm();
             return Some(status);
         }
+        #[cfg(target_os = "linux")]
         Leader::ExitedUnreaped => true,
         Leader::Running => false,
     };
