@@ -42,7 +42,22 @@ A webhook can subscribe to these 14 events, the full list the Sylvode API accept
 | AI tasks | `ai.task_completed`, `ai.task_failed` |
 
 A delivery carries `bot_context` only when the webhook has a bot user and that bot is an assignee
-of the issue, or, for `comment.created`, is mentioned in the comment.
+of the issue, or, for `comment.created`, is mentioned in the comment, and only when the same
+action did not already give that bot its task another way. Sylvode gives one action at most one
+bot task per bot:
+
+- Assigning an issue to the bot (on create or later) and mentioning it in a comment arrive as a
+  **worker AI task** (`trigger_kind` `assigned` or `mention`). The deliveries of that same request
+  (`issue.created`, `issue.assigned`, `issue.state_changed`, `issue.updated`, `comment.created`)
+  arrive without `bot_context` and are answered `not_bot_task`.
+- Other activity on an issue assigned to the bot, by a person or another bot (a state change, an
+  edit), arrives as a webhook delivery with `bot_context` (`status_changed`, `assigned`).
+- The bot's own actions never come back to it as a task: its own state change, edit, comment,
+  self-assignment or AI-task completion arrives without `bot_context`.
+
+So a route that should run on assignment matches `trigger_kinds = ["assigned"]` on the worker AI
+task; `created` and `mentioned` on a webhook delivery are no longer sent by current Sylvode
+versions (older servers still send them, which is why the values are still accepted).
 
 ## Features
 
@@ -298,7 +313,7 @@ start-up:
 
 | Source | Values |
 |--------|--------|
-| Webhook delivery (`bot_context.trigger_reason`) | `assigned` (`issue.assigned`, `issue.updated` and every event not listed here), `created` (`issue.created`), `status_changed` (`issue.state_changed`), `mentioned` (`comment.created`), `completed` (`ai.task_completed`), `failed` (`ai.task_failed`) |
+| Webhook delivery (`bot_context.trigger_reason`) | `assigned` (`issue.assigned`, `issue.updated` and every event not listed here), `created` (`issue.created`), `status_changed` (`issue.state_changed`), `mentioned` (`comment.created`), `completed` (`ai.task_completed`), `failed` (`ai.task_failed`). Current Sylvode sends only `assigned` (for an edit such as `issue.updated`) and `status_changed` on a webhook delivery; the assignment and the mention themselves arrive as worker AI tasks (see [How It Works](#how-it-works)) |
 | Worker AI task (`trigger_kind`) | `assigned` (`issue_assigned`), `mention` (`review_requested`, `comment_requested`), `proposal_vote` (`vote_requested`), `manual` (anything else) |
 
 `events` is compared with the delivery's `event` (a worker AI task has none, so a route with
