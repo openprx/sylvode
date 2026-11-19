@@ -4533,6 +4533,57 @@
 			},
 			"previewValues": "Enter valid quantity and unit price above and try again.",
 			"import": "Import package"
-		}
+		},
+		"host": {
+			"unavailable": "This app is unavailable.",
+			"unavailableHint": "It may have been disabled, removed or you may no longer have access.",
+			"back": "Back",
+			"backToProject": "Back to project",
+			"loading": "Loading the app…",
+			"frameTitle": "{name} · {label}",
+			"closeFrame": "Close app",
+			"suspended": "This app was suspended because its configuration changed.",
+			"integrityFailed": "This app failed its integrity check.",
+			"loadFailed": "The app could not be loaded.",
+			"retry": "Retry",
+			"more": "More",
+			"openDrawer": "Open {label}",
+			"closeDrawer": "Close panel",
+			"rateLimited": "Too many requests. Try again shortly.",
+			"methodUnavailable": "This action is not available to the app.",
+			"confirmApply": "Apply this result to the record?"
+		},
+		"apps": {
+			"navTitle": "Project apps",
+			"tabsLabel": "Project app views",
+			"empty": "No project apps are available.",
+			"open": "Open {label}",
+			"publisher": "{name} · v{version}",
+			"hiddenCount": "{count} hidden",
+			"showHidden": "Show hidden apps",
+			"stateTooLong": "The app state is too long and was ignored."
+		},
+		"prefs": {
+			"menu": "Display options",
+			"hide": "Hide",
+			"show": "Show",
+			"collapse": "Collapse",
+			"expand": "Expand",
+			"position": "Order",
+			"moveUp": "Move up",
+			"moveDown": "Move down",
+			"positionLabel": "Order (0-99)",
+			"reset": "Reset",
+			"resetAll": "Reset all my display options",
+			"resetDone": "Display options reset.",
+			"saved": "Display options saved.",
+			"saveFailed": "Display options could not be saved.",
+			"limitReached": "You have reached the limit of saved display options.",
+			"hiddenSection": "Hidden by you",
+			"restore": "Restore",
+			"unavailable": "This item is no longer available."
+		},
+		"creatorV3": {},
+		"layoutV3": {}
 	}
 }

@@ -13,12 +13,14 @@
 	import { apiClient } from '#lib/api/client.js';
 	import {
 		pluginCapabilities,
+		isV3,
 		pluginLibraryApi,
 		pluginPackagesApi,
 		type InstalledPluginPackage,
 		type PluginBinding,
 		type PluginBindingEvent,
 		type PluginCapability,
+		type PluginGrant,
 		type PluginPlacement,
 		type PluginUpload
 	} from '#lib/api/plugin-packages.js';
@@ -38,7 +40,7 @@
 	let backendMessage = $state('');
 	let notice = $state('');
 	let selected = $state<InstalledPluginPackage | null>(null);
-	let grants = $state<PluginCapability[]>([]);
+	let grants = $state<PluginGrant[]>([]);
 	let layoutSupported = $state(false);
 	let placements = $state<PluginPlacement[] | undefined>();
 	const validPositions = $derived(validPlacementPositions(placements));
@@ -398,7 +400,7 @@
 										{$t('plugins.previewGrantRequired')}
 									</p>{/if}
 							</fieldset>
-							{#if placements && item.manifest.ui.contributions}
+							{#if placements && !isV3(item.manifest) && item.manifest.ui.contributions}
 								<PluginPlacementFields
 									contributions={item.manifest.ui.contributions}
 									{placements}

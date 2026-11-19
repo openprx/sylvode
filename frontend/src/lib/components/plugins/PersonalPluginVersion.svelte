@@ -4,6 +4,7 @@
 	import { verifyPanelHtml } from '#lib/plugins/bridge.js';
 	import Button from '#lib/components/Button.svelte';
 	import {
+		isV3,
 		pluginLibraryApi,
 		type LibraryProject,
 		type PersonalPluginPackage
@@ -24,12 +25,11 @@
 	let html = $state<string | null>(null);
 	let panelState = $state<'loading' | 'error' | null>(null);
 	let panelLoad = 0;
-	const placement = $derived(item.manifest.ui.contributions?.[0]);
+	const v2ui = $derived(isV3(item.manifest) ? undefined : item.manifest.ui);
+	const placement = $derived(v2ui?.contributions?.[0]);
 	const slot = $derived(
 		placement?.slot ??
-			(item.manifest.ui.slot === 'form.record.actions'
-				? 'form.record.actions'
-				: 'form.record.detail')
+			(v2ui?.slot === 'form.record.actions' ? 'form.record.actions' : 'form.record.detail')
 	);
 	let quantity = $state<number | undefined>();
 	let unitPrice = $state<number | undefined>();

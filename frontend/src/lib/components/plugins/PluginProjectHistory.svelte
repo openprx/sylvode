@@ -7,6 +7,7 @@
 		type InstalledPluginPackage,
 		type PluginBindingEvent,
 		type PluginCapability,
+		type PluginGrant,
 		type PluginInvocationEvent,
 		type PluginPlacement
 	} from '#lib/api/plugin-packages.js';
@@ -63,11 +64,13 @@
 		}).format(new Date(value));
 	}
 
-	function grantLabel(grant: PluginCapability) {
-		return $t(`plugins.capabilityShort.${grant}`);
+	function grantLabel(grant: PluginGrant) {
+		return grant === 'amount.preview' || grant === 'amount.apply'
+			? $t(`plugins.capabilityShort.${grant}`)
+			: grant;
 	}
 
-	function describeGrants(grants: PluginCapability[]) {
+	function describeGrants(grants: PluginGrant[]) {
 		return grants.length ? grants.map(grantLabel).join(', ') : $t('plugins.historyNoGrants');
 	}
 
