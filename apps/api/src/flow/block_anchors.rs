@@ -473,11 +473,24 @@ mod tests {
         );
         tx.rollback().await.unwrap();
 
+        // The same version re-encoded in canonical peer order is not a head change: frontiers
+        // are compared as version vectors, so legacy-order rows keep matching.
         let tx = db.begin().await.unwrap();
         exec(
             &tx,
             "UPDATE collab_documents SET head_frontier=$2 WHERE id=$1",
             vec![documents[0].into(), replayed_wire.as_bytes().to_vec().into()],
+        )
+        .await;
+        ensure(&tx, pages[0], Some(&prepared)).await.unwrap();
+        tx.rollback().await.unwrap();
+
+        // A different version at the same head_seq is still contention.
+        let tx = db.begin().await.unwrap();
+        exec(
+            &tx,
+            "UPDATE collab_documents SET head_frontier=$2 WHERE id=$1",
+            vec![documents[0].into(), vec![0_u8].into()],
         )
         .await;
         assert_eq!(
