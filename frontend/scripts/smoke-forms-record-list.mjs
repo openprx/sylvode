@@ -235,6 +235,9 @@ async function api(route) {
 		if (path.includes('/form-records/gal-')) state.pluginRequests.push(path);
 		return reply(path.endsWith('plugin-panels') ? [] : { items: [], projects: [] });
 	}
+	// Endpoints the shared mock does not answer, unrelated to this check.
+	if (path === '/api/v1/scenario-templates') return reply(page_([]));
+	if (path.endsWith('/features/flow')) return reply({ enabled: false });
 	if (path === `/api/v1/projects/${projectId}/forms`) {
 		const upstream = await route.fetch();
 		const body = await upstream.json();
@@ -363,6 +366,11 @@ async function newPage({
 	);
 	const page = await context.newPage();
 	page.on('pageerror', (error) => console.log(`  page error: ${error.message}`));
+	page.on('response', (response) => {
+		const type = response.headers()['content-type'] ?? '';
+		if (response.url().includes('/api/v1/') && type.includes('text/html'))
+			console.log(`  unmocked API: ${new URL(response.url()).pathname}`);
+	});
 	await page.route('**/api/v1/**', api);
 	return page;
 }
@@ -376,8 +384,19 @@ const rowCells = (page) =>
 	);
 const screenshot = async (page, name, { top = true } = {}) => {
 	if (!screenshotDir) return;
-	if (top) await page.evaluate(() => window.scrollTo(0, 0));
-	await page.screenshot({ path: join(screenshotDir, name), fullPage: false });
+	// Playwright scrolls clicked elements into view, scroll containers included; start from the top.
+	if (top)
+		await page.evaluate(() => {
+			for (const node of document.querySelectorAll('*')) {
+				if (node.scrollTop || node.scrollLeft) node.scrollTo(0, 0);
+			}
+			window.scrollTo(0, 0);
+		});
+	await page.screenshot({
+		path: join(screenshotDir, name),
+		fullPage: false,
+		animations: 'disabled'
+	});
 };
 
 try {

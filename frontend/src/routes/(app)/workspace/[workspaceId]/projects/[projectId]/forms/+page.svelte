@@ -9054,6 +9054,7 @@
 		const local =
 			typeof target === 'string' ? (records.find((record) => record.id === id) ?? null) : target;
 		viewToolsExpanded = false;
+		if (!panelRecordId) panelWidth = arrangement.readPanelWidth(currentUserId) ?? panelWidth;
 		panelRecordId = id;
 		panelStatus = local ? 'ready' : 'loading';
 		panelError = '';
@@ -20764,7 +20765,10 @@
 										onrestore={() => void handleRestoreLastDeletedRecord()}
 										onretry={() => panelRecordId && void openRecordPanel(panelRecordId, 'none')}
 										onshowall={() => showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false })}
-										onresize={(px) => (panelWidth = px)}
+										onresize={(px) => {
+											panelWidth = px;
+											arrangement.writePanelWidth(currentUserId, px);
+										}}
 										onopenrelation={(id, sameForm, event) => {
 											if (!sameForm) return;
 											event.preventDefault();
