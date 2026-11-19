@@ -1,5 +1,10 @@
 use serde::Deserialize;
 
+use crate::executor_permissions::ExecutorPermissions;
+
+/// The executors a `cli` agent may run.
+pub const KNOWN_EXECUTORS: [&str; 3] = ["codex", "claude-code", "opencode"];
+
 #[derive(Deserialize, Clone, Debug)]
 pub struct Config {
     pub server: ServerConfig,
@@ -249,6 +254,22 @@ pub struct CliAgentConfig {
     /// Extra environment variables injected into the executor subprocess.
     #[serde(default)]
     pub env_vars: std::collections::HashMap<String, String>,
+    /// claude-code `--permission-mode`; default `dontAsk`. See [`crate::executor_permissions`].
+    pub permission_mode: Option<String>,
+    /// claude-code `--allowedTools`; default: every server of `mcp_config_path`.
+    pub allowed_tools: Option<Vec<String>>,
+    /// claude-code `--disallowedTools`.
+    pub disallowed_tools: Option<Vec<String>>,
+    /// claude-code `--strict-mcp-config` when `mcp_config_path` is set; default `true`.
+    pub strict_mcp_config: Option<bool>,
+    /// codex `--sandbox`; default `read-only`.
+    pub sandbox: Option<String>,
+    /// Acknowledges a setting that turns the executor's permission checks off. Required for
+    /// claude-code `permission_mode = "bypassPermissions"` and codex `sandbox =
+    /// "danger-full-access"`; for codex without `sandbox` it selects
+    /// `--dangerously-bypass-approvals-and-sandbox`.
+    #[serde(default)]
+    pub dangerously_bypass_permissions: bool,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -582,6 +603,12 @@ impl Config {
         self.validate_tunnel()?;
         self.validate_ai_task_callback()?;
         for agent in &self.agents {
+            if let Some(cli) = &agent.cli
+                && KNOWN_EXECUTORS.contains(&cli.executor.as_str())
+            {
+                // An executor outside the whitelist keeps failing at dispatch, as before.
+                ExecutorPermissions::from_config(cli).map_err(|e| format!("agent `{}`: {e}", agent.id))?;
+            }
             if let Some(route) = &agent.route {
                 for kind in &route.trigger_kinds {
                     let known = TRIGGER_KINDS
@@ -825,7 +852,30 @@ impl Config {
                     .to_string(),
             );
         }
+        for (agent, permissions) in self.cli_agent_permissions() {
+            if permissions.bypasses_permissions() {
+                warnings.push(format!(
+                    "agent `{}`: the executor runs with its permission checks turned off ({}); every task \
+                     it receives can run any command and edit any file the service user can. Use this \
+                     only inside a sandbox",
+                    agent.id,
+                    permissions.describe()
+                ));
+            }
+        }
         warnings
+    }
+
+    /// The validated executor permissions of every `cli` agent with a whitelisted executor, for
+    /// the start-up log.
+    pub fn cli_agent_permissions(&self) -> Vec<(&AgentConfig, ExecutorPermissions)> {
+        self.agents
+            .iter()
+            .filter_map(|agent| {
+                let permissions = ExecutorPermissions::from_config(agent.cli.as_ref()?).ok()?;
+                Some((agent, permissions))
+            })
+            .collect()
     }
 
     pub const fn cli_enabled(&self) -> bool {
@@ -1524,5 +1574,78 @@ url = "http://127.0.0.1:9000/hook"
         load_str(&tunnel_config(true, true, "")).expect("requirement defaults to off");
         load_str(&tunnel_config(false, true, "require_inbound_sig = true")).expect("feature flag off");
         load_str(&tunnel_config(true, false, "require_inbound_sig = true")).expect("tunnel disabled");
+    }
+
+    fn cli_agent_config(cli: &str) -> String {
+        format!(
+            "[server]\nlisten = \"127.0.0.1:9090\"\n[security]\nwebhook_secrets = [\"a-real-secret-value\"]\n\
+             [[agents]]\nid = \"fixer\"\nname = \"Fixer\"\nagent_type = \"cli\"\n[agents.cli]\n{cli}\n"
+        )
+    }
+
+    /// Executor permission settings are validated at start-up, naming the agent.
+    #[test]
+    fn executor_permission_settings_are_validated_at_start_up() {
+        for (cli, expected) in [
+            (
+                "executor = \"claude-code\"\npermission_mode = \"yolo\"",
+                "not a claude-code permission mode",
+            ),
+            (
+                "executor = \"claude-code\"\npermission_mode = \"bypassPermissions\"",
+                "dangerously_bypass_permissions",
+            ),
+            (
+                "executor = \"codex\"\nsandbox = \"danger-full-access\"",
+                "dangerously_bypass_permissions",
+            ),
+            (
+                "executor = \"opencode\"\nallowed_tools = [\"Read\"]",
+                "not a setting of the opencode executor",
+            ),
+        ] {
+            let err = Config::from_toml(&cli_agent_config(cli), None).expect_err(cli);
+            assert!(err.contains("agent `fixer`") && err.contains(expected), "{cli}: {err}");
+        }
+        // An executor outside the whitelist still fails only when a task is dispatched.
+        Config::from_toml(&cli_agent_config("executor = \"not-whitelisted\""), None).expect("accepted");
+    }
+
+    /// Bypassing the executor's permission checks starts, with a warning naming the agent; the
+    /// default does not warn.
+    #[test]
+    fn bypassing_executor_permissions_is_warned_about() {
+        let bypass = Config::from_toml(
+            &cli_agent_config(
+                "executor = \"claude-code\"\npermission_mode = \"bypassPermissions\"\n\
+                 dangerously_bypass_permissions = true",
+            ),
+            None,
+        )
+        .expect("explicit opt-in starts");
+        assert!(
+            bypass
+                .startup_warnings()
+                .iter()
+                .any(|w| w.contains("agent `fixer`") && w.contains("bypassPermissions")),
+            "{:?}",
+            bypass.startup_warnings()
+        );
+        let default = Config::from_toml(&cli_agent_config("executor = \"claude-code\""), None).expect("starts");
+        assert!(
+            !default
+                .startup_warnings()
+                .iter()
+                .any(|w| w.contains("permission checks")),
+            "{:?}",
+            default.startup_warnings()
+        );
+        let permissions = default.cli_agent_permissions();
+        assert_eq!(permissions.len(), 1);
+        assert!(
+            permissions
+                .first()
+                .is_some_and(|(_, p)| p.describe().contains("permission_mode = dontAsk"))
+        );
     }
 }

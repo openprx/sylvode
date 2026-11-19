@@ -21,7 +21,7 @@ use crate::{
     middleware::bot_auth::{BotAuthContext, require_workspace_access},
     response::{ApiResponse, PaginatedData},
     services::ai_task_service::{CreateAiTaskInput, create_ai_task},
-    webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks},
+    webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
 };
 
 #[derive(Debug, Serialize)]
@@ -262,7 +262,11 @@ pub async fn create_comment(
 
     tx.commit().await?;
 
-    for bot_id in mentioned_bot_ids(&state.db, &mention_user_ids, issue_context.workspace_id).await? {
+    // A mention of a bot is queued as that bot's AI task, which is its one bot task for this
+    // comment: the `comment.created` delivery below reaches that bot's webhook without
+    // `bot_context`. The author is never among the mentions (`normalize_mentions`).
+    let mentioned_bots = mentioned_bot_ids(&state.db, &mention_user_ids, issue_context.workspace_id).await?;
+    for &bot_id in &mentioned_bots {
         let _ = create_ai_task(
             &state.db,
             CreateAiTaskInput {
@@ -292,7 +296,7 @@ pub async fn create_comment(
         .await?;
     }
 
-    trigger_webhooks(
+    trigger_webhooks_after_ai_tasks(
         state.clone(),
         TriggerContext {
             event: WebhookEvent::CommentCreated,
@@ -307,6 +311,7 @@ pub async fn create_comment(
             mentions: mention_user_ids.clone(),
             extra_data: None,
         },
+        mentioned_bots,
     );
 
     Ok(ApiResponse::success(CommentResponse {

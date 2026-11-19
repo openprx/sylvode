@@ -1,5 +1,6 @@
 use crate::ai_task::{Completion, TaskOutcome};
 use crate::background::Background;
+use crate::executor_permissions::ExecutorPermissions;
 use crate::process::{self, End};
 use crate::{callback, config::AgentConfig, config::CliAgentConfig, config::Config};
 use serde_json::Value;
@@ -427,7 +428,7 @@ impl CliRunResult {
 }
 
 async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str, cancelled: impl Future<Output = ()>) -> CliRunResult {
-    let (program, args) = match build_executor_command(&cfg.executor, prompt, cfg.mcp_config_path.as_deref()) {
+    let (program, args) = match executor_command_for(cfg, prompt) {
         Ok(v) => v,
         Err(err) => {
             return CliRunResult {
@@ -496,10 +497,27 @@ async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str, cancelled: impl Fu
     }
 }
 
+/// The command for `cfg`'s executor: its permission settings, and for a claude-code agent without
+/// `allowed_tools` the servers of its MCP config, read now so an edited file takes effect on the
+/// next run.
+fn executor_command_for(cfg: &CliAgentConfig, prompt: &str) -> Result<(&'static str, Vec<String>), String> {
+    let permissions = ExecutorPermissions::from_config(cfg)?;
+    let mcp_servers = match cfg.mcp_config_path.as_deref() {
+        Some(path) if permissions.needs_mcp_servers() => {
+            let resolved = crate::executor_permissions::resolve_mcp_config_path(path, cfg.workdir.as_deref());
+            crate::executor_permissions::mcp_server_names(&resolved)
+                .map_err(|e| format!("mcp_config_path: {e}; the run was not started"))?
+        }
+        _ => Vec::new(),
+    };
+    build_executor_command(prompt, cfg.mcp_config_path.as_deref(), &permissions, &mcp_servers)
+}
+
 fn build_executor_command(
-    executor: &str,
     prompt: &str,
     mcp_config_path: Option<&str>,
+    permissions: &ExecutorPermissions,
+    mcp_servers: &[String],
 ) -> Result<(&'static str, Vec<String>), String> {
     // The prompt is a positional argument and contains payload text (an issue title, say), so a
     // leading `-` would make it an option of the executor, such as codex's `--config=...`.
@@ -510,31 +528,24 @@ fn build_executor_command(
                 .to_string(),
         );
     }
-    match executor {
-        "codex" => Ok((
-            "codex",
-            vec![
-                "exec".into(),
-                "--dangerously-bypass-approvals-and-sandbox".into(),
-                "--skip-git-repo-check".into(),
-                prompt.into(),
-            ],
-        )),
-        "claude-code" => {
-            let mut args = vec![
-                "-p".into(),
-                prompt.into(),
-                "--permission-mode".into(),
-                "bypassPermissions".into(),
-            ];
-            if let Some(mcp_path) = mcp_config_path {
-                args.push("--mcp-config".into());
-                args.push(mcp_path.into());
-            }
+    let permission_args = permissions.arguments(mcp_config_path, mcp_servers);
+    match permissions {
+        ExecutorPermissions::Codex(_) => {
+            // The prompt stays last: every permission argument is a complete option before it.
+            let mut args = vec!["exec".to_string()];
+            args.extend(permission_args);
+            args.push("--skip-git-repo-check".into());
+            args.push(prompt.into());
+            Ok(("codex", args))
+        }
+        ExecutorPermissions::ClaudeCode(_) => {
+            // `-p` is a flag and the prompt the positional argument right after it; the options
+            // follow, so a variadic list (`--allowedTools a b`) can never swallow the prompt.
+            let mut args = vec!["-p".to_string(), prompt.to_string()];
+            args.extend(permission_args);
             Ok(("claude", args))
         }
-        "opencode" => Ok(("opencode", vec!["run".into(), prompt.into()])),
-        _ => Err(format!("executor not allowed: {executor}")),
+        ExecutorPermissions::OpenCode => Ok(("opencode", vec!["run".into(), prompt.into()])),
     }
 }
 
@@ -1239,6 +1250,7 @@ mod tests {
     };
     use crate::background::Background;
     use crate::config::Config;
+    use crate::executor_permissions::ExecutorPermissions;
     use serde_json::json;
     use std::time::Duration;
 
@@ -1269,9 +1281,31 @@ webhook_secrets = []
         assert_eq!(header, Some(format!("sha256={expected_sig}")));
     }
 
+    /// The command for an executor with the given extra `[agents.cli]` keys, with `servers` as the
+    /// server names of the MCP config.
+    fn command(
+        executor: &str,
+        extra: &str,
+        prompt: &str,
+        mcp: Option<&str>,
+        servers: &[&str],
+    ) -> Result<(&'static str, Vec<String>), String> {
+        let cfg: crate::config::CliAgentConfig =
+            toml::from_str(&format!("executor = '{executor}'\n{extra}")).expect("cli config parses");
+        let permissions = ExecutorPermissions::from_config(&cfg)?;
+        let servers: Vec<String> = servers.iter().map(ToString::to_string).collect();
+        build_executor_command(prompt, mcp, &permissions, &servers)
+    }
+
     #[test]
     fn cli_executor_whitelist_builds_expected_command() {
-        let (_, args) = build_executor_command("codex", "fix it", None).expect("codex should be allowed");
+        let (_, args) = command("codex", "", "fix it", None, &[]).expect("codex should be allowed");
+        assert_eq!(
+            args,
+            vec!["exec", "--sandbox", "read-only", "--skip-git-repo-check", "fix it"]
+        );
+        let (_, args) =
+            command("codex", "dangerously_bypass_permissions = true", "fix it", None, &[]).expect("explicit opt-in");
         assert_eq!(
             args,
             vec![
@@ -1281,8 +1315,13 @@ webhook_secrets = []
                 "fix it"
             ]
         );
+        let (prog, args) = command("opencode", "", "fix it", None, &[]).expect("opencode allowed");
+        assert_eq!(
+            (prog, args),
+            ("opencode", vec!["run".to_string(), "fix it".to_string()])
+        );
 
-        assert!(build_executor_command("bash", "rm -rf /", None).is_err());
+        assert!(command("bash", "", "rm -rf /", None, &[]).is_err());
     }
 
     /// A prompt is always a positional argument; one that starts with `-` would be read as an
@@ -1291,34 +1330,102 @@ webhook_secrets = []
     fn a_prompt_that_starts_with_a_dash_is_refused_for_every_executor() {
         for executor in ["codex", "claude-code", "opencode"] {
             for prompt in ["--config=model_provider=evil --oss", "-x", "-"] {
-                let err = build_executor_command(executor, prompt, None).expect_err("refused");
+                let err = command(executor, "", prompt, None, &[]).expect_err("refused");
                 assert!(err.contains("starts with `-`"), "{executor} {prompt:?}: {err}");
             }
-            assert!(build_executor_command(executor, " -x", None).is_ok(), "{executor}");
+            assert!(command(executor, "", " -x", None, &[]).is_ok(), "{executor}");
         }
     }
 
     #[test]
     fn claude_code_executor_includes_mcp_config_when_set() {
         let (prog, args) =
-            build_executor_command("claude-code", "fix it", Some("/path/to/mcp.json")).expect("claude-code allowed");
+            command("claude-code", "", "fix it", Some("/path/to/mcp.json"), &["sylvode"]).expect("claude-code allowed");
         assert_eq!(prog, "claude");
         // prompt must come immediately after -p, not as a trailing positional
-        assert_eq!(args.first().map(String::as_str), Some("-p"));
-        assert_eq!(args.get(1).map(String::as_str), Some("fix it"));
-        assert!(args.contains(&"--mcp-config".to_string()));
-        assert!(args.contains(&"/path/to/mcp.json".to_string()));
-        // prompt must not be the last element (that would make claude treat it as a project dir)
-        assert_ne!(args.last().map(String::as_str), Some("fix it"));
+        assert_eq!(
+            args,
+            vec![
+                "-p",
+                "fix it",
+                "--permission-mode",
+                "dontAsk",
+                "--allowedTools",
+                "mcp__sylvode",
+                "--mcp-config",
+                "/path/to/mcp.json",
+                "--strict-mcp-config"
+            ]
+        );
     }
 
     #[test]
     fn claude_code_executor_omits_mcp_config_when_none() {
-        let (_, args) = build_executor_command("claude-code", "fix it", None).expect("claude-code allowed");
+        let (_, args) = command("claude-code", "", "fix it", None, &[]).expect("claude-code allowed");
         assert!(!args.contains(&"--mcp-config".to_string()));
-        // prompt must come immediately after -p flag
+        assert!(
+            !args.contains(&"bypassPermissions".to_string()),
+            "bypass is never the default"
+        );
+        // prompt must come immediately after -p flag, and is never last
         assert_eq!(args.first().map(String::as_str), Some("-p"));
         assert_eq!(args.get(1).map(String::as_str), Some("fix it"));
+        assert_ne!(args.last().map(String::as_str), Some("fix it"));
+    }
+
+    #[test]
+    fn claude_code_bypass_is_passed_only_when_opted_in() {
+        let (_, args) = command(
+            "claude-code",
+            "permission_mode = 'bypassPermissions'\ndangerously_bypass_permissions = true\nstrict_mcp_config = false",
+            "fix it",
+            Some("m.json"),
+            &[],
+        )
+        .expect("explicit opt-in");
+        assert_eq!(
+            args,
+            vec![
+                "-p",
+                "fix it",
+                "--permission-mode",
+                "bypassPermissions",
+                "--mcp-config",
+                "m.json"
+            ]
+        );
+    }
+
+    /// Without `allowed_tools`, the MCP config is read when the task runs; a file that cannot be
+    /// read fails the run instead of starting an agent that can use none of its tools.
+    #[test]
+    fn the_default_allow_list_is_read_from_the_mcp_config_at_run_time() {
+        let dir = std::env::temp_dir().join(format!("sylvode-webhook-mcp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::write(
+            dir.join("mcp.json"),
+            r#"{"mcpServers":{"sylvode":{"command":"mcp-server"}}}"#,
+        )
+        .expect("write mcp config");
+        let cfg: crate::config::CliAgentConfig = toml::from_str(&format!(
+            "executor = 'claude-code'\nworkdir = '{}'\nmcp_config_path = 'mcp.json'",
+            dir.display()
+        ))
+        .expect("parses");
+        let (_, args) = super::executor_command_for(&cfg, "fix it").expect("readable config");
+        assert!(
+            args.windows(2).any(|w| w == ["--allowedTools", "mcp__sylvode"]),
+            "{args:?}"
+        );
+
+        let missing: crate::config::CliAgentConfig = toml::from_str(&format!(
+            "executor = 'claude-code'\nworkdir = '{}'\nmcp_config_path = 'absent.json'",
+            dir.display()
+        ))
+        .expect("parses");
+        let err = super::executor_command_for(&missing, "fix it").expect_err("unreadable");
+        assert!(err.contains("mcp_config_path"), "{err}");
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]

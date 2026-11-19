@@ -19,6 +19,7 @@ mod callback;
 mod compat;
 mod config;
 mod dispatcher;
+mod executor_permissions;
 mod handler;
 mod process;
 mod replay;

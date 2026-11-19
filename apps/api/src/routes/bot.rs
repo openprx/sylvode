@@ -15,7 +15,16 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::middleware::bot_auth::{BotAuthContext, BotPermission, bot_permissions_allow, require_workspace_access};
-use crate::{error::ApiError, flow::event_origin::EventSurface, response::ApiResponse};
+use crate::{
+    error::ApiError, flow::event_origin::EventSurface, response::ApiResponse, services::bot_identity::BOT_ENTITY_TYPE,
+};
+
+/// `users.agent_type` of a bot created through this API.
+///
+/// Such a bot acts through its `opr_` token, most often from an MCP client. Its entity type is the ordinary [`BOT_ENTITY_TYPE`], so it can be
+/// assigned work, named as a webhook's bot user and registered as an AI participant like any
+/// other bot.
+pub const TOKEN_BOT_AGENT_TYPE: &str = "mcp";
 
 // ============================================================================
 // Request / Response types
@@ -211,8 +220,8 @@ pub async fn create_bot(
             "!".into(),
             bot_name.clone().into(),
             "user".into(),
-            "bot_mcp".into(),
-            "mcp".into(),
+            BOT_ENTITY_TYPE.into(),
+            TOKEN_BOT_AGENT_TYPE.into(),
             now.into(),
         ],
     ))
@@ -424,5 +433,168 @@ mod tests {
             workspace_role_from_permissions(&["read".to_string(), "write".to_string()]),
             "member"
         );
+    }
+}
+
+/// Bots created through this API against a migrated scratch database.
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod token_bot_identity_database_tests {
+    use super::{CreateBotRequest, TOKEN_BOT_AGENT_TYPE, create_bot};
+    use crate::routes::context::tenant_fixture::{count, exec, seed_tenant};
+    use crate::scratch_or_skip;
+    use crate::services::{ai_task_service::queue_vote_requested_tasks_for_project, bot_identity::is_bot_user};
+    use axum::extract::{Extension, Json, Path, State};
+    use axum::response::IntoResponse;
+    use platform::auth::{JwtClaims, TokenType};
+    use uuid::Uuid;
+
+    fn state_for(db: sea_orm::DatabaseConnection) -> platform::app::AppState {
+        use platform::config::{AppConfig, Secret};
+        platform::app::AppState {
+            cfg: AppConfig {
+                app_name: "token-bot-identity-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new("token-bot-identity-test-secret"),
+                jwt_access_ttl_seconds: 900,
+                jwt_refresh_ttl_seconds: 3600,
+                default_author_id: None,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db,
+            flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
+        }
+    }
+
+    /// A bot made with a token is an ordinary bot: it can be assigned work, named as a
+    /// webhook's bot user and act as a project's AI participant, with no administrator edit.
+    #[tokio::test]
+    async fn a_token_bot_is_a_bot_identity() {
+        let scratch = scratch_or_skip!("token_bot_identity");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "tb").await;
+        exec(
+            db,
+            "UPDATE workspace_members SET role = 'owner' WHERE workspace_id = $1 AND user_id = $2",
+            vec![tenant.workspace_id.into(), tenant.member_id.into()],
+        )
+        .await;
+        let claims = JwtClaims {
+            sub: tenant.member_id.to_string(),
+            email: format!("{}@tenant.test", tenant.member_id),
+            token_type: TokenType::Access,
+            iat: 0,
+            exp: 0,
+            sv: 0,
+        };
+        let response = create_bot(
+            State(state_for(db.clone())),
+            Extension(claims),
+            None,
+            Path(tenant.workspace_id),
+            Json(CreateBotRequest {
+                name: "loop bot".to_string(),
+                permissions: Some(vec!["write".to_string()]),
+                transport_surface: Some("mcp_stdio".to_string()),
+                expires_at: None,
+            }),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("create_bot failed: {err:?}"))
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+        let bot_id = body
+            .pointer("/data/id")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .expect("the response names the bot");
+
+        assert!(
+            is_bot_user(db, bot_id).await.expect("lookup"),
+            "assignable and usable as bot_user_id"
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM users WHERE id = $1 AND entity_type = 'bot' AND agent_type = $2",
+                vec![bot_id.into(), TOKEN_BOT_AGENT_TYPE.into()],
+            )
+            .await,
+            1
+        );
+
+        exec(
+            db,
+            "INSERT INTO ai_participants (id, project_id, name, model, provider, capabilities, registered_by) \
+             VALUES ($1, $2, 'loop bot', 'claude-code', 'anthropic', '{}'::jsonb, $3)",
+            vec![
+                bot_id.to_string().into(),
+                tenant.project_id.into(),
+                tenant.member_id.into(),
+            ],
+        )
+        .await;
+        let queued = queue_vote_requested_tasks_for_project(
+            db,
+            tenant.project_id,
+            &Uuid::new_v4().to_string(),
+            serde_json::json!({}),
+        )
+        .await
+        .expect("vote tasks queue");
+        assert_eq!(queued, 1, "the token bot is an AI participant of the project");
+        scratch.drop_self().await;
+    }
+
+    /// 0105 moves users created by the old bots API to `bot` and keeps everything else.
+    #[tokio::test]
+    async fn the_migration_turns_existing_token_users_into_bots() {
+        let scratch = scratch_or_skip!("token_bot_migration");
+        let db = &scratch.db;
+        let legacy = Uuid::new_v4();
+        let human = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type, agent_type) \
+             VALUES ($1, $2, '!', 'legacy', 'user', true, 'bot_mcp', 'mcp'), \
+                    ($3, $4, '!', 'person', 'user', true, 'human', NULL)",
+            vec![
+                legacy.into(),
+                format!("{legacy}@bot.openpr.local").into(),
+                human.into(),
+                format!("{human}@tenant.test").into(),
+            ],
+        )
+        .await;
+        let sql = include_str!("../../../../migrations/0105_token_bot_entity_type.sql");
+        for _ in 0..2 {
+            sea_orm::ConnectionTrait::execute_unprepared(db, sql)
+                .await
+                .expect("the migration runs, and runs again as a no-op");
+        }
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM users WHERE id = $1 AND entity_type = 'bot' AND agent_type = 'mcp'",
+                vec![legacy.into()],
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM users WHERE id = $1 AND entity_type = 'human'",
+                vec![human.into()],
+            )
+            .await,
+            1
+        );
+        scratch.drop_self().await;
     }
 }

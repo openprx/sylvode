@@ -1852,6 +1852,13 @@ fn build_router(state: AppState) -> Router {
                 )),
         )
         .route(
+            "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}/rotate-secret",
+            post(routes::webhook::rotate_webhook_secret).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
             "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}/deliveries",
             get(routes::webhook::list_deliveries).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
@@ -3605,6 +3612,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0104_project_resource_kinds.sql",
         include_str!("../../../migrations/0104_project_resource_kinds.sql"),
     ),
+    (
+        "0105_token_bot_entity_type.sql",
+        include_str!("../../../migrations/0105_token_bot_entity_type.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4143,6 +4154,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
             "ARRAY['directory'::text, 'custom'::text]",
         ),
     ),
+    ("0105_token_bot_entity_type.sql", SchemaProbe::Rerunnable),
 ];
 
 /// One recorded migration outcome.
@@ -4701,6 +4713,7 @@ mod tests {
                 "0102_flow_integrity_cross_workspace_attempts.sql",
                 "0103_form_plugin_extensions.sql",
                 "0104_project_resource_kinds.sql",
+                "0105_token_bot_entity_type.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -4813,7 +4826,7 @@ mod tests {
         );
     }
 
-    /// A probe has to produce a statement, except for the two files that create nothing and are
+    /// A probe has to produce a statement, except for the files that create nothing and are
     /// executed rather than adopted.
     #[test]
     fn only_rerunnable_probes_have_no_statement() {
@@ -4827,7 +4840,8 @@ mod tests {
             vec![
                 "0014_proposal_comments_schema_compat.sql",
                 "0021_fix_cascade.sql",
-                "0035_project_type_two_lanes.sql"
+                "0035_project_type_two_lanes.sql",
+                "0105_token_bot_entity_type.sql"
             ],
             "a migration may only skip its probe when re-executing it is a no-op"
         );

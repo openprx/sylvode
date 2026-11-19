@@ -8,9 +8,16 @@ export interface Webhook {
 	events: string[];
 	active?: boolean;
 	is_active: boolean;
-	secret?: string;
 	bot_user_id?: string | null;
 	created_at: string;
+}
+
+/**
+ * The answer to creating a webhook or rotating its secret. The signing secret is returned only
+ * here, once; list, get and update responses never carry it.
+ */
+export interface WebhookWithSecret extends Webhook {
+	secret: string;
 }
 
 export interface CreateWebhookData {
@@ -47,14 +54,21 @@ export const webhooksApi = {
 		return apiClient.get<Webhook>(`/api/v1/workspaces/${workspaceId}/webhooks/${webhookId}`);
 	},
 
-	create(workspaceId: string, data: CreateWebhookData): Promise<ApiResult<Webhook>> {
-		return apiClient.post<Webhook>(`/api/v1/workspaces/${workspaceId}/webhooks`, data);
+	create(workspaceId: string, data: CreateWebhookData): Promise<ApiResult<WebhookWithSecret>> {
+		return apiClient.post<WebhookWithSecret>(`/api/v1/workspaces/${workspaceId}/webhooks`, data);
+	},
+
+	rotateSecret(workspaceId: string, webhookId: string): Promise<ApiResult<WebhookWithSecret>> {
+		return apiClient.post<WebhookWithSecret>(
+			`/api/v1/workspaces/${workspaceId}/webhooks/${webhookId}/rotate-secret`,
+			{}
+		);
 	},
 
 	update(
 		workspaceId: string,
 		webhookId: string,
-		data: Partial<Webhook>
+		data: Partial<CreateWebhookData>
 	): Promise<ApiResult<Webhook>> {
 		return apiClient.patch<Webhook>(
 			`/api/v1/workspaces/${workspaceId}/webhooks/${webhookId}`,

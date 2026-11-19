@@ -770,7 +770,7 @@ mod reference_scope_database_tests {
         scratch.drop_self().await;
     }
 
-    fn state_for(db: sea_orm::DatabaseConnection) -> platform::app::AppState {
+    pub(super) fn state_for(db: sea_orm::DatabaseConnection) -> platform::app::AppState {
         use platform::config::{AppConfig, Secret};
         platform::app::AppState {
             cfg: AppConfig {
@@ -853,6 +853,51 @@ mod reference_scope_database_tests {
             panic!("no AI participant exists, so the task cannot be created");
         };
         assert!(message.contains("ai participant"), "{message}");
+        scratch.drop_self().await;
+    }
+}
+
+/// Only a task's own AI participant (or a system administrator) may complete or fail it, whatever
+/// kind of bot or person asks.
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod participant_authority_database_tests {
+    use super::{ensure_actor_can_operate, find_task};
+    use crate::error::ApiError;
+    use crate::routes::context::tenant_fixture::{exec, seed_bot_user, seed_tenant};
+    use crate::scratch_or_skip;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn only_the_participant_bot_may_operate_its_task() {
+        let scratch = scratch_or_skip!("ai_task_participant_authority");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "pa").await;
+        let participant = seed_bot_user(db, &tenant).await;
+        let other_bot = seed_bot_user(db, &tenant).await;
+        let task_id = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO ai_tasks (id, project_id, ai_participant_id, task_type, status) \
+             VALUES ($1, $2, $3, 'issue_assigned', 'processing')",
+            vec![task_id.into(), tenant.project_id.into(), participant.into()],
+        )
+        .await;
+        let state = super::reference_scope_database_tests::state_for(db.clone());
+        let task = find_task(&state, task_id).await.expect("task exists");
+
+        ensure_actor_can_operate(&state, &task, participant)
+            .await
+            .expect("the participant operates its own task");
+        for outsider in [other_bot, tenant.member_id] {
+            assert!(
+                matches!(
+                    ensure_actor_can_operate(&state, &task, outsider).await,
+                    Err(ApiError::Forbidden(_))
+                ),
+                "{outsider} is not the task's participant"
+            );
+        }
         scratch.drop_self().await;
     }
 }
