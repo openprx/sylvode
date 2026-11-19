@@ -29,6 +29,15 @@ fn routed_config(api: &StubApi) -> String {
     )
 }
 
+/// [`config`], with the agent routed by `bot_ids = ["bot-1"]` alone: no other list is set, so
+/// the bot id is the only constraint and the agent type of the task must not widen it.
+fn bot_id_routed_config(api: &StubApi) -> String {
+    config(api).replace(
+        "agent_type = \"cli\"\n\n",
+        "agent_type = \"cli\"\n\n[agents.route]\nbot_ids = [\"bot-1\"]\n\n",
+    )
+}
+
 /// A worker AI task for `bot_id`, as the Sylvode worker delivers it.
 fn worker_task(task_id: &str, bot_id: &str) -> serde_json::Value {
     serde_json::json!({
@@ -147,4 +156,37 @@ async fn a_direct_bot_task_no_agent_matches_calls_nothing() {
     assert_eq!(status, 200, "{answer}");
     assert_eq!(answer["status"], "no_agent", "{answer}");
     assert!(api.next(Duration::from_millis(500)).await.is_none());
+}
+
+/// A route that sets only `bot_ids` is a constraint: a task for another bot of the same agent
+/// type is not dispatched (it used to match any bot) and is failed as unmatched, while the
+/// listed bot still runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bot_ids_only_route_does_not_catch_another_bot() {
+    let bin = TempDir::new("bin");
+    write_script(bin.path(), "codex", "echo fixed it");
+    let mut api = StubApi::start().await;
+    let server = Server::start(
+        CANONICAL,
+        &bot_id_routed_config(&api),
+        &[("PATH", &path_with(bin.path()))],
+    )
+    .expect("server starts");
+
+    let other_id = uuid::Uuid::new_v4().to_string();
+    let other = worker_task(&other_id, "bot-unknown");
+    let (status, answer) = post_signed(&server.url("/webhook"), &other.to_string()).await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["status"], "no_agent", "{answer}");
+    let call = api.next(Duration::from_secs(10)).await.expect("fail call");
+    assert_eq!(call.path, format!("/api/v1/ai/callbacks/task/{other_id}/fail"));
+    assert!(api.next(Duration::from_millis(300)).await.is_none(), "one call only");
+
+    let listed_id = uuid::Uuid::new_v4().to_string();
+    let listed = worker_task(&listed_id, "bot-1");
+    let (status, answer) = post_signed(&server.url("/webhook"), &listed.to_string()).await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    let call = api.next(Duration::from_secs(10)).await.expect("complete call");
+    assert_eq!(call.path, format!("/api/v1/ai/callbacks/task/{listed_id}/complete"));
 }
