@@ -1,4 +1,10 @@
-use crate::{AppState, ai_task, compat, config::AgentConfig, dispatcher, replay::Refusal, signature};
+use crate::{
+    AppState, ai_task, compat,
+    config::{AgentConfig, RouteConfig},
+    dispatcher,
+    replay::Refusal,
+    signature,
+};
 use axum::{
     Json,
     extract::State,
@@ -132,6 +138,9 @@ fn bot_dispatch_target(payload: &Value) -> Option<BotDispatchTarget> {
     bot_context_target(payload).or_else(|| ai_task_envelope_target(payload))
 }
 
+/// One route list. An empty list is "not configured" and restricts nothing; a configured list
+/// matches only when the task's value is present and equals one entry (ignoring case and
+/// surrounding whitespace), so a task without the value fails it.
 fn list_matches_constraint(values: &[String], actual: Option<&str>) -> bool {
     values.is_empty()
         || actual.is_some_and(|actual| {
@@ -141,19 +150,26 @@ fn list_matches_constraint(values: &[String], actual: Option<&str>) -> bool {
         })
 }
 
+/// The bot identity constraint is `bot_names` and `bot_ids` taken together: with neither
+/// configured it restricts nothing; otherwise at least one configured list must contain the
+/// bot's name or id. A list that is not configured never satisfies the constraint (an empty
+/// list must not count as a match), so a route with only `bot_ids` rejects every other bot.
+fn bot_identity_matches(route: &RouteConfig, target: &BotDispatchTarget) -> bool {
+    if route.bot_names.is_empty() && route.bot_ids.is_empty() {
+        return true;
+    }
+    let bot_name = target.bot_name.as_deref().unwrap_or(target.bot_key.as_str());
+    let bot_id = target.bot_id.as_deref().unwrap_or(target.bot_key.as_str());
+    (!route.bot_names.is_empty() && list_matches_constraint(&route.bot_names, Some(bot_name)))
+        || (!route.bot_ids.is_empty() && list_matches_constraint(&route.bot_ids, Some(bot_id)))
+}
+
 fn agent_matches_route(agent: &AgentConfig, target: &BotDispatchTarget) -> bool {
     let Some(route) = agent.route.as_ref() else {
         return true;
     };
 
-    let has_bot_identity_constraint = !route.bot_names.is_empty() || !route.bot_ids.is_empty();
-    let bot_name = target.bot_name.as_deref().unwrap_or(target.bot_key.as_str());
-    let bot_id = target.bot_id.as_deref().unwrap_or(target.bot_key.as_str());
-    let bot_identity_matches = !has_bot_identity_constraint
-        || list_matches_constraint(&route.bot_names, Some(bot_name))
-        || list_matches_constraint(&route.bot_ids, Some(bot_id));
-
-    bot_identity_matches
+    bot_identity_matches(route, target)
         && list_matches_constraint(&route.bot_agent_types, target.agent_type.as_deref())
         && list_matches_constraint(&route.project_types, target.project_type.as_deref())
         && list_matches_constraint(&route.trigger_kinds, target.trigger_kind.as_deref())
@@ -618,5 +634,78 @@ agent_type = "webhook"
 
         let selected = select_agent(&agents, &target).expect("selected agent");
         assert_eq!(selected.id, "legacy-webhook");
+    }
+
+    /// A bot-task target with the given direct bot name and id.
+    fn named_target(bot_name: &str, bot_id: Option<&str>) -> super::BotDispatchTarget {
+        let context = json!({
+            "is_bot_task": true,
+            "bot_name": bot_name,
+            "bot_id": bot_id,
+            "bot_agent_type": "webhook"
+        });
+        bot_dispatch_target(&json!({"bot_context": context})).expect("target")
+    }
+
+    fn routed(route: &str) -> Vec<AgentConfig> {
+        vec![agent(&format!(
+            "id = \"routed\"\nname = \"Routed\"\nagent_type = \"webhook\"\n\n[route]\n{route}\n"
+        ))]
+    }
+
+    #[test]
+    fn a_bot_ids_only_route_rejects_every_other_bot() {
+        let agents = routed(r#"bot_ids = ["bot-1"]"#);
+        assert!(select_agent(&agents, &named_target("Other", Some("bot-unknown"))).is_none());
+        // The same agent type does not let it fall back to the route's agent.
+        assert!(select_agent(&agents, &named_target("Routed", Some("bot-unknown"))).is_none());
+        assert!(select_agent(&agents, &named_target("Other", Some("bot-1"))).is_some());
+        assert!(select_agent(&agents, &named_target("Other", Some(" BOT-1 "))).is_some());
+    }
+
+    #[test]
+    fn a_bot_names_only_route_rejects_every_other_bot() {
+        let agents = routed(r#"bot_names = ["Fixer"]"#);
+        assert!(select_agent(&agents, &named_target("Stranger", Some("bot-1"))).is_none());
+        assert!(select_agent(&agents, &named_target("fixer", Some("bot-9"))).is_some());
+    }
+
+    #[test]
+    fn with_bot_names_and_bot_ids_either_list_is_enough() {
+        let agents = routed("bot_names = [\"Fixer\"]\nbot_ids = [\"bot-1\"]");
+        assert!(select_agent(&agents, &named_target("Fixer", Some("bot-9"))).is_some());
+        assert!(select_agent(&agents, &named_target("Stranger", Some("bot-1"))).is_some());
+        assert!(select_agent(&agents, &named_target("Stranger", Some("bot-9"))).is_none());
+    }
+
+    #[test]
+    fn a_route_without_bot_identity_lists_does_not_restrict_the_bot() {
+        let agents = routed(r#"bot_agent_types = ["webhook"]"#);
+        assert!(select_agent(&agents, &named_target("Anyone", Some("bot-9"))).is_some());
+        let none = routed("");
+        assert!(select_agent(&none, &named_target("Anyone", None)).is_some());
+    }
+
+    #[test]
+    fn a_bot_identity_constraint_still_combines_with_the_other_lists() {
+        let agents = routed("bot_ids = [\"bot-1\"]\nproject_types = [\"contract_review\"]");
+        // The bot matches but the task has no project type.
+        assert!(select_agent(&agents, &named_target("Fixer", Some("bot-1"))).is_none());
+    }
+
+    #[test]
+    fn a_worker_task_is_matched_by_its_participant_id() {
+        let agents = routed(r#"bot_ids = ["bot-1"]"#);
+        let task = |id: &str| {
+            bot_dispatch_target(&json!({
+                "task_id": "t-1",
+                "ai_participant_id": id,
+                "ai_participant_agent_type": "webhook",
+                "trigger_kind": "assigned"
+            }))
+            .expect("target")
+        };
+        assert!(select_agent(&agents, &task("bot-1")).is_some());
+        assert!(select_agent(&agents, &task("bot-unknown")).is_none());
     }
 }

@@ -280,8 +280,12 @@ can check, when it receives the callback, that the bot may write to that issue.
 
 An agent without a route matches every task. A route matches when every non-empty list contains
 the task's value, compared ignoring case and surrounding whitespace; a value missing from the task
-fails a non-empty list. `bot_names` and `bot_ids` together form one constraint that either list can
-satisfy. When nothing matches, the answer is `{"status":"no_agent", ...}` and nothing runs.
+fails a non-empty list. A list that is omitted or empty restricts nothing. `bot_names` and
+`bot_ids` together form one constraint: when neither is set it restricts nothing, and when one or
+both are set the task's bot must match at least one entry of a list that is set (either list is
+enough when both are set). A route with only `bot_ids = ["bot-1"]` therefore rejects every other
+bot; before the Sylvode-aligned release it matched every bot (see the root
+`CHANGELOG.md`). When nothing matches, the answer is `{"status":"no_agent", ...}` and nothing runs.
 
 `trigger_kinds` is compared with `bot_context.trigger_reason` (or `bot_context.trigger_kind`) on a
 webhook delivery and with the top-level `trigger_kind` on a worker AI task, and with nothing else: a
