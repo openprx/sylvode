@@ -164,8 +164,9 @@ services:
   # the legacy /app/openpr-webhook. A local build is tagged with the image name below, the name
   # releases publish under: compose builds it when no image of that name is present, and
   # `docker compose pull webhook` fetches a published one instead. To run a specific published
-  # release, pin it, for example SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/openpr-webhook:<tag>, and for 0.3.3
-  # or earlier also override the command with /app/openpr-webhook. Pin a version tag rather than
+  # release, pin it, for example SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/sylvode-webhook:<sylvode version>
+  # (the image tag is the Sylvode release version). A pre-merge standalone image
+  # (ghcr.io/openprx/openpr-webhook, last tag 0.3.3) also needs the command /app/openpr-webhook. Pin a version tag rather than
   # :latest in production. SYLVODE_WEBHOOK_IMAGE / SYLVODE_WEBHOOK_CONFIG override the defaults;
   # scripts/start.sh maps the legacy OPENPR_WEBHOOK_IMAGE / OPENPR_WEBHOOK_CONFIG onto them.
   webhook:

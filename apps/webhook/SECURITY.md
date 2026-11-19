@@ -2,14 +2,16 @@
 
 ## Supported versions
 
-Security fixes are made on the latest release of Sylvode Webhook (formerly OpenPR Webhook). The
-legacy `openpr-webhook` executable, image and archive names receive the same fixes, because they
+Security fixes are made on the latest Sylvode release, which carries the webhook receiver
+(formerly OpenPR Webhook) at the same version; see the repository's
+[security policy](../../SECURITY.md). The legacy `openpr-webhook` executable, image and archive names receive the same fixes, because they
 are the same build.
 
 ## Reporting a vulnerability
 
 Please do not open a public issue for a vulnerability. Report it privately through
-[GitHub security advisories](https://github.com/openprx/openpr-webhook/security/advisories/new).
+[GitHub security advisories](https://github.com/openprx/sylvode/security/advisories/new), as the
+repository's [security policy](../../SECURITY.md) describes.
 
 Include the affected version, a description of the problem, steps to reproduce and the impact you
 expect. We will acknowledge the report, keep you informed while we investigate, and credit you in

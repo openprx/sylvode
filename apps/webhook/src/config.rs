@@ -1242,7 +1242,7 @@ url = "http://127.0.0.1:9000/hook"
     }
 
     /// Placeholder checks apply only to secrets in use: the `hmac_secret = "shared-hmac-secret"`
-    /// that the examples up to 0.3.17 shipped uncommented, beside `enabled = false`, starts with a
+    /// that the earlier standalone examples shipped uncommented, beside `enabled = false`, starts with a
     /// warning; the same line with the tunnel on refuses. A placeholder in `webhook_secrets` is not
     /// used with `allow_unsigned = true` either.
     #[test]
