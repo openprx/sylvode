@@ -838,9 +838,8 @@ the same digest. See [`Dockerfile`](Dockerfile).
 
 The receiver is a Sylvode workspace member and carries the Sylvode version: `sylvode-webhook
 --version`, image tags and archive names all use the workspace version. The standalone 0.3.x line
-ended with 0.3.53 (never released; the last published standalone release is 0.3.3). Sylvode's
-version is numerically lower than 0.3.x, so a tool that compares versions must treat the first
-Sylvode-versioned release as a new line, not a downgrade.
+ended with 0.3.53 (never released; the last published standalone release is 0.3.3). The first
+Sylvode-versioned release is 0.5.0, which continues above that line.
 
 ### Release archives
 

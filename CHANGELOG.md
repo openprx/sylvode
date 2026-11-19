@@ -10,6 +10,8 @@ name.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-19
+
 ### Added
 
 - **Plugin protocol 3: one package, several locations.** A package with `schema_version`
@@ -333,12 +335,11 @@ name.
   are answered `no_agent` (and, with the AI task callback enabled, failed). To keep a
   catch-all, remove `bot_ids` / `bot_names` from that route, keeping `bot_agent_types` or other
   lists if you want it narrower.
-- **Webhook receiver version numbers.** The next receiver release carries the Sylvode version,
-  which is numerically lower than the standalone 0.3.x versions. Treat it as a new line, not a
-  downgrade: pin the new version explicitly in deployment tooling, image tags and update checks
-  that compare versions. When upgrading from the last published standalone release 0.3.3, also
-  read "Upgrading from 0.3.3" in `apps/webhook/CHANGELOG.md`, which lists the configurations
-  that are now refused at start-up.
+- **Webhook receiver version numbers.** The receiver now carries the Sylvode version, starting
+  with 0.5.0, which continues above the standalone 0.3.x line (last published standalone
+  release 0.3.3; 0.3.53 was never released). When upgrading from 0.3.3, also read "Upgrading
+  from 0.3.3" in `apps/webhook/CHANGELOG.md`, which lists the configurations that are now
+  refused at start-up.
 - **Flow capabilities are switched on once.** Upgrading an existing database switches the capabilities listed above on once, including on installations that had them off; values that were already on and a higher `minimum_reader_version` are kept. To keep any of them off, switch it off right after the migration, before opening traffic (personal Flow: `UPDATE flow_runtime_capabilities SET external_mounts=false, personal_writes=false, personal_provisioning=false, updated_at=now() WHERE singleton;`). The choice survives restarts and migration replays; do not delete the `flow_capabilities_default_on` row in `flow_runtime_capability_rollouts`.
 - **Worker AI tasks: new end rules.** After the upgrade a task the receiver answers `no_agent`,
   `ignored`, `refused` or with an HTTP 4xx (other than 408, 409, 425, 429) is failed on the
@@ -1736,7 +1737,8 @@ First public release of the MCP server binaries.
   HTTP, stdio (including Content-Length framing) and SSE.
 - Workspace bot tokens (`opr_` prefix) and their management endpoints.
 
-[Unreleased]: https://github.com/openprx/sylvode/compare/v0.2.539...HEAD
+[Unreleased]: https://github.com/openprx/sylvode/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/openprx/sylvode/compare/v0.2.539...v0.5.0
 [0.2.539]: https://github.com/openprx/sylvode/compare/v0.2.21...v0.2.539
 [0.2.21]: https://github.com/openprx/sylvode/compare/v0.2.8...v0.2.21
 [0.2.8]: https://github.com/openprx/sylvode/compare/v0.2.7...v0.2.8

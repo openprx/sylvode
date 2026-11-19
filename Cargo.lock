@@ -120,7 +120,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "api"
-version = "0.2.539"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -597,7 +597,7 @@ dependencies = [
 
 [[package]]
 name = "collab-core"
-version = "0.2.539"
+version = "0.5.0"
 dependencies = [
  "base64",
  "crc32fast",
@@ -1238,7 +1238,7 @@ dependencies = [
 
 [[package]]
 name = "flow-loro-bench"
-version = "0.2.539"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "collab-core",
@@ -2332,7 +2332,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp-server"
-version = "0.2.539"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "api",
@@ -2766,7 +2766,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform"
-version = "0.2.539"
+version = "0.5.0"
 dependencies = [
  "jsonwebtoken",
  "parking_lot",
@@ -4023,7 +4023,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sylvode-webhook"
-version = "0.2.539"
+version = "0.5.0"
 dependencies = [
  "axum",
  "futures-util",
@@ -5532,7 +5532,7 @@ dependencies = [
 
 [[package]]
 name = "worker"
-version = "0.2.539"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "api",
