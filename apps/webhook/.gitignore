@@ -1,17 +1,3 @@
-# Build artifacts
-/target
-
-# Config with secrets
+# Local configuration with secrets (build output goes to the workspace target/)
 /config.toml
 !/config.example.toml
-
-# Logs
-*.log
-
-# OS
-.DS_Store
-
-# IDE
-.idea/
-.vscode/
-.brv/

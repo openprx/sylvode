@@ -66,12 +66,16 @@ of the issue, or, for `comment.created`, is mentioned in the comment.
 
 ## Quick Start
 
+The receiver lives in `apps/webhook` of the [Sylvode](https://github.com/openprx/sylvode)
+repository and is built as the `sylvode-webhook` package of its Cargo workspace. Run these
+commands from the repository root:
+
 ```bash
 # Build
-cargo build --release
+cargo build --release -p sylvode-webhook
 
 # Configure
-cp config.example.toml config.toml
+cp apps/webhook/config.example.toml config.toml
 # Set webhook_secrets to the secret of your Sylvode webhook; start-up is refused while the
 # example placeholder is still there
 
@@ -80,10 +84,9 @@ cp config.example.toml config.toml
 # sylvode-webhook listening on 127.0.0.1:9090
 ```
 
-The Rust toolchain is pinned in `rust-toolchain.toml` (1.97.1), which rustup installs on the first
-build. The crate's `[lints]` turn every compiler and clippy warning into an error, so building
-with a different compiler version (`cargo +stable build`, or `cargo install` outside this
-directory) can fail on a lint that version added.
+The Rust toolchain is pinned by the workspace `rust-toolchain.toml`, which rustup installs on the
+first build. The crate uses the workspace `[lints]`; CI runs clippy with `-D warnings`, so
+building with a different compiler version can fail there on a lint that version added.
 
 The example configuration is secure by default: it listens on loopback only, verifies every
 signature (`allow_unsigned = false`) and contains no agent that runs a command without
@@ -786,5 +789,5 @@ configuration) and the repository URL `https://github.com/openprx/openpr-webhook
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT)
+Licensed under either of [Apache License, Version 2.0](../../LICENSE-APACHE) or [MIT license](../../LICENSE-MIT)
 at your option.

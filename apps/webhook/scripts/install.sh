@@ -17,7 +17,8 @@
 # Options:
 #   --binary-path PATH   Path to the sylvode-webhook binary.
 #                        Default: ./sylvode-webhook, then
-#                                 ./target/release/sylvode-webhook; the
+#                                 ./target/release/sylvode-webhook, then the
+#                                 Sylvode workspace target/release; the
 #                                 legacy openpr-webhook name is tried last
 #   --config-dir  PATH   Directory that contains config.toml (and will be
 #                        used as the service working directory).
@@ -124,10 +125,12 @@ if [[ -z "$BINARY_PATH" ]]; then
         "$PWD/target/release/$CANONICAL_NAME" \
         "$SCRIPT_DIR/../$CANONICAL_NAME" \
         "$SCRIPT_DIR/../target/release/$CANONICAL_NAME" \
+        "$SCRIPT_DIR/../../../target/release/$CANONICAL_NAME" \
         "$PWD/$LEGACY_NAME" \
         "$PWD/target/release/$LEGACY_NAME" \
         "$SCRIPT_DIR/../$LEGACY_NAME" \
-        "$SCRIPT_DIR/../target/release/$LEGACY_NAME"
+        "$SCRIPT_DIR/../target/release/$LEGACY_NAME" \
+        "$SCRIPT_DIR/../../../target/release/$LEGACY_NAME"
     do
         if [[ -f "$candidate" ]]; then
             BINARY_PATH="$(resolve_path "$candidate")"
