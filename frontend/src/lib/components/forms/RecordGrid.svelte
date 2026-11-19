@@ -201,6 +201,8 @@
 		'inline-flex min-h-6 items-center gap-1 rounded text-start font-medium hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:hover:text-slate-100';
 </script>
 
+<!-- eslint-disable svelte/no-navigation-without-resolve -- title links are full record page paths built by the caller -->
+
 {#snippet sortIcon(key: string)}
 	{#if sort?.field === key}
 		{#if sort.direction === 'desc'}<ArrowDown

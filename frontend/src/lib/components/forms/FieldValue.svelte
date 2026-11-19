@@ -69,6 +69,8 @@
 		Array.from({ length: max }, (_, index) => index < count);
 </script>
 
+<!-- eslint-disable svelte/no-navigation-without-resolve -- links here are record values (sanitised mailto/tel/http URLs, attachment downloads) or full record page paths built by the caller, not app routes to resolve -->
+
 {#snippet empty()}
 	<span class="text-slate-500 dark:text-slate-400" data-field-value-empty
 		><span aria-hidden="true">—</span><span class="sr-only">{$t('forms.recordPanel.empty')}</span
@@ -210,7 +212,7 @@
 	>
 {:else if display.kind === 'location'}
 	<span class={panel ? 'block' : 'block truncate'} data-field-value-location>
-		{#if display.label}<span>{display.label}</span>{' '}{/if}
+		{#if display.label}<span class="me-1">{display.label}</span>{/if}
 		{#if panel || !display.label}
 			<span class="font-mono text-xs text-slate-600 dark:text-slate-300" dir="ltr"
 				>{display.coordinates}</span

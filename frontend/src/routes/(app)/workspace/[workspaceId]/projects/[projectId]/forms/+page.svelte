@@ -34,8 +34,8 @@
 		X
 	} from '@lucide/svelte';
 
-	import { goto } from '$app/navigation';
-	import { getContext, onMount, tick } from 'svelte';
+	import { afterNavigate, goto } from '$app/navigation';
+	import { getContext, onMount, tick, untrack } from 'svelte';
 	import { WORKBENCH_CONTEXT, type TaskWorkbench } from '#lib/workbench/tabs.js';
 	import {
 		FormsRefreshLatch,
@@ -49,7 +49,7 @@
 		type FormsSessionSnapshot
 	} from '#lib/workbench/forms-session.js';
 	import { page } from '$app/state';
-	import { apiClient } from '#lib/api/client.js';
+	import { apiClient, type ApiResult } from '#lib/api/client.js';
 
 	import {
 		formsApi,
@@ -78,6 +78,19 @@
 	import Button from '#lib/components/Button.svelte';
 	import FormDesignerWorkspace from '#lib/components/forms/FormDesignerWorkspace.svelte';
 	import OptionValueBadges from '#lib/components/forms/OptionValueBadges.svelte';
+	import LayoutSettingsSheet from '#lib/components/forms/LayoutSettingsSheet.svelte';
+	import RecordGrid, { type GridBadge } from '#lib/components/forms/RecordGrid.svelte';
+	import RecordSidePanel, {
+		PANEL_DEFAULT_WIDTH,
+		type PanelStatus
+	} from '#lib/components/forms/RecordSidePanel.svelte';
+	import ViewBar from '#lib/components/forms/ViewBar.svelte';
+	import type { SimpleFilter } from '#lib/components/forms/ViewArrangementControls.svelte';
+	import { buildDetailSections, headerFields } from '#lib/forms/detail-layout.js';
+	import type { FieldDisplayContext } from '#lib/forms/field-display.js';
+	import * as arrangement from '#lib/forms/view-arrangement.js';
+	import * as precedence from '#lib/forms/view-precedence.js';
+	import { authStore } from '#lib/stores/auth.js';
 	import FormWorkflowTabs, {
 		type FormWorkflowMode
 	} from '#lib/components/forms/FormWorkflowTabs.svelte';
@@ -147,6 +160,7 @@
 	};
 
 	type ZipFileInput = { path: string; data: string | Uint8Array };
+	type StoredViewArrangement = arrangement.StoredArrangement;
 
 	const recordPluginActions: RecordPluginActionSurface = writable(null);
 	const workspaceId = $derived(requireRouteParam(page.params.workspaceId, 'workspaceId'));
@@ -499,7 +513,32 @@
 	let aggregates = $state<Record<string, FormAggregate>>({});
 	let formPermissions = $state<FormPermissions | null>(null);
 	let selectedFormId = $state('');
-	let selectedViewId = $state('');
+	let selectedViewId = $state(precedence.ALL_RECORDS_VIEW_ID);
+	// The working arrangement is compared with the config the draft produced right after the saved
+	// view was applied, so representation differences in stored configs never read as changes.
+	let viewBaseline = $state({
+		viewId: '',
+		type: 'grid',
+		key: '',
+		config: {} as Record<string, unknown>
+	});
+	let viewConflict = $state(false);
+	let saveViewOpen = $state(false);
+	let saveViewName = $state('');
+	let saveViewError = $state<string | null>(null);
+	let resetUndo = $state<StoredViewArrangement | null>(null);
+	let serverRecordTotal = $state(0);
+	let panelRecordId = $state<string | null>(null);
+	let panelStatus = $state<PanelStatus>('ready');
+	let panelError = $state('');
+	let panelDetailsLoading = $state(false);
+	let panelWidth = $state(PANEL_DEFAULT_WIDTH);
+	let panelAppsOpen = $state(false);
+	let panelHistoryDepth = 0;
+	let recordGrid = $state<RecordGrid | null>(null);
+	let recordPanel = $state<RecordSidePanel | null>(null);
+	let liveMessage = $state('');
+	let panelMode = $state<'docked' | 'overlay' | 'sheet'>('docked');
 	let selectedRecord = $state<FormRecord | null>(null);
 	let focusedRecordIds = $state<string[]>([]);
 	let selectedRecordLinks = $state<FormRecordLink[]>([]);
@@ -511,7 +550,6 @@
 	let relationTargetsLoading = $state(false);
 	let loading = $state(true);
 	let templatesLoading = $state(false);
-	let viewsLoading = $state(false);
 	let recordsLoading = $state(false);
 	let eventsLoading = $state(false);
 	let recordCommentsLoading = $state(false);
@@ -519,7 +557,6 @@
 	let duplicatingForm = $state(false);
 	let installingTemplateKey = $state<string | null>(null);
 	let viewSubmitting = $state(false);
-	let deletingViewId = $state<string | null>(null);
 	let exportingRecords = $state(false);
 	let exportedCurrentViewJsonRecordCount = $state<number | null>(null);
 	let exportedAttachmentManifestCount = $state<number | null>(null);
@@ -752,9 +789,28 @@
 	const detailVisibleFields = $derived(
 		fields.filter((field) => field.visibility?.detail !== false)
 	);
-	const selectedView = $derived.by(
-		() => formViews.find((view) => view.id === selectedViewId) ?? formViews[0] ?? null
+	const savedView = $derived(formViews.find((view) => view.id === selectedViewId) ?? null);
+	const baseView = $derived(savedView ?? (selectedForm ? builtInView(selectedForm) : null));
+	const draftViewConfig = $derived(viewConfigFromDraft());
+	const arrangementModified = $derived(
+		!!baseView &&
+			viewBaseline.viewId === baseView.id &&
+			(viewBaseline.type !== viewDraft.view_type ||
+				viewBaseline.key !== arrangement.normalizedViewConfig(draftViewConfig))
 	);
+	const selectedView = $derived<FormView | null>(
+		baseView && arrangementModified
+			? { ...baseView, view_type: viewDraft.view_type, config: draftViewConfig }
+			: baseView
+	);
+	const recordQuery = $derived(
+		arrangement.serverQueryFor(
+			savedView && { id: savedView.id, config: viewBaseline.config },
+			draftViewConfig,
+			{ modified: arrangementModified, isServerSortable }
+		)
+	);
+	const canDesign = $derived(formPermissions?.effective.actions['form.design'] ?? true);
 	const selectedViewColumns = $derived.by(() => viewColumns(selectedView));
 	const selectedViewType = $derived((selectedView?.view_type ?? 'grid') as FormView['view_type']);
 	const detailUrlRecordId = $derived(
@@ -915,6 +971,7 @@
 	);
 
 	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
+	const currentUserId = $derived($authStore.user?.id ?? workbench?.current.userId ?? '');
 	let formsSessionKey = $state<string | null>(null);
 	let formsSessionUser: string | null = null;
 	let formsSessionRelease: (() => void) | null = null;
@@ -970,7 +1027,10 @@
 		formsSessionViewVersion = selectedView?.updated_at ?? null;
 	}
 	function formsSessionDirty() {
-		return formsDraftDirty(formsDraftGroups(), formsSessionClean);
+		// View changes are kept automatically (per user, on this device): never unsaved work.
+		const groups: Partial<ReturnType<typeof formsDraftGroups>> = formsDraftGroups();
+		delete groups.view;
+		return formsDraftDirty(groups, formsSessionClean);
 	}
 	function formsSessionSaving() {
 		return (
@@ -1110,6 +1170,7 @@
 				pinnedTimelineEventIds,
 				formsSessionConflict
 			} = saved);
+			if (activeMode === 'detail') activeMode = 'data';
 			formsSessionFocus = saved.focus ?? null;
 			formsSessionClean = cached.clean;
 			formsSessionSchemaVersion = cached.formSchemaVersion;
@@ -1469,7 +1530,8 @@
 		memberPermissionDraft = defaultPermissionActions();
 		memberFieldReadDraft = {};
 		memberFieldWriteDraft = {};
-		selectedViewId = '';
+		selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
+		panelRecordId = null;
 		selectedRecord = null;
 		selectedRecordLinks = [];
 		selectedRecordChildren = [];
@@ -1492,6 +1554,7 @@
 		url.searchParams.delete('form_id');
 		url.searchParams.delete('record');
 		url.searchParams.delete('record_id');
+		url.searchParams.delete('view');
 
 		const next = `${url.pathname}${url.search}${url.hash}`;
 		const current = `${page.url.pathname}${page.url.search}${page.url.hash}`;
@@ -1507,7 +1570,8 @@
 		if (!form) return false;
 
 		selectedFormId = form.id;
-		selectedViewId = '';
+		selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
+		panelRecordId = null;
 		editingRecordId = null;
 		recordEditorOpen = false;
 		recordPage = 1;
@@ -1544,32 +1608,31 @@
 	async function loadFormViews() {
 		if (!selectedFormId) {
 			formViews = [];
-			selectedViewId = '';
+			selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
 
 			return;
 		}
 
-		viewsLoading = true;
-
 		const response = await formsApi.listViews(selectedFormId);
-
-		viewsLoading = false;
 
 		if (response.code !== 0) {
 			toast.error(response.message);
 			formViews = [];
-			selectedViewId = '';
+			selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
+			applyView(precedence.ALL_RECORDS_VIEW_ID);
 
 			return;
 		}
 
 		formViews = sortViewsByDefault(response.data ?? []);
-
-		if (!selectedViewId || !formViews.some((view) => view.id === selectedViewId)) {
-			selectedViewId = formViews[0]?.id ?? '';
-		}
-
-		resetViewDraft();
+		const urlForm = page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
+		const resolved = precedence.resolveInitialView({
+			views: formViews,
+			urlViewId: urlForm === selectedFormId ? page.url.searchParams.get('view') : null,
+			rememberedViewId: precedence.readRememberedView(currentUserId, selectedFormId)
+		});
+		if (resolved.dropRemembered) precedence.forgetRememberedView(currentUserId, selectedFormId);
+		applyView(resolved.viewId);
 	}
 
 	async function loadFormPermissions() {
@@ -1644,12 +1707,15 @@
 		if (!selectedFormId) return false;
 
 		recordsLoading = true;
+		const query = recordQuery;
+		loadedRecordQuery = JSON.stringify([selectedFormId, query]);
 
 		const [response, previewResponse] = await Promise.all([
 			formsApi.listRecords(selectedFormId, {
 				page: 1,
-				per_page: 100,
-				view_id: selectedViewId || undefined
+				per_page: query.per_page,
+				view_id: query.view_id,
+				sort: query.sort
 			}),
 			formsApi.listRecords(selectedFormId, { page: 1, per_page: 100 })
 		]);
@@ -1659,8 +1725,13 @@
 			records = [];
 		} else {
 			records = response.data?.items ?? [];
+			serverRecordTotal = response.data?.total ?? records.length;
 
-			if (selectedRecord && !records.some((record) => record.id === selectedRecord?.id)) {
+			if (
+				selectedRecord &&
+				selectedRecord.id !== panelRecordId &&
+				!records.some((record) => record.id === selectedRecord?.id)
+			) {
 				selectedRecord = null;
 				selectedRecordLinks = [];
 				selectedRecordChildren = [];
@@ -1901,6 +1972,7 @@
 		selectedRecord = response.data;
 		editingRecordId = null;
 		recordEditorOpen = false;
+		if (panelRecordId) announce($t('forms.recordPanel.announceSaved'));
 		recordAttachments = [];
 		resetRecordDraft();
 		toast.success(wasEditing ? $t('forms.recordUpdated') : $t('forms.recordSaved'));
@@ -1964,6 +2036,7 @@
 		}
 
 		lastDeletedRecord = { id: record.id, title: label };
+		if (panelRecordId === record.id) closeRecordPanel();
 		records = records.filter((item) => item.id !== record.id);
 		filterPreviewRecords = filterPreviewRecords.filter((item) => item.id !== record.id);
 		printJobs = printJobs.filter((item) => item.id !== record.id);
@@ -2366,12 +2439,7 @@
 
 		focusedRecordIds = [record.id];
 
-		const gridView = formViews.find((view) => view.view_type === 'grid');
-
-		if (gridView) {
-			selectedViewId = gridView.id;
-			resetViewDraft(gridView);
-		}
+		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
 
 		toast.success($t('forms.timelineEventRecordFocused'));
 	}
@@ -2393,12 +2461,7 @@
 
 		focusedRecordIds = recordIds;
 
-		const gridView = formViews.find((view) => view.view_type === 'grid');
-
-		if (gridView) {
-			selectedViewId = gridView.id;
-			resetViewDraft(gridView);
-		}
+		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
 
 		toast.success($t('forms.focusedRecords', { values: { count: recordIds.length } }));
 	}
@@ -2576,12 +2639,7 @@
 
 		focusedRecordIds = group.records.map((record) => record.id);
 
-		const gridView = formViews.find((view) => view.view_type === 'grid');
-
-		if (gridView) {
-			selectedViewId = gridView.id;
-			resetViewDraft(gridView);
-		}
+		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
 
 		toast.success($t('forms.focusedRecords', { values: { count: group.records.length } }));
 	}
@@ -3129,49 +3187,12 @@
 	async function restoreRecordDetailFromUrl() {
 		const recordId = detailUrlRecordId;
 
-		if (!recordId || selectedRecord?.id === recordId) return;
-
-		const localRecord =
-			records.find((record) => record.id === recordId) ??
-			filterPreviewRecords.find((record) => record.id === recordId);
-
-		if (localRecord) {
-			await selectRecord(localRecord, { syncUrl: false });
-
-			return;
-		}
-
-		const response = await formsApi.getRecord(recordId);
-
-		if (response.code !== 0 || !response.data) {
-			await syncRecordDetailUrl(null);
-
-			return;
-		}
-
-		selectedRecord = response.data;
-		activeMode = 'detail';
-
-		await Promise.all([
-			loadSelectedRecordLinks(),
-			loadSelectedRecordChildren(),
-			loadSelectedRecordComments(),
-			loadRecordAttachments(response.data.id)
-		]);
+		if (recordId && recordId !== panelRecordId) await openRecordPanel(recordId, 'none');
 	}
 
+	/** Every view opens a record the same way: in the side panel next to the list. */
 	async function selectRecord(record: FormRecord, options: { syncUrl?: boolean } = {}) {
-		selectedRecord = record;
-		activeMode = 'detail';
-
-		if (options.syncUrl !== false) await syncRecordDetailUrl(record);
-
-		await Promise.all([
-			loadSelectedRecordLinks(),
-			loadSelectedRecordChildren(),
-			loadSelectedRecordComments(),
-			loadRecordAttachments(record.id)
-		]);
+		await openRecordPanel(record, options.syncUrl === false ? 'none' : 'push');
 	}
 
 	function closeRecordDetail() {
@@ -3238,6 +3259,14 @@
 			closeRecordEditorDrawer();
 		}
 	}
+
+	$effect(() => {
+		// Editor closed (saved or cancelled) while a record was open: back to the panel's Edit.
+		if (!recordEditorOpen && untrack(() => panelRecordId))
+			void tick().then(() =>
+				document.querySelector<HTMLElement>('[data-record-panel-edit]')?.focus()
+			);
+	});
 
 	function goToRecordPage(page: number) {
 		recordPage = Math.min(Math.max(page, 1), recordPageCount);
@@ -4657,15 +4686,6 @@
 
 	function viewVisibility(view: FormView | null): ViewVisibility {
 		return view?.config?.visibility === 'private' ? 'private' : 'shared';
-	}
-
-	function viewOptionLabel(view: FormView): string {
-		const badges = [];
-
-		if (viewIsDefault(view)) badges.push($t('forms.defaultViewBadge'));
-		if (viewVisibility(view) === 'private') badges.push($t('forms.privateViewBadge'));
-
-		return badges.length > 0 ? `${view.name} · ${badges.join(' · ')}` : view.name;
 	}
 
 	function sortViewsByDefault(views: FormView[]): FormView[] {
@@ -6311,12 +6331,7 @@
 		focusedRecordIds = recordIds;
 		pivotDrilldown = null;
 
-		const gridView = formViews.find((view) => view.view_type === 'grid');
-
-		if (gridView) {
-			selectedViewId = gridView.id;
-			resetViewDraft(gridView);
-		}
+		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
 
 		toast.success($t('forms.pivotDrilldownFocused'));
 	}
@@ -7845,83 +7860,10 @@
 		cleanFormsGroup('view');
 	}
 
-	function startNewViewDraft() {
-		const suffix = Date.now().toString(36);
-
-		viewDraft = {
-			key: `view_${suffix}`,
-			name: $t('forms.customView'),
-			view_type: 'grid',
-			columns: defaultViewColumns(),
-			filters: [],
-			filterRootLogic: 'all',
-			filterGroups: [],
-			filterField: '',
-			filterOperator: 'contains',
-			filterValue: '',
-			sortField: '',
-			sortDirection: 'asc',
-			groupBy: '',
-			pivotRowField: '',
-			pivotColumnField: '',
-			pivotValueField: '',
-			pivotAggregate: 'sum',
-			pivotTotals: 'all',
-			pivotValueDisplay: 'value',
-			pivotSort: 'label',
-			pivotEmptyBuckets: false,
-			pivotHideZeroBuckets: false,
-			pivotShowCounts: false,
-			pivotHeatmap: false,
-			pivotRowLimit: 0,
-			pivotColumnLimit: 0,
-			ganttStartField: '',
-			ganttEndField: '',
-			ganttGroupBy: '',
-			ganttDependencyField: '',
-			ganttScale: 'day',
-			swimlaneBy: '',
-			wipLimits: {},
-			dateField: '',
-			calendarRange: 'week',
-			calendarFocusDate: '',
-			calendarRecurrence: 'none',
-			calendarDayScope: 'all',
-			calendarLayout: 'grid',
-			calendarHideEmptyDays: false,
-			calendarEndField: '',
-			calendarResourceBy: '',
-			calendarExceptionRecordId: '',
-			calendarExceptionDate: '',
-			calendarExceptionDates: {},
-			cardTitleField: '',
-			cardSubtitleField: '',
-			cardBadgeField: '',
-			cardCoverField: '',
-			cardLayout: 'standard',
-			cardCoverAspect: 'auto',
-			cardCoverFit: 'cover',
-			cardCoverPosition: 'top',
-			cardFieldLimit: 6,
-			cardHideEmptyFields: false,
-			cardShowTimestamps: false,
-			cardShowRecordId: false,
-			cardFieldKeys: [],
-			timelineSource: 'records',
-			timelineEventLayout: 'summary',
-			timelineEventType: '',
-			timelineEventActor: '',
-			timelineEventAggregate: '',
-			timelineEventQuery: '',
-			timelineEventFrom: '',
-			timelineEventTo: '',
-			timelineTitleField: '',
-			timelineSubtitleField: '',
-			visibility: 'shared',
-			isDefault: false
-		};
-
-		selectedViewId = '';
+	function startNewViewDraft(type: FormView['view_type']) {
+		// A new view starts from what is on screen: same filters and sort, the chosen type.
+		viewDraft = { ...viewDraft, view_type: type };
+		if (type !== 'grid') openLayoutSettings();
 	}
 
 	function setViewDraftColumn(fieldKey: string, checked: boolean) {
@@ -8785,77 +8727,459 @@
 		return config;
 	}
 
-	async function saveViewDraft() {
-		if (!selectedForm) return;
+	const SORTABLE_TYPES = new Set([
+		'amount',
+		'number',
+		'integer',
+		'boolean',
+		'date',
+		'datetime',
+		'text',
+		'textarea',
+		'rich_text',
+		'single_select',
+		'ai_summary'
+	]);
 
-		const key = viewDraft.key.trim();
-		const name = viewDraft.name.trim();
-
-		if (!key || !name) {
-			toast.error($t('forms.viewNameRequired'));
-
-			return;
-		}
-
-		viewSubmitting = true;
-
-		const response = selectedViewId
-			? await formsApi.updateView(selectedViewId, {
-					name,
-					view_type: viewDraft.view_type,
-					config: viewConfigFromDraft(),
-					expected_updated_at:
-						formsSessionViewVersion ??
-						(selectedView?.id === selectedViewId ? selectedView.updated_at : undefined)
-				})
-			: await formsApi.createView(selectedForm.id, {
-					key,
-					name,
-					view_type: viewDraft.view_type,
-					config: viewConfigFromDraft()
-				});
-
-		viewSubmitting = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		const nextViews = selectedViewId
-			? formViews.map((view) => (view.id === response.data?.id ? response.data : view))
-			: [...formViews, response.data];
-
-		formViews = viewIsDefault(response.data)
-			? normalizeLocalDefaultViews(nextViews, response.data.id)
-			: sortViewsByDefault(nextViews);
-
-		selectedViewId = response.data.id;
-		resetViewDraft(response.data);
-		await loadRecords();
-		toast.success($t('forms.viewSaved'));
+	function isServerSortable(key: string): boolean {
+		if (['title', 'created_at', 'updated_at'].includes(key)) return true;
+		return SORTABLE_TYPES.has(fieldByKey(key)?.type ?? '');
 	}
 
-	async function deleteSelectedView() {
-		if (!selectedView) return;
+	/** The built-in "All records" table: every list field, no filters, server order. */
+	function builtInView(form: UniversalForm): FormView {
+		const { id, workspace_id, project_id, created_at, updated_at } = form;
+		const name = $t('forms.views.allRecords');
+		const columns = parseFields(form.schema)
+			.filter((field) => field.visibility?.list !== false)
+			.map((field) => field.key);
+		return {
+			id: precedence.ALL_RECORDS_VIEW_ID,
+			workspace_id,
+			project_id,
+			form_id: id,
+			key: 'all',
+			name,
+			view_type: 'grid',
+			config: { columns },
+			created_at,
+			updated_at
+		};
+	}
 
-		deletingViewId = selectedView.id;
-
-		const response = await formsApi.deleteView(selectedView.id);
-
-		deletingViewId = null;
-
-		if (response.code !== 0) {
-			toast.error(response.message);
-
+	/** Applies a view (saved or built-in) and brings back this user's working changes to it. */
+	function applyView(viewId: string) {
+		selectedViewId = viewId;
+		const view =
+			formViews.find((item) => item.id === viewId) ??
+			(selectedForm ? builtInView(selectedForm) : null);
+		if (!view) return;
+		resetViewDraft(view);
+		const config = viewConfigFromDraft();
+		viewBaseline = {
+			viewId: view.id,
+			type: viewDraft.view_type,
+			key: arrangement.normalizedViewConfig(config),
+			config
+		};
+		const stored = arrangement.readArrangement(currentUserId, selectedFormId, view.id);
+		if (!stored) return;
+		if (stored.base_updated_at !== (savedView ? view.updated_at : null)) {
+			arrangement.clearArrangement(currentUserId, selectedFormId, view.id);
+			toast.info($t('forms.views.updatedElsewhere', { values: { name: view.name } }));
 			return;
 		}
+		const audience = { visibility: view.config?.visibility, is_default: view.config?.is_default };
+		resetViewDraft({
+			...view,
+			view_type: stored.view_type,
+			config: { ...stored.config, ...audience }
+		});
+	}
 
-		formViews = formViews.filter((view) => view.id !== selectedView.id);
-		selectedViewId = formViews[0]?.id ?? '';
-		resetViewDraft();
-		toast.success($t('forms.viewDeleted'));
+	/** Switches the view; `remember` marks an explicit choice (kept per user and form, put in the URL). */
+	function showView(viewId: string, options: { remember: boolean }) {
+		applyView(viewId);
+		viewConflict = false;
+		resetUndo = null;
+		if (!options.remember) return;
+		precedence.writeRememberedView(currentUserId, selectedFormId, viewId);
+		const url = new URL(page.url.href);
+		url.searchParams.set('view', viewId);
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- same route, query only
+		void goto(url, { replace: true, reset: false });
+	}
+
+	let arrangementTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		const view = baseView;
+		const [modified, config, type] = [arrangementModified, draftViewConfig, viewDraft.view_type];
+		const [user, formId] = [currentUserId, selectedFormId];
+		if (!view || !formId || untrack(() => viewBaseline.viewId) !== view.id) return;
+		clearTimeout(arrangementTimer);
+		arrangementTimer = setTimeout(() => {
+			const base = untrack(() => savedView?.updated_at ?? null);
+			if (!modified) arrangement.clearArrangement(user, formId, view.id);
+			else
+				arrangement.writeArrangement(user, formId, view.id, {
+					base_updated_at: base,
+					view_type: type,
+					config,
+					at: new Date().toISOString()
+				});
+		}, 300);
+	});
+
+	let loadedRecordQuery = '';
+	let recordQueryTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		const key = JSON.stringify([selectedFormId, recordQuery]);
+		clearTimeout(recordQueryTimer);
+		if (!untrack(() => loadedRecordQuery) || key === untrack(() => loadedRecordQuery)) return;
+		recordQueryTimer = setTimeout(() => void loadRecords(), 300);
+	});
+
+	function resetArrangement() {
+		if (!baseView) return;
+		clearTimeout(arrangementTimer);
+		const undo = {
+			base_updated_at: null,
+			view_type: viewDraft.view_type,
+			config: draftViewConfig,
+			at: ''
+		};
+		arrangement.clearArrangement(currentUserId, selectedFormId, baseView.id);
+		applyView(baseView.id);
+		resetUndo = undo;
+		announce($t('forms.views.resetDone'));
+		setTimeout(() => {
+			if (resetUndo === undo) resetUndo = null;
+		}, 6000);
+	}
+
+	function undoReset() {
+		const undo = resetUndo;
+		if (!undo || !baseView) return;
+		resetUndo = null;
+		resetViewDraft({ ...baseView, view_type: undo.view_type, config: undo.config });
+	}
+
+	async function writeView(request: Promise<ApiResult<FormView>>): Promise<FormView | null> {
+		viewSubmitting = true;
+		const response = await request;
+		viewSubmitting = false;
+		if (response.code === 409) viewConflict = true;
+		if (response.code !== 0 || !response.data) {
+			if (response.code !== 409) toast.error(response.message);
+			return null;
+		}
+		const view = response.data;
+		const next = formViews.some((item) => item.id === view.id)
+			? formViews.map((item) => (item.id === view.id ? view : item))
+			: [...formViews, view];
+		formViews = viewIsDefault(view)
+			? normalizeLocalDefaultViews(next, view.id)
+			: sortViewsByDefault(next);
+		return view;
+	}
+
+	async function saveViewAs(input: { name: string; visibility: 'private' | 'shared' }) {
+		if (!selectedForm || !baseView) return;
+		saveViewError = null;
+		const from = baseView.id;
+		const config = { ...draftViewConfig, visibility: input.visibility, is_default: false };
+		const key = arrangement.generateViewKey(input.name);
+		const request = formsApi.createView(selectedForm.id, {
+			key,
+			name: input.name,
+			view_type: viewDraft.view_type,
+			config
+		});
+		const saving = await request;
+		if (saving.code !== 0 || !saving.data) {
+			saveViewError = saving.message;
+			return;
+		}
+		await writeView(Promise.resolve(saving));
+		arrangement.clearArrangement(currentUserId, selectedFormId, from);
+		saveViewOpen = false;
+		showView(saving.data.id, { remember: true });
+		announce($t('forms.views.viewSaved'));
+		toast.success($t('forms.views.viewSaved'));
+	}
+
+	/** Updates the saved view: with the working changes, or with a name or audience change only. */
+	async function updateCurrentView(patch?: { name?: string; config?: Record<string, unknown> }) {
+		const view = savedView;
+		if (!view) return;
+		const audience = {
+			visibility: view.config?.visibility ?? 'shared',
+			is_default: viewIsDefault(view)
+		};
+		const body = patch ?? {
+			view_type: viewDraft.view_type,
+			config: { ...draftViewConfig, ...audience }
+		};
+		const updated = await writeView(
+			formsApi.updateView(view.id, { ...body, expected_updated_at: view.updated_at })
+		);
+		if (!updated) return;
+		viewConflict = false;
+		if (!patch) {
+			arrangement.clearArrangement(currentUserId, selectedFormId, view.id);
+			applyView(view.id);
+		}
+		toast.success($t('forms.views.viewUpdated'));
+	}
+
+	async function deleteView() {
+		const view = savedView;
+		if (!view) return;
+		const response = await formsApi.deleteView(view.id);
+		if (response.code !== 0) {
+			toast.error(response.message);
+			return;
+		}
+		formViews = formViews.filter((item) => item.id !== view.id);
+		arrangement.clearArrangement(currentUserId, selectedFormId, view.id);
+		if (precedence.readRememberedView(currentUserId, selectedFormId) === view.id)
+			precedence.forgetRememberedView(currentUserId, selectedFormId);
+		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
+		toast.success($t('forms.views.viewDeleted'));
+	}
+
+	function openSaveView(name?: string) {
+		saveViewError = null;
+		saveViewName =
+			name ??
+			arrangement.suggestViewName(
+				baseView ?? { name: '' },
+				draftViewConfig,
+				(key) => {
+					const field = fieldByKey(key);
+					return field
+						? fieldLabel(field)
+						: $t(
+								`forms.views.${key === 'title' ? 'titleField' : key === 'created_at' ? 'createdField' : 'updatedField'}`
+							);
+				},
+				(field) => $t('forms.views.byField', { values: { field } })
+			);
+		saveViewOpen = true;
+	}
+
+	function openLayoutSettings() {
+		if (panelRecordId) closeRecordPanel(false);
+		viewToolsExpanded = true;
+	}
+
+	function setDraftFilters(filters: SimpleFilter[], logic: 'all' | 'any') {
+		const filterGroups = filters.length > 0 ? [{ logic, filters }] : [];
+		viewDraft = { ...viewDraft, filterGroups, ...syncLegacyViewFilterFields(filterGroups) };
+	}
+
+	// --- record side panel ---------------------------------------------------------------
+	const panelRecord = $derived(
+		panelRecordId
+			? (records.find((record) => record.id === panelRecordId) ??
+					(selectedRecord?.id === panelRecordId ? selectedRecord : null))
+			: null
+	);
+	const panelPosition = $derived(
+		panelRecordId ? viewRecords.findIndex((record) => record.id === panelRecordId) : -1
+	);
+	const fieldCtx = $derived<FieldDisplayContext>({
+		locale: $locale ?? 'en',
+		formKey: selectedForm?.key ?? '',
+		members: new Map(workspaceMembers.map((member) => [member.user_id, member])),
+		attachmentsByField: recordAttachments.reduce<Record<string, FormAttachment[]>>(
+			(groups, item) => {
+				if (item.record_id === panelRecordId) (groups[item.field_key] ??= []).push(item);
+				return groups;
+			},
+			{}
+		),
+		signedUrls: recordAttachmentSignedUrls,
+		relationTitle: (field, id) =>
+			relationTargets[field.key]?.find((item) => item.record_id === id)?.display
+	});
+
+	let announceTimer: ReturnType<typeof setTimeout> | undefined;
+	function announce(message: string, delay = 0) {
+		clearTimeout(announceTimer);
+		announceTimer = setTimeout(() => (liveMessage = message), delay);
+	}
+
+	function recordHref(recordId: string): string {
+		return `/workspace/${workspaceId}/projects/${projectId}/forms/records/${recordId}`;
+	}
+
+	function canChangeRecord(record: FormRecord, action: 'record.update' | 'record.delete'): boolean {
+		const effective = formPermissions?.effective;
+		if (!effective) return true;
+		return (
+			effective.actions[action] &&
+			(effective.record_scope !== 'owned' || record.created_by === currentUserId)
+		);
+	}
+
+	// URL writes run one at a time: a replace issued while a push is still in flight would abort
+	// it, and the panel's history depth (what Close and Back undo) would no longer be true.
+	let recordUrlWrite: Promise<void> = Promise.resolve();
+	function setRecordUrl(recordId: string | null, mode: 'push' | 'replace'): Promise<void> {
+		recordUrlWrite = recordUrlWrite
+			.then(async () => {
+				const url = new URL(page.url.href);
+				url.searchParams.delete('record_id');
+				if (recordId) url.searchParams.set('record', recordId);
+				else url.searchParams.delete('record');
+				if (recordId) url.searchParams.set('form', selectedFormId);
+				if (url.href === page.url.href) return;
+				// eslint-disable-next-line svelte/no-navigation-without-resolve -- same route, query only
+				await goto(url, { replace: mode === 'replace', reset: false });
+				if (mode === 'push' && page.url.href === url.href) panelHistoryDepth += 1;
+			})
+			.catch((error: unknown) => {
+				// A superseded navigation must not stop later URL writes.
+				console.warn('record URL update was not applied', error);
+			});
+		return recordUrlWrite;
+	}
+
+	async function openRecordPanel(
+		target: FormRecord | string,
+		history: 'push' | 'replace' | 'none'
+	) {
+		const id = typeof target === 'string' ? target : target.id;
+		const local =
+			typeof target === 'string' ? (records.find((record) => record.id === id) ?? null) : target;
+		viewToolsExpanded = false;
+		panelRecordId = id;
+		panelStatus = local ? 'ready' : 'loading';
+		panelError = '';
+		selectedRecord = local;
+		const index = viewRecords.findIndex((record) => record.id === id);
+		if (index >= 0) recordPage = Math.floor(index / recordPageSize) + 1;
+		if (history !== 'none') await setRecordUrl(id, history);
+		if (local && index >= 0)
+			announce(
+				$t('forms.recordPanel.announce', {
+					values: { title: local.title, index: index + 1, total: viewRecords.length }
+				}),
+				300
+			);
+		const started = Date.now();
+		const response = await formsApi.getRecord(id);
+		if (panelRecordId !== id) return;
+		const elapsed = Date.now() - started;
+		if (!local && elapsed > 200 && elapsed < 500)
+			await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
+		if (response.code === 0 && response.data && !response.data.archived_at) {
+			selectedRecord = response.data;
+			panelStatus = 'ready';
+			panelDetailsLoading = true;
+			await Promise.all([
+				loadSelectedRecordLinks(),
+				loadSelectedRecordChildren(),
+				loadRecordAttachments(id)
+			]);
+			panelDetailsLoading = false;
+		} else if (response.code === 404 || response.data?.archived_at) panelStatus = 'missing';
+		else if (!local) {
+			panelStatus = response.code === 403 ? 'forbidden' : 'error';
+			panelError = response.message;
+		}
+	}
+
+	function closeRecordPanel(restoreFocus = true) {
+		const id = panelRecordId;
+		if (!id) return;
+		const index = recordGrid?.rowIndex(id) ?? -1;
+		panelRecordId = null;
+		selectedRecord = null;
+		selectedRecordLinks = [];
+		selectedRecordChildren = [];
+		announce($t('forms.recordPanel.announceClosed'));
+		void recordUrlWrite.then(() => {
+			if (panelHistoryDepth > 0) {
+				history.go(-panelHistoryDepth);
+				panelHistoryDepth = 0;
+			} else void setRecordUrl(null, 'replace');
+		});
+		if (!restoreFocus) return;
+		pendingRowFocus = id;
+		void tick().then(() => {
+			if (recordGrid && viewRecords.some((record) => record.id === id)) recordGrid.focusRow(id);
+			else if (recordGrid) recordGrid.focusIndex(Math.max(index, 0));
+			else document.querySelector<HTMLElement>(`[data-record-open="${CSS.escape(id)}"]`)?.focus();
+		});
+	}
+
+	// Closing can navigate (history.back); focus the row again once that navigation settles.
+	let pendingRowFocus: string | null = null;
+	afterNavigate(() => {
+		const id = pendingRowFocus;
+		pendingRowFocus = null;
+		if (id && !panelRecordId && document.activeElement === document.body) recordGrid?.focusRow(id);
+	});
+
+	function stepRecordPanel(delta: 1 | -1) {
+		const next = viewRecords[panelPosition + delta];
+		if (!next) return;
+		void openRecordPanel(next, 'replace');
+	}
+
+	// Back / Forward open and close the panel; the panel's own writes never reach this branch.
+	$effect(() => {
+		const id = detailUrlRecordId;
+		if (!formsSessionReady || formsSessionActivating || !selectedFormId) return;
+		untrack(() => {
+			if (id && id !== panelRecordId) {
+				panelHistoryDepth = Math.max(0, panelHistoryDepth - 1);
+				void openRecordPanel(id, 'none');
+			} else if (!id && panelRecordId) {
+				panelHistoryDepth = 0;
+				const closing = panelRecordId;
+				panelRecordId = null;
+				selectedRecord = null;
+				void tick().then(() => recordGrid?.focusRow(closing));
+			}
+		});
+	});
+
+	function gridBadges(field: FormField, record: FormRecord | null): GridBadge[] {
+		const prefix = record ? 'grid-cell' : 'grid-header';
+		const value = record ? `${record.id}:${field.key}` : field.key;
+		const badges: GridBadge[] = [];
+		if (!record && memberFieldHidden(field))
+			badges.push({
+				attr: `${prefix}-permission-hidden`,
+				value,
+				label: $t('forms.fieldHiddenBadge'),
+				tone: 'amber'
+			});
+		if (!record && memberFieldLocked(field))
+			badges.push({
+				attr: `${prefix}-permission-locked`,
+				value,
+				label: $t('forms.fieldLockedBadge'),
+				tone: 'slate'
+			});
+		if (record ? recordFieldHiddenByCondition(field, record) : fieldHasConditionalHidden(field))
+			badges.push({
+				attr: `${prefix}-conditional-hidden`,
+				value,
+				label: $t('forms.fieldConditionHiddenBadge'),
+				tone: 'blue'
+			});
+		if (record ? recordFieldReadOnlyByCondition(field, record) : fieldHasConditionalReadOnly(field))
+			badges.push({
+				attr: `${prefix}-conditional-readonly`,
+				value,
+				label: $t('forms.fieldConditionReadOnlyBadge'),
+				tone: 'cyan'
+			});
+		return badges;
 	}
 
 	async function exportCurrentView() {
@@ -12277,6 +12601,7 @@
 {/snippet}
 
 <svelte:window onkeydown={handleGlobalKeydown} />
+<div class="sr-only" role="status" aria-live="polite" data-record-live-region>{liveMessage}</div>
 
 <div
 	class="mx-auto max-w-7xl space-y-5"
@@ -12762,24 +13087,6 @@
 										{/each}
 									</select>
 								</label>
-
-								<button
-									type="button"
-									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-									aria-expanded={viewToolsExpanded}
-									data-view-tools-toggle
-									onclick={() => (viewToolsExpanded = !viewToolsExpanded)}
-								>
-									<Filter class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-									{$t('forms.savedViews')}
-
-									<ArrowDown
-										class="ml-1.5 h-3.5 w-3.5 transition-transform {viewToolsExpanded
-											? 'rotate-180'
-											: ''}"
-										aria-hidden="true"
-									/>
-								</button>
 
 								<Button size="sm" onclick={openRecordCreateDrawer}>
 									<Plus class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -14189,103 +14496,22 @@
 						{/if}
 					</div>
 				{:else}
-					<div
-						class={activeMode === 'detail'
-							? 'grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'
-							: 'grid min-w-0 gap-4'}
-					>
+					<div class="grid min-w-0 gap-4">
 						{#if activeMode === 'data'}
-							<div class="min-w-0 space-y-4" data-record-list-stack>
-								{#if viewToolsExpanded}
-									<section
-										class="w-full rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
-										data-view-tools-expanded-panel
-									>
-										<div
-											class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
-										>
-											<div>
-												<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">
-													{$t('forms.savedViews')}
-												</h3>
-
-												<p class="text-sm text-slate-500 dark:text-slate-400">
-													{$t('forms.savedViewsDescription')}
-												</p>
-											</div>
-
-											<div class="flex flex-wrap gap-2">
-												<Button size="sm" variant="secondary" onclick={startNewViewDraft}>
-													<Plus class="mr-2 h-4 w-4" aria-hidden="true" />
-													{$t('forms.newView')}
-												</Button>
-
-												<Button size="sm" loading={viewSubmitting} onclick={saveViewDraft}
-													>{$t('forms.saveView')}</Button
-												>
-											</div>
-										</div>
-
-										<div class="max-h-[62vh] space-y-4 overflow-auto pr-1">
-											<details
+							<div class="flex min-w-0 items-start gap-4" data-record-list-stack>
+								<LayoutSettingsSheet
+									open={viewToolsExpanded}
+									viewName={selectedView?.name ?? ''}
+									onclose={() => (viewToolsExpanded = false)}
+								>
+									<section class="w-full" data-view-tools-expanded-panel>
+										<div class="space-y-4">
+											<div
 												class="rounded-md border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
-												data-view-setup-disclosure
+												data-view-setup
 											>
-												<summary
-													class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-semibold text-slate-900 marker:hidden dark:text-slate-100"
-												>
-													<span>{$t('forms.viewSetup')}</span>
-
-													<span class="text-xs font-normal text-slate-500 dark:text-slate-400"
-														>{$t('forms.viewSetupDescription')}</span
-													>
-												</summary>
-
 												<div class="space-y-2 border-t border-slate-100 p-3 dark:border-slate-800">
-													<label class="block space-y-1">
-														<span
-															class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-															>{$t('forms.currentView')}</span
-														>
-
-														<select
-															value={selectedViewId}
-															disabled={viewsLoading}
-															onchange={(event) => {
-																selectedViewId = selectValue(event);
-																resetViewDraft();
-																void loadRecords();
-															}}
-															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-														>
-															<option value=""
-																>{viewsLoading
-																	? $t('common.loading')
-																	: $t('forms.unsavedView')}</option
-															>
-
-															{#each formViews as view}
-																<option value={view.id}>{viewOptionLabel(view)}</option>
-															{/each}
-														</select>
-													</label>
-
 													<div class="grid grid-cols-2 gap-2">
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.viewKey')}</span
-															>
-
-															<input
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																value={viewDraft.key}
-																disabled={Boolean(selectedViewId)}
-																oninput={(event) =>
-																	(viewDraft = { ...viewDraft, key: inputValue(event) })}
-															/>
-														</label>
-
 														<label class="space-y-1">
 															<span
 																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
@@ -14502,414 +14728,348 @@
 															</select>
 														</label>
 
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.timelineSource')}</span
-															>
-
-															<select
-																value={viewDraft.timelineSource}
-																disabled={viewDraft.view_type !== 'timeline'}
-																onchange={(event) => {
-																	const timelineSource = selectValue(event) as ViewTimelineSource;
-
-																	viewDraft = {
-																		...viewDraft,
-																		timelineSource,
-																		timelineEventLayout:
-																			timelineSource === 'events'
-																				? viewDraft.timelineEventLayout
-																				: 'summary',
-																		timelineEventType:
-																			timelineSource === 'events'
-																				? viewDraft.timelineEventType
-																				: '',
-																		timelineEventActor:
-																			timelineSource === 'events'
-																				? viewDraft.timelineEventActor
-																				: '',
-																		timelineEventAggregate:
-																			timelineSource === 'events'
-																				? viewDraft.timelineEventAggregate
-																				: '',
-																		timelineEventQuery:
-																			timelineSource === 'events'
-																				? viewDraft.timelineEventQuery
-																				: '',
-																		timelineEventFrom:
-																			timelineSource === 'events'
-																				? viewDraft.timelineEventFrom
-																				: '',
-																		timelineEventTo:
-																			timelineSource === 'events' ? viewDraft.timelineEventTo : '',
-																		timelineTitleField:
-																			timelineSource === 'events'
-																				? ''
-																				: viewDraft.timelineTitleField,
-																		timelineSubtitleField:
-																			timelineSource === 'events'
-																				? ''
-																				: viewDraft.timelineSubtitleField
-																	};
-																}}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															>
-																<option value="records">{$t('forms.timelineSourceRecords')}</option>
-																<option value="events">{$t('forms.timelineSourceEvents')}</option>
-															</select>
-														</label>
-
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.timelineEventLayout')}</span
-															>
-
-															<select
-																value={viewDraft.timelineEventLayout}
-																disabled={viewDraft.view_type !== 'timeline' ||
-																	viewDraft.timelineSource !== 'events'}
-																onchange={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
-																		timelineEventLayout: timelineEventLayout(selectValue(event))
-																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															>
-																<option value="summary"
-																	>{$t('forms.timelineEventLayoutSummary')}</option
+														{#if viewDraft.view_type === 'timeline'}
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.timelineSource')}</span
 																>
-																<option value="detailed"
-																	>{$t('forms.timelineEventLayoutDetailed')}</option
+
+																<select
+																	value={viewDraft.timelineSource}
+																	onchange={(event) => {
+																		const timelineSource = selectValue(event) as ViewTimelineSource;
+
+																		viewDraft = {
+																			...viewDraft,
+																			timelineSource,
+																			timelineEventLayout:
+																				timelineSource === 'events'
+																					? viewDraft.timelineEventLayout
+																					: 'summary',
+																			timelineEventType:
+																				timelineSource === 'events'
+																					? viewDraft.timelineEventType
+																					: '',
+																			timelineEventActor:
+																				timelineSource === 'events'
+																					? viewDraft.timelineEventActor
+																					: '',
+																			timelineEventAggregate:
+																				timelineSource === 'events'
+																					? viewDraft.timelineEventAggregate
+																					: '',
+																			timelineEventQuery:
+																				timelineSource === 'events'
+																					? viewDraft.timelineEventQuery
+																					: '',
+																			timelineEventFrom:
+																				timelineSource === 'events'
+																					? viewDraft.timelineEventFrom
+																					: '',
+																			timelineEventTo:
+																				timelineSource === 'events'
+																					? viewDraft.timelineEventTo
+																					: '',
+																			timelineTitleField:
+																				timelineSource === 'events'
+																					? ''
+																					: viewDraft.timelineTitleField,
+																			timelineSubtitleField:
+																				timelineSource === 'events'
+																					? ''
+																					: viewDraft.timelineSubtitleField
+																		};
+																	}}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
 																>
-															</select>
-														</label>
+																	<option value="records"
+																		>{$t('forms.timelineSourceRecords')}</option
+																	>
+																	<option value="events">{$t('forms.timelineSourceEvents')}</option>
+																</select>
+															</label>
 
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.timelineEventType')}</span
-															>
-
-															<select
-																value={viewDraft.timelineEventType}
-																disabled={viewDraft.view_type !== 'timeline' ||
-																	viewDraft.timelineSource !== 'events'}
-																onchange={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
-																		timelineEventType: selectValue(event)
-																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															>
-																<option value="">{$t('forms.timelineEventTypeAll')}</option>
-
-																{#each timelineEventTypes as eventType}
-																	<option value={eventType}>{eventType}</option>
-																{/each}
-															</select>
-														</label>
-
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.timelineEventActorFilter')}</span
-															>
-
-															<select
-																value={viewDraft.timelineEventActor}
-																disabled={viewDraft.view_type !== 'timeline' ||
-																	viewDraft.timelineSource !== 'events'}
-																onchange={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
-																		timelineEventActor: selectValue(event)
-																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															>
-																<option value="">{$t('forms.timelineEventActorAll')}</option>
-
-																{#each timelineEventActors as actorId}
-																	<option value={actorId}>{actorId}</option>
-																{/each}
-															</select>
-														</label>
-
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.timelineEventAggregateFilter')}</span
-															>
-
-															<select
-																value={viewDraft.timelineEventAggregate}
-																disabled={viewDraft.view_type !== 'timeline' ||
-																	viewDraft.timelineSource !== 'events'}
-																onchange={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
-																		timelineEventAggregate: selectValue(event)
-																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															>
-																<option value="">{$t('forms.timelineEventAggregateAll')}</option>
-
-																{#each timelineEventAggregates as aggregate}
-																	<option value={aggregate}>{aggregate}</option>
-																{/each}
-															</select>
-														</label>
-
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.timelineEventSearch')}</span
-															>
-
-															<input
-																value={viewDraft.timelineEventQuery}
-																disabled={viewDraft.view_type !== 'timeline' ||
-																	viewDraft.timelineSource !== 'events'}
-																oninput={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
-																		timelineEventQuery: inputValue(event)
-																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																placeholder={$t('forms.timelineEventSearchPlaceholder')}
-															/>
-														</label>
-
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.timelineEventFrom')}</span
-															>
-
-															<input
-																type="datetime-local"
-																value={viewDraft.timelineEventFrom}
-																disabled={viewDraft.view_type !== 'timeline' ||
-																	viewDraft.timelineSource !== 'events'}
-																oninput={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
-																		timelineEventFrom: inputValue(event)
-																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															/>
-														</label>
-
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.timelineEventTo')}</span
-															>
-
-															<input
-																type="datetime-local"
-																value={viewDraft.timelineEventTo}
-																disabled={viewDraft.view_type !== 'timeline' ||
-																	viewDraft.timelineSource !== 'events'}
-																oninput={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
-																		timelineEventTo: inputValue(event)
-																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															/>
-														</label>
-
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.timelineTitleField')}</span
-															>
-
-															<select
-																value={viewDraft.timelineTitleField}
-																disabled={viewDraft.view_type !== 'timeline' ||
-																	viewDraft.timelineSource === 'events'}
-																onchange={(event) => {
-																	const timelineTitleField = selectValue(event);
-
-																	viewDraft = {
-																		...viewDraft,
-																		timelineTitleField,
-																		timelineSubtitleField:
-																			viewDraft.timelineSubtitleField === timelineTitleField
-																				? ''
-																				: viewDraft.timelineSubtitleField
-																	};
-																}}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															>
-																<option value="">{$t('forms.recordTitle')}</option>
-
-																{#each fields.filter((field) => field.visibility?.list !== false) as field}
-																	<option value={field.key}>{fieldLabel(field)}</option>
-																{/each}
-															</select>
-														</label>
-
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.timelineSubtitleField')}</span
-															>
-
-															<select
-																value={viewDraft.timelineSubtitleField}
-																disabled={viewDraft.view_type !== 'timeline' ||
-																	viewDraft.timelineSource === 'events'}
-																onchange={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
-																		timelineSubtitleField: selectValue(event)
-																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															>
-																<option value="">{$t('forms.viewNoRule')}</option>
-
-																{#each fields.filter((field) => field.visibility?.list !== false && field.key !== viewDraft.timelineTitleField) as field}
-																	<option value={field.key}>{fieldLabel(field)}</option>
-																{/each}
-															</select>
-														</label>
-
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.cardCoverAspect')}</span
-															>
-
-															<select
-																value={viewDraft.cardCoverAspect}
-																disabled={viewDraft.view_type !== 'card'}
-																onchange={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
-																		cardCoverAspect: viewCardCoverAspect(selectValue(event))
-																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															>
-																<option value="auto">{$t('forms.cardCoverAspectAuto')}</option>
-																<option value="wide">{$t('forms.cardCoverAspectWide')}</option>
-																<option value="square">{$t('forms.cardCoverAspectSquare')}</option>
-																<option value="portrait"
-																	>{$t('forms.cardCoverAspectPortrait')}</option
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.timelineEventLayout')}</span
 																>
-															</select>
-														</label>
 
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.cardCoverFit')}</span
-															>
-
-															<select
-																value={viewDraft.cardCoverFit}
-																disabled={viewDraft.view_type !== 'card'}
-																onchange={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
-																		cardCoverFit: viewCardCoverFit(selectValue(event))
-																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															>
-																<option value="cover">{$t('forms.cardCoverFitCover')}</option>
-																<option value="contain">{$t('forms.cardCoverFitContain')}</option>
-															</select>
-														</label>
-
-														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																>{$t('forms.cardCoverPosition')}</span
-															>
-
-															<select
-																value={viewDraft.cardCoverPosition}
-																disabled={viewDraft.view_type !== 'card'}
-																onchange={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
-																		cardCoverPosition: viewCardCoverPosition(selectValue(event))
-																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-															>
-																<option value="top">{$t('forms.cardCoverPositionTop')}</option>
-																<option value="left">{$t('forms.cardCoverPositionLeft')}</option>
-																<option value="hidden">{$t('forms.cardCoverPositionHidden')}</option
+																<select
+																	value={viewDraft.timelineEventLayout}
+																	disabled={viewDraft.timelineSource !== 'events'}
+																	onchange={(event) =>
+																		(viewDraft = {
+																			...viewDraft,
+																			timelineEventLayout: timelineEventLayout(selectValue(event))
+																		})}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
 																>
-															</select>
-														</label>
+																	<option value="summary"
+																		>{$t('forms.timelineEventLayoutSummary')}</option
+																	>
+																	<option value="detailed"
+																		>{$t('forms.timelineEventLayoutDetailed')}</option
+																	>
+																</select>
+															</label>
+
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.timelineEventType')}</span
+																>
+
+																<select
+																	value={viewDraft.timelineEventType}
+																	disabled={viewDraft.timelineSource !== 'events'}
+																	onchange={(event) =>
+																		(viewDraft = {
+																			...viewDraft,
+																			timelineEventType: selectValue(event)
+																		})}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																>
+																	<option value="">{$t('forms.timelineEventTypeAll')}</option>
+
+																	{#each timelineEventTypes as eventType}
+																		<option value={eventType}>{eventType}</option>
+																	{/each}
+																</select>
+															</label>
+
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.timelineEventActorFilter')}</span
+																>
+
+																<select
+																	value={viewDraft.timelineEventActor}
+																	disabled={viewDraft.timelineSource !== 'events'}
+																	onchange={(event) =>
+																		(viewDraft = {
+																			...viewDraft,
+																			timelineEventActor: selectValue(event)
+																		})}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																>
+																	<option value="">{$t('forms.timelineEventActorAll')}</option>
+
+																	{#each timelineEventActors as actorId}
+																		<option value={actorId}>{actorId}</option>
+																	{/each}
+																</select>
+															</label>
+
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.timelineEventAggregateFilter')}</span
+																>
+
+																<select
+																	value={viewDraft.timelineEventAggregate}
+																	disabled={viewDraft.timelineSource !== 'events'}
+																	onchange={(event) =>
+																		(viewDraft = {
+																			...viewDraft,
+																			timelineEventAggregate: selectValue(event)
+																		})}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																>
+																	<option value="">{$t('forms.timelineEventAggregateAll')}</option>
+
+																	{#each timelineEventAggregates as aggregate}
+																		<option value={aggregate}>{aggregate}</option>
+																	{/each}
+																</select>
+															</label>
+
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.timelineEventSearch')}</span
+																>
+
+																<input
+																	value={viewDraft.timelineEventQuery}
+																	disabled={viewDraft.timelineSource !== 'events'}
+																	oninput={(event) =>
+																		(viewDraft = {
+																			...viewDraft,
+																			timelineEventQuery: inputValue(event)
+																		})}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	placeholder={$t('forms.timelineEventSearchPlaceholder')}
+																/>
+															</label>
+
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.timelineEventFrom')}</span
+																>
+
+																<input
+																	type="datetime-local"
+																	value={viewDraft.timelineEventFrom}
+																	disabled={viewDraft.timelineSource !== 'events'}
+																	oninput={(event) =>
+																		(viewDraft = {
+																			...viewDraft,
+																			timelineEventFrom: inputValue(event)
+																		})}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																/>
+															</label>
+
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.timelineEventTo')}</span
+																>
+
+																<input
+																	type="datetime-local"
+																	value={viewDraft.timelineEventTo}
+																	disabled={viewDraft.timelineSource !== 'events'}
+																	oninput={(event) =>
+																		(viewDraft = {
+																			...viewDraft,
+																			timelineEventTo: inputValue(event)
+																		})}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																/>
+															</label>
+
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.timelineTitleField')}</span
+																>
+
+																<select
+																	value={viewDraft.timelineTitleField}
+																	disabled={viewDraft.timelineSource === 'events'}
+																	onchange={(event) => {
+																		const timelineTitleField = selectValue(event);
+
+																		viewDraft = {
+																			...viewDraft,
+																			timelineTitleField,
+																			timelineSubtitleField:
+																				viewDraft.timelineSubtitleField === timelineTitleField
+																					? ''
+																					: viewDraft.timelineSubtitleField
+																		};
+																	}}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																>
+																	<option value="">{$t('forms.recordTitle')}</option>
+
+																	{#each fields.filter((field) => field.visibility?.list !== false) as field}
+																		<option value={field.key}>{fieldLabel(field)}</option>
+																	{/each}
+																</select>
+															</label>
+
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.timelineSubtitleField')}</span
+																>
+
+																<select
+																	value={viewDraft.timelineSubtitleField}
+																	disabled={viewDraft.timelineSource === 'events'}
+																	onchange={(event) =>
+																		(viewDraft = {
+																			...viewDraft,
+																			timelineSubtitleField: selectValue(event)
+																		})}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																>
+																	<option value="">{$t('forms.viewNoRule')}</option>
+
+																	{#each fields.filter((field) => field.visibility?.list !== false && field.key !== viewDraft.timelineTitleField) as field}
+																		<option value={field.key}>{fieldLabel(field)}</option>
+																	{/each}
+																</select>
+															</label>
+														{/if}
+
+														{#if viewDraft.view_type === 'card'}
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.cardCoverAspect')}</span
+																>
+
+																<select
+																	value={viewDraft.cardCoverAspect}
+																	onchange={(event) =>
+																		(viewDraft = {
+																			...viewDraft,
+																			cardCoverAspect: viewCardCoverAspect(selectValue(event))
+																		})}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																>
+																	<option value="auto">{$t('forms.cardCoverAspectAuto')}</option>
+																	<option value="wide">{$t('forms.cardCoverAspectWide')}</option>
+																	<option value="square">{$t('forms.cardCoverAspectSquare')}</option
+																	>
+																	<option value="portrait"
+																		>{$t('forms.cardCoverAspectPortrait')}</option
+																	>
+																</select>
+															</label>
+
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.cardCoverFit')}</span
+																>
+
+																<select
+																	value={viewDraft.cardCoverFit}
+																	onchange={(event) =>
+																		(viewDraft = {
+																			...viewDraft,
+																			cardCoverFit: viewCardCoverFit(selectValue(event))
+																		})}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																>
+																	<option value="cover">{$t('forms.cardCoverFitCover')}</option>
+																	<option value="contain">{$t('forms.cardCoverFitContain')}</option>
+																</select>
+															</label>
+
+															<label class="space-y-1">
+																<span
+																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	>{$t('forms.cardCoverPosition')}</span
+																>
+
+																<select
+																	value={viewDraft.cardCoverPosition}
+																	onchange={(event) =>
+																		(viewDraft = {
+																			...viewDraft,
+																			cardCoverPosition: viewCardCoverPosition(selectValue(event))
+																		})}
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																>
+																	<option value="top">{$t('forms.cardCoverPositionTop')}</option>
+																	<option value="left">{$t('forms.cardCoverPositionLeft')}</option>
+																	<option value="hidden"
+																		>{$t('forms.cardCoverPositionHidden')}</option
+																	>
+																</select>
+															</label>
+														{/if}
 													</div>
-
-													<label class="block space-y-1">
-														<span
-															class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-															>{$t('forms.viewName')}</span
-														>
-
-														<input
-															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-															value={viewDraft.name}
-															oninput={(event) =>
-																(viewDraft = { ...viewDraft, name: inputValue(event) })}
-														/>
-													</label>
-
-													<label class="block space-y-1">
-														<span
-															class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-															>{$t('forms.viewVisibility')}</span
-														>
-
-														<select
-															value={viewDraft.visibility}
-															onchange={(event) =>
-																(viewDraft = {
-																	...viewDraft,
-																	visibility: selectValue(event) as ViewVisibility
-																})}
-															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-														>
-															<option value="shared">{$t('forms.viewVisibilityShared')}</option>
-															<option value="private">{$t('forms.viewVisibilityPrivate')}</option>
-														</select>
-													</label>
-
-													<label
-														class="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
-													>
-														<input
-															type="checkbox"
-															class="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600"
-															checked={viewDraft.isDefault}
-															onchange={(event) =>
-																(viewDraft = {
-																	...viewDraft,
-																	isDefault:
-																		event.currentTarget instanceof HTMLInputElement
-																			? event.currentTarget.checked
-																			: false
-																})}
-														/>
-
-														<span class="min-w-0">
-															<span
-																class="block text-sm font-medium text-slate-800 dark:text-slate-200"
-																>{$t('forms.defaultView')}</span
-															>
-
-															<span class="mt-0.5 block text-xs text-slate-500 dark:text-slate-400"
-																>{$t('forms.defaultViewDescription')}</span
-															>
-														</span>
-													</label>
 
 													<div
 														class="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"
@@ -15591,512 +15751,505 @@
 																</select>
 															</label>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.pivotRowField')}</span
-																>
-
-																<select
-																	value={viewDraft.pivotRowField}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	onchange={(event) => {
-																		const pivotRowField = selectValue(event);
-
-																		viewDraft = {
-																			...viewDraft,
-																			pivotRowField,
-																			pivotColumnField:
-																				viewDraft.pivotColumnField === pivotRowField
-																					? ''
-																					: viewDraft.pivotColumnField
-																		};
-																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
-
-																	{#each viewDraftPivotDimensionFieldCandidates() as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.pivotColumnField')}</span
-																>
-
-																<select
-																	value={viewDraft.pivotColumnField}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotColumnField: selectValue(event)
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
-
-																	{#each viewDraftPivotDimensionFieldCandidates().filter((field) => field.key !== viewDraft.pivotRowField) as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.pivotValueField')}</span
-																>
-
-																<select
-																	value={viewDraft.pivotValueField}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotValueField: selectValue(event)
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
-
-																	{#each viewDraftPivotValueFieldCandidates() as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.pivotAggregate')}</span
-																>
-
-																<select
-																	value={viewDraft.pivotAggregate}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotAggregate: viewPivotAggregate(selectValue(event))
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="sum">{$t('forms.pivotAggregateSum')}</option>
-																	<option value="count">{$t('forms.pivotAggregateCount')}</option>
-																	<option value="avg">{$t('forms.pivotAggregateAvg')}</option>
-																</select>
-															</label>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.pivotTotals')}</span
-																>
-
-																<select
-																	value={viewDraft.pivotTotals}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotTotals: viewPivotTotalsMode(selectValue(event))
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="all">{$t('forms.pivotTotalsAll')}</option>
-																	<option value="rows">{$t('forms.pivotTotalsRows')}</option>
-																	<option value="columns">{$t('forms.pivotTotalsColumns')}</option>
-																	<option value="none">{$t('forms.pivotTotalsNone')}</option>
-																</select>
-															</label>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.pivotValueDisplay')}</span
-																>
-
-																<select
-																	value={viewDraft.pivotValueDisplay}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotValueDisplay: viewPivotValueDisplay(selectValue(event))
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="value">{$t('forms.pivotValueDisplayValue')}</option
+															{#if viewDraft.view_type === 'pivot'}
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.pivotRowField')}</span
 																	>
-																	<option value="percent_row"
-																		>{$t('forms.pivotValueDisplayPercentRow')}</option
+
+																	<select
+																		value={viewDraft.pivotRowField}
+																		onchange={(event) => {
+																			const pivotRowField = selectValue(event);
+
+																			viewDraft = {
+																				...viewDraft,
+																				pivotRowField,
+																				pivotColumnField:
+																					viewDraft.pivotColumnField === pivotRowField
+																						? ''
+																						: viewDraft.pivotColumnField
+																			};
+																		}}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
 																	>
-																	<option value="percent_column"
-																		>{$t('forms.pivotValueDisplayPercentColumn')}</option
+																		<option value="">{$t('forms.viewNoRule')}</option>
+
+																		{#each viewDraftPivotDimensionFieldCandidates() as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
+
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.pivotColumnField')}</span
 																	>
-																	<option value="percent_total"
-																		>{$t('forms.pivotValueDisplayPercentTotal')}</option
+
+																	<select
+																		value={viewDraft.pivotColumnField}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotColumnField: selectValue(event)
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
 																	>
-																</select>
-															</label>
+																		<option value="">{$t('forms.viewNoRule')}</option>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.pivotSort')}</span
-																>
+																		{#each viewDraftPivotDimensionFieldCandidates().filter((field) => field.key !== viewDraft.pivotRowField) as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
 
-																<select
-																	value={viewDraft.pivotSort}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotSort: viewPivotSortMode(selectValue(event))
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="label">{$t('forms.pivotSortLabel')}</option>
-																	<option value="row_total_desc"
-																		>{$t('forms.pivotSortRowTotalDesc')}</option
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.pivotValueField')}</span
 																	>
-																	<option value="row_total_asc"
-																		>{$t('forms.pivotSortRowTotalAsc')}</option
+
+																	<select
+																		value={viewDraft.pivotValueField}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotValueField: selectValue(event)
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
 																	>
-																	<option value="column_total_desc"
-																		>{$t('forms.pivotSortColumnTotalDesc')}</option
+																		<option value="">{$t('forms.viewNoRule')}</option>
+
+																		{#each viewDraftPivotValueFieldCandidates() as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
+
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.pivotAggregate')}</span
 																	>
-																	<option value="column_total_asc"
-																		>{$t('forms.pivotSortColumnTotalAsc')}</option
+
+																	<select
+																		value={viewDraft.pivotAggregate}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotAggregate: viewPivotAggregate(selectValue(event))
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
 																	>
-																</select>
-															</label>
+																		<option value="sum">{$t('forms.pivotAggregateSum')}</option>
+																		<option value="count">{$t('forms.pivotAggregateCount')}</option>
+																		<option value="avg">{$t('forms.pivotAggregateAvg')}</option>
+																	</select>
+																</label>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.pivotRowLimit')}</span
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.pivotTotals')}</span
+																	>
+
+																	<select
+																		value={viewDraft.pivotTotals}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotTotals: viewPivotTotalsMode(selectValue(event))
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="all">{$t('forms.pivotTotalsAll')}</option>
+																		<option value="rows">{$t('forms.pivotTotalsRows')}</option>
+																		<option value="columns">{$t('forms.pivotTotalsColumns')}</option
+																		>
+																		<option value="none">{$t('forms.pivotTotalsNone')}</option>
+																	</select>
+																</label>
+
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.pivotValueDisplay')}</span
+																	>
+
+																	<select
+																		value={viewDraft.pivotValueDisplay}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotValueDisplay: viewPivotValueDisplay(selectValue(event))
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="value"
+																			>{$t('forms.pivotValueDisplayValue')}</option
+																		>
+																		<option value="percent_row"
+																			>{$t('forms.pivotValueDisplayPercentRow')}</option
+																		>
+																		<option value="percent_column"
+																			>{$t('forms.pivotValueDisplayPercentColumn')}</option
+																		>
+																		<option value="percent_total"
+																			>{$t('forms.pivotValueDisplayPercentTotal')}</option
+																		>
+																	</select>
+																</label>
+
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.pivotSort')}</span
+																	>
+
+																	<select
+																		value={viewDraft.pivotSort}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotSort: viewPivotSortMode(selectValue(event))
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="label">{$t('forms.pivotSortLabel')}</option>
+																		<option value="row_total_desc"
+																			>{$t('forms.pivotSortRowTotalDesc')}</option
+																		>
+																		<option value="row_total_asc"
+																			>{$t('forms.pivotSortRowTotalAsc')}</option
+																		>
+																		<option value="column_total_desc"
+																			>{$t('forms.pivotSortColumnTotalDesc')}</option
+																		>
+																		<option value="column_total_asc"
+																			>{$t('forms.pivotSortColumnTotalAsc')}</option
+																		>
+																	</select>
+																</label>
+
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.pivotRowLimit')}</span
+																	>
+
+																	<select
+																		value={String(viewDraft.pivotRowLimit)}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotRowLimit: viewPivotRowLimit(selectValue(event))
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="0">{$t('forms.pivotRowLimitAll')}</option>
+																		<option value="2">{$t('forms.pivotRowLimitTwo')}</option>
+																		<option value="5">{$t('forms.pivotRowLimitFive')}</option>
+																		<option value="10">{$t('forms.pivotRowLimitTen')}</option>
+																	</select>
+																</label>
+
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.pivotColumnLimit')}</span
+																	>
+
+																	<select
+																		value={String(viewDraft.pivotColumnLimit)}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotColumnLimit: viewPivotColumnLimit(selectValue(event))
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="0">{$t('forms.pivotColumnLimitAll')}</option>
+																		<option value="2">{$t('forms.pivotColumnLimitTwo')}</option>
+																		<option value="5">{$t('forms.pivotColumnLimitFive')}</option>
+																		<option value="10">{$t('forms.pivotColumnLimitTen')}</option>
+																	</select>
+																</label>
+
+																<label
+																	class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
 																>
+																	<input
+																		type="checkbox"
+																		class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																		checked={viewDraft.pivotEmptyBuckets}
+																		data-pivot-empty-buckets-control
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotEmptyBuckets:
+																					event.currentTarget instanceof HTMLInputElement
+																						? event.currentTarget.checked
+																						: false
+																			})}
+																	/>
 
-																<select
-																	value={String(viewDraft.pivotRowLimit)}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotRowLimit: viewPivotRowLimit(selectValue(event))
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	<span class="min-w-0 truncate"
+																		>{$t('forms.pivotEmptyBuckets')}</span
+																	>
+																</label>
+
+																<label
+																	class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
 																>
-																	<option value="0">{$t('forms.pivotRowLimitAll')}</option>
-																	<option value="2">{$t('forms.pivotRowLimitTwo')}</option>
-																	<option value="5">{$t('forms.pivotRowLimitFive')}</option>
-																	<option value="10">{$t('forms.pivotRowLimitTen')}</option>
-																</select>
-															</label>
+																	<input
+																		type="checkbox"
+																		class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																		checked={viewDraft.pivotHideZeroBuckets}
+																		data-pivot-hide-zero-buckets-control
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotHideZeroBuckets:
+																					event.currentTarget instanceof HTMLInputElement
+																						? event.currentTarget.checked
+																						: false
+																			})}
+																	/>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.pivotColumnLimit')}</span
+																	<span class="min-w-0 truncate"
+																		>{$t('forms.pivotHideZeroBuckets')}</span
+																	>
+																</label>
+
+																<label
+																	class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
 																>
+																	<input
+																		type="checkbox"
+																		class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																		checked={viewDraft.pivotShowCounts}
+																		data-pivot-show-counts-control
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotShowCounts:
+																					event.currentTarget instanceof HTMLInputElement
+																						? event.currentTarget.checked
+																						: false
+																			})}
+																	/>
 
-																<select
-																	value={String(viewDraft.pivotColumnLimit)}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotColumnLimit: viewPivotColumnLimit(selectValue(event))
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	<span class="min-w-0 truncate">{$t('forms.pivotShowCounts')}</span
+																	>
+																</label>
+
+																<label
+																	class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
 																>
-																	<option value="0">{$t('forms.pivotColumnLimitAll')}</option>
-																	<option value="2">{$t('forms.pivotColumnLimitTwo')}</option>
-																	<option value="5">{$t('forms.pivotColumnLimitFive')}</option>
-																	<option value="10">{$t('forms.pivotColumnLimitTen')}</option>
-																</select>
-															</label>
+																	<input
+																		type="checkbox"
+																		class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																		checked={viewDraft.pivotHeatmap}
+																		data-pivot-heatmap-control
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				pivotHeatmap:
+																					event.currentTarget instanceof HTMLInputElement
+																						? event.currentTarget.checked
+																						: false
+																			})}
+																	/>
 
-															<label
-																class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-															>
-																<input
-																	type="checkbox"
-																	class="h-4 w-4 rounded border-slate-300 text-blue-600"
-																	checked={viewDraft.pivotEmptyBuckets}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	data-pivot-empty-buckets-control
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotEmptyBuckets:
-																				event.currentTarget instanceof HTMLInputElement
-																					? event.currentTarget.checked
-																					: false
-																		})}
-																/>
+																	<span class="min-w-0 truncate">{$t('forms.pivotHeatmap')}</span>
+																</label>
 
-																<span class="min-w-0 truncate">{$t('forms.pivotEmptyBuckets')}</span
-																>
-															</label>
+																<div class="flex items-end">
+																	<button
+																		type="button"
+																		disabled={!viewDraft.pivotRowField ||
+																			!viewDraft.pivotColumnField}
+																		class="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+																		data-pivot-swap-axes
+																		onclick={swapViewDraftPivotAxes}
+																	>
+																		<ArrowLeftRight class="h-4 w-4" aria-hidden="true" />
+																		{$t('forms.pivotSwapAxes')}
+																	</button>
+																</div>
+															{/if}
 
-															<label
-																class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-															>
-																<input
-																	type="checkbox"
-																	class="h-4 w-4 rounded border-slate-300 text-blue-600"
-																	checked={viewDraft.pivotHideZeroBuckets}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	data-pivot-hide-zero-buckets-control
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotHideZeroBuckets:
-																				event.currentTarget instanceof HTMLInputElement
-																					? event.currentTarget.checked
-																					: false
-																		})}
-																/>
+															{#if viewDraft.view_type === 'gantt'}
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.ganttStartField')}</span
+																	>
 
-																<span class="min-w-0 truncate"
-																	>{$t('forms.pivotHideZeroBuckets')}</span
-																>
-															</label>
+																	<select
+																		value={viewDraft.ganttStartField}
+																		onchange={(event) => {
+																			const ganttStartField = selectValue(event);
 
-															<label
-																class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-															>
-																<input
-																	type="checkbox"
-																	class="h-4 w-4 rounded border-slate-300 text-blue-600"
-																	checked={viewDraft.pivotShowCounts}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	data-pivot-show-counts-control
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotShowCounts:
-																				event.currentTarget instanceof HTMLInputElement
-																					? event.currentTarget.checked
-																					: false
-																		})}
-																/>
+																			viewDraft = {
+																				...viewDraft,
+																				ganttStartField,
+																				ganttEndField:
+																					viewDraft.ganttEndField === ganttStartField
+																						? ''
+																						: viewDraft.ganttEndField,
+																				ganttGroupBy:
+																					viewDraft.ganttGroupBy === ganttStartField
+																						? ''
+																						: viewDraft.ganttGroupBy,
+																				ganttDependencyField:
+																					viewDraft.ganttDependencyField === ganttStartField
+																						? ''
+																						: viewDraft.ganttDependencyField
+																			};
+																		}}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																<span class="min-w-0 truncate">{$t('forms.pivotShowCounts')}</span>
-															</label>
+																		{#each viewDraftGanttDateFieldCandidates() as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
 
-															<label
-																class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-															>
-																<input
-																	type="checkbox"
-																	class="h-4 w-4 rounded border-slate-300 text-blue-600"
-																	checked={viewDraft.pivotHeatmap}
-																	disabled={viewDraft.view_type !== 'pivot'}
-																	data-pivot-heatmap-control
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			pivotHeatmap:
-																				event.currentTarget instanceof HTMLInputElement
-																					? event.currentTarget.checked
-																					: false
-																		})}
-																/>
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.ganttEndField')}</span
+																	>
 
-																<span class="min-w-0 truncate">{$t('forms.pivotHeatmap')}</span>
-															</label>
+																	<select
+																		value={viewDraft.ganttEndField}
+																		onchange={(event) => {
+																			const ganttEndField = selectValue(event);
 
-															<div class="flex items-end">
-																<button
-																	type="button"
-																	disabled={viewDraft.view_type !== 'pivot' ||
-																		!viewDraft.pivotRowField ||
-																		!viewDraft.pivotColumnField}
-																	class="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-																	data-pivot-swap-axes
-																	onclick={swapViewDraftPivotAxes}
-																>
-																	<ArrowLeftRight class="h-4 w-4" aria-hidden="true" />
-																	{$t('forms.pivotSwapAxes')}
-																</button>
-															</div>
+																			viewDraft = {
+																				...viewDraft,
+																				ganttEndField,
+																				ganttGroupBy:
+																					viewDraft.ganttGroupBy === ganttEndField
+																						? ''
+																						: viewDraft.ganttGroupBy,
+																				ganttDependencyField:
+																					viewDraft.ganttDependencyField === ganttEndField
+																						? ''
+																						: viewDraft.ganttDependencyField
+																			};
+																		}}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="">{$t('forms.ganttNoEndField')}</option>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.ganttStartField')}</span
-																>
+																		{#each viewDraftGanttDateFieldCandidates().filter((field) => field.key !== viewDraft.ganttStartField) as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
 
-																<select
-																	value={viewDraft.ganttStartField}
-																	disabled={viewDraft.view_type !== 'gantt'}
-																	onchange={(event) => {
-																		const ganttStartField = selectValue(event);
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.ganttGroupField')}</span
+																	>
 
-																		viewDraft = {
-																			...viewDraft,
-																			ganttStartField,
-																			ganttEndField:
-																				viewDraft.ganttEndField === ganttStartField
-																					? ''
-																					: viewDraft.ganttEndField,
-																			ganttGroupBy:
-																				viewDraft.ganttGroupBy === ganttStartField
-																					? ''
-																					: viewDraft.ganttGroupBy,
-																			ganttDependencyField:
-																				viewDraft.ganttDependencyField === ganttStartField
-																					? ''
-																					: viewDraft.ganttDependencyField
-																		};
-																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
+																	<select
+																		value={viewDraft.ganttGroupBy}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				ganttGroupBy: selectValue(event),
+																				ganttDependencyField:
+																					viewDraft.ganttDependencyField === selectValue(event)
+																						? ''
+																						: viewDraft.ganttDependencyField
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																	{#each viewDraftGanttDateFieldCandidates() as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
+																		{#each viewDraftGanttGroupFieldCandidates() as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.ganttEndField')}</span
-																>
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.ganttDependencyField')}</span
+																	>
 
-																<select
-																	value={viewDraft.ganttEndField}
-																	disabled={viewDraft.view_type !== 'gantt'}
-																	onchange={(event) => {
-																		const ganttEndField = selectValue(event);
+																	<select
+																		value={viewDraft.ganttDependencyField}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				ganttDependencyField: selectValue(event)
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																		viewDraft = {
-																			...viewDraft,
-																			ganttEndField,
-																			ganttGroupBy:
-																				viewDraft.ganttGroupBy === ganttEndField
-																					? ''
-																					: viewDraft.ganttGroupBy,
-																			ganttDependencyField:
-																				viewDraft.ganttDependencyField === ganttEndField
-																					? ''
-																					: viewDraft.ganttDependencyField
-																		};
-																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.ganttNoEndField')}</option>
+																		{#each viewDraftGanttDependencyFieldCandidates() as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
 
-																	{#each viewDraftGanttDateFieldCandidates().filter((field) => field.key !== viewDraft.ganttStartField) as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.ganttScale')}</span
+																	>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.ganttGroupField')}</span
-																>
+																	<select
+																		value={viewDraft.ganttScale}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				ganttScale: selectValue(event) as GanttScale
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="day">{$t('forms.ganttScaleDay')}</option>
+																		<option value="week">{$t('forms.ganttScaleWeek')}</option>
+																		<option value="month">{$t('forms.ganttScaleMonth')}</option>
+																	</select>
+																</label>
+															{/if}
 
-																<select
-																	value={viewDraft.ganttGroupBy}
-																	disabled={viewDraft.view_type !== 'gantt'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			ganttGroupBy: selectValue(event),
-																			ganttDependencyField:
-																				viewDraft.ganttDependencyField === selectValue(event)
-																					? ''
-																					: viewDraft.ganttDependencyField
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
+															{#if viewDraft.view_type === 'kanban'}
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.swimlaneField')}</span
+																	>
 
-																	{#each viewDraftGanttGroupFieldCandidates() as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
+																	<select
+																		value={viewDraft.swimlaneBy}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				swimlaneBy: selectValue(event)
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="">{$t('forms.viewNoRule')}</option>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.ganttDependencyField')}</span
-																>
-
-																<select
-																	value={viewDraft.ganttDependencyField}
-																	disabled={viewDraft.view_type !== 'gantt'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			ganttDependencyField: selectValue(event)
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
-
-																	{#each viewDraftGanttDependencyFieldCandidates() as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.ganttScale')}</span
-																>
-
-																<select
-																	value={viewDraft.ganttScale}
-																	disabled={viewDraft.view_type !== 'gantt'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			ganttScale: selectValue(event) as GanttScale
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="day">{$t('forms.ganttScaleDay')}</option>
-																	<option value="week">{$t('forms.ganttScaleWeek')}</option>
-																	<option value="month">{$t('forms.ganttScaleMonth')}</option>
-																</select>
-															</label>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.swimlaneField')}</span
-																>
-
-																<select
-																	value={viewDraft.swimlaneBy}
-																	disabled={viewDraft.view_type !== 'kanban'}
-																	onchange={(event) =>
-																		(viewDraft = { ...viewDraft, swimlaneBy: selectValue(event) })}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
-
-																	{#each viewDraftSwimlaneFieldCandidates() as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
+																		{#each viewDraftSwimlaneFieldCandidates() as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
+															{/if}
 
 															<label class="space-y-1 sm:col-span-2 xl:col-span-1">
 																<span
@@ -16132,366 +16285,361 @@
 																</select>
 															</label>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.calendarEndField')}</span
-																>
-
-																<select
-																	value={viewDraft.calendarEndField}
-																	disabled={viewDraft.view_type !== 'calendar'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			calendarEndField: selectValue(event)
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
-
-																	{#each viewDraftCalendarEndFieldCandidates() as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.calendarResourceField')}</span
-																>
-
-																<select
-																	value={viewDraft.calendarResourceBy}
-																	disabled={viewDraft.view_type !== 'calendar'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			calendarResourceBy: selectValue(event)
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
-
-																	{#each viewDraftCalendarResourceFieldCandidates() as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.calendarRange')}</span
-																>
-
-																<select
-																	value={viewDraft.calendarRange}
-																	disabled={viewDraft.view_type !== 'calendar'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			calendarRange: selectValue(event) as ViewCalendarRange
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="week">{$t('forms.calendarRangeWeek')}</option>
-																	<option value="month">{$t('forms.calendarRangeMonth')}</option>
-																</select>
-															</label>
-
-															<div class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.calendarFocusDate')}</span
-																>
-
-																<div class="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-1">
-																	<button
-																		type="button"
-																		class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
-																		disabled={viewDraft.view_type !== 'calendar'}
-																		onclick={() => shiftViewDraftCalendarFocus(-1)}
-																		aria-label={$t('forms.calendarPreviousRange')}
-																		title={$t('forms.calendarPreviousRange')}
-																		data-calendar-focus-shift="-1"
-																		><ChevronLeft class="h-4 w-4" aria-hidden="true" /></button
+															{#if viewDraft.view_type === 'calendar'}
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.calendarEndField')}</span
 																	>
 
-																	<input
-																		type="date"
-																		value={viewDraft.calendarFocusDate}
-																		disabled={viewDraft.view_type !== 'calendar'}
-																		aria-label={$t('forms.calendarFocusDate')}
-																		data-calendar-focus-date-control
-																		oninput={(event) =>
+																	<select
+																		value={viewDraft.calendarEndField}
+																		onchange={(event) =>
 																			(viewDraft = {
 																				...viewDraft,
-																				calendarFocusDate: inputValue(event)
+																				calendarEndField: selectValue(event)
 																			})}
-																		class="min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="">{$t('forms.viewNoRule')}</option>
+
+																		{#each viewDraftCalendarEndFieldCandidates() as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
+
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.calendarResourceField')}</span
+																	>
+
+																	<select
+																		value={viewDraft.calendarResourceBy}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				calendarResourceBy: selectValue(event)
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="">{$t('forms.viewNoRule')}</option>
+
+																		{#each viewDraftCalendarResourceFieldCandidates() as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
+
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.calendarRange')}</span
+																	>
+
+																	<select
+																		value={viewDraft.calendarRange}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				calendarRange: selectValue(event) as ViewCalendarRange
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="week">{$t('forms.calendarRangeWeek')}</option>
+																		<option value="month">{$t('forms.calendarRangeMonth')}</option>
+																	</select>
+																</label>
+
+																<div class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.calendarFocusDate')}</span
+																	>
+
+																	<div class="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-1">
+																		<button
+																			type="button"
+																			class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+																			onclick={() => shiftViewDraftCalendarFocus(-1)}
+																			aria-label={$t('forms.calendarPreviousRange')}
+																			title={$t('forms.calendarPreviousRange')}
+																			data-calendar-focus-shift="-1"
+																			><ChevronLeft class="h-4 w-4" aria-hidden="true" /></button
+																		>
+
+																		<input
+																			type="date"
+																			value={viewDraft.calendarFocusDate}
+																			aria-label={$t('forms.calendarFocusDate')}
+																			data-calendar-focus-date-control
+																			oninput={(event) =>
+																				(viewDraft = {
+																					...viewDraft,
+																					calendarFocusDate: inputValue(event)
+																				})}
+																			class="min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		/>
+
+																		<button
+																			type="button"
+																			class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+																			onclick={() => shiftViewDraftCalendarFocus(1)}
+																			aria-label={$t('forms.calendarNextRange')}
+																			title={$t('forms.calendarNextRange')}
+																			data-calendar-focus-shift="1"
+																			><ChevronRight class="h-4 w-4" aria-hidden="true" /></button
+																		>
+																	</div>
+																</div>
+
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.calendarRecurrence')}</span
+																	>
+
+																	<select
+																		value={viewDraft.calendarRecurrence}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				calendarRecurrence: selectValue(
+																					event
+																				) as ViewCalendarRecurrence
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="none"
+																			>{$t('forms.calendarRecurrenceNone')}</option
+																		>
+																		<option value="daily"
+																			>{$t('forms.calendarRecurrenceDaily')}</option
+																		>
+																		<option value="weekly"
+																			>{$t('forms.calendarRecurrenceWeekly')}</option
+																		>
+																		<option value="monthly"
+																			>{$t('forms.calendarRecurrenceMonthly')}</option
+																		>
+																	</select>
+																</label>
+
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.calendarDayScope')}</span
+																	>
+
+																	<select
+																		value={viewDraft.calendarDayScope}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				calendarDayScope: selectValue(event) as ViewCalendarDayScope
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="all">{$t('forms.calendarDayScopeAll')}</option>
+																		<option value="workweek"
+																			>{$t('forms.calendarDayScopeWorkweek')}</option
+																		>
+																	</select>
+																</label>
+
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.calendarLayout')}</span
+																	>
+
+																	<select
+																		value={viewDraft.calendarLayout}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				calendarLayout: selectValue(event) as ViewCalendarLayout
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="grid">{$t('forms.calendarLayoutGrid')}</option>
+																		<option value="agenda"
+																			>{$t('forms.calendarLayoutAgenda')}</option
+																		>
+																	</select>
+																</label>
+
+																<label
+																	class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+																>
+																	<input
+																		type="checkbox"
+																		class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																		checked={viewDraft.calendarHideEmptyDays}
+																		data-calendar-hide-empty-days-control
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				calendarHideEmptyDays:
+																					event.currentTarget instanceof HTMLInputElement
+																						? event.currentTarget.checked
+																						: false
+																			})}
 																	/>
 
-																	<button
-																		type="button"
-																		class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
-																		disabled={viewDraft.view_type !== 'calendar'}
-																		onclick={() => shiftViewDraftCalendarFocus(1)}
-																		aria-label={$t('forms.calendarNextRange')}
-																		title={$t('forms.calendarNextRange')}
-																		data-calendar-focus-shift="1"
-																		><ChevronRight class="h-4 w-4" aria-hidden="true" /></button
+																	<span class="min-w-0 truncate"
+																		>{$t('forms.calendarHideEmptyDays')}</span
 																	>
-																</div>
-															</div>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.calendarRecurrence')}</span
-																>
-
-																<select
-																	value={viewDraft.calendarRecurrence}
-																	disabled={viewDraft.view_type !== 'calendar'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			calendarRecurrence: selectValue(
-																				event
-																			) as ViewCalendarRecurrence
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="none">{$t('forms.calendarRecurrenceNone')}</option>
-																	<option value="daily"
-																		>{$t('forms.calendarRecurrenceDaily')}</option
-																	>
-																	<option value="weekly"
-																		>{$t('forms.calendarRecurrenceWeekly')}</option
-																	>
-																	<option value="monthly"
-																		>{$t('forms.calendarRecurrenceMonthly')}</option
-																	>
-																</select>
-															</label>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.calendarDayScope')}</span
-																>
-
-																<select
-																	value={viewDraft.calendarDayScope}
-																	disabled={viewDraft.view_type !== 'calendar'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			calendarDayScope: selectValue(event) as ViewCalendarDayScope
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="all">{$t('forms.calendarDayScopeAll')}</option>
-																	<option value="workweek"
-																		>{$t('forms.calendarDayScopeWorkweek')}</option
-																	>
-																</select>
-															</label>
-
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.calendarLayout')}</span
-																>
-
-																<select
-																	value={viewDraft.calendarLayout}
-																	disabled={viewDraft.view_type !== 'calendar'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			calendarLayout: selectValue(event) as ViewCalendarLayout
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="grid">{$t('forms.calendarLayoutGrid')}</option>
-																	<option value="agenda">{$t('forms.calendarLayoutAgenda')}</option>
-																</select>
-															</label>
-
-															<label
-																class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-															>
-																<input
-																	type="checkbox"
-																	class="h-4 w-4 rounded border-slate-300 text-blue-600"
-																	checked={viewDraft.calendarHideEmptyDays}
-																	disabled={viewDraft.view_type !== 'calendar'}
-																	data-calendar-hide-empty-days-control
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			calendarHideEmptyDays:
-																				event.currentTarget instanceof HTMLInputElement
-																					? event.currentTarget.checked
-																					: false
-																		})}
-																/>
-
-																<span class="min-w-0 truncate"
-																	>{$t('forms.calendarHideEmptyDays')}</span
-																>
-															</label>
+																</label>
+															{/if}
 
 															<div
 																class="space-y-2 rounded-md border border-slate-200 p-3 dark:border-slate-700 lg:col-span-2"
 															>
 																<div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_180px_auto]">
-																	<label class="space-y-1">
-																		<span
-																			class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																			>{$t('forms.calendarExceptionRecord')}</span
+																	{#if viewDraft.view_type === 'calendar'}
+																		<label class="space-y-1">
+																			<span
+																				class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																				>{$t('forms.calendarExceptionRecord')}</span
+																			>
+
+																			<select
+																				value={viewDraft.calendarExceptionRecordId}
+																				onchange={(event) =>
+																					(viewDraft = {
+																						...viewDraft,
+																						calendarExceptionRecordId: selectValue(event)
+																					})}
+																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																			>
+																				<option value="">{$t('forms.viewNoRule')}</option>
+
+																				{#each viewRecords as record}
+																					<option value={record.id}>{record.title}</option>
+																				{/each}
+																			</select>
+																		</label>
+																	{/if}
+
+																	{#if viewDraft.view_type === 'card'}
+																		<label class="space-y-1">
+																			<span
+																				class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																				>{$t('forms.cardFieldLimit')}</span
+																			>
+
+																			<select
+																				value={String(viewDraft.cardFieldLimit)}
+																				onchange={(event) =>
+																					(viewDraft = {
+																						...viewDraft,
+																						cardFieldLimit: viewCardFieldLimit(selectValue(event))
+																					})}
+																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																			>
+																				<option value="3">{$t('forms.cardFieldLimitThree')}</option>
+																				<option value="6">{$t('forms.cardFieldLimitSix')}</option>
+																				<option value="9">{$t('forms.cardFieldLimitNine')}</option>
+																				<option value="99">{$t('forms.cardFieldLimitAll')}</option>
+																			</select>
+																		</label>
+
+																		<label
+																			class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
 																		>
+																			<input
+																				type="checkbox"
+																				class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																				checked={viewDraft.cardHideEmptyFields}
+																				data-card-hide-empty-fields-control
+																				onchange={(event) =>
+																					(viewDraft = {
+																						...viewDraft,
+																						cardHideEmptyFields:
+																							event.currentTarget instanceof HTMLInputElement
+																								? event.currentTarget.checked
+																								: false
+																					})}
+																			/>
 
-																		<select
-																			value={viewDraft.calendarExceptionRecordId}
-																			disabled={viewDraft.view_type !== 'calendar'}
-																			onchange={(event) =>
-																				(viewDraft = {
-																					...viewDraft,
-																					calendarExceptionRecordId: selectValue(event)
-																				})}
-																			class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																			<span class="min-w-0 truncate"
+																				>{$t('forms.cardHideEmptyFields')}</span
+																			>
+																		</label>
+
+																		<label
+																			class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
 																		>
-																			<option value="">{$t('forms.viewNoRule')}</option>
+																			<input
+																				type="checkbox"
+																				class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																				checked={viewDraft.cardShowTimestamps}
+																				data-card-show-timestamps-control
+																				onchange={(event) =>
+																					(viewDraft = {
+																						...viewDraft,
+																						cardShowTimestamps:
+																							event.currentTarget instanceof HTMLInputElement
+																								? event.currentTarget.checked
+																								: false
+																					})}
+																			/>
 
-																			{#each viewRecords as record}
-																				<option value={record.id}>{record.title}</option>
-																			{/each}
-																		</select>
-																	</label>
+																			<span class="min-w-0 truncate"
+																				>{$t('forms.cardShowTimestamps')}</span
+																			>
+																		</label>
 
-																	<label class="space-y-1">
-																		<span
-																			class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																			>{$t('forms.cardFieldLimit')}</span
+																		<label
+																			class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
 																		>
+																			<input
+																				type="checkbox"
+																				class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																				checked={viewDraft.cardShowRecordId}
+																				data-card-show-record-id-control
+																				onchange={(event) =>
+																					(viewDraft = {
+																						...viewDraft,
+																						cardShowRecordId:
+																							event.currentTarget instanceof HTMLInputElement
+																								? event.currentTarget.checked
+																								: false
+																					})}
+																			/>
 
-																		<select
-																			value={String(viewDraft.cardFieldLimit)}
-																			disabled={viewDraft.view_type !== 'card'}
-																			onchange={(event) =>
-																				(viewDraft = {
-																					...viewDraft,
-																					cardFieldLimit: viewCardFieldLimit(selectValue(event))
-																				})}
-																			class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																		>
-																			<option value="3">{$t('forms.cardFieldLimitThree')}</option>
-																			<option value="6">{$t('forms.cardFieldLimitSix')}</option>
-																			<option value="9">{$t('forms.cardFieldLimitNine')}</option>
-																			<option value="99">{$t('forms.cardFieldLimitAll')}</option>
-																		</select>
-																	</label>
+																			<span class="min-w-0 truncate"
+																				>{$t('forms.cardShowRecordId')}</span
+																			>
+																		</label>
+																	{/if}
 
-																	<label
-																		class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-																	>
-																		<input
-																			type="checkbox"
-																			class="h-4 w-4 rounded border-slate-300 text-blue-600"
-																			checked={viewDraft.cardHideEmptyFields}
-																			disabled={viewDraft.view_type !== 'card'}
-																			data-card-hide-empty-fields-control
-																			onchange={(event) =>
-																				(viewDraft = {
-																					...viewDraft,
-																					cardHideEmptyFields:
-																						event.currentTarget instanceof HTMLInputElement
-																							? event.currentTarget.checked
-																							: false
-																				})}
-																		/>
+																	{#if viewDraft.view_type === 'calendar'}
+																		<label class="space-y-1">
+																			<span
+																				class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																				>{$t('forms.calendarExceptionDate')}</span
+																			>
 
-																		<span class="min-w-0 truncate"
-																			>{$t('forms.cardHideEmptyFields')}</span
-																		>
-																	</label>
-
-																	<label
-																		class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-																	>
-																		<input
-																			type="checkbox"
-																			class="h-4 w-4 rounded border-slate-300 text-blue-600"
-																			checked={viewDraft.cardShowTimestamps}
-																			disabled={viewDraft.view_type !== 'card'}
-																			data-card-show-timestamps-control
-																			onchange={(event) =>
-																				(viewDraft = {
-																					...viewDraft,
-																					cardShowTimestamps:
-																						event.currentTarget instanceof HTMLInputElement
-																							? event.currentTarget.checked
-																							: false
-																				})}
-																		/>
-
-																		<span class="min-w-0 truncate"
-																			>{$t('forms.cardShowTimestamps')}</span
-																		>
-																	</label>
-
-																	<label
-																		class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-																	>
-																		<input
-																			type="checkbox"
-																			class="h-4 w-4 rounded border-slate-300 text-blue-600"
-																			checked={viewDraft.cardShowRecordId}
-																			disabled={viewDraft.view_type !== 'card'}
-																			data-card-show-record-id-control
-																			onchange={(event) =>
-																				(viewDraft = {
-																					...viewDraft,
-																					cardShowRecordId:
-																						event.currentTarget instanceof HTMLInputElement
-																							? event.currentTarget.checked
-																							: false
-																				})}
-																		/>
-
-																		<span class="min-w-0 truncate"
-																			>{$t('forms.cardShowRecordId')}</span
-																		>
-																	</label>
-
-																	<label class="space-y-1">
-																		<span
-																			class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																			>{$t('forms.calendarExceptionDate')}</span
-																		>
-
-																		<input
-																			type="date"
-																			value={viewDraft.calendarExceptionDate}
-																			disabled={viewDraft.view_type !== 'calendar'}
-																			oninput={(event) =>
-																				(viewDraft = {
-																					...viewDraft,
-																					calendarExceptionDate: inputValue(event)
-																				})}
-																			class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																		/>
-																	</label>
+																			<input
+																				type="date"
+																				value={viewDraft.calendarExceptionDate}
+																				oninput={(event) =>
+																					(viewDraft = {
+																						...viewDraft,
+																						calendarExceptionDate: inputValue(event)
+																					})}
+																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																			/>
+																		</label>
+																	{/if}
 
 																	<div class="flex items-end">
 																		<button
 																			type="button"
-																			disabled={viewDraft.view_type !== 'calendar' ||
-																				!viewDraft.calendarExceptionRecordId ||
+																			disabled={!viewDraft.calendarExceptionRecordId ||
 																				!isIsoDate(viewDraft.calendarExceptionDate)}
 																			class="inline-flex h-10 items-center gap-2 rounded-md bg-slate-900 px-3 text-sm font-medium text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
 																			onclick={addViewDraftCalendarException}
@@ -16541,149 +16689,148 @@
 																</div>
 															</div>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.cardLayout')}</span
-																>
+															{#if viewDraft.view_type === 'card'}
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.cardLayout')}</span
+																	>
 
-																<select
-																	value={viewDraft.cardLayout}
-																	disabled={viewDraft.view_type !== 'card'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			cardLayout: selectValue(event) as CardLayoutMode
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="standard">{$t('forms.cardLayoutStandard')}</option>
-																	<option value="gallery">{$t('forms.cardLayoutGallery')}</option>
-																	<option value="compact">{$t('forms.cardLayoutCompact')}</option>
-																	<option value="list">{$t('forms.cardLayoutList')}</option>
-																</select>
-															</label>
+																	<select
+																		value={viewDraft.cardLayout}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				cardLayout: selectValue(event) as CardLayoutMode
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="standard"
+																			>{$t('forms.cardLayoutStandard')}</option
+																		>
+																		<option value="gallery">{$t('forms.cardLayoutGallery')}</option>
+																		<option value="compact">{$t('forms.cardLayoutCompact')}</option>
+																		<option value="list">{$t('forms.cardLayoutList')}</option>
+																	</select>
+																</label>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.cardTitleField')}</span
-																>
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.cardTitleField')}</span
+																	>
 
-																<select
-																	value={viewDraft.cardTitleField}
-																	disabled={viewDraft.view_type !== 'card'}
-																	onchange={(event) => {
-																		const cardTitleField = selectValue(event);
+																	<select
+																		value={viewDraft.cardTitleField}
+																		onchange={(event) => {
+																			const cardTitleField = selectValue(event);
 
-																		viewDraft = {
-																			...viewDraft,
-																			cardTitleField,
-																			cardSubtitleField:
-																				viewDraft.cardSubtitleField === cardTitleField
-																					? ''
-																					: viewDraft.cardSubtitleField,
-																			cardBadgeField:
-																				viewDraft.cardBadgeField === cardTitleField
-																					? ''
-																					: viewDraft.cardBadgeField,
-																			cardFieldKeys:
-																				cardTitleField &&
-																				viewDraft.cardFieldKeys[0] !== cardTitleField
-																					? [
-																							cardTitleField,
-																							...viewDraft.cardFieldKeys.filter(
-																								(key) => key !== cardTitleField
-																							)
-																						]
-																					: viewDraft.cardFieldKeys
-																		};
-																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.recordTitle')}</option>
+																			viewDraft = {
+																				...viewDraft,
+																				cardTitleField,
+																				cardSubtitleField:
+																					viewDraft.cardSubtitleField === cardTitleField
+																						? ''
+																						: viewDraft.cardSubtitleField,
+																				cardBadgeField:
+																					viewDraft.cardBadgeField === cardTitleField
+																						? ''
+																						: viewDraft.cardBadgeField,
+																				cardFieldKeys:
+																					cardTitleField &&
+																					viewDraft.cardFieldKeys[0] !== cardTitleField
+																						? [
+																								cardTitleField,
+																								...viewDraft.cardFieldKeys.filter(
+																									(key) => key !== cardTitleField
+																								)
+																							]
+																						: viewDraft.cardFieldKeys
+																			};
+																		}}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="">{$t('forms.recordTitle')}</option>
 
-																	{#each fields.filter((field) => field.visibility?.list !== false) as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
+																		{#each fields.filter((field) => field.visibility?.list !== false) as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.cardSubtitleField')}</span
-																>
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.cardSubtitleField')}</span
+																	>
 
-																<select
-																	value={viewDraft.cardSubtitleField}
-																	disabled={viewDraft.view_type !== 'card'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			cardSubtitleField: selectValue(event),
-																			cardBadgeField:
-																				viewDraft.cardBadgeField === selectValue(event)
-																					? ''
-																					: viewDraft.cardBadgeField
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
+																	<select
+																		value={viewDraft.cardSubtitleField}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				cardSubtitleField: selectValue(event),
+																				cardBadgeField:
+																					viewDraft.cardBadgeField === selectValue(event)
+																						? ''
+																						: viewDraft.cardBadgeField
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																	{#each fields.filter((field) => field.visibility?.list !== false && field.key !== viewDraft.cardTitleField) as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
+																		{#each fields.filter((field) => field.visibility?.list !== false && field.key !== viewDraft.cardTitleField) as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.cardBadgeField')}</span
-																>
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.cardBadgeField')}</span
+																	>
 
-																<select
-																	value={viewDraft.cardBadgeField}
-																	disabled={viewDraft.view_type !== 'card'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			cardBadgeField: selectValue(event)
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
+																	<select
+																		value={viewDraft.cardBadgeField}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				cardBadgeField: selectValue(event)
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																	{#each fields.filter((field) => field.visibility?.list !== false && field.key !== viewDraft.cardTitleField && field.key !== viewDraft.cardSubtitleField) as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
+																		{#each fields.filter((field) => field.visibility?.list !== false && field.key !== viewDraft.cardTitleField && field.key !== viewDraft.cardSubtitleField) as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
 
-															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-																	>{$t('forms.cardCoverField')}</span
-																>
+																<label class="space-y-1">
+																	<span
+																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		>{$t('forms.cardCoverField')}</span
+																	>
 
-																<select
-																	value={viewDraft.cardCoverField}
-																	disabled={viewDraft.view_type !== 'card'}
-																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
-																			cardCoverField: selectValue(event)
-																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-																>
-																	<option value="">{$t('forms.viewNoRule')}</option>
+																	<select
+																		value={viewDraft.cardCoverField}
+																		onchange={(event) =>
+																			(viewDraft = {
+																				...viewDraft,
+																				cardCoverField: selectValue(event)
+																			})}
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	>
+																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																	{#each fields.filter((field) => field.visibility?.list !== false && ['image', 'attachment'].includes(field.type ?? 'text')) as field}
-																		<option value={field.key}>{fieldLabel(field)}</option>
-																	{/each}
-																</select>
-															</label>
+																		{#each fields.filter((field) => field.visibility?.list !== false && ['image', 'attachment'].includes(field.type ?? 'text')) as field}
+																			<option value={field.key}>{fieldLabel(field)}</option>
+																		{/each}
+																	</select>
+																</label>
+															{/if}
 														</div>
 
 														{#if viewDraft.view_type === 'card' && viewDraftCardFields().length > 0}
@@ -16787,20 +16934,8 @@
 															</div>
 														{/if}
 													</div>
-
-													{#if selectedView}
-														<Button
-															size="sm"
-															variant="danger"
-															loading={deletingViewId === selectedView.id}
-															onclick={deleteSelectedView}
-														>
-															<Trash2 class="mr-2 h-4 w-4" aria-hidden="true" />
-															{$t('forms.deleteView')}
-														</Button>
-													{/if}
 												</div>
-											</details>
+											</div>
 
 											<details
 												class="rounded-md border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
@@ -16899,7 +17034,7 @@
 											</details>
 										</div>
 									</section>
-								{/if}
+								</LayoutSettingsSheet>
 
 								{#if recordEditorOpen}
 									<div
@@ -17431,9 +17566,82 @@
 								{/if}
 
 								<section
-									class="w-full overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+									class="w-full min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
 									data-record-list-panel
+									inert={panelMode === 'sheet' && !!panelRecordId}
 								>
+									<ViewBar
+										views={formViews}
+										view={savedView}
+										currentId={selectedViewId}
+										currentType={viewDraft.view_type}
+										modified={arrangementModified}
+										can={{
+											manage:
+												!!savedView &&
+												(savedView.config?.visibility === 'private'
+													? savedView.created_by === currentUserId
+													: canDesign),
+											share: canDesign,
+											setDefault: canDesign,
+											create: true
+										}}
+										busy={viewSubmitting}
+										saveOpen={saveViewOpen}
+										saveError={saveViewError}
+										suggestedName={saveViewName}
+										fields={listableFields}
+										sortableKeys={listableFields.map((field) => field.key).filter(isServerSortable)}
+										filters={(viewDraft.filterGroups[0]?.filters ?? []) as SimpleFilter[]}
+										filterLogic={viewDraft.filterGroups[0]?.logic ?? 'all'}
+										advancedFilters={viewDraft.filterGroups.length > 1 ||
+											viewDraft.filterRootLogic !== 'all'}
+										sort={viewDraft.sortField
+											? { field: viewDraft.sortField, direction: viewDraft.sortDirection }
+											: null}
+										columns={viewDraft.columns.length > 0
+											? viewDraft.columns
+											: defaultViewColumns()}
+										hiddenByPermission={new Set(
+											listableFields.filter(memberFieldHidden).map((field) => field.key)
+										)}
+										partialNotice={recordQuery.clientFilter && serverRecordTotal > records.length
+											? $t('forms.views.partialFilter', {
+													values: { loaded: records.length, total: serverRecordTotal }
+												})
+											: null}
+										conflict={viewConflict}
+										undoAvailable={!!resetUndo}
+										onselect={(id) => showView(id, { remember: true })}
+										oncreate={startNewViewDraft}
+										onupdate={() => void updateCurrentView()}
+										onrename={(name) => void updateCurrentView({ name })}
+										onvisibility={(visibility) =>
+											void updateCurrentView({
+												config: { ...savedView?.config, visibility, is_default: false }
+											})}
+										ondefault={(on) =>
+											void updateCurrentView({ config: { ...savedView?.config, is_default: on } })}
+										onlayout={openLayoutSettings}
+										onduplicate={() =>
+											openSaveView(
+												$t('forms.views.copyName', { values: { name: savedView?.name } })
+											)}
+										onreset={resetArrangement}
+										onundo={undoReset}
+										onreloadview={() => showView(selectedViewId, { remember: false })}
+										ondelete={() => void deleteView()}
+										onsaveopen={(open) => (open ? openSaveView() : (saveViewOpen = false))}
+										onsave={(input) => void saveViewAs(input)}
+										onfilters={setDraftFilters}
+										onsort={(sort) =>
+											(viewDraft = {
+												...viewDraft,
+												sortField: sort?.field ?? '',
+												sortDirection: sort?.direction ?? 'asc'
+											})}
+										oncolumns={(columns) => (viewDraft = { ...viewDraft, columns })}
+									/>
 									{#if lastDeletedRecord}
 										<div
 											class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-slate-700 dark:bg-amber-950/30 dark:text-amber-100"
@@ -17501,175 +17709,42 @@
 											{$t('forms.noMatchingRecords')}
 										</div>
 									{:else if selectedViewType === 'grid'}
-										<div class="overflow-x-auto" data-view-renderer="grid">
-											<table
-												class="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-700"
-											>
-												<thead class="bg-slate-50 dark:bg-slate-950">
-													<tr>
-														<th
-															class="w-56 px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300"
-															>{$t('forms.recordTitle')}</th
-														>
-
-														{#each visibleFields as field}
-															<th
-																class="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300"
-															>
-																<div class="flex flex-wrap items-center gap-1.5">
-																	<span>{fieldLabel(field)}</span>
-
-																	{#if memberFieldHidden(field)}
-																		<span
-																			class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
-																			data-grid-header-permission-hidden={field.key}
-																			>{$t('forms.fieldHiddenBadge')}</span
-																		>
-																	{/if}
-
-																	{#if memberFieldLocked(field)}
-																		<span
-																			class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-																			data-grid-header-permission-locked={field.key}
-																			>{$t('forms.fieldLockedBadge')}</span
-																		>
-																	{/if}
-
-																	{#if fieldHasConditionalHidden(field)}
-																		<span
-																			class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
-																			data-grid-header-conditional-hidden={field.key}
-																			>{$t('forms.fieldConditionHiddenBadge')}</span
-																		>
-																	{/if}
-
-																	{#if fieldHasConditionalReadOnly(field)}
-																		<span
-																			class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
-																			data-grid-header-conditional-readonly={field.key}
-																			>{$t('forms.fieldConditionReadOnlyBadge')}</span
-																		>
-																	{/if}
-																</div>
-															</th>
-														{/each}
-
-														<th
-															class="px-4 py-3 text-right font-medium text-slate-600 dark:text-slate-300"
-															>{$t('common.actions')}</th
-														>
-													</tr>
-												</thead>
-
-												<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-													{#each paginatedViewRecords as record}
-														<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/70">
-															<td class="px-4 py-3">
-																<button
-																	type="button"
-																	class="text-left font-medium text-blue-700 hover:text-blue-800 dark:text-blue-300"
-																	onclick={() => openRecordEditDrawer(record)}
-																	>{record.title}</button
-																>
-
-																<div class="mt-1 font-mono text-xs text-slate-400">
-																	{record.id.slice(0, 8)}
-																</div>
-															</td>
-
-															{#each visibleFields as field}
-																<td
-																	class="max-w-64 truncate px-4 py-3 text-slate-700 dark:text-slate-300"
-																>
-																	<div class="flex min-w-0 flex-wrap items-center gap-1.5">
-																		<span class="min-w-0 truncate"
-																			><OptionValueBadges
-																				{field}
-																				value={record.values[field.key]}
-																			/></span
-																		>
-
-																		{#if recordFieldHiddenByCondition(field, record)}
-																			<span
-																				class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
-																				data-grid-cell-conditional-hidden={`${record.id}:${field.key}`}
-																				>{$t('forms.fieldConditionHiddenBadge')}</span
-																			>
-																		{/if}
-
-																		{#if recordFieldReadOnlyByCondition(field, record)}
-																			<span
-																				class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
-																				data-grid-cell-conditional-readonly={`${record.id}:${field.key}`}
-																				>{$t('forms.fieldConditionReadOnlyBadge')}</span
-																			>
-																		{/if}
-																	</div>
-																</td>
-															{/each}
-
-															<td class="px-4 py-3 text-right">
-																<button
-																	type="button"
-																	class="mr-1 inline-flex items-center rounded-md p-1.5 text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
-																	onclick={() => openRecordEditDrawer(record)}
-																	aria-label={$t('forms.editRecord')}
-																	><Pencil class="h-4 w-4" aria-hidden="true" /></button
-																>
-
-																<button
-																	type="button"
-																	class="inline-flex items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
-																	disabled={deletingRecordId === record.id}
-																	onclick={() => handleDeleteRecord(record)}
-																	aria-label={$t('forms.deleteRecord')}
-																	><Trash2 class="h-4 w-4" aria-hidden="true" /></button
-																>
-															</td>
-														</tr>
-													{/each}
-												</tbody>
-											</table>
-										</div>
-
-										{#if recordPageCount > 1}
-											<div
-												class="flex flex-col gap-2 border-t border-slate-200 px-4 py-3 text-sm dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between"
-												data-record-pagination
-											>
-												<span class="text-slate-500 dark:text-slate-400">
-													{$t('forms.recordPageLabel', {
-														values: {
-															page: normalizedRecordPage,
-															total: recordPageCount,
-															count: viewRecords.length
-														}
-													})}
-												</span>
-
-												<div class="flex items-center gap-2">
-													<Button
-														size="sm"
-														variant="secondary"
-														disabled={normalizedRecordPage <= 1}
-														onclick={() => goToRecordPage(normalizedRecordPage - 1)}
-													>
-														<ChevronLeft class="mr-2 h-4 w-4" aria-hidden="true" />
-														{$t('forms.previousPage')}
-													</Button>
-
-													<Button
-														size="sm"
-														variant="secondary"
-														disabled={normalizedRecordPage >= recordPageCount}
-														onclick={() => goToRecordPage(normalizedRecordPage + 1)}
-													>
-														{$t('forms.nextPage')}
-														<ChevronRight class="ml-2 h-4 w-4" aria-hidden="true" />
-													</Button>
-												</div>
-											</div>
-										{/if}
+										<RecordGrid
+											bind:this={recordGrid}
+											records={paginatedViewRecords}
+											fields={visibleFields}
+											ctx={fieldCtx}
+											currentId={panelRecordId}
+											sort={viewDraft.sortField
+												? { field: viewDraft.sortField, direction: viewDraft.sortDirection }
+												: null}
+											sortableKeys={visibleFields
+												.map((field) => field.key)
+												.filter(isServerSortable)}
+											page={normalizedRecordPage}
+											pageCount={recordPageCount}
+											total={viewRecords.length}
+											deletingId={deletingRecordId}
+											{recordHref}
+											headerBadges={(field) => gridBadges(field, null)}
+											cellBadges={gridBadges}
+											canEdit={(record) => canChangeRecord(record, 'record.update')}
+											canDelete={(record) => canChangeRecord(record, 'record.delete')}
+											onopen={(record, options) =>
+												void openRecordPanel(record, options.replace ? 'replace' : 'push')}
+											onclosepanel={() => closeRecordPanel()}
+											onfocuspanel={() => recordPanel?.focusHeading()}
+											onedit={openRecordEditDrawer}
+											ondelete={(record) => void handleDeleteRecord(record)}
+											onsort={(sort) =>
+												(viewDraft = {
+													...viewDraft,
+													sortField: sort?.field ?? '',
+													sortDirection: sort?.direction ?? 'asc'
+												})}
+											ongotopage={goToRecordPage}
+											onannounce={announce}
+										/>
 									{:else if selectedViewType === 'gantt'}
 										<div class="overflow-x-auto p-4" data-view-renderer="gantt">
 											{#if !ganttTimeline.startField}
@@ -20632,6 +20707,79 @@
 										</div>
 									{/if}
 								</section>
+								{#if panelRecordId && selectedForm}
+									<RecordSidePanel
+										bind:this={recordPanel}
+										bind:appsOpen={panelAppsOpen}
+										record={panelRecord}
+										status={panelStatus}
+										errorMessage={panelError}
+										inView={panelPosition >= 0}
+										form={selectedForm}
+										sections={buildDetailSections(selectedForm, fields, {
+											main: $t('forms.detailSectionMain'),
+											other: $t('forms.recordPanel.otherFields')
+										})}
+										header={headerFields(selectedForm, fields)}
+										ctx={fieldCtx}
+										childTable={(field) => ({
+											rows: childRecordsForRelationField(field),
+											columns: childGridFieldsForRelationField(field)
+										})}
+										detailsLoading={panelDetailsLoading}
+										position={panelPosition >= 0
+											? { index: panelPosition + 1, total: viewRecords.length }
+											: null}
+										fullPageHref={recordHref(panelRecordId)}
+										{recordHref}
+										recordUrl={new URL(page.url.href).href}
+										memberName={(id) =>
+											workspaceMembers.find((member) => member.user_id === id)?.name ??
+											$t('forms.fieldValue.unknownMember')}
+										canEdit={!!panelRecord && canChangeRecord(panelRecord, 'record.update')}
+										canDelete={!!panelRecord && canChangeRecord(panelRecord, 'record.delete')}
+										canRestore={lastDeletedRecord?.id === panelRecordId}
+										showConfigBadges={canDesign}
+										configBadges={(field) =>
+											[
+												memberFieldHidden(field) && $t('forms.recordPanel.configHidden'),
+												memberFieldLocked(field) && $t('forms.recordPanel.configLocked'),
+												(fieldHasConditionalHidden(field) || fieldHasConditionalReadOnly(field)) &&
+													$t('forms.recordPanel.configConditional')
+											].filter((label): label is string => !!label)}
+										isHiddenByCondition={recordFieldHiddenByCondition}
+										plugins={{
+											workspaceId,
+											projectId,
+											surface: recordPluginActions,
+											enabled: selectedForm.project_id === projectId
+										}}
+										width={panelWidth}
+										inert={recordEditorOpen}
+										onclose={() => closeRecordPanel()}
+										onprev={() => stepRecordPanel(-1)}
+										onnext={() => stepRecordPanel(1)}
+										onedit={() => panelRecord && openRecordEditDrawer(panelRecord)}
+										ondelete={() => panelRecord && void handleDeleteRecord(panelRecord)}
+										onrestore={() => void handleRestoreLastDeletedRecord()}
+										onretry={() => panelRecordId && void openRecordPanel(panelRecordId, 'none')}
+										onshowall={() => showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false })}
+										onresize={(px) => (panelWidth = px)}
+										onopenrelation={(id, sameForm, event) => {
+											if (!sameForm) return;
+											event.preventDefault();
+											void openRecordPanel(id, 'push');
+										}}
+										onpluginapplied={() => void reloadSelectedRecord()}
+										onfocuslist={() => recordGrid?.focusRow(panelRecordId)}
+										onannounce={announce}
+										onmodechange={(mode) => (panelMode = mode)}
+										onmoredetails={() => {
+											activeMode = 'detail';
+											void loadSelectedRecordComments();
+										}}
+									/>
+								{/if}
 							</div>
 						{/if}
 

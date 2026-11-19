@@ -35,6 +35,10 @@
 		columns: string[];
 		hiddenByPermission: Set<string>;
 		partialNotice: string | null;
+		/** The view was changed by someone else since it was loaded. */
+		conflict: boolean;
+		/** "Changes reset" can still be undone. */
+		undoAvailable: boolean;
 		onselect: (viewId: string) => void;
 		oncreate: (type: FormView['view_type']) => void;
 		onupdate: () => void;
@@ -44,6 +48,8 @@
 		onlayout: () => void;
 		onduplicate: () => void;
 		onreset: () => void;
+		onundo: () => void;
+		onreloadview: () => void;
 		ondelete: () => void;
 		onsaveopen: (open: boolean) => void;
 		onsave: (input: { name: string; visibility: 'private' | 'shared' }) => void;
@@ -121,6 +127,14 @@
 			data-view-reset
 			onclick={props.onreset}>{$t('forms.views.reset')}</button
 		>
+	{:else if props.undoAvailable}
+		<span class="text-xs text-slate-500 dark:text-slate-400">{$t('forms.views.resetDone')}</span>
+		<button
+			type="button"
+			class="h-8 rounded-md px-2 text-sm font-medium text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300 dark:hover:bg-blue-950/40"
+			data-view-undo-reset
+			onclick={props.onundo}>{$t('forms.views.undo')}</button
+		>
 	{/if}
 	{#if props.can.create}
 		<button
@@ -147,6 +161,23 @@
 		/>
 	{/if}
 </div>
+{#if props.conflict}
+	<div
+		class="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+		role="alert"
+		data-view-conflict
+	>
+		<span>{$t('forms.views.conflict')}</span>
+		<button type="button" class="min-h-6 font-medium underline" onclick={props.onreloadview}
+			>{$t('forms.views.reloadView')}</button
+		>
+		<button
+			type="button"
+			class="min-h-6 font-medium underline"
+			onclick={() => props.onsaveopen(true)}>{$t('forms.views.saveAsNew')}</button
+		>
+	</div>
+{/if}
 {#if props.partialNotice}
 	<p
 		class="border-b border-slate-200 bg-slate-50 px-4 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300"
