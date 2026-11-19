@@ -4583,7 +4583,13 @@
 			"limitReached": "You have reached the limit of saved display options.",
 			"hiddenSection": "Hidden by you",
 			"restore": "Restore",
-			"unavailable": "This item is no longer available."
+			"unavailable": "This item is no longer available.",
+			"slots": {
+				"recordDetail": "Record detail",
+				"recordActions": "Record actions",
+				"listToolbar": "List toolbar",
+				"projectView": "Project apps"
+			}
 		},
 		"creatorV3": {
 			"template": "Template",
