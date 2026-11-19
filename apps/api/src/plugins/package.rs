@@ -153,7 +153,7 @@ impl Manifest {
     }
 }
 
-fn valid_label(label: &str) -> bool {
+pub(crate) fn valid_label(label: &str) -> bool {
     !label.is_empty() && label.len() <= 120 && label.trim() == label && !label.chars().any(char::is_control)
 }
 
