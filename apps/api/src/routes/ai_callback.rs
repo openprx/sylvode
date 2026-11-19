@@ -18,8 +18,9 @@ use crate::{
     response::{ApiResponse, PaginatedData},
     services::{
         ai_task_service::{
-            AiTaskRow, CreateAiTaskInput, create_ai_task, insert_ai_task_business_event, insert_ai_task_event,
-            next_retry_time, valid_reference_type, valid_task_type,
+            AiTaskRow, AttemptEnd, CreateAiTaskInput, create_ai_task, insert_ai_task_business_event,
+            insert_ai_task_event, next_retry_time, notify_ai_task_failed, status_after_failed_attempt,
+            valid_reference_type, valid_task_type,
         },
         trust_score_service::{is_project_admin_or_owner, is_project_member, is_system_admin},
     },
@@ -49,6 +50,41 @@ pub struct CreateAiTaskRequest {
 pub struct FailTaskRequest {
     pub error_message: Option<String>,
     pub payload: Option<Value>,
+    /// `false` fails the task now instead of scheduling a retry while attempts remain: the caller
+    /// knows a repeat cannot succeed (for example no agent matches the task). Defaults to `true`.
+    pub retry: Option<bool>,
+}
+
+/// The optional `?attempt=N` of the complete and fail callbacks.
+///
+/// `N` is the attempt number (the delivery's `attempts`) the caller ran. With it, the callback is accepted only while that very
+/// attempt is `processing`, so a late callback from an attempt the worker has already timed out
+/// and re-queued, or failed, cannot end a later attempt or a re-queued task. Without it the
+/// callback behaves as before.
+#[derive(Debug, Default, Deserialize)]
+pub struct CallbackAttemptQuery {
+    pub attempt: Option<i32>,
+}
+
+/// Whether a complete (`allow_pending = false`) or fail (`allow_pending = true`) callback for
+/// `attempt` may end a task in `status` at attempt `attempts`. An attempt-qualified callback needs
+/// that attempt to be `processing`; an unqualified fail also accepts a task already rescheduled to
+/// `pending`, as it always has.
+fn check_callback_attempt(
+    status: &str,
+    attempts: i32,
+    attempt: Option<i32>,
+    allow_pending: bool,
+) -> Result<(), String> {
+    match attempt {
+        Some(attempt) if status == "processing" && attempt == attempts => Ok(()),
+        Some(attempt) if status == "processing" => Err(format!(
+            "task is not in processing status for attempt {attempt} (current attempt {attempts})"
+        )),
+        None if status == "processing" || (allow_pending && status == "pending") => Ok(()),
+        None if allow_pending => Err("task cannot be failed in current status".to_string()),
+        Some(_) | None => Err("task is not in processing status".to_string()),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -107,18 +143,19 @@ pub async fn complete_task(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     Path(task_id): Path<Uuid>,
+    Query(attempt): Query<CallbackAttemptQuery>,
     Json(result): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor_id = parse_user_id(&claims)?;
     let mut task = find_task(&state, task_id).await?;
     ensure_actor_can_operate(&state, &task, actor_id).await?;
 
-    if task.status != "processing" {
-        return Err(ApiError::BadRequest("task is not in processing status".to_string()));
-    }
+    check_callback_attempt(&task.status, task.attempts, attempt.attempt, false).map_err(ApiError::BadRequest)?;
 
     let previous_status = task.status.clone();
     let now = Timestamp::now();
+    // Compare-and-set on the state checked above: a worker timeout, a fail callback or a second
+    // complete that commits in between makes this update match nothing instead of overwriting it.
     let updated = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
@@ -129,6 +166,8 @@ pub async fn complete_task(
                 completed_at = $3,
                 updated_at = $3
             WHERE id = $1
+              AND status = 'processing'
+              AND attempts = $4
             RETURNING
                 id,
                 project_id,
@@ -150,11 +189,11 @@ pub async fn complete_task(
                 created_at,
                 updated_at
         ",
-        vec![task_id.into(), result.clone().into(), now.into()],
+        vec![task_id.into(), result.clone().into(), now.into(), task.attempts.into()],
     ))
     .one(&state.db)
     .await?
-    .ok_or_else(|| ApiError::Internal)?;
+    .ok_or_else(|| ApiError::BadRequest("task is not in processing status".to_string()))?;
 
     task = updated.clone();
     insert_ai_task_event(&state.db, task_id, "completed", json!({ "result": result })).await?;
@@ -200,17 +239,14 @@ pub async fn fail_task(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     Path(task_id): Path<Uuid>,
+    Query(attempt): Query<CallbackAttemptQuery>,
     Json(req): Json<FailTaskRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor_id = parse_user_id(&claims)?;
     let mut task = find_task(&state, task_id).await?;
     ensure_actor_can_operate(&state, &task, actor_id).await?;
 
-    if task.status != "processing" && task.status != "pending" {
-        return Err(ApiError::BadRequest(
-            "task cannot be failed in current status".to_string(),
-        ));
-    }
+    check_callback_attempt(&task.status, task.attempts, attempt.attempt, true).map_err(ApiError::BadRequest)?;
 
     let previous_status = task.status.clone();
     let now = Timestamp::now();
@@ -219,7 +255,12 @@ pub async fn fail_task(
         .clone()
         .unwrap_or_else(|| "task execution failed".to_string());
 
-    let will_retry = task.attempts < task.max_attempts;
+    let end = if req.retry.unwrap_or(true) {
+        AttemptEnd::RetryWhileAttemptsRemain
+    } else {
+        AttemptEnd::Terminal
+    };
+    let will_retry = status_after_failed_attempt(task.attempts, task.max_attempts, end) == "pending";
     let (next_status, next_retry_at, event_type) = if will_retry {
         (
             "pending",
@@ -240,6 +281,8 @@ pub async fn fail_task(
                 completed_at = CASE WHEN $2 = 'failed' THEN $5 ELSE completed_at END,
                 updated_at = $5
             WHERE id = $1
+              AND status = $6
+              AND attempts = $7
             RETURNING
                 id,
                 project_id,
@@ -267,11 +310,13 @@ pub async fn fail_task(
             message.clone().into(),
             next_retry_at.into(),
             now.into(),
+            previous_status.clone().into(),
+            task.attempts.into(),
         ],
     ))
     .one(&state.db)
     .await?
-    .ok_or_else(|| ApiError::Internal)?;
+    .ok_or_else(|| ApiError::BadRequest("task cannot be failed in current status".to_string()))?;
 
     task = updated.clone();
     insert_ai_task_event(
@@ -309,30 +354,7 @@ pub async fn fail_task(
     .await?;
 
     if task.status == "failed" {
-        let project = find_project(&state, task.project_id).await?;
-        trigger_webhooks(
-            state.clone(),
-            TriggerContext {
-                event: WebhookEvent::AiTaskFailed,
-                workspace_id: project.workspace_id,
-                project_id: task.project_id,
-                actor_id,
-                issue_id: None,
-                comment_id: None,
-                label_id: None,
-                sprint_id: None,
-                changes: None,
-                mentions: Vec::new(),
-                extra_data: Some(json!({
-                    "task_id": task.id.to_string(),
-                    "task_type": task.task_type,
-                    "status": task.status,
-                    "reference_type": task.reference_type,
-                    "reference_id": task.reference_id.map(|v| v.to_string()),
-                    "error_message": task.error_message,
-                })),
-            },
-        );
+        notify_ai_task_failed(&state, &task, actor_id).await?;
     }
 
     Ok(ApiResponse::success(AiTaskResponse::from(task)))
@@ -898,6 +920,253 @@ mod participant_authority_database_tests {
                 "{outsider} is not the task's participant"
             );
         }
+        scratch.drop_self().await;
+    }
+}
+
+#[cfg(test)]
+mod callback_attempt_tests {
+    use super::check_callback_attempt;
+
+    #[test]
+    fn an_attempt_qualified_callback_needs_that_attempt_to_be_processing() {
+        assert!(check_callback_attempt("processing", 2, Some(2), false).is_ok());
+        assert!(check_callback_attempt("processing", 2, Some(2), true).is_ok());
+        let late = check_callback_attempt("processing", 3, Some(2), false).expect_err("a later attempt runs");
+        assert!(
+            late.contains("attempt 2") && late.contains("current attempt 3"),
+            "{late}"
+        );
+        for status in ["pending", "failed", "completed", "cancelled"] {
+            for allow_pending in [false, true] {
+                assert_eq!(
+                    check_callback_attempt(status, 2, Some(2), allow_pending),
+                    Err("task is not in processing status".to_string()),
+                    "{status} is not the attempt's processing state"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_unqualified_callback_keeps_the_previous_rules() {
+        assert!(check_callback_attempt("processing", 1, None, false).is_ok());
+        assert!(check_callback_attempt("pending", 1, None, false).is_err());
+        assert!(check_callback_attempt("processing", 1, None, true).is_ok());
+        assert!(check_callback_attempt("pending", 1, None, true).is_ok());
+        assert_eq!(
+            check_callback_attempt("failed", 1, None, true),
+            Err("task cannot be failed in current status".to_string())
+        );
+        assert_eq!(
+            check_callback_attempt("completed", 1, None, false),
+            Err("task is not in processing status".to_string())
+        );
+    }
+}
+
+/// The complete and fail callbacks against a migrated scratch database: the attempt guard, the
+/// compare-and-set on the task's state, and `retry = false`.
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod callback_guard_database_tests {
+    use super::{CallbackAttemptQuery, FailTaskRequest, complete_task, fail_task, find_task};
+    use crate::error::ApiError;
+    use crate::routes::context::tenant_fixture::{Tenant, count, exec, seed_bot_user, seed_tenant};
+    use crate::scratch_or_skip;
+    use axum::extract::{Extension, Json, Path, Query, State};
+    use platform::auth::{JwtClaims, TokenType};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn claims(user: Uuid) -> JwtClaims {
+        JwtClaims {
+            sub: user.to_string(),
+            email: format!("{user}@bot.test"),
+            token_type: TokenType::Access,
+            iat: 0,
+            exp: 0,
+            sv: 0,
+        }
+    }
+
+    async fn seed_task(
+        db: &sea_orm::DatabaseConnection,
+        tenant: &Tenant,
+        bot: Uuid,
+        status: &str,
+        attempts: i32,
+    ) -> Uuid {
+        let task_id = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO ai_tasks (id, project_id, ai_participant_id, task_type, status, attempts, max_attempts, started_at) \
+             VALUES ($1, $2, $3, 'issue_assigned', $4, $5, 3, now())",
+            vec![
+                task_id.into(),
+                tenant.project_id.into(),
+                bot.into(),
+                status.to_string().into(),
+                attempts.into(),
+            ],
+        )
+        .await;
+        task_id
+    }
+
+    fn fail_request(retry: Option<bool>) -> FailTaskRequest {
+        FailTaskRequest {
+            error_message: Some("no agent".to_string()),
+            payload: None,
+            retry,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_late_complete_from_an_earlier_attempt_is_refused() {
+        let scratch = scratch_or_skip!("ai_callback_late_complete");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "lc").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        let task_id = seed_task(db, &tenant, bot, "processing", 2).await;
+        let state = super::reference_scope_database_tests::state_for(db.clone());
+
+        let late = complete_task(
+            State(state.clone()),
+            Extension(claims(bot)),
+            Path(task_id),
+            Query(CallbackAttemptQuery { attempt: Some(1) }),
+            Json(json!({"status": "success"})),
+        )
+        .await;
+        let Err(ApiError::BadRequest(message)) = late else {
+            panic!("attempt 1 is no longer processing");
+        };
+        assert!(message.contains("attempt 1"), "{message}");
+        assert_eq!(find_task(&state, task_id).await.expect("task").status, "processing");
+
+        complete_task(
+            State(state.clone()),
+            Extension(claims(bot)),
+            Path(task_id),
+            Query(CallbackAttemptQuery { attempt: Some(2) }),
+            Json(json!({"status": "success"})),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("the current attempt completes: {err:?}"));
+        assert_eq!(find_task(&state, task_id).await.expect("task").status, "completed");
+
+        let again = complete_task(
+            State(state.clone()),
+            Extension(claims(bot)),
+            Path(task_id),
+            Query(CallbackAttemptQuery::default()),
+            Json(json!({"status": "success"})),
+        )
+        .await;
+        assert!(
+            matches!(again, Err(ApiError::BadRequest(_))),
+            "a completed task stays completed"
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM ai_task_events WHERE task_id = $1 AND event_type = 'completed'",
+                vec![task_id.into()],
+            )
+            .await,
+            1
+        );
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn an_attempt_qualified_fail_does_not_touch_a_requeued_task() {
+        let scratch = scratch_or_skip!("ai_callback_late_fail");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "lf").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        // Timed out and re-queued by the worker: pending, attempt 1 already counted.
+        let task_id = seed_task(db, &tenant, bot, "pending", 1).await;
+        let state = super::reference_scope_database_tests::state_for(db.clone());
+
+        let late = fail_task(
+            State(state.clone()),
+            Extension(claims(bot)),
+            Path(task_id),
+            Query(CallbackAttemptQuery { attempt: Some(1) }),
+            Json(fail_request(None)),
+        )
+        .await;
+        assert!(matches!(late, Err(ApiError::BadRequest(_))), "attempt 1 already ended");
+        let task = find_task(&state, task_id).await.expect("task");
+        assert_eq!((task.status.as_str(), task.attempts), ("pending", 1));
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn retry_false_fails_the_task_with_attempts_left() {
+        let scratch = scratch_or_skip!("ai_callback_fail_terminal");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "ft").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        let terminal = seed_task(db, &tenant, bot, "processing", 1).await;
+        let retried = seed_task(db, &tenant, bot, "processing", 1).await;
+        let state = super::reference_scope_database_tests::state_for(db.clone());
+
+        fail_task(
+            State(state.clone()),
+            Extension(claims(bot)),
+            Path(terminal),
+            Query(CallbackAttemptQuery { attempt: Some(1) }),
+            Json(fail_request(Some(false))),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("the participant fails its task: {err:?}"));
+        let task = find_task(&state, terminal).await.expect("task");
+        assert_eq!(task.status, "failed");
+        assert!(task.completed_at.is_some());
+
+        fail_task(
+            State(state.clone()),
+            Extension(claims(bot)),
+            Path(retried),
+            Query(CallbackAttemptQuery::default()),
+            Json(fail_request(None)),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("the participant fails its task: {err:?}"));
+        let task = find_task(&state, retried).await.expect("task");
+        assert_eq!(
+            task.status, "pending",
+            "the default still retries while attempts remain"
+        );
+        assert!(task.next_retry_at.is_some());
+        scratch.drop_self().await;
+    }
+
+    /// The participant rule is unchanged: another bot's token cannot fail the task, with or
+    /// without `retry = false`.
+    #[tokio::test]
+    async fn another_bot_still_cannot_fail_the_task() {
+        let scratch = scratch_or_skip!("ai_callback_other_bot");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "ob").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        let other = seed_bot_user(db, &tenant).await;
+        let task_id = seed_task(db, &tenant, bot, "processing", 1).await;
+        let state = super::reference_scope_database_tests::state_for(db.clone());
+
+        let refused = fail_task(
+            State(state.clone()),
+            Extension(claims(other)),
+            Path(task_id),
+            Query(CallbackAttemptQuery { attempt: Some(1) }),
+            Json(fail_request(Some(false))),
+        )
+        .await;
+        assert!(matches!(refused, Err(ApiError::Forbidden(_))));
+        assert_eq!(find_task(&state, task_id).await.expect("task").status, "processing");
         scratch.drop_self().await;
     }
 }
