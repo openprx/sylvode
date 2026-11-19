@@ -26,7 +26,6 @@
 		currentTheme,
 		enabledRoutes,
 		frameHeights,
-		frameKey,
 		frameVerdict,
 		loadEntry,
 		navigationHref,
@@ -35,11 +34,20 @@
 		projectName,
 		recordDiscovery,
 		safeFrom,
-		sameFrameIdentity,
 		slotLimits,
 		verdictReasons,
 		type DiscoveryState
 	} from '#lib/plugins/contributions.js';
+	import {
+		closeSlot,
+		createApplyConfirmation,
+		initialSlot,
+		openSlot,
+		recordPreview,
+		retireSlot,
+		type SlotDeps,
+		type SlotState
+	} from '#lib/plugins/frame-slot.js';
 	import {
 		createExtensionTransport,
 		createLegacyTransport,
@@ -61,9 +69,9 @@
 	const workspaceId = $derived(page.params.workspaceId ?? '');
 	const projectId = $derived(page.params.projectId ?? '');
 
-	/** Everything the host needs for the open frame. It is fixed when the frame opens. */
-	interface OpenFrame {
-		entry: RecordEntry;
+	/** Everything the host needs for the shown frame, derived from the slot's frame. */
+	interface HostedFrame {
+		token: number;
 		bridge: 1 | 2;
 		html: string;
 		webSha256: string;
@@ -80,22 +88,94 @@
 
 	let panels = $state<PluginPanel[]>([]);
 	let discovery = $state.raw<DiscoveryState>({ status: 'loading', items: [] });
-	let active = $state.raw<RecordEntry | null>(null);
-	let frame = $state.raw<OpenFrame | null>(null);
-	let notice = $state('');
-	let name = $state('');
+	// The open/retire state machine (frame-slot.ts) mutates this object; it is a deep $state proxy.
+	const slot = $state<SlotState<RecordEntry>>(initialSlot());
 	let theme = $state<'light' | 'dark'>(currentTheme());
 	let heading: HTMLHeadingElement | undefined = $state();
 	let closeButton: HTMLButtonElement | undefined = $state();
 	let launch: HTMLElement | null = null;
 	let confirmation: HTMLDialogElement | undefined = $state();
-	let confirmResolve: ((confirmed: boolean) => void) | null = null;
-	let preview = $state<number | null>(null);
+	const confirming = createApplyConfirmation({
+		show: () => confirmation?.showModal(),
+		hide: () => confirmation?.close()
+	});
 	let discoveryRunning = false;
 	let lastDiscovery = 0;
 	let disposed = false;
-	let openingRun = 0;
 	let authSignal: AbortSignal | undefined;
+
+	const active = $derived(slot.active);
+	const notice = $derived(slot.notice);
+	const preview = $derived(slot.preview);
+	const deps: SlotDeps<RecordEntry> = {
+		itemOf: (entry) => (isContributionEntry(entry) ? entry.item : null),
+		loadEntry: (item) => loadEntry(projectId, item, { recordId }),
+		projectName: () => projectName(projectId),
+		refresh: () => refreshAll(),
+		dismissConfirmation: () => confirming.dismiss(),
+		alive: () => !disposed && !authSignal?.aborted
+	};
+	const frame = $derived.by((): HostedFrame | null => {
+		const shown = slot.frame;
+		if (!shown) return null;
+		const token = shown.token;
+		const entry = shown.entry;
+		if (!isContributionEntry(entry)) {
+			const { panel } = entry;
+			return {
+				token,
+				bridge: 1,
+				html: panel.html,
+				webSha256: panel.web_sha256,
+				grants: [...panel.grants],
+				title: panel.name,
+				heading: `${panel.name} · v${panel.version}`,
+				// Protocol 1/2 frames keep their previous fixed height.
+				minHeight: 288,
+				maxHeight: frameHeights.panel.max,
+				panel,
+				...(panel.contributions ? { placement: { id: entry.id, slot: entry.slot } } : {}),
+				transport: tracked(
+					token,
+					createLegacyTransport({ recordId, panel, onApplied: () => onApplied() })
+				)
+			};
+		}
+		const item = shown.item ?? entry.item;
+		return {
+			token,
+			bridge: 2,
+			html: shown.html,
+			webSha256: item.web_sha256,
+			grants: [...item.grants],
+			title: $t('plugins.host.frameTitle', {
+				values: { name: item.name, label: item.contribution.label }
+			}),
+			heading: `${item.name} · v${item.version}`,
+			minHeight: frameHeights.panel.min,
+			maxHeight: frameHeights.panel.max,
+			item,
+			transport: tracked(
+				token,
+				createExtensionTransport({
+					projectId,
+					item,
+					recordId,
+					// Routes come from the current project discovery, never the manifest.
+					enabledRoutes: () =>
+						enabledRoutes(projectDiscovery(projectId).snapshot().items, item.key),
+					navigate: async (target) => {
+						// A frame that is no longer shown does not navigate anymore.
+						if (slot.frame?.token !== token) return;
+						const from = safeFrom(page.url.pathname + page.url.search, workspaceId, projectId);
+						await goto(navigationHref(target, { workspaceId, projectId, key: item.key, from }));
+					},
+					onStale: () => void recordDiscovery(projectId, recordId).refresh(),
+					onApplied: () => onApplied()
+				})
+			)
+		};
+	});
 
 	const v3Items = $derived(discovery.items);
 	const detailParts = $derived(
@@ -120,7 +200,7 @@
 	const context = $derived<PluginHostContext | undefined>(
 		frame?.item
 			? hostContext(frame.item, {
-					projectName: name,
+					projectName: slot.name,
 					recordId,
 					locale: $locale ?? 'zh',
 					theme
@@ -174,7 +254,9 @@
 	$effect(() => {
 		const current = discovery;
 		untrack(() => {
-			const watched = frame?.item ?? (active && isContributionEntry(active) ? active.item : null);
+			const watched =
+				slot.frame?.item ??
+				(slot.active && isContributionEntry(slot.active) ? slot.active.item : null);
 			if (!watched) return;
 			const verdict = frameVerdict(current, watched);
 			if (verdict !== 'ok') close(verdictReasons[verdict]);
@@ -189,7 +271,7 @@
 		observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 		void discover();
 		const timer = setInterval(() => {
-			if (frame || Date.now() - lastDiscovery >= 10000) void discover();
+			if (slot.frame || Date.now() - lastDiscovery >= 10000) void discover();
 		}, 2000);
 		return () => {
 			disposed = true;
@@ -197,7 +279,7 @@
 			authSignal?.removeEventListener('abort', sessionChanged);
 			observer.disconnect();
 			clearInterval(timer);
-			settleConfirmation(false);
+			confirming.settle(false);
 		};
 	});
 
@@ -242,20 +324,8 @@
 		if (projectId) void recordDiscovery(projectId, recordId).refresh();
 	}
 
-	function settleConfirmation(confirmed: boolean) {
-		const resolve = confirmResolve;
-		confirmResolve = null;
-		resolve?.(confirmed);
-	}
-
 	function close(message = '', restoreFocus = true) {
-		openingRun++;
-		settleConfirmation(false);
-		confirmation?.close();
-		frame = null;
-		active = null;
-		preview = null;
-		notice = message;
+		closeSlot(slot, deps, message);
 		const trigger = launch;
 		launch = null;
 		if (restoreFocus)
@@ -271,12 +341,16 @@
 	}
 
 	/** Records the previewed amount so the apply confirmation can show it. */
-	function tracked(base: HostTransport): HostTransport {
+	function tracked(token: number, base: HostTransport): HostTransport {
 		return async (method, params, requestId) => {
 			const outcome = await base(method, params, requestId);
 			if (method === 'amount.preview') {
 				const result = outcome.ok ? (outcome.result as { amount_cents?: unknown }) : null;
-				preview = typeof result?.amount_cents === 'number' ? result.amount_cents : null;
+				recordPreview(
+					slot,
+					token,
+					typeof result?.amount_cents === 'number' ? result.amount_cents : null
+				);
 			}
 			return outcome;
 		};
@@ -285,79 +359,15 @@
 	async function open(entry: RecordEntry, trigger: HTMLElement) {
 		close('', false);
 		launch = trigger;
-		const mine = ++openingRun;
-		active = entry;
-		if (!isContributionEntry(entry)) {
-			const { panel } = entry;
-			frame = {
-				entry,
-				bridge: 1,
-				html: panel.html,
-				webSha256: panel.web_sha256,
-				grants: [...panel.grants],
-				title: panel.name,
-				heading: `${panel.name} · v${panel.version}`,
-				// Protocol 1/2 frames keep their previous fixed height.
-				minHeight: 288,
-				maxHeight: frameHeights.panel.max,
-				panel,
-				...(panel.contributions ? { placement: { id: entry.id, slot: entry.slot } } : {}),
-				transport: tracked(createLegacyTransport({ recordId, panel, onApplied: () => onApplied() }))
-			};
-		} else {
-			const loaded = await Promise.all([
-				loadEntry(projectId, entry.item, { recordId }),
-				projectName(projectId)
-			]);
-			if (mine !== openingRun || disposed || authSignal?.aborted) return;
-			const [result, label] = loaded;
-			name = label;
-			if (!result.ok) {
-				close(
-					result.reason === 'unavailable' ? 'plugins.accessChanged' : 'plugins.host.loadFailed'
-				);
-				refreshAll();
-				return;
-			}
-			if (!sameFrameIdentity(result.item, entry.item)) {
-				close('plugins.versionChanged');
-				refreshAll();
-				return;
-			}
-			const item = result.item;
-			frame = {
-				entry,
-				bridge: 2,
-				html: result.html,
-				webSha256: item.web_sha256,
-				grants: [...item.grants],
-				title: $t('plugins.host.frameTitle', {
-					values: { name: item.name, label: item.contribution.label }
-				}),
-				heading: `${item.name} · v${item.version}`,
-				minHeight: frameHeights.panel.min,
-				maxHeight: frameHeights.panel.max,
-				item,
-				transport: tracked(
-					createExtensionTransport({
-						projectId,
-						item,
-						recordId,
-						// Routes come from the current project discovery, never the manifest.
-						enabledRoutes: () =>
-							enabledRoutes(projectDiscovery(projectId).snapshot().items, item.key),
-						navigate: async (target) => {
-							const from = safeFrom(page.url.pathname + page.url.search, workspaceId, projectId);
-							await goto(navigationHref(target, { workspaceId, projectId, key: item.key, from }));
-						},
-						onStale: () => void recordDiscovery(projectId, recordId).refresh(),
-						onApplied: () => onApplied()
-					})
-				)
-			};
-		}
+		const token = await openSlot(slot, entry, deps);
+		if (!token) return;
 		await tick();
-		if (mine === openingRun) closeButton?.focus();
+		if (slot.frame?.token === token) closeButton?.focus();
+	}
+
+	function confirmSave() {
+		if (authSignal?.aborted) return;
+		confirming.confirm();
 	}
 
 	function onClose(reason: string) {
@@ -368,24 +378,21 @@
 		if (reason !== '') refreshAll();
 	}
 
-	function confirmApply(): Promise<boolean> {
-		settleConfirmation(false);
-		return new Promise<boolean>((resolve) => {
-			confirmResolve = resolve;
-			confirmation?.showModal();
-		});
-	}
-
-	function confirm() {
-		if (authSignal?.aborted) return;
-		settleConfirmation(true);
-		confirmation?.close();
+	/**
+	 * The host of `token` retired its frame while the page was being left, and the page is live
+	 * again because the navigation came back before the removal finished. A protocol 3 panel the
+	 * user had open reopens with a fresh entry, if its contribution is still the same one; a
+	 * pending apply confirmation is dismissed and the panel is idle again. Legacy panels close
+	 * without a grace period and never get here.
+	 */
+	function retiredFor(token: number) {
+		return () => void retireSlot(slot, token, discovery, deps);
 	}
 </script>
 
 <svelte:window onfocus={() => void discover()} />
 
-{#if details.length || notice || frame || active || v3Items.length}
+{#if details.length || notice || slot.frame || active || v3Items.length}
 	<section
 		class="space-y-2 border-b border-slate-200 p-4 dark:border-slate-700"
 		aria-labelledby={componentId}
@@ -461,7 +468,8 @@
 					>
 				</div>
 				{#if frame}
-					{#key frame.item ? frameKey(frame.item) : `${frame.panel?.package_id}:${frame.panel?.generation}:${frame.entry.id}`}
+					<!-- One frame per open: a later open never reuses a host that is still being removed. -->
+					{#key frame.token}
 						<PluginFrameHost
 							html={frame.html}
 							webSha256={frame.webSha256}
@@ -474,7 +482,8 @@
 							minHeight={frame.minHeight}
 							maxHeight={frame.maxHeight}
 							{onClose}
-							onConfirmApply={confirmApply}
+							onRetired={frame.item ? retiredFor(frame.token) : undefined}
+							onConfirmApply={() => confirming.request()}
 						/>
 					{/key}
 				{:else}
@@ -491,7 +500,7 @@
 	bind:this={confirmation}
 	aria-labelledby={`${componentId}-confirm`}
 	class="max-w-md rounded-lg border border-slate-300 bg-white p-5 text-slate-900 shadow-xl backdrop:bg-slate-950/50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-	onclose={() => settleConfirmation(false)}
+	onclose={() => confirming.settle(false)}
 >
 	<h3 id={`${componentId}-confirm`} class="text-base font-semibold">
 		{$t('plugins.confirmAmount')}
@@ -503,6 +512,6 @@
 	{/if}
 	<div class="mt-4 flex flex-wrap justify-end gap-2">
 		<Button variant="secondary" onclick={() => confirmation?.close()}>{$t('common.cancel')}</Button>
-		<Button onclick={confirm}>{$t('plugins.saveAmount')}</Button>
+		<Button onclick={confirmSave}>{$t('plugins.saveAmount')}</Button>
 	</div>
 </dialog>

@@ -189,6 +189,13 @@ name.
   being served at once, receives the event, stays mounted but inert for a fixed 300 ms grace
   period and is then removed, also when its parent unmounts it. `host.navigate` now replies
   before navigating and refuses other requests from the frame until the navigation settles.
+- **Plugin panels and drawers reopen after a quick Back.** Leaving a page and coming back within
+  the 300 ms grace period of a suspended frame left the record panel, the Forms toolbar drawer
+  and the Creator preview with a "suspended" notice instead of the frame; closing and reopening
+  one within the grace period had the same result. Each open now gets its own frame, and a frame
+  retired that way reopens with a fresh entry, unless the contribution was revoked or changed
+  meanwhile (then the usual notice shows) or the user had closed it. A pending apply
+  confirmation is dismissed and the panel reopens idle.
 - **Webhook receiver: macOS build.** The receiver no longer fails the build on macOS and other
   non-Linux targets with a dead-code error (`Leader::ExitedUnreaped` is built only on Linux).
   This failure also broke the standalone 0.3.53 release.
