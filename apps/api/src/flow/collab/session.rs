@@ -7179,7 +7179,28 @@ mod database_tests {
     /// only integrity requirement `load` imposes on the frontier is
     /// `snapshot_frontier == head_frontier` (`running_frontier` never advances past
     /// `doc.snapshot_frontier` when there is nothing to fold in), which setting both columns to
-    /// the identical oversized value satisfies without needing a real CRDT frontier.
+    /// the identical oversized, well-formed version vector satisfies.
+    /// A well-formed version-vector frontier of at least `min_bytes` bytes: `load` compares
+    /// frontiers as decoded version vectors, so padding bytes are no longer a valid frontier.
+    /// Each entry is a 9-byte peer varint plus a 1-byte counter.
+    fn wide_frontier(min_bytes: usize) -> Vec<u8> {
+        fn varint(out: &mut Vec<u8>, mut value: u64) {
+            while value >= 0x80 {
+                out.push(value.to_le_bytes()[0] | 0x80);
+                value >>= 7;
+            }
+            out.push(value.to_le_bytes()[0]);
+        }
+        let entries = u64::try_from(min_bytes.div_ceil(10)).unwrap();
+        let mut out = Vec::with_capacity(min_bytes + 10);
+        varint(&mut out, entries);
+        for peer in 0..entries {
+            varint(&mut out, (1_u64 << 62) + peer);
+            out.push(2); // zigzag(1)
+        }
+        out
+    }
+
     #[tokio::test]
     async fn bootstrap_load_enforces_the_response_bytes_ceiling_against_a_real_document_row() {
         let scratch = scratch_or_skip!("bootstrap-response-bytes-ceiling");
@@ -7189,7 +7210,7 @@ mod database_tests {
 
         // Comfortably under `bootstrap_decoded_bytes_max` on its own (well under 1 MiB); large
         // enough that a genuinely wired response-bytes check, not merely luck, is what accepts it.
-        let modest_frontier = vec![7u8; 4096];
+        let modest_frontier = wide_frontier(4096);
         exec(
             &state,
             "UPDATE collab_documents SET snapshot_frontier = $1, head_frontier = $1 WHERE id = $2",
@@ -7209,7 +7230,7 @@ mod database_tests {
         // `head_frontier`'s length (its own definition is `snapshot.len() + sum(tail bytes)`), so
         // this exercises `check_bootstrap_response_bytes` without `check_bootstrap_decoded_bytes`
         // ever objecting first.
-        let oversized_frontier = vec![7u8; 9_500_000];
+        let oversized_frontier = wide_frontier(9_500_000);
         exec(
             &state,
             "UPDATE collab_documents SET snapshot_frontier = $1, head_frontier = $1 WHERE id = $2",
