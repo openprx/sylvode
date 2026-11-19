@@ -120,7 +120,9 @@ signature (`allow_unsigned = false`) and contains no agent that runs a command w
 In Sylvode, create a webhook pointing to this receiver:
 
 - **URL**: `http://your-server:9090/webhook`
-- **Secret**: Must match one of `webhook_secrets` in `config.toml`
+- **Secret**: Must match one of `webhook_secrets` in `config.toml`. Leave it empty to have Sylvode
+  generate one: the create response (`POST /api/v1/workspaces/{id}/webhooks`) returns it in
+  `secret`, once, and `POST .../webhooks/{webhook_id}/rotate-secret` issues a new one the same way
 - **Events**: Select which events to receive (see the list above)
 - **Bot user**: The bot whose tasks this receiver handles. Without one, deliveries carry no
   `bot_context` and are ignored, and the worker has no webhook to dispatch that bot's AI tasks to
