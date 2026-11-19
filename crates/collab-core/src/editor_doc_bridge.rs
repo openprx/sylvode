@@ -92,14 +92,65 @@ impl<'a> PlacementIndex<'a> {
 }
 /// None means a legacy tree-only document. IDs are actual live map CIDs, not ordinals.
 pub fn editor_blocks(doc: &LoroDoc) -> Result<Option<Vec<EditorBlock>>, CollabError> {
-    read_blocks(doc, false)
+    read_blocks(doc, Mode::Current, || crate::editor_structure::placements(doc))
 }
 pub fn legacy_editor_blocks(doc: &LoroDoc) -> Result<Option<Vec<EditorBlock>>, CollabError> {
-    read_blocks(doc, true)
+    read_blocks(doc, Mode::Legacy, || Ok(None))
 }
-fn read_blocks(doc: &LoroDoc, legacy: bool) -> Result<Option<Vec<EditorBlock>>, CollabError> {
+
+/// What the editor-model floor needs to know about the blocks [`editor_blocks`] would return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EditorModelSignals {
+    /// Some block is a model-5 atom (`image`, `attachment`, `childPage`).
+    pub atom: bool,
+    /// Some block carries inline marks or is not one of the model-1 prose kinds.
+    pub beyond_model1: bool,
+}
+
+/// [`editor_blocks`] reduced to [`EditorModelSignals`], for `minimum_editor_model`.
+///
+/// `placements` must be what `editor_structure::placements(doc)` returns for this unchanged
+/// document (the caller has already evaluated it, and its error, for the same state). Visits the
+/// same blocks in the same order and fails with exactly the error `editor_blocks` would, but skips
+/// work that only shapes the returned values: block text, logical-id aliases.
+pub fn editor_model_signals(
+    doc: &LoroDoc,
+    placements: Option<Vec<crate::editor_structure::Placement>>,
+) -> Result<Option<EditorModelSignals>, CollabError> {
+    let Some(blocks) = read_blocks(doc, Mode::Floor, || Ok(placements))? else {
+        return Ok(None);
+    };
+    Ok(Some(EditorModelSignals {
+        atom: blocks.iter().any(|block| crate::editor_media::is_atom(&block.kind)),
+        beyond_model1: blocks.iter().any(|block| {
+            !block.inline_spans.is_empty()
+                || !matches!(
+                    block.kind.as_str(),
+                    "paragraph" | "heading" | "bulletItem" | "codeBlock"
+                )
+        }),
+    }))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Package v2/v3 prose: model-1 kinds only, no structure, no inline marks.
+    Legacy,
+    /// The current reader.
+    Current,
+    /// `Current`'s filtering and validation, without block text or logical ids.
+    Floor,
+}
+
+fn read_blocks(
+    doc: &LoroDoc,
+    mode: Mode,
+    load_placements: impl FnOnce() -> Result<Option<Vec<crate::editor_structure::Placement>>, CollabError>,
+) -> Result<Option<Vec<EditorBlock>>, CollabError> {
     #[cfg(test)]
     crate::walk_counter::record_block_read();
+    let legacy = mode == Mode::Legacy;
+    let collect_values = mode != Mode::Floor;
     let Some(list) = root_children(doc) else {
         return Ok(None);
     };
@@ -108,16 +159,14 @@ fn read_blocks(doc: &LoroDoc, legacy: bool) -> Result<Option<Vec<EditorBlock>>, 
         return Err(invalid("editor_block_alias_limit_exceeded"));
     }
     let mut reverse_aliases = std::collections::BTreeMap::new();
-    for key in aliases.keys() {
-        if let Some(cid) = string(&aliases, key.as_ref()) {
-            reverse_aliases.entry(cid).or_insert_with(|| key.to_string());
+    if collect_values {
+        for key in aliases.keys() {
+            if let Some(cid) = string(&aliases, key.as_ref()) {
+                reverse_aliases.entry(cid).or_insert_with(|| key.to_string());
+            }
         }
     }
-    let placements = if legacy {
-        None
-    } else {
-        crate::editor_structure::placements(doc)?
-    };
+    let placements = load_placements()?;
     let index = placements.as_deref().map(PlacementIndex::new);
     let mut blocks = Vec::new();
     for i in 0..list.len() {
@@ -139,7 +188,8 @@ fn read_blocks(doc: &LoroDoc, legacy: bool) -> Result<Option<Vec<EditorBlock>>, 
             Some(ValueOrContainer::Container(Container::Map(attrs))) => attrs.get_deep_value().to_json_value(),
             _ => Value::Object(serde_json::Map::new()),
         };
-        if !crate::editor_media::is_atom(&kind)
+        let atom = crate::editor_media::is_atom(&kind);
+        if !atom
             && ["embed_type", "embed_object_id", "child_page_id", "reference_id"]
                 .iter()
                 .any(|key| attributes.get(*key).is_some())
@@ -147,32 +197,42 @@ fn read_blocks(doc: &LoroDoc, legacy: bool) -> Result<Option<Vec<EditorBlock>>, 
             continue;
         }
         let texts = text_children(&map)?;
-        if crate::editor_media::is_atom(&kind) {
+        if atom {
             crate::editor_media::validate(&kind, &attributes)?;
             if !texts.is_empty() {
                 return Err(invalid("editor_atom_children_not_empty"));
             }
         }
-        let text = if crate::editor_media::is_atom(&kind) {
+        // Each inline text is materialized once; its byte length is the next span offset.
+        let strings: Vec<String> = if collect_values {
+            texts.iter().map(LoroText::to_string).collect()
+        } else {
+            Vec::new()
+        };
+        let text = if !collect_values {
+            String::new()
+        } else if atom {
             crate::editor_media::searchable_text(&kind, &attributes)
         } else {
-            texts.iter().map(LoroText::to_string).collect::<String>()
+            strings.concat()
         };
         let mut inline_spans = Vec::new();
-        let mut offset = 0;
-        for text in texts {
-            for mut span in if legacy {
-                Vec::new()
-            } else {
-                crate::page_inline::spans(&text)?
-            } {
-                span.start += offset;
-                span.end += offset;
-                inline_spans.push(span);
+        if !legacy {
+            let mut offset = 0;
+            for (position, text) in texts.iter().enumerate() {
+                for mut span in crate::page_inline::spans(text)? {
+                    span.start += offset;
+                    span.end += offset;
+                    inline_spans.push(span);
+                }
+                offset += strings.get(position).map_or(0, String::len);
             }
-            offset += text.to_string().len();
         }
-        let logical_id = reverse_aliases.get(&cid).cloned();
+        let logical_id = if collect_values {
+            reverse_aliases.get(&cid).cloned()
+        } else {
+            None
+        };
         blocks.push(EditorBlock {
             id: cid,
             kind,
