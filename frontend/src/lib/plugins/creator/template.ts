@@ -1,4 +1,5 @@
 import type { PluginSlot, PluginUpload } from '../../api/plugin-packages';
+import type { CreatorTemplate } from './registry';
 import template from './order-amount-template.json';
 
 export interface CreatorDraft {
@@ -86,7 +87,7 @@ function decodeBase64(value: string) {
 	return Uint8Array.from(atob(value), (byte) => byte.charCodeAt(0));
 }
 
-async function sha256(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+export async function sha256(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', bytes);
 	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -188,3 +189,38 @@ async function runFixedGuest(): Promise<number> {
 	if (result.amount_cents !== 2500) throw new Error('Template output did not match the fixture');
 	return result.amount_cents;
 }
+
+export const orderAmountTemplate: CreatorTemplate<CreatorDraft> = {
+	id: 'order_amount',
+	profile: 'wasm',
+	output: 'openpr.plugin.v2',
+	slots: [detailSlot, actionSlot],
+	defaults: (origin) => readDraft(null, origin.formKey ?? defaultDraft.formKey),
+	read: (stored, origin) => readDraft(stored, origin.formKey ?? defaultDraft.formKey),
+	invalid: invalidDraftFields,
+	build: buildCreatorPackage,
+	review: (draft) => ({
+		slots: [
+			{
+				id: creatorPlacement(detailSlot).id,
+				kind: 'panel',
+				slot: detailSlot,
+				label: draft.detailLabel.trim(),
+				view: 'detail',
+				route: null,
+				form_key: draft.formKey.trim()
+			},
+			{
+				id: creatorPlacement(actionSlot).id,
+				kind: 'action',
+				slot: actionSlot,
+				label: draft.actionLabel.trim(),
+				view: 'actions',
+				route: null,
+				form_key: draft.formKey.trim()
+			}
+		],
+		reads: [],
+		capabilities: ['amount.preview', 'amount.apply']
+	})
+};
