@@ -38,3 +38,4 @@
 
 - `../docker-compose.yml` — Full stack: API, frontend, MCP, worker, webhook, PostgreSQL.
 - `../Dockerfile.prebuilt` — Production image using pre-built binaries.
+- `./runbooks/flow-runtime-capabilities.md` — Flow runtime capabilities: what is on by default, reader leases, and how to turn a capability off.
