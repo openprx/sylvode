@@ -269,7 +269,7 @@ async fn serve(config: config::Config) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Resolves on SIGINT or, on Unix, SIGTERM.
+/// Resolves on SIGINT or SIGTERM.
 ///
 /// Without a handler a process running as PID 1 in a container ignores SIGTERM, so `docker stop`
 /// would wait for its timeout and then kill it.
@@ -281,7 +281,6 @@ async fn shutdown_signal() {
         }
     };
 
-    #[cfg(unix)]
     let terminate = async {
         match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
             Ok(mut signal) => {
@@ -293,8 +292,6 @@ async fn shutdown_signal() {
             }
         }
     };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
 
     tokio::select! {
         () = interrupt => tracing::info!("received SIGINT, shutting down"),

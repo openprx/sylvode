@@ -9,6 +9,7 @@
 //! - stderr: the legacy name writes exactly one deprecation line naming the old name, the
 //!   replacement and the earliest removal; the canonical name writes nothing.
 
+#![cfg(unix)]
 // Test helpers outside `#[test]` functions may fail loudly; this is test code only.
 #![allow(clippy::expect_used)]
 

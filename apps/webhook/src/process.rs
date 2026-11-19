@@ -80,7 +80,6 @@ pub async fn run(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    #[cfg(unix)]
     command.process_group(0);
 
     let mut child = command.spawn().map_err(|e| e.to_string())?;
@@ -200,7 +199,6 @@ async fn join_reader(mut reader: tokio::task::JoinHandle<Vec<u8>>) -> Vec<u8> {
 /// Terminates the process group led by `child` and reaps `child`, signalling the group only while
 /// the leader is unreaped. Returns the result of reaping the leader, or `None` when it was left
 /// unreaped because it cannot be signalled (it is then reaped in the background once it exits).
-#[cfg(unix)]
 async fn terminate_tree(
     child: &mut tokio::process::Child,
     guard: &mut GroupGuard,
@@ -253,7 +251,6 @@ async fn terminate_tree(
 /// Nothing is signalled after this, so the leader may be reaped now if it has exited. Waiting for a
 /// leader that is still running and might never exit would make the timeout meaningless, so such
 /// a leader is left to `kill_on_drop` and to tokio, which reaps a dropped child once it exits.
-#[cfg(unix)]
 fn give_up(child: &mut tokio::process::Child, guard: &mut GroupGuard) -> Option<std::io::Result<ExitStatus>> {
     guard.disarm();
     match child.try_wait() {
@@ -264,24 +261,6 @@ fn give_up(child: &mut tokio::process::Child, guard: &mut GroupGuard) -> Option<
         }
         Err(e) => Some(Err(e)),
     }
-}
-
-/// Without process groups only the direct child can be killed.
-#[cfg(not(unix))]
-async fn terminate_tree(
-    child: &mut tokio::process::Child,
-    guard: &mut GroupGuard,
-    leader: Leader,
-    _grace: Duration,
-) -> Option<std::io::Result<ExitStatus>> {
-    if let Leader::Reaped(status) = leader {
-        guard.disarm();
-        return Some(status);
-    }
-    if let Err(e) = child.start_kill() {
-        tracing::debug!("kill child: {e}");
-    }
-    Some(reap(child, guard).await)
 }
 
 /// Reaps the leader. The guard is disarmed first: once the leader is reaped the group id may be
@@ -296,7 +275,6 @@ async fn reap(child: &mut tokio::process::Child, guard: &mut GroupGuard) -> std:
 }
 
 /// The result of signalling a process group.
-#[cfg(unix)]
 #[derive(Debug, PartialEq, Eq)]
 enum Signalled {
     /// The signal was sent (or, with no signal, the group exists).
@@ -309,12 +287,10 @@ enum Signalled {
 
 /// Sends `signal` (or, with `None`, only checks for existence) to the process group `pgid`. Call
 /// it only while the leader is unreaped (see the module documentation).
-#[cfg(unix)]
 fn signal_group(pgid: i32, signal: Option<nix::sys::signal::Signal>) -> Signalled {
     classify(pgid, nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), signal))
 }
 
-#[cfg(unix)]
 fn classify(pgid: i32, result: nix::Result<()>) -> Signalled {
     match result {
         Ok(()) => Signalled::Delivered,
@@ -387,14 +363,11 @@ impl GroupGuard {
 impl Drop for GroupGuard {
     fn drop(&mut self) {
         // Armed means the leader has not been reaped, so the group id is still pinned.
-        #[cfg(unix)]
         if self.armed
             && let Some(pgid) = self.pgid
         {
             signal_group(pgid, Some(nix::sys::signal::Signal::SIGKILL));
         }
-        #[cfg(not(unix))]
-        let _ = (self.armed, self.pgid);
     }
 }
 

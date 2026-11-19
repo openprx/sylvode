@@ -5,6 +5,7 @@
 //! identically; and only the legacy `x-openpr-signature` header (and the legacy executable name)
 //! write a deprecation line to stderr.
 
+#![cfg(unix)]
 // Test helpers outside `#[test]` functions may fail loudly; this is test code only.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
