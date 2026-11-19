@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The webhook receiver lives in this repository (apps/webhook). A separate checkout can still be
+# tested by passing its path as the first argument or setting SYLVODE_WEBHOOK_DIR.
 WEBHOOK_DIR="${1:-${SYLVODE_WEBHOOK_DIR:-}}"
-[[ -n $WEBHOOK_DIR && -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: webhook checkout not found (${WEBHOOK_DIR:-unset}); pass the checkout path as the first argument or set SYLVODE_WEBHOOK_DIR" >&2; exit 2; }
+if [[ -n $WEBHOOK_DIR ]]; then
+  [[ -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: webhook checkout not found ($WEBHOOK_DIR); pass the checkout path as the first argument or set SYLVODE_WEBHOOK_DIR, or leave both unset to use apps/webhook" >&2; exit 2; }
+fi
 TMP_DIR="$(mktemp -d)"
 PORT="$((19000 + $$ % 1000))"
 SERVER_PID=""
@@ -55,10 +60,15 @@ command = "/bin/echo"
 args = ["maintenance-route"]
 EOF
 
-(cd "${WEBHOOK_DIR}" && cargo build --quiet)
-# Releases up to 0.3.3 ship only the legacy executable name.
-WEBHOOK_BIN="${WEBHOOK_DIR}/target/debug/sylvode-webhook"
-[[ -x ${WEBHOOK_BIN} ]] || WEBHOOK_BIN="${WEBHOOK_DIR}/target/debug/openpr-webhook"
+if [[ -n $WEBHOOK_DIR ]]; then
+  (cd "${WEBHOOK_DIR}" && cargo build --quiet)
+  # Releases up to 0.3.3 ship only the legacy executable name.
+  WEBHOOK_BIN="${WEBHOOK_DIR}/target/debug/sylvode-webhook"
+  [[ -x ${WEBHOOK_BIN} ]] || WEBHOOK_BIN="${WEBHOOK_DIR}/target/debug/openpr-webhook"
+else
+  (cd "${ROOT_DIR}" && cargo build --quiet -p sylvode-webhook --bin sylvode-webhook)
+  WEBHOOK_BIN="${CARGO_TARGET_DIR:-${ROOT_DIR}/target}/debug/sylvode-webhook"
+fi
 "${WEBHOOK_BIN}" "${TMP_DIR}/config.toml" > "${TMP_DIR}/webhook.log" 2>&1 &
 SERVER_PID="$!"
 
