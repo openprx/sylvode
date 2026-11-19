@@ -4533,6 +4533,163 @@
 			},
 			"previewValues": "Enter valid quantity and unit price above and try again.",
 			"import": "Import package"
+		},
+		"host": {
+			"unavailable": "This app is unavailable.",
+			"unavailableHint": "It may have been disabled, removed or you may no longer have access.",
+			"back": "Back",
+			"backToProject": "Back to project",
+			"loading": "Loading the app…",
+			"frameTitle": "{name} · {label}",
+			"closeFrame": "Close app",
+			"suspended": "This app was suspended because its configuration changed.",
+			"integrityFailed": "This app failed its integrity check.",
+			"loadFailed": "The app could not be loaded.",
+			"retry": "Retry",
+			"more": "More",
+			"openDrawer": "Open {label}",
+			"closeDrawer": "Close panel",
+			"rateLimited": "Too many requests. Try again shortly.",
+			"methodUnavailable": "This action is not available to the app.",
+			"confirmApply": "Apply this result to the record?",
+			"invalidParams": "The app sent an invalid request.",
+			"notFound": "The requested item was not found or is no longer available."
+		},
+		"apps": {
+			"navTitle": "Project apps",
+			"tabsLabel": "Project app views",
+			"empty": "No project apps are available.",
+			"open": "Open {label}",
+			"publisher": "{name} · v{version}",
+			"hiddenCount": "{count} hidden",
+			"showHidden": "Show hidden apps",
+			"stateTooLong": "The app state is too long and was ignored."
+		},
+		"prefs": {
+			"menu": "Display options",
+			"hide": "Hide",
+			"show": "Show",
+			"collapse": "Collapse",
+			"expand": "Expand",
+			"position": "Order",
+			"moveUp": "Move up",
+			"moveDown": "Move down",
+			"positionLabel": "Order (0-99)",
+			"reset": "Reset",
+			"resetAll": "Reset all my display options",
+			"resetDone": "Display options reset.",
+			"saved": "Display options saved.",
+			"saveFailed": "Display options could not be saved.",
+			"limitReached": "You have reached the limit of saved display options.",
+			"hiddenSection": "Hidden by you",
+			"restore": "Restore",
+			"unavailable": "This item is no longer available."
+		},
+		"creatorV3": {
+			"template": "Template",
+			"templateName": {
+				"order_amount": "Order amount (record panel and action)",
+				"ui_view": "Data view (UI only)"
+			},
+			"templateHelp": "The data view template shows Form data you grant to it. It does not run WASM and cannot write business data.",
+			"uiIntro": "Build a view-only app. Choose where it appears and which Form fields it may read. An administrator grants the access after install.",
+			"locations": "Locations",
+			"locationEnabled": "Show in {slot}",
+			"reads": "Data read",
+			"readHelp": "List field keys separated by commas. Attachments, images, signatures, members, relations and child tables are never returned.",
+			"presentationLabel": "Presentation",
+			"presentation": {
+				"table": "Table of records",
+				"summary": "Summary totals"
+			},
+			"fieldHelp": "Use lowercase letters, digits and underscores in keys, starting with a letter. A route is the address segment after /apps/{plugin key}/.",
+			"needLocation": "Choose at least one location.",
+			"field": {
+				"key": "Plugin key",
+				"name": "Display name",
+				"publisher": "Publisher label",
+				"version": "Version",
+				"label": "Entry label",
+				"route": "Route",
+				"formKey": "Form key",
+				"readFormKey": "Form key to read",
+				"readFields": "Fields to read",
+				"presentation": "Presentation",
+				"title": "View title",
+				"text": "View instructions"
+			},
+			"reviewLocations": "Locations",
+			"reviewReads": "Reads {fields} from Form {form}",
+			"reviewNoReads": "Reads no Form data.",
+			"reviewNoWasm": "Runs no WASM and writes no business data.",
+			"reviewCapabilities": "No business capabilities are requested.",
+			"reviewLocation": "{label} · {slot}",
+			"reviewRoute": "Route {route}",
+			"reviewForm": "Form {form}",
+			"previewSampleProject": "The preview uses 3 sample rows shaped like the Form's fields. No real records are read and nothing is installed.",
+			"previewSamplePersonal": "The preview uses placeholder text for every value. No real records are read and nothing is installed.",
+			"previewSchemaFailed": "The Form fields could not be loaded, so the preview uses text samples.",
+			"previewUi": "Open the preview with sample data before reviewing the package.",
+			"extensionsUnavailable": "UI view packages require project extensions to be enabled.",
+			"slotChoice": "Preview location",
+			"newUiView": "Create UI view draft"
+		},
+		"layoutV3": {
+			"slot": {
+				"project": {
+					"view": "Project app view"
+				},
+				"form": {
+					"list": {
+						"toolbar": "Form list toolbar"
+					},
+					"record": {
+						"detail": "Record detail",
+						"actions": "Record actions"
+					}
+				}
+			},
+			"kind": {
+				"panel": "Panel",
+				"action": "Action",
+				"view": "View"
+			},
+			"profile": {
+				"ui": "UI only: no WASM, no business capabilities",
+				"wasm": "Runs WASM with capabilities"
+			},
+			"contributions": "Contributions",
+			"colLocation": "Location",
+			"colKind": "Kind",
+			"colLabel": "Label",
+			"colTarget": "Form or route",
+			"colEnabled": "Enabled",
+			"colOrder": "Order",
+			"route": "Route {route}",
+			"form": "Form {form}",
+			"grantsTitle": "Access to grant",
+			"grantsHelp": "Display access shows the app to project members. Each data read exposes only the listed fields to members who can already view that Form.",
+			"grant": {
+				"display": "Show this app in the project",
+				"read": "Read {fields} from Form {form}",
+				"readId": "Data read {id}",
+				"uiDisplay": "Display in the project"
+			},
+			"displayRequired": "Display access is required for any other access.",
+			"extensionsUnavailable": "Extensions are not enabled for this project, so this package cannot be installed.",
+			"reset": "Clear configuration",
+			"resetHelp": "Delete the saved project layout and every member's display options for this app.",
+			"resetConfirm": "Delete the saved layout and everyone's display options for {key}?",
+			"resetDone": "Configuration cleared.",
+			"resetFailed": "The configuration could not be cleared.",
+			"historyReason": "Reason: {reason}",
+			"reason": {
+				"configuration_reset": "configuration cleared"
+			},
+			"installSummary": "This package contributes {count} location(s) and reads {reads} Form data source(s).",
+			"readsNone": "No data reads",
+			"personalSampleNote": "The preview uses placeholder values.",
+			"personalPreviewUnavailable": "Preview for this package type is available after it is connected to a project."
 		}
 	}
 }
