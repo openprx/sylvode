@@ -292,7 +292,7 @@ field restrictions configured here do not constrain agent access."
 pub fn list_form_views_tool() -> ToolDefinition {
     ToolDefinition {
         name: "form_views.list".to_string(),
-        description: "List configured views for a universal form".to_string(),
+        description: "List the saved views of a universal form that the caller can see: every shared view plus the caller's own private (\"only me\") views. Another user's private view is never listed and cannot be used as a view_id. Creating, updating or deleting a private view needs only permission to view the form's records; shared views and the default view need form design permission.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -501,7 +501,7 @@ has_more and next_page: never summarise or count records without checking has_mo
                 "form_id": { "type": "string" },
                 "page": { "type": "integer", "minimum": 1, "description": "1-based page number (default 1)" },
                 "per_page": { "type": "integer", "minimum": 1, "maximum": 200, "description": "Page size, default 50, clamped to 200" },
-                "view_id": { "type": "string", "description": "Saved view UUID from form_views.list; its filter and sort apply unless overridden here" },
+                "view_id": { "type": "string", "description": "Saved view UUID from form_views.list; its filter and sort apply unless overridden here. Another user's private view is not found" },
                 "sort": { "type": "string", "description": "field:asc or field:desc. Sortable keys: title, created_at, updated_at, or any indexable schema field key" },
                 "filter_field": { "type": "string", "description": "Schema field key to filter on; must be an indexable field" },
                 "filter_op": {
