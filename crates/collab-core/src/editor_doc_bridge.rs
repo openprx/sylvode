@@ -70,6 +70,8 @@ pub fn legacy_editor_blocks(doc: &LoroDoc) -> Result<Option<Vec<EditorBlock>>, C
     read_blocks(doc, true)
 }
 fn read_blocks(doc: &LoroDoc, legacy: bool) -> Result<Option<Vec<EditorBlock>>, CollabError> {
+    #[cfg(test)]
+    crate::walk_counter::record_block_read();
     let Some(list) = root_children(doc) else {
         return Ok(None);
     };
