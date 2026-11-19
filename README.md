@@ -548,7 +548,7 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 | Repository                                                   | Description                                      |
 | ------------------------------------------------------------ | ------------------------------------------------ |
 | [Sylvode](https://github.com/openprx/sylvode)                | Core platform (this repo)                        |
-| [Sylvode Webhook](https://github.com/openprx/openpr-webhook) | Webhook receiver for external integrations       |
+| [Sylvode Webhook](apps/webhook)                              | Webhook receiver for external integrations (in this repo) |
 | [prx](https://github.com/openprx/prx)                        | AI assistant framework with built-in Sylvode MCP |
 | [prx-memory](https://github.com/openprx/prx-memory)          | Local-first MCP memory for coding agents         |
 | [wacli](https://github.com/openprx/wacli)                    | WhatsApp CLI with JSON-RPC daemon                |

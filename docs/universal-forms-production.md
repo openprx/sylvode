@@ -288,10 +288,10 @@ webhook receiver has a portable starter config. For production, copy
 it to a deployment-owned path, set a concrete `webhook_secrets` value, keep
 `allow_unsigned = false`, and point `SYLVODE_WEBHOOK_CONFIG` (legacy `OPENPR_WEBHOOK_CONFIG`) at that
 file. The default image is `ghcr.io/openprx/sylvode-webhook:latest`, which mounts the file at
-`/etc/sylvode-webhook/config.toml`. That image name exists only from the first Sylvode Webhook
-release after 0.3.3 onward; earlier releases are published only as
-`ghcr.io/openprx/openpr-webhook`. Until the first Sylvode Webhook release is published, the
-default does not pull: set `SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/openpr-webhook:<tag>` to a
+`/etc/sylvode-webhook/config.toml`; when no image of that name is present, compose builds it from
+`apps/webhook` in this repository (`apps/webhook/Dockerfile`, repository root as the context).
+Releases up to 0.3.3 are published only as `ghcr.io/openprx/openpr-webhook`. To run a published
+image instead, set `SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/openpr-webhook:<tag>` to a
 published tag and, for 0.3.3 or earlier, override the service command with
 `["/app/openpr-webhook", "/etc/sylvode-webhook/config.toml"]`, because those images do not
 carry `/app/sylvode-webhook`. In production, pin a version tag instead of `latest`.
