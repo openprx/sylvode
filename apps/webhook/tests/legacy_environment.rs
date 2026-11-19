@@ -7,6 +7,7 @@
 //! That safe mode actually turns the `cli` path off in a running service is shown by
 //! `tests/e2e/cli.rs` (`safe_mode_variables_turn_the_cli_path_off`).
 
+#![cfg(unix)]
 // Test helpers outside `#[test]` functions may fail loudly; this is test code only.
 #![allow(clippy::expect_used)]
 

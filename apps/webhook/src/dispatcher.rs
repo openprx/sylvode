@@ -1967,7 +1967,6 @@ mcp_instructions = "Read issue {issue_id} before writing."
 
     /// `{message}` in `args` is replaced by the rendered message, and the message is then not
     /// appended a second time.
-    #[cfg(unix)]
     #[tokio::test]
     async fn custom_args_substitute_the_message_placeholder() {
         let agent = custom_agent(r#"["[%s]", "{message}"]"#, "{key} {title}");
@@ -1979,7 +1978,6 @@ mcp_instructions = "Read issue {issue_id} before writing."
 
     /// Substituted text stays one argument, whatever it contains, and is never split or
     /// interpreted by a shell.
-    #[cfg(unix)]
     #[tokio::test]
     async fn custom_args_keep_a_substituted_message_as_one_argument() {
         let agent = custom_agent(r#"["[%s]", "--label={message}"]"#, "{title}");
@@ -1995,7 +1993,6 @@ mcp_instructions = "Read issue {issue_id} before writing."
     }
 
     /// Without the placeholder the message is appended as the last argument, as before.
-    #[cfg(unix)]
     #[tokio::test]
     async fn custom_args_without_placeholder_append_the_message() {
         let agent = custom_agent(r#"["[%s]"]"#, "{key}");
@@ -2007,7 +2004,6 @@ mcp_instructions = "Read issue {issue_id} before writing."
 
     /// Payload text cannot become an option: an argument that starts with `-` only because of
     /// the substituted message is refused unless an earlier argument is `--`.
-    #[cfg(unix)]
     #[tokio::test]
     async fn custom_args_refuse_a_message_that_would_start_an_option() {
         let config = base_config();
@@ -2036,7 +2032,6 @@ mcp_instructions = "Read issue {issue_id} before writing."
     /// A leading `-` the operator wrote in `message_template` is not payload text, so it is not
     /// refused, whether the message is substituted or appended. A `-` that comes from the
     /// payload still is, even behind placeholders that rendered empty.
-    #[cfg(unix)]
     #[tokio::test]
     async fn custom_args_accept_a_dash_written_in_the_template() {
         let config = base_config();
@@ -2076,7 +2071,6 @@ mcp_instructions = "Read issue {issue_id} before writing."
 
     /// `args` of an `openclaw` agent go between the command and `--channel`, so
     /// `openclaw message send` is written as a program plus two arguments.
-    #[cfg(unix)]
     #[tokio::test]
     async fn openclaw_args_precede_the_channel_options() {
         let agent: crate::config::AgentConfig = toml::from_str(
@@ -2094,7 +2088,6 @@ mcp_instructions = "Read issue {issue_id} before writing."
     }
 
     /// The same for an `openprx` agent that sends through a command.
-    #[cfg(unix)]
     #[tokio::test]
     async fn openprx_args_precede_the_channel_options() {
         let agent: crate::config::AgentConfig = toml::from_str(
