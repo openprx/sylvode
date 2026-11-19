@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order extension</title>
+<style>
+  :root { color-scheme: light dark; font: 15px/1.5 system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; color: #172533; background: #f2f7f8; }
+  h1, p { margin: 0 0 .65rem; }
+  h1 { font-size: 1rem; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: .25rem .5rem; border-bottom: 1px solid #b7cbd2; text-align: start; }
+  button { font: inherit; padding: .4rem .7rem; border: 1px solid #3b6576; border-radius: .35rem; color: #173847; background: #fff; }
+  button:enabled { cursor: pointer; }
+  button:focus-visible { outline: 3px solid #176784; outline-offset: 2px; }
+  #status { min-height: 1.5em; margin: .75rem 0 0; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e1edf0; background: #19313a; }
+    th, td { border-color: #476a76; }
+    button { color: #e1edf0; background: #223f49; border-color: #83a8b5; }
+  }
+</style>
+<main>
+  <h1 id="heading">Order extension</h1>
+  <p id="description">Connecting…</p>
+  <table id="rows" hidden><thead id="head"></thead><tbody id="body"></tbody></table>
+  <button id="action" type="button" hidden disabled>Refresh</button>
+  <p id="status" role="status"></p>
+</main>
+<script>
+  const heading = document.querySelector('#heading');
+  const description = document.querySelector('#description');
+  const table = document.querySelector('#rows');
+  const head = document.querySelector('#head');
+  const body = document.querySelector('#body');
+  const action = document.querySelector('#action');
+  const status = document.querySelector('#status');
+  const pending = new Map();
+  let port;
+  let context;
+
+  function send(method, params) {
+    return new Promise((resolve, reject) => {
+      const requestId = crypto.randomUUID();
+      pending.set(requestId, { resolve, reject });
+      port.postMessage({ protocol: 2, type: 'request', request_id: requestId, method, params });
+    });
+  }
+  function resize() {
+    port.postMessage({ protocol: 2, type: 'resize', height: Math.ceil(document.documentElement.scrollHeight) });
+  }
+  function cell(tag, text) {
+    const element = document.createElement(tag);
+    element.textContent = text;
+    return element;
+  }
+  function display(value) {
+    if (value && typeof value === 'object') return value.decimal ?? JSON.stringify(value);
+    return value == null ? '' : String(value);
+  }
+  async function load(grants) {
+    if (!grants.includes('read:orders')) {
+      description.textContent = 'Grant the orders read to see data here.';
+      status.textContent = '';
+      return resize();
+    }
+    status.textContent = 'Loading…';
+    try {
+      const { fields } = (await send('data.describe', { read: 'orders' })).form;
+      const page = await send('data.query', { read: 'orders', limit: 20 });
+      head.replaceChildren();
+      const row = document.createElement('tr');
+      for (const field of fields) row.append(cell('th', field.label));
+      head.append(row);
+      body.replaceChildren(...page.items.map((item) => {
+        const tr = document.createElement('tr');
+        for (const field of fields) tr.append(cell('td', display(item.values[field.key])));
+        return tr;
+      }));
+      table.hidden = false;
+      description.textContent = page.items.length + ' order lines';
+      status.textContent = '';
+    } catch (error) {
+      status.textContent = 'Could not load orders: ' + (error?.code ?? 'failed');
+    }
+    resize();
+  }
+  function render(grants) {
+    const view = context.contribution.view;
+    heading.textContent = context.contribution.slot === 'project.view' ? 'Order board' : 'Order ' + view;
+    if (context.contribution.slot === 'project.view') {
+      action.hidden = false;
+      action.disabled = false;
+      action.textContent = 'Refresh';
+      action.onclick = () => load(grants);
+    }
+    load(grants);
+  }
+  window.addEventListener('message', function connect(event) {
+    if (event.source !== window.parent || event.origin !== 'null' ||
+        event.data?.type !== 'sylvode-plugin-connect' || event.data.protocol !== 2 ||
+        event.ports.length !== 1 || port) return;
+    window.removeEventListener('message', connect);
+    port = event.ports[0];
+    context = event.data.context;
+    const grants = event.data.grants;
+    port.onmessage = ({ data }) => {
+      if (data?.protocol !== 2) return;
+      if (data.type === 'event' && data.name === 'context') context = data.data;
+      if (data.type === 'event' && data.name === 'suspended') status.textContent = 'This panel was suspended.';
+      if (data.type !== 'result') return;
+      const call = pending.get(data.request_id);
+      if (!call) return;
+      pending.delete(data.request_id);
+      if (data.ok) call.resolve(data.result); else call.reject(data.error);
+    };
+    port.postMessage({ protocol: 2, type: 'ready' });
+    render(grants);
+  });
+</script>
+</html>
