@@ -158,6 +158,7 @@ name.
   for 1,400 and 5,000 block pages.
 - **The plugin package concurrency budget** (four concurrent runs per process) is now covered by
   a unit test.
+- **Flow: personal Flow and the shipped installation-wide Flow capabilities are on by default.** Migration `0106_flow_capabilities_default_on.sql` defaults `personal_provisioning`, `personal_writes`, `external_mounts`, `personal_forms_conversion`, `block_transfers_enabled`, `portable_page_packages_enabled` and `portable_graph_packages_enabled` on and raises `minimum_reader_version` to 5, so a fresh installation needs no manual SQL before users can open a personal Flow space and write Pages. `scope_native_legacy`, `personal_package_imports`, `personal_scope_package_exports` and `cross_workspace_forms_conversion` stay off. See `docs/runbooks/flow-runtime-capabilities.md`.
 
 ### Fixed
 
@@ -208,7 +209,7 @@ name.
 
 ### Upgrade notes
 
-- **Apply the database migrations `0103`, `0104` and `0105`.** `0103` adds the protocol 3
+- **Apply the database migrations `0103`, `0104`, `0105` and `0106`.** `0103` adds the protocol 3
   layout and preference tables and the `contribution_id` column of the invocation log; `0104`
   converts project resource kinds; `0105` moves token bots to `bot`. All three are re-runnable
   and no-ops where nothing matches.
@@ -263,6 +264,8 @@ name.
   that compare versions. When upgrading from the last published standalone release 0.3.3, also
   read "Upgrading from 0.3.3" in `apps/webhook/CHANGELOG.md`, which lists the configurations
   that are now refused at start-up.
+- **Flow capabilities are switched on once.** Upgrading an existing database switches the capabilities listed above on once, including on installations that had them off; values that were already on and a higher `minimum_reader_version` are kept. To keep any of them off, switch it off right after the migration, before opening traffic (personal Flow: `UPDATE flow_runtime_capabilities SET external_mounts=false, personal_writes=false, personal_provisioning=false, updated_at=now() WHERE singleton;`). The choice survives restarts and migration replays; do not delete the `flow_capabilities_default_on` row in `flow_runtime_capability_rollouts`.
+- **Run the worker alongside the API.** Personal Flow and rich Page writes are refused with `scope_runtime_not_ready` until the API and the worker (worker and maintenance) have all registered reader-5 leases.
 
 ## [0.2.539] - 2026-11-18
 
