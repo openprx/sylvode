@@ -10,6 +10,23 @@ name.
 
 ## [Unreleased]
 
+### Security
+
+- Upgraded wasmtime from 49.0.5 to 50.0.2 (Cranelift 0.137.2, wasm-tools 0.261), which clears
+  RUSTSEC-2026-0566, RUSTSEC-2026-0567, RUSTSEC-2026-0568, RUSTSEC-2026-0569,
+  RUSTSEC-2026-0570, RUSTSEC-2026-0571, RUSTSEC-2026-0572 and RUSTSEC-2026-0573. The plugin
+  runtime keeps the same engine configuration and store limits; the guest-visible WebAssembly
+  feature set is unchanged (wasmtime 50 adds the compact-imports proposal, which is off by
+  default). The unused compilation cache stays disabled; its zstd 0.13 chain now has patched
+  releases, so that is no longer a security constraint.
+
+### Changed
+
+- **Plugin fuel accounting is stricter in two corner cases.** Wasmtime 50 no longer drops fuel
+  buffered in a module's start function and saves and restores fuel correctly around `call_ref`
+  and exception catches, so a plugin relying on those paths can report slightly more fuel
+  consumed. The sample order-amount plugin consumes exactly the same fuel as under wasmtime 49.
+
 ## [0.2.539] - 2026-11-18
 
 ### Added
