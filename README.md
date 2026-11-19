@@ -137,6 +137,7 @@ being silently ignored.
 | `[logging]` | all | `filter` — `tracing` directives, validated at startup (`<service>=info,tower_http=info`), `format` — `json` \| `text` (`json`), `output` — `stderr` \| `stdout` (`stderr`) |
 | `[storage]` | api | `backend` — `local` \| `s3` (`local`), `dir` (`./uploads`); `[storage.s3]` with `endpoint`, `bucket`, `region` (`us-east-1`), `access_key_id`, `secret_access_key`, `session_token`, required only when `backend = "s3"` and left unread otherwise |
 | `[audit]` | worker | `operation_log_retention_days` (`30`, range `1..=3650`) |
+| `[ai_tasks]` | worker | `processing_timeout_secs` (`3600`, range `60..=604800`; how long a delivered AI task may stay `processing` before the worker re-queues it, or fails it after its last attempt) |
 | `[migrations]` | api | `replay` (`false`), `continue_on_error` (`false`) — both are escape hatches; turn one on deliberately, then turn it back off |
 | `[outbound]` | api, worker | `allowed_hosts` — a TOML **array of strings** (`[]`), `allow_private` (`false`) |
 | `[flow]` | api, worker | `dispatch_max_attempts` (`10`), `collab_allowed_origins` — a TOML array of `scheme://host[:port]` origins allowed to open live collaboration sessions (`[]`; empty refuses every session, so list the web UI's origin to enable live editing), `conversion_reap_interval_secs` (`60`, range `1..=86400`; how often the api reclaims conversion jobs left `started` for more than 15 minutes) |
@@ -241,6 +242,37 @@ A delivery without `bot_context` is still sent, so a subscription keeps seeing
 every event it subscribes to as a plain notification; `sylvode-webhook` answers
 it `not_bot_task`.
 
+**How a worker AI task ends.** The worker picks a pending task up (`processing`,
+one attempt more) and delivers it to the bot's webhook. Every attempt ends in
+exactly one of these ways, each writing the `retried` or `failed` task event and
+the matching `ai_task.*` business event with the reason, and `ai.task_failed`
+when the task is failed:
+
+- **The receiver takes it** (`dispatched`) and reports the outcome through
+  `POST /api/v1/ai/callbacks/task/{id}/complete` or `.../fail`. Only the task's
+  own AI participant (its bot token) or a system administrator may call them.
+  A callback may name its attempt (`?attempt=N`, the delivery's `attempts`); it
+  is then accepted only while that attempt is `processing`, so a late callback
+  never ends a re-queued or later attempt. `fail` with `"retry": false` fails
+  the task at once instead of scheduling a retry.
+- **The receiver declines it** in its answer: `no_agent`, `ignored`, `refused`
+  (for example safe mode), or an HTTP 4xx other than 408, 409, 425 and 429. The
+  worker fails the task at once, without using up the remaining attempts, with
+  an error message that quotes the answer: a repeat seconds later would get the
+  same answer, and the receiver may hold no token that can end the task itself.
+  Fix the receiver's configuration and assign the task again.
+- **The delivery fails** (no active webhook, a transport error, HTTP 5xx, 408,
+  409, 425, 429): the task goes back to `pending` with a delay of
+  `attempts * 30` seconds while attempts remain, and is failed after the last.
+- **Nothing ends it** within `[ai_tasks] processing_timeout_secs` (default one
+  hour): the worker re-queues it while attempts remain and fails it after the
+  last, with a message naming the timeout and the attempt. This covers a
+  receiver that stopped, an agent that hangs, and a callback that was refused or
+  lost. Keep the timeout well above the receiver's longest agent run.
+
+Whichever of these commits first wins; the others find the attempt no longer
+`processing` and change nothing.
+
 ## Worker
 
 `apps/worker` is a standalone process with a 5-second poll loop and a
@@ -250,7 +282,7 @@ and awaits them sequentially.
 
 | Pipeline             | Source                                                                 | Behavior                                                      |
 | -------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------- |
-| AI task dispatch     | `ai_tasks`                                                             | POSTs to bot webhooks, HMAC-signed; retry delay `max(attempts, 1) * 30` s |
+| AI task dispatch     | `ai_tasks`                                                             | POSTs to bot webhooks, HMAC-signed; retry delay `max(attempts, 1) * 30` s; fails a task the receiver declines; re-queues or fails a task left `processing` past `[ai_tasks] processing_timeout_secs` |
 | Operation-log cleanup | `bot_operation_logs`                                                  | Deletes metadata records older than `[audit]` retention       |
 | Form jobs            | `form_import_jobs`, `form_export_jobs`, `form_attachment_package_jobs` | Plus expiry cleanup of package artifacts and signature values |
 | Proposal settlement  | `proposals`                                                            | Settles expired proposals (moved off the API read path)       |

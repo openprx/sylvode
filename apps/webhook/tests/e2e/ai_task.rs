@@ -141,6 +141,62 @@ async fn a_worker_task_no_agent_matches_is_failed() {
     );
     assert_eq!(call.body["payload"]["status"], "error");
     assert_eq!(call.body["payload"]["agent_id"], serde_json::Value::Null);
+    assert_eq!(call.body["retry"], false, "{:?}", call.body);
+    assert_eq!(answer["ai_task_callback"], "report", "{answer}");
+    assert!(
+        answer["reason"].as_str().unwrap_or_default().contains("bot-unknown"),
+        "the answer says why, for the worker: {answer}"
+    );
+}
+
+const BOT_A: &str = "0b7e2d4c-2f0a-4b8e-8f6c-3a1d9e5c7b20";
+const BOT_B: &str = "5989a9a2-c7f1-4a74-ba05-cffe01e33ad4";
+const BOT_C: &str = "9d3c6f0e-1b2a-4c5d-8e7f-0a1b2c3d4e5f";
+
+/// One receiver for two bots, the shape of the live test: bot A owns the global token and is
+/// routed to the agent, bot B has no agent and its own `[[ai_task_callback.bots]]` token, and
+/// bot C has neither.
+fn two_bot_config(api: &StubApi) -> String {
+    format!(
+        "[server]\nlisten = \"127.0.0.1:0\"\n\n[security]\nwebhook_secrets = [\"{SECRET}\"]\n\n\
+         [features]\ncli_enabled = true\n\n\
+         [ai_task_callback]\nenabled = true\napi_url = \"{}\"\ntoken = \"bot-a-token\"\nbot_id = \"{BOT_A}\"\n\
+         retry_delay_ms = 10\n\n\
+         [[ai_task_callback.bots]]\nbot_id = \"{BOT_B}\"\ntoken = \"bot-b-token\"\n\n\
+         [[agents]]\nid = \"bot-a\"\nname = \"Fixer\"\nagent_type = \"cli\"\n\n\
+         [agents.route]\nbot_ids = [\"{BOT_A}\"]\n\n\
+         [agents.cli]\nexecutor = \"codex\"\ntimeout_secs = 30\n",
+        api.url("")
+    )
+}
+
+/// Bot B's task, which no agent matches, is failed with bot B's token and names its attempt; bot
+/// C's task is answered `no_token` and nothing is called with bot A's token.
+#[tokio::test(flavor = "multi_thread")]
+async fn each_bots_unmatched_task_uses_its_own_token_or_none() {
+    let mut api = StubApi::start().await;
+    let server = Server::start(CANONICAL, &two_bot_config(&api), &[]).expect("server starts");
+
+    let task_b = uuid::Uuid::new_v4().to_string();
+    let mut task = worker_task(&task_b, BOT_B);
+    task["attempts"] = serde_json::json!(2);
+    let (status, answer) = post_signed(&server.url("/webhook"), &task.to_string()).await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["status"], "no_agent", "{answer}");
+    assert_eq!(answer["ai_task_callback"], "report", "{answer}");
+    let call = api.next(Duration::from_secs(10)).await.expect("fail call");
+    assert_eq!(call.path, format!("/api/v1/ai/callbacks/task/{task_b}/fail"));
+    assert_eq!(bearer(&call), Some("Bearer bot-b-token"));
+
+    let task_c = uuid::Uuid::new_v4().to_string();
+    let (status, answer) = post_signed(&server.url("/webhook"), &worker_task(&task_c, BOT_C).to_string()).await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["status"], "no_agent", "{answer}");
+    assert_eq!(answer["ai_task_callback"], "no_token", "{answer}");
+    assert!(
+        api.next(Duration::from_millis(500)).await.is_none(),
+        "bot C's task is not reported with another bot's token"
+    );
 }
 
 /// A delivery that is not a worker AI task, with no matching agent either, calls nothing.
