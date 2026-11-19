@@ -2,6 +2,7 @@
 	import { writable } from 'svelte/store';
 	import ProjectPluginSettingsLink from '#lib/components/plugins/ProjectPluginSettingsLink.svelte';
 	import CreatorPluginLink from '#lib/components/plugins/CreatorPluginLink.svelte';
+	import FormPluginToolbar from '#lib/components/plugins/FormPluginToolbar.svelte';
 	import RecordPluginPanels from '#lib/components/plugins/RecordPluginPanels.svelte';
 	import RecordPluginActions from '#lib/components/plugins/RecordPluginActions.svelte';
 	import type { RecordPluginActionSurface } from '#lib/plugins/placements.js';
@@ -12784,6 +12785,8 @@
 									<Plus class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
 									{$t('forms.newRecordAction')}
 								</Button>
+
+								<FormPluginToolbar {workspaceId} {projectId} form={selectedForm} />
 
 								<button
 									type="button"

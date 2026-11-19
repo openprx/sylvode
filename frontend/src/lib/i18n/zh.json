@@ -4583,7 +4583,13 @@
 			"limitReached": "已达到可保存的显示选项数量上限。",
 			"hiddenSection": "你已隐藏的项",
 			"restore": "恢复",
-			"unavailable": "此项已不可用。"
+			"unavailable": "此项已不可用。",
+			"slots": {
+				"recordDetail": "记录详情",
+				"recordActions": "记录操作",
+				"listToolbar": "列表工具栏",
+				"projectView": "项目应用"
+			}
 		},
 		"creatorV3": {
 			"template": "模板",
