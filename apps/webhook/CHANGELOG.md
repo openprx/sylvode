@@ -1,4 +1,9 @@
+> Frozen history of the standalone 0.3.x line. Current changes are in the root [`CHANGELOG.md`](../../CHANGELOG.md) under "Webhook receiver".
+
 # Sylvode Webhook Changelog
+
+The standalone line ended with 0.3.53, which was never released. Since the receiver joined the
+Sylvode repository its version follows Sylvode.
 
 Sylvode Webhook was called OpenPR Webhook up to 0.3.3, the last release under that name; it and
 earlier releases are described on the

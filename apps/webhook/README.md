@@ -85,6 +85,10 @@ cp apps/webhook/config.example.toml config.toml
 # sylvode-webhook listening on 127.0.0.1:9090
 ```
 
+The receiver runs on Unix only (Linux and macOS): it stops executors as process groups and handles
+SIGTERM. On any other target the crate is empty and the executables print `sylvode-webhook is not
+supported on this platform` and exit 1.
+
 The Rust toolchain is pinned by the workspace `rust-toolchain.toml`, which rustup installs on the
 first build. The crate uses the workspace `[lints]`; CI runs clippy with `-D warnings`, so
 building with a different compiler version can fail there on a lint that version added.
@@ -734,6 +738,14 @@ this one that adds them. It contains the legacy `/app/openpr-webhook` as well, s
 `/app/openpr-webhook` keeps working. It is also published as `ghcr.io/openprx/openpr-webhook` with
 the same digest. See [`Dockerfile`](Dockerfile).
 
+### Versioning
+
+The receiver is a Sylvode workspace member and carries the Sylvode version: `sylvode-webhook
+--version`, image tags and archive names all use the workspace version. The standalone 0.3.x line
+ended with 0.3.53 (never released; the last published standalone release is 0.3.3). Sylvode's
+version is numerically lower than 0.3.x, so a tool that compares versions must treat the first
+Sylvode-versioned release as a new line, not a downgrade.
+
 ### Release archives
 
 Each release ships `sylvode-webhook-<platform>.tar.gz` with a `.sha256`, for `linux-amd64`,
@@ -760,7 +772,7 @@ replacement. stdout and exit codes are the same for the legacy and the canonical
 
 ### Upgrade checks
 
-Upgrading from OpenPR Webhook 0.3.3 is not a drop-in replacement for every configuration. Start-up
+Upgrading from OpenPR Webhook 0.3.3 (the last published standalone release) is not a drop-in replacement for every configuration. Start-up
 now refuses configurations that cannot work or are unsafe, and some behaviour changed. Before
 upgrading, run the new binary once against your configuration; it exits 1 with one of the errors
 below if something must change (`sylvode-webhook config.toml`, then stop it with Ctrl-C).
@@ -832,7 +844,8 @@ These configurations still start, but the service behaves differently:
 Unchanged on purpose: the configuration file format and its default path `config.toml`, the
 `/webhook` and `/health` routes, the outbound `X-Webhook-Signature`, the `openprx` agent type
 (it names the OpenPRX assistant, not this product), the tunnel `agent_id` (always taken from your
-configuration) and the repository URL `https://github.com/openprx/openpr-webhook`.
+configuration). The receiver now lives in the Sylvode repository (`apps/webhook`), and the old
+`openprx/openpr-webhook` repository is no longer its home.
 
 ## Links
 
