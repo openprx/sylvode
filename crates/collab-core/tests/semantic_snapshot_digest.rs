@@ -444,25 +444,37 @@ fn malformed_corpus(corpus: &mut BTreeMap<String, String>) {
     aliases.insert("tombstone", "__deleted__").unwrap();
     cases.push(("flat duplicate alias", raw_snapshot(&doc)));
 
-    // Legacy tree nodes whose logical ids equal live editor block CIDs, and a tree node that
-    // claims to be editor prose through its own properties.
-    let structured_for_collision = structured_page(305, 6, false);
-    for (label, source) in [("flat", &flat), ("structured", &structured_for_collision)] {
+    // Legacy tree nodes whose logical ids equal editor block CIDs -- live, unplaced (deleted
+    // placement), atoms, and non-model-1 kinds -- with and without a `content_source` property,
+    // and a tree node that claims to be editor prose through its own properties.
+    let structured_for_collision = structured_page(305, 10, false);
+    let model5_for_collision = structured_page(306, 10, true);
+    for (label, source) in [
+        ("flat", &flat),
+        ("structured", &structured_for_collision),
+        ("model5", &model5_for_collision),
+    ] {
         let doc = raw(source);
+        if label == "flat" {
+            block_at(&doc, 4).insert("nodeName", "todoItem").unwrap();
+        }
         let tree = doc.get_tree("tree");
         tree.enable_fractional_index(0);
-        for (index, prop) in [(1, None), (2, Some("editor_doc")), (3, Some("tree"))] {
+        for index in 0..editor_list(&doc).len() {
             let cid = block_at(&doc, index).id().to_string();
             let node = tree.create(None).unwrap();
             let meta = tree.get_meta(node).unwrap();
             meta.insert("logical_id", cid.as_str()).unwrap();
-            meta.insert("kind", "block").unwrap();
+            meta.insert("kind", if index % 4 == 3 { "navigator_node" } else { "block" })
+                .unwrap();
             meta.insert_container("text", LoroText::new())
                 .unwrap()
                 .insert(0, "tree shadow")
                 .unwrap();
-            if let Some(source) = prop {
-                meta.insert("prop:content_source", source).unwrap();
+            match index % 3 {
+                1 => meta.insert("prop:content_source", "editor_doc").unwrap(),
+                2 => meta.insert("prop:content_source", "tree").unwrap(),
+                _ => {}
             }
         }
         let node = tree.create(None).unwrap();
