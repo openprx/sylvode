@@ -358,7 +358,13 @@ name.
   `reason` and `ai_task_callback` fields. Business events of attempts the worker ends now carry
   `source.type = "worker"` and `event_payload.reason`; their `metadata` no longer carries
   `worker_event`.
-- **Run the worker alongside the API.** Personal Flow and rich Page writes are refused with `scope_runtime_not_ready` until the API and the worker (worker and maintenance) have all registered reader-5 leases.
+- **Run the worker alongside the API.** With the default `minimum_reader_version` of 5, every
+  Page creation and every Page edit (in workspaces and personal spaces, including plain Pages
+  created through the REST v1 API, MCP or the CLI), every personal-space write, block transfers
+  and portable packages are refused with `scope_runtime_not_ready` until the API and the worker
+  (which registers both the `worker` and the `maintenance` lease) hold live reader-5 leases. An
+  installation that runs the API without the worker can read Flow content but cannot write
+  Pages; a worker that is down for more than 30 seconds stops Page writes until it is back.
 
 ## [0.2.539] - 2026-11-18
 

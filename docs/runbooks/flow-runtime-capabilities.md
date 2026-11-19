@@ -26,12 +26,29 @@ are reachable only by their owner and explicit grantees).
 
 ## Reader leases
 
-The API registers an `api` reader lease and the worker registers `worker` and `maintenance` leases
-in `flow_runtime_readers`, renewed every 10 seconds for 30 seconds. Personal writes and the other
-reader-gated features fail closed with `scope_runtime_not_ready` until all three components hold a
-live lease at or above `minimum_reader_version`. Start the worker together with the API; while it
-is down, personal Flow and rich Page writes are refused (nothing is written), and they resume on
-their own once its leases are back.
+The API registers an `api` lease, and the worker registers both a `worker` and a `maintenance`
+lease, in `flow_runtime_readers` when it starts; each process renews its leases every 10 seconds
+for 30 seconds. While `minimum_reader_version` is 4 or above (the default is 5), the following
+are refused with `403 feature_disabled`, `details.reason = "scope_runtime_not_ready"`, and
+nothing is written, unless the API, worker and maintenance components all hold a live lease at
+or above `minimum_reader_version` and no live lease is below it:
+
+- every Page creation and every Page edit, in workspaces and in personal spaces, including
+  plain Pages created through the REST v1 API, MCP or the CLI;
+- every write in a personal space;
+- block transfers and portable package export and import, which the capabilities response
+  then also reports as unsupported.
+
+Reading, workspace comments and objects other than Pages are not affected. The worker is
+therefore required for editing Pages: an installation that runs the API without the worker can
+read Flow content but cannot write Pages. A stopped process keeps its lease for up to 30
+seconds, so an ordinary restart does not interrupt writes; if the worker stays down longer,
+Page writes are refused until it is back. To see the live leases:
+
+```sql
+SELECT component, reader_version, lease_expires_at FROM flow_runtime_readers
+ WHERE lease_expires_at > now() ORDER BY component;
+```
 
 ## Turning a capability off
 

@@ -3148,6 +3148,8 @@ mod database_tests {
 
         migrate(&db).await;
 
+        // A scratch database models a running api and worker.
+        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 
@@ -3494,6 +3496,73 @@ mod database_tests {
             Some(&serde_json::json!("tree_depth")),
             "{what}: limit_kind must be the frozen `tree_depth`"
         );
+    }
+
+    async fn page_count(db: &DatabaseConnection, workspace_id: Uuid) -> i64 {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS pages FROM flow_objects WHERE workspace_id=$1 AND object_type='page'",
+            vec![workspace_id.into()],
+        ))
+        .await
+        .expect("page count query runs")
+        .expect("page count row exists")
+        .try_get::<i64>("", "pages")
+        .expect("page count is a bigint")
+    }
+
+    /// A plain workspace Page (editor model 1) needs the api, worker and maintenance leases at the
+    /// default floor; the hooks on the Page write path gate every Page write.
+    #[tokio::test]
+    async fn a_page_write_waits_for_every_reader_lease_at_the_default_floor() {
+        use crate::flow::scope_runtime::fixture::{clear_readers, register_reader};
+        let scratch = scratch_or_skip!("page_write_reader_leases");
+        let db = &scratch.db;
+        let state = state_for(db.clone());
+        let fx = seed_workspace(db).await;
+        let before = page_count(db, fx.workspace_id).await;
+
+        // Only the api process has registered.
+        clear_readers(db).await;
+        register_reader(db, "api", true).await;
+        let err = create_page(&state, &fx, None)
+            .await
+            .expect_err("a Page write needs every component");
+        assert!(
+            format!("{err:?}").contains("scope_runtime_not_ready"),
+            "unexpected refusal: {err:?}"
+        );
+        assert_eq!(
+            page_count(db, fx.workspace_id).await,
+            before,
+            "a refused write leaves no Page behind"
+        );
+
+        // An expired worker lease counts as absent.
+        register_reader(db, "worker", false).await;
+        register_reader(db, "maintenance", true).await;
+        let err = create_page(&state, &fx, None)
+            .await
+            .expect_err("an expired worker lease does not count");
+        assert!(
+            format!("{err:?}").contains("scope_runtime_not_ready"),
+            "unexpected refusal: {err:?}"
+        );
+        assert_eq!(
+            page_count(db, fx.workspace_id).await,
+            before,
+            "a refused write leaves no Page behind"
+        );
+
+        // A live worker lease completes the set.
+        register_reader(db, "worker", true).await;
+        create_page(&state, &fx, None)
+            .await
+            .expect("all three leases live accept the Page write");
+        assert_eq!(page_count(db, fx.workspace_id).await, before + 1);
+
+        scratch.drop_self().await;
     }
 
     /// `archive_tier_by_object_scope` plus the v0.4 baseline fixture named by the gate. The member
@@ -5091,6 +5160,8 @@ mod idempotency_race_database_tests {
 
         migrate(&db).await;
 
+        // A scratch database models a running api and worker.
+        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 

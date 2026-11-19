@@ -552,6 +552,14 @@ mod tests {
     async fn registry_reconcile_restore_moved_alias_and_rollback() {
         let scratch = scratch_or_skip!(&format!("block_registry_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
+        // This test drives the SQL below the process barrier directly. It runs at the pre-0106 floor
+        // with no reader leases, so nothing in it depends on fabricated leases.
+        exec(
+            db,
+            "UPDATE flow_runtime_capabilities SET minimum_reader_version=2 WHERE singleton",
+            vec![],
+        )
+        .await;
         let actor = Uuid::new_v4();
         let scope = Uuid::new_v4();
         let page = Uuid::new_v4();

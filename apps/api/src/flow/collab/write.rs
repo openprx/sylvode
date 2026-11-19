@@ -1967,6 +1967,8 @@ mod database_tests {
 
         migrate(&db).await;
 
+        // A scratch database models a running api and worker.
+        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 
@@ -2328,6 +2330,95 @@ mod database_tests {
         .expect("notice query runs")
         .expect("committed update has one durable fanout pointer");
         assert_eq!(notice.document_seq, Some(accepted.head_seq));
+
+        scratch.drop_self().await;
+    }
+
+    /// A content write to an existing Page needs the api, worker and maintenance leases at the
+    /// default floor: with only the api lease the write is refused and leaves the head where it was,
+    /// and once the other two components are live the same update is accepted.
+    #[tokio::test]
+    async fn a_content_write_is_refused_until_every_reader_lease_is_live() {
+        use crate::flow::scope_runtime::fixture::{clear_readers, register_reader};
+        let scratch = scratch_or_skip!("accept-reader-leases");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state).await;
+        // The scratch database models a running api and worker, so the Page is created normally.
+        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let snapshot = document_snapshot(&state, document_id).await;
+        let (update_bytes, _engine) = a_valid_update_against(&snapshot);
+        let checked_epoch = authz::read_epoch(&state.db, workspace_id).await.expect("epoch reads");
+        let head_before = head_seq_of(&state, document_id).await;
+
+        let cache = WarmCache::new();
+        let coordinator = DocumentCoordinator::new();
+        let registry = SessionRegistry::new();
+        let snapshot_advancer = SnapshotAdvancer::new();
+        let write = |update_id: Uuid| {
+            let (state, cache, coordinator, registry, snapshot_advancer) =
+                (&state, &cache, &coordinator, &registry, &snapshot_advancer);
+            let bytes = update_bytes.clone();
+            async move {
+                accept_update(
+                    &state.db,
+                    cache,
+                    coordinator,
+                    registry,
+                    snapshot_advancer,
+                    10,
+                    None,
+                    UpdateRequest {
+                        origin: crate::flow::event_origin::CommandOrigin::first_request_from(
+                            crate::flow::event_origin::EventSurface::Rest,
+                        ),
+                        document_id,
+                        update_id,
+                        bytes,
+                        idempotency_key: None,
+                        event_idempotency_key: None,
+                        origin_client_id: Some("test-client".to_string()),
+                        message: None,
+                        actor_id: owner_id,
+                        actor_is_bot: false,
+                        workspace_id,
+                        checked_epoch,
+                        expected_frontier: None,
+                    },
+                )
+                .await
+            }
+        };
+
+        // Only the api process is running.
+        clear_readers(&state.db).await;
+        register_reader(&state.db, "api", true).await;
+        let refused_id = Uuid::new_v4();
+        let refused = write(refused_id).await;
+        match refused {
+            Err(err) => assert!(
+                format!("{err:?}").contains("scope_runtime_not_ready"),
+                "unexpected refusal: {err:?}"
+            ),
+            Ok(AcceptOutcome::Rejected(rejected)) => {
+                panic!("expected the reader-lease refusal as an error, got a rejection: {rejected:?}")
+            }
+            Ok(AcceptOutcome::Accepted(_)) => panic!("a content write must be refused with only the api lease"),
+        }
+        assert_eq!(head_seq_of(&state, document_id).await, head_before);
+        assert_eq!(count_collab_updates(&state, document_id, refused_id).await, 0);
+
+        // The worker and maintenance components register: the same update is accepted.
+        register_reader(&state.db, "worker", true).await;
+        register_reader(&state.db, "maintenance", true).await;
+        let accepted_id = Uuid::new_v4();
+        let outcome = write(accepted_id)
+            .await
+            .expect("accept_update does not hit a hard database error");
+        let AcceptOutcome::Accepted(accepted) = outcome else {
+            panic!("expected Accepted with all three leases live");
+        };
+        assert_eq!(accepted.head_seq, head_before + 1);
+        assert_eq!(count_collab_updates(&state, document_id, accepted_id).await, 1);
 
         scratch.drop_self().await;
     }
