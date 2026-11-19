@@ -20,7 +20,8 @@ use uuid::Uuid;
 
 use super::secret::Secret;
 use super::{
-    AuditConfig, AuthConfig, ConfigError, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
+    AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS, AiTasksConfig, AuditConfig, AuthConfig, ConfigError,
+    DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
     DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS,
     DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig,
     LogFormat, LogOutput, LoggingConfig, MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
@@ -63,6 +64,8 @@ pub(super) struct RawConfig {
     storage: RawStorage,
     #[serde(default)]
     audit: RawAudit,
+    #[serde(default)]
+    ai_tasks: RawAiTasks,
     #[serde(default)]
     migrations: RawMigrations,
     #[serde(default)]
@@ -131,6 +134,12 @@ struct RawStorage {
 #[serde(deny_unknown_fields)]
 struct RawAudit {
     operation_log_retention_days: Option<u32>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawAiTasks {
+    processing_timeout_secs: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -217,6 +226,7 @@ impl RawConfig {
         let logging = self.logging.validate(&mut issues);
         let storage = self.storage.validate(&mut issues);
         let audit = self.audit.validate(&mut issues);
+        let ai_tasks = self.ai_tasks.validate(&mut issues);
         let migrations = self.migrations.validate();
         let outbound = self.outbound.validate(&mut issues);
         let mcp = self.mcp.validate(&mut issues);
@@ -241,6 +251,7 @@ impl RawConfig {
             logging,
             storage,
             audit,
+            ai_tasks,
             migrations,
             outbound,
             mcp,
@@ -490,6 +501,24 @@ impl RawAudit {
                 });
         AuditConfig {
             operation_log_retention_days,
+        }
+    }
+}
+
+impl RawAiTasks {
+    fn validate(self, issues: &mut Issues) -> AiTasksConfig {
+        let processing_timeout_secs =
+            self.processing_timeout_secs
+                .map_or(DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS, |secs| {
+                    if AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS.contains(&secs) {
+                        secs
+                    } else {
+                        issues.push("ai_tasks.processing_timeout_secs must be between 60 and 604800");
+                        DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS
+                    }
+                });
+        AiTasksConfig {
+            processing_timeout_secs,
         }
     }
 }

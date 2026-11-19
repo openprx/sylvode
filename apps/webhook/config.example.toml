@@ -51,15 +51,20 @@ require_inbound_sig = false
 # it delivers it (a delivery with `task_id` and `ai_participant_id`), and only the API's
 # POST /api/v1/ai/callbacks/task/{task_id}/complete or .../fail ends that state. When enabled,
 # the agent that ran the task calls `complete` after a successful run and `fail` after any other
-# end; a task that no agent matches is failed at once (this needs the global token).
-# Off by default; safe mode turns it off too.
+# end; a task that no agent matches is failed too, with the token of its bot. (The worker also
+# fails a task this receiver answers `no_agent` or `refused`, and takes back a task nobody ends
+# within its [ai_tasks] processing_timeout_secs.) Off by default; safe mode turns it off too.
 [ai_task_callback]
 enabled = false
 # Base URL of the Sylvode API (no path, query or credentials). Required when enabled.
 api_url = "http://127.0.0.1:8080"
 # Bearer token of the bot that is the tasks' AI participant: the API lets only that bot (or a
-# system administrator) end a task. Required when enabled, here or per agent below.
+# system administrator) end a task, so a token works ONLY for the tasks of the bot that owns it.
+# Required when enabled, here, per bot or per agent below.
 token = "replace-with-the-bot-token-of-the-ai-participant"
+# The id of the bot that owns `token` (its user id in Sylvode). With it, `token` is used only for
+# that bot's tasks; without it, for every task no other token covers (and refused for other bots).
+# bot_id = "00000000-0000-0000-0000-000000000000"
 # The transport the token is registered with in Sylvode: rest (no header), mcp_http, mcp_sse,
 # mcp_stdio, cli or cli_tools_call (sent as X-Sylvode-MCP-Surface and X-OpenPR-MCP-Surface).
 surface = "rest"
@@ -71,6 +76,14 @@ max_attempts = 3
 retry_delay_ms = 1000
 # At most this many trailing characters of the agent's output go into the callback.
 max_output_chars = 4000
+
+# One entry per further bot this receiver serves, keyed by the bot's id: used for that bot's tasks
+# that no agent token covers, including tasks no agent matches. A task whose bot has no token at
+# all is not reported (and logged); the worker then ends it.
+# [[ai_task_callback.bots]]
+# bot_id = "00000000-0000-0000-0000-000000000000"
+# token = "replace-with-the-bot-token-of-that-bot"
+# surface = "rest"
 
 # An openclaw agent runs a local command for every matching bot task and is not gated by
 # [features] or safe mode, so it is left commented out. Uncomment it once the secret above is set.

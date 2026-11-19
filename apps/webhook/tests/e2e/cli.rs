@@ -317,12 +317,18 @@ async fn safe_mode_variables_turn_the_cli_path_off() {
         assert_eq!(status, 200, "{answer}");
         let result = answer["result"].as_str().unwrap_or_default().to_owned();
         if disabled {
-            assert_eq!(result, "cli disabled by feature flag or safe mode", "{env:?}");
+            // The agent is not started, and the answer says so, so the worker fails a worker task.
+            assert_eq!(answer["status"], "refused", "{env:?}: {answer}");
+            assert_eq!(
+                answer["reason"], "cli disabled by feature flag or safe mode",
+                "{env:?}: {answer}"
+            );
             assert!(
                 wait_lines(&marker, 1, Duration::from_millis(500)).is_empty(),
                 "{env:?}: executor ran"
             );
         } else {
+            assert_eq!(answer["status"], "dispatched", "{answer}");
             assert!(result.starts_with("cli agent spawned"), "{result}");
             assert_eq!(wait_lines(&marker, 1, Duration::from_secs(10)), ["ran"]);
         }

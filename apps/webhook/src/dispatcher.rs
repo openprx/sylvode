@@ -49,6 +49,9 @@ pub enum Outcome {
     Failed,
     /// The work continues in the background (a `cli` run), which reports its own outcome.
     Deferred,
+    /// The agent was not started and will not be on a repeat either: safe mode or a feature flag
+    /// turns it off, or its configuration is incomplete. The `/webhook` answer says `refused`.
+    Refused,
 }
 
 /// How a dispatch went.
@@ -88,6 +91,10 @@ impl Dispatched {
     fn failed_with(summary: impl Into<String>, detail: impl Into<String>) -> Self {
         Self::with(Outcome::Failed, summary, detail)
     }
+
+    fn refused(text: impl Into<String>) -> Self {
+        Self::plain(Outcome::Refused, text)
+    }
 }
 
 pub async fn dispatch(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> Dispatched {
@@ -101,7 +108,7 @@ pub async fn dispatch(config: &Config, background: &Background, agent: &AgentCon
         "webhook" => dispatch_webhook(config, agent, payload).await,
         "custom" => dispatch_custom(config, background, agent, payload).await,
         "cli" => dispatch_cli(config, background, agent, payload, &mut completion),
-        other => Dispatched::failed(format!("unknown agent type: {other}")),
+        other => Dispatched::refused(format!("unknown agent type: {other}")),
     };
     // A deferred run took the completion with it; any other outcome is final now.
     if let Some(completion) = completion {
@@ -114,6 +121,8 @@ pub async fn dispatch(config: &Config, background: &Background, agent: &AgentCon
                 exit_code: None,
                 duration_ms: Some(started.elapsed().as_millis()),
                 output: None,
+                // An agent that was never started would not be on a retry either.
+                retryable: dispatched.outcome != Outcome::Refused,
             },
             background,
         );
@@ -139,11 +148,11 @@ fn dispatch_cli(
     completion: &mut Option<Completion>,
 ) -> Dispatched {
     if !config.cli_enabled() {
-        return Dispatched::failed("cli disabled by feature flag or safe mode");
+        return Dispatched::refused("cli disabled by feature flag or safe mode");
     }
 
     let Some(cfg) = &agent.cli else {
-        return Dispatched::failed("missing cli config");
+        return Dispatched::refused("missing cli config");
     };
 
     let issue_id = extract_issue_id(payload).unwrap_or_else(|| "unknown".to_string());
@@ -253,6 +262,7 @@ fn dispatch_cli(
                 } else {
                     run.stderr_tail.clone()
                 }),
+                retryable: true,
             }
         });
 
@@ -911,7 +921,7 @@ async fn dispatch_openclaw(
     payload: &Value,
 ) -> Dispatched {
     let Some(cfg) = &agent.openclaw else {
-        return Dispatched::failed("missing openclaw config");
+        return Dispatched::refused("missing openclaw config");
     };
 
     let message = format_message(agent, payload);
@@ -944,7 +954,7 @@ async fn dispatch_openprx(
     payload: &Value,
 ) -> Dispatched {
     let Some(cfg) = &agent.openprx else {
-        return Dispatched::failed("missing openprx config");
+        return Dispatched::refused("missing openprx config");
     };
 
     let message = format_message(agent, payload);
@@ -1005,7 +1015,7 @@ async fn dispatch_openprx(
         };
     }
 
-    Dispatched::failed("openprx config needs either signal_api or command")
+    Dispatched::refused("openprx config needs either signal_api or command")
 }
 
 fn outbound_signature_header_value(payload: &Value, secret: Option<&str>) -> Option<String> {
@@ -1019,7 +1029,7 @@ fn outbound_signature_header_value(payload: &Value, secret: Option<&str>) -> Opt
 
 async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value) -> Dispatched {
     let Some(cfg) = &agent.webhook else {
-        return Dispatched::failed("missing webhook config");
+        return Dispatched::refused("missing webhook config");
     };
 
     let client = reqwest::Client::builder()
@@ -1052,7 +1062,7 @@ async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value)
 
 async fn dispatch_custom(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> Dispatched {
     let Some(cfg) = &agent.custom else {
-        return Dispatched::failed("missing custom config");
+        return Dispatched::refused("missing custom config");
     };
 
     let message = format_message_tracked(agent, payload);
