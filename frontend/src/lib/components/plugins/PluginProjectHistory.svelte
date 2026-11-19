@@ -7,6 +7,7 @@
 		type InstalledPluginPackage,
 		type PluginBindingEvent,
 		type PluginCapability,
+		type PluginGrant,
 		type PluginInvocationEvent,
 		type PluginPlacement
 	} from '#lib/api/plugin-packages.js';
@@ -63,11 +64,16 @@
 		}).format(new Date(value));
 	}
 
-	function grantLabel(grant: PluginCapability) {
-		return $t(`plugins.capabilityShort.${grant}`);
+	function grantLabel(grant: PluginGrant) {
+		if (grant === 'amount.preview' || grant === 'amount.apply')
+			return $t(`plugins.capabilityShort.${grant}`);
+		if (grant === 'ui.display') return $t('plugins.layoutV3.grant.uiDisplay');
+		if (grant.startsWith('read:'))
+			return $t('plugins.layoutV3.grant.readId', { values: { id: grant.slice(5) } });
+		return grant;
 	}
 
-	function describeGrants(grants: PluginCapability[]) {
+	function describeGrants(grants: PluginGrant[]) {
 		return grants.length ? grants.map(grantLabel).join(', ') : $t('plugins.historyNoGrants');
 	}
 
@@ -76,6 +82,12 @@
 		return enabled?.length
 			? enabled.map((placement) => `${placement.id} (${placement.position})`).join(', ')
 			: $t('plugins.layoutNone');
+	}
+
+	function reasonLabel(reason: string) {
+		return reason === 'configuration_reset'
+			? $t('plugins.layoutV3.reason.configuration_reset')
+			: reason;
 	}
 
 	function packageVersion(version: string | null) {
@@ -121,6 +133,13 @@
 								}
 							})}
 						</p>
+						{#if row.reason}
+							<p>
+								{$t('plugins.layoutV3.historyReason', {
+									values: { reason: reasonLabel(row.reason) }
+								})}
+							</p>
+						{/if}
 						{#if row.placements || row.previous_placements}
 							<p>
 								{$t('plugins.historyLayoutChange', {

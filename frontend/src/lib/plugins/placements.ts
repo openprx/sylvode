@@ -1,4 +1,5 @@
 import type { Writable } from 'svelte/store';
+import { isV3 } from '../api/plugin-packages';
 import type {
 	InstalledPluginPackage,
 	PluginContribution,
@@ -61,6 +62,7 @@ export function sameEntry(first: RecordPluginEntry | null, second: RecordPluginE
 }
 
 export function placementDraft(item: InstalledPluginPackage): PluginPlacement[] | undefined {
+	if (isV3(item.manifest)) return undefined;
 	return item.manifest.ui.contributions?.map((contribution) => {
 		const existing = item.placements?.find((placement) => placement.id === contribution.id);
 		return {
