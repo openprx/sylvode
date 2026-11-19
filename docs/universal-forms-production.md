@@ -9,7 +9,7 @@ scenario.
 
 Minimum production services:
 
-- PostgreSQL 15 or newer.
+- PostgreSQL 18 (the version CI and the compose file run; older majors are not supported).
 - Sylvode API.
 - Sylvode worker.
 - Sylvode frontend.

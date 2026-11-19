@@ -47,15 +47,9 @@ if [[ $DOCUMENT_COUNT -le 0 ]]; then
   exit 1
 fi
 
-# A newer pg_dump can emit header-only SET statements unknown to the older target server. Remove
-# only the PostgreSQL 17 `transaction_timeout` setting, and only before the first COPY begins;
-# no data line or other restore error is filtered. The restored SQL remains the checksummed backup.
-pg_dump --dbname="$OPENPR_BACKUP_SOURCE_DATABASE_URL" --format=plain --no-owner --no-acl |
-  awk '
-    /^COPY / { in_data = 1 }
-    !in_data && $0 == "SET transaction_timeout = 0;" { next }
-    { print }
-  ' >"$DUMP_PATH"
+# Plain-SQL dump taken with the PostgreSQL 18 client and restored into PostgreSQL 18, so the
+# header SET statements need no filtering. The restored SQL remains the checksummed backup.
+pg_dump --dbname="$OPENPR_BACKUP_SOURCE_DATABASE_URL" --format=plain --no-owner --no-acl >"$DUMP_PATH"
 DUMP_SHA256=$(sha256sum "$DUMP_PATH" | awk '{print $1}')
 
 cleanup
