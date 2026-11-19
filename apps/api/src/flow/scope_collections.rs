@@ -457,7 +457,7 @@ async fn execute_inner(
             let expected = expected
                 .and_then(|value| BASE64.decode(value).ok())
                 .ok_or_else(|| ApiError::invalid_update("expected_frontier is required"))?;
-            if frontier != expected {
+            if !crate::flow::frontier::client_matches(&expected, &frontier)? {
                 return Err(ApiError::stale_frontier("Record changed before archive", None, None));
             }
         }

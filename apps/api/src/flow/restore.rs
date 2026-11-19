@@ -178,7 +178,7 @@ pub async fn restore_page_version(
     engine
         .revert_to_frontier(&Frontier::from_bytes(frontier_bytes))
         .map_err(|err| map_write_or_collab(&err))?;
-    if engine.frontier() == base {
+    if crate::flow::frontier::same(engine.frontier().as_bytes(), base.as_bytes())? {
         let view = load_view(&state.db, request.object_id).await?;
         return Ok(outcome_of(view, request.target_seq, false));
     }

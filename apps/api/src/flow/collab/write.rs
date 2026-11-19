@@ -582,8 +582,10 @@ pub(crate) async fn hydrate_and_apply(
     // against the *observed* head on every hydrate/rebase attempt, never a value read once
     // before the coordinator permit or before a rebase — so a caller cannot straddle a concurrent
     // commit the way a single pre-check would.
+    // Compared as version vectors: the observed head may be stored in a legacy byte order while
+    // the caller's expectation came from a canonical rebuild of the same version.
     if let Some(expected) = expected_frontier
-        && expected != observed.head_frontier.as_slice()
+        && !crate::flow::frontier::client_matches(expected, &observed.head_frontier)?
     {
         return Ok(HydrateOutcome::Rejected(AcceptOutcome::Rejected(Rejected {
             update_id: Some(update_id),

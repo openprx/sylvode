@@ -17,7 +17,7 @@
 //! does.
 
 use std::collections::BTreeMap;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use loro::{
     Container, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer, VersionVector,
@@ -327,24 +327,40 @@ impl LoroCollabEngine {
 
     /// Validates an engine-derived version against a persisted Loro wire vector.
     ///
-    /// Loro encodes its peer map in iteration order. Independent replay and snapshot decoding
-    /// may reorder entries without changing the causal version. Persisted receipt and CAS tokens
-    /// retain their original bytes, so this comparison is only for reconstructed engine state.
+    /// Loro 1.18 encoded its peer map in hash-map iteration order, so frontiers persisted before
+    /// [`CollabEngine::frontier`] became canonical may list the same entries in any order. The
+    /// comparison is therefore semantic. A wire value that does not decode never matches.
     pub fn matches_frontier(&self, wire: &[u8]) -> bool {
-        let Ok((entries, remaining)) = postcard::take_from_bytes::<Vec<(u64, i32)>>(wire) else {
-            return false;
-        };
-        let version = self.doc.state_vv();
-        if !remaining.is_empty()
-            || entries.len() != version.len()
-            || !postcard::to_allocvec(&entries).is_ok_and(|encoded| encoded == wire)
-        {
-            return false;
+        decode_frontier_entries(wire).is_ok_and(|entries| entries == state_entries(&self.doc.state_vv()))
+    }
+
+    /// Whether two persisted or client-supplied frontiers name the same causal version.
+    ///
+    /// Frontiers are compared as decoded version vectors, never as bytes: the same version may be
+    /// stored in canonical (peer-sorted) order or in the iteration order older releases emitted.
+    /// The empty byte string is the empty version, matching [`CollabEngine::export_from`].
+    ///
+    /// # Errors
+    /// `DecodeFailed` (`input: "frontier"`) when either side is not a well-formed, minimally
+    /// encoded version vector without duplicate peers or trailing bytes. An undecodable frontier
+    /// is never reported as equal to anything.
+    pub fn frontiers_equivalent(left: &[u8], right: &[u8]) -> Result<bool, CollabError> {
+        let left_entries = decode_frontier_entries(left)?;
+        let right_entries = decode_frontier_entries(right)?;
+        Ok(left_entries == right_entries)
+    }
+
+    /// Re-encodes a persisted or client-supplied frontier in canonical (peer-sorted) form.
+    ///
+    /// # Errors
+    /// `DecodeFailed` under the same conditions as [`Self::frontiers_equivalent`].
+    pub fn canonical_frontier(wire: &[u8]) -> Result<Frontier, CollabError> {
+        if wire.is_empty() {
+            return Ok(Frontier::from_bytes(Vec::new()));
         }
-        let mut seen = HashSet::with_capacity(entries.len());
-        entries
-            .into_iter()
-            .all(|(peer, counter)| seen.insert(peer) && version.get(&peer) == Some(&counter))
+        Ok(Frontier::from_bytes(encode_frontier_entries(&decode_frontier_entries(
+            wire,
+        )?)))
     }
 
     /// Creates an independent read-only historical view at an opaque version-vector frontier.
@@ -1075,8 +1091,61 @@ impl CollabEngine for LoroCollabEngine {
     }
 
     fn frontier(&self) -> Frontier {
-        Frontier::from_bytes(self.doc.state_vv().encode())
+        Frontier::from_bytes(encode_frontier_entries(&state_entries(&self.doc.state_vv())))
     }
+}
+
+/// A version vector as a peer-ordered map, independent of Loro's hash-map layout.
+fn state_entries(version: &VersionVector) -> BTreeMap<u64, i32> {
+    version.iter().map(|(peer, counter)| (*peer, *counter)).collect()
+}
+
+/// Decodes Loro's postcard version-vector wire format (`varint len`, then `len` pairs of
+/// `varint peer`, `zigzag varint counter`) in any entry order.
+fn decode_frontier_entries(wire: &[u8]) -> Result<BTreeMap<u64, i32>, CollabError> {
+    let malformed = |reason: &str| CollabError::DecodeFailed {
+        input: "frontier",
+        reason: reason.to_owned(),
+    };
+    if wire.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let (entries, remaining) =
+        postcard::take_from_bytes::<Vec<(u64, i32)>>(wire).map_err(|e| malformed(&e.to_string()))?;
+    if !remaining.is_empty() {
+        return Err(malformed("trailing bytes after version vector"));
+    }
+    if !postcard::to_allocvec(&entries).is_ok_and(|encoded| encoded == wire) {
+        return Err(malformed("non-minimal version vector encoding"));
+    }
+    let count = entries.len();
+    let decoded: BTreeMap<u64, i32> = entries.into_iter().collect();
+    if decoded.len() != count {
+        return Err(malformed("duplicate peer in version vector"));
+    }
+    Ok(decoded)
+}
+
+/// Encodes a version vector in canonical, peer-sorted order. The bytes are wire-compatible with
+/// `VersionVector::encode`/`decode` (a postcard map and a postcard sequence of pairs share one
+/// layout), so canonical frontiers remain readable by Loro and by older releases.
+fn encode_frontier_entries(entries: &BTreeMap<u64, i32>) -> Vec<u8> {
+    fn push_varint(out: &mut Vec<u8>, mut value: u64) {
+        // `to_le_bytes()[0]` is the low byte: the low seven bits plus the continuation flag.
+        while value >= 0x80 {
+            out.push(value.to_le_bytes()[0] | 0x80);
+            value >>= 7;
+        }
+        out.push(value.to_le_bytes()[0]);
+    }
+    let mut out = Vec::with_capacity(1 + entries.len() * 16);
+    push_varint(&mut out, entries.len() as u64);
+    for (peer, counter) in entries {
+        push_varint(&mut out, *peer);
+        // postcard zigzag-encodes signed integers.
+        push_varint(&mut out, u64::from(((counter << 1) ^ (counter >> 31)).cast_unsigned()));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1433,6 +1502,78 @@ mod tests {
             trailing.push(0);
             assert!(!state.matches_frontier(&trailing));
             assert!(!state.matches_frontier(&[2]));
+        }
+    }
+
+    #[test]
+    fn frontier_is_canonical_peer_sorted_and_loro_wire_compatible() {
+        let engine = LoroCollabEngine::new_empty(1);
+        for peer in [u64::MAX - 3, 47, 0x8000_0000_0000_0000, 31, 2] {
+            engine.doc.set_peer_id(peer).unwrap();
+            for i in 0..3 {
+                engine.doc.get_map("proof").insert(&format!("{peer}-{i}"), 1).unwrap();
+                engine.doc.commit();
+            }
+        }
+        let frontier = engine.frontier();
+        let version = engine.doc.state_vv();
+        let mut sorted: Vec<(u64, i32)> = version.iter().map(|(p, c)| (*p, *c)).collect();
+        sorted.sort_unstable();
+        // Byte-identical to postcard's encoding of the sorted entries ...
+        assert_eq!(frontier.as_bytes(), postcard::to_allocvec(&sorted).unwrap().as_slice());
+        // ... and still decodable by Loro, naming the same version.
+        assert_eq!(VersionVector::decode(frontier.as_bytes()).unwrap(), version);
+        // Loro's own iteration-order encoding is equivalent but need not be byte-identical.
+        assert!(LoroCollabEngine::frontiers_equivalent(frontier.as_bytes(), &version.encode()).unwrap());
+        assert_eq!(
+            LoroCollabEngine::canonical_frontier(&version.encode()).unwrap(),
+            frontier
+        );
+        assert!(engine.matches_frontier(frontier.as_bytes()));
+    }
+
+    #[test]
+    fn frontiers_equivalent_compares_versions_and_rejects_undecodable_input() {
+        let first = (31_u64, 4_i32);
+        let second = (47_u64, 9_i32);
+        let canonical = postcard::to_allocvec(&[first, second].as_slice()).unwrap();
+        let legacy_order = postcard::to_allocvec(&[second, first].as_slice()).unwrap();
+        let advanced = postcard::to_allocvec(&[first, (47_u64, 10_i32)].as_slice()).unwrap();
+        let fewer = postcard::to_allocvec(&[first].as_slice()).unwrap();
+
+        assert!(LoroCollabEngine::frontiers_equivalent(&canonical, &legacy_order).unwrap());
+        assert!(LoroCollabEngine::frontiers_equivalent(&legacy_order, &canonical).unwrap());
+        assert!(!LoroCollabEngine::frontiers_equivalent(&canonical, &advanced).unwrap());
+        assert!(!LoroCollabEngine::frontiers_equivalent(&legacy_order, &fewer).unwrap());
+        // The empty byte string is the empty version (`compaction_boundary_frontier` default).
+        assert!(LoroCollabEngine::frontiers_equivalent(&[], &[0]).unwrap());
+        assert!(!LoroCollabEngine::frontiers_equivalent(&[], &canonical).unwrap());
+
+        let mut trailing = legacy_order;
+        trailing.push(0);
+        let duplicate = postcard::to_allocvec(&[first, first].as_slice()).unwrap();
+        // 0x80 0x00 is a non-minimal varint for zero entries.
+        for malformed in [
+            trailing.as_slice(),
+            duplicate.as_slice(),
+            &[2],
+            &[0x80, 0x00],
+            b"fenced",
+        ] {
+            for (left, right) in [
+                (malformed, canonical.as_slice()),
+                (canonical.as_slice(), malformed),
+                (malformed, malformed),
+            ] {
+                assert!(
+                    matches!(
+                        LoroCollabEngine::frontiers_equivalent(left, right),
+                        Err(CollabError::DecodeFailed { input: "frontier", .. })
+                    ),
+                    "{left:?} vs {right:?}"
+                );
+            }
+            assert!(LoroCollabEngine::canonical_frontier(malformed).is_err());
         }
     }
 
