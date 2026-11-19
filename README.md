@@ -273,8 +273,10 @@ Only `--transport http` serves all three surfaces on one port.
 
 MCP authenticates to the API with **bot tokens** (prefix `opr_`), managed under
 **Workspace → Members → API Tokens**. A token has a display name shown in
-activity feeds, is scoped to one workspace, creates a `bot_mcp` user entity for
-audit-trail integrity, and carries `read`, `write` or `admin` permissions that the
+activity feeds, is scoped to one workspace, creates a bot user for audit-trail
+integrity (`entity_type = bot`, `agent_type = mcp`; the same kind of identity an
+administrator creates, so it can be assigned work, named as a webhook's bot user
+and registered as an AI participant), and carries `read`, `write` or `admin` permissions that the
 API enforces: safe methods need `read`, every other method needs `write`, and
 `admin` implies both.
 

@@ -589,15 +589,7 @@ async fn verify_workspace_access(state: &AppState, workspace_id: Uuid, user_id: 
 }
 
 async fn ensure_bot_user(state: &AppState, bot_user_id: Uuid) -> Result<(), ApiError> {
-    let row = state
-        .db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id FROM users WHERE id = $1 AND entity_type = 'bot'",
-            vec![bot_user_id.into()],
-        ))
-        .await?;
-    if row.is_none() {
+    if !crate::services::bot_identity::is_bot_user(&state.db, bot_user_id).await? {
         return Err(ApiError::BadRequest(
             "bot_user_id must reference a bot user".to_string(),
         ));
