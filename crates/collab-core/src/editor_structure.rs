@@ -67,10 +67,13 @@ pub fn placements(doc: &LoroDoc) -> Result<Option<Vec<Placement>>, CollabError> 
     let maps = physical(doc)?;
     let physical: BTreeSet<_> = maps.iter().map(|map| map.id().to_string()).collect();
     let mut all = BTreeSet::new();
+    // Every node's `block_cid`, read once here and reused for the active traversal below.
+    let mut cids = std::collections::HashMap::new();
     for node in tree.nodes() {
         let Some(cid) = value(&tree.get_meta(node).map_err(|e| invalid(&e.to_string()))?, "block_cid") else {
             continue;
         };
+        cids.insert(node, cid.clone());
         let known = physical.contains(&cid)
             || loro::ContainerID::try_from(cid.as_str())
                 .ok()
@@ -84,13 +87,30 @@ pub fn placements(doc: &LoroDoc) -> Result<Option<Vec<Placement>>, CollabError> 
     if physical.iter().any(|cid| !all.contains(cid)) {
         return Err(invalid("editor_structure_unindexed_physical_block"));
     }
-    let output = active_placements(&tree)?;
+    let output = active_placements_with(&tree, |node| {
+        cids.get(&node)
+            .map_or_else(|| block_cid(&tree, node), |cid| Ok(Some(cid.clone())))
+    })?;
     if output.iter().any(|entry| !physical.contains(&entry.cid)) {
         return Err(invalid("editor_structure_active_block_not_in_storage"));
     }
     Ok(Some(output))
 }
+fn block_cid(tree: &LoroTree, node: TreeID) -> Result<Option<String>, CollabError> {
+    Ok(value(
+        &tree.get_meta(node).map_err(|e| invalid(&e.to_string()))?,
+        "block_cid",
+    ))
+}
 fn active_placements(tree: &LoroTree) -> Result<Vec<Placement>, CollabError> {
+    active_placements_with(tree, |node| block_cid(tree, node))
+}
+/// The active (non-deleted) placements in document order. `cid_of` returns a node's
+/// `block_cid` exactly as [`block_cid`] would (it may answer from values already read).
+fn active_placements_with(
+    tree: &LoroTree,
+    cid_of: impl Fn(TreeID) -> Result<Option<String>, CollabError>,
+) -> Result<Vec<Placement>, CollabError> {
     let mut output = Vec::new();
     let mut active = BTreeSet::new();
     let mut stack: Vec<_> = tree
@@ -104,8 +124,7 @@ fn active_placements(tree: &LoroTree) -> Result<Vec<Placement>, CollabError> {
         if depth > 7 {
             return Err(invalid("editor_structure_depth_limit"));
         }
-        let cid = value(&tree.get_meta(node).map_err(|e| invalid(&e.to_string()))?, "block_cid")
-            .ok_or_else(|| invalid("editor_structure_missing_block_cid"))?;
+        let cid = cid_of(node)?.ok_or_else(|| invalid("editor_structure_missing_block_cid"))?;
         if !active.insert(cid.clone()) {
             return Err(invalid("editor_structure_duplicate_active_block_cid"));
         }
