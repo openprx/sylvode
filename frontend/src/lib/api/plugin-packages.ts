@@ -125,7 +125,7 @@ export interface PluginBindingEvent extends PluginBinding {
 	created_at: string;
 	previous_package_id: string | null;
 	previous_version: string | null;
-	previous_grants: PluginCapability[];
+	previous_grants: PluginGrant[];
 	previous_placements?: PluginPlacement[];
 	version: string | null;
 	reason?: string | null;
@@ -239,7 +239,7 @@ export interface PersonalPluginPackage extends InstalledPluginPackage {
 export interface ProjectPluginRequest {
 	source_id: string;
 	owner_id: string;
-	manifest: PluginManifest;
+	manifest: AnyPluginManifest;
 	package_sha256: string;
 	submitted_at: string;
 }
