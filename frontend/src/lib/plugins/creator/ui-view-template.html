@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data view</title>
+<style>
+  :root { color-scheme: light dark; font: 15px/1.5 system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; color: #172533; background: #f2f7f8; }
+  h1, p { margin: 0 0 .65rem; }
+  h1 { font-size: 1.05rem; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: .35rem .6rem; border-bottom: 1px solid #b8cdd4; text-align: start; white-space: nowrap; }
+  th { font-weight: 650; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0 0 .65rem; }
+  dt { font-weight: 650; }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  .metric { display: inline-block; margin: 0 1.5rem .5rem 0; }
+  .metric b { display: block; font: 650 1.6rem/1.1 ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  button { font: inherit; padding: .4rem .7rem; border: 1px solid #3b6576; border-radius: .35rem; color: #173847; background: #fff; }
+  button:enabled { cursor: pointer; }
+  button:disabled { opacity: .6; }
+  button:focus-visible { outline: 3px solid #176784; outline-offset: 2px; }
+  #status { min-height: 1.5em; margin: .75rem 0 0; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e1edf0; background: #19313a; }
+    th, td { border-color: #3e5c67; }
+    button { color: #e1edf0; background: #223f49; border-color: #83a8b5; }
+    button:focus-visible { outline-color: #b2e2f1; }
+  }
+</style>
+<!--author-copy-->
+<main>
+  <h1 id="heading"></h1>
+  <p id="description"></p>
+  <div id="content"></div>
+  <button id="more" type="button" hidden>Load more</button>
+  <p id="status" role="status">Connecting to Sylvode…</p>
+</main>
+<script>
+  const copy = JSON.parse(document.getElementById('author-copy').textContent);
+  const heading = document.querySelector('#heading');
+  const description = document.querySelector('#description');
+  const content = document.querySelector('#content');
+  const more = document.querySelector('#more');
+  const status = document.querySelector('#status');
+  const numeric = ['number', 'integer', 'amount', 'rating', 'progress'];
+  const pending = new Map();
+  let port;
+  let grants = [];
+  let context;
+  let fields = [];
+  let rows = [];
+  let cursor = null;
+  let busy = false;
+  heading.textContent = copy.title;
+  description.textContent = copy.text;
+
+  function call(method, params) {
+    return new Promise((resolve) => {
+      const id = crypto.randomUUID();
+      pending.set(id, resolve);
+      port.postMessage({ protocol: 2, type: 'request', request_id: id, method, params });
+    });
+  }
+
+  function plain(value) {
+    if (value === null || value === undefined) return '—';
+    if (Array.isArray(value)) return value.map(plain).join(', ');
+    if (typeof value === 'object') {
+      if ('decimal' in value) return String(value.decimal);
+      if ('value' in value) return plain(value.value);
+      return JSON.stringify(value);
+    }
+    return String(value);
+  }
+
+  function label(field) {
+    return field.label || field.key;
+  }
+
+  function renderTable() {
+    const scroll = document.createElement('div');
+    scroll.className = 'scroll';
+    const table = document.createElement('table');
+    const head = table.createTHead().insertRow();
+    for (const field of fields) {
+      const cell = document.createElement('th');
+      cell.scope = 'col';
+      cell.textContent = label(field);
+      head.append(cell);
+    }
+    const body = table.createTBody();
+    for (const row of rows) {
+      const line = body.insertRow();
+      for (const field of fields) line.insertCell().textContent = plain(row.values[field.key]);
+    }
+    scroll.append(table);
+    content.replaceChildren(scroll);
+  }
+
+  function renderSummary() {
+    const items = [['Records', String(rows.length) + (cursor ? '+' : '')]];
+    for (const field of fields.filter((item) => numeric.includes(item.type))) {
+      const values = rows.map((row) => Number(plain(row.values[field.key]))).filter(Number.isFinite);
+      if (values.length) {
+        const total = values.reduce((sum, value) => sum + value, 0);
+        items.push([label(field), new Intl.NumberFormat(navigator.language).format(total)]);
+      }
+    }
+    content.replaceChildren(...items.map(([name, value]) => {
+      const box = document.createElement('div');
+      box.className = 'metric';
+      const number = document.createElement('b');
+      number.textContent = value;
+      box.append(number, name);
+      return box;
+    }));
+  }
+
+  function renderRecord(row) {
+    const list = document.createElement('dl');
+    for (const field of fields) {
+      const term = document.createElement('dt');
+      term.textContent = label(field);
+      const detail = document.createElement('dd');
+      detail.textContent = plain(row.values[field.key]);
+      list.append(term, detail);
+    }
+    content.replaceChildren(list);
+  }
+
+  function failure(response) {
+    return response.error?.message || 'The data could not be loaded.';
+  }
+
+  async function load() {
+    if (busy) return;
+    busy = true;
+    more.disabled = true;
+    status.textContent = 'Loading…';
+    if (!fields.length) {
+      const described = await call('data.describe', { read: copy.read });
+      if (!described.ok) {
+        status.textContent = failure(described);
+        busy = false;
+        return;
+      }
+      fields = described.result.form.fields;
+    }
+    if (context.record) {
+      const response = await call('data.record', { read: copy.read, record_id: context.record.id });
+      if (response.ok) {
+        renderRecord(response.result.item);
+        status.textContent = '';
+      } else status.textContent = failure(response);
+    } else {
+      const response = await call('data.query', { read: copy.read, limit: 50, cursor });
+      if (response.ok) {
+        rows = rows.concat(response.result.items);
+        cursor = response.result.next_cursor ?? null;
+        if (copy.presentation === 'summary') renderSummary(); else renderTable();
+        status.textContent = rows.length ? '' : 'No records.';
+        more.hidden = !cursor;
+      } else status.textContent = failure(response);
+    }
+    more.disabled = false;
+    busy = false;
+  }
+
+  more.addEventListener('click', () => void load());
+  window.addEventListener('message', function connect(event) {
+    if (event.source !== window.parent || event.origin !== 'null' ||
+        event.data?.type !== 'sylvode-plugin-connect' || event.data.protocol !== 2 ||
+        event.ports.length !== 1 || port) return;
+    window.removeEventListener('message', connect);
+    port = event.ports[0];
+    grants = event.data.grants;
+    context = event.data.context;
+    port.onmessage = ({ data }) => {
+      if (data?.protocol !== 2) return;
+      if (data.type === 'result' && pending.has(data.request_id)) {
+        const resolve = pending.get(data.request_id);
+        pending.delete(data.request_id);
+        resolve(data);
+      } else if (data.type === 'event' && data.name === 'suspended') {
+        more.hidden = true;
+        status.textContent = 'This view was suspended because its access changed.';
+      }
+    };
+    port.postMessage({ protocol: 2, type: 'ready' });
+    new ResizeObserver(() => {
+      port.postMessage({ protocol: 2, type: 'resize', height: Math.ceil(document.body.getBoundingClientRect().height) });
+    }).observe(document.body);
+    if (!grants.includes('read:' + copy.read)) {
+      status.textContent = 'Data access has not been granted for this view.';
+    } else void load();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && port) port.postMessage({ protocol: 2, type: 'close' });
+  });
+</script>
+</html>
