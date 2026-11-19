@@ -143,6 +143,9 @@ describe('host method authorisation', () => {
 	});
 });
 
+// Navigation runs after the reply was posted (design 2.6), on the next macrotask.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
 describe('host.navigate', () => {
 	test('rejects external URLs and unknown shapes at the dispatcher', async () => {
 		const host = dispatcher(['ui.display'], never);
@@ -184,6 +187,7 @@ describe('host.navigate', () => {
 			await host.handle(id(2), 'host.navigate', { target: 'view', route: 'board', state: 's' }),
 			{ ok: true, result: { navigated: true } }
 		);
+		await settle();
 		assert.deepEqual(
 			await host.handle(id(3), 'host.navigate', {
 				target: 'record',
@@ -191,6 +195,7 @@ describe('host.navigate', () => {
 			}),
 			{ ok: true, result: { navigated: true } }
 		);
+		await settle();
 		assert.deepEqual(visited, [
 			{ target: 'view', route: 'board', state: 's' },
 			{ target: 'record', record_id: recordId }
