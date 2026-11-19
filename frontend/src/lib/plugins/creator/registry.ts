@@ -24,7 +24,9 @@ export interface CreatorTemplate<Draft> {
 	defaults(origin: CreatorOrigin): Draft;
 	read(stored: string | null, origin: CreatorOrigin): Draft;
 	invalid(draft: Draft): string[];
-	build(draft: Draft): Promise<{ upload: PluginUpload | PluginUploadV3; html: string; json: string }>;
+	build(
+		draft: Draft
+	): Promise<{ upload: PluginUpload | PluginUploadV3; html: string; json: string }>;
 	review(draft: Draft): {
 		slots: PluginContributionV3[];
 		reads: PluginReadV3[];
@@ -178,7 +180,8 @@ export function validateManifestV3(manifest: PluginManifestV3): ManifestV3Issue 
 		if (targets.has(target)) return bad;
 		targets.add(target);
 	}
-	if (!Array.isArray(manifest.reads) || manifest.reads.length > 4) return { reason: 'reads_invalid' };
+	if (!Array.isArray(manifest.reads) || manifest.reads.length > 4)
+		return { reason: 'reads_invalid' };
 	const readIds = new Set<string>();
 	for (const read of manifest.reads) {
 		if (
