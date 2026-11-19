@@ -789,7 +789,7 @@ mod tests {
     async fn bulk_legacy_seal_matches_per_alias_reference() {
         let scratch = scratch_or_skip!(&format!("block_anchor_seal_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
-        super::super::block_registry::fixtures::register_reader_leases(db).await;
+        super::super::scope_runtime::fixture::register_running_readers(db).await;
         // Below floor 5 creating a Page registers nothing, so both Pages start unsealed.
         db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=4 WHERE singleton")
             .await

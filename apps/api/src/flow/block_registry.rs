@@ -532,17 +532,6 @@ pub(crate) mod fixtures {
     use sea_orm::{DatabaseConnection, TransactionTrait};
     use uuid::Uuid;
 
-    /// Register the three reader leases through the production registration function, so Page
-    /// writes are not refused with `scope_runtime_not_ready` at reader floor 5. Local to these
-    /// tests: replace with the shared scratch-database helper when the harness branch is merged.
-    pub async fn register_reader_leases(db: &DatabaseConnection) {
-        for component in ["api", "worker", "maintenance"] {
-            crate::flow::scope_runtime::renew(db, Uuid::new_v4(), component)
-                .await
-                .unwrap();
-        }
-    }
-
     /// A personal scope with one navigator and one Page. Returns `(actor, scope, page)`.
     pub async fn page(db: &DatabaseConnection) -> (Uuid, Uuid, Uuid) {
         let actor = Uuid::new_v4();
@@ -785,7 +774,7 @@ mod tests {
     async fn registry_reconcile_restore_moved_alias_and_rollback() {
         let scratch = scratch_or_skip!(&format!("block_registry_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
-        register_reader_leases(db).await;
+        register_running_readers(db).await;
         let actor = Uuid::new_v4();
         let scope = Uuid::new_v4();
         let page = Uuid::new_v4();
@@ -922,7 +911,8 @@ mod tests {
         scratch.drop_self().await;
     }
 
-    use super::fixtures::{block, blocks, page, register_reader_leases};
+    use super::fixtures::{block, blocks, page};
+    use crate::flow::scope_runtime::fixture::register_running_readers;
     use sea_orm::DatabaseConnection;
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
@@ -1269,7 +1259,7 @@ mod tests {
 
     async fn scratch_with_leases(label: &str) -> Option<crate::routes::context::tenant_fixture::Scratch> {
         let scratch = crate::routes::context::tenant_fixture::scratch(label).await?;
-        register_reader_leases(&scratch.db).await;
+        register_running_readers(&scratch.db).await;
         Some(scratch)
     }
 
