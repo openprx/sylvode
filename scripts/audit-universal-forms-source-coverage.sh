@@ -241,7 +241,7 @@ contains "auth route verifies current password before update" "apps/api/src/rout
 contains "auth route persists notification preferences" "apps/api/src/routes/auth.rs" "update_preferences"
 
 printf '\nWorker and event delivery coverage:\n'
-contains "worker emits AI task business events" "apps/worker/src/main.rs" "ai_task.picked_up"
+contains "worker emits AI task business events" "apps/worker/src/ai_tasks.rs" "ai_task.picked_up"
 contains "legacy webhook route emits created business events" "apps/api/src/routes/webhook.rs" "webhook.created"
 contains "legacy webhook route emits updated business events" "apps/api/src/routes/webhook.rs" "webhook.updated"
 contains "legacy webhook route emits deleted business events" "apps/api/src/routes/webhook.rs" "webhook.deleted"
