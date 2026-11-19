@@ -26,6 +26,8 @@ name.
   buffered in a module's start function and saves and restores fuel correctly around `call_ref`
   and exception catches, so a plugin relying on those paths can report slightly more fuel
   consumed. The sample order-amount plugin consumes exactly the same fuel as under wasmtime 49.
+- The plugin package concurrency budget (four concurrent runs per process) is now covered by a
+  unit test.
 
 ## [0.2.539] - 2026-11-18
 
