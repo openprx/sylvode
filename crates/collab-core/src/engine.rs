@@ -699,9 +699,12 @@ impl LoroCollabEngine {
         #[cfg(test)]
         crate::walk_counter::record_floor_walk();
         let structured = self.has_editor_structure();
-        if structured {
-            crate::editor_structure::placements(&self.doc)?;
-        }
+        // Evaluated once: the block read below needs the same placements for the same state.
+        let placements = if structured {
+            crate::editor_structure::placements(&self.doc)?
+        } else {
+            None
+        };
         // Root map accessors register missing roots; a model query must leave legacy documents untouched.
         let model5 = matches!(
             self.doc.get_by_str_path(crate::editor_structure::META),
@@ -710,25 +713,11 @@ impl LoroCollabEngine {
                     if model.as_ref() == "rich_page_v5")
         );
         let physical_media=self.has_editor_doc() && crate::editor_structure::physical(&self.doc)?.iter().any(|map| matches!(map.get("nodeName"),Some(ValueOrContainer::Value(LoroValue::String(kind))) if crate::editor_media::is_atom(kind.as_ref())));
-        let blocks = crate::editor_doc_bridge::editor_blocks(&self.doc)?.unwrap_or_default();
-        if model5 || physical_media || blocks.iter().any(|block| crate::editor_media::is_atom(&block.kind)) {
+        let signals = crate::editor_doc_bridge::editor_model_signals(&self.doc, placements)?.unwrap_or_default();
+        if model5 || physical_media || signals.atom {
             return Ok(5);
         }
-        Ok(
-            if structured
-                || blocks.iter().any(|block| {
-                    !block.inline_spans.is_empty()
-                        || !matches!(
-                            block.kind.as_str(),
-                            "paragraph" | "heading" | "bulletItem" | "codeBlock"
-                        )
-                })
-            {
-                4
-            } else {
-                1
-            },
-        )
+        Ok(if structured || signals.beyond_model1 { 4 } else { 1 })
     }
     pub fn initialize_page_structure_model(&mut self, model: u32) -> Result<bool, CollabError> {
         if !matches!(model, 4 | 5) {
