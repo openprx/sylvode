@@ -55,7 +55,11 @@ export interface GrantOptionV3 {
 export function grantOptionsV3(manifest: PluginManifestV3): GrantOptionV3[] {
 	return [
 		{ grant: UI_DISPLAY, kind: 'display' },
-		...manifest.reads.map((read) => ({ grant: `read:${read.id}` as PluginGrant, kind: 'read' as const, read })),
+		...manifest.reads.map((read) => ({
+			grant: `read:${read.id}` as PluginGrant,
+			kind: 'read' as const,
+			read
+		})),
 		...manifest.capabilities.map((capability) => ({
 			grant: capability.name,
 			kind: 'capability' as const
@@ -64,7 +68,10 @@ export function grantOptionsV3(manifest: PluginManifestV3): GrantOptionV3[] {
 }
 
 /** Sorted, de-duplicated and limited to grants this manifest can receive. */
-export function normalizeGrantsV3(manifest: PluginManifestV3, grants: PluginGrant[]): PluginGrant[] {
+export function normalizeGrantsV3(
+	manifest: PluginManifestV3,
+	grants: PluginGrant[]
+): PluginGrant[] {
 	const allowed = new Set(grantOptionsV3(manifest).map((option) => option.grant));
 	return [...new Set(grants)].filter((grant) => allowed.has(grant)).sort();
 }

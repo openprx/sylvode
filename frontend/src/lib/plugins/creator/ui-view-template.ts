@@ -40,7 +40,10 @@ export const uiViewSlots: PluginSlotV3[] = [
 	'form.record.actions'
 ];
 
-const slotMeta: Record<PluginSlotV3, { id: string; kind: PluginContributionV3['kind']; view: string }> = {
+const slotMeta: Record<
+	PluginSlotV3,
+	{ id: string; kind: PluginContributionV3['kind']; view: string }
+> = {
 	'project.view': { id: 'project_view', kind: 'view', view: 'view' },
 	'form.list.toolbar': { id: 'list_toolbar', kind: 'action', view: 'toolbar' },
 	'form.record.detail': { id: 'record_detail', kind: 'panel', view: 'detail' },
@@ -194,7 +197,9 @@ export function uiViewContributions(draft: UiViewDraft): PluginContributionV3[] 
 }
 
 export function uiViewReads(draft: UiViewDraft): PluginReadV3[] {
-	return [{ id: readId, form_key: draft.readFormKey.trim(), fields: parseFields(draft.readFields) }];
+	return [
+		{ id: readId, form_key: draft.readFormKey.trim(), fields: parseFields(draft.readFields) }
+	];
 }
 
 /** Injects the author's copy as inert JSON. `<` is escaped so the text can never close the script. */
@@ -332,7 +337,9 @@ export function createMockTransport(
 			return { ok: true, result: { read: read.id, items: rows, next_cursor: null } };
 		if (method === 'data.record') {
 			const item = rows.find((row) => row.id === params.record_id);
-			return item ? { ok: true, result: { read: read.id, item } } : { ok: false, code: 'not_found' };
+			return item
+				? { ok: true, result: { read: read.id, item } }
+				: { ok: false, code: 'not_found' };
 		}
 		return { ok: false, code: 'method_unavailable' };
 	};

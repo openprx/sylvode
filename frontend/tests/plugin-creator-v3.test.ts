@@ -131,18 +131,39 @@ test('mirrored rules reject bad v3 manifests', async () => {
 	const check = (patch: Partial<PluginManifestV3>) => validateManifestV3({ ...good, ...patch });
 	assert.equal(check({ key: 'library' })?.reason, 'manifest_field_invalid');
 	assert.equal(check({ bridge_version: 1 as 2 })?.reason, 'manifest_protocol_unsupported');
-	assert.equal(check({ capabilities: [{ name: 'amount.preview', permission: 'p', input_schema: 1, output_schema: 1 }] })?.reason, 'profile_mismatch');
+	assert.equal(
+		check({
+			capabilities: [{ name: 'amount.preview', permission: 'p', input_schema: 1, output_schema: 1 }]
+		})?.reason,
+		'profile_mismatch'
+	);
 	const [view, ...rest] = good.contributions;
-	const nine = Array.from({ length: 9 }, (_, i) => ({ ...rest[0], id: `c${i}`, form_key: `f${i}` }));
+	const nine = Array.from({ length: 9 }, (_, i) => ({
+		...rest[0],
+		id: `c${i}`,
+		form_key: `f${i}`
+	}));
 	assert.equal(check({ contributions: nine })?.reason, 'contributions_invalid');
 	const views = [1, 2, 3].map((i) => ({ ...view, id: `v${i}`, route: `r${i}` }));
 	assert.deepEqual(check({ contributions: views }), { reason: 'contributions_invalid', index: 2 });
-	assert.equal(check({ contributions: [{ ...view, kind: 'panel' }] })?.reason, 'contributions_invalid');
-	assert.equal(check({ contributions: [{ ...view, route: null }] })?.reason, 'contributions_invalid');
-	assert.equal(check({ contributions: [{ ...rest[0], form_key: null }] })?.reason, 'contributions_invalid');
+	assert.equal(
+		check({ contributions: [{ ...view, kind: 'panel' }] })?.reason,
+		'contributions_invalid'
+	);
+	assert.equal(
+		check({ contributions: [{ ...view, route: null }] })?.reason,
+		'contributions_invalid'
+	);
+	assert.equal(
+		check({ contributions: [{ ...rest[0], form_key: null }] })?.reason,
+		'contributions_invalid'
+	);
 	assert.equal(check({ contributions: [rest[0], { ...rest[0], id: 'other' }] })?.index, 1);
 	const read = good.reads[0];
-	assert.equal(check({ reads: Array.from({ length: 5 }, (_, i) => ({ ...read, id: `r${i}` })) })?.reason, 'reads_invalid');
+	assert.equal(
+		check({ reads: Array.from({ length: 5 }, (_, i) => ({ ...read, id: `r${i}` })) })?.reason,
+		'reads_invalid'
+	);
 	assert.equal(check({ reads: [{ ...read, fields: [] }] })?.reason, 'reads_invalid');
 });
 
@@ -152,7 +173,11 @@ test('ui_view reads stored drafts defensively and the mock transport serves samp
 	assert.equal(readUiViewDraft('{"title":"Mine"}', origin).title, 'Mine');
 	assert.deepEqual(readUiViewDraft('not json', origin), base);
 	const read = { id: 'records', form_key: 'order_line', fields: ['quantity', 'note'] };
-	const project = createMockTransport(read, [{ key: 'quantity', label: 'Qty', type: 'number' }], false);
+	const project = createMockTransport(
+		read,
+		[{ key: 'quantity', label: 'Qty', type: 'number' }],
+		false
+	);
 	const described = await project('data.describe', { read: 'records' }, 'r');
 	assert.ok(described.ok);
 	const query = await project('data.query', { read: 'records' }, 'r');
@@ -165,8 +190,14 @@ test('ui_view reads stored drafts defensively and the mock transport serves samp
 		result: { items: { values: Record<string, unknown> }[] };
 	};
 	assert.deepEqual(rows.result.items[1].values, { quantity: '示例', note: '示例' });
-	assert.deepEqual(await personal('data.query', { read: 'other' }, 'r'), { ok: false, code: 'denied' });
-	assert.deepEqual(await personal('amount.preview', {}, 'r'), { ok: false, code: 'method_unavailable' });
+	assert.deepEqual(await personal('data.query', { read: 'other' }, 'r'), {
+		ok: false,
+		code: 'denied'
+	});
+	assert.deepEqual(await personal('amount.preview', {}, 'r'), {
+		ok: false,
+		code: 'method_unavailable'
+	});
 });
 
 test('order_amount keeps v2 output and the template review matches the registry contract', async () => {
@@ -175,9 +206,15 @@ test('order_amount keeps v2 output and the template review matches the registry 
 	const draft = tpl.defaults({ slot: 'form.record.actions', formKey: 'invoice_line' });
 	assert.equal(draft.formKey, 'invoice_line');
 	assert.equal((await tpl.build(draft)).json, (await buildCreatorPackage(draft)).json);
-	assert.equal(tpl.read(null, { slot: 'form.record.detail', formKey: null }).formKey, defaultDraft.formKey);
+	assert.equal(
+		tpl.read(null, { slot: 'form.record.detail', formKey: null }).formKey,
+		defaultDraft.formKey
+	);
 	assert.deepEqual(tpl.review(draft).capabilities, ['amount.preview', 'amount.apply']);
-	assert.deepEqual(uiViewContributions(base).map((item) => item.id), ['project_view']);
+	assert.deepEqual(
+		uiViewContributions(base).map((item) => item.id),
+		['project_view']
+	);
 });
 
 test('upload accepts v2 and v3 and rejects a v3 manifest carrying ui', async () => {
@@ -185,9 +222,13 @@ test('upload accepts v2 and v3 and rejects a v3 manifest carrying ui', async () 
 	assert.equal((await readPluginUpload(file(v3))).manifest.key, v3.manifest.key);
 	const v2 = await buildCreatorPackage(defaultDraft);
 	assert.equal((await readPluginUpload(file(v2.upload))).manifest.key, defaultDraft.key);
-	await assert.rejects(readPluginUpload(file({ ...v3, manifest: { ...v3.manifest, ui: { form_key: 'x' } } })));
+	await assert.rejects(
+		readPluginUpload(file({ ...v3, manifest: { ...v3.manifest, ui: { form_key: 'x' } } }))
+	);
 	await assert.rejects(readPluginUpload(file({ ...v3, wasm_base64: 'AAAA' })));
-	await assert.rejects(readPluginUpload(file({ ...v3, manifest: { ...v3.manifest, profile: 'x' } })));
+	await assert.rejects(
+		readPluginUpload(file({ ...v3, manifest: { ...v3.manifest, profile: 'x' } }))
+	);
 	await assert.rejects(
 		readPluginUpload(
 			file({ ...v3, manifest: { ...v3.manifest, contributions: [{ id: 'a', slot: 'nope' }] } })
@@ -202,25 +243,39 @@ test('layout-v3 merges stored rows with defaults and never submits undeclared ro
 		{ id: 'record_detail', enabled: false, position: 10 },
 		{ id: 'removed_in_this_version', enabled: false, position: 1 }
 	]);
-	assert.deepEqual(draft.map((row) => row.id), [
-		'list_toolbar',
-		'project_view',
-		'record_actions',
-		'record_detail'
-	]);
-	assert.deepEqual(draft.find((row) => row.id === 'record_detail'), {
-		id: 'record_detail',
-		enabled: false,
-		position: 10
-	});
-	assert.deepEqual(draft.find((row) => row.id === 'project_view'), {
-		id: 'project_view',
-		enabled: true,
-		position: 50
-	});
-	const item = { id: 'p', manifest, placements: [{ id: 'list_toolbar', enabled: false, position: 3 }] } as unknown as InstalledPluginPackage;
+	assert.deepEqual(
+		draft.map((row) => row.id),
+		['list_toolbar', 'project_view', 'record_actions', 'record_detail']
+	);
+	assert.deepEqual(
+		draft.find((row) => row.id === 'record_detail'),
+		{
+			id: 'record_detail',
+			enabled: false,
+			position: 10
+		}
+	);
+	assert.deepEqual(
+		draft.find((row) => row.id === 'project_view'),
+		{
+			id: 'project_view',
+			enabled: true,
+			position: 50
+		}
+	);
+	const item = {
+		id: 'p',
+		manifest,
+		placements: [{ id: 'list_toolbar', enabled: false, position: 3 }]
+	} as unknown as InstalledPluginPackage;
 	assert.equal(installedLayoutDraftV3(item)?.find((row) => row.id === 'list_toolbar')?.position, 3);
-	assert.equal(installedLayoutDraftV3({ ...item, manifest: { key: 'a' } } as unknown as InstalledPluginPackage), undefined);
+	assert.equal(
+		installedLayoutDraftV3({
+			...item,
+			manifest: { key: 'a' }
+		} as unknown as InstalledPluginPackage),
+		undefined
+	);
 });
 
 test('layout-v3 grant helpers keep ui.display, reads and capabilities consistent', async () => {
@@ -233,7 +288,11 @@ test('layout-v3 grant helpers keep ui.display, reads and capabilities consistent
 	assert.deepEqual(grants, ['read:records', 'ui.display']);
 	assert.equal(grantsValidV3(manifest, ['read:records']), false);
 	assert.equal(grantsValidV3(manifest, ['ui.display', 'read:nope']), false);
-	const wasm = { ...manifest, profile: 'wasm', capabilities: [{ name: 'amount.preview' }, { name: 'amount.apply' }] } as unknown as PluginManifestV3;
+	const wasm = {
+		...manifest,
+		profile: 'wasm',
+		capabilities: [{ name: 'amount.preview' }, { name: 'amount.apply' }]
+	} as unknown as PluginManifestV3;
 	const both = toggleGrantV3(wasm, [], 'amount.apply', true);
 	assert.deepEqual(both, ['amount.apply', 'amount.preview', 'ui.display']);
 	assert.deepEqual(toggleGrantV3(wasm, both, 'amount.preview', false), ['ui.display']);

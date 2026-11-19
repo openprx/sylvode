@@ -40,7 +40,9 @@ function validV3(value: Record<string, unknown>): boolean {
 		typeof value.web_base64 === 'string' &&
 		(value.wasm_base64 === undefined || typeof value.wasm_base64 === 'string') &&
 		(manifest.profile === 'ui' || manifest.profile === 'wasm') &&
-		(manifest.profile === 'ui' ? value.wasm_base64 === undefined : typeof value.wasm_base64 === 'string') &&
+		(manifest.profile === 'ui'
+			? value.wasm_base64 === undefined
+			: typeof value.wasm_base64 === 'string') &&
 		typeof manifest.key === 'string' &&
 		typeof manifest.name === 'string' &&
 		typeof manifest.version === 'string' &&

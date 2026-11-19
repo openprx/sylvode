@@ -4583,7 +4583,113 @@
 			"restore": "恢复",
 			"unavailable": "此项已不可用。"
 		},
-		"creatorV3": {},
-		"layoutV3": {}
+		"creatorV3": {
+			"template": "模板",
+			"templateName": {
+				"order_amount": "订单金额（记录面板和操作）",
+				"ui_view": "数据视图（纯 UI）"
+			},
+			"templateHelp": "数据视图模板只展示授权给它的 Form 数据，不运行 WASM，也不能写入业务数据。",
+			"uiIntro": "创建一个只读的应用。选择它出现的位置和可读取的 Form 字段，安装后由管理员授权。",
+			"locations": "位置",
+			"locationEnabled": "显示在“{slot}”",
+			"reads": "数据读取",
+			"readHelp": "字段键用逗号分隔。附件、图片、签名、成员、关联和子表字段不会返回。",
+			"presentationLabel": "展示方式",
+			"presentation": {
+				"table": "记录表格",
+				"summary": "汇总合计"
+			},
+			"fieldHelp": "键只能用小写字母、数字和下划线，且以字母开头。路由是 /apps/{插件键}/ 之后的地址段。",
+			"needLocation": "至少选择一个位置。",
+			"field": {
+				"key": "插件键",
+				"name": "显示名称",
+				"publisher": "发布者标签",
+				"version": "版本",
+				"label": "入口标签",
+				"route": "路由",
+				"formKey": "Form 键",
+				"readFormKey": "读取的 Form 键",
+				"readFields": "读取的字段",
+				"presentation": "展示方式",
+				"title": "视图标题",
+				"text": "视图说明"
+			},
+			"reviewLocations": "位置",
+			"reviewReads": "读取 Form {form} 的字段 {fields}",
+			"reviewNoReads": "不读取任何 Form 数据。",
+			"reviewNoWasm": "不执行 WASM，不写业务数据。",
+			"reviewCapabilities": "不请求任何业务能力。",
+			"reviewLocation": "{label} · {slot}",
+			"reviewRoute": "路由 {route}",
+			"reviewForm": "Form {form}",
+			"previewSampleProject": "预览使用 3 行按该 Form 字段类型生成的示例数据，不读取真实记录，也不会安装。",
+			"previewSamplePersonal": "预览的所有值都是占位文本，不读取真实记录，也不会安装。",
+			"previewSchemaFailed": "无法读取该 Form 的字段，预览改用文本示例。",
+			"previewPending": "当前版本暂不支持纯 UI 视图的沙箱预览。",
+			"previewUi": "示例数据预览",
+			"previewViewed": "我已查看预览。",
+			"extensionsUnavailable": "纯 UI 视图包需要项目已启用扩展功能。",
+			"slotChoice": "预览位置",
+			"newUiView": "创建纯 UI 视图草稿"
+		},
+		"layoutV3": {
+			"slot": {
+				"project": {
+					"view": "项目应用视图"
+				},
+				"form": {
+					"list": {
+						"toolbar": "Form 列表工具栏"
+					},
+					"record": {
+						"detail": "记录详情",
+						"actions": "记录操作"
+					}
+				}
+			},
+			"kind": {
+				"panel": "面板",
+				"action": "操作",
+				"view": "视图"
+			},
+			"profile": {
+				"ui": "纯 UI：不含 WASM，没有业务能力",
+				"wasm": "运行 WASM 并带业务能力"
+			},
+			"contributions": "贡献",
+			"colLocation": "位置",
+			"colKind": "种类",
+			"colLabel": "标签",
+			"colTarget": "Form 或路由",
+			"colEnabled": "启用",
+			"colOrder": "顺序",
+			"route": "路由 {route}",
+			"form": "Form {form}",
+			"grantsTitle": "要授予的权限",
+			"grantsHelp": "显示权限会让项目成员看到该应用。每项数据读取只向本来就能查看该 Form 的成员开放所列字段。",
+			"grant": {
+				"display": "在项目中显示此应用",
+				"read": "读取 Form {form} 的字段 {fields}",
+				"readId": "数据读取 {id}",
+				"uiDisplay": "在项目中显示"
+			},
+			"displayRequired": "授予其他权限前必须先授予显示权限。",
+			"extensionsUnavailable": "该项目未启用扩展功能，无法安装此包。",
+			"reset": "清除配置",
+			"resetHelp": "删除此应用已保存的项目布局以及所有成员的显示选项。",
+			"resetConfirm": "删除 {key} 已保存的布局和所有人的显示选项？",
+			"resetDone": "配置已清除。",
+			"resetFailed": "无法清除配置。",
+			"historyReason": "原因：{reason}",
+			"reason": {
+				"configuration_reset": "配置已清除"
+			},
+			"installSummary": "此包贡献 {count} 个位置，读取 {reads} 个 Form 数据源。",
+			"readsNone": "不读取数据",
+			"personalSampleNote": "预览使用占位值。",
+			"personalPreviewUnavailable": "此类包的预览需连接到项目后才可用。"
+		}
 	}
 }

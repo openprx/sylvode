@@ -42,7 +42,11 @@ export function listPersonalDrafts(actor: string): PersonalDraftEntry[] {
 			if (templateId === 'order_amount') {
 				entries.push({ id, templateId, draft: creatorTemplates.order_amount.read(value, origin) });
 			} else if (templateId === 'ui_view') {
-				entries.push({ id, templateId, draft: creatorTemplates.ui_view.read(value, { slot: 'project.view', formKey: null }) });
+				entries.push({
+					id,
+					templateId,
+					draft: creatorTemplates.ui_view.read(value, { slot: 'project.view', formKey: null })
+				});
 			} else continue;
 			seen.add(`${templateId}:${id}`);
 		}
