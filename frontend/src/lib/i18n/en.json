@@ -4551,7 +4551,9 @@
 			"closeDrawer": "Close panel",
 			"rateLimited": "Too many requests. Try again shortly.",
 			"methodUnavailable": "This action is not available to the app.",
-			"confirmApply": "Apply this result to the record?"
+			"confirmApply": "Apply this result to the record?",
+			"invalidParams": "The app sent an invalid request.",
+			"notFound": "The requested item was not found or is no longer available."
 		},
 		"apps": {
 			"navTitle": "Project apps",
