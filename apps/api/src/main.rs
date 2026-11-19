@@ -896,6 +896,74 @@ fn build_router(state: AppState) -> Router {
                 )),
         )
         .route(
+            "/api/v1/projects/{project_id}/plugin-contributions",
+            get(routes::plugin_package::extension::project_contributions)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/plugin-contributions/{key}/{contribution_id}/entry",
+            get(routes::plugin_package::extension::entry)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/plugin-contributions/{key}/{contribution_id}/data",
+            post(routes::plugin_package::extension::data)
+                .layer(DefaultBodyLimit::max(4 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/form-records/{record_id}/plugin-contributions",
+            get(routes::plugin_package::extension::record_contributions)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/form-records/{record_id}/plugin-contributions/{key}/{contribution_id}/invoke",
+            post(routes::plugin_package::extension::invoke)
+                .layer(DefaultBodyLimit::max(4 * 1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/plugin-preferences",
+            axum::routing::delete(routes::plugin_package::preferences::delete_all)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/plugin-preferences/{key}/{contribution_id}",
+            axum::routing::put(routes::plugin_package::preferences::put).delete(routes::plugin_package::preferences::delete_one)
+                .layer(DefaultBodyLimit::max(1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/plugin-packages/{key}/configuration/reset",
+            post(routes::plugin_package::extension::reset_configuration)
+                .layer(DefaultBodyLimit::max(1024))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::auth::jwt_auth_middleware,
+                )),
+        )
+        .route(
             "/api/v1/projects/{project_id}/plugins",
             get(routes::plugin::list_project_plugins)
                 .post(routes::plugin::install_project_plugin)
@@ -3529,6 +3597,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0102_flow_integrity_cross_workspace_attempts.sql",
         include_str!("../../../migrations/0102_flow_integrity_cross_workspace_attempts.sql"),
     ),
+    (
+        "0103_form_plugin_extensions.sql",
+        include_str!("../../../migrations/0103_form_plugin_extensions.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4054,6 +4126,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0102_flow_integrity_cross_workspace_attempts.sql",
         SchemaProbe::CrossWorkspaceIntegrity,
+    ),
+    (
+        "0103_form_plugin_extensions.sql",
+        SchemaProbe::Relation("form_plugin_user_preferences"),
     ),
 ];
 
@@ -4611,6 +4687,7 @@ mod tests {
                 "0100_form_plugin_layouts.sql",
                 "0101_form_plugin_library.sql",
                 "0102_flow_integrity_cross_workspace_attempts.sql",
+                "0103_form_plugin_extensions.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
