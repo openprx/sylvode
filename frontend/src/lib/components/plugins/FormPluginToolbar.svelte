@@ -13,7 +13,6 @@
 		enabledRoutes,
 		formDiscovery,
 		frameHeights,
-		frameKey,
 		frameVerdict,
 		itemKey,
 		layoutSlot,
@@ -22,10 +21,17 @@
 		projectDiscovery,
 		projectName,
 		safeFrom,
-		sameFrameIdentity,
 		verdictReasons,
 		type DiscoveryState
 	} from '#lib/plugins/contributions.js';
+	import {
+		closeSlot,
+		initialSlot,
+		openSlot,
+		retireSlot,
+		type SlotDeps,
+		type SlotState
+	} from '#lib/plugins/frame-slot.js';
 	import { createExtensionTransport, hostContext } from '#lib/plugins/host-methods.js';
 
 	let {
@@ -38,55 +44,59 @@
 		form: { id: string; key: string } | null;
 	} = $props();
 
-	type Opened = { item: PluginContributionItem; html: string };
 	const canManage = getContext<(() => boolean) | undefined>(PLUGIN_ADMIN_CONTEXT);
 	const drawerId = $props.id();
 
 	let discovery = $state.raw<DiscoveryState>({ status: 'loading', items: [] });
-	let active = $state.raw<PluginContributionItem | null>(null);
-	let opened = $state.raw<Opened | null>(null);
-	let phase = $state<'closed' | 'loading' | 'ready' | 'failed'>('closed');
-	let notice = $state('');
-	let name = $state('');
+	// The drawer's state machine (frame-slot.ts) mutates this object; it is a deep $state proxy.
+	const slot = $state<SlotState<PluginContributionItem>>(initialSlot());
 	let theme = $state<'light' | 'dark'>(currentTheme());
 	let closeButton: HTMLButtonElement | undefined = $state();
 	let launch: HTMLElement | null = null;
-	let run = 0;
 
+	const active = $derived(slot.active);
+	const opened = $derived(
+		slot.frame?.item
+			? { token: slot.frame.token, item: slot.frame.item, html: slot.frame.html }
+			: null
+	);
+	const phase = $derived(active ? (slot.frame ? 'ready' : 'loading') : 'closed');
+	const notice = $derived(slot.notice);
 	const formId = $derived(form?.id ?? null);
 	const layout = $derived(layoutSlot(discovery.items, 'form.list.toolbar'));
 	const context = $derived(
 		opened
 			? hostContext(opened.item, {
-					projectName: name,
+					projectName: slot.name,
 					locale: $locale ?? 'zh',
 					theme
 				})
 			: undefined
 	);
-	const transport = $derived(
-		opened
-			? createExtensionTransport({
-					projectId,
-					item: opened.item,
-					// Routes come from the current project discovery, never the manifest.
-					enabledRoutes: () =>
-						enabledRoutes(projectDiscovery(projectId).snapshot().items, opened?.item.key ?? ''),
-					navigate: async (target) => {
-						const from = safeFrom(page.url.pathname + page.url.search, workspaceId, projectId);
-						await goto(
-							navigationHref(target, {
-								workspaceId,
-								projectId,
-								key: opened?.item.key ?? '',
-								from
-							})
-						);
-					},
-					onStale: () => void formStore()?.refresh()
-				})
-			: undefined
-	);
+	const transport = $derived.by(() => {
+		const frame = opened;
+		if (!frame) return undefined;
+		const item = frame.item;
+		return createExtensionTransport({
+			projectId,
+			item,
+			// Routes come from the current project discovery, never the manifest.
+			enabledRoutes: () => enabledRoutes(projectDiscovery(projectId).snapshot().items, item.key),
+			navigate: async (target) => {
+				// A frame that is no longer shown does not navigate anymore.
+				if (slot.frame?.token !== frame.token) return;
+				const from = safeFrom(page.url.pathname + page.url.search, workspaceId, projectId);
+				await goto(navigationHref(target, { workspaceId, projectId, key: item.key, from }));
+			},
+			onStale: () => void formStore()?.refresh()
+		});
+	});
+	const deps: SlotDeps<PluginContributionItem> = {
+		itemOf: (item) => item,
+		loadEntry: (item) => loadEntry(projectId, item, { formId: formId ?? undefined }),
+		projectName: () => projectName(projectId),
+		refresh: () => void formStore()?.refresh()
+	};
 
 	function formStore() {
 		return formId ? formDiscovery(projectId, formId) : null;
@@ -115,7 +125,7 @@
 	$effect(() => {
 		const current = discovery;
 		untrack(() => {
-			const watched = opened?.item ?? active;
+			const watched = slot.frame?.item ?? slot.active;
 			if (!watched) return;
 			const verdict = frameVerdict(current, watched);
 			if (verdict !== 'ok') closeDrawer(verdictReasons[verdict], true);
@@ -129,11 +139,7 @@
 	});
 
 	function closeDrawer(message = '', restoreFocus = true) {
-		run++;
-		active = null;
-		opened = null;
-		phase = 'closed';
-		notice = message;
+		closeSlot(slot, deps, message);
 		const trigger = launch;
 		launch = null;
 		if (restoreFocus) void tick().then(() => trigger?.isConnected && trigger.focus());
@@ -147,36 +153,24 @@
 		}
 		closeDrawer('', false);
 		launch = trigger;
-		const mine = ++run;
-		active = item;
-		phase = 'loading';
-		const [entry, label] = await Promise.all([
-			loadEntry(projectId, item, { formId }),
-			projectName(projectId)
-		]);
-		if (mine !== run) return;
-		name = label;
-		if (!entry.ok) {
-			closeDrawer(
-				entry.reason === 'unavailable' ? 'plugins.accessChanged' : 'plugins.host.loadFailed'
-			);
-			void formStore()?.refresh();
-			return;
-		}
-		if (!sameFrameIdentity(entry.item, item)) {
-			closeDrawer('plugins.versionChanged');
-			void formStore()?.refresh();
-			return;
-		}
-		opened = { item: entry.item, html: entry.html };
-		phase = 'ready';
+		const token = await openSlot(slot, item, deps);
+		if (!token) return;
 		await tick();
-		if (mine === run) closeButton?.focus();
+		if (slot.frame?.token === token) closeButton?.focus();
 	}
 
 	function onClose(reason: string) {
 		closeDrawer(reason);
 		if (reason !== '') void formStore()?.refresh();
+	}
+
+	/**
+	 * The host of `token` retired its frame while the page was being left, and the page is live
+	 * again because the navigation came back before the removal finished. The drawer the user had
+	 * opened reopens with a fresh entry, as long as the contribution is still the same one.
+	 */
+	function retiredFor(token: number) {
+		return () => void retireSlot(slot, token, discovery, deps);
 	}
 
 	function onKeydown(event: KeyboardEvent) {
@@ -259,7 +253,8 @@
 				</p>
 			{/if}
 			{#if opened && transport && context}
-				{#key frameKey(opened.item)}
+				<!-- One frame per open: a later open never reuses a host that is still being removed. -->
+				{#key opened.token}
 					<PluginFrameHost
 						html={opened.html}
 						webSha256={opened.item.web_sha256}
@@ -273,6 +268,7 @@
 						minHeight={frameHeights.panel.min}
 						maxHeight={frameHeights.panel.max}
 						{onClose}
+						onRetired={retiredFor(opened.token)}
 					/>
 				{/key}
 			{/if}

@@ -13,6 +13,13 @@
 	} from '#lib/plugins/bridge.js';
 	import { createMockTransport, sampleRecordId } from '#lib/plugins/creator/ui-view-template.js';
 	import { creatorPlacement, creatorSlot } from '#lib/plugins/creator/template.js';
+	import {
+		closePreview,
+		initialPreviewFrame,
+		retirePreview,
+		retryPreview,
+		type PreviewFrame
+	} from '#lib/plugins/creator/preview-frame.js';
 
 	let {
 		html,
@@ -35,8 +42,8 @@
 
 	// The v3 preview is fixed when it opens; the caller remounts it for a new draft revision.
 	const spec = untrack(() => v3);
-	let attempt = $state(0);
-	let closedReason = $state<string | null>(null);
+	// Which frame is shown (creator/preview-frame.ts): every open mounts its own host.
+	const shown = $state<PreviewFrame>(initialPreviewFrame());
 	const picked = spec?.manifest.contributions.find((item) => item.id === spec.contributionId);
 	const grants = spec
 		? [
@@ -79,6 +86,11 @@
 							: 'light'
 				}
 			: null;
+
+	/** The host of `attempt` retired while the page was being left; mount a fresh one. */
+	function retiredFor(attempt: number) {
+		return () => void retirePreview(shown, attempt);
+	}
 
 	async function previewTransport(
 		method: string,
@@ -165,22 +177,17 @@
 
 <svelte:window onmessage={receive} />
 {#if spec && picked && previewContext}
-	{#if closedReason !== null}
+	{#if shown.closed !== null}
 		<div class="flex flex-wrap items-center gap-2 text-sm">
-			{#if closedReason}<p role="alert" class="text-red-800 dark:text-red-200">
-					{$t(closedReason)}
+			{#if shown.closed}<p role="alert" class="text-red-800 dark:text-red-200">
+					{$t(shown.closed)}
 				</p>{/if}
-			<Button
-				variant="secondary"
-				size="sm"
-				onclick={() => {
-					closedReason = null;
-					attempt++;
-				}}>{$t('plugins.host.retry')}</Button
+			<Button variant="secondary" size="sm" onclick={() => retryPreview(shown)}
+				>{$t('plugins.host.retry')}</Button
 			>
 		</div>
 	{:else}
-		{#key attempt}
+		{#key shown.attempt}
 			<div class="rounded border border-slate-300 dark:border-slate-600">
 				<PluginFrameHost
 					{html}
@@ -194,9 +201,8 @@
 					})}
 					minHeight={picked.kind === 'view' ? 320 : 160}
 					maxHeight={picked.kind === 'view' ? 4000 : 800}
-					onClose={(reason) => {
-						closedReason = reason;
-					}}
+					onClose={(reason) => closePreview(shown, reason)}
+					onRetired={retiredFor(shown.attempt)}
 				/>
 			</div>
 		{/key}
