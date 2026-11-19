@@ -22,7 +22,7 @@ env:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -79,7 +79,7 @@ jobs:
   # it as well. The workspace-wide Lint and Test jobs still cover the receiver on every run.
   webhook-changes:
     name: Webhook changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       webhook: ${{ steps.filter.outputs.webhook }}
@@ -134,7 +134,7 @@ jobs:
   test:
     name: Test
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     services:
       postgres:
@@ -169,7 +169,7 @@ jobs:
 
   frontend:
     name: Frontend
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -199,7 +199,7 @@ jobs:
 
   universal-forms:
     name: Universal Forms Gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
