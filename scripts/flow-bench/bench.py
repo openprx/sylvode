@@ -78,7 +78,20 @@ def save_ids(path: Path, payload: dict) -> None:
 
 
 class ApiError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        envelope: dict | None = None,
+        elapsed_ms: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        # Parsed JSON body of a rejected response, when the server sent one.
+        self.envelope = envelope
+        # Client-observed time of the failed attempt, when it reached the server.
+        self.elapsed_ms = elapsed_ms
+        # Contention retries performed before this error was raised.
+        self.retries: list[float] = []
 
 
 def call(method: str, url: str, token: str | None, payload: dict | None, timeout: float) -> tuple[dict, float, int]:
@@ -104,7 +117,11 @@ def call(method: str, url: str, token: str | None, payload: dict | None, timeout
         parsed = None
     if status >= 400 or not isinstance(parsed, dict) or parsed.get("code") != 0:
         snippet = body[:600].decode("utf-8", "replace")
-        raise ApiError(f"{method} {urllib.parse.urlparse(url).path} HTTP {status} in {elapsed:.1f} ms: {snippet}")
+        raise ApiError(
+            f"{method} {urllib.parse.urlparse(url).path} HTTP {status} in {elapsed:.1f} ms: {snippet}",
+            envelope=parsed if isinstance(parsed, dict) else None,
+            elapsed_ms=elapsed,
+        )
     data_field = parsed.get("data")
     if not isinstance(data_field, dict):
         raise ApiError(f"{method} {url} returned no data object")
@@ -113,6 +130,74 @@ def call(method: str, url: str, token: str | None, payload: dict | None, timeout
 
 def new_key() -> str:
     return str(uuid.uuid4())
+
+
+# A contention rejection means the server gave up on the write after its own internal
+# retries, with retry_after_ms as a hint. Three client retries (about 4 attempts in total)
+# are enough to ride out a transient spike without hiding a deterministic overrun.
+CONTENTION_RETRY_LIMIT = 3
+CONTENTION_RETRY_FLOOR_MS = 250
+
+
+def is_contention_rejection(err: ApiError) -> bool:
+    envelope = err.envelope
+    if not isinstance(envelope, dict) or envelope.get("error_code") != "server_draining":
+        return False
+    details = envelope.get("details")
+    return isinstance(details, dict) and details.get("reason") == "contention"
+
+
+def contention_wait_ms(err: ApiError) -> float:
+    details = err.envelope.get("details") if isinstance(err.envelope, dict) else None
+    hint = details.get("retry_after_ms") if isinstance(details, dict) else None
+    if not isinstance(hint, (int, float)) or isinstance(hint, bool) or hint < 0:
+        hint = 0
+    return float(max(hint, CONTENTION_RETRY_FLOOR_MS))
+
+
+def send_with_contention_retry(
+    send,
+    *,
+    limit: int = CONTENTION_RETRY_LIMIT,
+    sleep=None,
+    on_retry=None,
+) -> tuple[dict, float, list[float]]:
+    """Run send() and retry only contention rejections.
+
+    send() must return the (data, elapsed_ms, size) triple of call() and must resend the
+    same request, including its idempotency key, on every invocation.
+
+    Returns (data, total_ms, retry_waits_ms): total_ms covers every attempt that reached
+    the server; retry_waits_ms has one entry per retry. Any other error, or a contention
+    error after `limit` retries, is raised as ApiError with `retries` set to the waits
+    performed so far, so a failure always keeps its retry count.
+    """
+    retry_waits: list[float] = []
+    total_ms = 0.0
+    while True:
+        try:
+            data, elapsed, _size = send()
+        except ApiError as err:
+            total_ms += err.elapsed_ms or 0.0
+            if not is_contention_rejection(err):
+                err.retries = retry_waits
+                raise
+            if len(retry_waits) >= limit:
+                exhausted = ApiError(
+                    f"contention retries exhausted after {limit} retries: {err}",
+                    envelope=err.envelope,
+                    elapsed_ms=err.elapsed_ms,
+                )
+                exhausted.retries = retry_waits
+                raise exhausted from err
+            wait_ms = contention_wait_ms(err)
+            retry_waits.append(wait_ms)
+            if on_retry is not None:
+                on_retry(len(retry_waits), wait_ms)
+            (time.sleep if sleep is None else sleep)(wait_ms / 1000.0)
+            continue
+        total_ms += elapsed
+        return data, total_ms, retry_waits
 
 
 def create_page(origin: str, token: str, workspace_id: str, title: str) -> tuple[dict, float]:
@@ -133,6 +218,8 @@ def semantic_batches(origin: str, token: str, object_id: str, blocks: int, token
     if blocks % BLOCKS_PER_BATCH != 0:
         raise ApiError(f"block count {blocks} is not a multiple of {BLOCKS_PER_BATCH}")
     samples: list[float] = []
+    retries_per_batch: list[int] = []
+    retries_total = 0
     failures: list[str] = []
     started = time.perf_counter()
     for batch_index, start in enumerate(range(0, blocks, BLOCKS_PER_BATCH)):
@@ -149,21 +236,32 @@ def semantic_batches(origin: str, token: str, object_id: str, blocks: int, token
             operations.append({"op": "insert_text", "id": block_id, "index": 0, "text": text})
         if len(operations) != BATCH_OPS:
             raise ApiError(f"batch built {len(operations)} operations, expected {BATCH_OPS}")
-        try:
-            _data, elapsed, _size = call(
-                "POST",
-                f"{origin}/api/v1/flow/objects/{object_id}/commands",
-                token,
-                {
-                    "command": {"type": "semantic_patch", "payload": {"operations": operations}},
-                    "idempotency_key": new_key(),
-                },
-                180,
+        # One body and one idempotency key per batch, so a retry replays the same write.
+        body = {
+            "command": {"type": "semantic_patch", "payload": {"operations": operations}},
+            "idempotency_key": new_key(),
+        }
+        url = f"{origin}/api/v1/flow/objects/{object_id}/commands"
+
+        def on_retry(attempt: int, wait_ms: float) -> None:
+            eprint(
+                f"  semantic_patch {token_word} batch {batch_index + 1} at block {start}: "
+                f"contention, retry {attempt} of {CONTENTION_RETRY_LIMIT} after {wait_ms:.0f} ms"
             )
-            samples.append(elapsed)
+
+        try:
+            _data, elapsed, retry_waits = send_with_contention_retry(
+                lambda: call("POST", url, token, body, 180),
+                on_retry=on_retry,
+            )
         except ApiError as err:
-            failures.append(f"batch {batch_index} at block {start}: {err}")
+            retries_total += len(err.retries)
+            detail = f" (after {len(err.retries)} contention retries)" if err.retries else ""
+            failures.append(f"batch {batch_index} at block {start}{detail}: {err}")
             break
+        samples.append(elapsed)
+        retries_per_batch.append(len(retry_waits))
+        retries_total += len(retry_waits)
         if batch_index % 10 == 0:
             eprint(f"  semantic_patch {token_word} batch {batch_index + 1} {elapsed:.0f} ms")
     return {
@@ -174,6 +272,9 @@ def semantic_batches(origin: str, token: str, object_id: str, blocks: int, token
         "batches_expected": blocks // BLOCKS_PER_BATCH,
         "wall_ms": (time.perf_counter() - started) * 1000.0,
         "batch": stats(samples),
+        "retry_limit_per_batch": CONTENTION_RETRY_LIMIT,
+        "retries_per_batch": retries_per_batch,
+        "retries_total": retries_total,
         "failures": failures,
         "ok": len(samples) == blocks // BLOCKS_PER_BATCH and not failures,
     }
@@ -900,6 +1001,17 @@ def fmt_stats(block: dict | None) -> str:
     )
 
 
+def fmt_retries(block: dict | None) -> str:
+    if not isinstance(block, dict) or "retries_total" not in block:
+        return "not recorded (run predates retry reporting)"
+    per_batch = block.get("retries_per_batch") or []
+    batches_with_retries = sum(1 for count in per_batch if count)
+    return (
+        f"total {block['retries_total']} (limit {block.get('retry_limit_per_batch')} per batch); "
+        f"{batches_with_retries} of {len(per_batch)} completed batches needed a retry"
+    )
+
+
 def row(cells: list[str]) -> str:
     return "| " + " | ".join(cells) + " |"
 
@@ -986,6 +1098,8 @@ def render_markdown(summary: dict) -> str:
                 f"{(api.get('semantic_patch_5k') or {}).get('batches_expected')} 批",
             ]
         ),
+        row(["semantic_patch 1k contention retries", fmt_retries(api.get("semantic_patch_1k"))]),
+        row(["semantic_patch 5k contention retries", fmt_retries(api.get("semantic_patch_5k"))]),
         row(
             [
                 "5k 文档上再打一批",
@@ -1134,7 +1248,8 @@ def render_markdown(summary: dict) -> str:
                 f"CLS {vitals.get('cls') if vitals.get('cls') is not None else '—'}",
                 f"- 画布出现（脚本墙钟）{fmt_ms(page.get('canvas_wall_ms'))} ms，编辑器可输入 {fmt_ms(page.get('editor_wall_ms'))} ms",
                 f"- 截图：{page.get('screenshot') or '无'}",
-                f"- 打字：{fmt_stats(typing.get('latency')) if typing.get('ok') else (typing.get('error') or '未测')}",
+                f"- 打字：{fmt_stats(typing.get('latency')) if typing.get('ok') else (typing.get('error') or '未测')}"
+                + (f"; server ack {fmt_ms(typing.get('server_ack_ms'))} ms" if typing.get("server_ack_ms") is not None else ""),
                 "",
             ]
         )
