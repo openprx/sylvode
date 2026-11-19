@@ -220,6 +220,27 @@ governance config, AI task), while webhook subscriptions are validated against a
 narrower 14-entry allow-list in `apps/api/src/entities/webhook.rs`. **Legacy
 webhook delivery has no retry** — `retry_count` is always written as `0`.
 
+**Bot tasks.** A webhook with a `bot_user_id` carries the tasks of that bot, on
+two channels: worker AI tasks (durable, retried, ended through the AI-task
+callbacks) and webhook deliveries that carry `bot_context`. One action gives a
+bot at most one bot task:
+
+- Assigning an issue to a bot (on create or later) and mentioning a bot in a
+  comment queue a worker AI task (`issue_assigned`, `comment_requested`). That
+  is the bot's task for the action: every delivery the same request emits
+  (`issue.created`, `issue.assigned`, `issue.state_changed`, `issue.updated`,
+  `comment.created`) reaches that bot's webhook **without** `bot_context`.
+- Any other activity on an issue assigned to a bot (a person or another bot
+  changes its state, edits it, deletes it) is delivered to the bot's webhook with
+  `bot_context`, as before.
+- An action never gives a task to the bot that performed it: a bot's own state
+  change, edit, comment, self-assignment or task completion reaches its webhook
+  without `bot_context` and queues no AI task for it. Other bots are unaffected.
+
+A delivery without `bot_context` is still sent, so a subscription keeps seeing
+every event it subscribes to as a plain notification; `sylvode-webhook` answers
+it `not_bot_task`.
+
 ## Worker
 
 `apps/worker` is a standalone process with a 5-second poll loop and a

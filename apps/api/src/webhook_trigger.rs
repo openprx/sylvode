@@ -16,6 +16,7 @@ use sha2::Sha256;
 use uuid::Uuid;
 
 use crate::outbound::{truncate_string, validate_outbound_url};
+use crate::services::bot_identity::is_bot_entity_type;
 
 /// Hard cap on the response body pulled from a webhook receiver.
 ///
@@ -205,15 +206,32 @@ struct DeliveryRecord {
     delivered_at: Timestamp,
 }
 
+/// Delivers `ctx` to every active webhook of the workspace that subscribes to its event.
 pub fn trigger_webhooks(state: AppState, ctx: TriggerContext) {
+    trigger_webhooks_after_ai_tasks(state, ctx, Vec::new());
+}
+
+/// [`trigger_webhooks`] for an action that has already queued a worker AI task for each bot in
+/// `ai_task_bots`.
+///
+/// One action gives a bot at most one bot task (see [`bot_task_suppression`]). The AI task is
+/// that bot's task for this action, so the deliveries of `ctx` reach the subscription of such a
+/// bot as plain notifications, without `bot_context`. Pass the same list to every
+/// `trigger_webhooks_after_ai_tasks` call the action makes (an assignment that also changes the
+/// state emits `issue.assigned` and `issue.state_changed`).
+pub fn trigger_webhooks_after_ai_tasks(state: AppState, ctx: TriggerContext, ai_task_bots: Vec<Uuid>) {
     tokio::spawn(async move {
-        if let Err(err) = trigger_webhooks_inner(state, ctx).await {
+        if let Err(err) = trigger_webhooks_inner(state, ctx, ai_task_bots).await {
             tracing::warn!(error = %err, "webhook trigger failed");
         }
     });
 }
 
-async fn trigger_webhooks_inner(state: AppState, ctx: TriggerContext) -> Result<(), sea_orm::DbErr> {
+async fn trigger_webhooks_inner(
+    state: AppState,
+    ctx: TriggerContext,
+    ai_task_bots: Vec<Uuid>,
+) -> Result<(), sea_orm::DbErr> {
     let webhooks = ActiveWebhookRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
@@ -234,7 +252,7 @@ async fn trigger_webhooks_inner(state: AppState, ctx: TriggerContext) -> Result<
 
     for webhook in webhooks {
         let delivery_id = Uuid::new_v4();
-        let payload = match build_payload(&state, &ctx, delivery_id, &webhook).await {
+        let payload = match build_payload(&state, &ctx, delivery_id, &webhook, &ai_task_bots).await {
             Ok(v) => v,
             Err(err) => {
                 tracing::warn!(webhook_id = %webhook.id, event = ctx.event.as_str(), error = %err, "build payload failed");
@@ -274,6 +292,7 @@ async fn build_payload(
     ctx: &TriggerContext,
     delivery_id: Uuid,
     webhook: &ActiveWebhookRow,
+    ai_task_bots: &[Uuid],
 ) -> Result<WebhookPayload, sea_orm::DbErr> {
     let workspace = WorkspaceRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -313,26 +332,26 @@ async fn build_payload(
     let built_data = build_event_data(state, ctx, &project.key).await?;
 
     let mut bot_context = None;
-    if let Some(identity) = check_bot_context(&state.db, &built_data.assignee_ids, webhook.bot_user_id).await {
-        bot_context = Some(BotContext {
-            is_bot_task: true,
-            bot_id: identity.bot_id.to_string(),
-            bot_name: identity.bot_name,
-            bot_agent_type: identity.bot_agent_type,
-            trigger_reason: default_trigger_reason(ctx.event).to_string(),
-            webhook_id: webhook.id.to_string(),
-        });
-    } else if matches!(ctx.event, WebhookEvent::CommentCreated)
-        && let Some(identity) = check_bot_mention(&state.db, &ctx.mentions, webhook.bot_user_id).await
+    if let Some(candidate) = bot_task_candidate(ctx.event, &built_data.assignee_ids, &ctx.mentions, webhook.bot_user_id)
     {
-        bot_context = Some(BotContext {
-            is_bot_task: true,
-            bot_id: identity.bot_id.to_string(),
-            bot_name: identity.bot_name,
-            bot_agent_type: identity.bot_agent_type,
-            trigger_reason: "mentioned".to_string(),
-            webhook_id: webhook.id.to_string(),
-        });
+        if let Some(suppression) = bot_task_suppression(candidate.bot_id, ctx.actor_id, ai_task_bots) {
+            tracing::debug!(
+                webhook_id = %webhook.id,
+                event = ctx.event.as_str(),
+                bot_id = %candidate.bot_id,
+                reason = suppression.as_str(),
+                "delivered without bot_context"
+            );
+        } else if let Some(identity) = load_bot_identity(&state.db, candidate.bot_id).await {
+            bot_context = Some(BotContext {
+                is_bot_task: true,
+                bot_id: identity.bot_id.to_string(),
+                bot_name: identity.bot_name,
+                bot_agent_type: identity.bot_agent_type,
+                trigger_reason: candidate.trigger_reason.to_string(),
+                webhook_id: webhook.id.to_string(),
+            });
+        }
     }
 
     Ok(WebhookPayload {
@@ -722,70 +741,92 @@ async fn fetch_comment_payload(
     ))
 }
 
-async fn check_bot_context(
-    db: &impl ConnectionTrait,
+/// The bot a delivery to a webhook would hand a bot task to, before [`bot_task_suppression`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BotTaskCandidate {
+    bot_id: Uuid,
+    trigger_reason: &'static str,
+}
+
+/// The webhook's bot is a candidate when it is an assignee of the issue the event is about, or,
+/// for `comment.created`, mentioned in the comment. Whether that user really is a bot is checked
+/// afterwards by [`load_bot_identity`].
+fn bot_task_candidate(
+    event: WebhookEvent,
     assignee_ids: &[Uuid],
+    mentions: &[Uuid],
     webhook_bot_user_id: Option<Uuid>,
-) -> Option<BotIdentity> {
-    let webhook_bot_user_id = webhook_bot_user_id?;
-
-    for assignee_id in assignee_ids {
-        if *assignee_id != webhook_bot_user_id {
-            continue;
-        }
-
-        let row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT entity_type, agent_type, name FROM users WHERE id = $1",
-                vec![(*assignee_id).into()],
-            ))
-            .await
-            .ok()??;
-
-        let entity_type: Option<String> = row.try_get("", "entity_type").ok();
-        if entity_type.as_deref() != Some("bot") {
-            continue;
-        }
-
-        let bot_name: String = row.try_get::<String>("", "name").unwrap_or_else(|_| "Bot".to_string());
-        let bot_agent_type = row
-            .try_get::<Option<String>>("", "agent_type")
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "custom".to_string());
-
-        return Some(BotIdentity {
-            bot_id: *assignee_id,
-            bot_name,
-            bot_agent_type,
+) -> Option<BotTaskCandidate> {
+    let bot_id = webhook_bot_user_id?;
+    if assignee_ids.contains(&bot_id) {
+        return Some(BotTaskCandidate {
+            bot_id,
+            trigger_reason: default_trigger_reason(event),
         });
     }
-
+    if matches!(event, WebhookEvent::CommentCreated) && mentions.contains(&bot_id) {
+        return Some(BotTaskCandidate {
+            bot_id,
+            trigger_reason: "mentioned",
+        });
+    }
     None
 }
 
-async fn check_bot_mention(
-    db: &impl ConnectionTrait,
-    mention_ids: &[Uuid],
-    webhook_bot_user_id: Option<Uuid>,
-) -> Option<BotIdentity> {
-    let bot_id = webhook_bot_user_id?;
-    if !mention_ids.contains(&bot_id) {
-        return None;
-    }
+/// Why a delivery that would otherwise be a bot task for a bot goes out without `bot_context`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BotTaskSuppression {
+    /// The bot caused the event itself (it changed the state, edited, commented, completed its
+    /// own task). A bot is never handed a task by its own action, which would make an agent
+    /// trigger itself in a loop.
+    OwnAction,
+    /// The action already queued a worker AI task for this bot (an assignment or a mention),
+    /// which is the bot's one task for it.
+    AiTaskQueued,
+}
 
-    let row = db
+impl BotTaskSuppression {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OwnAction => "own_action",
+            Self::AiTaskQueued => "ai_task_queued",
+        }
+    }
+}
+
+/// The rule that gives one action at most one bot task per bot, and none to the bot that acted.
+///
+/// The delivery itself is still sent; only its `bot_context` is left out, so the subscription
+/// keeps receiving the event as a plain notification and a receiver answers it `not_bot_task`.
+pub fn bot_task_suppression(bot_id: Uuid, actor_id: Uuid, ai_task_bots: &[Uuid]) -> Option<BotTaskSuppression> {
+    if bot_id == actor_id {
+        Some(BotTaskSuppression::OwnAction)
+    } else if ai_task_bots.contains(&bot_id) {
+        Some(BotTaskSuppression::AiTaskQueued)
+    } else {
+        None
+    }
+}
+
+/// Name and agent type of `bot_id`, or `None` when that user is not a bot.
+async fn load_bot_identity(db: &impl ConnectionTrait, bot_id: Uuid) -> Option<BotIdentity> {
+    let row = match db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT entity_type, agent_type, name FROM users WHERE id = $1",
             vec![bot_id.into()],
         ))
         .await
-        .ok()??;
+    {
+        Ok(row) => row?,
+        Err(err) => {
+            tracing::warn!(bot_id = %bot_id, error = %err, "bot identity lookup failed, delivered without bot_context");
+            return None;
+        }
+    };
 
     let entity_type: Option<String> = row.try_get("", "entity_type").ok();
-    if entity_type.as_deref() != Some("bot") {
+    if !entity_type.as_deref().is_some_and(is_bot_entity_type) {
         return None;
     }
 
@@ -1273,5 +1314,144 @@ mod delivery_tests {
                 "{url} must not be deliverable"
             );
         }
+    }
+}
+
+/// The rule that decides whether a delivery is a bot task: who is a candidate, and when a
+/// candidate's task is left out because the action already gave it one or because it acted
+/// itself.
+#[cfg(test)]
+mod bot_task_rule_tests {
+    use super::{BotTaskCandidate, BotTaskSuppression, WebhookEvent, bot_task_candidate, bot_task_suppression};
+    use uuid::Uuid;
+
+    /// Number of deliveries of one action that reach `bot`'s webhook as bot tasks.
+    fn webhook_bot_tasks(
+        bot: Uuid,
+        actor: Uuid,
+        deliveries: &[(WebhookEvent, &[Uuid], &[Uuid])],
+        ai_task_bots: &[Uuid],
+    ) -> usize {
+        deliveries
+            .iter()
+            .filter_map(|(event, assignees, mentions)| bot_task_candidate(*event, assignees, mentions, Some(bot)))
+            .filter(|candidate| bot_task_suppression(candidate.bot_id, actor, ai_task_bots).is_none())
+            .count()
+    }
+
+    #[test]
+    fn the_webhook_bot_is_a_candidate_as_assignee_or_mentioned_in_a_comment() {
+        let bot = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        assert_eq!(
+            bot_task_candidate(WebhookEvent::IssueStateChanged, &[bot], &[], Some(bot)),
+            Some(BotTaskCandidate {
+                bot_id: bot,
+                trigger_reason: "status_changed"
+            })
+        );
+        assert_eq!(
+            bot_task_candidate(WebhookEvent::CommentCreated, &[], &[bot], Some(bot)),
+            Some(BotTaskCandidate {
+                bot_id: bot,
+                trigger_reason: "mentioned"
+            })
+        );
+        assert_eq!(
+            bot_task_candidate(WebhookEvent::IssueUpdated, &[other], &[], Some(bot)),
+            None
+        );
+        assert_eq!(
+            bot_task_candidate(WebhookEvent::CommentUpdated, &[], &[bot], Some(bot)),
+            None
+        );
+        assert_eq!(bot_task_candidate(WebhookEvent::IssueCreated, &[bot], &[], None), None);
+        // AI task events carry no assignees, so they stay plain notifications.
+        assert_eq!(
+            bot_task_candidate(WebhookEvent::AiTaskCompleted, &[], &[], Some(bot)),
+            None
+        );
+    }
+
+    #[test]
+    fn a_bot_gets_no_task_from_its_own_action_and_none_twice() {
+        let bot = Uuid::new_v4();
+        let human = Uuid::new_v4();
+        assert_eq!(bot_task_suppression(bot, bot, &[]), Some(BotTaskSuppression::OwnAction));
+        assert_eq!(
+            bot_task_suppression(bot, bot, &[bot]),
+            Some(BotTaskSuppression::OwnAction)
+        );
+        assert_eq!(
+            bot_task_suppression(bot, human, &[bot]),
+            Some(BotTaskSuppression::AiTaskQueued)
+        );
+        assert_eq!(bot_task_suppression(bot, human, &[]), None);
+        assert_eq!(bot_task_suppression(bot, human, &[Uuid::new_v4()]), None);
+    }
+
+    /// Creating an issue assigned to a bot emits `issue.created` and `issue.assigned` and queues
+    /// one AI task; neither delivery may be a second (or third) task.
+    #[test]
+    fn create_with_a_bot_assignee_is_one_task() {
+        let bot = Uuid::new_v4();
+        let human = Uuid::new_v4();
+        let deliveries: [(WebhookEvent, &[Uuid], &[Uuid]); 2] = [
+            (WebhookEvent::IssueCreated, &[bot], &[]),
+            (WebhookEvent::IssueAssigned, &[bot], &[]),
+        ];
+        let ai_tasks = [bot];
+        assert_eq!(
+            ai_tasks.len() + webhook_bot_tasks(bot, human, &deliveries, &ai_tasks),
+            1
+        );
+    }
+
+    /// Assigning later, also together with a state change and an edit, is one task.
+    #[test]
+    fn assigning_an_existing_issue_to_a_bot_is_one_task() {
+        let bot = Uuid::new_v4();
+        let human = Uuid::new_v4();
+        let deliveries: [(WebhookEvent, &[Uuid], &[Uuid]); 3] = [
+            (WebhookEvent::IssueAssigned, &[bot], &[]),
+            (WebhookEvent::IssueStateChanged, &[bot], &[]),
+            (WebhookEvent::IssueUpdated, &[bot], &[]),
+        ];
+        let ai_tasks = [bot];
+        assert_eq!(
+            ai_tasks.len() + webhook_bot_tasks(bot, human, &deliveries, &ai_tasks),
+            1
+        );
+    }
+
+    #[test]
+    fn a_mention_is_one_task() {
+        let bot = Uuid::new_v4();
+        let human = Uuid::new_v4();
+        let deliveries: [(WebhookEvent, &[Uuid], &[Uuid]); 1] = [(WebhookEvent::CommentCreated, &[], &[bot])];
+        let ai_tasks = [bot];
+        assert_eq!(
+            ai_tasks.len() + webhook_bot_tasks(bot, human, &deliveries, &ai_tasks),
+            1
+        );
+    }
+
+    #[test]
+    fn state_changes_reach_the_assigned_bot_unless_it_made_them() {
+        let bot_a = Uuid::new_v4();
+        let bot_b = Uuid::new_v4();
+        let human = Uuid::new_v4();
+        let deliveries: [(WebhookEvent, &[Uuid], &[Uuid]); 1] = [(WebhookEvent::IssueStateChanged, &[bot_a], &[])];
+        assert_eq!(webhook_bot_tasks(bot_a, bot_a, &deliveries, &[]), 0, "own change");
+        assert_eq!(
+            webhook_bot_tasks(bot_a, human, &deliveries, &[]),
+            1,
+            "a person's change"
+        );
+        assert_eq!(
+            webhook_bot_tasks(bot_a, bot_b, &deliveries, &[]),
+            1,
+            "another bot's change"
+        );
     }
 }
