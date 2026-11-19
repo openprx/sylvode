@@ -1,7 +1,8 @@
 -- Project resource kinds are reduced to `directory` and `custom`.
 --
 -- Removed kinds: repo, document_library, crm_account, erp_order, equipment, site.
--- Existing resource rows are kept and become `custom`; the original kind is preserved in the
+-- Existing resource rows are kept: `repo` rows become `directory`, every other removed kind
+-- becomes `custom`; the original kind is preserved in the
 -- nullable `legacy_kind` column (the table has no neutral metadata column, and `locator` /
 -- `permission_policy` hold user-facing data that should not carry migration bookkeeping).
 -- Suggested resources in project types, scenario templates and the template copy stored on
@@ -15,7 +16,7 @@ ALTER TABLE project_resources
 
 UPDATE project_resources
 SET legacy_kind = COALESCE(legacy_kind, kind),
-    kind = 'custom',
+    kind = CASE WHEN kind = 'repo' THEN 'directory' ELSE 'custom' END,
     updated_at = NOW()
 WHERE kind IN ('repo', 'document_library', 'crm_account', 'erp_order', 'equipment', 'site');
 
