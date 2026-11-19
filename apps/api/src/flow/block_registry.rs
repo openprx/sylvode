@@ -168,6 +168,20 @@ pub(crate) mod statement_probe {
     }
 }
 
+/// Maximum number of rows one registry bulk write statement carries. The production per-statement cap
+/// (`DOCUMENT_LOCK_HOLD_MS_MAX`, 100 ms) is reached by a single statement of about 10,000 inserted
+/// placements, so a statement whose row count scales with the number of new or changed blocks is
+/// issued in chunks of at most this many rows. The statement count therefore depends only on
+/// `ceil(changed rows / BULK_ROWS_MAX)`, never on unchanged blocks.
+pub(crate) const BULK_ROWS_MAX: usize = 2_000;
+
+/// Ranges of at most `BULK_ROWS_MAX` consecutive rows covering `0..len`, in order.
+fn chunk_ranges(len: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
+    (0..len)
+        .step_by(BULK_ROWS_MAX)
+        .map(move |start| start..(start + BULK_ROWS_MAX).min(len))
+}
+
 /// Latest placement of one physical CID, as locked by the bulk read of `reconcile`.
 #[derive(FromQueryResult)]
 struct LatestPlacement {
@@ -177,6 +191,9 @@ struct LatestPlacement {
     generation: i64,
     state: String,
     content_hash: Vec<u8>,
+    /// Alias fence of the CID, if one exists; read without locking it.
+    fence_first_logical_id: Option<Uuid>,
+    fence_ever_retired: Option<bool>,
 }
 
 /// Column-wise bulk write plan built by the decision pass; no database access happens while filling it.
@@ -201,8 +218,9 @@ struct WritePlan {
 /// Multi-Page operations must lock all Page heads in UUID order before calling this function.
 /// Affected shares are suspended in this transaction; returned IDs are private audit metadata.
 ///
-/// The statement count is independent of the number of blocks: one bulk locking read, a pure
-/// decision pass, at most five bulk writes, and rows whose content did not change are not rewritten.
+/// Rows whose content did not change are neither rewritten nor carried by any write statement. One
+/// bulk locking read covers all blocks; every write statement carries at most `BULK_ROWS_MAX` rows, so
+/// the number of write statements depends only on `ceil(changed rows / BULK_ROWS_MAX)`.
 pub async fn reconcile(
     tx: &DatabaseTransaction,
     scope_id: Uuid,
@@ -246,7 +264,7 @@ pub async fn reconcile(
     statement_probe::note();
     let latest = LatestPlacement::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT p.id,p.physical_cid,p.logical_id,p.generation,p.state,p.content_hash FROM flow_block_placements p WHERE p.id IN (SELECT DISTINCT ON (h.physical_cid) h.id FROM flow_block_placements h WHERE h.scope_id=$1 AND h.page_id=$2 AND h.physical_cid=ANY($3::text[]) ORDER BY h.physical_cid,h.alias_order DESC) ORDER BY p.id FOR UPDATE OF p",
+        "SELECT p.id,p.physical_cid,p.logical_id,p.generation,p.state,p.content_hash,f.first_logical_id AS fence_first_logical_id,f.ever_retired AS fence_ever_retired FROM flow_block_placements p LEFT JOIN flow_block_alias_fences f ON f.scope_id=p.scope_id AND f.page_id=p.page_id AND f.physical_cid=p.physical_cid WHERE p.id IN (SELECT DISTINCT ON (h.physical_cid) h.id FROM flow_block_placements h WHERE h.scope_id=$1 AND h.page_id=$2 AND h.physical_cid=ANY($3::text[]) ORDER BY h.physical_cid,h.alias_order DESC) ORDER BY p.id FOR UPDATE OF p",
         vec![scope_id.into(), page_id.into(), cids.clone().into()],
     ))
     .all(tx)
@@ -277,10 +295,21 @@ pub async fn reconcile(
         if decision.fresh_identity {
             plan.fresh_ids.push(decision.logical_id);
         }
-        plan.fence_cids.push(block.physical_cid.clone());
-        plan.fence_logical.push(decision.logical_id);
-        plan.fence_retired
-            .push(alias.is_some_and(|alias| alias.state != AliasState::Active));
+        let retired = alias.is_some_and(|alias| alias.state != AliasState::Active);
+        // The fence upsert changes a row only when it is missing, or not yet retired and either
+        // retired now or pointing at another first identity; skip every fence that is already right.
+        let fence_changes = match old {
+            None => true,
+            Some(old) => match (old.fence_first_logical_id, old.fence_ever_retired) {
+                (Some(first), Some(ever_retired)) => !ever_retired && (retired || first != decision.logical_id),
+                _ => true,
+            },
+        };
+        if fence_changes {
+            plan.fence_cids.push(block.physical_cid.clone());
+            plan.fence_logical.push(decision.logical_id);
+            plan.fence_retired.push(retired);
+        }
         if let Some(old) = old.filter(|row| row.state == "active") {
             if old.content_hash != block.content_hash {
                 plan.hash_ids.push(old.id);
@@ -298,17 +327,17 @@ pub async fn reconcile(
             suspend.push(decision.logical_id);
         }
     }
-    if !plan.fresh_ids.is_empty() {
+    for range in chunk_ranges(plan.fresh_ids.len()) {
         #[cfg(test)]
         statement_probe::note();
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "INSERT INTO flow_logical_blocks(id,state) SELECT v.id,'active' FROM unnest($1::uuid[]) WITH ORDINALITY AS v(id,ord) ORDER BY v.ord",
-            vec![plan.fresh_ids.into()],
+            vec![plan.fresh_ids[range].to_vec().into()],
         ))
         .await?;
     }
-    if !plan.fence_cids.is_empty() {
+    for range in chunk_ranges(plan.fence_cids.len()) {
         // Data-identical to the former per-block upsert, but an unchanged fence is not rewritten.
         #[cfg(test)]
         statement_probe::note();
@@ -318,32 +347,37 @@ pub async fn reconcile(
             vec![
                 scope_id.into(),
                 page_id.into(),
-                plan.fence_cids.into(),
-                plan.fence_logical.into(),
-                plan.fence_retired.into(),
+                plan.fence_cids[range.clone()].to_vec().into(),
+                plan.fence_logical[range.clone()].to_vec().into(),
+                plan.fence_retired[range].to_vec().into(),
             ],
         ))
         .await?;
     }
-    if !plan.hash_ids.is_empty() {
+    for range in chunk_ranges(plan.hash_ids.len()) {
         #[cfg(test)]
         statement_probe::note();
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE flow_block_placements p SET content_hash=v.hash FROM unnest($1::uuid[],$2::bytea[]) AS v(id,hash) WHERE p.id=v.id AND p.content_hash IS DISTINCT FROM v.hash",
-            vec![plan.hash_ids.into(), plan.hash_values.into()],
+            vec![
+                plan.hash_ids[range.clone()].to_vec().into(),
+                plan.hash_values[range].to_vec().into(),
+            ],
         ))
         .await?;
     }
-    if !plan.activate_ids.is_empty() {
+    for range in chunk_ranges(plan.activate_ids.len()) {
         #[cfg(test)]
         statement_probe::note();
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE flow_logical_blocks SET state='active' WHERE id=ANY($1::uuid[]) AND state<>'active'",
-            vec![plan.activate_ids.into()],
+            vec![plan.activate_ids[range].to_vec().into()],
         ))
         .await?;
+    }
+    for range in chunk_ranges(plan.new_ids.len()) {
         #[cfg(test)]
         statement_probe::note();
         tx.execute(Statement::from_sql_and_values(
@@ -352,35 +386,43 @@ pub async fn reconcile(
             vec![
                 scope_id.into(),
                 page_id.into(),
-                plan.new_ids.into(),
-                plan.new_logical.into(),
-                plan.new_cids.into(),
-                plan.new_generations.into(),
-                plan.new_hashes.into(),
+                plan.new_ids[range.clone()].to_vec().into(),
+                plan.new_logical[range.clone()].to_vec().into(),
+                plan.new_cids[range.clone()].to_vec().into(),
+                plan.new_generations[range.clone()].to_vec().into(),
+                plan.new_hashes[range].to_vec().into(),
             ],
         ))
         .await?;
     }
-    #[cfg(test)]
-    statement_probe::note();
-    let removed = tx.query_all(Statement::from_sql_and_values(DbBackend::Postgres,
-        "UPDATE flow_block_placements SET state='deleted',retired_at=now() WHERE scope_id=$1 AND page_id=$2 AND state='active' AND NOT(physical_cid=ANY($3::text[])) RETURNING logical_id",
-        vec![scope_id.into(),page_id.into(),cids.into()])).await?;
-    let mut removed_ids = Vec::with_capacity(removed.len());
-    for row in removed {
-        removed_ids.push(row.try_get::<Uuid>("", "logical_id")?);
+    // Placements no longer present are retired in chunks; each round retires at most `BULK_ROWS_MAX`
+    // and the loop ends at the first round that retires fewer.
+    let mut removed_ids = Vec::new();
+    loop {
+        #[cfg(test)]
+        statement_probe::note();
+        let removed = tx.query_all(Statement::from_sql_and_values(DbBackend::Postgres,
+            "UPDATE flow_block_placements SET state='deleted',retired_at=now() WHERE id IN (SELECT id FROM flow_block_placements WHERE scope_id=$1 AND page_id=$2 AND state='active' AND NOT(physical_cid=ANY($3::text[])) ORDER BY id LIMIT $4 FOR UPDATE) RETURNING logical_id",
+            vec![scope_id.into(),page_id.into(),cids.clone().into(),i64::try_from(BULK_ROWS_MAX).map_err(|_| ApiError::internal())?.into()])).await?;
+        let round = removed.len();
+        for row in removed {
+            removed_ids.push(row.try_get::<Uuid>("", "logical_id")?);
+        }
+        if round < BULK_ROWS_MAX {
+            break;
+        }
     }
-    if !removed_ids.is_empty() {
+    for range in chunk_ranges(removed_ids.len()) {
         #[cfg(test)]
         statement_probe::note();
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE flow_logical_blocks SET state='deleted' WHERE id=ANY($1::uuid[])",
-            vec![removed_ids.clone().into()],
+            vec![removed_ids[range].to_vec().into()],
         ))
         .await?;
-        suspend.extend(removed_ids);
     }
+    suspend.extend(removed_ids);
     #[cfg(test)]
     statement_probe::note();
     tx.execute(Statement::from_sql_and_values(
@@ -1323,16 +1365,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reconcile_statement_count_is_independent_of_block_count() {
+    async fn reconcile_statement_count_depends_only_on_changed_rows() {
         let Some(scratch) = scratch_with_leases(&format!("block_registry_count_{}", Uuid::new_v4().simple())).await
         else {
             eprintln!("SKIPPED (no database)");
             return;
         };
         let db = &scratch.db;
+        let sizes = [50, BULK_ROWS_MAX, 2 * BULK_ROWS_MAX + 1];
         let mut first = Vec::new();
         let mut steady = Vec::new();
-        for size in [50, 2_000] {
+        for size in sizes {
             let (_, scope, page) = page(db).await;
             let tx = db.begin().await.unwrap();
             let initial = blocks(size, 1);
@@ -1343,10 +1386,18 @@ mod tests {
             tx.rollback().await.unwrap();
         }
         eprintln!("reconcile statements: first registration {first:?}, steady state {steady:?}");
-        assert_eq!(first[0], first[1], "first registration must not grow with the page");
-        assert_eq!(steady[0], steady[1], "steady state must not grow with the page");
         assert!(
-            first.iter().chain(&steady).all(|count| *count <= 20),
+            steady.windows(2).all(|pair| pair[0] == pair[1]),
+            "steady state must not grow with the page: {steady:?}"
+        );
+        // First registration issues four chunked statements per new-row kind (logical blocks, fences,
+        // activation, placements); each kind adds one statement per further chunk of new blocks.
+        for (size, count) in sizes.iter().zip(&first) {
+            let extra_chunks = size.div_ceil(BULK_ROWS_MAX) - 1;
+            assert_eq!(*count, first[0] + 4 * extra_chunks, "size {size}: {first:?}");
+        }
+        assert!(
+            first.iter().chain(&steady).all(|count| *count <= 30),
             "{first:?} {steady:?}"
         );
         scratch.drop_self().await;
