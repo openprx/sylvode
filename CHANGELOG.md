@@ -97,6 +97,37 @@ name.
 
 ### Changed
 
+- **Forms record list: opens as a table, simpler views, read-only record panel.** Every form
+  now has a built-in **All records** table, and a form opens with it unless the URL names a
+  view (`?view=`), the user chose another view before (remembered per user and form on this
+  device), or an admin set a default view; template-created views no longer decide the landing
+  view. The "Saved views" panel is replaced by a view bar: a view switcher, quick **Filter**,
+  **Sort** and **Fields** controls and sortable column headers that change the list
+  immediately and are kept for the user without saving, a **Modified** state with **Reset**,
+  and **Save view…**, which asks only for a name (and, for form designers, whether everyone or
+  only the user sees it; "Only me" is the default). Renaming, sharing, setting the default,
+  updating and deleting (with a confirmation) live in the view's menu; the per-type parameters
+  moved to a **Layout settings** sheet that shows only the controls of the current view type.
+  Clicking a row (or Enter on it) opens the record read-only in a side panel beside the list:
+  fields follow the detail layout and are rendered by type (formatted numbers, amounts and
+  dates, option badges, members, links, image and signature previews, attachments with name and
+  size, relation chips, rich text as plain text, never HTML), with previous / next, copy,
+  **Edit** (opens the existing editor), **Open full page**, and plugin panels in a collapsed
+  **Apps** section that is mounted only when expanded. The panel docks beside the list on wide
+  screens, floats over it on medium widths and is a modal sheet on phones; `?record=` reflects
+  the open record, Back closes it, the arrow keys move between records without adding history
+  entries, and Esc returns focus to the row. Row edit and delete buttons are shown only to users
+  who may use them. Links, child records and comments are edited from the panel's menu
+  (**Links and child records…**).
+- **Personal views no longer need form design permission.** Saving, renaming, updating and
+  deleting a view that only its creator can see now needs only permission to view the form's
+  records; creating or changing a shared view, or setting the default view, still needs
+  `form.design`. A private view is listed, readable and usable as a `view_id` only by its
+  creator (form admins and bots no longer see other people's private views), cannot be the
+  default view, and can be made private only by its creator. Duplicating a form copies the
+  caller's own private views but not other people's, a personal view no longer blocks removing
+  a field it uses, and removing a member from a workspace archives their private views.
+
 - **Webhook receiver: now part of this repository.** The receiver (crate `sylvode-webhook`,
   executables `sylvode-webhook` and the legacy `openpr-webhook`, formerly OpenPR Webhook) is
   imported with its history as `apps/webhook` and built as a workspace member, with its own
