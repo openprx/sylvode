@@ -17,7 +17,10 @@ PATTERN='/opt/(worker|working|opsx)([/"'"'"' ]|$)|/home/[A-Za-z0-9_.-]+/|/Users/
 # path<TAB>exact line text that may contain a machine path<TAB>reason
 EXEMPTIONS=$'scripts/audit-universal-forms-production-readiness.sh\tnot_contains "compose does not hardcode a local webhook binary path" "$COMPOSE_FILE" "/opt/opsx/openpr-webhook"\tnegative check: asserts the compose file does not contain this path
 scripts/report-flow-v0.3-json.sh\t      repository: "/opt/worker/code/openpr",\tfrozen v0.3 receipt: docs/schemas/sylvode-flow-gate-v1.schema.json pins this value as a const
-scripts/report-flow-v0.3-json.sh\t    source: {repository: "/opt/worker/code/openpr", head: $head, dirty: $dirty},\tfrozen v0.3 receipt: docs/schemas/sylvode-flow-gate-v1.schema.json pins this value as a const'
+scripts/report-flow-v0.3-json.sh\t    source: {repository: "/opt/worker/code/openpr", head: $head, dirty: $dirty},\tfrozen v0.3 receipt: docs/schemas/sylvode-flow-gate-v1.schema.json pins this value as a const
+apps/webhook/CHANGELOG.md\t  `<string>"/Users/me/.local/bin/sylvode-webhook"</string>`, a launchd agent that never starts.\trelease note of webhook 0.3.x: quotes the broken plist value a macOS install rendered; not a path any script uses
+apps/webhook/tests/install_scripts.rs\tconst ODD: &str = r#"/Users/me/odd dir & 100% $HOME \\ "q" <x>"#;\ttest input: a placeholder value full of characters templates treat specially, rendered into a sandbox; never read or written as a path
+apps/webhook/tests/install_scripts.rs\tv=\'/Users/me/odd dir & 100% $HOME \\ "q" <x>\'\tthe same test input, assigned in the shell driver of the rendering test'
 
 # path<TAB>reason: whole files exempt because they are frozen and their hash or content is pinned
 FILE_EXEMPTIONS=$'docs/schemas/sylvode-flow-gate-v1.schema.json\tfrozen gate schema: pins the v0.3-v1.0 receipt repository path as a const
