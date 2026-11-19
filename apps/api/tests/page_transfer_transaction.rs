@@ -976,6 +976,10 @@ async fn workspace_transfer_keeps_admission_and_write_guards() {
         .await
         .unwrap();
     let db = &scratch.db;
+    // Reader 5 is the default since 0106; start below it so the transfer reader gate is exercised.
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=4 WHERE singleton")
+        .await
+        .unwrap();
     let workspace = Uuid::new_v4();
     let owner = Uuid::new_v4();
     let reader = Uuid::new_v4();
