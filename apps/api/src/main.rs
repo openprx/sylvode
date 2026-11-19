@@ -3529,6 +3529,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0102_flow_integrity_cross_workspace_attempts.sql",
         include_str!("../../../migrations/0102_flow_integrity_cross_workspace_attempts.sql"),
     ),
+    (
+        "0104_project_resource_kinds.sql",
+        include_str!("../../../migrations/0104_project_resource_kinds.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4054,6 +4058,14 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0102_flow_integrity_cross_workspace_attempts.sql",
         SchemaProbe::CrossWorkspaceIntegrity,
+    ),
+    (
+        "0104_project_resource_kinds.sql",
+        SchemaProbe::ConstraintContains(
+            "project_resources",
+            "project_resources_kind_check",
+            "ARRAY['directory'::text, 'custom'::text]",
+        ),
     ),
 ];
 
@@ -4611,6 +4623,7 @@ mod tests {
                 "0100_form_plugin_layouts.sql",
                 "0101_form_plugin_library.sql",
                 "0102_flow_integrity_cross_workspace_attempts.sql",
+                "0104_project_resource_kinds.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );

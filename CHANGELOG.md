@@ -10,6 +10,14 @@ name.
 
 ## [Unreleased]
 
+### Changed
+
+- **Project resource kinds** are reduced to `directory` and `custom`. The removed kinds (`repo`, `document_library`, `crm_account`, `erp_order`, `equipment`, `site`) are rejected on create and update. Migration `0104` converts existing rows to `custom` (the original kind is kept in `project_resources.legacy_kind`) and remaps suggested resources in project types, scenario templates and projects (`repo` to `directory`, everything else to `custom`).
+
+### Upgrade notes
+
+- Apply the database migration `0104`. An API older than this change that tries to create a resource with a removed kind after the migration gets a database error from the tightened CHECK constraint instead of a validation error.
+
 ## [0.2.539] - 2026-11-18
 
 ### Added

@@ -51,15 +51,7 @@ export interface ScenarioTemplate {
 	updated_at: string;
 }
 
-export type ProjectResourceKind =
-	| 'repo'
-	| 'directory'
-	| 'document_library'
-	| 'crm_account'
-	| 'erp_order'
-	| 'equipment'
-	| 'site'
-	| 'custom';
+export type ProjectResourceKind = 'directory' | 'custom';
 
 export interface ProjectResource {
 	id: string;
