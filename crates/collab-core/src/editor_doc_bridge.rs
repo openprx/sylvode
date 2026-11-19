@@ -62,14 +62,189 @@ fn text_children(map: &LoroMap) -> Result<Vec<LoroText>, CollabError> {
     }
     Ok(texts)
 }
+/// Constant-time lookups over a placement list, answering exactly what the linear scans
+/// `entries.iter().any(..)`, `entries.iter().find(..)` and a `BTreeMap` collected from
+/// `entries.iter().enumerate()` answer, including when a CID occurs more than once: `find` yields
+/// the first entry for a CID, the collected position map keeps the last index.
+struct PlacementIndex<'a> {
+    first: std::collections::HashMap<&'a str, &'a crate::editor_structure::Placement>,
+    last_position: std::collections::HashMap<&'a str, usize>,
+}
+impl<'a> PlacementIndex<'a> {
+    fn new(entries: &'a [crate::editor_structure::Placement]) -> Self {
+        let mut first = std::collections::HashMap::with_capacity(entries.len());
+        let mut last_position = std::collections::HashMap::with_capacity(entries.len());
+        for (index, entry) in entries.iter().enumerate() {
+            first.entry(entry.cid.as_str()).or_insert(entry);
+            last_position.insert(entry.cid.as_str(), index);
+        }
+        Self { first, last_position }
+    }
+    fn contains(&self, cid: &str) -> bool {
+        self.first.contains_key(cid)
+    }
+    fn first(&self, cid: &str) -> Option<&'a crate::editor_structure::Placement> {
+        self.first.get(cid).copied()
+    }
+    fn position(&self, cid: &str) -> Option<usize> {
+        self.last_position.get(cid).copied()
+    }
+}
 /// None means a legacy tree-only document. IDs are actual live map CIDs, not ordinals.
 pub fn editor_blocks(doc: &LoroDoc) -> Result<Option<Vec<EditorBlock>>, CollabError> {
-    read_blocks(doc, false)
+    read_blocks(doc, Mode::Current, || crate::editor_structure::placements(doc))
 }
 pub fn legacy_editor_blocks(doc: &LoroDoc) -> Result<Option<Vec<EditorBlock>>, CollabError> {
-    read_blocks(doc, true)
+    read_blocks(doc, Mode::Legacy, || Ok(None))
 }
-fn read_blocks(doc: &LoroDoc, legacy: bool) -> Result<Option<Vec<EditorBlock>>, CollabError> {
+
+/// What the editor-model floor needs to know about the blocks [`editor_blocks`] would return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EditorModelSignals {
+    /// Some block is a model-5 atom (`image`, `attachment`, `childPage`).
+    pub atom: bool,
+    /// Some block carries inline marks or is not one of the model-1 prose kinds.
+    pub beyond_model1: bool,
+}
+
+/// [`editor_blocks`] reduced to [`EditorModelSignals`], for `minimum_editor_model`.
+///
+/// `placements` must be what `editor_structure::placements(doc)` returns for this unchanged
+/// document (the caller has already evaluated it, and its error, for the same state). Visits the
+/// same blocks in the same order and fails with exactly the error `editor_blocks` would, but skips
+/// work that only shapes the returned values: block text, logical-id aliases.
+pub fn editor_model_signals(
+    doc: &LoroDoc,
+    placements: Option<Vec<crate::editor_structure::Placement>>,
+) -> Result<Option<EditorModelSignals>, CollabError> {
+    let Some(blocks) = read_blocks(doc, Mode::Floor, || Ok(placements))? else {
+        return Ok(None);
+    };
+    Ok(Some(EditorModelSignals {
+        atom: blocks.iter().any(|block| crate::editor_media::is_atom(&block.kind)),
+        beyond_model1: blocks.iter().any(|block| {
+            !block.inline_spans.is_empty()
+                || !matches!(
+                    block.kind.as_str(),
+                    "paragraph" | "heading" | "bulletItem" | "codeBlock"
+                )
+        }),
+    }))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Package v2/v3 prose: model-1 kinds only, no structure, no inline marks.
+    Legacy,
+    /// The current reader.
+    Current,
+    /// `Current`'s filtering and validation, without block text or logical ids.
+    Floor,
+}
+
+fn is_legacy_kind(kind: &str) -> bool {
+    matches!(kind, "paragraph" | "heading" | "bulletItem" | "codeBlock")
+}
+fn block_attributes(map: &LoroMap) -> Value {
+    match map.get("attributes") {
+        Some(ValueOrContainer::Container(Container::Map(attrs))) => attrs.get_deep_value().to_json_value(),
+        _ => Value::Object(serde_json::Map::new()),
+    }
+}
+/// Non-prose dependency nodes must not expand private content into search/export.
+fn is_dependency(attributes: &Value) -> bool {
+    ["embed_type", "embed_object_id", "child_page_id", "reference_id"]
+        .iter()
+        .any(|key| attributes.get(*key).is_some())
+}
+fn reverse_aliases(aliases: &LoroMap) -> std::collections::BTreeMap<String, String> {
+    let mut reverse = std::collections::BTreeMap::new();
+    for key in aliases.keys() {
+        if let Some(cid) = string(aliases, key.as_ref()) {
+            reverse.entry(cid).or_insert_with(|| key.to_string());
+        }
+    }
+    reverse
+}
+/// The tail of a non-legacy block read, after kind and dependency filtering and once the inline
+/// text containers are known: atom validation, text, inline spans, logical id.
+fn finish_block(
+    cid: String,
+    kind: String,
+    attributes: Value,
+    texts: &[LoroText],
+    collect_values: bool,
+    reverse_aliases: &std::collections::BTreeMap<String, String>,
+) -> Result<EditorBlock, CollabError> {
+    let atom = crate::editor_media::is_atom(&kind);
+    if atom {
+        crate::editor_media::validate(&kind, &attributes)?;
+        if !texts.is_empty() {
+            return Err(invalid("editor_atom_children_not_empty"));
+        }
+    }
+    // Each inline text is materialized once; its byte length is the next span offset.
+    let strings: Vec<String> = if collect_values {
+        texts.iter().map(LoroText::to_string).collect()
+    } else {
+        Vec::new()
+    };
+    let text = if !collect_values {
+        String::new()
+    } else if atom {
+        crate::editor_media::searchable_text(&kind, &attributes)
+    } else {
+        strings.concat()
+    };
+    let mut inline_spans = Vec::new();
+    let mut offset = 0;
+    for (position, text) in texts.iter().enumerate() {
+        for mut span in crate::page_inline::spans(text)? {
+            span.start += offset;
+            span.end += offset;
+            inline_spans.push(span);
+        }
+        offset += strings.get(position).map_or(0, String::len);
+    }
+    let logical_id = if collect_values {
+        reverse_aliases.get(&cid).cloned()
+    } else {
+        None
+    };
+    Ok(EditorBlock {
+        id: cid,
+        kind,
+        text,
+        attributes,
+        logical_id,
+        inline_spans,
+        parent: None,
+    })
+}
+/// Orders blocks by placement and attaches parent and depth, as structured pages require.
+fn apply_placements(blocks: &mut [EditorBlock], index: &PlacementIndex<'_>) -> Result<(), CollabError> {
+    blocks.sort_by_key(|block| index.position(&block.id).unwrap_or(usize::MAX));
+    for block in blocks.iter_mut() {
+        if let Some(entry) = index.first(&block.id) {
+            block.parent.clone_from(&entry.parent);
+            block
+                .attributes
+                .as_object_mut()
+                .ok_or_else(|| invalid("editor_block_invalid_attributes"))?
+                .insert("indent".into(), serde_json::json!(entry.depth));
+        }
+    }
+    Ok(())
+}
+fn read_blocks(
+    doc: &LoroDoc,
+    mode: Mode,
+    load_placements: impl FnOnce() -> Result<Option<Vec<crate::editor_structure::Placement>>, CollabError>,
+) -> Result<Option<Vec<EditorBlock>>, CollabError> {
+    #[cfg(test)]
+    crate::walk_counter::record_block_read();
+    let legacy = mode == Mode::Legacy;
+    let collect_values = mode != Mode::Floor;
     let Some(list) = root_children(doc) else {
         return Ok(None);
     };
@@ -77,102 +252,146 @@ fn read_blocks(doc: &LoroDoc, legacy: bool) -> Result<Option<Vec<EditorBlock>>, 
     if aliases.len() > crate::limits::DOCUMENT_BLOCK_COUNT_MAX {
         return Err(invalid("editor_block_alias_limit_exceeded"));
     }
-    let mut reverse_aliases = std::collections::BTreeMap::new();
-    for key in aliases.keys() {
-        if let Some(cid) = string(&aliases, key.as_ref()) {
-            reverse_aliases.entry(cid).or_insert_with(|| key.to_string());
-        }
-    }
-    let placements = if legacy {
-        None
+    let reverse_aliases = if collect_values {
+        reverse_aliases(&aliases)
     } else {
-        crate::editor_structure::placements(doc)?
+        std::collections::BTreeMap::new()
     };
+    let placements = load_placements()?;
+    let index = placements.as_deref().map(PlacementIndex::new);
     let mut blocks = Vec::new();
     for i in 0..list.len() {
         let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(i) else {
             return Err(invalid("editor_doc_unsupported_block_container"));
         };
-        if placements
-            .as_ref()
-            .is_some_and(|entries| !entries.iter().any(|entry| entry.cid == map.id().to_string()))
-        {
+        let cid = map.id().to_string();
+        if index.as_ref().is_some_and(|index| !index.contains(&cid)) {
             continue;
         }
         let kind = string(&map, "nodeName").ok_or_else(|| invalid("editor_block_missing_node_name"))?;
-        // Non-prose dependency nodes must not expand private content into search/export.
-        if !supported(&kind)
-            || (legacy && !matches!(kind.as_str(), "paragraph" | "heading" | "bulletItem" | "codeBlock"))
-        {
+        if !supported(&kind) || (legacy && !is_legacy_kind(&kind)) {
             continue;
         }
-        let attributes = match map.get("attributes") {
-            Some(ValueOrContainer::Container(Container::Map(attrs))) => attrs.get_deep_value().to_json_value(),
-            _ => Value::Object(serde_json::Map::new()),
-        };
-        if !crate::editor_media::is_atom(&kind)
-            && ["embed_type", "embed_object_id", "child_page_id", "reference_id"]
-                .iter()
-                .any(|key| attributes.get(*key).is_some())
-        {
+        let attributes = block_attributes(&map);
+        if !crate::editor_media::is_atom(&kind) && is_dependency(&attributes) {
             continue;
         }
         let texts = text_children(&map)?;
-        if crate::editor_media::is_atom(&kind) {
-            crate::editor_media::validate(&kind, &attributes)?;
-            if !texts.is_empty() {
-                return Err(invalid("editor_atom_children_not_empty"));
-            }
-        }
-        let text = if crate::editor_media::is_atom(&kind) {
-            crate::editor_media::searchable_text(&kind, &attributes)
+        if legacy {
+            // Legacy prose never carries atoms (filtered above) and never reads inline marks.
+            let text = texts.iter().map(LoroText::to_string).collect::<String>();
+            let logical_id = reverse_aliases.get(&cid).cloned();
+            blocks.push(EditorBlock {
+                id: cid,
+                kind,
+                text,
+                attributes,
+                logical_id,
+                inline_spans: Vec::new(),
+                parent: None,
+            });
         } else {
-            texts.iter().map(LoroText::to_string).collect::<String>()
-        };
-        let mut inline_spans = Vec::new();
-        let mut offset = 0;
-        for text in texts {
-            for mut span in if legacy {
-                Vec::new()
-            } else {
-                crate::page_inline::spans(&text)?
-            } {
-                span.start += offset;
-                span.end += offset;
-                inline_spans.push(span);
-            }
-            offset += text.to_string().len();
+            blocks.push(finish_block(
+                cid,
+                kind,
+                attributes,
+                &texts,
+                collect_values,
+                &reverse_aliases,
+            )?);
         }
-        let logical_id = reverse_aliases.get(&map.id().to_string()).cloned();
-        blocks.push(EditorBlock {
-            id: map.id().to_string(),
-            kind,
-            text,
-            attributes,
-            logical_id,
-            inline_spans,
-            parent: None,
-        });
     }
-    if let Some(placements) = placements {
-        let positions: std::collections::BTreeMap<_, _> = placements
-            .iter()
-            .enumerate()
-            .map(|(index, entry)| (entry.cid.as_str(), index))
-            .collect();
-        blocks.sort_by_key(|block| positions.get(block.id.as_str()).copied().unwrap_or(usize::MAX));
-        for block in &mut blocks {
-            if let Some(entry) = placements.iter().find(|entry| entry.cid == block.id) {
-                block.parent.clone_from(&entry.parent);
-                block
-                    .attributes
-                    .as_object_mut()
-                    .ok_or_else(|| invalid("editor_block_invalid_attributes"))?
-                    .insert("indent".into(), serde_json::json!(entry.depth));
-            }
-        }
+    if let Some(index) = index {
+        apply_placements(&mut blocks, &index)?;
     }
     Ok(Some(blocks))
+}
+
+/// The block ids `legacy_editor_blocks` returns, and what `editor_blocks` returns.
+pub type LegacyIdsAndBlocks = (Vec<String>, Vec<EditorBlock>);
+
+/// `legacy_editor_blocks` (reduced to block ids) and `editor_blocks`, evaluated in that order but
+/// in one pass over the editor document. The result -- values, `None`, and which typed error is
+/// returned -- equals calling the two readers in sequence: an error the legacy reader would
+/// return wins over anything the current reader would report, then the current reader's
+/// placement error, then its first per-block error.
+pub fn legacy_ids_and_editor_blocks(doc: &LoroDoc) -> Result<Option<LegacyIdsAndBlocks>, CollabError> {
+    #[cfg(test)]
+    crate::walk_counter::record_block_read();
+    // Both readers stop here identically: no editor document, or too many aliases.
+    let Some(list) = root_children(doc) else {
+        return Ok(None);
+    };
+    let aliases = doc.get_map("flow_editor_aliases");
+    if aliases.len() > crate::limits::DOCUMENT_BLOCK_COUNT_MAX {
+        return Err(invalid("editor_block_alias_limit_exceeded"));
+    }
+    let reverse_aliases = reverse_aliases(&aliases);
+    // The current reader's placement error is reported only if the legacy reader succeeds.
+    let placements = crate::editor_structure::placements(doc);
+    let index = match &placements {
+        Ok(Some(entries)) => Some(PlacementIndex::new(entries)),
+        _ => None,
+    };
+    let mut current_error = placements.as_ref().err().cloned();
+    let mut legacy_ids = Vec::new();
+    let mut blocks = Vec::new();
+    for i in 0..list.len() {
+        let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(i) else {
+            return Err(invalid("editor_doc_unsupported_block_container"));
+        };
+        let cid = map.id().to_string();
+        let kind = string(&map, "nodeName");
+        let mut attributes = None;
+        let mut texts = None;
+
+        // Legacy reader: every block, model-1 kinds only; its errors return immediately.
+        let Some(legacy_kind) = kind.as_deref() else {
+            return Err(invalid("editor_block_missing_node_name"));
+        };
+        if supported(legacy_kind) && is_legacy_kind(legacy_kind) {
+            let legacy_attributes = attributes.insert(block_attributes(&map));
+            if !is_dependency(legacy_attributes) {
+                texts = Some(text_children(&map)?);
+                legacy_ids.push(cid.clone());
+            }
+        }
+
+        // Current reader: placed blocks only; its first error is held until the legacy reader
+        // has visited every block.
+        if current_error.is_some() || index.as_ref().is_some_and(|index| !index.contains(&cid)) {
+            continue;
+        }
+        let Some(kind) = kind else {
+            current_error = Some(invalid("editor_block_missing_node_name"));
+            continue;
+        };
+        if !supported(&kind) {
+            continue;
+        }
+        let attributes = attributes.unwrap_or_else(|| block_attributes(&map));
+        if !crate::editor_media::is_atom(&kind) && is_dependency(&attributes) {
+            continue;
+        }
+        let texts = match texts.map_or_else(|| text_children(&map), Ok) {
+            Ok(texts) => texts,
+            Err(error) => {
+                current_error = Some(error);
+                continue;
+            }
+        };
+        match finish_block(cid, kind, attributes, &texts, true, &reverse_aliases) {
+            Ok(block) => blocks.push(block),
+            Err(error) => current_error = Some(error),
+        }
+    }
+    if let Some(error) = current_error {
+        return Err(error);
+    }
+    if let Some(index) = index {
+        apply_placements(&mut blocks, &index)?;
+    }
+    Ok(Some((legacy_ids, blocks)))
 }
 /// Resolve only live top-level editor maps. Tombstoned aliases cannot resurrect blocks.
 pub fn resolve_editor_block_id(doc: &LoroDoc, id: &str) -> Option<String> {
@@ -772,6 +991,195 @@ pub fn replace_atom(doc: &LoroDoc, id: &str, kind: &str, attributes: &Value) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The index must answer exactly like the linear scans it replaced, including for duplicate
+    /// CIDs (first entry for `find`, last index for the collected position map) and absent ones.
+    #[test]
+    fn placement_index_matches_linear_scans_with_duplicates() {
+        use crate::editor_structure::Placement;
+        let entry = |cid: &str, depth: u32, counter: i32| Placement {
+            cid: cid.to_owned(),
+            parent: (depth > 0).then(|| format!("parent-of-{cid}")),
+            depth,
+            tree_id: loro::TreeID { peer: 7, counter },
+            position: usize::try_from(counter).unwrap_or(0),
+        };
+        let cases = [
+            vec![],
+            vec![entry("a", 0, 0)],
+            vec![entry("a", 0, 0), entry("b", 1, 1), entry("a", 2, 2)],
+            vec![entry("x", 3, 0), entry("x", 1, 1), entry("x", 0, 2), entry("y", 0, 3)],
+            vec![entry("", 0, 0), entry("b", 0, 1), entry("", 4, 2), entry("b", 2, 3)],
+        ];
+        for entries in &cases {
+            let index = PlacementIndex::new(entries);
+            let positions: std::collections::BTreeMap<_, _> = entries
+                .iter()
+                .enumerate()
+                .map(|(position, entry)| (entry.cid.as_str(), position))
+                .collect();
+            for cid in ["a", "b", "x", "y", "", "missing"] {
+                assert_eq!(
+                    index.contains(cid),
+                    entries.iter().any(|entry| entry.cid == cid),
+                    "{cid}"
+                );
+                let linear = entries.iter().find(|entry| entry.cid == cid);
+                assert_eq!(
+                    index
+                        .first(cid)
+                        .map(|entry| (entry.tree_id, entry.depth, entry.parent.clone())),
+                    linear.map(|entry| (entry.tree_id, entry.depth, entry.parent.clone())),
+                    "{cid}"
+                );
+                assert_eq!(index.position(cid), positions.get(cid).copied(), "{cid}");
+            }
+        }
+    }
+    /// A page with `blocks` paragraphs (structured when `structured`), as a raw Loro document
+    /// that tests can damage.
+    fn damageable_page(seed: u64, blocks: usize, structured: bool) -> LoroDoc {
+        use crate::{CollabEngine, LoroCollabEngine, NodeKind, Operation};
+        let mut engine = LoroCollabEngine::new_empty(seed);
+        engine.initialize_page_editor().unwrap();
+        if structured {
+            engine.initialize_page_structure_model(4).unwrap();
+        }
+        for index in 0..blocks {
+            let id = format!("p{index}");
+            engine
+                .apply_content_operation(&Operation::CreateNode {
+                    id: id.as_str().into(),
+                    parent: None,
+                    index: u32::try_from(index + 1).unwrap(),
+                    kind: NodeKind::Block,
+                })
+                .unwrap();
+            engine
+                .apply_content_operation(&Operation::InsertText {
+                    id: id.as_str().into(),
+                    index: 0,
+                    text: format!("text {index}"),
+                })
+                .unwrap();
+        }
+        if structured {
+            engine
+                .apply_content_operation(&Operation::DeleteNode { id: "p1".into() })
+                .unwrap();
+        }
+        let doc = LoroDoc::new();
+        crate::page_inline::configure(&doc);
+        doc.import(&engine.export_snapshot().unwrap()).unwrap();
+        doc.set_peer_id(77).unwrap();
+        doc
+    }
+
+    fn damaged_block(doc: &LoroDoc, index: usize) -> LoroMap {
+        match root_children(doc).unwrap().get(index) {
+            Some(ValueOrContainer::Container(Container::Map(map))) => map,
+            _ => panic!("block {index}"),
+        }
+    }
+
+    /// One way to break block `index` (or the whole page for the structure-level defects).
+    fn damage(doc: &LoroDoc, defect: usize, index: usize) {
+        let map = damaged_block(doc, index);
+        match defect {
+            0 => {
+                map.delete("children").unwrap();
+            }
+            1 => {
+                map.delete("nodeName").unwrap();
+            }
+            2 => {
+                map.insert("nodeName", "image").unwrap();
+            }
+            3 => {
+                if let Some(text) = text_children(&map).ok().and_then(|texts| texts.into_iter().next()) {
+                    text.mark(0..2, "link", "javascript:x").unwrap();
+                }
+            }
+            4 => {
+                map.insert("nodeName", "todoItem").unwrap();
+                map.delete("children").unwrap();
+            }
+            5 => {
+                doc.get_map(crate::editor_structure::META)
+                    .insert("model", "rich_page_v0")
+                    .unwrap();
+            }
+            _ => {
+                let list = root_children(doc).unwrap();
+                list.insert_container(list.len(), LoroText::new()).unwrap();
+            }
+        }
+        doc.commit();
+    }
+
+    fn summarize(blocks: Vec<EditorBlock>) -> Vec<String> {
+        blocks
+            .into_iter()
+            .map(|block| {
+                format!(
+                    "{}|{}|{}|{}|{:?}|{:?}|{:?}",
+                    block.id,
+                    block.kind,
+                    block.text,
+                    block.attributes,
+                    block.logical_id,
+                    block.inline_spans,
+                    block.parent
+                )
+            })
+            .collect()
+    }
+
+    /// `legacy_editor_blocks` then `editor_blocks`, as `semantic_snapshot` used to call them.
+    type Summary = Option<(Vec<String>, Vec<String>)>;
+    fn sequential_reads(doc: &LoroDoc) -> Result<Summary, CollabError> {
+        let legacy = legacy_editor_blocks(doc)?;
+        let current = editor_blocks(doc)?;
+        Ok(legacy
+            .zip(current)
+            .map(|(legacy, current)| (legacy.into_iter().map(|block| block.id).collect(), summarize(current))))
+    }
+
+    /// Asserts that the single-pass reader agrees with the sequential readers on `doc`; returns
+    /// the shared error text when both fail.
+    fn assert_single_pass_matches(doc: &LoroDoc, label: &str) -> Option<String> {
+        let fused = legacy_ids_and_editor_blocks(doc).map(|read| read.map(|(ids, blocks)| (ids, summarize(blocks))));
+        let sequential = sequential_reads(doc);
+        assert_eq!(sequential, fused, "{label}");
+        sequential.err().map(|error| error.to_string())
+    }
+
+    /// The single-pass reader must return exactly what the two readers return in sequence --
+    /// including which error wins -- for every pair of defects at several pairs of positions,
+    /// on flat and structured pages (structured pages include a block behind a deleted
+    /// placement, which only the legacy reader visits).
+    #[test]
+    fn single_pass_prose_read_matches_sequential_readers_under_combined_defects() {
+        let positions = [(1, 3), (3, 1), (2, 2), (1, 2), (4, 1)];
+        let cases = [false, true].into_iter().flat_map(|structured| {
+            (0..7).flat_map(move |first| {
+                (0..7).flat_map(move |second| positions.map(move |(a, b)| (structured, first, second, a, b)))
+            })
+        });
+        let mut errors = std::collections::BTreeSet::new();
+        for (seed, (structured, first, second, a, b)) in (500_u64..).zip(cases) {
+            let doc = damageable_page(seed, 4, structured);
+            damage(&doc, first, a);
+            damage(&doc, second, b);
+            let label = format!("structured={structured} defects=({first}@{a},{second}@{b})");
+            errors.extend(assert_single_pass_matches(&doc, &label));
+        }
+        assert!(
+            errors.len() >= 6,
+            "defects did not exercise enough distinct errors: {errors:?}"
+        );
+    }
+
     const SNAPSHOT: &[u8] = include_bytes!("../../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot");
     fn fixture() -> LoroDoc {
         let doc = LoroDoc::new();
