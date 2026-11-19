@@ -99,6 +99,8 @@
 		onfocuslist: () => void;
 		onannounce: (message: string) => void;
 		onmodechange?: (mode: PanelMode) => void;
+		/** Opens the full in-page record details (link and child record editing). */
+		onmoredetails?: () => void;
 	}
 
 	let {
@@ -142,7 +144,8 @@
 		onpluginapplied,
 		onfocuslist,
 		onannounce,
-		onmodechange
+		onmodechange,
+		onmoredetails
 	}: Props = $props();
 
 	const MIN_WIDTH = 360;
@@ -248,8 +251,13 @@
 		}
 		if (event.altKey && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
 			event.preventDefault();
+			// The record's content is re-rendered; keep focus in the panel, on the new heading.
+			const fromContent = !!(document.activeElement as HTMLElement | null)?.closest(
+				'.record-content'
+			);
 			if (event.key === 'ArrowDown') onnext();
 			else onprev();
+			if (fromContent) void tick().then(() => heading?.focus());
 			return;
 		}
 		if (event.key === 'F6') {
@@ -462,6 +470,8 @@
 		'flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
 </script>
 
+<!-- eslint-disable svelte/no-navigation-without-resolve -- links are full record page paths built by the caller -->
+
 <svelte:element
 	this={mode === 'sheet' ? 'div' : 'aside'}
 	bind:this={root}
@@ -625,6 +635,19 @@
 					class={menuItem}
 					onclick={() => runMenu(() => void copyValue('id', record?.id ?? null))}
 					><Copy class="h-4 w-4" aria-hidden="true" />{$t('forms.recordPanel.copyId')}</button
+				>
+			{/if}
+			{#if onmoredetails && record && status === 'ready'}
+				<button
+					type="button"
+					role="menuitem"
+					tabindex="-1"
+					class={menuItem}
+					data-record-panel-more-details
+					onclick={() => runMenu(() => onmoredetails?.())}
+					><span class="h-4 w-4" aria-hidden="true"></span>{$t(
+						'forms.recordPanel.moreDetails'
+					)}</button
 				>
 			{/if}
 			{#if plugins.enabled && !appsOpen}
@@ -896,7 +919,7 @@
 											<dt
 												class="pt-0.5 text-xs font-medium text-slate-500 uppercase break-words dark:text-slate-400 {wide
 													? ''
-													: 'col-span-2'}"
+													: 'col-start-1 row-start-1'}"
 											>
 												{fieldLabel(field)}
 												{#if field.type === 'ai_summary'}
@@ -920,7 +943,11 @@
 													>
 												{/each}
 											</dt>
-											<dd class="min-w-0 text-sm text-slate-900 dark:text-slate-100">
+											<dd
+												class="min-w-0 text-sm text-slate-900 dark:text-slate-100 {wide
+													? ''
+													: 'col-span-2'}"
+											>
 												{#if field.type === 'child_table'}
 													{@const table = childTable(field)}
 													{#if detailsLoading && table.rows.length === 0}
