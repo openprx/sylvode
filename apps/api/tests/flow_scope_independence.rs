@@ -3048,6 +3048,10 @@ async fn personal_forms_conversion_commits_native_target_with_scoped_job_and_rep
         destination_workspace_id: workspace,
         destination_project_id: Some(project),
     };
+    // Default-on since 0106; switch it off to prove the refusal.
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET personal_forms_conversion=false WHERE singleton")
+        .await
+        .unwrap();
     assert!(
         bridge::preview_scope_conversion(&state, owner, preview_input())
             .await
