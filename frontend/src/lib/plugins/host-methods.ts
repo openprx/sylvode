@@ -181,7 +181,12 @@ export function createHostDispatcher(options: HostDispatcherOptions): HostDispat
 			timer = setTimeout(() => resolve('timeout'), timeoutMs);
 		});
 		const pending = Promise.resolve()
-			.then(() => options.transport(method, params, requestId))
+			.then(() =>
+				// A request queued before disposal must not reach the transport after it.
+				disposed
+					? ({ ok: false, code: 'canceled' } as const)
+					: options.transport(method, params, requestId)
+			)
 			.then(
 				(value): HostOutcome => {
 					if (isObject(value) && value.ok === true) return { ok: true, result: value.result };
@@ -359,6 +364,9 @@ export interface ExtensionTransportOptions {
 /** Transport for protocol 2 frames backed by the v3 data, invoke and routing endpoints. */
 export function createExtensionTransport(options: ExtensionTransportOptions): HostTransport {
 	const api = options.api ?? pluginExtensionsApi;
+	// An accepted navigation is performed after its reply was posted. Until it settles, every other
+	// request from the frame is refused, so the plugin cannot act once navigation was accepted.
+	let navigationPending = false;
 	const { item } = options;
 	const failure = (response: Pick<ApiResult<unknown>, 'code' | 'error_code' | 'details'>) => {
 		const code = mapApiFailure(response);
@@ -367,6 +375,7 @@ export function createExtensionTransport(options: ExtensionTransportOptions): Ho
 	};
 
 	return async (method, params, requestId) => {
+		if (navigationPending) return { ok: false, code: 'canceled' };
 		if (method === 'data.describe' || method === 'data.query' || method === 'data.record') {
 			const response = await api.data(options.projectId, item.key, item.contribution.id, {
 				...dataRequest(method, params),
@@ -381,7 +390,16 @@ export function createExtensionTransport(options: ExtensionTransportOptions): Ho
 			if (!target) return { ok: false, code: 'invalid_params' };
 			if (target.target === 'view' && !options.enabledRoutes().includes(target.route))
 				return { ok: false, code: 'invalid_params' };
-			await options.navigate(target);
+			// Reply first: navigating unmounts the frame, so awaiting it would drop the reply.
+			navigationPending = true;
+			setTimeout(() => {
+				void Promise.resolve()
+					.then(() => options.navigate(target))
+					.catch(() => undefined)
+					.finally(() => {
+						navigationPending = false;
+					});
+			}, 0);
 			return { ok: true, result: { navigated: true } };
 		}
 		if (isAmountMethod(method)) {

@@ -13,6 +13,11 @@
 		type BridgeErrorCode,
 		type PluginHostContext as Context
 	} from '#lib/plugins/bridge.js';
+	import {
+		createFrameLifecycle,
+		suspendGraceMs,
+		type FrameLifecycle
+	} from '#lib/plugins/frame-lifecycle.js';
 	import { createHostDispatcher, type HostOutcome } from '#lib/plugins/host-methods.js';
 
 	let {
@@ -94,6 +99,7 @@
 	let height = $state(untrack(() => clampFrameHeight(minHeight, minHeight, maxHeight)));
 	let frame: HTMLIFrameElement | undefined = $state();
 	let port: MessagePort | undefined;
+	let lifecycle: FrameLifecycle | undefined;
 	let loadTimer: ReturnType<typeof setTimeout> | undefined;
 	let finished = false;
 	let sentContext = '';
@@ -110,26 +116,41 @@
 		return context ? ($state.snapshot(context) as Context) : undefined;
 	}
 
-	/** Recycles the port and the frame. `notify` is false when the caller unmounted us. */
+	/**
+	 * Stops serving the frame and retires its port. With a reason on a protocol 2 frame whose port
+	 * is open, the plugin first gets `suspended` and a short grace period (see frame-lifecycle.ts):
+	 * serving stops immediately, only the removal is delayed. `notify` is false when the caller
+	 * unmounted us.
+	 */
 	function finish(reason: string, notify = true) {
 		if (finished) return;
 		finished = true;
 		dispatcher.dispose();
 		clearTimeout(loadTimer);
-		if (!legacy && port && reason !== '' && stage !== 'verifying')
-			port.postMessage({
+		if (!legacy && reason !== '' && stage !== 'verifying')
+			lifecycle?.suspend({
 				protocol: bridgeProtocolV2,
 				type: 'event',
 				name: 'suspended',
 				data: null
 			});
-		if (port) {
-			port.onmessage = null;
-			port.close();
-		}
+		else lifecycle?.close();
 		port = undefined;
 		stage = 'closed';
 		if (notify) onClose(reason);
+	}
+
+	/**
+	 * Outro of the frame element. It runs when the frame is removed, including when a parent
+	 * unmounts or re-keys this component without going through finish(): Svelte then keeps the
+	 * element mounted for the returned duration, and the lifecycle closes it at the latest then.
+	 */
+	function holdWhileSuspending(node: HTMLElement) {
+		finish(reasons.suspended, false);
+		if (lifecycle?.state !== 'suspending') return { duration: 0 };
+		node.inert = true;
+		node.style.display = 'none';
+		return { duration: suspendGraceMs };
 	}
 
 	onMount(() => {
@@ -156,6 +177,7 @@
 		return () => {
 			active = false;
 			finish(reasons.suspended, false);
+			lifecycle?.close();
 		};
 	});
 
@@ -196,6 +218,12 @@
 		const channel = new MessageChannel();
 		port = channel.port1;
 		port.onmessage = ({ data }) => (legacy ? receiveLegacy(data) : receive(data));
+		const node = frame;
+		lifecycle = createFrameLifecycle({
+			port,
+			dispose: () => dispatcher.dispose(),
+			removeFrame: () => node.remove()
+		});
 		if (initContext) sentContext = JSON.stringify(initContext);
 		const init =
 			legacy || !initContext
@@ -302,6 +330,7 @@
 		bind:this={frame}
 		{title}
 		src="/plugin-host/frame.html"
+		out:holdWhileSuspending|global
 		sandbox="allow-scripts"
 		referrerpolicy="no-referrer"
 		class="block w-full border-0"
