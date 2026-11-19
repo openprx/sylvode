@@ -21,7 +21,8 @@
 			{$t('plugins.apps.stateTooLong')}
 		</p>
 	{/if}
-	{#key `${workspaceId}/${projectId}/${pluginKey}/${route}/${parsed.state ?? ''}`}
+	<!-- A new `state` for the same route keeps the frame; it receives the new context instead. -->
+	{#key `${workspaceId}/${projectId}/${pluginKey}/${route}`}
 		<ProjectPluginView
 			{workspaceId}
 			{projectId}
