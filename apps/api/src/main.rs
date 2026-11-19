@@ -3616,6 +3616,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0105_token_bot_entity_type.sql",
         include_str!("../../../migrations/0105_token_bot_entity_type.sql"),
     ),
+    (
+        "0106_flow_capabilities_default_on.sql",
+        include_str!("../../../migrations/0106_flow_capabilities_default_on.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4155,6 +4159,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         ),
     ),
     ("0105_token_bot_entity_type.sql", SchemaProbe::Rerunnable),
+    (
+        "0106_flow_capabilities_default_on.sql",
+        SchemaProbe::Relation("flow_runtime_capability_rollouts"),
+    ),
 ];
 
 /// One recorded migration outcome.
@@ -4714,6 +4722,7 @@ mod tests {
                 "0103_form_plugin_extensions.sql",
                 "0104_project_resource_kinds.sql",
                 "0105_token_bot_entity_type.sql",
+                "0106_flow_capabilities_default_on.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -4845,6 +4854,71 @@ mod tests {
             ],
             "a migration may only skip its probe when re-executing it is a no-op"
         );
+    }
+
+    /// 0106 re-runs whenever the ledger has no row for it, so the one-time switch-on must be
+    /// claimed through its marker, may only raise values, and must leave the capabilities that
+    /// stay off alone. Comment lines are stripped so the explanation in the file cannot satisfy
+    /// or trip the assertions.
+    #[test]
+    fn flow_capability_default_migration_runs_once_and_only_raises() {
+        let sql = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "0106_flow_capabilities_default_on.sql")
+            .map(|(_, sql)| *sql)
+            .expect("0106 must be registered");
+        let statements: String = sql
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let update = statements
+            .split_once("UPDATE flow_runtime_capabilities")
+            .map(|(_, rest)| rest)
+            .expect("0106 updates the singleton row");
+
+        assert!(
+            statements.contains("ON CONFLICT (name) DO NOTHING")
+                && update.contains("AND EXISTS (SELECT 1 FROM claimed)"),
+            "the row update must run only in the execution that claims the rollout marker"
+        );
+        assert!(
+            update.contains("minimum_reader_version = GREATEST(minimum_reader_version, 5)"),
+            "the reader floor may only be raised"
+        );
+        assert!(
+            !update.to_lowercase().contains("false"),
+            "the one-time update may only switch capabilities on"
+        );
+        for column in [
+            "personal_provisioning",
+            "personal_writes",
+            "external_mounts",
+            "personal_forms_conversion",
+            "block_transfers_enabled",
+            "portable_page_packages_enabled",
+            "portable_graph_packages_enabled",
+        ] {
+            assert!(
+                update.contains(&format!("{column} = true")),
+                "{column} must be switched on for existing databases"
+            );
+            assert!(
+                statements.contains(&format!("ALTER COLUMN {column} SET DEFAULT true")),
+                "{column} must default on for new rows"
+            );
+        }
+        for column in [
+            "scope_native_legacy",
+            "personal_package_imports",
+            "personal_scope_package_exports",
+            "cross_workspace_forms_conversion",
+        ] {
+            assert!(
+                !statements.contains(column),
+                "{column} stays off by default and must not be touched"
+            );
+        }
     }
 
     #[test]
@@ -5951,6 +6025,278 @@ mod migration_runner_database_tests {
         assert_schema_complete(&relocated).await;
 
         drop(relocated);
+        scratch.drop_self().await;
+    }
+
+    const CAPABILITY_DEFAULT_MIGRATION: &str = "0106_flow_capabilities_default_on.sql";
+
+    /// Every operator-controlled column of the capability singleton, `updated_at` excluded so a
+    /// no-op re-run compares equal.
+    async fn flow_capability_row(db: &DatabaseConnection) -> serde_json::Value {
+        let row = db
+            .query_one(Statement::from_string(
+                DbBackend::Postgres,
+                "SELECT (to_jsonb(c) - 'updated_at')::text AS row FROM flow_runtime_capabilities c WHERE singleton"
+                    .to_string(),
+            ))
+            .await
+            .expect("the capability row is readable")
+            .expect("the capability singleton exists");
+        let text: String = row.try_get("", "row").expect("row column");
+        serde_json::from_str(&text).expect("the capability row is JSON")
+    }
+
+    fn capability_flag(row: &serde_json::Value, column: &str) -> bool {
+        row.get(column)
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_else(|| panic!("{column} is a boolean capability column: {row}"))
+    }
+
+    fn reader_floor(row: &serde_json::Value) -> i64 {
+        row.get("minimum_reader_version")
+            .and_then(serde_json::Value::as_i64)
+            .expect("minimum_reader_version is an integer")
+    }
+
+    const DEFAULT_ON: [&str; 7] = [
+        "personal_provisioning",
+        "personal_writes",
+        "external_mounts",
+        "personal_forms_conversion",
+        "block_transfers_enabled",
+        "portable_page_packages_enabled",
+        "portable_graph_packages_enabled",
+    ];
+    const DEFAULT_OFF: [&str; 4] = [
+        "scope_native_legacy",
+        "personal_package_imports",
+        "personal_scope_package_exports",
+        "cross_workspace_forms_conversion",
+    ];
+
+    /// What an ordinary user of a running installation does first: open the personal Flow home
+    /// and create a rich Page (the editor sends model5). The leases stand in for the api and
+    /// worker processes, which register them on start; no capability is touched by hand.
+    async fn ordinary_user_creates_a_personal_page(db: &DatabaseConnection) -> Result<(), api::error::ApiError> {
+        let user = uuid::Uuid::new_v4();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO users(id,email,password_hash,name,role,is_active) VALUES($1,$2,'!','Flow default user','user',true)",
+            vec![user.into(), format!("{user}@flow-default.test").into()],
+        ))
+        .await
+        .expect("the user is created");
+        let (home, roots) = api::flow::scope::personal_home(db, user).await?;
+        assert_eq!(home.kind, "personal");
+        assert_eq!(home.owner_user_id, Some(user));
+        assert_eq!(roots.len(), 1, "the personal home has exactly one navigator root");
+        api::flow::scope::create_personal(
+            db,
+            user,
+            api::flow::scope::CreateInput {
+                editor_model: 5,
+                scope_id: home.id,
+                object_type: "page".to_string(),
+                parent_object_id: None,
+                project_id: None,
+                title: "First personal Page".to_string(),
+                idempotency_key: uuid::Uuid::new_v4().to_string(),
+                message: None,
+                initial_fields: vec![],
+                initial_view: None,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn register_running_readers(db: &DatabaseConnection) {
+        for component in ["api", "worker", "maintenance"] {
+            api::flow::scope_runtime::renew(db, uuid::Uuid::new_v4(), component)
+                .await
+                .expect("the reader lease is registered");
+        }
+    }
+
+    /// A fresh installation has personal Flow and the shipped Flow surfaces on without any
+    /// manual SQL, and an ordinary user can open their personal home and write a Page in it.
+    #[tokio::test]
+    async fn a_fresh_database_migrates_with_flow_capabilities_on() {
+        let scratch = scratch_or_skip!("flow_caps_fresh");
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("a fresh database migrates cleanly");
+
+        let row = flow_capability_row(&scratch.db).await;
+        for column in DEFAULT_ON {
+            assert!(capability_flag(&row, column), "{column} is on by default: {row}");
+        }
+        for column in DEFAULT_OFF {
+            assert!(!capability_flag(&row, column), "{column} stays off by default: {row}");
+        }
+        assert_eq!(
+            reader_floor(&row),
+            i64::from(api::flow::scope_runtime::READER_VERSION),
+            "the reader floor matches what the shipped components register"
+        );
+
+        // Before any component has registered, writes fail closed instead of erroring or
+        // degrading; the same request succeeds once the api and worker leases exist.
+        let blocked = ordinary_user_creates_a_personal_page(&scratch.db)
+            .await
+            .expect_err("no reader lease is registered yet");
+        assert!(
+            format!("{blocked:?}").contains("scope_runtime_not_ready"),
+            "missing leases are reported as a runtime that is not ready: {blocked:?}"
+        );
+        register_running_readers(&scratch.db).await;
+        ordinary_user_creates_a_personal_page(&scratch.db)
+            .await
+            .expect("an ordinary user can use personal Flow on a fresh database");
+
+        let caps = api::flow::scope::capabilities(&scratch.db)
+            .await
+            .expect("capabilities are readable");
+        assert!(caps.personal_provisioning && caps.personal_writes && caps.external_mounts);
+        assert!(caps.block_transfers_supported, "block transfers are advertised");
+        assert!(caps.portable_page_packages_supported && caps.portable_graph_packages_supported);
+
+        scratch.drop_self().await;
+    }
+
+    /// An operator who turns personal Flow off keeps it off: neither a replay nor a re-run of
+    /// 0106 after its ledger row is gone may switch a capability back on.
+    #[tokio::test]
+    async fn an_operator_disable_survives_a_migration_rerun() {
+        let scratch = scratch_or_skip!("flow_caps_operator_off");
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("a fresh database migrates cleanly");
+        scratch
+            .db
+            .execute_unprepared(
+                "UPDATE flow_runtime_capabilities SET external_mounts=false, personal_writes=false, \
+                 personal_provisioning=false, personal_forms_conversion=false, block_transfers_enabled=false, \
+                 portable_page_packages_enabled=false, portable_graph_packages_enabled=false WHERE singleton",
+            )
+            .await
+            .expect("the documented operator switch-off satisfies the CHECK constraints");
+        let disabled = flow_capability_row(&scratch.db).await;
+
+        run_migrations_with(
+            &scratch.db,
+            MigrationOptions {
+                replay: true,
+                continue_on_error: false,
+            },
+        )
+        .await
+        .expect("a replay runs");
+        assert_eq!(
+            flow_capability_row(&scratch.db).await,
+            disabled,
+            "a replay keeps the operator's choice"
+        );
+
+        scratch
+            .db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM schema_migrations WHERE name=$1",
+                vec![CAPABILITY_DEFAULT_MIGRATION.into()],
+            ))
+            .await
+            .expect("the ledger row is removed");
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("an ordinary start re-executes 0106");
+        assert_eq!(
+            status_of(&ledger(&scratch.db).await, CAPABILITY_DEFAULT_MIGRATION),
+            "applied",
+            "0106 was executed again"
+        );
+        assert_eq!(
+            flow_capability_row(&scratch.db).await,
+            disabled,
+            "a re-execution keeps the operator's choice"
+        );
+
+        register_running_readers(&scratch.db).await;
+        let refused = ordinary_user_creates_a_personal_page(&scratch.db)
+            .await
+            .expect_err("personal Flow is off");
+        assert!(
+            format!("{refused:?}").contains("personal_creation_disabled"),
+            "the switch-off is enforced: {refused:?}"
+        );
+
+        scratch.drop_self().await;
+    }
+
+    /// An existing database that predates 0106 is switched on once, keeps everything an operator
+    /// turned on (including capabilities that stay off by default) and never sees its reader floor
+    /// lowered; executing the file again changes nothing.
+    #[tokio::test]
+    async fn the_flow_capability_default_migration_is_idempotent_and_never_lowers() {
+        let scratch = scratch_or_skip!("flow_caps_idempotent");
+        seed_pre_ledger_schema(&scratch.db, Some(CAPABILITY_DEFAULT_MIGRATION)).await;
+        let before = flow_capability_row(&scratch.db).await;
+        for column in DEFAULT_ON.iter().chain(DEFAULT_OFF.iter()) {
+            assert!(!capability_flag(&before, column), "{column} starts off before 0106");
+        }
+        scratch
+            .db
+            .execute_unprepared(
+                "UPDATE flow_runtime_capabilities SET minimum_reader_version=6, personal_package_imports=true, \
+                 scope_native_legacy=true WHERE singleton",
+            )
+            .await
+            .expect("the operator settings are applied");
+
+        let sql = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == CAPABILITY_DEFAULT_MIGRATION)
+            .map(|(_, sql)| *sql)
+            .expect("0106 is registered");
+        scratch
+            .db
+            .execute_unprepared(sql)
+            .await
+            .expect("0106 first execution succeeds");
+        let first = flow_capability_row(&scratch.db).await;
+        for column in DEFAULT_ON {
+            assert!(capability_flag(&first, column), "{column} is switched on: {first}");
+        }
+        assert!(
+            capability_flag(&first, "personal_package_imports"),
+            "operator choice kept"
+        );
+        assert!(capability_flag(&first, "scope_native_legacy"), "operator choice kept");
+        assert!(!capability_flag(&first, "personal_scope_package_exports"));
+        assert!(!capability_flag(&first, "cross_workspace_forms_conversion"));
+        assert_eq!(reader_floor(&first), 6, "the reader floor is never lowered");
+
+        scratch
+            .db
+            .execute_unprepared(sql)
+            .await
+            .expect("0106 second execution succeeds");
+        assert_eq!(
+            flow_capability_row(&scratch.db).await,
+            first,
+            "a second execution is a no-op"
+        );
+
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("the runner adopts the database and re-executes the post-cutoff files");
+        assert_eq!(
+            flow_capability_row(&scratch.db).await,
+            first,
+            "the runner's execution is a no-op"
+        );
+        assert_schema_complete(&scratch.db).await;
+
         scratch.drop_self().await;
     }
 }
