@@ -135,7 +135,8 @@ async function measurePage(page, label, objectId) {
 				result.typed_screenshot = `screenshots/${typedName}`;
 			}
 		}
-		result.ok = result.vitals != null && result.screenshot != null;
+		// A typed text the server did not confirm fails the page: the benchmark must not pass on it.
+		result.ok = result.vitals != null && result.screenshot != null && result.typing.ok === true;
 	} catch (error) {
 		result.ok = false;
 		result.error = error instanceof Error ? error.message : String(error);
@@ -353,7 +354,7 @@ if (!debugArgsWorked) {
 
 const oneK = pages[0];
 const payload = {
-	ok: Boolean(oneK?.ok && oneK.screenshot),
+	ok: Boolean(oneK?.ok && oneK.screenshot && pages.every((entry) => entry.typing?.ok === true)),
 	pages,
 	lighthouse
 };
