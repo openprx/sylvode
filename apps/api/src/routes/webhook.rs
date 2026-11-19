@@ -47,6 +47,19 @@ pub struct WebhookResponse {
     pub last_triggered_at: Option<platform::timestamp::Timestamp>,
 }
 
+/// The answer to creating a webhook or rotating its secret: the webhook plus its signing secret.
+///
+/// This is the only place the secret ever leaves the API, once, so the receiver can be configured
+/// with it (including one the server generated). [`WebhookResponse`], which list, get and update
+/// answer with and which is copied into the webhook's business events, has no secret field.
+#[derive(Debug, Serialize)]
+pub struct WebhookWithSecretResponse {
+    #[serde(flatten)]
+    pub webhook: WebhookResponse,
+    /// HMAC-SHA256 key of `X-Webhook-Signature`; not retrievable afterwards.
+    pub secret: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ListDeliveriesQuery {
     pub page: Option<u32>,
@@ -246,7 +259,8 @@ pub async fn create_webhook(
         ensure_bot_user(&state, bot_user_id).await?;
     }
 
-    // Prefer explicit secret, otherwise generate one.
+    // Prefer explicit secret, otherwise generate one. Either way it is returned in this response
+    // only, so a generated one can be handed to the receiver.
     let secret = req.secret.unwrap_or_else(generate_secret);
 
     let webhook_id = Uuid::new_v4();
@@ -274,7 +288,7 @@ pub async fn create_webhook(
             workspace_id.into(),
             name.into(),
             req.url.into(),
-            secret.into(),
+            secret.clone().into(),
             serde_json::to_value(&req.events)
                 .map_err(|_| ApiError::Internal)?
                 .into(),
@@ -291,7 +305,52 @@ pub async fn create_webhook(
     insert_webhook_event(&tx, &response, "webhook.created", user_id).await?;
     tx.commit().await?;
 
-    Ok(ApiResponse::success(response))
+    Ok(ApiResponse::success(WebhookWithSecretResponse {
+        webhook: response,
+        secret,
+    }))
+}
+
+/// POST /`api/v1/workspaces/:workspace_id/webhooks/:webhook_id/rotate-secret`
+///
+/// Replaces the signing secret with a newly generated one and returns it, once. Deliveries signed
+/// from now on use the new secret, so the receiver has to be given it (`sylvode-webhook` accepts
+/// several `webhook_secrets` at once, which allows a rotation without dropping deliveries).
+pub async fn rotate_webhook_secret(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path((workspace_id, webhook_id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
+
+    verify_workspace_admin(&state, workspace_id, user_id).await?;
+
+    let secret = generate_secret();
+    let tx = state.db.begin().await?;
+    let result = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE webhooks SET secret = $1, updated_at = $2 WHERE id = $3 AND workspace_id = $4",
+            vec![
+                secret.clone().into(),
+                platform::timestamp::Timestamp::now().into(),
+                webhook_id.into(),
+                workspace_id.into(),
+            ],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound("Webhook not found".to_string()));
+    }
+
+    let response = find_webhook_response_with_conn(&tx, webhook_id).await?;
+    insert_webhook_event(&tx, &response, "webhook.secret_rotated", user_id).await?;
+    tx.commit().await?;
+
+    Ok(ApiResponse::success(WebhookWithSecretResponse {
+        webhook: response,
+        secret,
+    }))
 }
 
 /// GET /`api/v1/workspaces/:workspace_id/webhooks`
@@ -696,4 +755,172 @@ fn generate_secret() -> String {
             CHARSET.get(idx).copied().map_or('A', char::from)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod secret_exposure_tests {
+    use super::{WebhookResponse, WebhookWithSecretResponse, generate_secret};
+    use uuid::Uuid;
+
+    fn webhook() -> WebhookResponse {
+        let now = platform::timestamp::Timestamp::now();
+        WebhookResponse {
+            id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
+            name: Some("receiver".to_string()),
+            url: "https://receiver.example.com/webhook".to_string(),
+            events: vec!["issue.assigned".to_string()],
+            active: true,
+            bot_user_id: None,
+            created_by: Uuid::new_v4(),
+            created_at: now,
+            updated_at: now,
+            last_triggered_at: None,
+        }
+    }
+
+    #[test]
+    fn only_the_create_and_rotate_answer_carries_the_secret() {
+        let plain = serde_json::to_value(webhook()).expect("serializes");
+        assert!(
+            plain.get("secret").is_none(),
+            "list, get and update never show the secret"
+        );
+
+        let secret = generate_secret();
+        let created = serde_json::to_value(WebhookWithSecretResponse {
+            webhook: webhook(),
+            secret: secret.clone(),
+        })
+        .expect("serializes");
+        assert_eq!(
+            created.get("secret").and_then(serde_json::Value::as_str),
+            Some(secret.as_str())
+        );
+        assert_eq!(
+            created.get("url").and_then(serde_json::Value::as_str),
+            Some("https://receiver.example.com/webhook"),
+            "the webhook fields stay at the top level"
+        );
+    }
+
+    #[test]
+    fn generated_secrets_are_long_and_distinct() {
+        let first = generate_secret();
+        assert_eq!(first.len(), 64);
+        assert!(first.chars().all(|c| c.is_ascii_alphanumeric()));
+        assert_ne!(first, generate_secret());
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod secret_rotation_database_tests {
+    use super::{get_webhook, rotate_webhook_secret};
+    use crate::routes::context::tenant_fixture::{count, exec, seed_tenant};
+    use crate::scratch_or_skip;
+    use axum::extract::{Extension, Path, State};
+    use axum::response::IntoResponse;
+    use platform::auth::{JwtClaims, TokenType};
+    use uuid::Uuid;
+
+    fn state_for(db: sea_orm::DatabaseConnection) -> platform::app::AppState {
+        use platform::config::{AppConfig, Secret};
+        platform::app::AppState {
+            cfg: AppConfig {
+                app_name: "webhook-secret-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new("webhook-secret-test-secret"),
+                jwt_access_ttl_seconds: 900,
+                jwt_refresh_ttl_seconds: 3600,
+                default_author_id: None,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db,
+            flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
+        }
+    }
+
+    async fn body(response: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        serde_json::from_slice(&bytes).expect("json body")
+    }
+
+    #[tokio::test]
+    async fn rotation_returns_the_new_secret_once_and_get_never_does() {
+        let scratch = scratch_or_skip!("webhook_secret_rotation");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "ws").await;
+        exec(
+            db,
+            "UPDATE workspace_members SET role = 'admin' WHERE workspace_id = $1 AND user_id = $2",
+            vec![tenant.workspace_id.into(), tenant.member_id.into()],
+        )
+        .await;
+        let webhook_id = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO webhooks (id, workspace_id, name, url, secret, events, active, created_by) \
+             VALUES ($1, $2, 'r', 'https://receiver.example.com/webhook', 'old-secret', '[]'::jsonb, true, $3)",
+            vec![webhook_id.into(), tenant.workspace_id.into(), tenant.member_id.into()],
+        )
+        .await;
+        let state = state_for(db.clone());
+        let claims = JwtClaims {
+            sub: tenant.member_id.to_string(),
+            email: format!("{}@tenant.test", tenant.member_id),
+            token_type: TokenType::Access,
+            iat: 0,
+            exp: 0,
+            sv: 0,
+        };
+
+        let rotated = rotate_webhook_secret(
+            State(state.clone()),
+            Extension(claims.clone()),
+            Path((tenant.workspace_id, webhook_id)),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("rotate failed: {err:?}"))
+        .into_response();
+        let rotated = body(rotated).await;
+        let secret = rotated
+            .pointer("/data/secret")
+            .and_then(serde_json::Value::as_str)
+            .expect("the new secret is returned")
+            .to_string();
+        assert_ne!(secret, "old-secret");
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM webhooks WHERE id = $1 AND secret = $2",
+                vec![webhook_id.into(), secret.clone().into()],
+            )
+            .await,
+            1,
+            "the returned secret is the one deliveries are signed with"
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM business_events \
+                 WHERE aggregate_id = $1 AND event_type = 'webhook.secret_rotated' AND payload::text NOT LIKE $2",
+                vec![webhook_id.to_string().into(), format!("%{secret}%").into()],
+            )
+            .await,
+            1,
+            "the rotation is recorded without the secret"
+        );
+
+        let fetched = get_webhook(State(state), Extension(claims), Path((tenant.workspace_id, webhook_id)))
+            .await
+            .unwrap_or_else(|err| panic!("get failed: {err:?}"))
+            .into_response();
+        assert!(body(fetched).await.pointer("/data/secret").is_none());
+        scratch.drop_self().await;
+    }
 }
