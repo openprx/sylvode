@@ -61,7 +61,8 @@ test.describe('Universal forms / mobile and dark mode', () => {
 
 			await expect(page.getByRole('heading', { name: '记录列表' })).toBeVisible();
 			await expect(page.locator('#form-switcher')).toHaveValue(codeTaskFormId);
-			await expect(page.getByRole('button', { name: '保存视图' })).toBeVisible();
+			await expect(page.locator('[data-view-switcher]')).toContainText('全部记录');
+			await expect(page.getByRole('button', { name: '保存视图…' })).toBeVisible();
 			await page.getByRole('button', { name: '新增', exact: true }).click();
 			await expect(page.locator('[data-record-editor-drawer]')).toBeVisible();
 			await expect(page.getByRole('heading', { name: '新建记录' })).toBeVisible();
