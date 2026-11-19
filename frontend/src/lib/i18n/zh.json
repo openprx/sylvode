@@ -4551,7 +4551,9 @@
 			"closeDrawer": "关闭面板",
 			"rateLimited": "请求过于频繁，请稍后再试。",
 			"methodUnavailable": "应用无权使用此操作。",
-			"confirmApply": "确认将此结果应用到记录？"
+			"confirmApply": "确认将此结果应用到记录？",
+			"invalidParams": "应用发送了无效的请求。",
+			"notFound": "请求的内容不存在或已不可用。"
 		},
 		"apps": {
 			"navTitle": "项目应用",
