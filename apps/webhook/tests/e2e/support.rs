@@ -332,8 +332,17 @@ impl Drop for StubApi {
     }
 }
 
-/// Whether process `pid` is alive (a zombie counts as dead).
+/// Whether process `pid` is alive (a zombie counts as dead). Read from `/proc` where it exists,
+/// from `ps` elsewhere (macOS).
 pub fn alive(pid: i32) -> bool {
+    if !Path::new("/proc/self/stat").exists() {
+        let out = Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .expect("run ps");
+        let state = String::from_utf8_lossy(&out.stdout);
+        return state.trim().chars().next().is_some_and(|state| state != 'Z');
+    }
     std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
         stat.rsplit_once(')')
             .and_then(|(_, rest)| rest.split_whitespace().next())
