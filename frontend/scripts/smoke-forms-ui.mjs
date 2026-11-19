@@ -847,6 +847,37 @@ async function waitFor(check, label) {
 }
 const textInElements = (text, selector = 'a,button,h1,h2,h3,p,span,td,div,li') => Array.from(document.querySelectorAll(selector)).some((el) => el.textContent.includes(text));
 const buttonExact = (text) => Array.from(document.querySelectorAll('button')).find((button) => button.textContent.trim() === text);
+// The record list's view bar: switch views with the switcher, edit the advanced controls in the
+// Layout settings sheet (they apply live), and keep changes with View menu -> Update.
+async function openLayoutSettings() {
+  if (document.querySelector('[data-layout-settings-sheet]')) return;
+  document.querySelector('[data-view-menu-button]')?.click();
+  (await waitFor(() => document.querySelector('[data-view-menu-layout]'), 'layout settings menu item')).click();
+  await waitFor(() => document.querySelector('[data-layout-settings-sheet]'), 'layout settings sheet');
+}
+async function switchView(viewId) {
+  document.querySelector('[data-view-switcher]')?.click();
+  (await waitFor(() => document.querySelector('[data-view-option="' + viewId + '"]'), 'view option ' + viewId)).click();
+  await waitFor(() => document.querySelector('[data-view-switcher="' + viewId + '"]'), 'view switched to ' + viewId);
+  await openLayoutSettings();
+}
+// Links, child records and comments live in the in-page record details, reached from the
+// record side panel's "More actions" menu.
+async function openRecordDetails(recordId = 'record-order-line-created') {
+  if (!document.querySelector('[data-record-panel]')) {
+    (await waitFor(() => document.querySelector('[data-record-title-link="' + recordId + '"]'), 'record row ' + recordId)).click();
+  }
+  (await waitFor(() => document.querySelector('[data-record-panel-status="ready"] [data-record-panel-more]'), 'record panel ready')).click();
+  (await waitFor(() => document.querySelector('[data-record-panel-more-details]'), 'record details menu item')).click();
+  await waitFor(() => document.querySelector('[data-record-detail-drawer]'), 'record details');
+}
+async function commitView() {
+  if (!document.querySelector('[data-view-modified]')) return;
+  document.querySelector('[data-view-menu-button]')?.click();
+  (await waitFor(() => document.querySelector('[data-view-menu-update]'), 'update view menu item')).click();
+  await waitFor(() => !document.querySelector('[data-view-modified]'), 'view updated');
+  await openLayoutSettings();
+}
 function clickFieldLibraryType(type) {
   const button = document.querySelector('[data-field-library-type="' + type + '"]');
   if (!button) throw new Error('field library button not found: ' + type);
@@ -1056,11 +1087,8 @@ function dragGanttBarToDate(recordId, isoDate) {
         return (
           params.get('form') === 'form-order-line' &&
           params.get('record') === 'record-order-line-created' &&
-          document.querySelector('[data-record-detail-drawer="record-order-line-created"]') &&
-          document.querySelector('[data-record-detail-url-record="record-order-line-created"]') &&
-          document.querySelector('[data-record-detail-layout="record-order-line-created"]') &&
-          document.querySelector('[data-record-detail-section="record-order-line-created:handoff"]')?.textContent?.includes('Kitchen Handoff') &&
-          textInElements('Record links') &&
+          document.querySelector('[data-record-panel="record-order-line-created"][data-record-panel-status="ready"]') &&
+          document.querySelector('[data-record-panel-section="record-order-line-created:handoff"]')?.textContent?.includes('Kitchen Handoff') &&
           textInElements('Beef Noodles x2')
         );
       },
@@ -1347,7 +1375,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-option-color-grid');
 	  mark('data-form-record-created');
-	  buttonExact('Detail').click();
+	  await openRecordDetails();
 	  await waitFor(() => textInElements('Record links') && textInElements('Beef Noodles x2'), 'created record selected for attachment');
 	  buttonExact('Edit').click();
 	  await waitFor(() => document.querySelector('[data-attachment-field="attachment_12"]'), 'attachment field editor');
@@ -1829,7 +1857,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    return;
 	  }
 	  if (mode === 'attachment-detail' || mode === 'comments-detail') {
-	    buttonExact('Detail').click();
+	    await openRecordDetails();
 	    await waitFor(
 	      () =>
 	        textInElements('Record links') &&
@@ -1877,12 +1905,12 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    return;
 	  }
 	  await waitFor(() => textInElements('Green Tea x1'), 'comparison record visible');
-	  setByLabel('Current view', 'view-order-line-default');
+	  await switchView('view-order-line-default');
 	  await waitFor(() => document.querySelector('[data-view-renderer="grid"]'), 'default grid selected for view rules');
 	  setCheckedByAria('Visible columns: Guest Signature', true);
 	  setCheckedByAria('Visible columns: VIP Note', true);
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'conditional indicator columns saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'conditional indicator columns saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-view-column-conditional-readonly="guest_signature"]') &&
@@ -2061,9 +2089,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  setByLabel('Sort field', 'quantity');
 	  setByLabel('Sort direction', 'desc');
 	  setByLabel('Group field', 'status');
-	  setByLabel('Visibility', 'private');
-	  setCheckedByLabel('Default view', true);
-	  buttonExact('Save view').click();
+	  await commitView();
 	  await waitFor(() => textInElements('1 rows') && textInElements('Beef Noodles x2') && !textInElements('Green Tea x1'), 'saved view filter and sort');
 	  mark('data-form-view-rules-filtered');
 	  const toggleFirstFilterDisabled = document.querySelector('[data-filter-toggle-disabled="1.1"]');
@@ -2073,7 +2099,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    () => document.querySelector('[data-filter-toggle-disabled="1.1"]')?.getAttribute('data-filter-disabled') === 'true',
 	    'filter condition disabled in builder'
 	  );
-	  buttonExact('Save view').click();
+	  await commitView();
 	  await waitFor(
 	    () => textInElements('2 rows') && textInElements('Beef Noodles x2') && textInElements('Green Tea x1'),
 	    'disabled filter condition skipped'
@@ -2090,7 +2116,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    () => document.querySelector('[data-filter-toggle-disabled="1.1"]')?.getAttribute('data-filter-disabled') === 'false',
 	    'filter condition re-enabled in builder'
 	  );
-	  buttonExact('Save view').click();
+	  await commitView();
 	  await waitFor(
 	    () => textInElements('1 rows') && textInElements('Beef Noodles x2') && !textInElements('Green Tea x1'),
 	    're-enabled filter condition applied'
@@ -2184,7 +2210,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    'filter group reordered down'
 	  );
 	  mark('data-form-view-filter-expression-reordered');
-	  buttonExact('Save view').click();
+	  await commitView();
 	  await waitFor(() => textInElements('2 rows') && textInElements('Beef Noodles x2') && textInElements('Green Tea x1'), 'saved view nested filter expression');
 	  mark('data-form-view-rules-nested-filtered');
 	  buttonExact('Export current view').click();
@@ -2302,7 +2328,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-import-mapping-applied');
 	  buttonExact('Cancel').click();
-	  setByLabel('Current view', 'view-order-line-detail');
+	  await switchView('view-order-line-detail');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-view-renderer="detail"]') &&
@@ -2330,13 +2356,13 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-record-detail-url-state');
 	  buttonExact('Data').click();
 	  await waitFor(() => document.querySelector('[data-view-renderer="detail"]'), 'detail view restored after record detail layout');
-	  setByLabel('Current view', 'view-order-line-pivot');
+	  await switchView('view-order-line-pivot');
 	  await waitFor(() => document.querySelector('[data-view-renderer="pivot"]'), 'pivot view renderer');
 	  setByLabel('Pivot row field', 'seat_no');
 	  setByLabel('Pivot column field', 'status');
 	  setByLabel('Pivot value field', 'line_total');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot view saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot view saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-pivot-cell="1:sent_to_kitchen"]')?.textContent?.trim() === '19.98 CNY' &&
@@ -2364,8 +2390,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-pivot-export-table');
 	  setByLabel('Pivot sort', 'row_total_asc');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot sort view saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot sort view saved');
 	  await waitFor(
 	    () => {
 	      const rows = Array.from(document.querySelectorAll('[data-pivot-row]')).map((row) =>
@@ -2381,8 +2407,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-pivot-row-total-sort');
 	  setByLabel('Pivot aggregate', 'count');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot aggregate view saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot aggregate view saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-pivot-aggregate="count"]') &&
@@ -2472,11 +2498,11 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-pivot-drilldown-focus');
 	  document.querySelector('[data-record-focus-clear]')?.click();
 	  await waitFor(() => !document.querySelector('[data-record-focus]'), 'pivot drilldown focused records cleared');
-	  setByLabel('Current view', 'view-order-line-pivot');
+	  await switchView('view-order-line-pivot');
 	  await waitFor(() => document.querySelector('[data-view-renderer="pivot"]'), 'pivot view restored after drilldown focus');
 	  document.querySelector('[data-pivot-swap-axes]')?.click();
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot swapped axes saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot swapped axes saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-pivot-row-field="status"]') &&
@@ -2487,8 +2513,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-pivot-swap-axes');
 	  setByLabel('Pivot totals', 'none');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot totals view saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot totals view saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-pivot-totals="none"]') &&
@@ -2500,8 +2526,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-pivot-totals-none');
 	  setByLabel('Pivot value display', 'percent_total');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot value display view saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot value display view saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-pivot-value-display="percent_total"]') &&
@@ -2511,8 +2537,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-pivot-value-display-percent-total');
 	  setCheckedByLabel('Show empty buckets', true);
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot empty buckets saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot empty buckets saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-pivot-empty-buckets="true"]') &&
@@ -2524,8 +2550,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-pivot-empty-buckets');
 	  setCheckedByLabel('Show cell counts', true);
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot show counts saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot show counts saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-pivot-show-counts="true"]') &&
@@ -2536,8 +2562,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-pivot-cell-counts');
 	  setCheckedByLabel('Cell heatmap', true);
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot heatmap saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot heatmap saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-pivot-heatmap="true"]') &&
@@ -2548,8 +2574,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-pivot-heatmap');
 	  setCheckedByLabel('Hide zero buckets', true);
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot hide zero buckets saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot hide zero buckets saved');
 	  await waitFor(
 	    () => {
 	      const rows = Array.from(document.querySelectorAll('[data-pivot-row]')).map((row) =>
@@ -2580,8 +2606,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-pivot-copy-cell-value');
 		  setByLabel('Pivot sort', 'row_total_desc');
 	  setByLabel('Pivot row limit', '2');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot row limit saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot row limit saved');
 	  await waitFor(
 	    () => {
 	      const rows = Array.from(document.querySelectorAll('[data-pivot-row]')).map((row) =>
@@ -2607,8 +2633,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  setByLabel('Pivot sort', 'column_total_desc');
 	  setByLabel('Pivot row limit', '0');
 	  setByLabel('Pivot column limit', '2');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot column limit saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot column limit saved');
 	  await waitFor(
 	    () => {
 	      const columns = Array.from(document.querySelectorAll('[data-pivot-column]')).map((column) =>
@@ -2649,8 +2675,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	      labelControl('Filter value 2').value === 'sent_to_kitchen',
 	    'pivot drilldown bucket filters applied to draft'
 	  );
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot drilldown bucket filters saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot drilldown bucket filters saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-pivot-cell="1:sent_to_kitchen"]')?.textContent?.includes('100.00%') &&
@@ -2663,8 +2689,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  setByLabel('Pivot row field', 'vip_note');
 	  setByLabel('Pivot column field', 'status');
 	  setByLabel('Pivot value field', 'line_total');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'pivot conditional indicator config saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'pivot conditional indicator config saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-pivot-row-field-conditional-hidden="vip_note"]') &&
@@ -2674,14 +2700,14 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    'pivot conditional field indicators'
 	  );
 	  mark('data-form-pivot-conditional-indicators');
-	  setByLabel('Current view', 'view-order-line-gantt');
+	  await switchView('view-order-line-gantt');
 	  await waitFor(() => document.querySelector('[data-view-renderer="gantt"]'), 'gantt view renderer');
 	  setByLabel('Gantt start field', 'service_date');
 	  setByLabel('Gantt end field', 'service_end_date');
 	  setByLabel('Gantt group field', 'status');
 	  setByLabel('Gantt dependency field', 'order_ref');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'gantt view saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'gantt view saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-gantt-start-field="service_date"]') &&
@@ -2717,8 +2743,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-gantt-resize-end');
 	  setByLabel('Gantt scale', 'week');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'gantt scale saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'gantt scale saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-gantt-scale="week"]') &&
@@ -2728,8 +2754,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-gantt-scale');
 	  setByLabel('Gantt dependency field', 'guest_signature');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'gantt conditional indicator config saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'gantt conditional indicator config saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-gantt-dependency-field-conditional-readonly="guest_signature"]') &&
@@ -2739,7 +2765,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-gantt-conditional-indicators');
 	  mark('data-form-gantt-dependency-field');
 	  mark('data-form-gantt-view-rendered');
-	  setByLabel('Current view', 'view-order-line-kanban');
+	  await switchView('view-order-line-kanban');
 	  await waitFor(() => document.querySelector('[data-view-renderer="kanban"]') && textInElements('sent_to_kitchen') && textInElements('Beef Noodles x2'), 'kanban view renderer');
 	  await waitFor(() => document.querySelector('[data-kanban-column="cancelled"]'), 'kanban empty option column');
 	  await waitFor(() => {
@@ -2751,8 +2777,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  }, 'kanban WIP policy controls');
 	  setByLabel('Swimlane field', 'seat_no');
 	  setByLabel('WIP limit served', '1');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'kanban WIP policy saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'kanban WIP policy saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-kanban-swimlane="1"]') &&
@@ -2775,14 +2801,14 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  await waitFor(() => textInElements('Moved 2 records'), 'kanban bulk move');
 	  mark('data-form-kanban-bulk-move');
 	  mark('data-form-kanban-view-rendered');
-	  setByLabel('Current view', 'view-order-line-calendar');
+	  await switchView('view-order-line-calendar');
 	  await waitFor(() => document.querySelector('[data-view-renderer="calendar"]') && textInElements('Beef Noodles x2'), 'calendar view renderer');
 	  setByLabel('Calendar range', 'month');
 	  setByLabel('Calendar end field', 'service_end_date');
 	  setByLabel('Calendar resource field', 'quantity');
 	  setByLabel('Calendar recurrence', 'daily');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'calendar range saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'calendar range saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-calendar-range="month"]') &&
@@ -2823,8 +2849,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 		  setByLabel('Calendar exception date', '2026-05-30');
 		  await waitFor(() => buttonExact('Add exception')?.disabled === false, 'calendar exception add enabled');
 		  buttonExact('Add exception').click();
-		  buttonExact('Save view').click();
-		  await waitFor(() => textInElements('View saved'), 'calendar exception saved');
+		  await commitView();
+		  await waitFor(() => textInElements('View updated'), 'calendar exception saved');
 		  await waitFor(
 		    () =>
 		      !document.querySelector('[data-calendar-occurrence="record-order-line-created:2026-05-30"]') &&
@@ -2845,8 +2871,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    'calendar recurring series shifted'
 	  );
 	  setByLabel('Calendar recurrence', 'weekly');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'calendar weekly recurrence saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'calendar weekly recurrence saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-calendar-occurrence="record-order-line-created:2026-05-17"]') &&
@@ -2856,8 +2882,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    'calendar weekly recurring occurrences'
 	  );
 	  setByLabel('Calendar recurrence', 'monthly');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'calendar monthly recurrence saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'calendar monthly recurrence saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-calendar-occurrence="record-order-line-created:2026-05-17"]') &&
@@ -2869,8 +2895,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    () => document.querySelector('[data-calendar-focus-date-control]')?.value === '2026-06-01',
 	    'calendar next range focus draft'
 	  );
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'calendar focus date saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'calendar focus date saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-calendar-focus-date="2026-06-01"]') &&
@@ -2885,8 +2911,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    () => document.querySelector('[data-calendar-focus-date-control]')?.value === '2026-05-01',
 	    'calendar previous range focus draft'
 	  );
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'calendar previous focus date saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'calendar previous focus date saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-calendar-focus-date="2026-05-01"]') &&
@@ -2896,8 +2922,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-calendar-focus-navigation');
 	  setByLabel('Calendar days', 'workweek');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'calendar workweek saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'calendar workweek saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-calendar-day-scope="workweek"]') &&
@@ -2909,8 +2935,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-calendar-workweek');
 	  setByLabel('Calendar days', 'all');
 	  setByLabel('Calendar layout', 'agenda');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'calendar agenda saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'calendar agenda saved');
 		  await waitFor(
 		    () =>
 		      document.querySelector('[data-calendar-layout="agenda"]') &&
@@ -2924,8 +2950,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 		  mark('data-form-calendar-agenda-layout');
 		  setByLabel('Calendar layout', 'grid');
 		  setCheckedByLabel('Hide empty days', true);
-		  buttonExact('Save view').click();
-		  await waitFor(() => textInElements('View saved'), 'calendar hide empty days saved');
+		  await commitView();
+		  await waitFor(() => textInElements('View updated'), 'calendar hide empty days saved');
 		  await waitFor(
 		    () =>
 		      document.querySelector('[data-calendar-layout="grid"]') &&
@@ -2976,8 +3002,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	      labelControl('Filter value 2').value === '2',
 	    'calendar bucket filters applied to draft'
 	  );
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'calendar bucket filters saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'calendar bucket filters saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-view-renderer="calendar"]') &&
@@ -3005,11 +3031,11 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-calendar-end-field');
 	  mark('data-form-calendar-weekly-monthly-recurrence');
 	  mark('data-form-calendar-view-rendered');
-	  setByLabel('Current view', 'view-order-line-card');
+	  await switchView('view-order-line-card');
 	  await waitFor(() => document.querySelector('[data-view-renderer="card"]') && textInElements('Beef Noodles x2') && textInElements('19.98 CNY'), 'card view renderer');
 	  setByLabel('Group field', 'status');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card group field saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card group field saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-group-field="status"]') &&
@@ -3048,7 +3074,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-card-group-focus-records');
 	  document.querySelector('[data-record-focus-clear]')?.click();
 	  await waitFor(() => !document.querySelector('[data-record-focus]'), 'card group focused records cleared');
-	  setByLabel('Current view', 'view-order-line-card');
+	  await switchView('view-order-line-card');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-view-renderer="card"]') &&
@@ -3076,8 +3102,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  }, 'card group expanded');
 	  mark('data-form-card-group-collapse');
 	  setByLabel('Group field', 'seat_no');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card seat group field saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card seat group field saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-group-field="seat_no"]') &&
@@ -3096,8 +3122,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	      labelControl('Filter value 1').value === '1',
 	    'card group filter applied to draft'
 	  );
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card group filter saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card group filter saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-group-field="seat_no"]') &&
@@ -3112,8 +3138,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  setByLabel('Card badge field', 'status');
 	  setByLabel('Card cover field', 'dish_photo');
 	  setByLabel('Card layout', 'gallery');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card layout saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card layout saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-layout="gallery"]') &&
@@ -3126,8 +3152,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    'card configured title and subtitle'
 	  );
 	  setByLabel('Card cover aspect', 'portrait');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card cover aspect saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card cover aspect saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-layout="gallery"]') &&
@@ -3139,8 +3165,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-card-cover-aspect');
 	  setByLabel('Card cover fit', 'contain');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card cover fit saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card cover fit saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-layout="gallery"]') &&
@@ -3152,8 +3178,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-card-cover-fit');
 	  setByLabel('Card cover position', 'left');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card cover position left saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card cover position left saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-cover-position="left"]') &&
@@ -3167,8 +3193,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-card-cover-position-left');
 	  setByLabel('Card cover position', 'hidden');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card cover position hidden saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card cover position hidden saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-cover-position="hidden"]') &&
@@ -3177,8 +3203,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-card-cover-position-hidden');
 	  setByLabel('Card cover position', 'top');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card cover position restored');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card cover position restored');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-cover-position="top"]') &&
@@ -3189,8 +3215,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  setByLabel('Card layout', 'compact');
 	  await waitFor(() => labelControl('Card layout').value === 'compact', 'card compact layout selected');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card compact layout saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card compact layout saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-layout="compact"]') &&
@@ -3202,8 +3228,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-card-compact-layout');
 	  setByLabel('Card layout', 'list');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card list layout saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card list layout saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-layout="list"]') &&
@@ -3216,8 +3242,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  setCheckedByAria('Visible columns: Dish Photo', true);
 	  setByLabel('Card fields', '99');
 	  setCheckedByLabel('Hide empty fields', true);
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card hide empty fields saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card hide empty fields saved');
 		  await waitFor(
 		    () =>
 		      document.querySelector('[data-card-hide-empty-fields="true"]') &&
@@ -3227,8 +3253,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 		  );
 		  mark('data-form-card-hide-empty-fields');
 		  setCheckedByLabel('Show timestamps', true);
-		  buttonExact('Save view').click();
-		  await waitFor(() => textInElements('View saved'), 'card timestamps saved');
+		  await commitView();
+		  await waitFor(() => textInElements('View updated'), 'card timestamps saved');
 		  await waitFor(
 		    () =>
 		      document.querySelector('[data-card-timestamps="record-order-line-created"]') &&
@@ -3238,8 +3264,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 		  );
 		  mark('data-form-card-show-timestamps');
 		  setCheckedByLabel('Show record ID', true);
-		  buttonExact('Save view').click();
-		  await waitFor(() => textInElements('View saved'), 'card record id saved');
+		  await commitView();
+		  await waitFor(() => textInElements('View updated'), 'card record id saved');
 		  await waitFor(
 		    () =>
 		      document.querySelector('[data-card-show-record-id="true"]') &&
@@ -3248,8 +3274,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 		  );
 		  mark('data-form-card-show-record-id');
 		  setByLabel('Card layout', 'compact');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card compact layout restored');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card compact layout restored');
 	  document.querySelector('[data-card-menu="record-order-line-created"] summary')?.click();
 	  await waitFor(
 	    () =>
@@ -3288,8 +3314,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	        ?.getAttribute('data-card-field-order') === '1:quantity',
 	    'card field order updated in rules'
 	  );
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card field order saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card field order saved');
 	  await waitFor(
 	    () =>
 	      Array.from(document.querySelectorAll('[data-card-field^="record-order-line-created:"]'))[0]?.getAttribute('data-card-field') ===
@@ -3298,8 +3324,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-card-field-order');
 	  setByLabel('Card fields', '3');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'card field limit saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'card field limit saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-card-field-limit="3"]') &&
@@ -3308,12 +3334,12 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-card-field-limit');
 	  mark('data-form-card-view-rendered');
-	  setByLabel('Current view', 'view-order-line-timeline');
+	  await switchView('view-order-line-timeline');
 	  await waitFor(() => document.querySelector('[data-view-renderer="timeline"]') && textInElements('Beef Noodles x2'), 'timeline view renderer');
 	  setByLabel('Timeline title field', 'sku_name');
 	  setByLabel('Timeline subtitle field', 'seat_no');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline layout saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline layout saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-timeline-title="record-order-line-created"]')?.textContent?.trim() === 'Beef Noodles' &&
@@ -3326,8 +3352,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  setByLabel('Timeline source', 'events');
 	  setByLabel('Timeline event layout', 'detailed');
 	  setByLabel('Timeline event type', 'form.record.created');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline event source saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline event source saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-timeline-source="events"]') &&
@@ -3376,7 +3402,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-timeline-event-focus-filtered-records');
 	  document.querySelector('[data-record-focus-clear]')?.click();
 	  await waitFor(() => !document.querySelector('[data-record-focus]'), 'timeline filtered event records focus cleared');
-	  setByLabel('Current view', 'view-order-line-timeline');
+	  await switchView('view-order-line-timeline');
 	  await waitFor(() => document.querySelector('[data-view-renderer="timeline"]'), 'timeline view restored after filtered event focus');
 	  await waitFor(
 	    () =>
@@ -3478,7 +3504,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-timeline-event-focus-record');
 	  document.querySelector('[data-record-focus-clear]')?.click();
 	  await waitFor(() => !document.querySelector('[data-record-focus]'), 'timeline event focused record cleared');
-	  setByLabel('Current view', 'view-order-line-timeline');
+	  await switchView('view-order-line-timeline');
 	  await waitFor(() => document.querySelector('[data-view-renderer="timeline"]'), 'timeline view restored after event focus');
 	  document.querySelector('[data-timeline-event-menu="event-order-line-created"] summary')?.click();
 	  await waitFor(
@@ -3490,8 +3516,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    () => labelControl('Timeline event aggregate').value === 'form_record:record-order-line-created',
 	    'timeline event aggregate quick filter applied'
 	  );
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline event aggregate filter saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline event aggregate filter saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-timeline-event-aggregate-filter="form_record:record-order-line-created"]') &&
@@ -3501,8 +3527,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-timeline-event-aggregate-filter');
 	  setByLabel('Timeline event aggregate', '');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline event aggregate filter cleared');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline event aggregate filter cleared');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-timeline-event-aggregate-filter=""]') &&
@@ -3525,8 +3551,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  await waitFor(() => document.querySelector('[data-view-renderer="timeline"]'), 'timeline data view restored after event action');
 	  setByLabel('Timeline event type', '');
 	  setByLabel('Timeline event search', 'Green Tea');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline event search saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline event search saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-timeline-event-query="Green Tea"]') &&
@@ -3536,8 +3562,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  mark('data-form-timeline-event-search-filter');
 	  setByLabel('Timeline event search', '');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline event search cleared');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline event search cleared');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-timeline-event-query=""]') &&
@@ -3548,8 +3574,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  const timelineEventTo = dateTimeLocal(new Date(Date.parse(smokeNow) + 70_000).toISOString());
 	  setByLabel('Timeline event from', timelineEventFrom);
 	  setByLabel('Timeline event to', timelineEventTo);
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline event date window saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline event date window saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-timeline-event-from="' + timelineEventFrom + '"]') &&
@@ -3561,8 +3587,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-timeline-event-date-window-filter');
 	  setByLabel('Timeline event from', '');
 	  setByLabel('Timeline event to', '');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline event date window cleared');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline event date window cleared');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-timeline-event-from=""]') &&
@@ -3583,8 +3609,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	      labelControl('Timeline event to').value === timelineEventDayWindowTo,
 	    'timeline event day quick filter applied'
 	  );
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline event day quick filter saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline event day quick filter saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-timeline-event-from="' + timelineEventDayWindowFrom + '"]') &&
@@ -3596,8 +3622,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-timeline-event-day-filter');
 	  setByLabel('Timeline event from', '');
 	  setByLabel('Timeline event to', '');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline event day quick filter cleared');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline event day quick filter cleared');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-timeline-event-from=""]') &&
@@ -3613,8 +3639,8 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  );
 	  document.querySelector('[data-timeline-event-action="event-order-line-created:filter-actor"]')?.click();
 	  await waitFor(() => labelControl('Timeline event actor').value === 'user-smoke', 'timeline event actor quick filter applied');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline event actor filter saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline event actor filter saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-timeline-event-actor-filter="user-smoke"]') &&
@@ -3628,7 +3654,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	  mark('data-form-timeline-event-drill-down');
 	  mark('data-form-timeline-event-actions');
 	  mark('data-form-timeline-view-rendered');
-	  setByLabel('Current view', 'view-order-line-default');
+	  await switchView('view-order-line-default');
 	  await waitFor(() => document.querySelector('[data-view-renderer="grid"]') && textInElements('Beef Noodles x2'), 'grid view renderer restored');
 	  buttonExact('Permissions').click();
 	  await waitFor(() => {
@@ -3714,39 +3740,39 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    'data mode restored with grid and view field permission indicators'
 		  );
 		  mark('data-form-permission-state-data');
-	  setByLabel('Current view', 'view-order-line-kanban');
+	  await switchView('view-order-line-kanban');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-view-renderer="kanban"]') &&
 	      document.querySelector('[data-kanban-card-field-permission-locked="record-order-line-created:quantity"]'),
 	    'kanban view permission indicators'
 	  );
-	  setByLabel('Current view', 'view-order-line-calendar');
+	  await switchView('view-order-line-calendar');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-view-renderer="calendar"]') &&
 	      document.querySelector('[data-calendar-resource-field-permission-locked="quantity"]'),
 	    'calendar view permission indicators'
 	  );
-	  setByLabel('Current view', 'view-order-line-card');
+	  await switchView('view-order-line-card');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-view-renderer="card"]') &&
 	      document.querySelector('[data-card-field-permission-locked="record-order-line-created:quantity"]'),
 	    'card view permission indicators'
 	  );
-	  setByLabel('Current view', 'view-order-line-timeline');
+	  await switchView('view-order-line-timeline');
 	  setByLabel('Timeline source', 'records');
 	  setByLabel('Timeline title field', 'quantity');
-	  buttonExact('Save view').click();
-	  await waitFor(() => textInElements('View saved'), 'timeline permission indicator config saved');
+	  await commitView();
+	  await waitFor(() => textInElements('View updated'), 'timeline permission indicator config saved');
 	  await waitFor(
 	    () =>
 	      document.querySelector('[data-view-renderer="timeline"]') &&
 	      document.querySelector('[data-timeline-title-permission-locked="record-order-line-created:quantity"]'),
 	    'timeline view permission indicators'
 	  );
-	  buttonExact('Detail').click();
+	  await openRecordDetails();
   await waitFor(
 	    () =>
 	      textInElements('Record links') &&
@@ -3814,7 +3840,7 @@ function dragGanttBarToDate(recordId, isoDate) {
 	    'designer property permission indicators'
 	  );
 	  mark('data-form-permission-state-cross-mode');
-  buttonExact('Detail').click();
+  await openRecordDetails();
   await waitFor(() => textInElements('Record links') && textInElements('Beef Noodles x2'), 'detail mode restored after edit indicator check');
   mark('data-form-record-detail');
   setByPlaceholder('Target record id', 'order-1');
@@ -6345,7 +6371,7 @@ try {
 			multiFilterViewPayload.config.sort?.direction !== 'desc' ||
 			multiFilterViewPayload.config.group_by !== 'status' ||
 			multiFilterViewPayload.config.filter_groups?.[0]?.logic !== 'all' ||
-			multiFilterViewPayload.config.visibility !== 'private' ||
+			// "Update view" keeps the saved view's audience: the default view stays the default.
 			multiFilterViewPayload.config.is_default !== true ||
 			orderLineViews.filter((view) => view.config?.is_default === true).length !== 1
 		) {

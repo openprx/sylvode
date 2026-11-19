@@ -300,35 +300,20 @@ test.describe("Universal forms / interaction IA", () => {
   test("expanded data-entry view tools keep advanced view parameters disclosed on demand", async ({
     page,
   }, testInfo) => {
-    await page.getByRole("button", { name: "保存视图" }).click();
+    await expect(page.locator("[data-view-switcher]")).toContainText("全部记录");
+    await page.locator("[data-view-menu-button]").click();
+    await page.getByRole("menuitem", { name: "布局设置…" }).click();
 
-    const expandedTools = page.locator("[data-view-tools-expanded-panel]");
-    await expect(expandedTools).toBeVisible();
-    await expect(
-      expandedTools.locator("[data-view-setup-disclosure]"),
-    ).toBeVisible();
-    await expect(
-      expandedTools.locator("[data-view-columns-disclosure]"),
-    ).toBeVisible();
+    const sheet = page.locator("[data-layout-settings-sheet]");
+    await expect(sheet).toBeVisible();
+    await expect(sheet.locator("[data-view-columns-disclosure]")).toBeVisible();
     await expect(page.getByText("视图标识")).toBeHidden();
-    await expect(
-      expandedTools.locator("[data-view-columns-disclosure]"),
-    ).toContainText("显示列");
+    await expect(sheet.locator("[data-view-columns-disclosure]")).toContainText(
+      "显示列",
+    );
+    // The sheet is non-modal: the record list stays visible and usable beside it.
     await expect(page.locator("[data-record-list-panel]")).toBeVisible();
-    const widths = await page.evaluate(() => {
-      const viewTools = document
-        .querySelector("[data-view-tools-expanded-panel]")
-        ?.getBoundingClientRect();
-      const recordList = document
-        .querySelector("[data-record-list-panel]")
-        ?.getBoundingClientRect();
-      return {
-        leftDelta: viewTools && recordList ? Math.abs(viewTools.left - recordList.left) : 999,
-        widthDelta: viewTools && recordList ? Math.abs(viewTools.width - recordList.width) : 999,
-      };
-    });
-    expect(widths.leftDelta).toBeLessThanOrEqual(1);
-    expect(widths.widthDelta).toBeLessThanOrEqual(1);
+    await expect(sheet.locator("[disabled][data-pivot-swap-axes]")).toHaveCount(0);
 
     await attachScreenshot(
       page,
