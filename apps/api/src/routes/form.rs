@@ -1064,13 +1064,16 @@ pub async fn create_form_view(
     Json(req): Json<CreateViewRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let form = find_form(&state, form_id).await?;
-    let (actor_id, _, is_bot) =
-        require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.design").await?;
+    let (actor_id, role, is_bot) =
+        require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
     let key = normalize_key(&req.key).map_err(ApiError::BadRequest)?;
     let name = required_trimmed(&req.name, "name")?;
     let view_type = normalize_view_type(&req.view_type)?;
     let config = normalize_view_config(req.config.unwrap_or_else(|| json!({})))?;
     let mark_default = config_marks_default(&config);
+    let audience = view_audience(&config);
+    ensure_private_view_shape(audience, mark_default, is_bot)?;
+    ensure_view_write_allowed(&state, &form, &role, view_write_action(audience, mark_default)).await?;
     let view_id = Uuid::new_v4();
     let tx = state.db.begin().await?;
     if mark_default {
@@ -1127,9 +1130,9 @@ pub async fn list_form_views(
     Path(form_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let form = find_form(&state, form_id).await?;
-    let (actor_id, role, is_bot) =
-        require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
-    let can_view_private = is_bot || role_is_form_admin(&role);
+    let (actor_id, _, _) = require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
+    // A private view belongs to its creator alone: not to form admins, not to bots. Bot-created
+    // views have no `created_by`, so they can never match here.
     let views = ViewResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
@@ -1141,12 +1144,11 @@ pub async fn list_form_views(
               AND (
                   COALESCE(config->>'visibility', 'shared') <> 'private'
                   OR created_by = $2
-                  OR $3 = true
               )
             ORDER BY (config->>'is_default' = 'true') DESC,
                      created_at ASC
         ",
-        vec![form_id.into(), actor_id.into(), can_view_private.into()],
+        vec![form_id.into(), actor_id.into()],
     ))
     .all(&state.db)
     .await?;
@@ -1163,8 +1165,31 @@ pub async fn update_form_view(
     let view = find_view(&state, view_id).await?;
     let form = find_form(&state, view.form_id).await?;
     let (actor_id, role, is_bot) =
-        require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.design").await?;
-    ensure_can_manage_view(&view, actor_id, &role, is_bot)?;
+        require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
+    ensure_view_readable(&view, actor_id, is_bot)?;
+    let next_config = req.config.map(normalize_view_config).transpose()?;
+    let current_audience = view_audience(&view.config);
+    let (next_audience, next_default) = next_config.as_ref().map_or_else(
+        || (current_audience, config_marks_default(&view.config)),
+        |config| (view_audience(config), config_marks_default(config)),
+    );
+    if next_config.is_some() {
+        ensure_private_view_shape(next_audience, next_default, is_bot)?;
+    }
+    if current_audience == ViewAudience::Shared
+        && next_audience == ViewAudience::Private
+        && (is_bot || view.created_by != Some(actor_id))
+    {
+        return Err(ApiError::Forbidden(
+            "only the creator of a view can make it private".to_string(),
+        ));
+    }
+    let required_action = if current_audience == ViewAudience::Shared {
+        "form.design"
+    } else {
+        view_write_action(next_audience, next_default)
+    };
+    ensure_view_write_allowed(&state, &form, &role, required_action).await?;
     if let Some(expected_updated_at) = req.expected_updated_at
         && expected_updated_at != view.updated_at
     {
@@ -1191,9 +1216,8 @@ pub async fn update_form_view(
         push_set!("view_type", normalize_view_type(&view_type)?.into());
     }
     let mut mark_default = false;
-    if let Some(config) = req.config {
+    if let Some(config) = next_config {
         changed_fields.push("config");
-        let config = normalize_view_config(config)?;
         mark_default = config_marks_default(&config);
         push_set!("config", config.into());
     }
@@ -1249,8 +1273,10 @@ pub async fn delete_form_view(
     let view = find_view(&state, view_id).await?;
     let form = find_form(&state, view.form_id).await?;
     let (actor_id, role, is_bot) =
-        require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.design").await?;
-    ensure_can_manage_view(&view, actor_id, &role, is_bot)?;
+        require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
+    ensure_view_readable(&view, actor_id, is_bot)?;
+    let required_action = view_write_action(view_audience(&view.config), config_marks_default(&view.config));
+    ensure_view_write_allowed(&state, &form, &role, required_action).await?;
     let tx = state.db.begin().await?;
     insert_form_event(
         &tx,
@@ -1309,7 +1335,7 @@ pub async fn list_form_records(
     )
     .await?;
 
-    let view_query = record_query_config_from_view(&state, form_id, query.view_id).await?;
+    let view_query = record_query_config_from_view(&state, form_id, query.view_id, actor_id).await?;
     let sort = query.sort.as_deref().or(view_query.sort.as_deref());
     let query_filter_expression = query_filter_expression(
         query.filter_field.as_deref(),
@@ -1526,16 +1552,16 @@ async fn export_records_for_form(
         is_bot || role_is_form_admin(role),
     )?;
     let row_limit = export_records_limit(query.limit)?;
-    let selected_keys = export_column_keys(state, form.id, &fields, query)
+    let selected_keys = export_column_keys(state, form.id, &fields, query, actor_id)
         .await?
         .into_iter()
         .filter(|key| !denied_read_fields.contains(key))
         .collect::<Vec<_>>();
     let view_query = if export_scope == "view" {
-        record_query_config_from_view(state, form.id, query.view_id).await?
+        record_query_config_from_view(state, form.id, query.view_id, actor_id).await?
     } else {
         if let Some(view_id) = query.view_id {
-            ensure_export_view_access(state, form.id, view_id).await?;
+            find_readable_view(state, form.id, view_id, actor_id).await?;
         }
         RecordQueryConfig::default()
     };
@@ -5158,16 +5184,11 @@ async fn export_column_keys(
     form_id: Uuid,
     fields: &[FormField],
     query: &ExportRecordsQuery,
+    actor_id: Uuid,
 ) -> Result<Vec<String>, ApiError> {
     let mut raw_keys = Vec::new();
     if let Some(view_id) = query.view_id {
-        let view = find_view(state, view_id).await?;
-        if view.form_id != form_id {
-            return Err(ApiError::BadRequest("view_id does not belong to form".to_string()));
-        }
-        if view.archived_at.is_some() {
-            return Err(ApiError::BadRequest("view is archived".to_string()));
-        }
+        let view = find_readable_view(state, form_id, view_id, actor_id).await?;
         raw_keys.extend(export_columns_from_config(&view.config));
     }
     if raw_keys.is_empty()
@@ -5196,32 +5217,35 @@ async fn export_column_keys(
     Ok(normalized)
 }
 
-async fn ensure_export_view_access(state: &AppState, form_id: Uuid, view_id: Uuid) -> Result<(), ApiError> {
+/// Loads a view a caller names by id for reading records or exporting: it must belong to the form,
+/// be live, and — when private — belong to the caller.
+async fn find_readable_view(
+    state: &AppState,
+    form_id: Uuid,
+    view_id: Uuid,
+    actor_id: Uuid,
+) -> Result<ViewResponse, ApiError> {
     let view = find_view(state, view_id).await?;
     if view.form_id != form_id {
         return Err(ApiError::BadRequest("view_id does not belong to form".to_string()));
     }
+    ensure_view_readable(&view, actor_id, false)?;
     if view.archived_at.is_some() {
         return Err(ApiError::BadRequest("view is archived".to_string()));
     }
-    Ok(())
+    Ok(view)
 }
 
 async fn record_query_config_from_view(
     state: &AppState,
     form_id: Uuid,
     view_id: Option<Uuid>,
+    actor_id: Uuid,
 ) -> Result<RecordQueryConfig, ApiError> {
     let Some(view_id) = view_id else {
         return Ok(RecordQueryConfig::default());
     };
-    let view = find_view(state, view_id).await?;
-    if view.form_id != form_id {
-        return Err(ApiError::BadRequest("view_id does not belong to form".to_string()));
-    }
-    if view.archived_at.is_some() {
-        return Err(ApiError::BadRequest("view is archived".to_string()));
-    }
+    let view = find_readable_view(state, form_id, view_id, actor_id).await?;
 
     let mut config = RecordQueryConfig {
         filter_expression: record_filter_expression_from_config(&view.config),
@@ -5248,7 +5272,7 @@ async fn visible_form_record_ids_for_export(
     role: &str,
     view_id: Option<Uuid>,
 ) -> Result<Vec<Uuid>, ApiError> {
-    let view_query = record_query_config_from_view(state, form.id, view_id).await?;
+    let view_query = record_query_config_from_view(state, form.id, view_id, actor_id).await?;
     let mut values: Vec<sea_orm::Value> = vec![form.id.into()];
     let mut joins = Vec::new();
     let mut where_parts = vec![
@@ -6720,9 +6744,14 @@ async fn duplicate_form_views(
             FROM form_views
             WHERE form_id = $1
               AND archived_at IS NULL
+              AND (
+                  COALESCE(config->>'visibility', 'shared') <> 'private'
+                  OR created_by = $2
+              )
             ORDER BY created_at ASC
         ",
-        vec![source_form.id.into()],
+        // Other people's private views stay with them: copying one would hand it to the caller.
+        vec![source_form.id.into(), created_by.into()],
     ))
     .all(tx)
     .await?;
@@ -6981,14 +7010,98 @@ fn view_config_is_private(config: &Value) -> bool {
         .is_some_and(|value| value.trim() == "private")
 }
 
-fn ensure_can_manage_view(view: &ViewResponse, actor_id: Uuid, role: &str, is_bot: bool) -> Result<(), ApiError> {
-    if !view_config_is_private(&view.config) || is_bot || role_is_form_admin(role) || view.created_by == Some(actor_id)
-    {
+/// Who a saved view is for, read from `config.visibility` (absent means shared).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ViewAudience {
+    /// Only the creator can list, read, change or delete it.
+    Private,
+    /// Everyone who can view the form's records sees it.
+    Shared,
+}
+
+fn view_audience(config: &Value) -> ViewAudience {
+    if view_config_is_private(config) {
+        ViewAudience::Private
+    } else {
+        ViewAudience::Shared
+    }
+}
+
+/// The form action a view write needs once the caller is known to be able to view the form.
+///
+/// A personal view (private and not the default) is a reading aid, so anyone who can view the
+/// records may keep one. Anything other people will see — a shared view, or the form's default —
+/// is form design.
+fn view_write_action(audience: ViewAudience, marks_default: bool) -> &'static str {
+    if audience == ViewAudience::Private && !marks_default {
+        "form.view"
+    } else {
+        "form.design"
+    }
+}
+
+/// Rejects private view configs that cannot work: a default view is chosen for everyone, and a
+/// private view needs an owning user (bot writes carry no `created_by`).
+fn ensure_private_view_shape(audience: ViewAudience, marks_default: bool, is_bot: bool) -> Result<(), ApiError> {
+    if audience != ViewAudience::Private {
         return Ok(());
     }
-    Err(ApiError::Forbidden(
-        "private view can only be changed by its creator or a workspace admin".to_string(),
+    if marks_default {
+        return Err(ApiError::BadRequest(
+            "a private view cannot be the default view".to_string(),
+        ));
+    }
+    if is_bot {
+        return Err(ApiError::BadRequest(
+            "a private view needs a user owner; bots can only write shared views".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// A private view does not exist for anyone but its creator. Answering "not found" rather than
+/// "forbidden" keeps other people's personal views from being probed by id.
+fn ensure_view_readable(view: &ViewResponse, actor_id: Uuid, is_bot: bool) -> Result<(), ApiError> {
+    if view_audience(&view.config) == ViewAudience::Shared || (!is_bot && view.created_by == Some(actor_id)) {
+        return Ok(());
+    }
+    Err(ApiError::NotFound("form view not found".to_string()))
+}
+
+async fn ensure_view_write_allowed(
+    state: &AppState,
+    form: &FormResponse,
+    role: &str,
+    action: &str,
+) -> Result<(), ApiError> {
+    if action == "form.view" || form_action_allowed(state, form.id, role, action).await? {
+        return Ok(());
+    }
+    Err(ApiError::Forbidden(format!("form permission denied: {action}")))
+}
+
+/// Archives the private views a removed workspace member created in that workspace. They are
+/// visible to their creator alone, so once the creator has left nobody can see, use or clean them
+/// up. Soft, like every view delete; shared views stay with the team.
+pub(crate) async fn archive_departed_member_private_views(
+    tx: &DatabaseTransaction,
+    workspace_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), ApiError> {
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+            UPDATE form_views
+            SET archived_at = now(), updated_at = now()
+            WHERE workspace_id = $1
+              AND created_by = $2
+              AND archived_at IS NULL
+              AND config->>'visibility' = 'private'
+        ",
+        vec![workspace_id.into(), user_id.into()],
     ))
+    .await?;
+    Ok(())
 }
 
 async fn clear_default_form_views(
@@ -7101,6 +7214,83 @@ mod tests {
 
     fn denied_fields(keys: &[&str]) -> BTreeSet<String> {
         keys.iter().map(|key| (*key).to_string()).collect()
+    }
+
+    fn view_with(config: Value, created_by: Option<Uuid>) -> super::ViewResponse {
+        let now = platform::timestamp::Timestamp::now();
+        super::ViewResponse {
+            id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            form_id: Uuid::new_v4(),
+            key: "mine".to_string(),
+            name: "Mine".to_string(),
+            view_type: "grid".to_string(),
+            config,
+            created_by,
+            archived_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn view_audience_defaults_to_shared() {
+        assert_eq!(super::view_audience(&json!({})), super::ViewAudience::Shared);
+        assert_eq!(
+            super::view_audience(&json!({"visibility": "shared"})),
+            super::ViewAudience::Shared
+        );
+        assert_eq!(
+            super::view_audience(&json!({"visibility": "private"})),
+            super::ViewAudience::Private
+        );
+    }
+
+    #[test]
+    fn personal_views_need_only_form_view() {
+        use super::{ViewAudience, view_write_action};
+        assert_eq!(view_write_action(ViewAudience::Private, false), "form.view");
+        assert_eq!(view_write_action(ViewAudience::Shared, false), "form.design");
+        assert_eq!(view_write_action(ViewAudience::Shared, true), "form.design");
+        assert_eq!(view_write_action(ViewAudience::Private, true), "form.design");
+    }
+
+    #[test]
+    fn private_views_cannot_be_default_or_bot_owned() {
+        use super::{ViewAudience, ensure_private_view_shape};
+        assert!(ensure_private_view_shape(ViewAudience::Private, false, false).is_ok());
+        assert!(matches!(
+            ensure_private_view_shape(ViewAudience::Private, true, false),
+            Err(ApiError::BadRequest(_))
+        ));
+        assert!(matches!(
+            ensure_private_view_shape(ViewAudience::Private, false, true),
+            Err(ApiError::BadRequest(_))
+        ));
+        assert!(ensure_private_view_shape(ViewAudience::Shared, true, true).is_ok());
+    }
+
+    #[test]
+    fn a_private_view_is_readable_by_its_creator_only() {
+        let owner = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let private = view_with(json!({"visibility": "private"}), Some(owner));
+        assert!(super::ensure_view_readable(&private, owner, false).is_ok());
+        assert!(matches!(
+            super::ensure_view_readable(&private, other, false),
+            Err(ApiError::NotFound(_))
+        ));
+        // A bot never owns a private view, even if its actor id were to collide.
+        assert!(matches!(
+            super::ensure_view_readable(&private, owner, true),
+            Err(ApiError::NotFound(_))
+        ));
+        let orphaned = view_with(json!({"visibility": "private"}), None);
+        assert!(super::ensure_view_readable(&orphaned, other, false).is_err());
+        let shared = view_with(json!({"visibility": "shared"}), Some(owner));
+        assert!(super::ensure_view_readable(&shared, other, false).is_ok());
+        assert!(super::ensure_view_readable(&shared, other, true).is_ok());
     }
 
     #[test]
@@ -7683,18 +7873,18 @@ mod record_link_database_tests {
     use serde_json::{Value, json};
     use uuid::Uuid;
 
-    const TEST_DATABASE_URL_ENV: &str = "OPENPR_TEST_DATABASE_URL";
+    pub(super) const TEST_DATABASE_URL_ENV: &str = "OPENPR_TEST_DATABASE_URL";
 
     /// A throwaway database that drops itself when the test is done.
-    struct Scratch {
-        db: DatabaseConnection,
+    pub(super) struct Scratch {
+        pub(super) db: DatabaseConnection,
         url: String,
         name: String,
         admin_url: String,
     }
 
     impl Scratch {
-        async fn drop_self(self) {
+        pub(super) async fn drop_self(self) {
             let Self {
                 db, name, admin_url, ..
             } = self;
@@ -7714,7 +7904,7 @@ mod record_link_database_tests {
     /// Creates an empty database named after the test and applies every migration file on disk in
     /// name order, which is the order the runner uses. Returns `None` when the environment does not
     /// offer a server, so the suite stays runnable without one.
-    async fn scratch(label: &str) -> Option<Scratch> {
+    pub(super) async fn scratch(label: &str) -> Option<Scratch> {
         let admin_url = std::env::var(TEST_DATABASE_URL_ENV).ok()?;
         let admin = Database::connect(&admin_url)
             .await
@@ -7780,7 +7970,7 @@ mod record_link_database_tests {
         };
     }
 
-    fn state_for(scratch: &Scratch) -> AppState {
+    pub(super) fn state_for(scratch: &Scratch) -> AppState {
         AppState {
             cfg: AppConfig {
                 app_name: "api-test".to_string(),
@@ -7798,7 +7988,7 @@ mod record_link_database_tests {
         }
     }
 
-    fn claims_for(user_id: Uuid) -> JwtClaims {
+    pub(super) fn claims_for(user_id: Uuid) -> JwtClaims {
         JwtClaims {
             sub: user_id.to_string(),
             email: format!("{user_id}@example.test"),
@@ -7834,7 +8024,7 @@ mod record_link_database_tests {
         })
     }
 
-    async fn create_user(state: &AppState, label: &str) -> Uuid {
+    pub(super) async fn create_user(state: &AppState, label: &str) -> Uuid {
         let user_id = Uuid::new_v4();
         state
             .db
@@ -7853,7 +8043,7 @@ mod record_link_database_tests {
     }
 
     /// One workspace with one project, and the caller joined at `role`.
-    async fn create_tenant(state: &AppState, label: &str, user_id: Uuid, role: &str) -> (Uuid, Uuid) {
+    pub(super) async fn create_tenant(state: &AppState, label: &str, user_id: Uuid, role: &str) -> (Uuid, Uuid) {
         let workspace_id = Uuid::new_v4();
         state
             .db
@@ -7902,7 +8092,7 @@ mod record_link_database_tests {
         project_id
     }
 
-    async fn create_form(state: &AppState, tenant: (Uuid, Uuid), key: &str, schema: Value) -> Uuid {
+    pub(super) async fn create_form(state: &AppState, tenant: (Uuid, Uuid), key: &str, schema: Value) -> Uuid {
         let form_id = Uuid::new_v4();
         state
             .db
@@ -7950,7 +8140,7 @@ mod record_link_database_tests {
         record_id
     }
 
-    async fn set_member_policy(state: &AppState, tenant: (Uuid, Uuid), form_id: Uuid, policy: Value) {
+    pub(super) async fn set_member_policy(state: &AppState, tenant: (Uuid, Uuid), form_id: Uuid, policy: Value) {
         state
             .db
             .execute(Statement::from_sql_and_values(
@@ -8313,5 +8503,371 @@ mod record_link_database_tests {
         );
 
         scratch.drop_self().await;
+    }
+}
+
+/// Personal ("only me") views: who may write them, and that nobody but the creator ever sees one.
+/// DB-backed like `record_link_database_tests`; skipped when `OPENPR_TEST_DATABASE_URL` is unset.
+#[cfg(test)]
+#[allow(clippy::indexing_slicing)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
+mod form_view_database_tests {
+    use super::record_link_database_tests::{
+        TEST_DATABASE_URL_ENV, claims_for, create_form, create_tenant, create_user, scratch, set_member_policy,
+        state_for,
+    };
+    use super::{
+        CreateViewRequest, ListRecordsQuery, UpdateViewRequest, create_form_view, delete_form_view, list_form_records,
+        list_form_views, update_form_view,
+    };
+    use crate::error::ApiError;
+    use axum::extract::{Extension, Json, Path, Query, State};
+    use axum::response::IntoResponse;
+    use platform::app::AppState;
+    use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
+    use serde_json::{Value, json};
+    use uuid::Uuid;
+
+    macro_rules! scratch_or_skip {
+        ($label:expr) => {
+            match scratch($label).await {
+                Some(scratch) => scratch,
+                None => {
+                    eprintln!("skipped: {} is not set", TEST_DATABASE_URL_ENV);
+                    return;
+                }
+            }
+        };
+    }
+
+    struct Fixture {
+        state: AppState,
+        tenant: (Uuid, Uuid),
+        form_id: Uuid,
+        admin: Uuid,
+        member: Uuid,
+        other_member: Uuid,
+    }
+
+    /// A workspace owner (form admin), two plain members, and a form whose member policy may view
+    /// records but not design the form.
+    async fn fixture(state: AppState) -> Fixture {
+        let admin = create_user(&state, "admin").await;
+        let tenant = create_tenant(&state, "views", admin, "owner").await;
+        let member = create_user(&state, "member").await;
+        let other_member = create_user(&state, "other").await;
+        for user in [member, other_member] {
+            state
+                .db
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'member')",
+                    vec![tenant.0.into(), user.into()],
+                ))
+                .await
+                .expect("the membership is created");
+        }
+        let form_id = create_form(
+            &state,
+            tenant,
+            "delivery",
+            json!({"fields": [{"field_id": "fld_due_date", "key": "due", "type": "date"}]}),
+        )
+        .await;
+        set_member_policy(
+            &state,
+            tenant,
+            form_id,
+            json!({"actions": {"form.view": true, "form.design": false, "record.create": true}}),
+        )
+        .await;
+        Fixture {
+            state,
+            tenant,
+            form_id,
+            admin,
+            member,
+            other_member,
+        }
+    }
+
+    async fn json_of(response: impl IntoResponse) -> Value {
+        let bytes = axum::body::to_bytes(response.into_response().into_body(), 1024 * 1024)
+            .await
+            .expect("the body is readable");
+        serde_json::from_slice(&bytes).expect("the body is JSON")
+    }
+
+    async fn create(f: &Fixture, user: Uuid, key: &str, config: Value) -> Result<Uuid, ApiError> {
+        let response = create_form_view(
+            State(f.state.clone()),
+            Extension(claims_for(user)),
+            None,
+            Path(f.form_id),
+            Json(CreateViewRequest {
+                key: key.to_string(),
+                name: key.to_string(),
+                view_type: "grid".to_string(),
+                config: Some(config),
+            }),
+        )
+        .await?;
+        let body = json_of(response).await;
+        let id = body["data"]["id"].as_str().expect("the created view has an id");
+        Ok(Uuid::parse_str(id).expect("the view id is a UUID"))
+    }
+
+    async fn update(
+        f: &Fixture,
+        user: Uuid,
+        view_id: Uuid,
+        name: Option<&str>,
+        config: Option<Value>,
+    ) -> Result<(), ApiError> {
+        update_form_view(
+            State(f.state.clone()),
+            Extension(claims_for(user)),
+            None,
+            Path(view_id),
+            Json(UpdateViewRequest {
+                name: name.map(str::to_string),
+                view_type: None,
+                config,
+                expected_updated_at: None,
+            }),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    async fn delete(f: &Fixture, user: Uuid, view_id: Uuid) -> Result<(), ApiError> {
+        delete_form_view(State(f.state.clone()), Extension(claims_for(user)), None, Path(view_id))
+            .await
+            .map(|_| ())
+    }
+
+    async fn listed_keys(f: &Fixture, user: Uuid) -> Vec<String> {
+        let response = list_form_views(
+            State(f.state.clone()),
+            Extension(claims_for(user)),
+            None,
+            Path(f.form_id),
+        )
+        .await
+        .expect("the views are listed");
+        json_of(response).await["data"]
+            .as_array()
+            .expect("the list is an array")
+            .iter()
+            .filter_map(|view| view["key"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    async fn records_with_view(f: &Fixture, user: Uuid, view_id: Uuid) -> Result<(), ApiError> {
+        let query: ListRecordsQuery =
+            serde_json::from_value(json!({"view_id": view_id})).expect("the query deserializes");
+        list_form_records(
+            State(f.state.clone()),
+            Extension(claims_for(user)),
+            None,
+            Path(f.form_id),
+            Query(query),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct ArchivedRow {
+        archived: bool,
+    }
+
+    async fn archived(state: &AppState, view_id: Uuid) -> bool {
+        ArchivedRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT archived_at IS NOT NULL AS archived FROM form_views WHERE id = $1",
+            vec![view_id.into()],
+        ))
+        .one(&state.db)
+        .await
+        .expect("the view is readable")
+        .is_some_and(|row| row.archived)
+    }
+
+    #[tokio::test]
+    async fn a_member_without_design_keeps_a_personal_view_nobody_else_sees() {
+        let scratch = scratch_or_skip!("view_personal");
+        let f = fixture(state_for(&scratch)).await;
+
+        let view = create(
+            &f,
+            f.member,
+            "mine",
+            json!({"visibility": "private", "is_default": false}),
+        )
+        .await
+        .expect("a member who can view records may save a private view");
+
+        assert!(listed_keys(&f, f.member).await.contains(&"mine".to_string()));
+        assert!(!listed_keys(&f, f.other_member).await.contains(&"mine".to_string()));
+        assert!(
+            !listed_keys(&f, f.admin).await.contains(&"mine".to_string()),
+            "a form admin must not list someone else's private view"
+        );
+
+        let own = records_with_view(&f, f.member, view).await;
+        assert!(own.is_ok(), "{own:?}");
+        assert!(matches!(
+            records_with_view(&f, f.admin, view).await,
+            Err(ApiError::NotFound(_))
+        ));
+        assert!(matches!(
+            update(&f, f.admin, view, Some("x"), None).await,
+            Err(ApiError::NotFound(_))
+        ));
+        assert!(matches!(
+            delete(&f, f.other_member, view).await,
+            Err(ApiError::NotFound(_))
+        ));
+
+        update(
+            &f,
+            f.member,
+            view,
+            Some("Mine, sorted"),
+            Some(json!({"visibility": "private", "sort": {"field": "due", "direction": "desc"}})),
+        )
+        .await
+        .expect("the owner may rename and update a private view");
+        delete(&f, f.member, view)
+            .await
+            .expect("the owner may delete a private view");
+
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn sharing_or_defaulting_still_needs_design() {
+        let scratch = scratch_or_skip!("view_share_rules");
+        let f = fixture(state_for(&scratch)).await;
+
+        assert!(matches!(
+            create(&f, f.member, "for_all", json!({"visibility": "shared"})).await,
+            Err(ApiError::Forbidden(_))
+        ));
+        assert!(matches!(
+            create(&f, f.member, "no_visibility", json!({})).await,
+            Err(ApiError::Forbidden(_))
+        ));
+        assert!(matches!(
+            create(
+                &f,
+                f.member,
+                "my_default",
+                json!({"visibility": "private", "is_default": true})
+            )
+            .await,
+            Err(ApiError::BadRequest(_))
+        ));
+
+        let view = create(&f, f.member, "mine", json!({"visibility": "private"}))
+            .await
+            .expect("the private view is created");
+        assert!(
+            matches!(
+                update(&f, f.member, view, None, Some(json!({"visibility": "shared"}))).await,
+                Err(ApiError::Forbidden(_))
+            ),
+            "a member without design must not turn a private view shared"
+        );
+
+        let shared = create(&f, f.admin, "team", json!({"visibility": "shared"}))
+            .await
+            .expect("an admin may create a shared view");
+        assert!(matches!(
+            update(&f, f.member, shared, Some("renamed"), None).await,
+            Err(ApiError::Forbidden(_))
+        ));
+        assert!(matches!(
+            delete(&f, f.member, shared).await,
+            Err(ApiError::Forbidden(_))
+        ));
+
+        let own_shared = create(&f, f.admin, "admins", json!({"visibility": "shared"}))
+            .await
+            .expect("the shared view is created");
+        update(&f, f.admin, own_shared, None, Some(json!({"visibility": "private"})))
+            .await
+            .expect("the creator may make a shared view private");
+        assert!(!listed_keys(&f, f.member).await.contains(&"admins".to_string()));
+
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn only_the_creator_can_make_a_shared_view_private() {
+        let scratch = scratch_or_skip!("view_privatize");
+        let f = fixture(state_for(&scratch)).await;
+        let second_admin = create_user(&f.state, "admin2").await;
+        f.state
+            .db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'admin')",
+                vec![f.tenant.0.into(), second_admin.into()],
+            ))
+            .await
+            .expect("the membership is created");
+        let shared = create(&f, f.admin, "team", json!({"visibility": "shared"}))
+            .await
+            .expect("the shared view is created");
+        assert!(matches!(
+            update(&f, second_admin, shared, None, Some(json!({"visibility": "private"}))).await,
+            Err(ApiError::Forbidden(_))
+        ));
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn leaving_the_workspace_archives_personal_views_only() {
+        let scratch = scratch_or_skip!("view_member_leaves");
+        let f = fixture(state_for(&scratch)).await;
+        set_member_policy_design(&f).await;
+        let private = create(&f, f.member, "mine", json!({"visibility": "private"}))
+            .await
+            .expect("the private view is created");
+        let shared = create(&f, f.member, "team", json!({"visibility": "shared"}))
+            .await
+            .expect("a designer member may create a shared view");
+
+        crate::routes::member::remove_member(
+            State(f.state.clone()),
+            Extension(claims_for(f.admin)),
+            Path((f.tenant.0, f.member)),
+        )
+        .await
+        .expect("the owner removes the member");
+
+        assert!(
+            archived(&f.state, private).await,
+            "the leaver's private view is archived"
+        );
+        assert!(!archived(&f.state, shared).await, "views the team can see are kept");
+        scratch.drop_self().await;
+    }
+
+    async fn set_member_policy_design(f: &Fixture) {
+        f.state
+            .db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "UPDATE form_permissions SET policy = $2 WHERE form_id = $1 AND subject_id = 'member'",
+                vec![
+                    f.form_id.into(),
+                    json!({"actions": {"form.view": true, "form.design": true}}).into(),
+                ],
+            ))
+            .await
+            .expect("the member policy is updated");
     }
 }
