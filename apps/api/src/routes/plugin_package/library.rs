@@ -1,7 +1,8 @@
 //! Private plugin releases and explicit project admission.
 use super::{
-    ActivePackage, EXECUTIONS, InstallRequest, Package, admin, audited_error, bad, busy, enabled, guest_input,
-    lock_admin, lock_binding, lock_project, require_extensions, runtime_policy, sha256, statement, validate_install,
+    ActivePackage, EXECUTIONS, InstallRequest, Package, admin, audited_error, bad, enabled, guest_input, lock_admin,
+    lock_binding, lock_project, require_extensions, reserve_execution, runtime_policy, sha256, statement,
+    validate_install,
 };
 use crate::{
     error::{ApiError, ApiErrorKind},
@@ -246,7 +247,7 @@ pub async fn preview(
     if sha256(&package.wasm_bytes) != package.wasm_sha256 {
         return Err(ApiError::Internal);
     }
-    let _capacity = EXECUTIONS.try_acquire().map_err(|_| busy())?;
+    let _capacity = reserve_execution(&EXECUTIONS)?;
     let runtime = invoke_wasm_plugin(
         package.wasm_bytes,
         guest_input(PREVIEW, request.quantity, request.unit_price_cents),
