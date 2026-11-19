@@ -27,6 +27,8 @@ tunnel_reconnect_backoff_max_secs = 60
 # Optional: end worker AI tasks. The worker marks an AI task `processing` when it delivers it here
 # and only POST /api/v1/ai/callbacks/task/{task_id}/complete or .../fail ends that state; with this
 # enabled the agent that ran the task calls one of them (and a task no agent matches is failed).
+# A token works only for the tasks of the bot that owns it: set `bot_id` to that bot and add a
+# [[ai_task_callback.bots]] entry (bot_id, token, surface) for every other bot this receiver serves.
 # Off by default. See apps/webhook/README.md, "AI task callbacks".
 [ai_task_callback]
 enabled = false
