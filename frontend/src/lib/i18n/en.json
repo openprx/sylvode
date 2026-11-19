@@ -1448,13 +1448,7 @@
 		"add": "Add",
 		"empty": "No project resources yet.",
 		"noLocator": "No locator",
-		"kindRepo": "Repo",
 		"kindDirectory": "Directory",
-		"kindDocumentLibrary": "Document library",
-		"kindCrmAccount": "CRM account",
-		"kindErpOrder": "ERP order",
-		"kindEquipment": "Equipment",
-		"kindSite": "Site",
 		"kindCustom": "Custom"
 	},
 	"connections": {

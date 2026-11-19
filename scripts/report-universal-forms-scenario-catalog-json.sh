@@ -95,7 +95,7 @@ templates_json="$(jq -R -s '
     if $key == "code_delivery_default" then {
       operator_steps: [
         "Create the project from the code delivery template",
-        "Register repository and working-directory resources",
+        "Register repository and working-directory resources as directory resources",
         "Create code tasks and change records",
         "Record CI and release evidence before handoff"
       ],
@@ -119,7 +119,7 @@ templates_json="$(jq -R -s '
     elif $key == "equipment_maintenance_default" then {
       operator_steps: [
         "Create the project from the equipment maintenance template",
-        "Register equipment and site resources",
+        "Register equipment and site records as custom resources",
         "Create repair orders from fault reports",
         "Close the workflow with inspection records"
       ],
@@ -143,7 +143,7 @@ templates_json="$(jq -R -s '
     elif $key == "customer_delivery_default" then {
       operator_steps: [
         "Create the project from the customer delivery template",
-        "Register customer and acceptance-material resources",
+        "Register customer and acceptance-material records as custom resources",
         "Create milestone and change-request records",
         "Send updates through MCP, webhook, or REST connectors"
       ],
