@@ -182,6 +182,13 @@ fn chunk_ranges(len: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
         .map(move |start| start..(start + BULK_ROWS_MAX).min(len))
 }
 
+/// The rows of one chunk as an owned column, or an internal error if the range is out of bounds.
+fn column<T: Clone>(rows: &[T], range: &std::ops::Range<usize>) -> Result<Vec<T>, ApiError> {
+    rows.get(range.clone())
+        .map(<[T]>::to_vec)
+        .ok_or_else(ApiError::internal)
+}
+
 /// Latest placement of one physical CID, as locked by the bulk read of `reconcile`.
 #[derive(FromQueryResult)]
 struct LatestPlacement {
@@ -298,13 +305,10 @@ pub async fn reconcile(
         let retired = alias.is_some_and(|alias| alias.state != AliasState::Active);
         // The fence upsert changes a row only when it is missing, or not yet retired and either
         // retired now or pointing at another first identity; skip every fence that is already right.
-        let fence_changes = match old {
-            None => true,
-            Some(old) => match (old.fence_first_logical_id, old.fence_ever_retired) {
-                (Some(first), Some(ever_retired)) => !ever_retired && (retired || first != decision.logical_id),
-                _ => true,
-            },
-        };
+        let fence_changes = old.is_none_or(|old| match (old.fence_first_logical_id, old.fence_ever_retired) {
+            (Some(first), Some(ever_retired)) => !ever_retired && (retired || first != decision.logical_id),
+            _ => true,
+        });
         if fence_changes {
             plan.fence_cids.push(block.physical_cid.clone());
             plan.fence_logical.push(decision.logical_id);
@@ -333,7 +337,7 @@ pub async fn reconcile(
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "INSERT INTO flow_logical_blocks(id,state) SELECT v.id,'active' FROM unnest($1::uuid[]) WITH ORDINALITY AS v(id,ord) ORDER BY v.ord",
-            vec![plan.fresh_ids[range].to_vec().into()],
+            vec![column(&plan.fresh_ids, &range)?.into()],
         ))
         .await?;
     }
@@ -347,9 +351,9 @@ pub async fn reconcile(
             vec![
                 scope_id.into(),
                 page_id.into(),
-                plan.fence_cids[range.clone()].to_vec().into(),
-                plan.fence_logical[range.clone()].to_vec().into(),
-                plan.fence_retired[range].to_vec().into(),
+                column(&plan.fence_cids, &range)?.into(),
+                column(&plan.fence_logical, &range)?.into(),
+                column(&plan.fence_retired, &range)?.into(),
             ],
         ))
         .await?;
@@ -361,8 +365,8 @@ pub async fn reconcile(
             DbBackend::Postgres,
             "UPDATE flow_block_placements p SET content_hash=v.hash FROM unnest($1::uuid[],$2::bytea[]) AS v(id,hash) WHERE p.id=v.id AND p.content_hash IS DISTINCT FROM v.hash",
             vec![
-                plan.hash_ids[range.clone()].to_vec().into(),
-                plan.hash_values[range].to_vec().into(),
+                column(&plan.hash_ids, &range)?.into(),
+                column(&plan.hash_values, &range)?.into(),
             ],
         ))
         .await?;
@@ -373,7 +377,7 @@ pub async fn reconcile(
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE flow_logical_blocks SET state='active' WHERE id=ANY($1::uuid[]) AND state<>'active'",
-            vec![plan.activate_ids[range].to_vec().into()],
+            vec![column(&plan.activate_ids, &range)?.into()],
         ))
         .await?;
     }
@@ -386,11 +390,11 @@ pub async fn reconcile(
             vec![
                 scope_id.into(),
                 page_id.into(),
-                plan.new_ids[range.clone()].to_vec().into(),
-                plan.new_logical[range.clone()].to_vec().into(),
-                plan.new_cids[range.clone()].to_vec().into(),
-                plan.new_generations[range.clone()].to_vec().into(),
-                plan.new_hashes[range].to_vec().into(),
+                column(&plan.new_ids, &range)?.into(),
+                column(&plan.new_logical, &range)?.into(),
+                column(&plan.new_cids, &range)?.into(),
+                column(&plan.new_generations, &range)?.into(),
+                column(&plan.new_hashes, &range)?.into(),
             ],
         ))
         .await?;
@@ -418,7 +422,7 @@ pub async fn reconcile(
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE flow_logical_blocks SET state='deleted' WHERE id=ANY($1::uuid[])",
-            vec![removed_ids[range].to_vec().into()],
+            vec![column(&removed_ids, &range)?.into()],
         ))
         .await?;
     }
