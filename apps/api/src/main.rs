@@ -1852,6 +1852,13 @@ fn build_router(state: AppState) -> Router {
                 )),
         )
         .route(
+            "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}/rotate-secret",
+            post(routes::webhook::rotate_webhook_secret).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
             "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}/deliveries",
             get(routes::webhook::list_deliveries).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
