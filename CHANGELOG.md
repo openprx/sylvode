@@ -14,8 +14,13 @@ name.
 
 - **Project resource kinds** are reduced to `directory` and `custom`. The removed kinds (`repo`, `document_library`, `crm_account`, `erp_order`, `equipment`, `site`) are rejected on create and update. Migration `0104` converts existing `repo` rows to `directory` and every other removed kind to `custom` (the original kind is kept in `project_resources.legacy_kind`) and remaps suggested resources in project types, scenario templates and projects (`repo` to `directory`, everything else to `custom`).
 
+### Fixed
+
+- **A bot created with a token is a bot.** `POST /api/v1/workspaces/{id}/bots` created the user behind an `opr_` token with `entity_type = 'bot_mcp'`, while assignment to a bot, a webhook's `bot_user_id`, AI participants, bot mentions and bot context on webhook deliveries all require `entity_type = 'bot'`, so a token bot could not be assigned work or act as the AI participant of a task without an administrator editing the user. There is now one automation identity type: the bots API creates `entity_type = 'bot'` with `agent_type = 'mcp'`, and migration `0105` moves every existing `bot_mcp` user to `bot` (agent type, membership, tokens and history unchanged; every issued token keeps working). Being a bot grants nothing by itself: a token's permissions are still decided by the token, and an AI task can still only be completed or failed by its own participant or a system administrator.
+
 ### Upgrade notes
 
+- Apply the database migration `0105`. It is a no-op on a database without token bots. Behaviour change for existing token bots: they are now treated like every other bot, so proposals, votes, proposal comments, vetoes and appeals they make are recorded as AI (`author_type = ai`) instead of human, and an AI vote or proposal comment by such a bot needs the AI participant permission for the domain, as for any other bot. Their mentions queue AI tasks, and they appear in the bot pickers of the web UI.
 - Apply the database migration `0104`. An API older than this change that tries to create a resource with a removed kind after the migration gets a database error from the tightened CHECK constraint instead of a validation error.
 
 ### Webhook receiver
