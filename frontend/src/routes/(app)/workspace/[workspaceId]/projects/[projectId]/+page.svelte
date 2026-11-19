@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ProjectPluginSettingsLink from '#lib/components/plugins/ProjectPluginSettingsLink.svelte';
+	import ProjectPluginNav from '#lib/components/plugins/ProjectPluginNav.svelte';
 	import FlowSharedBlockList from '#lib/components/flow/FlowSharedBlockList.svelte';
 	import { FileText, Power } from '@lucide/svelte';
 	import { onMount, onDestroy, getContext } from 'svelte';
@@ -741,6 +742,8 @@
 				</a>
 			</section>
 		</div>
+
+		<ProjectPluginNav {workspaceId} {projectId} />
 
 		{#if scenarioTemplate}
 			<div
