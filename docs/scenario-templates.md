@@ -74,7 +74,8 @@ context resource). Creating or updating a resource with any other kind returns a
 validation error. A template's `resource_schema` suggests resources using only
 these two kinds. Rows created before migration `0104` with a retired kind
 (`repo`, `document_library`, `crm_account`, `erp_order`, `equipment`, `site`) are
-converted to `custom`, and the original kind is kept in
+converted (`repo` to `directory`, every other kind to `custom`), and the original
+kind is kept in
 `project_resources.legacy_kind`.
 
 ## Scenario Details

@@ -12,7 +12,7 @@ name.
 
 ### Changed
 
-- **Project resource kinds** are reduced to `directory` and `custom`. The removed kinds (`repo`, `document_library`, `crm_account`, `erp_order`, `equipment`, `site`) are rejected on create and update. Migration `0104` converts existing rows to `custom` (the original kind is kept in `project_resources.legacy_kind`) and remaps suggested resources in project types, scenario templates and projects (`repo` to `directory`, everything else to `custom`).
+- **Project resource kinds** are reduced to `directory` and `custom`. The removed kinds (`repo`, `document_library`, `crm_account`, `erp_order`, `equipment`, `site`) are rejected on create and update. Migration `0104` converts existing `repo` rows to `directory` and every other removed kind to `custom` (the original kind is kept in `project_resources.legacy_kind`) and remaps suggested resources in project types, scenario templates and projects (`repo` to `directory`, everything else to `custom`).
 
 ### Upgrade notes
 
