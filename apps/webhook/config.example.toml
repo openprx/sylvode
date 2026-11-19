@@ -121,6 +121,10 @@ callback_token = "opr_xxx"
 update_state_on_start = "in_progress"
 update_state_on_success = "done"
 update_state_on_fail = "todo"
+# codex runs in its read-only sandbox by default. To let it write in workdir:
+# sandbox = "workspace-write"           # read-only | workspace-write | danger-full-access
+# The old behaviour (no sandbox, no approvals) is an explicit opt-in, warned about at start-up:
+# dangerously_bypass_permissions = true
 
 # --- MCP closed-loop example (AI reads full issue context via MCP) ---
 
@@ -147,6 +151,19 @@ callback_token = "opr_xxx"
 # mcp_instructions, or env_vars) also appends the default MCP instructions to
 # the prompt. If omitted, claude-code uses its global ~/.claude.json MCP config.
 mcp_config_path = "/path/to/mcp-config.json"
+
+# Permissions of claude-code. The default is permission_mode = "dontAsk": anything
+# that would ask for permission is denied without asking, so the agent can read
+# files in workdir and use the allowed tools, and cannot run shell commands or
+# edit files. Without allowed_tools, every MCP server named in mcp_config_path is
+# allowed (mcp__<server>), and --strict-mcp-config ignores every other MCP server.
+# permission_mode = "dontAsk"          # acceptEdits | auto | dontAsk | manual | plan | bypassPermissions
+# allowed_tools = ["mcp__sylvode", "Read", "Edit(//path/to/your/repository/**)", "Bash(cargo test *)"]
+# disallowed_tools = ["WebFetch"]
+# strict_mcp_config = true
+# Turning every permission check off needs both lines and is warned about at start-up:
+# permission_mode = "bypassPermissions"
+# dangerously_bypass_permissions = true
 
 # Custom MCP instructions appended to the prompt. If omitted, a sensible
 # default is used that instructs the AI to read/write via Sylvode MCP tools.

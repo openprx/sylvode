@@ -336,11 +336,58 @@ for either of them therefore matches only those tasks, or none.
 - `webhook` posts the delivery JSON unchanged to `url`, signed with `X-Webhook-Signature:
   sha256=<hex>` when `secret` is set.
 - `cli` runs the whitelisted executor with the rendered prompt in the background and answers at
-  once: `codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check <prompt>`,
-  `claude -p <prompt> --permission-mode bypassPermissions [--mcp-config <path>]` or
-  `opencode run <prompt>`, in `workdir`, stopped after `timeout_secs` (see below). A rendered prompt that
+  once: `codex exec --sandbox <sandbox> --skip-git-repo-check <prompt>`,
+  `claude -p <prompt> --permission-mode <mode> [--allowedTools ...] [--disallowedTools ...]
+  [--mcp-config <path> [--strict-mcp-config]]` or `opencode run <prompt>` (see [Executor
+  permissions](#executor-permissions)), in `workdir`, stopped after `timeout_secs` (see below). A rendered prompt that
   starts with `-` would be read as an option of the executor, so such a run is not started and
   reports `failed`; begin `prompt_template` with fixed text (the default does).
+
+### Executor permissions
+
+Each `cli` agent sets how much its executor may do, in `[agents.cli]`. The default lets an agent
+use the MCP tools it is configured with and read its working directory, but not run shell commands
+or edit files. **Bypassing the executor's permission checks is never the default**; it needs
+`dangerously_bypass_permissions = true` and is logged as a warning at start-up. Start-up also logs
+one line per `cli` agent with the settings it runs with (`cli executor permissions: ...`).
+
+| Executor | Key | Values | Default |
+|---|---|---|---|
+| `claude-code` | `permission_mode` | `acceptEdits`, `auto`, `dontAsk`, `manual`, `plan`, `bypassPermissions` (passed as `--permission-mode`) | `dontAsk` |
+| `claude-code` | `allowed_tools` | tool rules passed as `--allowedTools`, such as `mcp__sylvode`, `Read`, `Edit(//repo/**)`, `Bash(cargo test *)` | every server named in `mcp_config_path`, as `mcp__<server>`; nothing without one |
+| `claude-code` | `disallowed_tools` | tool rules passed as `--disallowedTools` | none |
+| `claude-code` | `strict_mcp_config` | `true` passes `--strict-mcp-config` with `mcp_config_path`, so only its servers load | `true` |
+| `codex` | `sandbox` | `read-only`, `workspace-write`, `danger-full-access` (passed as `--sandbox`) | `read-only` |
+| `codex`, `claude-code` | `dangerously_bypass_permissions` | `true` acknowledges `permission_mode = "bypassPermissions"` or `sandbox = "danger-full-access"`; for codex without `sandbox` it passes `--dangerously-bypass-approvals-and-sandbox` | `false` |
+
+- With `dontAsk`, a tool that would ask for permission is denied at once, so a run never waits for
+  an answer. Listing a tool in `allowed_tools` replaces the default list: include the MCP servers
+  (`mcp__<server>`) yourself. `allowed_tools = []` allows nothing beyond what `dontAsk` permits.
+- The default list is read from `mcp_config_path` (relative to `workdir` when relative) each time a
+  task runs. If the file cannot be read or has no `mcpServers` object the run fails with that
+  error instead of starting an agent that cannot use its tools; start-up only warns.
+- `opencode` has no permission settings here and is started as before (`opencode run`); configure
+  opencode itself. Setting any key above for it, or a key of another executor (`sandbox` for
+  claude-code, `permission_mode` for codex), refuses start-up, as does an unknown mode, an entry
+  that is blank or starts with `-`, `bypassPermissions` or `danger-full-access` without
+  `dangerously_bypass_permissions = true`, and `dangerously_bypass_permissions = true` with a mode
+  it does not apply to.
+- The codex MCP servers come from codex's own configuration. Whether codex runs MCP tool calls
+  without asking in its sandbox depends on that configuration and its approval settings; check it
+  before relying on a codex agent for an MCP closed loop.
+
+To keep the behaviour of earlier releases (no permission checks at all), set:
+
+```toml
+[agents.cli]
+executor = "claude-code"
+permission_mode = "bypassPermissions"
+dangerously_bypass_permissions = true
+
+# or, for codex:
+# executor = "codex"
+# dangerously_bypass_permissions = true
+```
 
 Commands are run directly, never through a shell, so `command` names one program and everything
 else goes in `args`. Their stdin is `/dev/null`; they inherit the service's environment (a `cli`
@@ -722,7 +769,7 @@ Description=Sylvode Webhook Receiver
 After=network.target
 
 [Service]
-# A dedicated unprivileged user: cli executors run with bypassed permissions as this user.
+# A dedicated unprivileged user: cli executors (and any tool their permission settings allow) run as this user.
 User=sylvode-webhook
 Group=sylvode-webhook
 ExecStart=/usr/local/bin/sylvode-webhook /etc/sylvode-webhook/config.toml
