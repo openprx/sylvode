@@ -124,7 +124,7 @@ covered by `cargo test --workspace`. The collaboration tests start
 Many tests need PostgreSQL. They read one variable, `OPENPR_TEST_DATABASE_URL` (the name
 predates the rename and is kept on purpose):
 
-- It is a **maintenance connection**: a PostgreSQL 13 or newer role that is a superuser, or at
+- It is a **maintenance connection**: a PostgreSQL 18 role that is a superuser, or at
   least has `CREATEDB` and may create the `pgcrypto` extension.
 - Its path must be a bare database name, such as `/postgres`. Tests replace it with the name of
   a scratch database that they create, migrate and drop themselves; the database you point at
@@ -132,7 +132,7 @@ predates the rename and is kept on purpose):
 
 ```bash
 docker run -d --name sylvode-test-pg -e POSTGRES_USER=sylvode_test \
-  -e POSTGRES_PASSWORD=sylvode_test -p 127.0.0.1:55432:5432 postgres:16
+  -e POSTGRES_PASSWORD=sylvode_test -p 127.0.0.1:55432:5432 postgres:18
 export OPENPR_TEST_DATABASE_URL=postgres://sylvode_test:sylvode_test@127.0.0.1:55432/postgres
 cargo test --workspace --no-fail-fast
 ```
