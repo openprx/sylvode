@@ -126,6 +126,7 @@ export async function buildCreatorPackage(draft: CreatorDraft): Promise<CreatorP
 	const source = template.manifest;
 	const manifest = {
 		...source,
+		schema_version: 'openpr.plugin.v2' as const,
 		key: key.trim(),
 		name: name.trim(),
 		publisher: publisher.trim(),

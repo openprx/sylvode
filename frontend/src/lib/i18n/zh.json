@@ -4533,6 +4533,57 @@
 			},
 			"previewValues": "请在上方输入有效的数量和单价后重试。",
 			"import": "导入插件包"
-		}
+		},
+		"host": {
+			"unavailable": "此应用不可用。",
+			"unavailableHint": "它可能已被停用或移除，或者你已无权访问。",
+			"back": "返回",
+			"backToProject": "返回项目",
+			"loading": "正在加载应用…",
+			"frameTitle": "{name} · {label}",
+			"closeFrame": "关闭应用",
+			"suspended": "应用配置已变更，已暂停该应用。",
+			"integrityFailed": "此应用未通过完整性校验。",
+			"loadFailed": "无法加载此应用。",
+			"retry": "重试",
+			"more": "更多",
+			"openDrawer": "打开 {label}",
+			"closeDrawer": "关闭面板",
+			"rateLimited": "请求过于频繁，请稍后再试。",
+			"methodUnavailable": "应用无权使用此操作。",
+			"confirmApply": "确认将此结果应用到记录？"
+		},
+		"apps": {
+			"navTitle": "项目应用",
+			"tabsLabel": "项目应用视图",
+			"empty": "暂无可用的项目应用。",
+			"open": "打开 {label}",
+			"publisher": "{name} · v{version}",
+			"hiddenCount": "已隐藏 {count} 项",
+			"showHidden": "显示已隐藏的应用",
+			"stateTooLong": "应用状态过长，已忽略。"
+		},
+		"prefs": {
+			"menu": "显示选项",
+			"hide": "隐藏",
+			"show": "显示",
+			"collapse": "折叠",
+			"expand": "展开",
+			"position": "排序",
+			"moveUp": "上移",
+			"moveDown": "下移",
+			"positionLabel": "顺序（0-99）",
+			"reset": "重置",
+			"resetAll": "重置我的全部显示选项",
+			"resetDone": "显示选项已重置。",
+			"saved": "显示选项已保存。",
+			"saveFailed": "无法保存显示选项。",
+			"limitReached": "已达到可保存的显示选项数量上限。",
+			"hiddenSection": "你已隐藏的项",
+			"restore": "恢复",
+			"unavailable": "此项已不可用。"
+		},
+		"creatorV3": {},
+		"layoutV3": {}
 	}
 }
