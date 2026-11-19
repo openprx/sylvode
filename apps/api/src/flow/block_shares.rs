@@ -245,7 +245,7 @@ async fn publish(
     let reviewed = base64::engine::general_purpose::STANDARD
         .decode(&input.expected_frontier)
         .map_err(|_| ApiError::invalid_update("invalid reviewed Page frontier"))?;
-    if reviewed != boot.head_frontier || !engine.matches_frontier(&reviewed) {
+    if !super::frontier::client_matches(&reviewed, &boot.head_frontier)? || !engine.matches_frontier(&reviewed) {
         return Err(ApiError::policy_rejected("Page changed after selection review"));
     }
     let root = prepared
@@ -349,7 +349,7 @@ async fn publish(
         ))
         .await?
         .ok_or_else(ApiError::internal)?;
-    if head.try_get::<Vec<u8>>("", "head_frontier")? != reviewed {
+    if !super::frontier::same(&reviewed, &head.try_get::<Vec<u8>>("", "head_frontier")?)? {
         return Err(ApiError::policy_rejected("source Page changed; select blocks again"));
     }
     let seq = head.try_get::<i64>("", "head_seq")?;

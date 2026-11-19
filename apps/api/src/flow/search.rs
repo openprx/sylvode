@@ -408,6 +408,10 @@ struct SearchCandidate {
     rank: f32,
 }
 
+// `indexed_frontier` is a byte copy of `flow_object_projections.document_frontier` made by the
+// indexer (`flow_search_index.indexed_frontier`'s column comment), so this is a provenance check,
+// not a version comparison, and it must agree with the SQL `IS DISTINCT FROM` freshness query.
+// A byte-only difference can only make a row look stale until the indexer copies it again.
 fn candidate_is_stale(row: &SearchCandidate) -> bool {
     row.indexed_seq != row.projection_seq
         || row.indexed_frontier != row.projection_frontier

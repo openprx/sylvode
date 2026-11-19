@@ -215,7 +215,11 @@ pub async fn refresh_editor_state(
         return Ok(None);
     }
     let engine = super::document::load_head_engine(db, document).await?;
-    if encode_frontier(&engine.frontier()) != expected_frontier {
+    // `expected_frontier` is the stored projection frontier and may use a legacy byte order.
+    let expected = BASE64
+        .decode(expected_frontier)
+        .map_err(|_| crate::error::ApiError::internal())?;
+    if !super::frontier::same(engine.frontier().as_bytes(), &expected)? {
         return Err(crate::error::ApiError::resync_required(
             "document changed during projection refresh",
             None,

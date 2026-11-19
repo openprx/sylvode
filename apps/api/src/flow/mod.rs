@@ -33,6 +33,7 @@ pub mod document;
 pub mod event_origin;
 pub mod event_policy;
 pub mod export;
+pub mod frontier;
 pub mod grants;
 pub mod import;
 pub mod maintenance;
