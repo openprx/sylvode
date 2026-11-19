@@ -950,7 +950,7 @@ def render_markdown(summary: dict) -> str:
     lines = [
         "# Flow 性能基线",
         "",
-        "数字来自 GitHub Actions 上的 release API、PostgreSQL 16 和已登录的 Flow 页面。本文件由基准脚本生成，不是估计。",
+        "数字来自 GitHub Actions 上的 release API、PostgreSQL（版本见下方记录）和已登录的 Flow 页面。本文件由基准脚本生成，不是估计。",
         "",
         f"- 提交：`{meta.get('github_sha') or '未知'}`",
         f"- 分支：`{meta.get('github_ref') or '未知'}`",

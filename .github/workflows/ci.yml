@@ -80,7 +80,7 @@ jobs:
     timeout-minutes: 60
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: sylvode_ci
           POSTGRES_PASSWORD: sylvode_ci_local_only
@@ -145,7 +145,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: sylvode_ci
           POSTGRES_PASSWORD: sylvode_ci_local_only
@@ -213,7 +213,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: sylvode_ci
           POSTGRES_PASSWORD: sylvode_ci_local_only
