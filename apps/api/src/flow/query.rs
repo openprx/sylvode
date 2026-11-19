@@ -8,7 +8,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 use collab_core::isolation::IsolatedApplyError;
-use collab_core::{Frontier, NodeKind, SemanticSnapshot};
+use collab_core::{Frontier, LoroCollabEngine, NodeKind, SemanticSnapshot};
 use platform::app::AppState;
 use platform::timestamp::Timestamp;
 use serde_json::json;
@@ -694,9 +694,13 @@ pub async fn get_object_diff(
     let mut replay_updates = Vec::new();
     for row in rows.updates {
         if row.seq != expected_seq
-            || running_frontier
-                .as_ref()
-                .is_some_and(|frontier| frontier != &row.before_frontier)
+            || running_frontier.as_ref().is_some_and(|frontier| {
+                // Version-vector equality; an undecodable link is a broken chain.
+                !matches!(
+                    LoroCollabEngine::frontiers_equivalent(frontier, &row.before_frontier),
+                    Ok(true)
+                )
+            })
             || super::collab::bootstrap::content_hash(&row.bytes) != row.content_hash
         {
             return Err(history_invalid());

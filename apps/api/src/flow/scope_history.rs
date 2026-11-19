@@ -268,7 +268,7 @@ pub async fn restore_page(
     engine
         .initialize_page_editor()
         .map_err(|e| super::command::map_collab_error(&e))?;
-    if engine.frontier() == base {
+    if crate::flow::frontier::same(engine.frontier().as_bytes(), base.as_bytes())? {
         use sea_orm::TransactionTrait;
         let tx = state.db.begin().await?;
         scope::require_personal_write(&tx).await?;
@@ -286,7 +286,7 @@ pub async fn restore_page(
             .await?
             .ok_or_else(|| ApiError::not_found("Flow document not found"))?
             .try_get::<Vec<u8>>("", "head_frontier")?;
-        if current != base.as_bytes() {
+        if !crate::flow::frontier::same(&current, base.as_bytes())? {
             return Err(ApiError::stale_frontier(
                 "document changed while preparing restore",
                 None,
