@@ -1,20 +1,23 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
-	import type { PluginSlot } from '#lib/api/plugin-packages.js';
+	import type { PluginSlot, PluginSlotV3 } from '#lib/api/plugin-packages.js';
+	import type { V3PreviewSpec } from '#lib/plugins/creator/registry.js';
 	import { bridgeProtocol, isBridgeSignal, pluginRequest } from '#lib/plugins/bridge.js';
-	import { creatorPlacement } from '#lib/plugins/creator/template.js';
+	import { creatorPlacement, creatorSlot } from '#lib/plugins/creator/template.js';
 
 	let {
 		html,
 		slot,
 		placementId,
-		onPreview
+		onPreview,
+		v3
 	}: {
 		html: string;
-		slot: PluginSlot;
+		slot: PluginSlot | PluginSlotV3;
 		placementId?: string;
-		onPreview: () => number | null | Promise<number | null>;
+		onPreview?: () => number | null | Promise<number | null>;
+		v3?: V3PreviewSpec;
 	} = $props();
 	let frame: HTMLIFrameElement | undefined = $state();
 	let port: MessagePort | undefined;
@@ -34,7 +37,8 @@
 	});
 
 	function receive(event: MessageEvent) {
-		if (!frame || event.source !== frame.contentWindow || event.origin !== 'null' || failed) return;
+		if (v3 || !frame || event.source !== frame.contentWindow || event.origin !== 'null' || failed)
+			return;
 		if (isBridgeSignal(event.data, 'sylvode-plugin-shell-invalidated')) {
 			failed = true;
 			port?.close();
@@ -52,7 +56,7 @@
 			const request = pluginRequest(data);
 			if (!request || !ready || failed) return;
 			const { requestId, method } = request;
-			const cents = method === 'amount.preview' ? await onPreview() : null;
+			const cents = method === 'amount.preview' && onPreview ? await onPreview() : null;
 			const response =
 				cents === null
 					? {
@@ -77,7 +81,7 @@
 				type: 'sylvode-plugin-shell-init',
 				html,
 				grants: ['amount.preview'],
-				placement: placementId ? { id: placementId, slot } : creatorPlacement(slot)
+				placement: placementId ? { id: placementId, slot } : creatorPlacement(creatorSlot(slot))
 			},
 			'*',
 			[channel.port2]
@@ -86,7 +90,9 @@
 </script>
 
 <svelte:window onmessage={receive} />
-{#if failed}
+{#if v3}
+	<p role="status" class="text-sm">{$t('plugins.creatorV3.previewPending')}</p>
+{:else if failed}
 	<p role="alert" class="text-sm text-red-800 dark:text-red-200">{$t('plugins.loadFailed')}</p>
 {:else}
 	{#if !ready}<p role="status" class="text-sm">{$t('plugins.loadingPanel')}</p>{/if}

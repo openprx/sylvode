@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
-	import type { PluginContribution, PluginPlacement } from '#lib/api/plugin-packages.js';
+	import type {
+		PluginContribution,
+		PluginContributionV3,
+		PluginPlacement
+	} from '#lib/api/plugin-packages.js';
+	import { slotLabelKey } from '#lib/plugins/layout-v3.js';
 	import { validPlacementPositions } from '#lib/plugins/placements.js';
 
 	let {
@@ -9,7 +14,7 @@
 		disabled,
 		onChange
 	}: {
-		contributions: PluginContribution[];
+		contributions: (PluginContribution | PluginContributionV3)[];
 		placements: PluginPlacement[];
 		disabled: boolean;
 		onChange: (id: string, change: Partial<Pick<PluginPlacement, 'enabled' | 'position'>>) => void;
@@ -39,7 +44,13 @@
 					<span>
 						{contribution.label}
 						<span class="block text-xs text-slate-600 dark:text-slate-300"
-							>{$t(`plugins.slot.${contribution.slot}`)}</span
+							>{$t(slotLabelKey(contribution.slot))}{#if 'kind' in contribution}
+								· {$t(`plugins.layoutV3.kind.${contribution.kind}`)}
+								· {contribution.route
+									? $t('plugins.layoutV3.route', { values: { route: contribution.route } })
+									: $t('plugins.layoutV3.form', {
+											values: { form: contribution.form_key }
+										})}{/if}</span
 						>
 					</span>
 				</label>

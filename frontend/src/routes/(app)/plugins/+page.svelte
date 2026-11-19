@@ -4,10 +4,12 @@
 	import { t } from 'svelte-i18n';
 	import { apiClient } from '#lib/api/client.js';
 	import {
+		isV3,
 		pluginLibraryApi,
 		type LibraryProject,
 		type PersonalPluginPackage,
-		type PluginUpload
+		type PluginUpload,
+		type PluginUploadV3
 	} from '#lib/api/plugin-packages.js';
 	import { listPersonalDrafts } from '#lib/plugins/creator/personal-drafts.js';
 	import { readPluginUpload } from '#lib/plugins/upload.js';
@@ -22,7 +24,7 @@
 	let importing = $state(false);
 	let importError = $state('');
 	let importNotice = $state('');
-	let upload = $state<PluginUpload | null>(null);
+	let upload = $state<PluginUpload | PluginUploadV3 | null>(null);
 	let importBusy = $state(false);
 	let selection = 0;
 	let generation = 0;
@@ -110,6 +112,12 @@
 			<Button onclick={() => goto(`/plugins/creator?draft=${crypto.randomUUID()}`)}
 				>{$t('plugins.creator.launch')}</Button
 			>
+			<Button
+				variant="secondary"
+				onclick={() =>
+					goto(`/plugins/creator?draft=${crypto.randomUUID()}&template=ui_view&slot=project.view`)}
+				>{$t('plugins.creatorV3.newUiView')}</Button
+			>
 		</div>
 	</header>
 
@@ -131,9 +139,21 @@
 				<div class="space-y-2 border-l-2 border-blue-500 pl-3 text-sm">
 					<p class="font-medium">{upload.manifest.name} · v{upload.manifest.version}</p>
 					<p>{upload.manifest.key} · {upload.manifest.publisher}</p>
-					<p>
-						{$t('plugins.creator.targetForm', { values: { form: upload.manifest.ui.form_key } })}
-					</p>
+					{#if isV3(upload.manifest)}
+						<p>
+							{$t('plugins.layoutV3.installSummary', {
+								values: {
+									count: upload.manifest.contributions.length,
+									reads: upload.manifest.reads.length
+								}
+							})}
+						</p>
+						<p>{$t(`plugins.layoutV3.profile.${upload.manifest.profile}`)}</p>
+					{:else}
+						<p>
+							{$t('plugins.creator.targetForm', { values: { form: upload.manifest.ui.form_key } })}
+						</p>
+					{/if}
 					<Button loading={importBusy} onclick={saveImport}>{$t('plugins.library.save')}</Button>
 				</div>
 			{/if}
@@ -150,13 +170,13 @@
 			<ul
 				class="divide-y divide-slate-200 rounded-lg border border-slate-300 bg-white px-4 dark:divide-slate-700 dark:border-slate-700 dark:bg-slate-900"
 			>
-				{#each drafts as entry (entry.id)}
+				{#each drafts as entry (`${entry.templateId}:${entry.id}`)}
 					<li class="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
 						<span class="break-all"
 							>{entry.draft.name || $t('plugins.library.untitled')} · v{entry.draft.version}</span
 						>
 						<a
-							href={`/plugins/creator?draft=${encodeURIComponent(entry.id)}`}
+							href={`/plugins/creator?draft=${encodeURIComponent(entry.id)}&template=${entry.templateId}`}
 							aria-label={$t('plugins.library.editNamed', {
 								values: { name: entry.draft.name || $t('plugins.library.untitled') }
 							})}
