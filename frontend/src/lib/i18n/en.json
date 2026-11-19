@@ -4629,7 +4629,6 @@
 			"previewSampleProject": "The preview uses 3 sample rows shaped like the Form's fields. No real records are read and nothing is installed.",
 			"previewSamplePersonal": "The preview uses placeholder text for every value. No real records are read and nothing is installed.",
 			"previewSchemaFailed": "The Form fields could not be loaded, so the preview uses text samples.",
-			"previewPending": "The sandboxed preview for UI views is not available in this build yet.",
 			"previewUi": "Open the preview with sample data before reviewing the package.",
 			"extensionsUnavailable": "UI view packages require project extensions to be enabled.",
 			"slotChoice": "Preview location",
