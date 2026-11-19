@@ -1434,8 +1434,21 @@ enum ResumeRefusal {
     OutOfRange,
     /// The frontier the client claims at `known_seq` is not the one the server recorded there.
     FrontierMismatch,
-    /// `(known_seq, head_seq]` is not fully readable from `collab_updates`.
+    /// `(known_seq, head_seq]` is not fully readable from `collab_updates`, or a retained
+    /// frontier in it does not decode.
     HistoryUnavailable,
+    /// `known_frontier` is not base64 of a well-formed version vector, so it cannot match any
+    /// recorded frontier.
+    InvalidFrontier,
+}
+
+/// Version-vector equality between a decoded client frontier and a retained one. Retained
+/// frontiers may be stored in a legacy byte order, so bytes are never compared directly.
+fn resume_frontier_matches(known: &[u8], retained: &[u8]) -> Result<bool, ResumeRefusal> {
+    collab_core::LoroCollabEngine::frontiers_equivalent(known, retained).map_err(|error| {
+        tracing::warn!(%error, "collab session: a retained frontier failed to decode");
+        ResumeRefusal::HistoryUnavailable
+    })
 }
 
 /// `collab-protocol-v1.md`'s `open document_id, known_seq, known_frontier` → reconnect resume.
@@ -1484,6 +1497,12 @@ async fn plan_resume(
     if known_seq < boot.snapshot_seq || known_seq > boot.head_seq {
         return Err(ResumeRefusal::OutOfRange);
     }
+    let known_bytes = BASE64
+        .decode(known_frontier)
+        .map_err(|_| ResumeRefusal::InvalidFrontier)?;
+    if collab_core::LoroCollabEngine::canonical_frontier(&known_bytes).is_err() {
+        return Err(ResumeRefusal::InvalidFrontier);
+    }
 
     // The `ack` that confirms the resume point back to the client. Sent whether or not there is
     // anything to replay, so "resumed, you are already at head" is distinguishable from a stalled
@@ -1496,7 +1515,7 @@ async fn plan_resume(
     };
 
     if known_seq == boot.head_seq {
-        if known_frontier != BASE64.encode(&boot.head_frontier) {
+        if !resume_frontier_matches(&known_bytes, &boot.head_frontier)? {
             return Err(ResumeRefusal::FrontierMismatch);
         }
         #[cfg(test)]
@@ -1524,10 +1543,10 @@ async fn plan_resume(
     let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
         return Err(ResumeRefusal::HistoryUnavailable);
     };
-    if BASE64.encode(&first.before_frontier) != known_frontier {
+    if !resume_frontier_matches(&known_bytes, &first.before_frontier)? {
         return Err(ResumeRefusal::FrontierMismatch);
     }
-    if last.after_frontier != boot.head_frontier {
+    if !resume_frontier_matches(&last.after_frontier, &boot.head_frontier)? {
         return Err(ResumeRefusal::HistoryUnavailable);
     }
 

@@ -232,7 +232,7 @@ pub async fn initialize(
         ));
     }
     let (doc, seq, frontier) = document(db, object).await?;
-    if expected_bytes != frontier {
+    if !super::frontier::client_matches(&expected_bytes, &frontier)? {
         return Err(ApiError::stale_frontier(
             "editor initialization requires the current head",
             Some(seq),
@@ -241,7 +241,7 @@ pub async fn initialize(
     }
     let mut engine = super::document::load_head_engine(db, doc).await?;
     let base = engine.frontier();
-    if base.as_bytes() != expected_bytes {
+    if !super::frontier::same(base.as_bytes(), &expected_bytes)? {
         return Err(ApiError::stale_frontier(
             "document changed before editor initialization",
             None,
@@ -273,7 +273,7 @@ pub async fn initialize(
             .await?
             .ok_or_else(ApiError::internal)?
             .try_get::<Vec<u8>>("", "head_frontier")?;
-        if current != expected_bytes {
+        if !super::frontier::same(&current, &expected_bytes)? {
             return Err(ApiError::stale_frontier(
                 "document changed before editor initialization",
                 None,

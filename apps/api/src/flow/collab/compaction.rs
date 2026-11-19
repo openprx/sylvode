@@ -115,7 +115,14 @@ pub async fn record_client_ack(
     ))
     .one(db)
     .await?;
-    if expected.is_none_or(|row| row.frontier != frontier) {
+    let Some(expected) = expected else {
+        return Ok(false);
+    };
+    // An undecodable client frontier is refused (the caller answers `invalid_update`), never
+    // matched; the retained frontier may be stored in a legacy byte order, so compare versions.
+    if collab_core::LoroCollabEngine::canonical_frontier(frontier).is_err()
+        || !crate::flow::frontier::same(&expected.frontier, frontier)?
+    {
         return Ok(false);
     }
 
@@ -227,7 +234,7 @@ where
     .ok_or_else(|| ApiError::not_found("document not found".to_string()))?;
     if locked.head_seq != expected_head_seq
         || locked.head_seq != candidate.head_seq
-        || locked.head_frontier != candidate.head_frontier
+        || !crate::flow::frontier::same(&locked.head_frontier, &candidate.head_frontier)?
     {
         tx.rollback().await?;
         return Err(ApiError::stale_frontier("stale_frontier", Some(locked.head_seq), None));

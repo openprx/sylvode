@@ -609,7 +609,7 @@ pub async fn commit(
             }
             let head=tx.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT d.head_seq,d.head_frontier FROM collab_documents d JOIN flow_objects o ON o.id=d.object_id WHERE d.id=$1 AND o.id=$2 AND o.scope_id=$3 FOR SHARE OF d",vec![document.into(),target.into(),scope_id.into()])).await?.ok_or_else(||ApiError::stale_frontier("import lineage target was removed",None,None))?;
             if head.try_get::<i64>("", "head_seq")? != object.accepted_seq
-                || head.try_get::<Vec<u8>>("", "head_frontier")? != valid.frontier
+                || !super::frontier::same(&head.try_get::<Vec<u8>>("", "head_frontier")?, &valid.frontier)?
             {
                 return Err(ApiError::stale_frontier("import lineage target changed", None, None));
             }

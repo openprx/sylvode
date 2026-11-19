@@ -531,7 +531,7 @@ pub(crate) fn complete_and_reorder_scope_navigator(
         )?;
     }
     reorder_scope_navigator(engine, object, after)?;
-    if engine.frontier().as_bytes() == base.as_bytes() {
+    if super::frontier::same(engine.frontier().as_bytes(), base.as_bytes())? {
         return Ok(None);
     }
     let bytes = engine.export_from(&base).map_err(|e| map_collab_error(&e))?;
@@ -636,7 +636,7 @@ fn build_navigator_update(
             .map_err(|err| map_collab_error(&err))?;
     }
 
-    if engine.frontier().as_bytes() == base_frontier.as_bytes() {
+    if super::frontier::same(engine.frontier().as_bytes(), base_frontier.as_bytes())? {
         // The engine merged the operations into nothing — every entry was already exactly here.
         return Ok(NavigatorChange {
             bytes: None,

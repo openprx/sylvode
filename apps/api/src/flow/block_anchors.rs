@@ -74,7 +74,7 @@ pub(crate) async fn ensure(
         .await?
         .ok_or_else(ApiError::internal)?;
     if head.try_get::<i64>("", "head_seq")? != prepared.head_seq
-        || head.try_get::<Vec<u8>>("", "head_frontier")? != prepared.frontier
+        || !super::frontier::same(&head.try_get::<Vec<u8>>("", "head_frontier")?, &prepared.frontier)?
     {
         return Err(ApiError::server_draining(
             crate::error::ServerDrainingReason::Contention,
@@ -217,7 +217,7 @@ pub(crate) async fn baseline_for_read(db: &DatabaseConnection, page: Uuid) -> Re
             .await?
             .ok_or_else(ApiError::internal)?;
         if head.try_get::<i64>("", "head_seq")? != boot.head_seq
-            || head.try_get::<Vec<u8>>("", "head_frontier")? != boot.head_frontier
+            || !super::frontier::same(&head.try_get::<Vec<u8>>("", "head_frontier")?, &boot.head_frontier)?
         {
             tx.rollback().await?;
             continue;
