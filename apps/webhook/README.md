@@ -57,6 +57,7 @@ of the issue, or, for `comment.created`, is mentioned in the comment.
   - `cli` — Run codex, claude-code or opencode with a rendered prompt (fixed executor whitelist)
 - **MCP closed-loop automation** — AI agents read full issue context (description, comments, labels) via Sylvode MCP tools and write results back directly
 - **CLI callbacks** — Report a CLI run back to Sylvode via MCP or the REST API (see [Callbacks](#callbacks))
+- **AI task callbacks** — Complete or fail the worker AI task an agent ran, off by default (see [AI task callbacks](#ai-task-callbacks))
 - **Per-agent environment variables** — Inject extra environment variables into each CLI executor
 - **WSS tunnel client (Phase B MVP)** — Active ws/wss connection with Bearer auth, heartbeat, auto-reconnect. No Sylvode server endpoint exists yet, so it has nothing to connect to (see [the tunnel section](#phase-b-tunnel-wss-mvp))
 - **Tunnel envelope + HMAC** — Minimal envelope (`id/type/ts/agent_id/payload/sig`) with optional HMAC-SHA256
@@ -440,6 +441,58 @@ A plain API callback (`callback = "api"`) reports its surface as `cli` in both
 `X-Sylvode-MCP-Surface` and the legacy `X-OpenPR-MCP-Surface`, with the same value, so the API
 records it correctly whether it predates the rename or not. Both headers are sent for the whole
 Sylvode 1.x line.
+
+### AI task callbacks
+
+The Sylvode worker marks an AI task `processing` when it delivers it (a delivery that carries
+`task_id` and `ai_participant_id`), and only the API's
+`POST /api/v1/ai/callbacks/task/{task_id}/complete` or `.../fail` ends that state. With
+`[ai_task_callback]` enabled, sylvode-webhook calls one of them when the agent's run ends, so the
+task does not stay `processing` for good. It is off by default, and safe mode turns it off.
+
+```toml
+[ai_task_callback]
+enabled = false                 # default
+api_url = "http://127.0.0.1:8080"   # base URL of the Sylvode API; required when enabled
+token = "replace-with-the-bot-token-of-the-ai-participant"
+surface = "rest"                # default
+max_attempts = 3                # default; 1 to 10
+retry_delay_ms = 1000           # default; at most 60000
+max_output_chars = 4000         # default
+
+# Per agent (optional):
+[agents.ai_task_callback]
+enabled = true                  # default: true, except for agent_type = "webhook"
+token = "replace-with-the-bot-token-of-this-agents-bot"
+surface = "mcp_stdio"
+```
+
+- **`token`** is sent as `Authorization: Bearer <token>`. The API accepts only the task's AI
+  participant (that bot's token) or a system administrator, so it must be the token of the bot the
+  tasks are assigned to. An agent's own `[agents.ai_task_callback].token` overrides the global
+  one. With the callback enabled, start-up is refused while an agent that reports has no token or
+  a placeholder one. Tokens are never logged.
+- **`surface`** is the transport the token is registered with in Sylvode: `rest` sends no surface
+  header; `mcp_http`, `mcp_sse`, `mcp_stdio`, `cli` or `cli_tools_call` is sent in
+  `X-Sylvode-MCP-Surface` and the legacy `X-OpenPR-MCP-Surface`.
+- **When.** A `cli` agent reports once its background run ends: `complete` after exit code 0,
+  `fail` after a failure, a timeout or a cancellation by shutdown. Other agent types report right
+  after their dispatch: `complete` when it succeeded, `fail` otherwise. A `webhook` agent forwards
+  the task to another receiver, which owns it, so it does not report unless its
+  `[agents.ai_task_callback].enabled = true`.
+- **No agent.** A worker AI task that no agent matches is failed at once with an error message
+  naming the bot, using the global `token` (without one it is only logged). The API then retries or
+  fails the task by its own attempt count.
+- **Bodies.** `complete` receives `{source, agent_id, agent_type, status, summary, exit_code,
+  duration_ms, output}`, which the API stores as the task's result; `fail` receives
+  `{error_message, payload}` with the same report as `payload`. `output` is the tail of stdout
+  after a success and of stderr otherwise, at most `max_output_chars` characters.
+- **Retries.** Both endpoints answer HTTP 200 with a `{code, message}` envelope even when they
+  refuse. A transport error, HTTP 5xx or 429, or an API code of 500 or more is retried up to
+  `max_attempts` attempts in all, the delay doubling from `retry_delay_ms` (never more than 30
+  seconds between two attempts); a refusal, such as code 400 for a task that is no longer
+  `processing`, is logged and not retried. Shutdown waits for a callback in flight but schedules
+  no further retry.
 
 ## Outbound webhook signature
 

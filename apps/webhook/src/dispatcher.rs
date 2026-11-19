@@ -1,3 +1,4 @@
+use crate::ai_task::{Completion, TaskOutcome};
 use crate::background::Background;
 use crate::process::{self, End};
 use crate::{callback, config::AgentConfig, config::CliAgentConfig, config::Config};
@@ -40,6 +41,15 @@ const DEFAULT_MESSAGE_TEMPLATE: &str = "[{project}] {event}: {key} {title}\n{act
 #[allow(clippy::literal_string_with_formatting_args)]
 const DEFAULT_PROMPT_TEMPLATE: &str = "Fix issue {issue_id}: {title}\nContext: {reason}";
 
+/// Whether the agent's work is done, and how it went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    Succeeded,
+    Failed,
+    /// The work continues in the background (a `cli` run), which reports its own outcome.
+    Deferred,
+}
+
 /// How a dispatch went.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Dispatched {
@@ -48,35 +58,66 @@ pub struct Dispatched {
     pub summary: String,
     /// The full result, for this service's own log: command output, remote error bodies.
     pub detail: String,
+    pub outcome: Outcome,
 }
 
 impl Dispatched {
-    /// A result written by this service, safe to report as it is.
-    fn plain(text: impl Into<String>) -> Self {
-        let text = text.into();
-        Self {
-            summary: text.clone(),
-            detail: text,
-        }
-    }
-
-    fn new(summary: impl Into<String>, detail: impl Into<String>) -> Self {
+    fn with(outcome: Outcome, summary: impl Into<String>, detail: impl Into<String>) -> Self {
         Self {
             summary: summary.into(),
             detail: detail.into(),
+            outcome,
         }
+    }
+
+    /// A result written by this service, safe to report as it is.
+    fn plain(outcome: Outcome, text: impl Into<String>) -> Self {
+        let text = text.into();
+        Self::with(outcome, text.clone(), text)
+    }
+
+    fn ok(text: impl Into<String>) -> Self {
+        Self::plain(Outcome::Succeeded, text)
+    }
+
+    fn failed(text: impl Into<String>) -> Self {
+        Self::plain(Outcome::Failed, text)
+    }
+
+    fn failed_with(summary: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self::with(Outcome::Failed, summary, detail)
     }
 }
 
 pub async fn dispatch(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> Dispatched {
-    match agent.agent_type.as_str() {
+    // A worker AI task stays `processing` in Sylvode until it is completed or failed; this is the
+    // callback that does it, when `[ai_task_callback]` applies to this agent.
+    let mut completion = Completion::for_delivery(config, agent, payload);
+    let started = Instant::now();
+    let dispatched = match agent.agent_type.as_str() {
         "openclaw" => dispatch_openclaw(config, background, agent, payload).await,
         "openprx" => dispatch_openprx(config, background, agent, payload).await,
         "webhook" => dispatch_webhook(config, agent, payload).await,
         "custom" => dispatch_custom(config, background, agent, payload).await,
-        "cli" => Dispatched::plain(dispatch_cli(config, background, agent, payload)),
-        other => Dispatched::plain(format!("unknown agent type: {other}")),
+        "cli" => dispatch_cli(config, background, agent, payload, &mut completion),
+        other => Dispatched::failed(format!("unknown agent type: {other}")),
+    };
+    // A deferred run took the completion with it; any other outcome is final now.
+    if let Some(completion) = completion {
+        let succeeded = dispatched.outcome == Outcome::Succeeded;
+        completion.report_in_background(
+            TaskOutcome {
+                succeeded,
+                status: if succeeded { "success" } else { "failed" }.to_string(),
+                summary: dispatched.summary.clone(),
+                exit_code: None,
+                duration_ms: Some(started.elapsed().as_millis()),
+                output: None,
+            },
+            background,
+        );
     }
+    dispatched
 }
 
 /// The summary of a command that exited unsuccessfully.
@@ -87,13 +128,21 @@ fn exit_summary(code: Option<i32>) -> String {
     )
 }
 
-fn dispatch_cli(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> String {
+/// Starts a `cli` run in the background. A run that starts takes `completion`, and reports the
+/// AI task outcome itself once it ends.
+fn dispatch_cli(
+    config: &Config,
+    background: &Background,
+    agent: &AgentConfig,
+    payload: &Value,
+    completion: &mut Option<Completion>,
+) -> Dispatched {
     if !config.cli_enabled() {
-        return "cli disabled by feature flag or safe mode".into();
+        return Dispatched::failed("cli disabled by feature flag or safe mode");
     }
 
     let Some(cfg) = &agent.cli else {
-        return "missing cli config".into();
+        return Dispatched::failed("missing cli config");
     };
 
     let issue_id = extract_issue_id(payload).unwrap_or_else(|| "unknown".to_string());
@@ -119,6 +168,7 @@ fn dispatch_cli(config: &Config, background: &Background, agent: &AgentConfig, p
     let http_timeout_secs = config.runtime.http_timeout_secs;
 
     let task_background = background.clone();
+    let completion = completion.take();
 
     // Everything after this point runs in the background and the `/webhook` answer does not wait
     // for it: the sender gives up after 10 seconds and then retries the task, which would run it
@@ -185,6 +235,26 @@ fn dispatch_cli(config: &Config, background: &Background, agent: &AgentConfig, p
             );
         }
 
+        let task_outcome = completion.as_ref().map(|_| {
+            let succeeded = run.status == "success";
+            TaskOutcome {
+                succeeded,
+                status: run.status.clone(),
+                summary: if succeeded {
+                    "cli execution completed".to_string()
+                } else {
+                    format!("cli execution {}", run.status)
+                },
+                exit_code: run.exit_code,
+                duration_ms: Some(run.duration_ms),
+                output: Some(if succeeded {
+                    run.stdout_tail.clone()
+                } else {
+                    run.stderr_tail.clone()
+                }),
+            }
+        });
+
         // Send final callback only on failure/timeout when skip_callback_state is false
         // (on success the agent handles state updates via MCP itself)
         if callback_enabled && !bg_cfg.skip_callback_state && run.status != "success" {
@@ -207,10 +277,17 @@ fn dispatch_cli(config: &Config, background: &Background, agent: &AgentConfig, p
                 tracing::warn!(error = ?e, "final callback failed");
             }
         }
+
+        if let (Some(completion), Some(task_outcome)) = (completion, task_outcome) {
+            completion.report(task_outcome, &task_background).await;
+        }
     });
 
     // The answer, at once.
-    format!("cli agent spawned in background run_id={run_id} issue_id={issue_id} executor={executor}")
+    Dispatched::plain(
+        Outcome::Deferred,
+        format!("cli agent spawned in background run_id={run_id} issue_id={issue_id} executor={executor}"),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -759,7 +836,7 @@ fn issue_field<'a>(payload: &'a Value, key: &str) -> Option<&'a str> {
         .or_else(|| payload.get(&payload_key).and_then(Value::as_str))
 }
 
-fn tail_chars(input: &str, max_chars: usize) -> String {
+pub fn tail_chars(input: &str, max_chars: usize) -> String {
     let char_count = input.chars().count();
     if char_count <= max_chars {
         return input.to_string();
@@ -823,7 +900,7 @@ async fn dispatch_openclaw(
     payload: &Value,
 ) -> Dispatched {
     let Some(cfg) = &agent.openclaw else {
-        return Dispatched::plain("missing openclaw config");
+        return Dispatched::failed("missing openclaw config");
     };
 
     let message = format_message(agent, payload);
@@ -835,16 +912,16 @@ async fn dispatch_openclaw(
         Ok(o) if o.success => {
             let out = o.stdout.trim();
             tracing::info!(stdout = ?out, "openclaw ok");
-            Dispatched::new("ok", format!("ok: {out}"))
+            Dispatched::with(Outcome::Succeeded, "ok", format!("ok: {out}"))
         }
         Ok(o) => {
             let err = o.stderr.trim();
             tracing::error!(stderr = ?err, "openclaw failed");
-            Dispatched::new(exit_summary(o.code), format!("error: {err}"))
+            Dispatched::failed_with(exit_summary(o.code), format!("error: {err}"))
         }
         Err(e) => {
             tracing::error!(error = ?e, "openclaw exec failed");
-            Dispatched::plain(format!("exec_error: {e}"))
+            Dispatched::failed(format!("exec_error: {e}"))
         }
     }
 }
@@ -856,7 +933,7 @@ async fn dispatch_openprx(
     payload: &Value,
 ) -> Dispatched {
     let Some(cfg) = &agent.openprx else {
-        return Dispatched::plain("missing openprx config");
+        return Dispatched::failed("missing openprx config");
     };
 
     let message = format_message(agent, payload);
@@ -874,26 +951,26 @@ async fn dispatch_openprx(
             .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
             .build();
         let Ok(client) = client else {
-            return Dispatched::plain("error: failed to build http client");
+            return Dispatched::failed("error: failed to build http client");
         };
 
         return match client.post(&url).json(&body).send().await {
             Ok(resp) if resp.status().is_success() => {
                 tracing::info!("openprx signal ok");
-                Dispatched::plain("ok")
+                Dispatched::ok("ok")
             }
             Ok(resp) => {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
                 tracing::error!(%status, body = ?text, "openprx signal request refused");
-                Dispatched::new(
+                Dispatched::failed_with(
                     format!("error: the Signal API answered {status}"),
                     format!("error: {status} {text}"),
                 )
             }
             Err(e) => {
                 tracing::error!(error = ?e.to_string(), "openprx signal request failed");
-                Dispatched::new("error: the Signal API request failed", format!("error: {e}"))
+                Dispatched::failed_with("error: the Signal API request failed", format!("error: {e}"))
             }
         };
     }
@@ -906,18 +983,18 @@ async fn dispatch_openprx(
         return match run_subprocess_with_timeout(command, &args, timeout, background.cancelled()).await {
             Ok(o) if o.success => {
                 tracing::info!("openprx cli ok");
-                Dispatched::plain("ok")
+                Dispatched::ok("ok")
             }
             Ok(o) => {
                 let err = o.stderr.trim();
                 tracing::error!(stderr = ?err, "openprx cli failed");
-                Dispatched::new(exit_summary(o.code), format!("error: {err}"))
+                Dispatched::failed_with(exit_summary(o.code), format!("error: {err}"))
             }
-            Err(e) => Dispatched::plain(format!("exec_error: {e}")),
+            Err(e) => Dispatched::failed(format!("exec_error: {e}")),
         };
     }
 
-    Dispatched::plain("openprx config needs either signal_api or command")
+    Dispatched::failed("openprx config needs either signal_api or command")
 }
 
 fn outbound_signature_header_value(payload: &Value, secret: Option<&str>) -> Option<String> {
@@ -931,14 +1008,14 @@ fn outbound_signature_header_value(payload: &Value, secret: Option<&str>) -> Opt
 
 async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value) -> Dispatched {
     let Some(cfg) = &agent.webhook else {
-        return Dispatched::plain("missing webhook config");
+        return Dispatched::failed("missing webhook config");
     };
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
         .build();
     let Ok(client) = client else {
-        return Dispatched::plain("webhook_error: failed to build http client");
+        return Dispatched::failed("webhook_error: failed to build http client");
     };
 
     let mut request = client.post(&cfg.url).json(payload);
@@ -947,17 +1024,24 @@ async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value)
     }
 
     match request.send().await {
-        Ok(resp) => Dispatched::plain(format!("webhook: {}", resp.status())),
+        Ok(resp) => {
+            let outcome = if resp.status().is_success() {
+                Outcome::Succeeded
+            } else {
+                Outcome::Failed
+            };
+            Dispatched::plain(outcome, format!("webhook: {}", resp.status()))
+        }
         Err(e) => {
             tracing::warn!(error = ?e.to_string(), "webhook agent request failed");
-            Dispatched::new("webhook_error: the request failed", format!("webhook_error: {e}"))
+            Dispatched::failed_with("webhook_error: the request failed", format!("webhook_error: {e}"))
         }
     }
 }
 
 async fn dispatch_custom(config: &Config, background: &Background, agent: &AgentConfig, payload: &Value) -> Dispatched {
     let Some(cfg) = &agent.custom else {
-        return Dispatched::plain("missing custom config");
+        return Dispatched::failed("missing custom config");
     };
 
     let message = format_message_tracked(agent, payload);
@@ -971,21 +1055,20 @@ async fn dispatch_custom(config: &Config, background: &Background, agent: &Agent
         Ok(args) => args,
         Err(e) => {
             tracing::warn!(agent = ?agent.id, reason = ?e, "custom agent not run");
-            return Dispatched::plain(format!("custom_error: {e}"));
+            return Dispatched::failed(format!("custom_error: {e}"));
         }
     };
     let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
 
     match run_subprocess_with_timeout(&cfg.command, &args, timeout, background.cancelled()).await {
         Ok(o) => {
-            let summary = if o.success {
-                "ok".to_string()
+            if o.success {
+                Dispatched::with(Outcome::Succeeded, "ok", o.stdout)
             } else {
-                exit_summary(o.code)
-            };
-            Dispatched::new(summary, o.stdout)
+                Dispatched::failed_with(exit_summary(o.code), o.stdout)
+            }
         }
-        Err(e) => Dispatched::plain(format!("custom_error: {e}")),
+        Err(e) => Dispatched::failed(format!("custom_error: {e}")),
     }
 }
 
