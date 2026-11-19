@@ -3,7 +3,7 @@
 Open-source project management platform with built-in governance, a universal
 business-form engine, collaborative Flow pages, WASM plugins, and a first-class
 MCP server for AI agents. Built with **Rust** (Axum + SeaORM), **SvelteKit**, and
-**PostgreSQL 16**.
+**PostgreSQL 18**.
 
 > **Formerly OpenPR.** Releases up to 0.2.21 were published as OpenPR. Existing
 > OpenPR names (the `mcp-server` CLI commands, `config/openpr.toml`, `OPENPR_*`
@@ -92,7 +92,7 @@ records, and a workspace-scoped bot token; it refuses non-local API URLs unless
 ### Local development
 
 ```bash
-# Prerequisites: the Rust toolchain pinned in rust-toolchain.toml, Bun, PostgreSQL 16
+# Prerequisites: the Rust toolchain pinned in rust-toolchain.toml, Bun, PostgreSQL 18
 scripts/dev-up.sh                                  # start only PostgreSQL from compose
 cp config/sylvode.example.toml config/sylvode.toml
 $EDITOR config/sylvode.toml                        # database.url, auth.jwt_secret, [mcp]
@@ -537,7 +537,7 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 
 ## Tech Stack
 
-- **Backend**: Rust edition 2024, axum 0.8, SeaORM 1 (`sqlx-postgres`, rustls), `rust_decimal`, wasmtime 49, Loro (Flow collaboration), PostgreSQL 16
+- **Backend**: Rust edition 2024, axum 0.8, SeaORM 1 (`sqlx-postgres`, rustls), `rust_decimal`, wasmtime 49, Loro (Flow collaboration), PostgreSQL 18
 - **Frontend**: SvelteKit 2.50, Svelte 5, Tailwind 4, `@sveltejs/adapter-static`, Bun
 - **MCP**: JSON-RPC 2.0 over HTTP, stdio, and SSE
 - **Auth**: JWT access + refresh, bot tokens (`opr_`)

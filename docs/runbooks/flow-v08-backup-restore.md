@@ -9,7 +9,8 @@ Set `OPENPR_BACKUP_SOURCE_DATABASE_URL` to the database being backed up and
 environment or a PostgreSQL password file, never in the repository. The verifier only permits a
 disposable restore database whose name starts with `v08_restore_`, drops it on exit, and keeps its
 dump and comparison material under `.flow-gate/cache` in the checkout (override with
-`SYLVODE_SCRATCH_ROOT`).
+`SYLVODE_SCRATCH_ROOT`). Run it with the PostgreSQL 18 `pg_dump` and `psql` client tools: `pg_dump`
+refuses to dump a server newer than itself, and the source and restore servers must both be 18.
 
 ```bash
 export OPENPR_BACKUP_SOURCE_DATABASE_URL='postgresql://.../openpr'
