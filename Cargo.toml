@@ -5,6 +5,7 @@ members = [
   "apps/api",
   "apps/worker",
   "apps/mcp-server",
+  "apps/webhook",
   "crates/platform",
   "crates/collab-core",
   "spikes/collab-shared",

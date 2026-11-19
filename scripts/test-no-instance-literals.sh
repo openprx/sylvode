@@ -21,7 +21,9 @@ PATTERN="${PRIVATE_IPV4}|${TOKEN_LITERAL}"
 
 # path<TAB>exact line text<TAB>reason
 EXEMPTIONS=$'apps/api/src/outbound.rs\t            "10.0.0.1",\ttest input: the outbound URL guard must refuse a private address
-frontend/docker-entrypoint.d/10-resolver.sh\t# and per host (podman hands out 10.89.0.1 on one machine and 10.89.3.1 on another), so\texplains why the resolver address is discovered at runtime instead of hard-coded'
+frontend/docker-entrypoint.d/10-resolver.sh\t# and per host (podman hands out 10.89.0.1 on one machine and 10.89.3.1 on another), so\texplains why the resolver address is discovered at runtime instead of hard-coded
+apps/webhook/src/config.rs\t            "192.168.1.5:9090",\ttest input: allow_unsigned on a LAN listen address must be refused without the acknowledgement
+apps/webhook/src/config.rs\t            "ws://10.0.0.5:8080/t",\ttest input: a plain ws:// tunnel URL to a private, non-loopback host must be refused without the acknowledgement'
 
 exempt() {
   local rel=$1 text=$2 e_path e_text e_reason

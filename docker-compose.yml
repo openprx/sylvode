@@ -160,18 +160,22 @@ services:
     networks:
       - openpr-network
 
-  # The optional Sylvode Webhook receiver (github.com/openprx/openpr-webhook). The default image name
-  # ghcr.io/openprx/sylvode-webhook exists only from the first Sylvode Webhook release after 0.3.3
-  # onward; from then on each release is published under that name and, with the same digest, under
-  # the legacy ghcr.io/openprx/openpr-webhook, and carries /app/sylvode-webhook and the legacy
-  # /app/openpr-webhook. Until that release is out, the default does not pull: pin a published
-  # image, for example SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/openpr-webhook:<tag>, and for 0.3.3 or
-  # earlier also override the command with /app/openpr-webhook. Pin a version tag rather than
+  # The optional Sylvode Webhook receiver, built from this repository (apps/webhook) with
+  # `docker compose --profile connectors build webhook`. The image carries /app/sylvode-webhook and
+  # the legacy /app/openpr-webhook. A local build is tagged with the image name below, the name
+  # releases publish under: compose builds it when no image of that name is present, and
+  # `docker compose pull webhook` fetches a published one instead. To run a specific published
+  # release, pin it, for example SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/sylvode-webhook:<sylvode version>
+  # (the image tag is the Sylvode release version). A pre-merge standalone image
+  # (ghcr.io/openprx/openpr-webhook, last tag 0.3.3) also needs the command /app/openpr-webhook. Pin a version tag rather than
   # :latest in production. SYLVODE_WEBHOOK_IMAGE / SYLVODE_WEBHOOK_CONFIG override the defaults;
   # scripts/start.sh maps the legacy OPENPR_WEBHOOK_IMAGE / OPENPR_WEBHOOK_CONFIG onto them.
   webhook:
     profiles:
       - connectors
+    build:
+      context: .
+      dockerfile: apps/webhook/Dockerfile
     image: ${SYLVODE_WEBHOOK_IMAGE:-ghcr.io/openprx/sylvode-webhook:latest}
     volumes:
       - ${SYLVODE_WEBHOOK_CONFIG:-./config/sylvode-webhook.example.toml}:/etc/sylvode-webhook/config.toml:ro

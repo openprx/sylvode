@@ -1,0 +1,166 @@
+[server]
+# Loopback only. Put a TLS reverse proxy in front, or listen on another address once the
+# secret below is set.
+listen = "127.0.0.1:9090"
+
+[security]
+# The secret of your Sylvode webhook. Start-up is refused while the placeholder is in place.
+webhook_secrets = ["replace-with-the-secret-of-your-sylvode-webhook"]
+# Never true in production: without signatures anyone who can reach the port triggers agents.
+# On an address other than loopback it is refused unless allow_unsigned_non_loopback = true.
+allow_unsigned = false
+# Refuse a signed delivery whose timestamp is further than this from now, either way (0 = off).
+# Worker AI tasks carry no timestamp; see "Replayed requests" in the README.
+max_delivery_age_secs = 300
+
+# Feature flags: all new Phase-B paths default OFF.
+[features]
+tunnel_enabled = false
+cli_enabled = false
+callback_enabled = false
+
+# Runtime guardrails
+[runtime]
+cli_max_concurrency = 1
+http_timeout_secs = 15
+tunnel_reconnect_backoff_max_secs = 60
+
+# Optional: tunnel config (Phase B minimal viable). The client is tested only against an
+# in-process test peer: no Sylvode server endpoint exists yet, so enabling it today connects to
+# nothing. The url below is a placeholder.
+[tunnel]
+enabled = false
+# supports ws:// and wss://, production should use wss://
+url = "wss://sylvode.example.com/api/v1/agent-tunnel"
+# required: the id the control plane registered for this agent; there is no default
+agent_id = "vano-qa"
+# sent as Authorization: Bearer <token>
+auth_token = "opr_xxx"
+# auto reconnect interval after disconnect/failure
+reconnect_secs = 3
+# heartbeat send interval
+heartbeat_secs = 20
+# optional: sign outgoing envelopes and verify incoming envelopes; set it to a long random
+# secret shared with the control plane (an example placeholder refuses start-up)
+# hmac_secret = "replace-with-the-secret-shared-with-the-control-plane"
+# if true, inbound tunnel messages without sig are rejected; requires hmac_secret
+# (start-up is refused without it)
+require_inbound_sig = false
+
+# Optional: end worker AI tasks in Sylvode. The Sylvode worker marks an AI task `processing` when
+# it delivers it (a delivery with `task_id` and `ai_participant_id`), and only the API's
+# POST /api/v1/ai/callbacks/task/{task_id}/complete or .../fail ends that state. When enabled,
+# the agent that ran the task calls `complete` after a successful run and `fail` after any other
+# end; a task that no agent matches is failed at once (this needs the global token).
+# Off by default; safe mode turns it off too.
+[ai_task_callback]
+enabled = false
+# Base URL of the Sylvode API (no path, query or credentials). Required when enabled.
+api_url = "http://127.0.0.1:8080"
+# Bearer token of the bot that is the tasks' AI participant: the API lets only that bot (or a
+# system administrator) end a task. Required when enabled, here or per agent below.
+token = "replace-with-the-bot-token-of-the-ai-participant"
+# The transport the token is registered with in Sylvode: rest (no header), mcp_http, mcp_sse,
+# mcp_stdio, cli or cli_tools_call (sent as X-Sylvode-MCP-Surface and X-OpenPR-MCP-Surface).
+surface = "rest"
+# Attempts per callback, including the first (1 to 10). Transport errors, HTTP 5xx/429 and API
+# codes of 500 or more are retried; a refusal (for example code 400, task not processing) is not.
+max_attempts = 3
+# Delay before the first retry in milliseconds, doubled after each further failure (at most
+# 60000; the wait between two attempts never exceeds 30 seconds).
+retry_delay_ms = 1000
+# At most this many trailing characters of the agent's output go into the callback.
+max_output_chars = 4000
+
+# An openclaw agent runs a local command for every matching bot task and is not gated by
+# [features] or safe mode, so it is left commented out. Uncomment it once the secret above is set.
+#
+# [[agents]]
+# id = "david"
+# name = "David"
+# agent_type = "openclaw"
+# message_template = "[{project}] {event}: {key} {title}\n{actor} | Trigger: {reason}"
+#
+# [agents.openclaw]
+# command = "openclaw"
+# args = ["message", "send"] # runs: openclaw message send --channel ... --target ... --message ...
+# channel = "signal"
+# target = "uuid:your-user-uuid"
+
+# cli agents run only with [features].cli_enabled = true, and never in safe mode.
+[[agents]]
+id = "vano-cli"
+name = "Vano CLI"
+agent_type = "cli"
+# A cli agent is given prompt_template (below); message_template does not apply.
+
+# Optional scenario route constraints. When present, the Sylvode bot task or
+# worker AI task must match these fields before the agent is selected.
+# Empty lists mean "no constraint" for that dimension.
+[agents.route]
+bot_agent_types = ["cli"]
+project_types = ["code_delivery"]
+# Values Sylvode sends: assigned, created, status_changed, mentioned, completed,
+# failed (webhook deliveries) and assigned, mention, proposal_vote, manual
+# (worker AI tasks). Any other value refuses start-up.
+trigger_kinds = ["assigned", "mentioned"]
+# Event routing. Only events a webhook subscription can request are ever
+# delivered; see WEBHOOK_EVENTS in the Sylvode API.
+# events = ["issue.assigned", "comment.created"]
+# form_keys = ["order", "print_job"]
+
+[agents.cli]
+executor = "codex" # codex | claude-code | opencode
+workdir = "/path/to/your/repository"
+timeout_secs = 900
+max_output_chars = 12000
+prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
+callback = "mcp" # mcp | api
+callback_url = "http://127.0.0.1:8090/mcp/rpc"
+callback_token = "opr_xxx"
+update_state_on_start = "in_progress"
+update_state_on_success = "done"
+update_state_on_fail = "todo"
+
+# --- MCP closed-loop example (AI reads full issue context via MCP) ---
+
+[[agents]]
+id = "ai-fixer"
+name = "AI Issue Fixer"
+agent_type = "cli"
+
+[agents.cli]
+executor = "claude-code"
+workdir = "/path/to/your/repository"
+timeout_secs = 900
+max_output_chars = 12000
+prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
+
+# MCP closed-loop: AI updates issue state directly via MCP tools,
+# so we skip the callback state update to avoid duplication.
+skip_callback_state = true
+callback = "mcp"
+callback_url = "http://127.0.0.1:8090/mcp/rpc"
+callback_token = "opr_xxx"
+
+# Path to an MCP config for claude-code (--mcp-config flag). Setting it (or
+# mcp_instructions, or env_vars) also appends the default MCP instructions to
+# the prompt. If omitted, claude-code uses its global ~/.claude.json MCP config.
+mcp_config_path = "/path/to/mcp-config.json"
+
+# Custom MCP instructions appended to the prompt. If omitted, a sensible
+# default is used that instructs the AI to read/write via Sylvode MCP tools.
+# mcp_instructions = "Use work_items.get to read issue {issue_id}, then fix it."
+
+# Extra environment variables injected into the executor subprocess.
+# The Sylvode MCP server reads its API URL, bot token and workspace from its
+# own config file (mcp-server serve --config ...), not from these variables.
+# [agents.cli.env_vars]
+# HTTPS_PROXY = "http://proxy.internal:3128"
+
+# Optional per-agent overrides of [ai_task_callback]. `enabled` defaults to true for every agent
+# type except `webhook` (a forwarding agent hands the task to another receiver, which owns it).
+# [agents.ai_task_callback]
+# enabled = true
+# token = "replace-with-the-bot-token-of-this-agents-bot"
+# surface = "mcp_stdio"

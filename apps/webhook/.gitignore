@@ -1,0 +1,3 @@
+# Local configuration with secrets (build output goes to the workspace target/)
+/config.toml
+!/config.example.toml
