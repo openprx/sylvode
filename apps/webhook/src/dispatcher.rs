@@ -2069,11 +2069,28 @@ mcp_instructions = "Read issue {issue_id} before writing."
     }
 
     fn custom_agent(args: &str, message_template: &str) -> crate::config::AgentConfig {
+        custom_agent_running("printf", args, message_template)
+    }
+
+    fn custom_agent_running(command: &str, args: &str, message_template: &str) -> crate::config::AgentConfig {
         toml::from_str(&format!(
             "id = 'logger'\nname = 'Logger'\nagent_type = 'custom'\nmessage_template = '{message_template}'\n\
-             [custom]\ncommand = 'printf'\nargs = {args}\n"
+             [custom]\ncommand = '{command}'\nargs = {args}\n"
         ))
         .expect("parse agent")
+    }
+
+    /// A `custom` agent that prints every argument it is given as `[argument]`, one after the
+    /// other. `sh` receives the configured `args` as its positional parameters, so none of them
+    /// is parsed as an option: a `printf` operand of `--` is dropped by some implementations and
+    /// kept by others (GNU, BSD), which makes `printf` unfit to observe it.
+    /// `rest` is the TOML for the arguments that follow the fixed prefix.
+    fn argv_logging_agent(rest: &str, message_template: &str) -> crate::config::AgentConfig {
+        custom_agent_running(
+            "sh",
+            &format!(r#"['-c', 'for a in "$@"; do printf "[%s]" "$a"; done', 'sh', {rest}]"#),
+            message_template,
+        )
     }
 
     fn titled(title: &str) -> serde_json::Value {
@@ -2137,7 +2154,8 @@ mcp_instructions = "Read issue {issue_id} before writing."
         let out = dispatch(&config, &Background::new(1), &appended, &payload).await.detail;
         assert!(out.starts_with("custom_error:"), "{out}");
 
-        let separated = custom_agent(r#"["[%s]", "--", "{message}"]"#, "{title}");
+        // Both the configured `--` and the message reach the command, verbatim and in order.
+        let separated = argv_logging_agent(r#""--", "{message}""#, "{title}");
         assert_eq!(
             dispatch(&config, &Background::new(1), &separated, &payload)
                 .await
