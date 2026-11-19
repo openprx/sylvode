@@ -49,6 +49,8 @@ pub mod operation;
 pub mod page_inline;
 mod prose_projection;
 pub mod semantic;
+#[cfg(test)]
+mod walk_counter;
 
 pub use engine::{CollabEngine, Diff, EngineMetadata, LoroCollabEngine, metadata};
 pub use error::{CollabError, InputLimits};
