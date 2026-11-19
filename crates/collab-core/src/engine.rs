@@ -901,8 +901,12 @@ impl LoroCollabEngine {
     /// # Errors
     /// Propagates the underlying engine's read failure, if any.
     pub fn semantic_snapshot(&self) -> Result<SemanticSnapshot, CollabError> {
-        let mut snapshot = self.legacy_package_semantic_snapshot_v3()?;
-        crate::prose_projection::project_editor_prose(&self.doc, &mut snapshot)?;
+        // `legacy_package_semantic_snapshot_v3` followed by `project_editor_prose`, reading the
+        // editor document once for both prose steps (see
+        // `project_legacy_then_current_editor_prose`).
+        let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
+        self.project_navigator_order(&mut snapshot);
+        crate::prose_projection::project_legacy_then_current_editor_prose(&self.doc, &mut snapshot)?;
         Ok(snapshot)
     }
 
@@ -919,6 +923,13 @@ impl LoroCollabEngine {
     }
     pub fn legacy_package_semantic_snapshot_v3(&self) -> Result<SemanticSnapshot, CollabError> {
         let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
+        self.project_navigator_order(&mut snapshot);
+        crate::prose_projection::project_legacy_editor_prose(&self.doc, &mut snapshot)?;
+        Ok(snapshot)
+    }
+
+    /// Package v3's navigator step: order keys from the `order` map override tree positions.
+    fn project_navigator_order(&self, snapshot: &mut SemanticSnapshot) {
         let order = self.navigator_order();
         for (id, node) in &mut snapshot.nodes {
             if node.kind != NodeKind::NavigatorNode {
@@ -942,8 +953,6 @@ impl LoroCollabEngine {
                 node.order_key.clone_from(key);
             }
         }
-        crate::prose_projection::project_legacy_editor_prose(&self.doc, &mut snapshot)?;
-        Ok(snapshot)
     }
 
     /// Exact package v2 reader before navigator order-map projection (tree plus editor prose).
@@ -2028,5 +2037,73 @@ mod tests {
         // The head state's floor is now known: a read costs no further walk.
         assert_eq!(engine.minimum_editor_model().unwrap(), 5);
         assert_eq!(crate::walk_counter::counts().0, tail + 1);
+    }
+
+    /// Regression guard (count-based, not wall clock) for the isolated-apply worker's metered
+    /// window -- `import_update_causally_complete` then `semantic_snapshot` on a freshly loaded
+    /// base -- and for a later import onto the same engine:
+    /// - model 1: one floor walk (pre-import) and one prose read for the snapshot;
+    /// - model 5: two floor walks (pre-import, plus the post-import downgrade check) and one
+    ///   prose read; the next import reuses the post-import floor as its pre-import floor.
+    ///
+    /// Every floor walk reads the editor blocks once, so block reads = floor walks + 1.
+    #[test]
+    fn worker_window_walks_are_bounded() {
+        for model5 in [false, true] {
+            let mut author = LoroCollabEngine::new_empty(71);
+            author.initialize_page_editor().unwrap();
+            if model5 {
+                author.initialize_page_structure_model(5).unwrap();
+                author
+                    .insert_page_atom("image", None, 0, "image", &image_attrs())
+                    .unwrap();
+            }
+            for index in 0..20 {
+                author
+                    .apply_content_operation(&Operation::CreateNode {
+                        id: format!("b{index}").as_str().into(),
+                        parent: None,
+                        index: 0,
+                        kind: NodeKind::Block,
+                    })
+                    .unwrap();
+            }
+            let base = author.export_snapshot().unwrap();
+            let mut updates = Vec::new();
+            for index in 0..2 {
+                let before = author.frontier();
+                author
+                    .apply_content_operation(&Operation::InsertText {
+                        id: format!("b{index}").as_str().into(),
+                        index: 0,
+                        text: "typed".into(),
+                    })
+                    .unwrap();
+                updates.push(author.export_from(&before).unwrap());
+            }
+            let floor_walks = if model5 { 2 } else { 1 };
+
+            let mut engine = LoroCollabEngine::load(&base).unwrap();
+            crate::walk_counter::reset();
+            engine
+                .import_update_causally_complete(updates.first().unwrap())
+                .unwrap();
+            engine.semantic_snapshot().unwrap();
+            assert_eq!(
+                crate::walk_counter::counts(),
+                (floor_walks, floor_walks + 1),
+                "model5={model5}: (floor walks, block reads) in the worker window"
+            );
+
+            crate::walk_counter::reset();
+            engine.import_update_causally_complete(updates.get(1).unwrap()).unwrap();
+            // Model 1: the pre-import walk (nothing cached it). Model 5: the pre-import floor is
+            // the previous post-import check's, so only the new post-import check walks.
+            assert_eq!(
+                crate::walk_counter::counts().0,
+                1,
+                "model5={model5}: floor walks for a follow-up import"
+            );
+        }
     }
 }
