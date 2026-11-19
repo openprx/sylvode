@@ -3916,7 +3916,7 @@ location.replace(${JSON.stringify(target)});
 		json(res, 200, apiResult(project));
 		return;
 	}
-	if (pathname === `/api/v1/projects//forms`) {
+	if (pathname === `/api/v1/projects/${projectId}/forms`) {
 		json(res, 200, apiResult(paginated([orderLineForm, printJobForm])));
 		return;
 	}
@@ -4914,7 +4914,10 @@ function assertDetailWidgetLimitPayloads() {
 if (!existsSync(buildDir)) {
 	throw new Error(`Missing build directory: ${buildDir}. Run bun run build before smoke:forms-ui.`);
 }
-if (!existsSync(chromium)) {
+// Serve-only mode starts the mock API and the built app and waits, for drivers that bring their
+// own browser (scripts/smoke-forms-record-list.mjs drives it with real input events).
+const serveOnly = process.env.OPENPR_FORMS_UI_SERVE_ONLY === '1';
+if (!serveOnly && !existsSync(chromium)) {
 	throw new Error(`Chromium binary not found: ${chromium}`);
 }
 
@@ -4925,6 +4928,10 @@ const server = createServer((req, res) => {
 });
 const port = 19580 + Math.floor(Math.random() * 1000);
 await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+if (serveOnly) {
+	console.log(`SMOKE_SERVER_READY ${port}`);
+	await new Promise(() => {});
+}
 
 try {
 	if (screenshotDir) await mkdir(screenshotDir, { recursive: true });
