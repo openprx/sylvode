@@ -68,6 +68,9 @@ session_token = "s3-session-token"
 [audit]
 operation_log_retention_days = 45
 
+[ai_tasks]
+processing_timeout_secs = 7200
+
 [migrations]
 replay = true
 continue_on_error = true
@@ -127,6 +130,7 @@ fn a_complete_file_parses_into_every_section() {
         Some("s3-session-token")
     );
     assert_eq!(config.audit.operation_log_retention_days, 45);
+    assert_eq!(config.ai_tasks.processing_timeout_secs, 7200);
 
     assert!(config.migrations.replay);
     assert!(config.migrations.continue_on_error);
@@ -187,6 +191,7 @@ jwt_secret = "0123456789abcdef0123456789abcdef"
     assert_eq!(config.storage.backend, StorageBackend::Local);
     assert_eq!(config.storage.dir, Path::new("./uploads"));
     assert_eq!(config.audit.operation_log_retention_days, 30);
+    assert_eq!(config.ai_tasks.processing_timeout_secs, 3600);
     assert!(!config.migrations.replay);
     assert!(!config.migrations.continue_on_error);
     assert!(config.outbound.allowed_hosts.is_empty());
@@ -204,6 +209,24 @@ fn operation_log_retention_days_are_bounded() {
                 .any(|issue| issue.contains("audit.operation_log_retention_days")),
             "invalid retention {days} was not rejected: {reported:?}"
         );
+    }
+}
+
+#[test]
+fn ai_task_processing_timeout_is_bounded() {
+    for secs in [0, 59, 604_801] {
+        let reported = issues(&format!("[ai_tasks]\nprocessing_timeout_secs = {secs}\n"));
+        assert!(
+            reported
+                .iter()
+                .any(|issue| issue.contains("ai_tasks.processing_timeout_secs")),
+            "invalid timeout {secs} was not rejected: {reported:?}"
+        );
+    }
+    for secs in [60, 604_800] {
+        let config = parse(&format!("[ai_tasks]\nprocessing_timeout_secs = {secs}\n"))
+            .unwrap_or_else(|error| panic!("valid timeout {secs} was rejected: {error}"));
+        assert_eq!(config.ai_tasks.processing_timeout_secs, secs);
     }
 }
 

@@ -74,8 +74,8 @@ use parking_lot::Mutex;
 use platform::{
     app::AppState,
     config::{
-        AppConfig, AuditConfig, AuthConfig, DatabaseConfig, FlowConfig, LoggingConfig, McpConfig, MigrationsConfig,
-        OpenPrConfig, OutboundConfig, Secret, ServerConfig, StorageBackend, StorageConfig,
+        AiTasksConfig, AppConfig, AuditConfig, AuthConfig, DatabaseConfig, FlowConfig, LoggingConfig, McpConfig,
+        MigrationsConfig, OpenPrConfig, OutboundConfig, Secret, ServerConfig, StorageBackend, StorageConfig,
     },
 };
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQueryResult, Statement};
@@ -387,6 +387,7 @@ fn install_config(receiver_port: u16) -> Result<(), String> {
             s3: None,
         },
         audit: AuditConfig::default(),
+        ai_tasks: AiTasksConfig::default(),
         migrations: MigrationsConfig::default(),
         outbound: OutboundConfig {
             allowed_hosts: vec![format!("127.0.0.1:{receiver_port}")],
