@@ -11,8 +11,6 @@
 		enabledRoutes,
 		findByRoute,
 		frameHeights,
-		frameKey,
-		frameVerdict,
 		itemKey,
 		layoutSlot,
 		loadEntry,
@@ -20,11 +18,19 @@
 		projectDiscovery,
 		projectHref,
 		projectName,
-		sameFrameIdentity,
-		verdictReasons,
 		type DiscoveryState
 	} from '#lib/plugins/contributions.js';
 	import { createExtensionTransport, hostContext } from '#lib/plugins/host-methods.js';
+	import {
+		closeView,
+		initialProjectView,
+		openView,
+		reconcileView,
+		retireFrame,
+		retryView,
+		type ProjectViewDeps,
+		type ProjectViewState
+	} from '#lib/plugins/project-view.js';
 
 	let {
 		workspaceId,
@@ -43,24 +49,20 @@
 		from: string | null;
 	} = $props();
 
-	type Opened = { item: PluginContributionItem; html: string };
 	const backHref = $derived(from ?? projectHref(workspaceId, projectId));
 
 	let discovery = $state.raw<DiscoveryState>({ status: 'loading', items: [] });
-	let opened = $state.raw<Opened | null>(null);
-	let phase = $state<'loading' | 'ready' | 'failed' | 'unavailable'>('loading');
-	let notice = $state('');
-	let name = $state('');
+	// The view's state machine (project-view.ts) mutates this object; it is a deep $state proxy.
+	const view = $state<ProjectViewState>(initialProjectView());
 	let theme = $state<'light' | 'dark'>(currentTheme());
-	let run = 0;
-	let inflight = false;
 
 	const found = $derived(findByRoute(discovery.items, pluginKey, route));
 	const tabs = $derived(layoutSlot(discovery.items, 'project.view'));
+	const opened = $derived(view.opened);
 	const context = $derived(
 		opened
 			? hostContext(opened.item, {
-					projectName: name,
+					projectName: view.name,
 					routeState,
 					locale: $locale ?? 'zh',
 					theme
@@ -75,12 +77,20 @@
 					// Always the current discovery, never the manifest.
 					enabledRoutes: () => enabledRoutes(discovery.items, pluginKey),
 					navigate: async (target) => {
+						// A frame that is no longer shown does not navigate anymore.
+						if (view.opened?.token !== opened.token) return;
 						await goto(navigationHref(target, { workspaceId, projectId, key: pluginKey, from }));
 					},
 					onStale: () => void projectDiscovery(projectId).refresh()
 				})
 			: undefined
 	);
+	const deps: ProjectViewDeps = {
+		loadEntry: (target) => loadEntry(projectId, target, {}),
+		projectName: () => projectName(projectId),
+		refreshDiscovery: () => projectDiscovery(projectId).refresh(),
+		latest: () => findByRoute(discovery.items, pluginKey, route)
+	};
 
 	$effect(() => {
 		const store = projectDiscovery(projectId);
@@ -110,87 +120,36 @@
 	});
 
 	function reconcile(current: DiscoveryState, target: PluginContributionItem | undefined) {
-		if (opened) {
-			const verdict = frameVerdict(current, opened.item);
-			if (verdict === 'ok') return;
-			run++;
-			inflight = false;
-			opened = null;
-			notice = verdictReasons[verdict];
-			if (verdict === 'error') {
-				phase = 'failed';
-				return;
-			}
-			phase = 'loading';
-		}
-		if (phase === 'failed' && target && current.status !== 'off' && current.status !== 'denied')
-			return;
-		if (current.status === 'loading') {
-			phase = 'loading';
-			return;
-		}
-		if (current.status === 'off' || current.status === 'denied' || !target) {
-			run++;
-			inflight = false;
-			phase = 'unavailable';
-			return;
-		}
-		if (!inflight) void open(target);
-	}
-
-	async function open(target: PluginContributionItem) {
-		const mine = ++run;
-		inflight = true;
-		phase = 'loading';
-		const [entry, label] = await Promise.all([
-			loadEntry(projectId, target, {}),
-			projectName(projectId)
-		]);
-		if (mine !== run) return;
-		inflight = false;
-		name = label;
-		if (!entry.ok) {
-			phase = entry.reason === 'unavailable' ? 'unavailable' : 'failed';
-			notice = entry.reason === 'unavailable' ? '' : 'plugins.host.loadFailed';
-			return;
-		}
-		if (!sameFrameIdentity(entry.item, target)) {
-			// Discovery was stale. Only continue when a fresh discovery agrees with the entry.
-			await projectDiscovery(projectId).refresh();
-			if (mine !== run) return;
-			const latest = findByRoute(discovery.items, pluginKey, route);
-			if (!latest || !sameFrameIdentity(latest, entry.item)) {
-				phase = 'failed';
-				notice = 'plugins.versionChanged';
-				return;
-			}
-		}
-		notice = '';
-		opened = { item: entry.item, html: entry.html };
-		phase = 'ready';
+		const next = reconcileView(view, current, target);
+		if (next) void openView(view, next, deps);
 	}
 
 	function onClose(reason: string) {
-		opened = null;
-		if (reason === '') {
+		if (closeView(view, reason) === 'back') {
 			void goto(backHref);
 			return;
 		}
-		run++;
-		inflight = false;
-		phase = 'failed';
-		notice = reason;
 		void projectDiscovery(projectId).refresh();
 	}
 
+	/**
+	 * The host of `token` retired its frame while this view was being left (route change, re-key),
+	 * and the view is live again because the navigation came back before the removal finished.
+	 * The host only reports this once it runs again, so the view reopens with a fresh entry.
+	 */
+	function retiredFor(token: number) {
+		return () => {
+			if (retireFrame(view, token)) reconcile(discovery, found);
+		};
+	}
+
 	function retry() {
-		notice = '';
-		phase = 'loading';
-		reconcile(discovery, found);
+		const next = retryView(view, discovery, found);
+		if (next) void openView(view, next, deps);
 	}
 </script>
 
-{#if phase === 'unavailable'}
+{#if view.phase === 'unavailable'}
 	<section class="space-y-3" data-plugin-unavailable>
 		<h1 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
 			{$t('plugins.host.unavailable')}
@@ -248,14 +207,14 @@
 		<h1 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
 			{found?.contribution.label ?? pluginKey}
 		</h1>
-		{#if notice && phase !== 'ready'}
-			<p class="text-sm text-slate-600 dark:text-slate-300" role="status">{$t(notice)}</p>
+		{#if view.notice && view.phase !== 'ready'}
+			<p class="text-sm text-slate-600 dark:text-slate-300" role="status">{$t(view.notice)}</p>
 		{/if}
-		{#if phase === 'loading'}
+		{#if view.phase === 'loading'}
 			<p class="text-sm text-slate-600 dark:text-slate-300" role="status">
 				{$t('plugins.host.loading')}
 			</p>
-		{:else if phase === 'failed'}
+		{:else if view.phase === 'failed'}
 			<button
 				type="button"
 				onclick={retry}
@@ -264,7 +223,8 @@
 			>
 		{/if}
 		{#if opened && transport && context}
-			{#key frameKey(opened.item)}
+			<!-- One frame per open: a later open never reuses a host that is still being removed. -->
+			{#key opened.token}
 				<div class="overflow-hidden rounded-md border border-slate-300 dark:border-slate-600">
 					<PluginFrameHost
 						html={opened.html}
@@ -279,6 +239,7 @@
 						minHeight={frameHeights.view.min}
 						maxHeight={frameHeights.view.max}
 						{onClose}
+						onRetired={retiredFor(opened.token)}
 					/>
 				</div>
 			{/key}

@@ -32,6 +32,7 @@
 		minHeight,
 		maxHeight,
 		onClose,
+		onRetired,
 		onConfirmApply
 	}: {
 		html: string;
@@ -49,6 +50,12 @@
 		minHeight: number;
 		maxHeight: number;
 		onClose: (reason: '' | string) => void;
+		/**
+		 * Called when this host runs again after it retired its frame silently (see
+		 * `retiredSilently`). Read once, when the host opens. Without it, `onClose` gets the
+		 * suspended reason, so the caller never shows an empty host.
+		 */
+		onRetired?: () => void;
 		onConfirmApply?: () => Promise<boolean>;
 	} = $props();
 
@@ -103,6 +110,15 @@
 	let loadTimer: ReturnType<typeof setTimeout> | undefined;
 	let finished = false;
 	let sentContext = '';
+	/**
+	 * Set when the frame was retired because the caller unmounted or re-keyed this host (no
+	 * `onClose`). Svelte keeps such a host alive during the outro grace period and resumes it,
+	 * instead of mounting a new one, when the same block becomes current again before the outro
+	 * ends (for example browser Back within 300 ms). A resumed host has no frame and can never get
+	 * one, so it tells its caller as soon as it runs again; a host that is destroyed never does.
+	 */
+	let retiredSilently = $state(false);
+	const retired = untrack(() => onRetired);
 
 	const dispatcher = createHostDispatcher({
 		bridge: opened.bridge,
@@ -138,6 +154,7 @@
 		port = undefined;
 		stage = 'closed';
 		if (notify) onClose(reason);
+		else retiredSilently = true;
 	}
 
 	/**
@@ -179,6 +196,17 @@
 			finish(reasons.suspended, false);
 			lifecycle?.close();
 		};
+	});
+
+	// Effects of a host that is being removed (paused for its outro, or destroyed) do not run, so
+	// this only fires once the host is live again after a silent retire.
+	$effect(() => {
+		if (!retiredSilently) return;
+		untrack(() => {
+			retiredSilently = false;
+			if (retired) retired();
+			else onClose(reasons.suspended);
+		});
 	});
 
 	$effect(() => {

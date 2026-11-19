@@ -221,6 +221,40 @@ describe('host.navigate reply ordering', () => {
 		});
 	});
 
+	test('a second navigate during the pending window is refused and does not navigate', async () => {
+		let finish: () => void = () => undefined;
+		const { order, dispatcher } = setup(() => new Promise<void>((resolve) => (finish = resolve)));
+		const first = dispatcher.handle(id(1), 'host.navigate', { target: 'view', route: 'board' });
+		// Concurrent with the first call: the dispatcher's own limit.
+		const concurrent = dispatcher.handle(id(2), 'host.navigate', { target: 'project' });
+		assert.deepEqual(await first, { ok: true, result: { navigated: true } });
+		assert.deepEqual(await concurrent, { ok: false, code: 'busy' });
+		// After the reply, before the navigation settled: the transport refuses it.
+		assert.deepEqual(await dispatcher.handle(id(3), 'host.navigate', { target: 'project' }), {
+			ok: false,
+			code: 'canceled'
+		});
+		await macrotask();
+		assert.deepEqual(order, ['navigate:view']);
+		finish();
+		await macrotask();
+		// A same-route navigation keeps the frame, so it must be served again once settled.
+		assert.equal((await dispatcher.handle(id(4), 'data.query', { read: 'orders' })).ok, true);
+	});
+
+	test('a navigation that never settles only wedges its own transport', async () => {
+		const stuck = setup(() => new Promise<void>(() => undefined));
+		await stuck.dispatcher.handle(id(1), 'host.navigate', { target: 'project' });
+		await macrotask();
+		assert.equal(
+			(await stuck.dispatcher.handle(id(2), 'data.query', { read: 'orders' })).ok,
+			false
+		);
+		// A reopened view creates a new transport; nothing is shared between the two.
+		const fresh = setup(() => undefined);
+		assert.equal((await fresh.dispatcher.handle(id(1), 'data.query', { read: 'orders' })).ok, true);
+	});
+
 	test('a navigation that fails to start does not reject or wedge the transport', async () => {
 		const { dispatcher } = setup(() => Promise.reject(new Error('offline')));
 		await dispatcher.handle(id(1), 'host.navigate', { target: 'project' });
