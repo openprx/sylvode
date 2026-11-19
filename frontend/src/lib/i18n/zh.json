@@ -4628,8 +4628,7 @@
 			"previewSamplePersonal": "预览的所有值都是占位文本，不读取真实记录，也不会安装。",
 			"previewSchemaFailed": "无法读取该 Form 的字段，预览改用文本示例。",
 			"previewPending": "当前版本暂不支持纯 UI 视图的沙箱预览。",
-			"previewUi": "示例数据预览",
-			"previewViewed": "我已查看预览。",
+			"previewUi": "审核前请先查看示例数据预览。",
 			"extensionsUnavailable": "纯 UI 视图包需要项目已启用扩展功能。",
 			"slotChoice": "预览位置",
 			"newUiView": "创建纯 UI 视图草稿"

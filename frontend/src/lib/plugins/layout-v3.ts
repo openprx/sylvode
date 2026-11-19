@@ -102,3 +102,10 @@ export function toggleGrantV3(
 	}
 	return normalizeGrantsV3(manifest, [...next]);
 }
+
+/** i18n key for a slot name. The two record slots keep the keys the v2 screens already use. */
+export function slotLabelKey(slot: string): string {
+	return slot === 'form.record.detail' || slot === 'form.record.actions'
+		? `plugins.slot.${slot}`
+		: `plugins.layoutV3.slot.${slot}`;
+}

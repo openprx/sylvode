@@ -8,7 +8,7 @@ import type {
 	PluginUploadV3
 } from '../../api/plugin-packages';
 import { orderAmountTemplate, type CreatorDraft } from './template';
-import { uiViewTemplate, type UiViewDraft } from './ui-view-template';
+import { uiViewTemplate, type SampleField, type UiViewDraft } from './ui-view-template';
 
 export type CreatorTemplateId = 'order_amount' | 'ui_view';
 export interface CreatorOrigin {
@@ -40,6 +40,19 @@ export type PreviewTransport = (
 	params: Record<string, unknown>,
 	requestId: string
 ) => Promise<{ ok: true; result: unknown } | { ok: false; code: string }>;
+
+/** What the isolated v3 preview needs: the package, the entry to show and where sample data comes from. */
+export interface V3PreviewSpec {
+	manifest: PluginManifestV3;
+	contributionId: string;
+	webSha256: string;
+	/** Form fields for project previews; null falls back to text samples. */
+	schema: SampleField[] | null;
+	personal: boolean;
+	onViewed: () => void;
+	/** Answers `amount.preview` for packages that declare it; other previews cannot call capabilities. */
+	onAmountPreview?: () => Promise<number | null>;
+}
 
 export const allSlots: PluginSlotV3[] = [
 	'project.view',
