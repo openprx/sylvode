@@ -182,7 +182,7 @@ async function navigateWithinApp(path) {
   await navigateWithinApp('/workspace/${workspaceId}/projects/${projectId}');
   await waitFor(() => textInElements('Project resources'), 'resources panel');
   const kind = document.querySelector('select[aria-label="Resource kind"]');
-  kind.value = 'document_library';
+  kind.value = 'custom';
   kind.dispatchEvent(new Event('change', { bubbles: true }));
   setInputByPlaceholder('Name', 'Contract Library');
   setInputByPlaceholder('Locator', '{"url":"https://docs.example/contracts"}');
@@ -457,8 +457,8 @@ try {
 	if (!updatedTypePayload || updatedTypePayload.name !== 'Audit Review Updated') {
 		throw new Error('Expected project type update payload');
 	}
-	if (!createdResourcePayload || createdResourcePayload.kind !== 'document_library') {
-		throw new Error('Expected document_library resource create payload');
+	if (!createdResourcePayload || createdResourcePayload.kind !== 'custom') {
+		throw new Error('Expected custom resource create payload');
 	}
 	if (!updatedResourcePayload || updatedResourcePayload.name !== 'Contract Library Updated') {
 		throw new Error('Expected resource update payload');

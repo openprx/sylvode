@@ -58,7 +58,7 @@ pub async fn get_project_type(client: &OpenPrClient, args: Value) -> CallToolRes
 pub fn list_project_resources_tool() -> ToolDefinition {
     ToolDefinition {
         name: "project_resources.list".to_string(),
-        description: "List project resources such as repositories, directories, document libraries, equipment, or business records".to_string(),
+        description: "List project resources (directory or custom kind) used as AI/project context".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -103,7 +103,8 @@ pub fn create_project_resource_tool() -> ToolDefinition {
                 },
                 "kind": {
                     "type": "string",
-                    "description": "repo, directory, document_library, crm_account, erp_order, equipment, site, or custom"
+                    "enum": ["directory", "custom"],
+                    "description": "Resource kind: directory or custom"
                 },
                 "name": {
                     "type": "string",
@@ -166,7 +167,7 @@ pub fn update_project_resource_tool() -> ToolDefinition {
             "properties": {
                 "project_id": { "type": "string" },
                 "resource_id": { "type": "string" },
-                "kind": { "type": "string" },
+                "kind": { "type": "string", "enum": ["directory", "custom"] },
                 "name": { "type": "string" },
                 "locator": { "type": "object" },
                 "permission_policy": { "type": "object" },

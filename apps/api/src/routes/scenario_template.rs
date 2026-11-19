@@ -141,7 +141,7 @@ fn scenario_template_usage_guide(key: &str, name: &str) -> JsonValue {
             "operator_entrypoints": common_entrypoints,
             "operator_steps": [
                 "Create the project from the code delivery template",
-                "Register repository and working-directory resources",
+                "Register repository and working-directory resources as directory resources",
                 "Create code tasks and change records",
                 "Record CI and release evidence before handoff"
             ],
@@ -167,7 +167,7 @@ fn scenario_template_usage_guide(key: &str, name: &str) -> JsonValue {
             "operator_entrypoints": common_entrypoints,
             "operator_steps": [
                 "Create the project from the equipment maintenance template",
-                "Register equipment and site resources",
+                "Register equipment and site records as custom resources",
                 "Create repair orders from fault reports",
                 "Close the workflow with inspection records"
             ],
@@ -193,7 +193,7 @@ fn scenario_template_usage_guide(key: &str, name: &str) -> JsonValue {
             "operator_entrypoints": common_entrypoints,
             "operator_steps": [
                 "Create the project from the customer delivery template",
-                "Register customer and acceptance-material resources",
+                "Register customer and acceptance-material records as custom resources",
                 "Create milestone and change-request records",
                 "Send updates through MCP, webhooks, or REST APIs"
             ],
