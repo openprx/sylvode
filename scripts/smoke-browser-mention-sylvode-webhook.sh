@@ -2,8 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The webhook receiver lives in this repository (apps/webhook). A separate checkout can still be
+# tested by setting SYLVODE_WEBHOOK_DIR (or the legacy OPENPR_WEBHOOK_DIR).
 WEBHOOK_DIR="${SYLVODE_WEBHOOK_DIR:-${OPENPR_WEBHOOK_DIR:-}}"
-[[ -n $WEBHOOK_DIR && -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: webhook checkout not found (${WEBHOOK_DIR:-unset}); set SYLVODE_WEBHOOK_DIR to the webhook checkout" >&2; exit 2; }
+if [[ -n $WEBHOOK_DIR ]]; then
+  [[ -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: webhook checkout not found ($WEBHOOK_DIR); set SYLVODE_WEBHOOK_DIR to the webhook checkout, or leave it unset to use apps/webhook" >&2; exit 2; }
+fi
 POSTGRES_PORT="${OPENPR_SMOKE_PG_PORT:-5366}"
 PG_SUPERUSER="${OPENPR_SMOKE_PG_SUPERUSER:-postgres}"
 DB_NAME="sylvode_mention_smoke_$$_$(date +%s)"
@@ -89,11 +93,16 @@ if [[ ! -x "$CHROMIUM_BIN" ]]; then
   exit 2
 fi
 
-cargo build -q -p api --bin api -p worker --bin worker
-(cd "$WEBHOOK_DIR" && cargo build -q)
-# Releases up to 0.3.3 ship only the legacy executable name.
-WEBHOOK_BIN="$WEBHOOK_DIR/target/debug/sylvode-webhook"
-[[ -x $WEBHOOK_BIN ]] || WEBHOOK_BIN="$WEBHOOK_DIR/target/debug/openpr-webhook"
+if [[ -n $WEBHOOK_DIR ]]; then
+  cargo build -q -p api --bin api -p worker --bin worker
+  (cd "$WEBHOOK_DIR" && cargo build -q)
+  # Releases up to 0.3.3 ship only the legacy executable name.
+  WEBHOOK_BIN="$WEBHOOK_DIR/target/debug/sylvode-webhook"
+  [[ -x $WEBHOOK_BIN ]] || WEBHOOK_BIN="$WEBHOOK_DIR/target/debug/openpr-webhook"
+else
+  cargo build -q -p api --bin api -p worker --bin worker -p sylvode-webhook --bin sylvode-webhook
+  WEBHOOK_BIN="${CARGO_TARGET_DIR:-$ROOT_DIR/target}/debug/sylvode-webhook"
+fi
 
 sudo -n -u "$PG_SUPERUSER" psql -p "$POSTGRES_PORT" -d postgres -v ON_ERROR_STOP=1 -q <<SQL
 CREATE ROLE "$DB_USER" LOGIN PASSWORD '$DB_PASSWORD';

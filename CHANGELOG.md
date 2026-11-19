@@ -18,6 +18,17 @@ name.
 
 - Apply the database migration `0104`. An API older than this change that tries to create a resource with a removed kind after the migration gets a database error from the tightened CHECK constraint instead of a validation error.
 
+### Webhook receiver
+
+- **The receiver is imported into this repository** as `apps/webhook` (crate `sylvode-webhook`, executables `sylvode-webhook` and the legacy `openpr-webhook`, formerly OpenPR Webhook) with its history. It is a workspace member and **its version now follows Sylvode**: `sylvode-webhook --version`, image tags and archive names carry the workspace version. The standalone 0.3.x line ends here. The last standalone version was 0.3.53, which was never released; the last published standalone release is 0.3.3 (`ghcr.io/openprx/openpr-webhook`). The next release carries the Sylvode version number, which is numerically lower than 0.3.x, so tools that compare versions must treat it as a new line, not a downgrade. The standalone history is frozen in `apps/webhook/CHANGELOG.md`; the standalone workflows under `apps/webhook/.github` were removed.
+- **AI task completion callback.** The worker marks an AI task `processing` when it delivers it, and nothing ended that state. With the new `[ai_task_callback]` section (and per-agent `[agents.ai_task_callback]` overrides; disabled by default) the agent that ran a worker AI task calls `POST /api/v1/ai/callbacks/task/{id}/complete` after a successful run and `.../fail` otherwise, using the bot token. A worker AI task that no agent matches is failed at once with a message naming the bot, instead of staying `processing`. See `apps/webhook/README.md` and `config/sylvode-webhook.example.toml`.
+- **macOS build fix.** The receiver no longer fails the build on macOS and other non-Linux targets with a dead-code error (`Leader::ExitedUnreaped` is built only on Linux).
+- **Windows.** The receiver is Unix only (process groups and signals). On a non-Unix target the library is empty and both executables print `sylvode-webhook is not supported on this platform` and exit 1, so `cargo build --workspace` still succeeds there; no Windows build of the receiver is shipped.
+
+#### Changed: stricter route matching
+
+- **A route that sets `bot_ids` or `bot_names` now matches only those bots.** `agent_matches_route` treated an unset list as a match for the bot identity, so a route with only `bot_ids = ["bot-1"]` (or only `bot_names`) matched every bot: a task for `bot-unknown` was accepted. Now a configured list must contain the task's bot; an omitted or empty list restricts nothing; when both lists are set, either one is enough (unchanged). Affected: configurations that relied on a route with only a bot-id or bot-name list to catch every bot, for example as a catch-all after the first match. Such a task is now answered `no_agent` (and a worker AI task is failed with the no-agent message) instead of running. To keep the old behaviour, remove `bot_ids` / `bot_names` from that route (and keep `bot_agent_types` or other lists if you want a narrower catch-all).
+
 ## [0.2.539] - 2026-11-18
 
 ### Added
