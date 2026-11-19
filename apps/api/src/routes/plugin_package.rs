@@ -15,7 +15,7 @@ use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, SemaphorePermit};
 use uuid::Uuid;
 
 use crate::{
@@ -45,7 +45,10 @@ use crate::{
     routes::form::{self, FormResponse, RecordResponse, UpdateRecordRequest},
 };
 
-static EXECUTIONS: Semaphore = Semaphore::const_new(4);
+/// How many plugin package runs (install probes and invocations) may execute at once across the
+/// process; a request beyond that is refused as busy rather than queued.
+const MAX_CONCURRENT_EXECUTIONS: usize = 4;
+static EXECUTIONS: Semaphore = Semaphore::const_new(MAX_CONCURRENT_EXECUTIONS);
 
 fn statement(sql: &str, values: Vec<sea_orm::Value>) -> Statement {
     Statement::from_sql_and_values(DbBackend::Postgres, sql, values)
@@ -576,7 +579,7 @@ enum ProbeFailure {
 
 /// Runs both order amount capabilities once against a fixed input, as every WASM install does.
 async fn probe_wasm(wasm: &[u8]) -> Result<(), ProbeFailure> {
-    let _capacity = EXECUTIONS.try_acquire().map_err(|_| ProbeFailure::Busy)?;
+    let _capacity = reserve_execution(&EXECUTIONS).map_err(|_| ProbeFailure::Busy)?;
     for capability in [PREVIEW, APPLY] {
         let probe = invoke_wasm_plugin(wasm.to_vec(), guest_input(capability, 2, 1250), runtime_policy())
             .await
@@ -1018,6 +1021,12 @@ const fn runtime_policy() -> PluginRuntimePolicy {
     }
 }
 
+/// Takes one slot of `executions` for the caller's run, or refuses at once when every slot is
+/// held, so a burst of plugin runs can never queue up behind each other.
+fn reserve_execution(executions: &Semaphore) -> Result<SemaphorePermit<'_>, ApiError> {
+    executions.try_acquire().map_err(|_| busy())
+}
+
 fn busy() -> ApiError {
     ApiError::typed(
         ApiErrorKind::LimitExceeded,
@@ -1422,7 +1431,7 @@ async fn execute(
         generation,
         request_id,
     };
-    let _capacity = EXECUTIONS.try_acquire().map_err(|_| busy())?;
+    let _capacity = reserve_execution(&EXECUTIONS)?;
     let tx = state.db.begin().await?;
     execution.check_binding(state, &tx).await?;
     let replay = execution.replay(&tx).await?;
@@ -1576,4 +1585,31 @@ async fn failure(
         .await?;
     tx.commit().await?;
     Err(audited_error(kind))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_CONCURRENT_EXECUTIONS, reserve_execution};
+    use crate::error::ApiErrorKind;
+    use tokio::sync::Semaphore;
+
+    /// The concurrency budget admits exactly `MAX_CONCURRENT_EXECUTIONS` runs, refuses the next
+    /// one as busy instead of queueing it, and admits a run again once a slot is released.
+    #[test]
+    fn the_execution_budget_refuses_runs_beyond_its_capacity() {
+        let executions = Semaphore::const_new(MAX_CONCURRENT_EXECUTIONS);
+        let mut held: Vec<_> = (0..MAX_CONCURRENT_EXECUTIONS)
+            .map(|_| reserve_execution(&executions).expect("a run within the budget is admitted"))
+            .collect();
+        assert_eq!(executions.available_permits(), 0, "{} runs hold every slot", held.len());
+
+        let refused = reserve_execution(&executions).expect_err("a run beyond the budget is refused");
+        assert_eq!(refused.kind(), ApiErrorKind::LimitExceeded);
+
+        drop(held.pop());
+        held.push(reserve_execution(&executions).expect("a released slot admits the next run"));
+        assert!(reserve_execution(&executions).is_err(), "the budget is full again");
+        drop(held);
+        assert_eq!(executions.available_permits(), MAX_CONCURRENT_EXECUTIONS);
+    }
 }

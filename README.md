@@ -183,7 +183,7 @@ allow_private = false
 
 ## WASM Plugins
 
-Per-project WebAssembly modules executed by `wasmtime` 49. Each invocation runs under a
+Per-project WebAssembly modules executed by `wasmtime` 50. Each invocation runs under a
 **fuel budget** (per manifest, at most 1e9), a **memory ceiling** (per manifest, at most
 128 MiB), a **wall-clock deadline** (per manifest, at most 30000 ms) that covers compiling the
 module as well as running it, a **module size limit** of 4 MiB, and store limits of one
@@ -537,7 +537,7 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 
 ## Tech Stack
 
-- **Backend**: Rust edition 2024, axum 0.8, SeaORM 1 (`sqlx-postgres`, rustls), `rust_decimal`, wasmtime 49, Loro (Flow collaboration), PostgreSQL 18
+- **Backend**: Rust edition 2024, axum 0.8, SeaORM 1 (`sqlx-postgres`, rustls), `rust_decimal`, wasmtime 50, Loro (Flow collaboration), PostgreSQL 18
 - **Frontend**: SvelteKit 2.50, Svelte 5, Tailwind 4, `@sveltejs/adapter-static`, Bun
 - **MCP**: JSON-RPC 2.0 over HTTP, stdio, and SSE
 - **Auth**: JWT access + refresh, bot tokens (`opr_`)
