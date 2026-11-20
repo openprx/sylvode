@@ -19,7 +19,7 @@ use crate::{
     error::ApiError,
     response::{ApiResponse, PaginatedData},
     services::{
-        ai_task_service::{CreateAiTaskInput, create_ai_task},
+        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
         bot_identity::is_bot_user,
         workflow_service::{allowed_state_values, default_project_state, resolve_effective_workflow_for_project},
     },
@@ -174,6 +174,7 @@ async fn queue_assignment_ai_task(
     let queued = create_ai_task(
         db,
         CreateAiTaskInput {
+            origin: DispatchOrigin::Request,
             project_id: input.project_id,
             ai_participant_id: input.assignee_id,
             actor_id: Some(input.actor_id),

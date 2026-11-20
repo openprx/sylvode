@@ -492,3 +492,129 @@ async fn the_dispatch_guard_refuses_bots_only_and_only_for_delegated_requests() 
     .await;
     scratch.drop_self().await;
 }
+
+#[tokio::test]
+async fn the_central_guard_refuses_every_agent_task_creation_under_a_delegated_request() {
+    use crate::services::ai_task_service::{
+        CreateAiTaskInput, DispatchOrigin, create_ai_task, queue_vote_requested_tasks_for_project,
+    };
+    let scratch = oauth_scratch_or_skip!("deleg_central_guard", Start::Complete);
+    let db = &scratch.db;
+    let one = seed_tenant(db, "central").await;
+    let bot = Uuid::new_v4();
+    exec(
+        db,
+        "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type) \
+         VALUES ($1, $2, '!', 'bot', 'user', true, 'bot')",
+        vec![bot.into(), format!("{bot}@example.test").into()],
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO ai_participants (id, project_id, name, model, provider, capabilities, registered_by) \
+         VALUES ($1, $2, 'central bot', 'm', 'p', '{}'::jsonb, $3)",
+        vec![bot.to_string().into(), one.project_id.into(), one.member_id.into()],
+    )
+    .await;
+    let tasks = || crate::oauth::test_support::count(db, "SELECT count(*) AS n FROM ai_tasks", vec![]);
+    let input = |origin: DispatchOrigin, key: &str| CreateAiTaskInput {
+        origin,
+        project_id: one.project_id,
+        ai_participant_id: bot,
+        actor_id: Some(one.member_id),
+        task_type: "issue_assigned".to_owned(),
+        reference_type: None,
+        reference_id: None,
+        priority: 0,
+        payload: serde_json::json!({}),
+        idempotency_key: Some(key.to_owned()),
+        max_attempts: 3,
+    };
+
+    // An ordinary request and the server itself create tasks.
+    assert!(
+        create_ai_task(db, input(DispatchOrigin::Request, "plain"))
+            .await
+            .expect("an ordinary request may create a task")
+            .is_some()
+    );
+    assert!(
+        create_ai_task(db, input(DispatchOrigin::System, "system"))
+            .await
+            .expect("the server may create a task")
+            .is_some()
+    );
+    let before = tasks().await;
+
+    let delegated = context(one.member_id, one.workspace_id, ProjectScope::All);
+    with_context(delegated, async {
+        // Every way in is refused before anything is written: the plain call, the helper that
+        // fans a vote request out to the project's agents, and a call from a spawned task that
+        // says whom it acts for.
+        assert!(create_ai_task(db, input(DispatchOrigin::Request, "d1")).await.is_err());
+        assert!(
+            create_ai_task(db, input(DispatchOrigin::Delegated, "d2"))
+                .await
+                .is_err()
+        );
+        assert!(
+            queue_vote_requested_tasks_for_project(
+                db,
+                DispatchOrigin::Request,
+                one.project_id,
+                "proposal-1",
+                serde_json::json!({})
+            )
+            .await
+            .is_err()
+        );
+        let owned = db.clone();
+        let project = one.project_id;
+        let spawned = tokio::spawn(async move {
+            create_ai_task(
+                &owned,
+                CreateAiTaskInput {
+                    origin: DispatchOrigin::Delegated,
+                    project_id: project,
+                    ai_participant_id: bot,
+                    actor_id: None,
+                    task_type: "issue_assigned".to_owned(),
+                    reference_type: None,
+                    reference_id: None,
+                    priority: 0,
+                    payload: serde_json::json!({}),
+                    idempotency_key: Some("d3".to_owned()),
+                    max_attempts: 3,
+                },
+            )
+            .await
+        });
+        assert!(
+            spawned.await.expect("task").is_err(),
+            "an explicit origin crosses the spawn"
+        );
+        // The server's own work is not a delegated request, even when it runs inside one's scope.
+        assert!(
+            create_ai_task(db, input(DispatchOrigin::System, "system-inside"))
+                .await
+                .expect("system origin")
+                .is_some()
+        );
+    })
+    .await;
+    assert_eq!(tasks().await, before + 1, "only the system task was created");
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn a_spawned_task_does_not_inherit_the_delegation_so_it_must_say_where_it_acts_for() {
+    let delegated = context(Uuid::new_v4(), Uuid::new_v4(), ProjectScope::All);
+    with_context(delegated, async {
+        assert!(super::delegated::current().is_some());
+        let inside_spawn = tokio::spawn(async { super::delegated::current().is_some() })
+            .await
+            .expect("task");
+        assert!(!inside_spawn, "the task local is not inherited by a spawned task");
+    })
+    .await;
+}

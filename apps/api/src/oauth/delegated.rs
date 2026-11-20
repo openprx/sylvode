@@ -412,6 +412,25 @@ pub async fn refuse_agent_dispatch(db: &impl ConnectionTrait, user_ids: &[Uuid])
     Ok(())
 }
 
+/// The refusal for anything that would start an agent on behalf of a connected application.
+pub fn agent_task_refused() -> ApiError {
+    ApiError::Forbidden(DISPATCH_REFUSED_MESSAGE.to_string())
+}
+
+/// The central guard behind every AI task creation: the request running on this task, if it is a
+/// delegated one, may not create an agent task, whatever route or helper asked for it. The
+/// middleware turns the marked response into `403 insufficient_scope`, as it does for the
+/// handler-level checks. Not delegated: always `Ok`.
+pub fn refuse_agent_task() -> Result<(), ApiError> {
+    match ACTIVE.try_with(Arc::clone) {
+        Ok(scope) => {
+            scope.dispatch_refused.store(true, Ordering::Release);
+            Err(agent_task_refused())
+        }
+        Err(_) => Ok(()),
+    }
+}
+
 /// The workspace a bot-or-delegated request works in, for handlers that were bot-only.
 ///
 /// A delegated request supplies the grant's workspace (its project set was enforced before the
