@@ -116,6 +116,18 @@ pub struct LoroCollabEngine {
     /// pending. Errors are never cached, so a malformed document is re-walked and re-rejected
     /// with the same typed error every time.
     editor_model_floor: OnceLock<CachedEditorModelFloor>,
+    /// The editor session's placement index (see [`crate::editor_structure::PlacementIndex`]),
+    /// built on the first structural edit of a command build and updated by each one after it.
+    ///
+    /// It is used only while `session_stamp` equals the document's state frontier and no local
+    /// transaction is pending, so any change the session did not make itself (an import, a revert,
+    /// an atom insert, ...) retires it; every such method also drops it explicitly. An operation
+    /// that fails drops it too.
+    session_index: Option<crate::editor_structure::PlacementIndex>,
+    session_stamp: Option<Frontiers>,
+    /// Test only: route structural and text edits through the recompute-every-time reference.
+    #[cfg(test)]
+    recompute_placements: bool,
 }
 
 #[derive(Debug)]
@@ -343,6 +355,10 @@ impl LoroCollabEngine {
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
             editor_model_floor: OnceLock::new(),
+            session_index: None,
+            session_stamp: None,
+            #[cfg(test)]
+            recompute_placements: false,
         };
         engine.rebuild_id_cache()?;
         Ok(engine)
@@ -368,6 +384,10 @@ impl LoroCollabEngine {
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
             editor_model_floor: OnceLock::new(),
+            session_index: None,
+            session_stamp: None,
+            #[cfg(test)]
+            recompute_placements: false,
         }
     }
 
@@ -499,6 +519,10 @@ impl LoroCollabEngine {
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
             editor_model_floor: OnceLock::new(),
+            session_index: None,
+            session_stamp: None,
+            #[cfg(test)]
+            recompute_placements: false,
         };
         fork.rebuild_id_cache()?;
         Ok(fork)
@@ -741,6 +765,31 @@ impl LoroCollabEngine {
     /// document, before any mutation is attempted, so a failed mutation cannot leave a stale entry.
     fn invalidate_editor_model_floor(&mut self) {
         self.editor_model_floor.take();
+        self.drop_session_index();
+    }
+
+    /// Drops the editor session's placement index.
+    fn drop_session_index(&mut self) {
+        self.session_index = None;
+        self.session_stamp = None;
+    }
+
+    /// Retires the session index unless the document is exactly at the state it was sealed at.
+    fn check_session_index(&mut self) {
+        if self.session_index.is_some()
+            && (self.doc.get_pending_txn_len() != 0 || self.session_stamp.as_ref() != Some(&self.doc.state_frontiers()))
+        {
+            self.drop_session_index();
+        }
+    }
+
+    /// Records the document state the session index describes, after an operation committed.
+    fn seal_session_index(&mut self) {
+        if self.session_index.is_some() && self.doc.get_pending_txn_len() == 0 {
+            self.session_stamp = Some(self.doc.state_frontiers());
+        } else {
+            self.drop_session_index();
+        }
     }
 
     /// The full-document walk behind [`Self::minimum_editor_model`].
@@ -828,28 +877,67 @@ impl LoroCollabEngine {
     }
 
     pub fn apply_content_operation(&mut self, operation: &Operation) -> Result<(), CollabError> {
-        self.invalidate_editor_model_floor();
+        self.editor_model_floor.take();
+        self.check_session_index();
         if let Operation::CreateNode { id, .. } = operation
             && self.id_to_tree.contains_key(id)
         {
             return Err(CollabError::DuplicateNode { id: id.to_string() });
         }
-        if crate::editor_doc_bridge::apply_editor_structure(&self.doc, operation)? {
+        #[cfg(test)]
+        let changed = if self.recompute_placements {
+            crate::editor_doc_bridge::apply_editor_structure(&self.doc, operation)
+        } else {
+            crate::editor_doc_bridge::apply_editor_structure_session(&self.doc, operation, &mut self.session_index)
+        };
+        #[cfg(not(test))]
+        let changed =
+            crate::editor_doc_bridge::apply_editor_structure_session(&self.doc, operation, &mut self.session_index);
+        if changed.inspect_err(|_| self.drop_session_index())? {
             self.doc.commit();
+            self.seal_session_index();
             return Ok(());
         }
         self.apply_operation(operation)
     }
 
     pub fn apply_operation(&mut self, operation: &Operation) -> Result<(), CollabError> {
-        self.invalidate_editor_model_floor();
+        self.editor_model_floor.take();
+        self.check_session_index();
+        let result = self.apply_operation_unchecked(operation);
+        match result {
+            Ok(()) => self.seal_session_index(),
+            Err(_) => self.drop_session_index(),
+        }
+        result
+    }
+
+    /// One text edit of an editor block, located through the session index.
+    fn apply_editor_text_edit(
+        &mut self,
+        id: &str,
+        index: u32,
+        delete_len: Option<u32>,
+        insert: Option<&str>,
+    ) -> Result<bool, CollabError> {
+        #[cfg(test)]
+        if self.recompute_placements {
+            return crate::editor_doc_bridge::apply_editor_text(&self.doc, id, index, delete_len, insert);
+        }
+        crate::editor_doc_bridge::apply_editor_text_session(
+            &self.doc,
+            id,
+            index,
+            delete_len,
+            insert,
+            &mut self.session_index,
+        )
+    }
+
+    fn apply_operation_unchecked(&mut self, operation: &Operation) -> Result<(), CollabError> {
         let editor_changed = match operation {
-            Operation::InsertText { id, index, text } => {
-                crate::editor_doc_bridge::apply_editor_text(&self.doc, id, *index, None, Some(text))?
-            }
-            Operation::DeleteText { id, index, len } => {
-                crate::editor_doc_bridge::apply_editor_text(&self.doc, id, *index, Some(*len), None)?
-            }
+            Operation::InsertText { id, index, text } => self.apply_editor_text_edit(id, *index, None, Some(text))?,
+            Operation::DeleteText { id, index, len } => self.apply_editor_text_edit(id, *index, Some(*len), None)?,
             _ => false,
         };
         if editor_changed {
@@ -1291,6 +1379,10 @@ impl CollabEngine for LoroCollabEngine {
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
             editor_model_floor: OnceLock::new(),
+            session_index: None,
+            session_stamp: None,
+            #[cfg(test)]
+            recompute_placements: false,
         };
         engine.rebuild_id_cache()?;
         Ok(engine)
@@ -1380,6 +1472,8 @@ fn encode_frontier_entries(entries: &BTreeMap<u64, i32>) -> Vec<u8> {
 
 #[cfg(test)]
 mod floor_equivalence_tests;
+#[cfg(test)]
+mod placement_session_tests;
 #[cfg(test)]
 mod read_side_effect_tests;
 #[cfg(test)]
