@@ -5,6 +5,8 @@ pub mod server;
 pub mod cli;
 pub mod cli_app;
 pub mod client;
+pub mod oauth;
+pub mod oauth_scopes;
 pub mod tools;
 
 pub use tools::get_all_tool_definitions;
