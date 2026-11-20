@@ -1434,8 +1434,21 @@ enum ResumeRefusal {
     OutOfRange,
     /// The frontier the client claims at `known_seq` is not the one the server recorded there.
     FrontierMismatch,
-    /// `(known_seq, head_seq]` is not fully readable from `collab_updates`.
+    /// `(known_seq, head_seq]` is not fully readable from `collab_updates`, or a retained
+    /// frontier in it does not decode.
     HistoryUnavailable,
+    /// `known_frontier` is not base64 of a well-formed version vector, so it cannot match any
+    /// recorded frontier.
+    InvalidFrontier,
+}
+
+/// Version-vector equality between a decoded client frontier and a retained one. Retained
+/// frontiers may be stored in a legacy byte order, so bytes are never compared directly.
+fn resume_frontier_matches(known: &[u8], retained: &[u8]) -> Result<bool, ResumeRefusal> {
+    collab_core::LoroCollabEngine::frontiers_equivalent(known, retained).map_err(|error| {
+        tracing::warn!(%error, "collab session: a retained frontier failed to decode");
+        ResumeRefusal::HistoryUnavailable
+    })
 }
 
 /// `collab-protocol-v1.md`'s `open document_id, known_seq, known_frontier` → reconnect resume.
@@ -1484,6 +1497,12 @@ async fn plan_resume(
     if known_seq < boot.snapshot_seq || known_seq > boot.head_seq {
         return Err(ResumeRefusal::OutOfRange);
     }
+    let known_bytes = BASE64
+        .decode(known_frontier)
+        .map_err(|_| ResumeRefusal::InvalidFrontier)?;
+    if collab_core::LoroCollabEngine::canonical_frontier(&known_bytes).is_err() {
+        return Err(ResumeRefusal::InvalidFrontier);
+    }
 
     // The `ack` that confirms the resume point back to the client. Sent whether or not there is
     // anything to replay, so "resumed, you are already at head" is distinguishable from a stalled
@@ -1496,7 +1515,7 @@ async fn plan_resume(
     };
 
     if known_seq == boot.head_seq {
-        if known_frontier != BASE64.encode(&boot.head_frontier) {
+        if !resume_frontier_matches(&known_bytes, &boot.head_frontier)? {
             return Err(ResumeRefusal::FrontierMismatch);
         }
         #[cfg(test)]
@@ -1524,10 +1543,10 @@ async fn plan_resume(
     let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
         return Err(ResumeRefusal::HistoryUnavailable);
     };
-    if BASE64.encode(&first.before_frontier) != known_frontier {
+    if !resume_frontier_matches(&known_bytes, &first.before_frontier)? {
         return Err(ResumeRefusal::FrontierMismatch);
     }
-    if last.after_frontier != boot.head_frontier {
+    if !resume_frontier_matches(&last.after_frontier, &boot.head_frontier)? {
         return Err(ResumeRefusal::HistoryUnavailable);
     }
 
@@ -2985,6 +3004,8 @@ mod tests {
                     .unwrap_or_else(|err| panic!("applying {} failed: {err}", path.display()));
             }
 
+            // A scratch database models a running api and worker.
+            crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
             Some(Scratch { db, name, admin_url })
         }
 
@@ -6697,6 +6718,8 @@ mod database_tests {
                 .unwrap_or_else(|err| panic!("applying {} failed: {err}", path.display()));
         }
 
+        // A scratch database models a running api and worker.
+        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 
@@ -7160,7 +7183,28 @@ mod database_tests {
     /// only integrity requirement `load` imposes on the frontier is
     /// `snapshot_frontier == head_frontier` (`running_frontier` never advances past
     /// `doc.snapshot_frontier` when there is nothing to fold in), which setting both columns to
-    /// the identical oversized value satisfies without needing a real CRDT frontier.
+    /// the identical oversized, well-formed version vector satisfies.
+    /// A well-formed version-vector frontier of at least `min_bytes` bytes: `load` compares
+    /// frontiers as decoded version vectors, so padding bytes are no longer a valid frontier.
+    /// Each entry is a 9-byte peer varint plus a 1-byte counter.
+    fn wide_frontier(min_bytes: usize) -> Vec<u8> {
+        fn varint(out: &mut Vec<u8>, mut value: u64) {
+            while value >= 0x80 {
+                out.push(value.to_le_bytes()[0] | 0x80);
+                value >>= 7;
+            }
+            out.push(value.to_le_bytes()[0]);
+        }
+        let entries = u64::try_from(min_bytes.div_ceil(10)).unwrap();
+        let mut out = Vec::with_capacity(min_bytes + 10);
+        varint(&mut out, entries);
+        for peer in 0..entries {
+            varint(&mut out, (1_u64 << 62) + peer);
+            out.push(2); // zigzag(1)
+        }
+        out
+    }
+
     #[tokio::test]
     async fn bootstrap_load_enforces_the_response_bytes_ceiling_against_a_real_document_row() {
         let scratch = scratch_or_skip!("bootstrap-response-bytes-ceiling");
@@ -7170,7 +7214,7 @@ mod database_tests {
 
         // Comfortably under `bootstrap_decoded_bytes_max` on its own (well under 1 MiB); large
         // enough that a genuinely wired response-bytes check, not merely luck, is what accepts it.
-        let modest_frontier = vec![7u8; 4096];
+        let modest_frontier = wide_frontier(4096);
         exec(
             &state,
             "UPDATE collab_documents SET snapshot_frontier = $1, head_frontier = $1 WHERE id = $2",
@@ -7190,7 +7234,7 @@ mod database_tests {
         // `head_frontier`'s length (its own definition is `snapshot.len() + sum(tail bytes)`), so
         // this exercises `check_bootstrap_response_bytes` without `check_bootstrap_decoded_bytes`
         // ever objecting first.
-        let oversized_frontier = vec![7u8; 9_500_000];
+        let oversized_frontier = wide_frontier(9_500_000);
         exec(
             &state,
             "UPDATE collab_documents SET snapshot_frontier = $1, head_frontier = $1 WHERE id = $2",

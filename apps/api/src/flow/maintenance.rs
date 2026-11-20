@@ -209,7 +209,8 @@ where
         .one(&tx)
         .await?
         .ok_or_else(|| ApiError::not_found("collab document not found".to_string()))?;
-        if locked.head_seq != boot.head_seq || locked.head_frontier != boot.head_frontier {
+        if locked.head_seq != boot.head_seq || !crate::flow::frontier::same(&locked.head_frontier, &boot.head_frontier)?
+        {
             tx.rollback().await?;
             return Err(ApiError::stale_frontier(
                 "document head changed during projection rebuild",
@@ -313,7 +314,7 @@ pub async fn rebuild_search(
         .ok_or_else(|| ApiError::not_found("collab document not found".to_string()))?;
         let locked_source = projection_row(&tx, object_id).await?.ok_or_else(ApiError::internal)?;
         if locked.head_seq != source.document_seq
-            || locked.head_frontier != source.document_frontier
+            || !crate::flow::frontier::same(&locked.head_frontier, &source.document_frontier)?
             || projection_hash(&locked_source)? != projection_hash(&source)?
         {
             tx.rollback().await?;

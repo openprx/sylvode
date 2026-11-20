@@ -20,9 +20,10 @@ use crate::{
     response::{ApiResponse, PaginatedData},
     services::{
         ai_task_service::{CreateAiTaskInput, create_ai_task},
+        bot_identity::is_bot_user,
         workflow_service::{allowed_state_values, default_project_state, resolve_effective_workflow_for_project},
     },
-    webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks},
+    webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
 };
 
 #[derive(Debug, Serialize)]
@@ -131,6 +132,76 @@ fn build_auth_extensions(claims: JwtClaims, bot: Option<Extension<BotAuthContext
 /// Sprints belong to a project, so the containment checked here is the project, which is strictly
 /// inside the workspace. A sprint in another project and a sprint that does not exist produce the
 /// same `BadRequest`, so this does not become an oracle of its own.
+/// One assignment of an issue, as queued by [`queue_assignment_ai_task`].
+struct AssignmentTaskInput {
+    project_id: Uuid,
+    issue_id: Uuid,
+    assignee_id: Uuid,
+    actor_id: Uuid,
+    trigger: &'static str,
+    idempotency_key: String,
+}
+
+/// What an assignment produced: whether the assignee is a bot, and the bots that received their
+/// task for it as a worker AI task (to pass to `trigger_webhooks_after_ai_tasks`).
+#[derive(Debug, Default)]
+struct AssignmentOutcome {
+    assignee_is_bot: bool,
+    ai_task_bots: Vec<Uuid>,
+}
+
+/// Whether assigning `assignee_id` queues an `issue_assigned` AI task.
+///
+/// Assigning a bot gives it exactly one bot task, and that task is the worker AI task: it is
+/// durable, retried, and completed or failed through the AI-task callbacks. A bot that assigns an
+/// issue to itself gets no task, since an action never hands its own actor a task. A person
+/// assignee gets none either.
+const fn assignment_queues_ai_task(actor_id: Uuid, assignee_id: Uuid, assignee_is_bot: bool) -> bool {
+    assignee_is_bot && actor_id.as_u128() != assignee_id.as_u128()
+}
+
+async fn queue_assignment_ai_task(
+    db: &impl ConnectionTrait,
+    input: AssignmentTaskInput,
+) -> Result<AssignmentOutcome, ApiError> {
+    let assignee_is_bot = is_bot_user(db, input.assignee_id).await?;
+    if !assignment_queues_ai_task(input.actor_id, input.assignee_id, assignee_is_bot) {
+        return Ok(AssignmentOutcome {
+            assignee_is_bot,
+            ai_task_bots: Vec::new(),
+        });
+    }
+    let queued = create_ai_task(
+        db,
+        CreateAiTaskInput {
+            project_id: input.project_id,
+            ai_participant_id: input.assignee_id,
+            actor_id: Some(input.actor_id),
+            task_type: "issue_assigned".to_string(),
+            reference_type: Some("work_item".to_string()),
+            reference_id: Some(input.issue_id),
+            priority: 10,
+            payload: json!({
+                "issue_id": input.issue_id.to_string(),
+                "project_id": input.project_id.to_string(),
+                "assignee_id": input.assignee_id.to_string(),
+                "trigger": input.trigger,
+            }),
+            idempotency_key: Some(input.idempotency_key),
+            max_attempts: 3,
+        },
+    )
+    .await?;
+    if queued.is_none() {
+        // The same key was queued before: the bot already holds its task for this assignment.
+        tracing::debug!(issue_id = %input.issue_id, bot_id = %input.assignee_id, "assignment task already queued");
+    }
+    Ok(AssignmentOutcome {
+        assignee_is_bot,
+        ai_task_bots: vec![input.assignee_id],
+    })
+}
+
 async fn ensure_sprint_in_project(
     db: &impl ConnectionTrait,
     sprint_id: Uuid,
@@ -274,8 +345,27 @@ pub async fn create_issue(
         ))
         .await?;
 
-    let created_assignee_ids = req.assignee_id.map(|v| vec![v]).unwrap_or_default();
-    trigger_webhooks(
+    // The assignment is queued as an AI task before any delivery is triggered, so every delivery
+    // of this request knows that the bot already has its one task for it.
+    let assignment = match req.assignee_id {
+        Some(assignee_id) => {
+            queue_assignment_ai_task(
+                &state.db,
+                AssignmentTaskInput {
+                    project_id,
+                    issue_id,
+                    assignee_id,
+                    actor_id: user_id,
+                    trigger: "issue.create",
+                    idempotency_key: format!("issue_assigned:{issue_id}:{assignee_id}"),
+                },
+            )
+            .await?
+        }
+        None => AssignmentOutcome::default(),
+    };
+
+    trigger_webhooks_after_ai_tasks(
         state.clone(),
         TriggerContext {
             event: WebhookEvent::IssueCreated,
@@ -290,66 +380,35 @@ pub async fn create_issue(
             mentions: Vec::new(),
             extra_data: None,
         },
+        assignment.ai_task_bots.clone(),
     );
 
-    if let Some(assignee_id) = req.assignee_id {
-        let is_bot_assignee = state
-            .db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT 1 FROM users WHERE id = $1 AND entity_type = 'bot'",
-                vec![assignee_id.into()],
-            ))
-            .await?
-            .is_some();
-
-        if is_bot_assignee {
-            let _ = create_ai_task(
-                &state.db,
-                CreateAiTaskInput {
-                    project_id,
-                    ai_participant_id: assignee_id,
-                    actor_id: Some(user_id),
-                    task_type: "issue_assigned".to_string(),
-                    reference_type: Some("work_item".to_string()),
-                    reference_id: Some(issue_id),
-                    priority: 10,
-                    payload: json!({
-                        "issue_id": issue_id.to_string(),
-                        "project_id": project_id.to_string(),
-                        "assignee_id": assignee_id.to_string(),
-                        "trigger": "issue.create",
-                    }),
-                    idempotency_key: Some(format!("issue_assigned:{issue_id}:{assignee_id}")),
-                    max_attempts: 3,
-                },
-            )
-            .await?;
-
-            trigger_webhooks(
-                state.clone(),
-                TriggerContext {
-                    event: WebhookEvent::IssueAssigned,
-                    workspace_id: project.workspace_id,
-                    project_id,
-                    actor_id: user_id,
-                    issue_id: Some(issue_id),
-                    comment_id: None,
-                    label_id: None,
-                    sprint_id: None,
-                    changes: Some(json!({
-                        "assignee_ids": {
-                            "old": [],
-                            "new": created_assignee_ids.iter().map(Uuid::to_string).collect::<Vec<_>>(),
-                            "added": created_assignee_ids.iter().map(Uuid::to_string).collect::<Vec<_>>(),
-                            "removed": []
-                        }
-                    })),
-                    mentions: Vec::new(),
-                    extra_data: None,
-                },
-            );
-        }
+    if assignment.assignee_is_bot {
+        let created_assignee_ids: Vec<String> = req.assignee_id.iter().map(Uuid::to_string).collect();
+        trigger_webhooks_after_ai_tasks(
+            state.clone(),
+            TriggerContext {
+                event: WebhookEvent::IssueAssigned,
+                workspace_id: project.workspace_id,
+                project_id,
+                actor_id: user_id,
+                issue_id: Some(issue_id),
+                comment_id: None,
+                label_id: None,
+                sprint_id: None,
+                changes: Some(json!({
+                    "assignee_ids": {
+                        "old": [],
+                        "new": created_assignee_ids,
+                        "added": created_assignee_ids,
+                        "removed": []
+                    }
+                })),
+                mentions: Vec::new(),
+                extra_data: None,
+            },
+            assignment.ai_task_bots,
+        );
     }
 
     Ok(ApiResponse::success(IssueResponse {
@@ -1030,44 +1089,32 @@ pub async fn update_issue(
 
     let to_single_or_empty = |value: Option<Uuid>| value.map(|id| vec![id.to_string()]).unwrap_or_default();
 
-    if assignee_changed {
-        if let Some(new_assignee) = updated.assignee_id {
-            let is_bot_assignee = state
-                .db
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "SELECT 1 FROM users WHERE id = $1 AND entity_type = 'bot'",
-                    vec![new_assignee.into()],
-                ))
-                .await?
-                .is_some();
-
-            if is_bot_assignee {
-                let _ = create_ai_task(
-                    &state.db,
-                    CreateAiTaskInput {
-                        project_id: current_issue.project_id,
-                        ai_participant_id: new_assignee,
-                        actor_id: Some(user_id),
-                        task_type: "issue_assigned".to_string(),
-                        reference_type: Some("work_item".to_string()),
-                        reference_id: Some(issue_id),
-                        priority: 10,
-                        payload: json!({
-                            "issue_id": issue_id.to_string(),
-                            "project_id": current_issue.project_id.to_string(),
-                            "assignee_id": new_assignee.to_string(),
-                            "trigger": "issue.update_assignee",
-                        }),
-                        idempotency_key: Some(format!("issue_assigned:{issue_id}:{new_assignee}")),
-                        max_attempts: 3,
-                    },
-                )
-                .await?;
-            }
+    // A change of assignee to a bot is queued as that bot's AI task before any delivery of this
+    // request is triggered; the state change or edit made in the same request is part of the
+    // same action and gives the bot no second task.
+    let assignment = match updated.assignee_id.filter(|_| assignee_changed) {
+        Some(new_assignee) => {
+            queue_assignment_ai_task(
+                &state.db,
+                AssignmentTaskInput {
+                    project_id: current_issue.project_id,
+                    issue_id,
+                    assignee_id: new_assignee,
+                    actor_id: user_id,
+                    trigger: "issue.update_assignee",
+                    // Every assignment is its own task: reassigning A -> B -> A gives A a new
+                    // task the second time, which a key of issue and assignee alone would
+                    // silently drop as a duplicate of the first.
+                    idempotency_key: format!("issue_assigned:{issue_id}:{new_assignee}:{}", Uuid::new_v4()),
+                },
+            )
+            .await?
         }
+        None => AssignmentOutcome::default(),
+    };
 
-        trigger_webhooks(
+    if assignee_changed {
+        trigger_webhooks_after_ai_tasks(
             state.clone(),
             TriggerContext {
                 event: WebhookEvent::IssueAssigned,
@@ -1089,11 +1136,12 @@ pub async fn update_issue(
                 mentions: Vec::new(),
                 extra_data: None,
             },
+            assignment.ai_task_bots.clone(),
         );
     }
 
     if state_changed {
-        trigger_webhooks(
+        trigger_webhooks_after_ai_tasks(
             state.clone(),
             TriggerContext {
                 event: WebhookEvent::IssueStateChanged,
@@ -1113,11 +1161,12 @@ pub async fn update_issue(
                 mentions: Vec::new(),
                 extra_data: None,
             },
+            assignment.ai_task_bots.clone(),
         );
     }
 
     if !updated_fields.is_empty() {
-        trigger_webhooks(
+        trigger_webhooks_after_ai_tasks(
             state.clone(),
             TriggerContext {
                 event: WebhookEvent::IssueUpdated,
@@ -1132,6 +1181,7 @@ pub async fn update_issue(
                 mentions: Vec::new(),
                 extra_data: None,
             },
+            assignment.ai_task_bots,
         );
     }
 
@@ -1555,6 +1605,333 @@ mod tenant_scoping_tests {
             .await
             .expect("a sprint of the issue's own project is accepted");
 
+        scratch.drop_self().await;
+    }
+}
+
+#[cfg(test)]
+mod assignment_rule_tests {
+    use super::assignment_queues_ai_task;
+    use uuid::Uuid;
+
+    #[test]
+    fn only_a_bot_assigned_by_someone_else_gets_an_assignment_task() {
+        let actor = Uuid::new_v4();
+        let assignee = Uuid::new_v4();
+        assert!(assignment_queues_ai_task(actor, assignee, true));
+        assert!(!assignment_queues_ai_task(actor, assignee, false), "a person");
+        assert!(
+            !assignment_queues_ai_task(assignee, assignee, true),
+            "a bot assigning itself"
+        );
+    }
+}
+
+/// Bot tasks produced by the issue routes against a migrated scratch database: worker AI tasks
+/// queued, and webhook deliveries that carry `bot_context`. Each scenario counts both, so a
+/// duplicate on either channel fails it.
+///
+/// The webhooks point at a loopback address, which outbound validation refuses; the refused
+/// delivery is still recorded with its full payload, which is what these tests read.
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod bot_task_dispatch_tests {
+    use super::{CreateIssueRequest, UpdateIssueRequest, create_issue, update_issue};
+    use crate::routes::context::tenant_fixture::{Tenant, count, exec, seed_bot_user, seed_tenant, seed_work_item};
+    use crate::scratch_or_skip;
+    use axum::extract::{Extension, Json, Path, State};
+    use platform::auth::{JwtClaims, TokenType};
+    use sea_orm::DatabaseConnection;
+    use std::time::Duration;
+    use uuid::Uuid;
+
+    const EVENTS: &str = r#"["issue.created","issue.assigned","issue.updated","issue.state_changed"]"#;
+
+    fn state_for(db: DatabaseConnection) -> platform::app::AppState {
+        use platform::config::{AppConfig, Secret};
+        platform::app::AppState {
+            cfg: AppConfig {
+                app_name: "bot-task-dispatch-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new("bot-task-dispatch-test-secret"),
+                jwt_access_ttl_seconds: 900,
+                jwt_refresh_ttl_seconds: 3600,
+                default_author_id: None,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db,
+            flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
+        }
+    }
+
+    fn claims(user: Uuid) -> JwtClaims {
+        JwtClaims {
+            sub: user.to_string(),
+            email: format!("{user}@tenant.test"),
+            token_type: TokenType::Access,
+            iat: 0,
+            exp: 0,
+            sv: 0,
+        }
+    }
+
+    struct Fixture {
+        tenant: Tenant,
+        bot_a: Uuid,
+        bot_b: Uuid,
+        human: Uuid,
+    }
+
+    /// A tenant with two bots, each with its own webhook, and a second person.
+    async fn fixture(db: &DatabaseConnection, tag: &str) -> Fixture {
+        let tenant = seed_tenant(db, tag).await;
+        let bot_a = seed_bot_user(db, &tenant).await;
+        let bot_b = seed_bot_user(db, &tenant).await;
+        let human = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active) VALUES ($1, $2, '!', 'h', 'user', true)",
+            vec![human.into(), format!("{human}@tenant.test").into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'member')",
+            vec![tenant.workspace_id.into(), human.into()],
+        )
+        .await;
+        for bot in [bot_a, bot_b] {
+            exec(
+                db,
+                "INSERT INTO webhooks (id, workspace_id, name, url, secret, events, active, bot_user_id, created_by) \
+                 VALUES ($1, $2, 'receiver', 'http://127.0.0.1:9/webhook', 'test-secret', $3::jsonb, true, $4, $5)",
+                vec![
+                    Uuid::new_v4().into(),
+                    tenant.workspace_id.into(),
+                    EVENTS.into(),
+                    bot.into(),
+                    tenant.member_id.into(),
+                ],
+            )
+            .await;
+        }
+        Fixture {
+            tenant,
+            bot_a,
+            bot_b,
+            human,
+        }
+    }
+
+    async fn assign_directly(db: &DatabaseConnection, issue: Uuid, assignee: Uuid) {
+        exec(
+            db,
+            "UPDATE work_items SET assignee_id = $2 WHERE id = $1",
+            vec![issue.into(), assignee.into()],
+        )
+        .await;
+    }
+
+    /// Waits until the workspace has recorded `expected` deliveries (they are sent from spawned
+    /// tasks), then gives stragglers a moment so an extra delivery would be counted too.
+    async fn settle_deliveries(db: &DatabaseConnection, workspace: Uuid, expected: i64) {
+        let sql = "SELECT COUNT(*)::bigint AS count FROM webhook_deliveries d \
+                   JOIN webhooks w ON w.id = d.webhook_id WHERE w.workspace_id = $1";
+        for _ in 0..200 {
+            if count(db, sql, vec![workspace.into()]).await >= expected {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            count(db, sql, vec![workspace.into()]).await,
+            expected,
+            "deliveries recorded"
+        );
+    }
+
+    async fn webhook_bot_tasks(db: &DatabaseConnection, bot: Uuid) -> i64 {
+        count(
+            db,
+            "SELECT COUNT(*)::bigint AS count FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id \
+             WHERE w.bot_user_id = $1 AND d.payload->'bot_context' IS NOT NULL \
+               AND d.payload->'bot_context' <> 'null'::jsonb",
+            vec![bot.into()],
+        )
+        .await
+    }
+
+    async fn ai_tasks(db: &DatabaseConnection, bot: Uuid) -> i64 {
+        count(
+            db,
+            "SELECT COUNT(*)::bigint AS count FROM ai_tasks WHERE ai_participant_id = $1",
+            vec![bot.into()],
+        )
+        .await
+    }
+
+    async fn bot_tasks(db: &DatabaseConnection, bot: Uuid) -> i64 {
+        ai_tasks(db, bot).await + webhook_bot_tasks(db, bot).await
+    }
+
+    fn update(assignee: Option<Uuid>, state: Option<&str>) -> UpdateIssueRequest {
+        UpdateIssueRequest {
+            title: None,
+            description: None,
+            state: state.map(str::to_string),
+            priority: None,
+            assignee_id: assignee,
+            due_at: None,
+            sprint_id: None,
+        }
+    }
+
+    async fn put(state: &platform::app::AppState, actor: Uuid, issue: Uuid, req: UpdateIssueRequest) {
+        update_issue(
+            State(state.clone()),
+            Extension(claims(actor)),
+            None,
+            Path(issue),
+            Json(req),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("update_issue failed: {err:?}"));
+    }
+
+    /// Before the fix this was three runs: `issue.created` and `issue.assigned` with
+    /// `bot_context`, plus the AI task.
+    #[tokio::test]
+    async fn create_with_a_bot_assignee_is_exactly_one_bot_task() {
+        let scratch = scratch_or_skip!("bot_task_create");
+        let db = &scratch.db;
+        let f = fixture(db, "bc").await;
+        let state = state_for(db.clone());
+
+        create_issue(
+            State(state),
+            Extension(claims(f.tenant.member_id)),
+            None,
+            Path(f.tenant.project_id),
+            Json(CreateIssueRequest {
+                title: "for the bot".to_string(),
+                description: None,
+                state: None,
+                priority: None,
+                assignee_id: Some(f.bot_a),
+                due_at: None,
+                sprint_id: None,
+            }),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("create_issue failed: {err:?}"));
+
+        // issue.created and issue.assigned, to each of the two webhooks.
+        settle_deliveries(db, f.tenant.workspace_id, 4).await;
+        assert_eq!(ai_tasks(db, f.bot_a).await, 1);
+        assert_eq!(bot_tasks(db, f.bot_a).await, 1, "one assignment, one bot task");
+        assert_eq!(bot_tasks(db, f.bot_b).await, 0);
+        scratch.drop_self().await;
+    }
+
+    /// Before the fix this was two runs: `issue.assigned` with `bot_context` plus the AI task.
+    /// An assignment made together with a state change is still one task.
+    #[tokio::test]
+    async fn assigning_later_and_reassigning_are_one_bot_task_each() {
+        let scratch = scratch_or_skip!("bot_task_assign");
+        let db = &scratch.db;
+        let f = fixture(db, "ba").await;
+        let state = state_for(db.clone());
+        let issue = seed_work_item(db, &f.tenant, "later").await;
+
+        put(
+            &state,
+            f.tenant.member_id,
+            issue,
+            update(Some(f.bot_a), Some("in_progress")),
+        )
+        .await;
+        // issue.assigned and issue.state_changed, to each webhook.
+        settle_deliveries(db, f.tenant.workspace_id, 4).await;
+        assert_eq!(bot_tasks(db, f.bot_a).await, 1, "assign later");
+
+        put(&state, f.tenant.member_id, issue, update(Some(f.bot_b), None)).await;
+        settle_deliveries(db, f.tenant.workspace_id, 6).await;
+        assert_eq!(bot_tasks(db, f.bot_b).await, 1, "reassigned bot");
+        assert_eq!(bot_tasks(db, f.bot_a).await, 1, "the previous bot gets nothing new");
+
+        put(&state, f.tenant.member_id, issue, update(Some(f.bot_a), None)).await;
+        settle_deliveries(db, f.tenant.workspace_id, 8).await;
+        assert_eq!(
+            bot_tasks(db, f.bot_a).await,
+            2,
+            "assigned back: a new task, not a dropped duplicate"
+        );
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn assigning_a_person_is_no_bot_task() {
+        let scratch = scratch_or_skip!("bot_task_human");
+        let db = &scratch.db;
+        let f = fixture(db, "bh").await;
+        let state = state_for(db.clone());
+        let issue = seed_work_item(db, &f.tenant, "human").await;
+        assign_directly(db, issue, f.bot_a).await;
+
+        put(&state, f.tenant.member_id, issue, update(Some(f.human), None)).await;
+        settle_deliveries(db, f.tenant.workspace_id, 2).await;
+        assert_eq!(bot_tasks(db, f.bot_a).await, 0);
+        assert_eq!(bot_tasks(db, f.bot_b).await, 0);
+        assert_eq!(
+            count(db, "SELECT COUNT(*)::bigint AS count FROM ai_tasks", vec![]).await,
+            0
+        );
+        scratch.drop_self().await;
+    }
+
+    /// The bot's own change to done used to come back to it as a `status_changed` bot task.
+    #[tokio::test]
+    async fn a_bot_changing_its_own_issue_gets_no_task() {
+        let scratch = scratch_or_skip!("bot_task_self");
+        let db = &scratch.db;
+        let f = fixture(db, "bs").await;
+        let state = state_for(db.clone());
+        let issue = seed_work_item(db, &f.tenant, "mine").await;
+        assign_directly(db, issue, f.bot_a).await;
+
+        put(&state, f.bot_a, issue, update(None, Some("done"))).await;
+        settle_deliveries(db, f.tenant.workspace_id, 2).await;
+        assert_eq!(bot_tasks(db, f.bot_a).await, 0, "own state change");
+
+        // A bot assigning an issue to itself is its own action too.
+        let claimed = seed_work_item(db, &f.tenant, "claimed").await;
+        put(&state, f.bot_a, claimed, update(Some(f.bot_a), None)).await;
+        settle_deliveries(db, f.tenant.workspace_id, 4).await;
+        assert_eq!(bot_tasks(db, f.bot_a).await, 0, "self assignment");
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn others_changing_a_bot_issue_still_reach_the_bot() {
+        let scratch = scratch_or_skip!("bot_task_others");
+        let db = &scratch.db;
+        let f = fixture(db, "bo").await;
+        let state = state_for(db.clone());
+        let issue = seed_work_item(db, &f.tenant, "theirs").await;
+        assign_directly(db, issue, f.bot_a).await;
+
+        put(&state, f.human, issue, update(None, Some("in_progress"))).await;
+        settle_deliveries(db, f.tenant.workspace_id, 2).await;
+        assert_eq!(webhook_bot_tasks(db, f.bot_a).await, 1, "a person's state change");
+
+        put(&state, f.bot_b, issue, update(None, Some("done"))).await;
+        settle_deliveries(db, f.tenant.workspace_id, 4).await;
+        assert_eq!(webhook_bot_tasks(db, f.bot_a).await, 2, "another bot's state change");
+        assert_eq!(bot_tasks(db, f.bot_b).await, 0, "the acting bot is not the assignee");
+        assert_eq!(ai_tasks(db, f.bot_a).await, 0);
         scratch.drop_self().await;
     }
 }

@@ -1,16 +1,21 @@
+pub mod extension;
 pub mod library;
+pub mod preferences;
+
+use std::collections::HashMap;
 
 use axum::{
     Extension, Json,
     extract::{Path, State},
     response::IntoResponse,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, SemaphorePermit};
 use uuid::Uuid;
 
 use crate::{
@@ -30,13 +35,20 @@ use crate::{
             decode_asset, default_placements, enabled_contributions, normalize_placements, parse_guest_amount,
             read_decimal, read_order_inputs, sha256, validate_key,
         },
+        package_v3::{
+            AnyManifest, ManifestV3, Profile, SCHEMA_V3, Slot, UI_DISPLAY, merge_v3_layout, normalize_v3_placements,
+            parse_manifest, plugin_error, validate_v3_grants,
+        },
         runtime::{PluginFailureKind, PluginRuntimeOutput, invoke_wasm_plugin},
     },
     response::ApiResponse,
     routes::form::{self, FormResponse, RecordResponse, UpdateRecordRequest},
 };
 
-static EXECUTIONS: Semaphore = Semaphore::const_new(4);
+/// How many plugin package runs (install probes and invocations) may execute at once across the
+/// process; a request beyond that is refused as busy rather than queued.
+const MAX_CONCURRENT_EXECUTIONS: usize = 4;
+static EXECUTIONS: Semaphore = Semaphore::const_new(MAX_CONCURRENT_EXECUTIONS);
 
 fn statement(sql: &str, values: Vec<sea_orm::Value>) -> Statement {
     Statement::from_sql_and_values(DbBackend::Postgres, sql, values)
@@ -50,6 +62,95 @@ fn enabled() -> Result<(), ApiError> {
             ApiErrorKind::FeatureDisabled,
             "Form plugin packages are disabled",
         ))
+    }
+}
+
+/// Protocol 3, the `ui` profile and every extension endpoint sit behind this switch.
+pub(crate) fn extensions_enabled() -> bool {
+    std::env::var("SV_FORM_PLUGIN_EXTENSIONS_ENABLED").as_deref() == Ok("1")
+}
+
+pub(crate) fn require_extensions() -> Result<(), ApiError> {
+    if extensions_enabled() {
+        Ok(())
+    } else {
+        Err(plugin_error(
+            ApiErrorKind::FeatureDisabled,
+            "extensions_disabled",
+            "Form plugin extensions are disabled",
+        ))
+    }
+}
+
+pub(crate) fn contribution_unavailable() -> ApiError {
+    plugin_error(
+        ApiErrorKind::NotFound,
+        "contribution_unavailable",
+        "plugin contribution is not available",
+    )
+}
+
+pub(crate) fn is_v3(manifest: &Value) -> bool {
+    manifest.get("schema_version").and_then(Value::as_str) == Some(SCHEMA_V3)
+}
+
+/// Stored v3 manifests passed validation on the way in; a decoding failure is corruption.
+pub(crate) fn stored_manifest_v3(manifest: &Value) -> Result<ManifestV3, ApiError> {
+    ManifestV3::deserialize(manifest).map_err(|_| ApiError::Internal)
+}
+
+#[derive(FromQueryResult)]
+struct LayoutRow {
+    key: String,
+    contribution_id: String,
+    enabled: bool,
+    position: i16,
+}
+
+/// Project layout rows of protocol 3 contributions, grouped by plugin key.
+pub(crate) async fn stored_layouts<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    key: Option<&str>,
+) -> Result<HashMap<String, Vec<Placement>>, ApiError> {
+    let rows = LayoutRow::find_by_statement(statement(
+        "SELECT key,contribution_id,enabled,position FROM form_plugin_contribution_layouts
+          WHERE project_id=$1 AND ($2::text IS NULL OR key=$2) ORDER BY key,contribution_id",
+        vec![project_id.into(), key.map(str::to_owned).into()],
+    ))
+    .all(db)
+    .await?;
+    let mut layouts: HashMap<String, Vec<Placement>> = HashMap::new();
+    for row in rows {
+        layouts.entry(row.key).or_default().push(Placement {
+            id: row.contribution_id,
+            enabled: row.enabled,
+            position: u8::try_from(row.position).map_err(|_| ApiError::Internal)?,
+        });
+    }
+    Ok(layouts)
+}
+
+pub(crate) fn v3_layout(manifest: &ManifestV3, stored: &HashMap<String, Vec<Placement>>) -> Vec<Placement> {
+    merge_v3_layout(manifest, stored.get(&manifest.key).map_or(&[], Vec::as_slice))
+}
+
+/// Placements as published for one package: protocol 3 from the project layout table, protocol 2
+/// from the per-package layout row, protocol 1 none.
+fn placements_json(
+    manifest: Option<&Value>,
+    stored_v2: Option<Value>,
+    stored_v3: &HashMap<String, Vec<Placement>>,
+) -> Result<Option<Value>, ApiError> {
+    match manifest {
+        Some(manifest) if is_v3(manifest) => {
+            let placements = v3_layout(&stored_manifest_v3(manifest)?, stored_v3);
+            serde_json::to_value(placements)
+                .map(Some)
+                .map_err(|_| ApiError::Internal)
+        }
+        Some(manifest) => layout_json(manifest.pointer("/ui/contributions"), stored_v2),
+        None => Ok(None),
     }
 }
 
@@ -109,9 +210,20 @@ async fn admin(state: &AppState, claims: &JwtClaims, project_id: Uuid) -> Result
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InstallRequest {
-    manifest: Manifest,
-    wasm_base64: String,
+    manifest: Value,
+    #[serde(default)]
+    wasm_base64: Option<String>,
     web_base64: String,
+}
+
+/// A package that passed every install check, ready to be stored.
+struct ValidatedPackage {
+    key: String,
+    version: String,
+    manifest: Value,
+    package_sha256: String,
+    wasm: Vec<u8>,
+    html: String,
 }
 
 #[derive(FromQueryResult, Serialize)]
@@ -130,9 +242,24 @@ struct Package {
 }
 
 impl Package {
-    fn with_layout(mut self) -> Result<Self, ApiError> {
-        self.placements = layout_json(self.manifest.pointer("/ui/contributions"), self.placements)?;
+    fn with_layouts(mut self, stored_v3: &HashMap<String, Vec<Placement>>) -> Result<Self, ApiError> {
+        self.placements = placements_json(Some(&self.manifest), self.placements.take(), stored_v3)?;
         Ok(self)
+    }
+
+    /// Resolves placements for a single package, reading the v3 layout rows when needed.
+    async fn with_layout<C: ConnectionTrait>(self, db: &C, project_id: Uuid) -> Result<Self, ApiError> {
+        let stored_v3 = if is_v3(&self.manifest) {
+            let key = self
+                .manifest
+                .get("key")
+                .and_then(Value::as_str)
+                .ok_or(ApiError::Internal)?;
+            stored_layouts(db, project_id, Some(key)).await?
+        } else {
+            HashMap::new()
+        };
+        self.with_layouts(&stored_v3)
     }
 }
 
@@ -146,11 +273,22 @@ struct Binding {
     placements: Option<Value>,
     #[serde(skip)]
     declarations: Option<Value>,
+    /// The bound manifest when it uses protocol 3.
+    #[serde(skip)]
+    manifest_v3: Option<Value>,
 }
 
+const BINDING_FIELDS: &str = "b.key,b.package_id,b.generation,b.grants,l.placements,
+    p.manifest->'ui'->'contributions' AS declarations,
+    CASE WHEN p.manifest->>'schema_version'='openpr.plugin.v3' THEN p.manifest END AS manifest_v3";
+
 impl Binding {
-    fn with_layout(mut self) -> Result<Self, ApiError> {
-        self.placements = layout_json(self.declarations.as_ref(), self.placements)?;
+    fn with_layouts(mut self, stored_v3: &HashMap<String, Vec<Placement>>) -> Result<Self, ApiError> {
+        self.placements = if let Some(manifest) = &self.manifest_v3 {
+            placements_json(Some(manifest), None, stored_v3)?
+        } else {
+            layout_json(self.declarations.as_ref(), self.placements.take())?
+        };
         Ok(self)
     }
 }
@@ -161,6 +299,7 @@ struct BindingActivity {
     request_id: Uuid,
     actor_id: Uuid,
     created_at: Timestamp,
+    reason: Option<String>,
     previous_package_id: Option<Uuid>,
     previous_version: Option<String>,
     previous_grants: Vec<String>,
@@ -180,6 +319,7 @@ struct Catalog {
     bindings: Vec<Binding>,
     binding_history: Vec<BindingActivity>,
     layout_supported: bool,
+    extension_supported: bool,
 }
 
 pub async fn list(
@@ -188,6 +328,7 @@ pub async fn list(
     Path(project_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     admin(&state, &claims, project_id).await?;
+    let stored_v3 = stored_layouts(&state.db, project_id, None).await?;
     let items = Package::find_by_statement(statement(
         "SELECT p.id,p.manifest,p.package_sha256,p.installed_by,p.installed_at,p.library_source_id,l.placements
            FROM form_plugin_packages p LEFT JOIN form_plugin_layouts l ON l.package_id=p.id
@@ -197,20 +338,22 @@ pub async fn list(
     .all(&state.db)
     .await?
     .into_iter()
-    .map(Package::with_layout)
+    .map(|package| package.with_layouts(&stored_v3))
     .collect::<Result<Vec<_>, _>>()?;
     let bindings = Binding::find_by_statement(statement(
-        "SELECT b.key,b.package_id,b.generation,b.grants,l.placements,p.manifest->'ui'->'contributions' AS declarations
+        &format!(
+            "SELECT {BINDING_FIELDS}
            FROM form_plugin_bindings b
            LEFT JOIN form_plugin_packages p ON p.id=b.package_id
            LEFT JOIN form_plugin_layouts l ON l.package_id=b.package_id
-          WHERE b.project_id=$1 ORDER BY b.key",
+          WHERE b.project_id=$1 ORDER BY b.key"
+        ),
         vec![project_id.into()],
     ))
     .all(&state.db)
     .await?
     .into_iter()
-    .map(Binding::with_layout)
+    .map(|binding| binding.with_layouts(&stored_v3))
     .collect::<Result<Vec<_>, _>>()?;
     let binding_history = BindingActivity::find_by_statement(statement(
         "WITH activity AS (
@@ -218,7 +361,7 @@ pub async fn list(
                    lag(c.response) OVER (PARTITION BY c.key ORDER BY (c.response->>'generation')::bigint) AS previous
               FROM form_plugin_binding_changes c WHERE c.project_id=$1
         )
-         SELECT a.key,a.request_id,a.actor_id,a.created_at,
+         SELECT a.key,a.request_id,a.actor_id,a.created_at,a.request->>'reason' AS reason,
                 older.id AS previous_package_id,older.version AS previous_version,
                 ARRAY(SELECT jsonb_array_elements_text(COALESCE(a.previous->'grants','[]'::jsonb))) AS previous_grants,
                 a.previous->'placements' AS previous_placements,
@@ -239,6 +382,7 @@ pub async fn list(
         bindings,
         binding_history,
         layout_supported: layouts_enabled(),
+        extension_supported: extensions_enabled(),
     }))
 }
 
@@ -249,7 +393,7 @@ pub async fn install(
     Json(request): Json<InstallRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let (workspace_id, actor_id) = admin(&state, &claims, project_id).await?;
-    let (manifest, package_sha256, wasm, html) = validate_install(&request).await?;
+    let package = validate_install(request).await?;
     let tx = state.db.begin().await?;
     lock_admin(&tx, workspace_id, actor_id).await?;
     lock_project(&tx, project_id).await?;
@@ -259,20 +403,21 @@ pub async fn install(
           WHERE p.project_id=$1 AND p.key=$2 AND p.version=$3",
         vec![
             project_id.into(),
-            request.manifest.key.clone().into(),
-            request.manifest.version.clone().into(),
+            package.key.clone().into(),
+            package.version.clone().into(),
         ],
     ))
     .one(&tx)
     .await?;
     if let Some(previous) = previous {
-        if previous.library_source_id.is_some() || previous.package_sha256 != package_sha256 {
+        if previous.library_source_id.is_some() || previous.package_sha256 != package.package_sha256 {
             return Err(ApiError::Conflict(
                 "a different package already uses this key and version".into(),
             ));
         }
+        let previous = previous.with_layout(&tx, project_id).await?;
         tx.commit().await?;
-        return Ok(ApiResponse::success(previous.with_layout()?));
+        return Ok(ApiResponse::success(previous));
     }
     let count = tx
         .query_one(statement(
@@ -285,53 +430,163 @@ pub async fn install(
     if count >= 32 {
         return Err(bad("project package limit reached"));
     }
-    let package = Package::find_by_statement(statement(
+    let installed = Package::find_by_statement(statement(
         "INSERT INTO form_plugin_packages (project_id,key,version,manifest,package_sha256,wasm_bytes,html,installed_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,manifest,package_sha256,installed_by,installed_at,library_source_id,NULL::jsonb AS placements",
         vec![
             project_id.into(),
-            request.manifest.key.into(),
-            request.manifest.version.into(),
-            manifest.into(),
-            package_sha256.into(),
-            wasm.into(),
-            html.into(),
+            package.key.into(),
+            package.version.into(),
+            package.manifest.into(),
+            package.package_sha256.into(),
+            package.wasm.into(),
+            package.html.into(),
             actor_id.into(),
         ],
     ))
     .one(&tx)
     .await?
     .ok_or(ApiError::Internal)?;
+    let installed = installed.with_layout(&tx, project_id).await?;
     tx.commit().await?;
-    Ok(ApiResponse::success(package.with_layout()?))
+    Ok(ApiResponse::success(installed))
 }
 
-async fn validate_install(request: &InstallRequest) -> Result<(Value, String, Vec<u8>, String), ApiError> {
-    request.manifest.validate()?;
-    if request.manifest.ui.contributions.is_some() {
+/// Dispatches on `schema_version`: protocol 1/2 keep their checks and messages, protocol 3
+/// follows the typed reasons of the extension contract.
+async fn validate_install(request: InstallRequest) -> Result<ValidatedPackage, ApiError> {
+    match parse_manifest(request.manifest)? {
+        AnyManifest::V2(manifest) => validate_v2(manifest, request.wasm_base64, &request.web_base64).await,
+        AnyManifest::V3(manifest) => validate_v3(manifest, request.wasm_base64, &request.web_base64).await,
+    }
+}
+
+async fn validate_v2(
+    manifest: Manifest,
+    wasm_base64: Option<String>,
+    web_base64: &str,
+) -> Result<ValidatedPackage, ApiError> {
+    manifest.validate()?;
+    if manifest.ui.contributions.is_some() {
         require_layouts_flag()?;
     }
-    let wasm = decode_asset(&request.manifest.wasm, "plugin.wasm", &request.wasm_base64, WASM_BYTES)?;
-    let html = String::from_utf8(decode_asset(
-        &request.manifest.ui.entry,
-        "panel.html",
-        &request.web_base64,
-        WEB_BYTES,
-    )?)
-    .map_err(|_| bad("plugin panel must be UTF-8 HTML"))?;
+    let wasm_base64 = wasm_base64.ok_or_else(|| bad("invalid plugin asset path or size"))?;
+    let wasm = decode_asset(&manifest.wasm, "plugin.wasm", &wasm_base64, WASM_BYTES)?;
+    let html = String::from_utf8(decode_asset(&manifest.ui.entry, "panel.html", web_base64, WEB_BYTES)?)
+        .map_err(|_| bad("plugin panel must be UTF-8 HTML"))?;
     if html.trim().is_empty() || html.contains('\0') {
         return Err(bad("plugin panel HTML is empty or invalid"));
     }
-    let _capacity = EXECUTIONS.try_acquire().map_err(|_| busy())?;
-    for capability in [PREVIEW, APPLY] {
-        let probe = invoke_wasm_plugin(wasm.clone(), guest_input(capability, 2, 1250), runtime_policy())
-            .await
-            .map_err(|_| bad("WASM failed its ABI and capability installation check"))?;
-        parse_guest_amount(&probe.output)?;
+    match probe_wasm(&wasm).await {
+        Ok(()) => {}
+        Err(ProbeFailure::Busy) => return Err(busy()),
+        Err(ProbeFailure::Invoke) => return Err(bad("WASM failed its ABI and capability installation check")),
+        Err(ProbeFailure::Output(error)) => return Err(error),
     }
-    let manifest = serde_json::to_value(&request.manifest).map_err(|_| ApiError::Internal)?;
-    let package_sha256 = sha256(&serde_jcs::to_vec(&manifest).map_err(|_| ApiError::Internal)?);
-    Ok((manifest, package_sha256, wasm, html))
+    let value = serde_json::to_value(&manifest).map_err(|_| ApiError::Internal)?;
+    let package_sha256 = sha256(&serde_jcs::to_vec(&value).map_err(|_| ApiError::Internal)?);
+    Ok(ValidatedPackage {
+        key: manifest.key,
+        version: manifest.version,
+        manifest: value,
+        package_sha256,
+        wasm,
+        html,
+    })
+}
+
+async fn validate_v3(
+    manifest: ManifestV3,
+    wasm_base64: Option<String>,
+    web_base64: &str,
+) -> Result<ValidatedPackage, ApiError> {
+    require_extensions()?;
+    manifest.validate()?;
+    let profile_mismatch = || {
+        plugin_error(
+            ApiErrorKind::InvalidUpdate,
+            "profile_mismatch",
+            "the package profile does not match the uploaded assets",
+        )
+    };
+    let wasm = match (manifest.profile, wasm_base64, manifest.wasm.as_ref()) {
+        (Profile::Ui, None, _) => Vec::new(),
+        (Profile::Wasm, Some(encoded), Some(asset)) => {
+            let wasm = decode_v3_asset(asset.size, &asset.sha256, &encoded, WASM_BYTES)?;
+            match probe_wasm(&wasm).await {
+                Ok(()) => wasm,
+                Err(ProbeFailure::Busy) => return Err(busy()),
+                Err(ProbeFailure::Invoke | ProbeFailure::Output(_)) => {
+                    return Err(plugin_error(
+                        ApiErrorKind::InvalidUpdate,
+                        "wasm_probe_failed",
+                        "WASM failed its ABI and capability installation check",
+                    ));
+                }
+            }
+        }
+        _ => return Err(profile_mismatch()),
+    };
+    let html = String::from_utf8(decode_v3_asset(
+        manifest.entry.size,
+        &manifest.entry.sha256,
+        web_base64,
+        WEB_BYTES,
+    )?)
+    .map_err(|_| asset_invalid("plugin panel must be UTF-8 HTML"))?;
+    if html.trim().is_empty() || html.contains('\0') {
+        return Err(asset_invalid("plugin panel HTML is empty or invalid"));
+    }
+    let value = serde_json::to_value(&manifest).map_err(|_| ApiError::Internal)?;
+    let package_sha256 = sha256(&serde_jcs::to_vec(&value).map_err(|_| ApiError::Internal)?);
+    Ok(ValidatedPackage {
+        key: manifest.key,
+        version: manifest.version,
+        manifest: value,
+        package_sha256,
+        wasm,
+        html,
+    })
+}
+
+fn asset_invalid(message: &str) -> ApiError {
+    plugin_error(ApiErrorKind::InvalidUpdate, "asset_invalid", message)
+}
+
+/// Decodes a protocol 3 asset whose path and digest format the manifest validation already fixed.
+fn decode_v3_asset(size: usize, digest: &str, encoded: &str, limit: usize) -> Result<Vec<u8>, ApiError> {
+    if size == 0 || size > limit || encoded.len() > limit.div_ceil(3) * 4 {
+        return Err(asset_invalid("invalid plugin asset path or size"));
+    }
+    let bytes = STANDARD
+        .decode(encoded)
+        .map_err(|_| asset_invalid("invalid plugin asset base64"))?;
+    if bytes.len() != size || sha256(&bytes) != digest {
+        return Err(plugin_error(
+            ApiErrorKind::ChecksumMismatch,
+            "asset_digest_mismatch",
+            "plugin asset size or SHA-256 does not match the manifest",
+        ));
+    }
+    Ok(bytes)
+}
+
+enum ProbeFailure {
+    Busy,
+    Invoke,
+    Output(ApiError),
+}
+
+/// Runs both order amount capabilities once against a fixed input, as every WASM install does.
+async fn probe_wasm(wasm: &[u8]) -> Result<(), ProbeFailure> {
+    let _capacity = reserve_execution(&EXECUTIONS).map_err(|_| ProbeFailure::Busy)?;
+    for capability in [PREVIEW, APPLY] {
+        let probe = invoke_wasm_plugin(wasm.to_vec(), guest_input(capability, 2, 1250), runtime_policy())
+            .await
+            .map_err(|_| ProbeFailure::Invoke)?;
+        parse_guest_amount(&probe.output).map_err(ProbeFailure::Output)?;
+    }
+    Ok(())
 }
 
 async fn lock_project(tx: &DatabaseTransaction, project_id: Uuid) -> Result<(), ApiError> {
@@ -376,14 +631,7 @@ pub async fn bind(
 ) -> Result<impl IntoResponse, ApiError> {
     let (workspace_id, actor_id) = admin(&state, &claims, project_id).await?;
     validate_key(&key)?;
-    request.grants.sort_unstable();
-    let valid_grants = match request.grants.as_slice() {
-        [] => true,
-        [preview] => preview == PREVIEW,
-        [apply, preview] => apply == APPLY && preview == PREVIEW,
-        _ => false,
-    };
-    if !valid_grants || (request.package_id.is_none() && !request.grants.is_empty()) || request.request_id.is_nil() {
+    if request.request_id.is_nil() {
         return Err(bad("invalid binding grants or request ID"));
     }
     let tx = state.db.begin().await?;
@@ -392,27 +640,41 @@ pub async fn bind(
     // Only a key with a real installation can acquire a binding, including disable requests.
     let selected = tx
         .query_one(statement(
-            "SELECT manifest->'ui'->'contributions' AS declarations FROM form_plugin_packages
+            "SELECT manifest FROM form_plugin_packages
           WHERE project_id=$1 AND key=$2 AND ($3::uuid IS NULL OR (id=$3 AND library_revoked_at IS NULL)) LIMIT 1",
             vec![project_id.into(), key.clone().into(), request.package_id.into()],
         ))
         .await?
         .ok_or_else(|| ApiError::not_found("plugin package not installed for this project and key"))?;
-    let declarations: Option<Value> = if request.package_id.is_some() {
-        selected.try_get("", "declarations")?
+    // Every binding writer holds the project lock, so the current binding cannot move from here on.
+    let target_v3 = if request.package_id.is_some() {
+        let manifest: Value = selected.try_get("", "manifest")?;
+        is_v3(&manifest).then_some(manifest)
     } else {
         None
     };
-    if declarations.is_some() {
-        require_layouts_flag()?;
-    }
-    if let Some(placements) = &mut request.placements {
-        let declared = declarations
-            .as_ref()
-            .ok_or_else(|| bad("this version has no configurable layout"))?;
-        let declared: Vec<Contribution> = serde_json::from_value(declared.clone()).map_err(|_| ApiError::Internal)?;
-        normalize_placements(&declared, placements)?;
-    }
+    let v3 = if let Some(manifest) = &target_v3 {
+        require_extensions()?;
+        let manifest = stored_manifest_v3(manifest)?;
+        validate_v3_grants(Some(&manifest), &mut request.grants)?;
+        if let Some(placements) = &mut request.placements {
+            normalize_v3_placements(&manifest, placements)?;
+        }
+        true
+    } else if request.package_id.is_none() && current_binding_is_v3(&tx, project_id, &key).await? {
+        validate_v3_grants(None, &mut request.grants)?;
+        if request.placements.is_some() {
+            return Err(plugin_error(
+                ApiErrorKind::InvalidUpdate,
+                "placements_invalid",
+                "a disable request cannot carry placements",
+            ));
+        }
+        false
+    } else {
+        validate_legacy_binding(&mut request, &selected)?;
+        false
+    };
     tx.execute(statement(
         "INSERT INTO form_plugin_bindings (project_id,key) VALUES ($1,$2) ON CONFLICT DO NOTHING",
         vec![project_id.into(), key.clone().into()],
@@ -420,30 +682,45 @@ pub async fn bind(
     .await?;
     let current = lock_binding(&tx, project_id, &key).await?;
     let payload = serde_json::to_value(&request).map_err(|_| ApiError::Internal)?;
-    if let Some(receipt) = tx.query_one(statement(
-        "SELECT actor_id,request,response FROM form_plugin_binding_changes WHERE project_id=$1 AND key=$2 AND request_id=$3",
-        vec![project_id.into(), key.clone().into(), request.request_id.into()],
-    )).await? {
-        if receipt.try_get::<Uuid>("", "actor_id")? != actor_id
-            || receipt.try_get::<Value>("", "request")? != payload
-        {
-            return Err(ApiError::Conflict("binding request ID has already been used".into()));
-        }
-        let response = receipt.try_get::<Value>("", "response")?;
+    if let Some(response) = binding_receipt(&tx, project_id, &key, request.request_id, actor_id, &payload).await? {
         tx.commit().await?;
         return Ok(ApiResponse::success(response));
     }
     if current.generation != request.expected_generation {
         return Err(stale_binding());
     }
-    if let (Some(package_id), Some(placements)) = (request.package_id, &request.placements) {
-        let serialized = serde_json::to_value(placements).map_err(|_| ApiError::Internal)?;
-        tx.execute(statement(
-            "INSERT INTO form_plugin_layouts (package_id,placements) VALUES ($1,$2)
+    match (request.package_id, &request.placements) {
+        (Some(_), Some(placements)) if v3 => {
+            // Rows of contributions the target does not declare stay for a later rollback.
+            for placement in placements {
+                tx.execute(statement(
+                    "INSERT INTO form_plugin_contribution_layouts
+                        (project_id,key,contribution_id,enabled,position,updated_by)
+                     VALUES ($1,$2,$3,$4,$5,$6)
+                     ON CONFLICT (project_id,key,contribution_id) DO UPDATE SET enabled=EXCLUDED.enabled,
+                        position=EXCLUDED.position,updated_by=EXCLUDED.updated_by,updated_at=clock_timestamp()",
+                    vec![
+                        project_id.into(),
+                        key.clone().into(),
+                        placement.id.clone().into(),
+                        placement.enabled.into(),
+                        i16::from(placement.position).into(),
+                        actor_id.into(),
+                    ],
+                ))
+                .await?;
+            }
+        }
+        (Some(package_id), Some(placements)) => {
+            let serialized = serde_json::to_value(placements).map_err(|_| ApiError::Internal)?;
+            tx.execute(statement(
+                "INSERT INTO form_plugin_layouts (package_id,placements) VALUES ($1,$2)
                 ON CONFLICT (package_id) DO UPDATE SET placements=EXCLUDED.placements,updated_at=clock_timestamp()",
-            vec![package_id.into(), serialized.into()],
-        ))
-        .await?;
+                vec![package_id.into(), serialized.into()],
+            ))
+            .await?;
+        }
+        _ => {}
     }
     tx.execute(statement(
         "UPDATE form_plugin_bindings SET package_id=$3, generation=generation+1, grants=$4
@@ -458,36 +735,124 @@ pub async fn bind(
     .await?;
     let binding = lock_binding(&tx, project_id, &key).await?;
     let response = serde_json::to_value(binding).map_err(|_| ApiError::Internal)?;
+    insert_binding_receipt(&tx, project_id, &key, request.request_id, actor_id, payload, &response).await?;
+    tx.commit().await?;
+    Ok(ApiResponse::success(response))
+}
+
+/// Protocol 1/2 grant and layout rules with their original messages.
+fn validate_legacy_binding(request: &mut BindRequest, selected: &sea_orm::QueryResult) -> Result<(), ApiError> {
+    request.grants.sort_unstable();
+    let valid_grants = match request.grants.as_slice() {
+        [] => true,
+        [preview] => preview == PREVIEW,
+        [apply, preview] => apply == APPLY && preview == PREVIEW,
+        _ => false,
+    };
+    if !valid_grants || (request.package_id.is_none() && !request.grants.is_empty()) {
+        return Err(bad("invalid binding grants or request ID"));
+    }
+    let declarations = if request.package_id.is_some() {
+        selected
+            .try_get::<Value>("", "manifest")?
+            .pointer("/ui/contributions")
+            .cloned()
+    } else {
+        None
+    };
+    if declarations.is_some() {
+        require_layouts_flag()?;
+    }
+    if let Some(placements) = &mut request.placements {
+        let declared = declarations.ok_or_else(|| bad("this version has no configurable layout"))?;
+        let declared: Vec<Contribution> = serde_json::from_value(declared).map_err(|_| ApiError::Internal)?;
+        normalize_placements(&declared, placements)?;
+    }
+    Ok(())
+}
+
+async fn current_binding_is_v3(tx: &DatabaseTransaction, project_id: Uuid, key: &str) -> Result<bool, ApiError> {
+    Ok(tx
+        .query_one(statement(
+            "SELECT 1 FROM form_plugin_bindings b JOIN form_plugin_packages p ON p.id=b.package_id
+              WHERE b.project_id=$1 AND b.key=$2 AND p.manifest->>'schema_version'=$3",
+            vec![project_id.into(), key.into(), SCHEMA_V3.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Returns the stored response when this request ID already changed the binding with the same
+/// request body; a different body under the same ID is a conflict.
+async fn binding_receipt(
+    tx: &DatabaseTransaction,
+    project_id: Uuid,
+    key: &str,
+    request_id: Uuid,
+    actor_id: Uuid,
+    payload: &Value,
+) -> Result<Option<Value>, ApiError> {
+    let Some(receipt) = tx
+        .query_one(statement(
+            "SELECT actor_id,request,response FROM form_plugin_binding_changes
+              WHERE project_id=$1 AND key=$2 AND request_id=$3",
+            vec![project_id.into(), key.into(), request_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    if receipt.try_get::<Uuid>("", "actor_id")? != actor_id || &receipt.try_get::<Value>("", "request")? != payload {
+        return Err(ApiError::Conflict("binding request ID has already been used".into()));
+    }
+    Ok(Some(receipt.try_get::<Value>("", "response")?))
+}
+
+async fn insert_binding_receipt(
+    tx: &DatabaseTransaction,
+    project_id: Uuid,
+    key: &str,
+    request_id: Uuid,
+    actor_id: Uuid,
+    payload: Value,
+    response: &Value,
+) -> Result<(), ApiError> {
     tx.execute(statement(
         "INSERT INTO form_plugin_binding_changes (project_id,key,request_id,actor_id,request,response)
          VALUES ($1,$2,$3,$4,$5,$6)",
         vec![
             project_id.into(),
             key.into(),
-            request.request_id.into(),
+            request_id.into(),
             actor_id.into(),
             payload.into(),
             response.clone().into(),
         ],
     ))
     .await?;
-    tx.commit().await?;
-    Ok(ApiResponse::success(response))
+    Ok(())
 }
 
 async fn lock_binding(tx: &DatabaseTransaction, project_id: Uuid, key: &str) -> Result<Binding, ApiError> {
-    Binding::find_by_statement(statement(
-        "SELECT b.key,b.package_id,b.generation,b.grants,l.placements,p.manifest->'ui'->'contributions' AS declarations
+    let binding = Binding::find_by_statement(statement(
+        &format!(
+            "SELECT {BINDING_FIELDS}
            FROM form_plugin_bindings b
            LEFT JOIN form_plugin_packages p ON p.id=b.package_id
            LEFT JOIN form_plugin_layouts l ON l.package_id=b.package_id
-          WHERE b.project_id=$1 AND b.key=$2 FOR UPDATE OF b",
+          WHERE b.project_id=$1 AND b.key=$2 FOR UPDATE OF b"
+        ),
         vec![project_id.into(), key.into()],
     ))
     .one(tx)
     .await?
-    .ok_or_else(stale_binding)?
-    .with_layout()
+    .ok_or_else(stale_binding)?;
+    let stored_v3 = if binding.manifest_v3.is_some() {
+        stored_layouts(tx, project_id, Some(key)).await?
+    } else {
+        HashMap::new()
+    };
+    binding.with_layouts(&stored_v3)
 }
 
 const fn stale_binding() -> ApiError {
@@ -656,6 +1021,12 @@ const fn runtime_policy() -> PluginRuntimePolicy {
     }
 }
 
+/// Takes one slot of `executions` for the caller's run, or refuses at once when every slot is
+/// held, so a burst of plugin runs can never queue up behind each other.
+fn reserve_execution(executions: &Semaphore) -> Result<SemaphorePermit<'_>, ApiError> {
+    executions.try_acquire().map_err(|_| busy())
+}
+
 fn busy() -> ApiError {
     ApiError::typed(
         ApiErrorKind::LimitExceeded,
@@ -682,11 +1053,12 @@ struct Receipt {
     duration_ms: Option<i64>,
     fuel_consumed: Option<i64>,
     created_at: Timestamp,
+    contribution_id: Option<String>,
 }
 
 const RECEIPT_FIELDS: &str = "i.request_id,i.actor_id,i.record_id,i.package_id,p.key,p.version,
     i.generation,i.capability,i.preview_request_id,i.record_updated_at,i.schema_version,i.status,
-    i.amount_cents,i.error_kind,i.duration_ms,i.fuel_consumed,i.created_at";
+    i.amount_cents,i.error_kind,i.duration_ms,i.fuel_consumed,i.created_at,i.contribution_id";
 
 const RECEIPT_SOURCE: &str = "FROM form_plugin_invocations i JOIN form_plugin_packages p ON p.id=i.package_id";
 
@@ -719,6 +1091,13 @@ pub(crate) struct Execution {
     capability: String,
     request_id: Uuid,
     preview_request_id: Option<Uuid>,
+    /// Set for protocol 3 invocations, which address one declared record contribution.
+    contribution: Option<ContributionTarget>,
+}
+
+pub(crate) struct ContributionTarget {
+    id: String,
+    form_key: String,
 }
 
 impl Execution {
@@ -761,7 +1140,28 @@ impl Execution {
         if !binding.grants.contains(&self.capability) {
             return Err(ApiError::forbidden("plugin capability has not been granted"));
         }
-        if let Some(placements) = binding.placements {
+        if let Some(target) = &self.contribution {
+            require_extensions()?;
+            if !binding.grants.iter().any(|grant| grant == UI_DISPLAY) {
+                return Err(contribution_unavailable());
+            }
+            let manifest = stored_manifest_v3(binding.manifest_v3.as_ref().ok_or_else(contribution_unavailable)?)?;
+            if !v3_record_target(&manifest, &target.id, &target.form_key) {
+                return Err(contribution_unavailable());
+            }
+            let placements: Vec<Placement> = binding
+                .placements
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|_| ApiError::Internal)?
+                .unwrap_or_default();
+            if !placements
+                .iter()
+                .any(|placement| placement.id == target.id && placement.enabled)
+            {
+                return Err(contribution_unavailable());
+            }
+        } else if let Some(placements) = binding.placements {
             require_layouts_flag()?;
             let placements: Vec<Placement> = serde_json::from_value(placements).map_err(|_| ApiError::Internal)?;
             if !placements.into_iter().any(|placement| placement.enabled) {
@@ -809,7 +1209,21 @@ impl Execution {
         {
             return Err(ApiError::Conflict("request ID is bound to a different preview".into()));
         }
+        if receipt
+            .as_ref()
+            .is_some_and(|row| row.contribution_id.as_deref() != self.contribution_id())
+        {
+            return Err(plugin_error(
+                ApiErrorKind::InvalidUpdate,
+                "contribution_mismatch",
+                "request ID is bound to a different contribution",
+            ));
+        }
         Ok(receipt)
+    }
+
+    fn contribution_id(&self) -> Option<&str> {
+        self.contribution.as_ref().map(|target| target.id.as_str())
     }
 
     async fn insert_receipt(
@@ -831,12 +1245,14 @@ impl Execution {
             error_kind.into(),
             duration_ms.into(),
             fuel_consumed.into(),
+            self.contribution_id().map(str::to_owned).into(),
         ]);
         tx.execute(statement(
             "INSERT INTO form_plugin_invocations
             (project_id,actor_id,record_id,package_id,generation,capability,request_id,preview_request_id,
-             record_updated_at,schema_version,status,amount_cents,error_kind,duration_ms,fuel_consumed)
-              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
+             record_updated_at,schema_version,status,amount_cents,error_kind,duration_ms,fuel_consumed,
+             contribution_id)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
             values,
         ))
         .await?;
@@ -978,11 +1394,11 @@ pub async fn invoke(
     let execution = Execution {
         workspace_id: context.form.workspace_id,
         project_id: context.form.project_id,
-        key: active.key,
+        key: active.key.clone(),
         package_id,
         generation: request.generation,
         actor_id: context.actor_id,
-        role: context.role,
+        role: context.role.clone(),
         form_id: context.form.id,
         record_id,
         created_by: context.record.created_by,
@@ -991,28 +1407,42 @@ pub async fn invoke(
         capability: request.capability,
         request_id: request.request_id,
         preview_request_id: request.preview_request_id,
+        contribution: None,
     };
-    let result = |amount_cents| {
-        ApiResponse::success(InvokeResult {
-            amount_cents,
-            package_id,
-            version: active.version.clone(),
-            generation: request.generation,
-            request_id: request.request_id,
-        })
+    Ok(ApiResponse::success(execute(&state, context, execution, active).await?))
+}
+
+/// Shared by the protocol 1/2 and protocol 3 invoke routes once the execution is identified.
+async fn execute(
+    state: &AppState,
+    context: RecordContext,
+    execution: Execution,
+    active: ActivePackage,
+) -> Result<InvokeResult, ApiError> {
+    let package_id = execution.package_id;
+    let generation = execution.generation;
+    let request_id = execution.request_id;
+    let record_id = execution.record_id;
+    let version = active.version;
+    let result = |amount_cents| InvokeResult {
+        amount_cents,
+        package_id,
+        version: version.clone(),
+        generation,
+        request_id,
     };
-    let _capacity = EXECUTIONS.try_acquire().map_err(|_| busy())?;
+    let _capacity = reserve_execution(&EXECUTIONS)?;
     let tx = state.db.begin().await?;
-    execution.check_binding(&state, &tx).await?;
+    execution.check_binding(state, &tx).await?;
     let replay = execution.replay(&tx).await?;
     tx.commit().await?;
     if let Some(receipt) = replay {
         return Ok(result(receipt_result(&receipt)?));
     }
 
-    let expected_amount = execution.preview_amount(&state).await?;
+    let expected_amount = execution.preview_amount(state).await?;
     let Ok((quantity, unit_price_cents)) = read_order_inputs(&context.record.values) else {
-        return failure(&state, &execution, "invalid_record", None, None)
+        return failure(state, &execution, "invalid_record", None, None)
             .await
             .map(result);
     };
@@ -1029,7 +1459,7 @@ pub async fn invoke(
                 "execution_failed"
             };
             return failure(
-                &state,
+                state,
                 &execution,
                 kind,
                 i64::try_from(err.duration_ms).ok(),
@@ -1042,14 +1472,14 @@ pub async fn invoke(
     let duration_ms = i64::try_from(runtime.duration_ms).ok();
     let fuel_consumed = runtime.fuel_consumed.and_then(|fuel| i64::try_from(fuel).ok());
     let Ok(amount) = parse_guest_amount(&runtime.output) else {
-        return failure(&state, &execution, "invalid_output", duration_ms, fuel_consumed)
+        return failure(state, &execution, "invalid_output", duration_ms, fuel_consumed)
             .await
             .map(result);
     };
     let amount_cents = i64::try_from(amount).map_err(|_| ApiError::Internal)?;
     if let Some(expected_amount) = expected_amount {
         if amount_cents != expected_amount {
-            return failure(&state, &execution, "preview_mismatch", duration_ms, fuel_consumed)
+            return failure(state, &execution, "preview_mismatch", duration_ms, fuel_consumed)
                 .await
                 .map(result);
         }
@@ -1060,7 +1490,7 @@ pub async fn invoke(
             title: explicit_title,
             source: Some(
                 json!({"type":"form_plugin","actor_id":execution.actor_id,"package_id":package_id,
-                "version":active.version,"generation":request.generation,"request_id":request.request_id}),
+                "version":version,"generation":generation,"request_id":request_id}),
             ),
             idempotency_key: None,
             expected_updated_at: Some(context.record.updated_at),
@@ -1072,7 +1502,7 @@ pub async fn invoke(
             runtime,
         };
         match form::update_record_for_plugin(
-            &state,
+            state,
             &context.form,
             context.record,
             commit.execution.actor_id,
@@ -1085,7 +1515,7 @@ pub async fn invoke(
             Ok(_) => {}
             Err(ApiError::BadRequest(_)) => {
                 // The Form transaction has rolled back. Record only the failure classification.
-                return failure(&state, &commit.execution, "form_rejected", duration_ms, fuel_consumed)
+                return failure(state, &commit.execution, "form_rejected", duration_ms, fuel_consumed)
                     .await
                     .map(result);
             }
@@ -1093,7 +1523,7 @@ pub async fn invoke(
         }
     } else {
         let tx = state.db.begin().await?;
-        execution.check_binding(&state, &tx).await?;
+        execution.check_binding(state, &tx).await?;
         if let Some(receipt) = execution.replay(&tx).await? {
             let amount = receipt_result(&receipt)?;
             tx.commit().await?;
@@ -1121,6 +1551,20 @@ pub async fn invoke(
     Ok(result(amount_cents))
 }
 
+/// A protocol 3 record contribution may drive the amount capabilities only when it targets the
+/// WASM Form key and that key is the record's Form key.
+pub(crate) fn v3_record_target(manifest: &ManifestV3, contribution_id: &str, form_key: &str) -> bool {
+    let Some(wasm) = &manifest.wasm else {
+        return false;
+    };
+    manifest.profile == Profile::Wasm
+        && wasm.form_key == form_key
+        && manifest.contribution(contribution_id).is_some_and(|contribution| {
+            matches!(contribution.slot, Slot::FormRecordDetail | Slot::FormRecordActions)
+                && contribution.form_key.as_deref() == Some(form_key)
+        })
+}
+
 async fn failure(
     state: &AppState,
     execution: &Execution,
@@ -1141,4 +1585,31 @@ async fn failure(
         .await?;
     tx.commit().await?;
     Err(audited_error(kind))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_CONCURRENT_EXECUTIONS, reserve_execution};
+    use crate::error::ApiErrorKind;
+    use tokio::sync::Semaphore;
+
+    /// The concurrency budget admits exactly `MAX_CONCURRENT_EXECUTIONS` runs, refuses the next
+    /// one as busy instead of queueing it, and admits a run again once a slot is released.
+    #[test]
+    fn the_execution_budget_refuses_runs_beyond_its_capacity() {
+        let executions = Semaphore::const_new(MAX_CONCURRENT_EXECUTIONS);
+        let mut held: Vec<_> = (0..MAX_CONCURRENT_EXECUTIONS)
+            .map(|_| reserve_execution(&executions).expect("a run within the budget is admitted"))
+            .collect();
+        assert_eq!(executions.available_permits(), 0, "{} runs hold every slot", held.len());
+
+        let refused = reserve_execution(&executions).expect_err("a run beyond the budget is refused");
+        assert_eq!(refused.kind(), ApiErrorKind::LimitExceeded);
+
+        drop(held.pop());
+        held.push(reserve_execution(&executions).expect("a released slot admits the next run"));
+        assert!(reserve_execution(&executions).is_err(), "the budget is full again");
+        drop(held);
+        assert_eq!(executions.available_permits(), MAX_CONCURRENT_EXECUTIONS);
+    }
 }

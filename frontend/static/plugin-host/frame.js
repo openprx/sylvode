@@ -9,7 +9,8 @@ function initialize(event) {
 	const { data, source, ports } = event;
 	if (
 		source !== window.parent || data?.protocol !== protocol ||
-		data.type !== 'sylvode-plugin-shell-init' || typeof data.html !== 'string' || ports.length !== 1
+		data.type !== 'sylvode-plugin-shell-init' || typeof data.html !== 'string' || ports.length !== 1 ||
+		(data.bridge === 2 && (data.context === null || typeof data.context !== 'object'))
 	) return;
 	window.removeEventListener('message', initialize);
 
@@ -27,6 +28,15 @@ function initialize(event) {
 			return;
 		}
 		connected = true;
+		if (data.bridge === 2) {
+			frame.contentWindow.postMessage({
+				protocol: 2,
+				type: 'sylvode-plugin-connect',
+				grants: data.grants,
+				context: data.context
+			}, '*', ports);
+			return;
+		}
 		frame.contentWindow.postMessage({
 			protocol,
 			type: 'sylvode-plugin-connect',

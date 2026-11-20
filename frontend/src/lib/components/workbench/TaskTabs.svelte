@@ -125,7 +125,7 @@
 			role="tablist"
 			tabindex="-1"
 			aria-label={$t('workbench.openTasks')}
-			class="flex min-h-11 overflow-x-auto px-3"
+			class="flex min-h-[26px] overflow-x-auto px-3"
 			data-testid="task-tablist"
 			aria-describedby="task-reorder-hint"
 		>
@@ -158,7 +158,7 @@
 						aria-selected={$workbench.active === tab.key}
 						aria-controls={`task-panel-${domId(tab.key)}`}
 						tabindex={$workbench.active === tab.key ? 0 : -1}
-						class="min-h-11 max-w-56 cursor-grab select-none truncate px-3 text-sm active:cursor-grabbing"
+						class="min-h-[26px] max-w-56 cursor-grab select-none truncate px-3 text-sm active:cursor-grabbing"
 						data-testid="task-tab"
 						draggable="true"
 						data-dragging={dragging === tab.key}
@@ -195,7 +195,7 @@
 					<button
 						type="button"
 						aria-label={$t('workbench.close', { values: { title: title(tab) } })}
-						class="min-h-11 min-w-9 text-slate-500 hover:text-slate-900"
+						class="min-h-[26px] min-w-7 text-slate-500 hover:text-slate-900"
 						data-testid="task-tab-close"
 						data-tab-key={tab.key}
 						draggable="false"

@@ -757,6 +757,14 @@ mod sql_tests {
     async fn body_asset_sql_ownership_reference_rollback_and_history_retention() {
         let scratch = scratch_or_skip!(&format!("page_asset_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
+        // This test drives the SQL below the process barrier directly. It runs at the pre-0106 floor
+        // with no reader leases, so nothing in it depends on fabricated leases.
+        exec(
+            db,
+            "UPDATE flow_runtime_capabilities SET minimum_reader_version=2 WHERE singleton",
+            vec![],
+        )
+        .await;
         let owner = Uuid::new_v4();
         let scope_id = Uuid::new_v4();
         let a = Uuid::new_v4();

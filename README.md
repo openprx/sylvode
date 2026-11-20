@@ -3,7 +3,7 @@
 Open-source project management platform with built-in governance, a universal
 business-form engine, collaborative Flow pages, WASM plugins, and a first-class
 MCP server for AI agents. Built with **Rust** (Axum + SeaORM), **SvelteKit**, and
-**PostgreSQL 16**.
+**PostgreSQL 18**.
 
 > **Formerly OpenPR.** Releases up to 0.2.21 were published as OpenPR. Existing
 > OpenPR names (the `mcp-server` CLI commands, `config/openpr.toml`, `OPENPR_*`
@@ -92,7 +92,7 @@ records, and a workspace-scoped bot token; it refuses non-local API URLs unless
 ### Local development
 
 ```bash
-# Prerequisites: the Rust toolchain pinned in rust-toolchain.toml, Bun, PostgreSQL 16
+# Prerequisites: the Rust toolchain pinned in rust-toolchain.toml, Bun, PostgreSQL 18
 scripts/dev-up.sh                                  # start only PostgreSQL from compose
 cp config/sylvode.example.toml config/sylvode.toml
 $EDITOR config/sylvode.toml                        # database.url, auth.jwt_secret, [mcp]
@@ -137,6 +137,7 @@ being silently ignored.
 | `[logging]` | all | `filter` — `tracing` directives, validated at startup (`<service>=info,tower_http=info`), `format` — `json` \| `text` (`json`), `output` — `stderr` \| `stdout` (`stderr`) |
 | `[storage]` | api | `backend` — `local` \| `s3` (`local`), `dir` (`./uploads`); `[storage.s3]` with `endpoint`, `bucket`, `region` (`us-east-1`), `access_key_id`, `secret_access_key`, `session_token`, required only when `backend = "s3"` and left unread otherwise |
 | `[audit]` | worker | `operation_log_retention_days` (`30`, range `1..=3650`) |
+| `[ai_tasks]` | worker | `processing_timeout_secs` (`3600`, range `60..=604800`; how long a delivered AI task may stay `processing` before the worker re-queues it, or fails it after its last attempt) |
 | `[migrations]` | api | `replay` (`false`), `continue_on_error` (`false`) — both are escape hatches; turn one on deliberately, then turn it back off |
 | `[outbound]` | api, worker | `allowed_hosts` — a TOML **array of strings** (`[]`), `allow_private` (`false`) |
 | `[flow]` | api, worker | `dispatch_max_attempts` (`10`), `collab_allowed_origins` — a TOML array of `scheme://host[:port]` origins allowed to open live collaboration sessions (`[]`; empty refuses every session, so list the web UI's origin to enable live editing), `conversion_reap_interval_secs` (`60`, range `1..=86400`; how often the api reclaims conversion jobs left `started` for more than 15 minutes) |
@@ -183,7 +184,7 @@ allow_private = false
 
 ## WASM Plugins
 
-Per-project WebAssembly modules executed by `wasmtime` 49. Each invocation runs under a
+Per-project WebAssembly modules executed by `wasmtime` 50. Each invocation runs under a
 **fuel budget** (per manifest, at most 1e9), a **memory ceiling** (per manifest, at most
 128 MiB), a **wall-clock deadline** (per manifest, at most 30000 ms) that covers compiling the
 module as well as running it, a **module size limit** of 4 MiB, and store limits of one
@@ -220,6 +221,58 @@ governance config, AI task), while webhook subscriptions are validated against a
 narrower 14-entry allow-list in `apps/api/src/entities/webhook.rs`. **Legacy
 webhook delivery has no retry** — `retry_count` is always written as `0`.
 
+**Bot tasks.** A webhook with a `bot_user_id` carries the tasks of that bot, on
+two channels: worker AI tasks (durable, retried, ended through the AI-task
+callbacks) and webhook deliveries that carry `bot_context`. One action gives a
+bot at most one bot task:
+
+- Assigning an issue to a bot (on create or later) and mentioning a bot in a
+  comment queue a worker AI task (`issue_assigned`, `comment_requested`). That
+  is the bot's task for the action: every delivery the same request emits
+  (`issue.created`, `issue.assigned`, `issue.state_changed`, `issue.updated`,
+  `comment.created`) reaches that bot's webhook **without** `bot_context`.
+- Any other activity on an issue assigned to a bot (a person or another bot
+  changes its state, edits it, deletes it) is delivered to the bot's webhook with
+  `bot_context`, as before.
+- An action never gives a task to the bot that performed it: a bot's own state
+  change, edit, comment, self-assignment or task completion reaches its webhook
+  without `bot_context` and queues no AI task for it. Other bots are unaffected.
+
+A delivery without `bot_context` is still sent, so a subscription keeps seeing
+every event it subscribes to as a plain notification; `sylvode-webhook` answers
+it `not_bot_task`.
+
+**How a worker AI task ends.** The worker picks a pending task up (`processing`,
+one attempt more) and delivers it to the bot's webhook. Every attempt ends in
+exactly one of these ways, each writing the `retried` or `failed` task event and
+the matching `ai_task.*` business event with the reason, and `ai.task_failed`
+when the task is failed:
+
+- **The receiver takes it** (`dispatched`) and reports the outcome through
+  `POST /api/v1/ai/callbacks/task/{id}/complete` or `.../fail`. Only the task's
+  own AI participant (its bot token) or a system administrator may call them.
+  A callback may name its attempt (`?attempt=N`, the delivery's `attempts`); it
+  is then accepted only while that attempt is `processing`, so a late callback
+  never ends a re-queued or later attempt. `fail` with `"retry": false` fails
+  the task at once instead of scheduling a retry.
+- **The receiver declines it** in its answer: `no_agent`, `ignored`, `refused`
+  (for example safe mode), or an HTTP 4xx other than 408, 409, 425 and 429. The
+  worker fails the task at once, without using up the remaining attempts, with
+  an error message that quotes the answer: a repeat seconds later would get the
+  same answer, and the receiver may hold no token that can end the task itself.
+  Fix the receiver's configuration and assign the task again.
+- **The delivery fails** (no active webhook, a transport error, HTTP 5xx, 408,
+  409, 425, 429): the task goes back to `pending` with a delay of
+  `attempts * 30` seconds while attempts remain, and is failed after the last.
+- **Nothing ends it** within `[ai_tasks] processing_timeout_secs` (default one
+  hour): the worker re-queues it while attempts remain and fails it after the
+  last, with a message naming the timeout and the attempt. This covers a
+  receiver that stopped, an agent that hangs, and a callback that was refused or
+  lost. Keep the timeout well above the receiver's longest agent run.
+
+Whichever of these commits first wins; the others find the attempt no longer
+`processing` and change nothing.
+
 ## Worker
 
 `apps/worker` is a standalone process with a 5-second poll loop and a
@@ -229,7 +282,7 @@ and awaits them sequentially.
 
 | Pipeline             | Source                                                                 | Behavior                                                      |
 | -------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------- |
-| AI task dispatch     | `ai_tasks`                                                             | POSTs to bot webhooks, HMAC-signed; retry delay `max(attempts, 1) * 30` s |
+| AI task dispatch     | `ai_tasks`                                                             | POSTs to bot webhooks, HMAC-signed; retry delay `max(attempts, 1) * 30` s; fails a task the receiver declines; re-queues or fails a task left `processing` past `[ai_tasks] processing_timeout_secs` |
 | Operation-log cleanup | `bot_operation_logs`                                                  | Deletes metadata records older than `[audit]` retention       |
 | Form jobs            | `form_import_jobs`, `form_export_jobs`, `form_attachment_package_jobs` | Plus expiry cleanup of package artifacts and signature values |
 | Proposal settlement  | `proposals`                                                            | Settles expired proposals (moved off the API read path)       |
@@ -273,8 +326,10 @@ Only `--transport http` serves all three surfaces on one port.
 
 MCP authenticates to the API with **bot tokens** (prefix `opr_`), managed under
 **Workspace → Members → API Tokens**. A token has a display name shown in
-activity feeds, is scoped to one workspace, creates a `bot_mcp` user entity for
-audit-trail integrity, and carries `read`, `write` or `admin` permissions that the
+activity feeds, is scoped to one workspace, creates a bot user for audit-trail
+integrity (`entity_type = bot`, `agent_type = mcp`; the same kind of identity an
+administrator creates, so it can be assigned work, named as a webhook's bot user
+and registered as an AI participant), and carries `read`, `write` or `admin` permissions that the
 API enforces: safe methods need `read`, every other method needs `write`, and
 `admin` implies both.
 
@@ -537,7 +592,7 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 
 ## Tech Stack
 
-- **Backend**: Rust edition 2024, axum 0.8, SeaORM 1 (`sqlx-postgres`, rustls), `rust_decimal`, wasmtime 49, Loro (Flow collaboration), PostgreSQL 16
+- **Backend**: Rust edition 2024, axum 0.8, SeaORM 1 (`sqlx-postgres`, rustls), `rust_decimal`, wasmtime 50, Loro (Flow collaboration), PostgreSQL 18
 - **Frontend**: SvelteKit 2.50, Svelte 5, Tailwind 4, `@sveltejs/adapter-static`, Bun
 - **MCP**: JSON-RPC 2.0 over HTTP, stdio, and SSE
 - **Auth**: JWT access + refresh, bot tokens (`opr_`)
@@ -548,7 +603,7 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 | Repository                                                   | Description                                      |
 | ------------------------------------------------------------ | ------------------------------------------------ |
 | [Sylvode](https://github.com/openprx/sylvode)                | Core platform (this repo)                        |
-| [Sylvode Webhook](https://github.com/openprx/openpr-webhook) | Webhook receiver for external integrations       |
+| [Sylvode Webhook](apps/webhook)                              | Webhook receiver for external integrations (in this repo) |
 | [prx](https://github.com/openprx/prx)                        | AI assistant framework with built-in Sylvode MCP |
 | [prx-memory](https://github.com/openprx/prx-memory)          | Local-first MCP memory for coding agents         |
 | [wacli](https://github.com/openprx/wacli)                    | WhatsApp CLI with JSON-RPC daemon                |

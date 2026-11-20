@@ -148,7 +148,9 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
                     })?;
             engine.import_update_causally_complete(&update)?;
         }
-        if request.from_frontier != request.to_frontier || !engine.matches_frontier(&request.to_frontier) {
+        if !LoroCollabEngine::frontiers_equivalent(&request.from_frontier, &request.to_frontier)?
+            || !engine.matches_frontier(&request.to_frontier)
+        {
             return Err(CollabError::OperationFailed {
                 reason: "package accepted frontier does not match replayed head".into(),
             });
@@ -182,7 +184,7 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
     }
     let mut retained_frontier = request.snapshot_frontier;
     for update in request.updates {
-        if retained_frontier != update.before_frontier {
+        if !LoroCollabEngine::frontiers_equivalent(&retained_frontier, &update.before_frontier)? {
             return Err(CollabError::OperationFailed {
                 reason: "retained history before_frontier is discontinuous".to_string(),
             });

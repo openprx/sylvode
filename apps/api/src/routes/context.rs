@@ -902,8 +902,8 @@ pub mod tenant_fixture {
         decision_id
     }
 
-    /// A bot user that is a member of `tenant`'s workspace, the shape `bot::create` produces
-    /// except for `entity_type`, which the mention path matches on exactly.
+    /// A bot user that is a member of `tenant`'s workspace, the identity shape `bot::create`
+    /// produces (`entity_type = 'bot'`) without the token row.
     pub async fn seed_bot_user(db: &impl ConnectionTrait, tenant: &Tenant) -> Uuid {
         let bot_id = Uuid::new_v4();
         exec(

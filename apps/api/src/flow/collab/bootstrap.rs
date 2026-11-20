@@ -20,6 +20,8 @@ use std::sync::{Arc, LazyLock};
 #[cfg(test)]
 use tokio::sync::{Notify, oneshot};
 
+use collab_core::LoroCollabEngine;
+
 use super::limits;
 use crate::error::ApiError;
 use crate::flow::repository::{self, IntegrityRecordInput};
@@ -258,8 +260,16 @@ pub async fn load(db: &DatabaseConnection, document_id: Uuid) -> Result<Bootstra
         if row.seq != expected_seq {
             return Err(resync_required(db, workspace_id, document_id, "tail has a seq gap or duplicate").await);
         }
-        if row.before_frontier != running_frontier {
-            return Err(resync_required(db, workspace_id, document_id, "tail frontier chain is broken").await);
+        // Version-vector equality: a chain written across the canonical-encoding change may
+        // store one version under two byte orders. An undecodable link breaks the chain.
+        match LoroCollabEngine::frontiers_equivalent(&row.before_frontier, &running_frontier) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(resync_required(db, workspace_id, document_id, "tail frontier chain is broken").await);
+            }
+            Err(_) => {
+                return Err(resync_required(db, workspace_id, document_id, "tail frontier does not decode").await);
+            }
         }
         if content_hash(&row.bytes) != row.content_hash {
             return Err(resync_required(
@@ -279,8 +289,12 @@ pub async fn load(db: &DatabaseConnection, document_id: Uuid) -> Result<Bootstra
             after_frontier: row.after_frontier,
         });
     }
-    if running_frontier != doc.head_frontier {
-        return Err(resync_required(db, workspace_id, document_id, "tail does not chain to head_frontier").await);
+    match LoroCollabEngine::frontiers_equivalent(&running_frontier, &doc.head_frontier) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(resync_required(db, workspace_id, document_id, "tail does not chain to head_frontier").await);
+        }
+        Err(_) => return Err(resync_required(db, workspace_id, document_id, "head_frontier does not decode").await),
     }
 
     // `bootstrap_decoded_bytes_max` / `bootstrap_response_bytes_max` (`limits-v1.md`): checked

@@ -1,6 +1,7 @@
-# Build context of Dockerfile and Dockerfile.prebuilt (compose builds with context "."). Only what
-# the two Dockerfiles copy is sent; everything else, including target/ apart from the five release
-# binaries, .flow-gate/, uploads, generated configuration with secrets and .env, stays out.
+# Build context of Dockerfile, Dockerfile.prebuilt and apps/webhook/Dockerfile (compose builds
+# with context "."; apps/webhook is covered by apps/**). Only what the Dockerfiles copy is sent;
+# everything else, including target/ apart from the five release binaries, .flow-gate/, uploads,
+# generated configuration with secrets and .env, stays out.
 **
 !Cargo.toml
 !Cargo.lock

@@ -245,15 +245,7 @@ pub async fn collect_field_dependencies(
         }
         for view in &views {
             if json_contains_string(&view.config, &field.key) || json_contains_string(&view.config, &field.field_id) {
-                dependencies.push(FormFieldDependency {
-                    field_id: field.field_id.clone(),
-                    field_key: field.key.clone(),
-                    source_type: "view".to_string(),
-                    source_id: Some(view.id.to_string()),
-                    source_key: Some(view.key.clone()),
-                    reason: "view config references field".to_string(),
-                    blocking: true,
-                });
+                dependencies.push(view_dependency(field, view));
             }
         }
     }
@@ -312,6 +304,37 @@ fn deduplicate_dependencies(dependencies: Vec<FormFieldDependency>) -> Vec<FormF
         .collect()
 }
 
+/// A shared view that uses a field blocks removing it. Someone's private view does not: it is a
+/// personal reading aid nobody else can see or fix, so it is reported without its id or key and
+/// simply stops showing the removed field.
+fn view_dependency(field: &FormField, view: &ViewDependencyRow) -> FormFieldDependency {
+    let private = view
+        .config
+        .get("visibility")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.trim() == "private");
+    if private {
+        return FormFieldDependency {
+            field_id: field.field_id.clone(),
+            field_key: field.key.clone(),
+            source_type: "view".to_string(),
+            source_id: None,
+            source_key: None,
+            reason: "a personal view references field".to_string(),
+            blocking: false,
+        };
+    }
+    FormFieldDependency {
+        field_id: field.field_id.clone(),
+        field_key: field.key.clone(),
+        source_type: "view".to_string(),
+        source_id: Some(view.id.to_string()),
+        source_key: Some(view.key.clone()),
+        reason: "view config references field".to_string(),
+        blocking: true,
+    }
+}
+
 fn json_contains_string(value: &Value, needle: &str) -> bool {
     match value {
         Value::String(value) => value == needle || value.contains(needle),
@@ -337,6 +360,31 @@ mod tests {
     use super::{FormFieldDependency, SchemaInsightInput, find_schema_field, json_contains_string};
     use serde_json::json;
     use uuid::Uuid;
+
+    #[test]
+    fn a_private_view_reference_is_redacted_and_does_not_block() {
+        let fields = crate::forms::schema::parse_fields(&json!({
+            "fields": [{"field_id": "fld_name_01", "key": "name", "type": "text"}]
+        }))
+        .unwrap();
+        let shared = super::ViewDependencyRow {
+            id: Uuid::nil(),
+            key: "team".to_string(),
+            config: json!({"columns": ["name"]}),
+        };
+        let private = super::ViewDependencyRow {
+            id: Uuid::nil(),
+            key: "my_secret_view".to_string(),
+            config: json!({"columns": ["name"], "visibility": "private"}),
+        };
+        let shared_dependency = super::view_dependency(&fields[0], &shared);
+        assert!(shared_dependency.blocking);
+        assert_eq!(shared_dependency.source_key.as_deref(), Some("team"));
+        let private_dependency = super::view_dependency(&fields[0], &private);
+        assert!(!private_dependency.blocking);
+        assert_eq!(private_dependency.source_key, None);
+        assert_eq!(private_dependency.source_id, None);
+    }
 
     #[test]
     fn detects_nested_json_string_references() {

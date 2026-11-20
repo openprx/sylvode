@@ -146,6 +146,18 @@ operation_log_retention_days = 30
 
 
 # ---------------------------------------------------------------------------------------------
+# [ai_tasks] — the worker's handling of AI tasks it has delivered to a bot's webhook.
+# ---------------------------------------------------------------------------------------------
+[ai_tasks]
+# A delivered task that is neither completed nor failed by the receiver within this many seconds
+# is taken back by the worker: re-queued while attempts remain, failed otherwise. Keep it well
+# above the receiver's longest agent run plus its queue wait (sylvode-webhook `timeout_secs`,
+# 900 by default, times the tasks that can wait for a `cli_max_concurrency` slot).
+# Default: 3600. Accepted range: 60..=604800.
+processing_timeout_secs = 3600
+
+
+# ---------------------------------------------------------------------------------------------
 # [migrations] — escape hatches of the migration runner. Both default to false, which is the
 # setting a healthy deployment runs with. Turn one on deliberately, then turn it back off.
 # ---------------------------------------------------------------------------------------------

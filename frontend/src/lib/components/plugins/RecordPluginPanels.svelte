@@ -1,24 +1,60 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
-	import { t } from 'svelte-i18n';
+	import { onMount, tick, untrack } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import { locale, t } from 'svelte-i18n';
 	import Button from '#lib/components/Button.svelte';
+	import PluginFrameHost from './PluginFrameHost.svelte';
+	import PluginPreferenceMenu from './PluginPreferenceMenu.svelte';
 	import RecordPluginEntryButton from './RecordPluginEntryButton.svelte';
 	import {
+		contributionEntries,
+		entryPluginKey,
+		isContributionEntry,
+		mergeEntries,
 		panelEntries,
 		sameEntry,
-		type RecordPluginActionSurface,
-		type RecordPluginEntry
+		type RecordActionSurfaceEntry,
+		type RecordEntry,
+		type RecordPluginActionSurface
 	} from '#lib/plugins/placements.js';
 	import { apiClient } from '#lib/api/client.js';
 	import { pluginPackagesApi, type PluginPanel } from '#lib/api/plugin-packages.js';
+	import type { PluginContributionItem } from '#lib/api/plugin-packages.js';
+	import { samePanel } from '#lib/plugins/bridge.js';
 	import {
-		bridgeProtocol,
-		isBridgeSignal,
-		pluginRequest,
-		samePanel,
-		validResult,
-		verifyPanelHtml
-	} from '#lib/plugins/bridge.js';
+		currentTheme,
+		enabledRoutes,
+		frameHeights,
+		frameVerdict,
+		loadEntry,
+		navigationHref,
+		partitionInline,
+		projectDiscovery,
+		projectName,
+		recordDiscovery,
+		safeFrom,
+		slotLimits,
+		verdictReasons,
+		type DiscoveryState
+	} from '#lib/plugins/contributions.js';
+	import {
+		closeSlot,
+		createApplyConfirmation,
+		initialSlot,
+		openSlot,
+		recordPreview,
+		retireSlot,
+		type SlotDeps,
+		type SlotState
+	} from '#lib/plugins/frame-slot.js';
+	import {
+		createExtensionTransport,
+		createLegacyTransport,
+		hostContext,
+		type HostTransport
+	} from '#lib/plugins/host-methods.js';
+	import type { PluginHostContext } from '#lib/plugins/bridge.js';
 
 	let {
 		recordId,
@@ -30,49 +66,220 @@
 		onApplied: () => void;
 	} = $props();
 	const componentId = $props.id();
+	const workspaceId = $derived(page.params.workspaceId ?? '');
+	const projectId = $derived(page.params.projectId ?? '');
+
+	/** Everything the host needs for the shown frame, derived from the slot's frame. */
+	interface HostedFrame {
+		token: number;
+		bridge: 1 | 2;
+		html: string;
+		webSha256: string;
+		grants: string[];
+		title: string;
+		heading: string;
+		minHeight: number;
+		maxHeight: number;
+		placement?: { id: string; slot: string };
+		item?: PluginContributionItem;
+		panel?: PluginPanel;
+		transport: HostTransport;
+	}
+
 	let panels = $state<PluginPanel[]>([]);
-	let active = $state.raw<RecordPluginEntry | null>(null);
-	const current = $derived(active?.panel ?? null);
-	const details = $derived(panelEntries(panels, 'form.record.detail'));
-	const actions = $derived(panelEntries(panels, 'form.record.actions'));
-	let notice = $state('');
-	let stage = $state<'closed' | 'verifying' | 'opening' | 'ready'>('closed');
-	let frame: HTMLIFrameElement | undefined = $state();
+	let discovery = $state.raw<DiscoveryState>({ status: 'loading', items: [] });
+	// The open/retire state machine (frame-slot.ts) mutates this object; it is a deep $state proxy.
+	const slot = $state<SlotState<RecordEntry>>(initialSlot());
+	let theme = $state<'light' | 'dark'>(currentTheme());
 	let heading: HTMLHeadingElement | undefined = $state();
 	let closeButton: HTMLButtonElement | undefined = $state();
 	let launch: HTMLElement | null = null;
 	let confirmation: HTMLDialogElement | undefined = $state();
-	let confirmRequest = $state<string | null>(null);
-	let preview = $state<{ requestId: string; cents: number } | null>(null);
-	let port: MessagePort | undefined;
-	let busy = false;
-	let timeout: ReturnType<typeof setTimeout> | undefined;
+	const confirming = createApplyConfirmation({
+		show: () => confirmation?.showModal(),
+		hide: () => confirmation?.close()
+	});
 	let discoveryRunning = false;
 	let lastDiscovery = 0;
 	let disposed = false;
-	let openingRun = 0;
-	let epoch = 0;
 	let authSignal: AbortSignal | undefined;
-	const requests = new Set<string>();
+
+	const active = $derived(slot.active);
+	const notice = $derived(slot.notice);
+	const preview = $derived(slot.preview);
+	const deps: SlotDeps<RecordEntry> = {
+		itemOf: (entry) => (isContributionEntry(entry) ? entry.item : null),
+		loadEntry: (item) => loadEntry(projectId, item, { recordId }),
+		projectName: () => projectName(projectId),
+		refresh: () => refreshAll(),
+		dismissConfirmation: () => confirming.dismiss(),
+		alive: () => !disposed && !authSignal?.aborted
+	};
+	const frame = $derived.by((): HostedFrame | null => {
+		const shown = slot.frame;
+		if (!shown) return null;
+		const token = shown.token;
+		const entry = shown.entry;
+		if (!isContributionEntry(entry)) {
+			const { panel } = entry;
+			return {
+				token,
+				bridge: 1,
+				html: panel.html,
+				webSha256: panel.web_sha256,
+				grants: [...panel.grants],
+				title: panel.name,
+				heading: `${panel.name} · v${panel.version}`,
+				// Protocol 1/2 frames keep their previous fixed height.
+				minHeight: 288,
+				maxHeight: frameHeights.panel.max,
+				panel,
+				...(panel.contributions ? { placement: { id: entry.id, slot: entry.slot } } : {}),
+				transport: tracked(
+					token,
+					createLegacyTransport({ recordId, panel, onApplied: () => onApplied() })
+				)
+			};
+		}
+		const item = shown.item ?? entry.item;
+		return {
+			token,
+			bridge: 2,
+			html: shown.html,
+			webSha256: item.web_sha256,
+			grants: [...item.grants],
+			title: $t('plugins.host.frameTitle', {
+				values: { name: item.name, label: item.contribution.label }
+			}),
+			heading: `${item.name} · v${item.version}`,
+			minHeight: frameHeights.panel.min,
+			maxHeight: frameHeights.panel.max,
+			item,
+			transport: tracked(
+				token,
+				createExtensionTransport({
+					projectId,
+					item,
+					recordId,
+					// Routes come from the current project discovery, never the manifest.
+					enabledRoutes: () =>
+						enabledRoutes(projectDiscovery(projectId).snapshot().items, item.key),
+					navigate: async (target) => {
+						// A frame that is no longer shown does not navigate anymore.
+						if (slot.frame?.token !== token) return;
+						const from = safeFrom(page.url.pathname + page.url.search, workspaceId, projectId);
+						await goto(navigationHref(target, { workspaceId, projectId, key: item.key, from }));
+					},
+					onStale: () => void recordDiscovery(projectId, recordId).refresh(),
+					onApplied: () => onApplied()
+				})
+			)
+		};
+	});
+
+	const v3Items = $derived(discovery.items);
+	const detailParts = $derived(
+		split(
+			mergeEntries(
+				panelEntries(panels, 'form.record.detail'),
+				contributionEntries(v3Items, 'form.record.detail')
+			),
+			slotLimits['form.record.detail']
+		)
+	);
+	const actionParts = $derived(
+		split(
+			mergeEntries(
+				panelEntries(panels, 'form.record.actions'),
+				contributionEntries(v3Items, 'form.record.actions')
+			),
+			slotLimits['form.record.actions']
+		)
+	);
+	const details = $derived([...detailParts.inline, ...detailParts.more]);
+	const context = $derived<PluginHostContext | undefined>(
+		frame?.item
+			? hostContext(frame.item, {
+					projectName: slot.name,
+					recordId,
+					locale: $locale ?? 'zh',
+					theme
+				})
+			: undefined
+	);
+
+	function split(entries: RecordEntry[], limit: number) {
+		return partitionInline(
+			entries,
+			limit,
+			(entry) => isContributionEntry(entry) && entry.item.preference.collapsed
+		);
+	}
 
 	$effect(() => {
-		surface.set({ recordId, panelId: componentId + '-panel', entries: actions, active, toggle });
+		surface.set({
+			recordId,
+			panelId: componentId + '-panel',
+			entries: actionParts.inline,
+			more: actionParts.more,
+			active,
+			toggle
+		} satisfies RecordActionSurfaceEntry);
+	});
+
+	// Protocol 3 contributions for this record, shared and polled by the discovery store.
+	$effect(() => {
+		const id = projectId;
+		const record = recordId;
+		discovery = { status: 'loading', items: [] };
+		if (!id) return;
+		const store = recordDiscovery(id, record);
+		const stop = store.subscribe((value) => (discovery = value));
+		const release = store.retain();
+		return () => {
+			stop();
+			release();
+		};
+	});
+
+	$effect(() => {
+		if (!frame?.item || !projectId) return;
+		const release = [
+			recordDiscovery(projectId, recordId).holdBusy(),
+			projectDiscovery(projectId).retain()
+		];
+		return () => release.forEach((fn) => fn());
+	});
+
+	$effect(() => {
+		const current = discovery;
+		untrack(() => {
+			const watched =
+				slot.frame?.item ??
+				(slot.active && isContributionEntry(slot.active) ? slot.active.item : null);
+			if (!watched) return;
+			const verdict = frameVerdict(current, watched);
+			if (verdict !== 'ok') close(verdictReasons[verdict]);
+		});
 	});
 
 	onMount(() => {
-		epoch = apiClient.getAuthSessionEpoch();
+		const epoch = apiClient.getAuthSessionEpoch();
 		authSignal = apiClient.authSessionSignal(epoch);
 		authSignal.addEventListener('abort', sessionChanged, { once: true });
+		const observer = new MutationObserver(() => (theme = currentTheme()));
+		observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 		void discover();
 		const timer = setInterval(() => {
-			if (current || Date.now() - lastDiscovery >= 10000) void discover();
+			if (slot.frame || Date.now() - lastDiscovery >= 10000) void discover();
 		}, 2000);
 		return () => {
 			disposed = true;
 			surface.update((value) => (value?.panelId === componentId + '-panel' ? null : value));
 			authSignal?.removeEventListener('abort', sessionChanged);
+			observer.disconnect();
 			clearInterval(timer);
-			clearChannel();
+			confirming.settle(false);
 		};
 	});
 
@@ -88,9 +295,10 @@
 		try {
 			const result = await pluginPackagesApi.discover(recordId);
 			if (disposed || authSignal?.aborted) return;
+			const legacy = frame?.panel;
 			if (result.code !== 0 || !Array.isArray(result.data)) {
 				panels = [];
-				if (current)
+				if (legacy)
 					close(
 						result.code === 401 || result.code === 403
 							? 'plugins.accessChanged'
@@ -99,9 +307,9 @@
 				return;
 			}
 			panels = result.data;
-			if (current && !panels.some((panel) => samePanel(panel, current!))) {
+			if (legacy && !panels.some((panel) => samePanel(panel, legacy))) {
 				close(
-					panels.some((panel) => panel.key === current?.key)
+					panels.some((panel) => panel.key === legacy.key)
 						? 'plugins.versionChanged'
 						: 'plugins.accessChanged'
 				);
@@ -111,219 +319,96 @@
 		}
 	}
 
-	function clearChannel() {
-		clearTimeout(timeout);
-		port?.close();
-		port = undefined;
-		preview = null;
-		busy = false;
-		requests.clear();
-		confirmation?.close();
-		confirmRequest = null;
+	function refreshAll() {
+		void discover();
+		if (projectId) void recordDiscovery(projectId, recordId).refresh();
 	}
 
 	function close(message = '', restoreFocus = true) {
-		openingRun++;
-		clearChannel();
-		stage = 'closed';
-		active = null;
-		notice = message;
+		closeSlot(slot, deps, message);
 		const trigger = launch;
 		launch = null;
 		if (restoreFocus)
 			void tick().then(() => {
-				if (trigger?.isConnected) trigger.focus();
-				else heading?.focus();
+				trigger?.focus();
+				if (!trigger?.isConnected || document.activeElement !== trigger) heading?.focus();
 			});
 	}
 
-	function toggle(entry: RecordPluginEntry, trigger: HTMLElement) {
+	function toggle(entry: RecordEntry, trigger: HTMLElement) {
 		if (sameEntry(active, entry)) close();
 		else void open(entry, trigger);
 	}
 
-	async function open(entry: RecordPluginEntry, trigger: HTMLElement) {
+	/** Records the previewed amount so the apply confirmation can show it. */
+	function tracked(token: number, base: HostTransport): HostTransport {
+		return async (method, params, requestId) => {
+			const outcome = await base(method, params, requestId);
+			if (method === 'amount.preview') {
+				const result = outcome.ok ? (outcome.result as { amount_cents?: unknown }) : null;
+				recordPreview(
+					slot,
+					token,
+					typeof result?.amount_cents === 'number' ? result.amount_cents : null
+				);
+			}
+			return outcome;
+		};
+	}
+
+	async function open(entry: RecordEntry, trigger: HTMLElement) {
 		close('', false);
 		launch = trigger;
-		const mine = ++openingRun;
-		active = entry;
-		const { panel } = entry;
-		stage = 'verifying';
-		let verified = false;
-		try {
-			verified = await verifyPanelHtml(panel);
-		} catch {
-			/* Unavailable integrity verification fails closed. */
-		}
-		if (mine !== openingRun || disposed || authSignal?.aborted) return;
-		if (!verified) {
-			close('plugins.integrityFailed');
-			return;
-		}
-		stage = 'opening';
-		timeout = setTimeout(() => close('plugins.loadFailed'), 7000);
+		const token = await openSlot(slot, entry, deps);
+		if (!token) return;
 		await tick();
-		if (mine === openingRun) closeButton?.focus();
+		if (slot.frame?.token === token) closeButton?.focus();
 	}
 
-	function onWindowMessage(event: MessageEvent) {
-		if (!current || !frame || event.source !== frame.contentWindow || event.origin !== 'null')
-			return;
-		if (isBridgeSignal(event.data, 'sylvode-plugin-shell-invalidated')) {
-			close('plugins.loadFailed');
-			return;
-		}
-		if (stage !== 'opening' || port || !isBridgeSignal(event.data, 'sylvode-plugin-shell-ready'))
-			return;
-		const channel = new MessageChannel();
-		port = channel.port1;
-		port.onmessage = ({ data }) => void onMessage(data);
-		frame.contentWindow?.postMessage(
-			{
-				protocol: bridgeProtocol,
-				type: 'sylvode-plugin-shell-init',
-				html: current.html,
-				grants: $state.snapshot(current.grants),
-				...(active && current.contributions
-					? { placement: { id: active.id, slot: active.slot } }
-					: {})
-			},
-			'*',
-			[channel.port2]
-		);
+	function confirmSave() {
+		if (authSignal?.aborted) return;
+		confirming.confirm();
 	}
 
-	function result(requestId: string, errorKey: string) {
-		port?.postMessage({
-			protocol: bridgeProtocol,
-			type: 'result',
-			request_id: requestId,
-			ok: false,
-			message: $t(errorKey)
-		});
+	function onClose(reason: string) {
+		close(reason);
+		// The host closes an `amount.*` call that outlived its timeout. A timed-out write may have
+		// committed, so reload the record.
+		if (reason === 'plugins.actionTimedOut') onApplied();
+		if (reason !== '') refreshAll();
 	}
 
-	async function onMessage(data: unknown) {
-		if (stage === 'opening' && isBridgeSignal(data, 'ready')) {
-			clearTimeout(timeout);
-			stage = 'ready';
-			return;
-		}
-		if (stage !== 'ready' || !current) return;
-		if (isBridgeSignal(data, 'close')) {
-			close();
-			return;
-		}
-		const parsed = pluginRequest(data);
-		if (!parsed) return;
-		const { method, requestId } = parsed;
-		if (!method || !current.grants.includes(method)) {
-			result(requestId, 'plugins.actionUnavailable');
-			return;
-		}
-		if (busy || requests.has(requestId) || requests.size >= 100) {
-			result(requestId, 'plugins.actionBusy');
-			return;
-		}
-		requests.add(requestId);
-		busy = true;
-		const mine = openingRun;
-		const panel = current;
-		const authorizedPreview = preview;
-		if (method === 'amount.apply') {
-			if (!authorizedPreview) {
-				result(requestId, 'plugins.previewRequired');
-				busy = false;
-				return;
-			}
-			confirmRequest = requestId;
-			await tick();
-			if (mine !== openingRun) return;
-			confirmation?.showModal();
-			return;
-		}
-		preview = null;
-		await invoke(panel, method, requestId, mine);
-	}
-
-	function dismissConfirmation() {
-		if (!confirmRequest) return;
-		result(confirmRequest, 'plugins.actionCanceled');
-		confirmRequest = null;
-		busy = false;
-	}
-
-	function confirm() {
-		if (!confirmRequest || !current || !preview || authSignal?.aborted) return;
-		const requestId = confirmRequest;
-		confirmRequest = null;
-		confirmation?.close();
-		void invoke(current, 'amount.apply', requestId, openingRun, preview.requestId);
-	}
-
-	async function invoke(
-		panel: PluginPanel,
-		method: 'amount.preview' | 'amount.apply',
-		requestId: string,
-		mine: number,
-		previewRequestId?: string
-	) {
-		// Close the port on timeout. A timed-out write may have committed, so reload the record.
-		timeout = setTimeout(() => {
-			if (mine !== openingRun) return;
-			if (method === 'amount.apply') onApplied();
-			close('plugins.actionTimedOut');
-		}, 10000);
-		const response = await pluginPackagesApi.invoke(
-			recordId,
-			panel,
-			method,
-			requestId,
-			previewRequestId
-		);
-		if (disposed || mine !== openingRun || !apiClient.isAuthSessionEpoch(epoch)) return;
-		clearTimeout(timeout);
-		busy = false;
-		if (response.code !== 0 || !response.data || !validResult(response.data, panel, requestId)) {
-			result(requestId, 'plugins.actionFailed');
-			preview = null;
-			if (response.code === 401 || response.code === 403 || response.code === 404) {
-				close('plugins.accessChanged');
-				void discover();
-			}
-			return;
-		}
-		if (method === 'amount.preview') preview = { requestId, cents: response.data.amount_cents };
-		else {
-			preview = null;
-			onApplied();
-		}
-		port?.postMessage({
-			protocol: bridgeProtocol,
-			type: 'result',
-			request_id: requestId,
-			ok: true,
-			result: { amount_cents: response.data.amount_cents }
-		});
+	/**
+	 * The host of `token` retired its frame while the page was being left, and the page is live
+	 * again because the navigation came back before the removal finished. A protocol 3 panel the
+	 * user had open reopens with a fresh entry, if its contribution is still the same one; a
+	 * pending apply confirmation is dismissed and the panel is idle again. Legacy panels close
+	 * without a grace period and never get here.
+	 */
+	function retiredFor(token: number) {
+		return () => void retireSlot(slot, token, discovery, deps);
 	}
 </script>
 
-<svelte:window onmessage={onWindowMessage} onfocus={() => void discover()} />
+<svelte:window onfocus={() => void discover()} />
 
-{#if details.length || notice || current}
+{#if details.length || notice || slot.frame || active || v3Items.length}
 	<section
 		class="space-y-2 border-b border-slate-200 p-4 dark:border-slate-700"
 		aria-labelledby={componentId}
 	>
-		<h3 id={componentId} bind:this={heading} tabindex="-1" class="text-sm font-semibold">
-			{$t('plugins.recordPlugins')}
-		</h3>
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			<h3 id={componentId} bind:this={heading} tabindex="-1" class="text-sm font-semibold">
+				{$t('plugins.recordPlugins')}
+			</h3>
+			{#if projectId}<PluginPreferenceMenu {projectId} items={v3Items} />{/if}
+		</div>
 		{#if notice}
 			<p class="text-sm text-slate-600 dark:text-slate-300" role="status">{$t(notice)}</p>
 		{/if}
 		{#if details.length}
 			<ul class="flex flex-wrap gap-2" data-plugin-slot="form.record.detail">
-				{#each details as entry (`${entry.panel.key}:${entry.id}`)}
+				{#each detailParts.inline as entry (`${entryPluginKey(entry)}:${entry.id}`)}
 					<li>
 						<RecordPluginEntryButton
 							{entry}
@@ -334,15 +419,46 @@
 						/>
 					</li>
 				{/each}
+				{#if detailParts.more.length}
+					<li>
+						<details class="relative">
+							<summary
+								class="cursor-pointer rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600"
+								>{$t('plugins.host.more')}</summary
+							>
+							<ul
+								class="absolute left-0 z-20 mt-1 min-w-44 space-y-1 rounded-md border border-slate-300 bg-white p-2 shadow dark:border-slate-600 dark:bg-slate-900"
+							>
+								{#each detailParts.more as entry (`${entryPluginKey(entry)}:${entry.id}`)}
+									<li>
+										<RecordPluginEntryButton
+											{entry}
+											panelId={componentId + '-panel'}
+											expanded={sameEntry(active, entry)}
+											onToggle={(next, trigger) => {
+												const menu = trigger.closest('details');
+												if (menu) menu.open = false;
+												toggle(next, trigger);
+											}}
+											showVersion
+										/>
+									</li>
+								{/each}
+							</ul>
+						</details>
+					</li>
+				{/if}
 			</ul>
 		{/if}
-		{#if current}
+		{#if active}
 			<div
 				id={componentId + '-panel'}
 				class="overflow-hidden rounded-md border border-slate-300 dark:border-slate-600"
 			>
 				<div class="flex flex-wrap items-center justify-between gap-2 px-3 py-1">
-					<h4 class="text-sm font-medium">{current.name} · v{current.version}</h4>
+					<h4 class="text-sm font-medium">
+						{frame?.heading ?? (isContributionEntry(active) ? active.item.name : active.panel.name)}
+					</h4>
 					<button
 						type="button"
 						bind:this={closeButton}
@@ -351,21 +467,29 @@
 						>{$t('plugins.closePanel')}</button
 					>
 				</div>
-				{#if stage === 'verifying' || stage === 'opening'}
+				{#if frame}
+					<!-- One frame per open: a later open never reuses a host that is still being removed. -->
+					{#key frame.token}
+						<PluginFrameHost
+							html={frame.html}
+							webSha256={frame.webSha256}
+							bridge={frame.bridge}
+							grants={frame.grants}
+							{context}
+							placement={frame.placement}
+							transport={frame.transport}
+							title={frame.title}
+							minHeight={frame.minHeight}
+							maxHeight={frame.maxHeight}
+							{onClose}
+							onRetired={frame.item ? retiredFor(frame.token) : undefined}
+							onConfirmApply={() => confirming.request()}
+						/>
+					{/key}
+				{:else}
 					<p class="px-3 pb-2 text-sm text-slate-600 dark:text-slate-300" role="status">
-						{$t('plugins.loadingPanel')}
+						{$t('plugins.host.loading')}
 					</p>
-				{/if}
-				{#if stage === 'opening' || stage === 'ready'}
-					<iframe
-						bind:this={frame}
-						title={current.name}
-						src="/plugin-host/frame.html"
-						sandbox="allow-scripts"
-						referrerpolicy="no-referrer"
-						class="block h-72 w-full border-0"
-						hidden={stage !== 'ready'}
-					></iframe>
 				{/if}
 			</div>
 		{/if}
@@ -376,18 +500,18 @@
 	bind:this={confirmation}
 	aria-labelledby={`${componentId}-confirm`}
 	class="max-w-md rounded-lg border border-slate-300 bg-white p-5 text-slate-900 shadow-xl backdrop:bg-slate-950/50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-	onclose={dismissConfirmation}
+	onclose={() => confirming.settle(false)}
 >
 	<h3 id={`${componentId}-confirm`} class="text-base font-semibold">
 		{$t('plugins.confirmAmount')}
 	</h3>
-	{#if preview}
+	{#if preview !== null}
 		<p class="mt-2 text-sm">
-			{$t('plugins.confirmAmountBody', { values: { amount: (preview.cents / 100).toFixed(2) } })}
+			{$t('plugins.confirmAmountBody', { values: { amount: (preview / 100).toFixed(2) } })}
 		</p>
 	{/if}
 	<div class="mt-4 flex flex-wrap justify-end gap-2">
 		<Button variant="secondary" onclick={() => confirmation?.close()}>{$t('common.cancel')}</Button>
-		<Button onclick={confirm}>{$t('plugins.saveAmount')}</Button>
+		<Button onclick={confirmSave}>{$t('plugins.saveAmount')}</Button>
 	</div>
 </dialog>

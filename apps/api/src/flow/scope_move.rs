@@ -228,7 +228,7 @@ fn prepare_order_update(
                 .map_err(|e| super::command::map_collab_error(&e))?;
         }
     }
-    if engine.frontier().as_bytes() == base.as_bytes() {
+    if super::frontier::same(engine.frontier().as_bytes(), base.as_bytes())? {
         return Ok(None);
     }
     let bytes = engine
@@ -330,7 +330,9 @@ pub async fn execute(
         proof.audience_revisions.sort_unstable();
         proof.audience_revisions.dedup();
         let boot = bootstrap::load(&state.db, document).await?;
-        if expected.as_ref().is_some_and(|f| f != &boot.head_frontier) {
+        if let Some(expected) = &expected
+            && !super::frontier::client_matches(expected, &boot.head_frontier)?
+        {
             return Err(ApiError::stale_frontier("target navigator changed", None, None));
         }
         let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|e| super::command::map_collab_error(&e))?;

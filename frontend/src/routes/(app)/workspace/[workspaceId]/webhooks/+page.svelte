@@ -83,7 +83,8 @@
 			url: webhook.url,
 			events: webhook.events,
 			is_active: webhook.is_active ?? webhook.active ?? true,
-			secret: webhook.secret ?? ''
+			// The secret is never returned after creation; leave the field empty to keep it.
+			secret: ''
 		};
 		botUserId = webhook.bot_user_id ?? '';
 		showModal = true;

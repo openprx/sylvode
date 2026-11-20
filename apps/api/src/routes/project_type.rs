@@ -126,10 +126,7 @@ fn normalize_key(raw: &str) -> Result<String, ApiError> {
 
 fn normalize_kind(raw: &str) -> Result<String, ApiError> {
     let kind = raw.trim().to_ascii_lowercase();
-    if matches!(
-        kind.as_str(),
-        "repo" | "directory" | "document_library" | "crm_account" | "erp_order" | "equipment" | "site" | "custom"
-    ) {
+    if matches!(kind.as_str(), "directory" | "custom") {
         Ok(kind)
     } else {
         Err(ApiError::BadRequest("invalid project resource kind".to_string()))
@@ -896,20 +893,22 @@ mod tests {
     }
 
     #[test]
-    fn normalize_kind_matches_phase_one_resource_kinds() {
-        for kind in [
+    fn normalize_kind_accepts_only_directory_and_custom() {
+        for kind in ["directory", "custom"] {
+            assert_eq!(normalize_kind(kind).unwrap(), kind);
+        }
+        assert_eq!(normalize_kind(" Directory ").unwrap(), "directory");
+        for removed in [
             "repo",
-            "directory",
             "document_library",
             "crm_account",
             "erp_order",
             "equipment",
             "site",
-            "custom",
+            "mysql",
         ] {
-            assert_eq!(normalize_kind(kind).unwrap(), kind);
+            assert!(normalize_kind(removed).is_err(), "{removed} must be rejected");
         }
-        assert!(normalize_kind("mysql").is_err());
     }
 
     #[test]

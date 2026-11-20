@@ -138,7 +138,7 @@ async fn seed_workspace(db: &DatabaseConnection) -> Result<(Uuid, Uuid), Box<dyn
     exec(
         db,
         "INSERT INTO users (id,email,password_hash,name,role,is_active,entity_type,agent_type) \
-         VALUES ($1,$2,'!','CLI bot','user',true,'bot_mcp','mcp')",
+         VALUES ($1,$2,'!','CLI bot','user',true,'bot','mcp')",
         vec![bot_id.into(), format!("{bot_id}@bot.state.test").into()],
     )
     .await?;

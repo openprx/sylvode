@@ -311,7 +311,14 @@ pub async fn commit_candidate(
         let _ = tx.rollback().await;
         return Ok(CommitOutcome::AlreadyAdvanced);
     }
-    if locked.head_seq != candidate.head_seq || locked.head_frontier != candidate.head_frontier {
+    let same_head = match crate::flow::frontier::same(&locked.head_frontier, &candidate.head_frontier) {
+        Ok(same) => same,
+        Err(error) => {
+            let _ = tx.rollback().await;
+            return Err(error);
+        }
+    };
+    if locked.head_seq != candidate.head_seq || !same_head {
         let _ = tx.rollback().await;
         return Ok(CommitOutcome::HeadMismatch);
     }
@@ -838,6 +845,8 @@ mod database_tests {
 
         migrate(&db).await;
 
+        // A scratch database models a running api and worker.
+        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 

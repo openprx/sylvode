@@ -1635,7 +1635,7 @@ impl McpServer {
             json!({
                 "uriTemplate": "sylvode://projects/{project_id}/resources",
                 "name": "Project Resources",
-                "description": "Read project resources such as repositories, directories, documents, equipment, or business records",
+                "description": "Read project resources of kind directory or custom",
                 "mimeType": "application/json"
             }),
             json!({

@@ -531,7 +531,7 @@ pub(crate) fn complete_and_reorder_scope_navigator(
         )?;
     }
     reorder_scope_navigator(engine, object, after)?;
-    if engine.frontier().as_bytes() == base.as_bytes() {
+    if super::frontier::same(engine.frontier().as_bytes(), base.as_bytes())? {
         return Ok(None);
     }
     let bytes = engine.export_from(&base).map_err(|e| map_collab_error(&e))?;
@@ -636,7 +636,7 @@ fn build_navigator_update(
             .map_err(|err| map_collab_error(&err))?;
     }
 
-    if engine.frontier().as_bytes() == base_frontier.as_bytes() {
+    if super::frontier::same(engine.frontier().as_bytes(), base_frontier.as_bytes())? {
         // The engine merged the operations into nothing — every entry was already exactly here.
         return Ok(NavigatorChange {
             bytes: None,
@@ -2398,6 +2398,8 @@ mod database_tests {
             .await
             .unwrap_or_else(|err| panic!("could not connect to scratch database {name}: {err}"));
         migrate(&db).await;
+        // A scratch database models a running api and worker.
+        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 
@@ -4444,7 +4446,8 @@ mod database_tests {
     /// `rest-api-v1.md`: "只有真正推进 target 文档 canonical head 的命令才携带
     /// `expected_target_frontier?`". `move_object` is such a command, so the guard has to actually
     /// guard the *target navigator's* head — not the moved object's own document, which this
-    /// command never touches.
+    /// command never touches. A well-formed frontier of another version is `stale_frontier`; an
+    /// undecodable value is `invalid_update`.
     #[tokio::test]
     async fn expected_target_frontier_guards_the_target_navigator_head() {
         let scratch = scratch_or_skip!("expected_target_frontier");
@@ -4457,7 +4460,15 @@ mod database_tests {
         let page = create(&state, &fx, "page", Some(fx.project_a), Some(nav_a)).await;
         let doc_b = document_of(&scratch.db, nav_b).await;
 
-        let wrong_frontier = crate::flow::collab::frame::encode_bytes(b"not-this-documents-frontier");
+        // A well-formed frontier of another version: it decodes, so it is stale, not invalid.
+        let wrong_frontier = {
+            use collab_core::CollabEngine as _;
+            let mut other = collab_core::LoroCollabEngine::new_empty(7);
+            other
+                .set_title("another document")
+                .expect("title set on a scratch engine");
+            crate::flow::collab::frame::encode_bytes(other.frontier().as_bytes())
+        };
         let err = run_move(
             &state,
             &collab,
@@ -4472,6 +4483,30 @@ mod database_tests {
         .await
         .expect_err("a frontier that is not the target navigator's head must be refused");
         assert_eq!(err.kind(), ApiErrorKind::StaleFrontier, "got {err:?}");
+        assert_eq!(parent_of(&scratch.db, page).await, Some(nav_a), "nothing moved");
+        assert_eq!(
+            head_seq(&scratch.db, doc_b).await,
+            0,
+            "the target navigator did not advance"
+        );
+
+        // An undecodable value is `invalid_update` (400), not `stale_frontier`: no rebase can turn
+        // it into a valid frontier.
+        let garbage_frontier = crate::flow::collab::frame::encode_bytes(b"not-a-frontier");
+        let err = run_move(
+            &state,
+            &collab,
+            &fx,
+            &move_input(
+                page,
+                fx.owner_id,
+                "owner",
+                json!({ "target_object_id": nav_b, "expected_target_frontier": garbage_frontier }),
+            ),
+        )
+        .await
+        .expect_err("a value that is not a frontier must be refused");
+        assert_eq!(err.kind(), ApiErrorKind::InvalidUpdate, "got {err:?}");
         assert_eq!(parent_of(&scratch.db, page).await, Some(nav_a), "nothing moved");
         assert_eq!(
             head_seq(&scratch.db, doc_b).await,

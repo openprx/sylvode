@@ -122,7 +122,7 @@ curl -X POST http://localhost:8090/mcp/rpc \
 
 - Never commit bot tokens or API keys.
 - The configuration file is the source of all secrets (`mcp.bot_token`, `mcp.workspace_id`); Sylvode reads no environment variables. Never commit the file itself.
-- Bot tokens are workspace-scoped; each creates a `bot_mcp` user for audit integrity.
+- Bot tokens are workspace-scoped; each creates a bot user (`entity_type = bot`, `agent_type = mcp`) for audit integrity.
 - `mcp.bot_token` is only required for `stdio` transport and CLI subcommands (no per-request caller to act on). `http`/`sse` transports ignore it: every request supplies its own caller bot token via `Authorization: Bearer opr_...`, forwarded to the API unchanged. There is no server-side fallback identity and no shared inbound secret for these transports, so `mcp.bind_addr` can be bound to any reachable address without extra configuration.
 - `mcp.auth_token` was removed. A configuration file that still sets it fails to start; when asked to fix a broken MCP config, delete the key rather than filling in a value.
 - File uploads: server-side type validation and size limits.
