@@ -3626,12 +3626,12 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0107_flow_block_registration_progress.sql",
         include_str!("../../../migrations/0107_flow_block_registration_progress.sql"),
     ),
-];
-
     (
         "0108_oauth_authorization_server.sql",
         include_str!("../../../migrations/0108_oauth_authorization_server.sql"),
     ),
+];
+
 /// Newest migration an existing database may claim without executing it.
 ///
 /// Frozen on purpose. Everything past it is executed on every database that has no ledger row for
@@ -4177,12 +4177,12 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0107_flow_block_registration_progress.sql",
         SchemaProbe::Column("flow_block_checkpoints", "pending_registrations"),
     ),
-];
-
     (
         "0108_oauth_authorization_server.sql",
         SchemaProbe::Relation("oauth_grants"),
     ),
+];
+
 /// One recorded migration outcome.
 struct RecordedMigration {
     checksum: String,
@@ -4742,9 +4742,9 @@ mod tests {
                 "0105_token_bot_entity_type.sql",
                 "0106_flow_capabilities_default_on.sql",
                 "0107_flow_block_registration_progress.sql",
+                "0108_oauth_authorization_server.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
-                "0108_oauth_authorization_server.sql",
         );
     }
 
