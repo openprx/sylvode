@@ -1367,6 +1367,148 @@ async fn a_grant_for_one_workspace_and_one_project_reaches_nothing_else() {
 }
 
 #[tokio::test]
+async fn responses_of_allowed_routes_carry_nothing_beyond_the_grant() {
+    let Some(w) = World::new("deleg_response_fields").await else {
+        return;
+    };
+    // Governance decisions: one in the grant's workspace (a workspace-wide object: it belongs to
+    // no project), one in the other workspace.
+    let (mine, theirs) = (format!("PROP-{}", Uuid::new_v4()), format!("PROP-{}", Uuid::new_v4()));
+    for (proposal, ws, decision) in [(&mine, w.ws1, "DEC-mine-secret"), (&theirs, w.ws2, "DEC-theirs-secret")] {
+        exec(
+            &w.db,
+            "INSERT INTO proposals (id, title, proposal_type, status, author_id, author_type, content, workspace_id) \
+             VALUES ($1, 'decided', 'feature', 'draft', $2, 'human', 'body', $3)",
+            vec![proposal.clone().into(), w.alice.to_string().into(), ws.into()],
+        )
+        .await;
+        exec(
+            &w.db,
+            "INSERT INTO decisions (id, proposal_id, result, approval_rate, total_votes) \
+             VALUES ($1, $2, 'approved', 1.0, 7)",
+            vec![decision.to_string().into(), proposal.clone().into()],
+        )
+        .await;
+    }
+    let selected = w.session(w.alice, w.ws1, &[w.p1], ALL_API_SCOPES).await;
+    let all = w.session(w.alice, w.ws1, &[], ALL_API_SCOPES).await;
+    for (name, session) in [("selected", &selected), ("all", &all)] {
+        let context = w.get(session, &format!("/api/v1/projects/{}/context", w.p1)).await;
+        assert_ok(&context, "project context");
+        let data = &context.json()["data"];
+        assert!(
+            data.get("recent_decisions").is_none(),
+            "{name}: decisions are workspace-wide and no scope covers them: {}",
+            context.text()
+        );
+        for secret in ["DEC-mine-secret", "DEC-theirs-secret", mine.as_str(), theirs.as_str()] {
+            assert!(
+                !context.text().contains(secret),
+                "{name}: {secret} reached a connection"
+            );
+        }
+        assert!(
+            data["project"]["id"] == json!(w.p1),
+            "the project itself is still there"
+        );
+    }
+    // The user's own session keeps the field, with its own workspace's decision only.
+    let own = send_to(
+        &w.router,
+        "GET",
+        &format!("/api/v1/projects/{}/context", w.p1),
+        Some(&World::jwt(w.alice)),
+        &[],
+        None,
+    )
+    .await;
+    let decisions = own.json()["data"]["recent_decisions"].clone();
+    assert_eq!(decisions.as_array().map(Vec::len), Some(1), "{}", own.text());
+    assert_eq!(decisions[0]["proposal_id"], json!(mine));
+
+    // People: a comment and an activity by someone who is no longer in the workspace.
+    let ghost = Uuid::new_v4();
+    exec(
+        &w.db,
+        "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type) \
+         VALUES ($1, 'ghost-person@elsewhere.test', '!', 'Ghost Person', 'user', true, 'human')",
+        vec![ghost.into()],
+    )
+    .await;
+    exec(
+        &w.db,
+        "INSERT INTO comments (id, work_item_id, author_id, body) VALUES ($1, $2, $3, 'left behind')",
+        vec![Uuid::new_v4().into(), w.i1.into(), ghost.into()],
+    )
+    .await;
+    exec(
+        &w.db,
+        "INSERT INTO activities (id, workspace_id, project_id, issue_id, user_id, action, detail, created_at, \
+         resource_type, resource_id, event_type, actor_id, payload) \
+         VALUES ($1, $2, $3, $4, $5, 'state_changed', '{}'::jsonb, now(), 'issue', $4, 'state_changed', $5, '{}'::jsonb)",
+        vec![Uuid::new_v4().into(), w.ws1.into(), w.p1.into(), w.i1.into(), ghost.into()],
+    )
+    .await;
+    let comments = w.get(&selected, &format!("/api/v1/issues/{}/comments", w.i1)).await;
+    let activities = w.get(&selected, &format!("/api/v1/issues/{}/activities", w.i1)).await;
+    for (name, reply) in [("comments", &comments), ("activities", &activities)] {
+        assert_ok(reply, name);
+        for secret in ["Ghost Person", "ghost-person@elsewhere.test"] {
+            assert!(
+                !reply.text().contains(secret),
+                "{name}: a person outside the workspace is named: {}",
+                reply.text()
+            );
+        }
+    }
+    assert!(
+        comments.text().contains("left behind"),
+        "the comment itself is still listed"
+    );
+    assert!(
+        comments.text().contains("alice"),
+        "a current member keeps the name: {}",
+        comments.text()
+    );
+    // The user's own session sees what it saw before.
+    let own = send_to(
+        &w.router,
+        "GET",
+        &format!("/api/v1/issues/{}/comments", w.i1),
+        Some(&World::jwt(w.alice)),
+        &[],
+        None,
+    )
+    .await;
+    assert!(own.text().contains("Ghost Person"), "{}", own.text());
+
+    // A notification of the grant's project that names an item of another project shows no title.
+    let mixed = Uuid::new_v4();
+    exec(
+        &w.db,
+        "INSERT INTO notifications (id, user_id, workspace_id, type, kind, payload, title, content, \
+         related_project_id, related_issue_id, is_read) \
+         VALUES ($1, $2, $3, 'mentioned', 'mentioned', '{}'::jsonb, 'title', 'content', $4, $5, false)",
+        vec![mixed.into(), w.alice.into(), w.ws1.into(), w.p1.into(), w.i2.into()],
+    )
+    .await;
+    let notifications = w.get(&selected, "/api/v1/notifications").await;
+    assert_ok(&notifications, "notifications");
+    let items = notifications.json()["data"]["items"].clone();
+    let row = items
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["id"] == json!(mixed)))
+        .cloned()
+        .expect("the notification of the grant's project is listed");
+    assert!(
+        row["issue_title"].is_null(),
+        "the title of an item outside the grant is not shown: {row}"
+    );
+    assert!(!notifications.text().contains("item two"), "{}", notifications.text());
+    w.finish().await;
+}
+
+#[tokio::test]
 async fn a_grant_follows_the_users_live_state() {
     let Some(w) = World::new("deleg_state").await else {
         return;

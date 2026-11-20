@@ -70,6 +70,20 @@ fn delegated_scope(alias: &str, first_param: usize) -> Option<(String, Vec<sea_o
     Some((sql, values))
 }
 
+/// The condition that keeps a joined work item inside the grant, so a notification that names an
+/// item of another project (or workspace) shows no title for it to a connected application.
+/// Uses the placeholders that [`delegated_scope`] numbers from `first_param`.
+fn delegated_item_scope(first_param: usize) -> String {
+    let Some(context) = crate::oauth::delegated::current() else {
+        return String::new();
+    };
+    let projects = match &context.projects {
+        crate::oauth::scopes::ProjectScope::All => String::new(),
+        crate::oauth::scopes::ProjectScope::Selected(_) => format!(" AND p.id = ANY(${})", first_param + 1),
+    };
+    format!(" AND i.project_id IN (SELECT p.id FROM projects p WHERE p.workspace_id = ${first_param}{projects})")
+}
+
 /// GET /api/v1/notifications
 pub async fn list_notifications(
     State(state): State<AppState>,
@@ -121,6 +135,7 @@ pub async fn list_notifications(
 
     // Get notifications
     let (list_scope, list_scope_values) = delegated_scope("n.", 4).unwrap_or_default();
+    let item_scope = delegated_item_scope(4);
     let unread_clause = if unread_only { " AND n.is_read = false" } else { "" };
     let list_query = format!(
         "SELECT n.id, n.user_id, n.type as notification_type, n.title, n.content, n.link,
@@ -128,7 +143,7 @@ pub async fn list_notifications(
                 n.is_read, n.created_at, n.read_at,
                 i.title as issue_title
          FROM notifications n
-         LEFT JOIN work_items i ON n.related_issue_id = i.id
+         LEFT JOIN work_items i ON n.related_issue_id = i.id{item_scope}
          WHERE n.user_id = $1{unread_clause}{list_scope}
          ORDER BY n.created_at DESC
          LIMIT $2 OFFSET $3"

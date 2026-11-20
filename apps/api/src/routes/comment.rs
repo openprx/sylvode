@@ -377,14 +377,23 @@ pub async fn list_comments(
     let comments = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT c.id, c.work_item_id, c.author_id, u.name as author_name, u.email as author_email,
+            SELECT c.id, c.work_item_id, c.author_id,
+                   CASE WHEN $2 AND m.user_id IS NULL THEN NULL ELSE u.name END AS author_name,
+                   CASE WHEN $2 AND m.user_id IS NULL THEN NULL ELSE u.email END AS author_email,
                    c.body, c.created_at, c.updated_at
             FROM comments c
             LEFT JOIN users u ON c.author_id = u.id
+            LEFT JOIN workspace_members m ON m.workspace_id = $3 AND m.user_id = c.author_id
             WHERE c.work_item_id = $1
             ORDER BY c.created_at ASC
         ",
-        vec![issue_id.into()],
+        // A connected application sees the name and email of an author only while the author is a
+        // member of the connected workspace; a person who has left stays a bare id.
+        vec![
+            issue_id.into(),
+            crate::oauth::delegated::current().is_some().into(),
+            issue.workspace_id.into(),
+        ],
     ))
     .all(&state.db)
     .await?;
