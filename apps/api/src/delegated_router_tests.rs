@@ -1681,6 +1681,19 @@ async fn a_connection_can_never_start_or_assign_an_agent() {
         .await;
     assert_eq!(direct.bearer_error().as_deref(), Some("insufficient_scope"));
     assert_eq!(tasks().await, tasks_before);
+    // So is the route that starts a proposal's voting, which queues a vote request for every agent
+    // of the project.
+    let voting = w
+        .send(
+            "POST",
+            &format!("/api/v1/proposals/{}/start-voting", Uuid::new_v4()),
+            Some(&session.token),
+            &[],
+            Some(&json!({})),
+        )
+        .await;
+    assert_eq!(voting.bearer_error().as_deref(), Some("insufficient_scope"));
+    assert_eq!(tasks().await, tasks_before);
 
     // People are fine to assign and mention: only agents are guarded.
     let person = w

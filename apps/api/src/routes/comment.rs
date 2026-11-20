@@ -20,7 +20,7 @@ use crate::{
     error::{ApiError, localize_error, request_lang},
     middleware::bot_auth::{BotAuthContext, require_workspace_access},
     response::{ApiResponse, PaginatedData},
-    services::ai_task_service::{CreateAiTaskInput, create_ai_task},
+    services::ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
 };
 
@@ -274,6 +274,7 @@ pub async fn create_comment(
         let _ = create_ai_task(
             &state.db,
             CreateAiTaskInput {
+                origin: DispatchOrigin::Request,
                 project_id: issue_context.project_id,
                 ai_participant_id: bot_id,
                 actor_id: Some(user_id),

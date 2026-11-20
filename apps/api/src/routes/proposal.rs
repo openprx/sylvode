@@ -19,7 +19,7 @@ use crate::{
     error::ApiError,
     response::{ApiResponse, PaginatedData},
     routes::check_result::sync_check_result_after_proposal_decision,
-    services::ai_task_service::queue_vote_requested_tasks_for_project,
+    services::ai_task_service::{DispatchOrigin, queue_vote_requested_tasks_for_project},
     services::governance_audit_service::{GovernanceAuditLogInput, write_governance_audit_log},
     services::impact_review_service::ImpactReviewService,
     services::permission_service::PermissionService,
@@ -874,6 +874,7 @@ pub async fn governance_tick(state: &AppState) -> Result<(), ApiError> {
             if let Some(project_id) = resolve_project_id_for_proposal(state, &moved.id, &moved.author_id).await? {
                 let _ = queue_vote_requested_tasks_for_project(
                     &state.db,
+                    DispatchOrigin::System,
                     project_id,
                     &moved.id,
                     json!({
@@ -2028,6 +2029,7 @@ pub async fn start_voting(
     if let Some(project_id) = resolve_project_id_for_proposal(&state, &proposal.id, &proposal.author_id).await? {
         let _ = queue_vote_requested_tasks_for_project(
             &state.db,
+            DispatchOrigin::Request,
             project_id,
             &proposal.id,
             json!({

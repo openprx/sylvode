@@ -541,6 +541,7 @@ mod token_bot_identity_database_tests {
         .await;
         let queued = queue_vote_requested_tasks_for_project(
             db,
+            crate::services::ai_task_service::DispatchOrigin::System,
             tenant.project_id,
             &Uuid::new_v4().to_string(),
             serde_json::json!({}),
