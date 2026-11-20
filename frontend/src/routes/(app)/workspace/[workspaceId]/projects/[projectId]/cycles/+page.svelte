@@ -14,6 +14,7 @@
 	} from '#lib/api/sprints.js';
 	import ProgressBar from '#lib/components/ProgressBar.svelte';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 
 	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
@@ -140,9 +141,9 @@
 
 	function getStatusClass(status: SprintStatus): string {
 		const map: Record<SprintStatus, string> = {
-			planned: 'bg-slate-100 dark:bg-slate-800 text-fg',
-			active: 'bg-green-100 text-green-700',
-			completed: 'bg-blue-100 text-blue-700'
+			planned: 'bg-surface text-fg',
+			active: 'bg-success-soft text-success',
+			completed: 'bg-surface text-fg'
 		};
 		return map[status];
 	}
@@ -242,9 +243,13 @@
 	}
 
 	async function removeSprint(sprint: Sprint) {
-		const confirmed = window.confirm(
-			get(t)('cycles.deleteConfirm', { values: { name: sprint.name } })
-		);
+		const nameValues = { values: { name: sprint.name } };
+		const confirmed = await confirmAction({
+			tone: 'destructive',
+			title: get(t)('cycles.deleteTitle', nameValues),
+			body: get(t)('cycles.deleteBody'),
+			confirmLabel: get(t)('cycles.deleteAction', nameValues)
+		});
 		if (!confirmed) return;
 
 		const response = await sprintsApi.delete(sprint.id);
@@ -273,20 +278,16 @@
 </script>
 
 <div class="mx-auto max-w-7xl space-y-6">
-	<div
-		class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4 sm:p-5"
-	>
+	<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 		<div class="mb-4 text-sm text-fg-muted">
-			<a href="/workspace" class="hover:text-blue-600">{$t('nav.myWorkspace')}</a>
-			<span class="mx-1 text-slate-400">/</span>
-			<a href="/workspace/{workspaceId}/projects" class="hover:text-blue-600"
-				>{$t('project.title')}</a
-			>
-			<span class="mx-1 text-slate-400">/</span>
-			<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:text-blue-600"
+			<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
+			<span class="mx-1 text-fg-muted">/</span>
+			<a href="/workspace/{workspaceId}/projects" class="hover:underline">{$t('project.title')}</a>
+			<span class="mx-1 text-fg-muted">/</span>
+			<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:underline"
 				>{$t('project.detail')}</a
 			>
-			<span class="mx-1 text-slate-400">/</span>
+			<span class="mx-1 text-fg-muted">/</span>
 			<span class="font-medium text-fg">{$t('cycles.title')}</span>
 		</div>
 
@@ -297,7 +298,7 @@
 			</div>
 			<button
 				onclick={openCreateModal}
-				class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+				class="rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary"
 			>
 				+ {$t('cycles.create')}
 			</button>
@@ -305,20 +306,18 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-8 text-center text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-8 text-center text-fg-muted">
 			<div
-				class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"
+				class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-fg border-t-transparent"
 			></div>
 			{$t('cycles.loading')}
 		</div>
 	{:else if errorMessage}
-		<div class="rounded-lg border border-red-200 bg-red-50 p-6 text-center">
-			<p class="mb-3 text-sm text-red-700">{errorMessage}</p>
+		<div class="rounded-card border bg-danger-soft p-6 text-center">
+			<p class="mb-3 text-sm text-danger">{errorMessage}</p>
 			<button
 				onclick={loadData}
-				class="rounded-md bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
+				class="rounded-control bg-danger-soft px-4 py-2 text-sm text-danger"
 			>
 				{$t('common.retry')}
 			</button>
@@ -329,17 +328,13 @@
 				{$t('cycles.current')}
 			</h2>
 			{#if activeSprints.length === 0}
-				<div
-					class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-sm text-fg-muted"
-				>
+				<div class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted">
 					{$t('cycles.noActive')}
 				</div>
 			{:else}
 				<div class="space-y-3">
 					{#each activeSprints as sprint (sprint.id)}
-						<div
-							class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4 sm:p-5"
-						>
+						<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 							<div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
 								<div>
 									<h3 class="text-lg font-semibold text-fg">
@@ -373,12 +368,8 @@
 									}
 								})}
 							/>
-							<div
-								class="mt-4 rounded-md border border-line bg-slate-50 dark:bg-slate-950 p-3"
-							>
-								<p
-									class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted"
-								>
+							<div class="mt-4 rounded-control border border-line bg-surface p-3">
+								<p class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted">
 									{$t('cycles.linkedIssues', {
 										values: { count: sprintIssues[sprint.id]?.length ?? 0 }
 									})}
@@ -392,7 +383,7 @@
 										{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
 											<a
 												href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
-												class="block rounded border border-line bg-white dark:bg-slate-900 px-3 py-2 text-sm hover:border-blue-200 hover:bg-blue-50"
+												class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
 											>
 												<p class="font-medium text-fg">{issue.title}</p>
 												<p class="font-mono text-xs text-fg-muted">
@@ -407,13 +398,13 @@
 							<div class="mt-4 flex flex-wrap gap-2">
 								<button
 									onclick={() => goSprintBoard(sprint.id)}
-									class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-sm text-fg hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+									class="rounded-control border border-fg px-3 py-1.5 text-sm text-fg hover:bg-surface"
 								>
 									{$t('cycles.viewDetail')}
 								</button>
 								<button
 									onclick={() => updateSprintStatus(sprint, 'completed')}
-									class="rounded-md bg-green-600 px-3 py-1.5 text-sm text-white hover:bg-green-700"
+									class="rounded-control bg-primary px-3 py-1.5 text-sm text-on-primary"
 								>
 									{$t('cycles.completeSprint')}
 								</button>
@@ -429,17 +420,13 @@
 				{$t('cycles.planned')}
 			</h2>
 			{#if plannedSprints.length === 0}
-				<div
-					class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-sm text-fg-muted"
-				>
+				<div class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted">
 					{$t('cycles.noPlanned')}
 				</div>
 			{:else}
 				<div class="space-y-3">
 					{#each plannedSprints as sprint (sprint.id)}
-						<div
-							class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4 sm:p-5"
-						>
+						<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 							<div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
 								<div>
 									<h3 class="text-lg font-semibold text-fg">
@@ -463,12 +450,8 @@
 									{$t('cycles.goal')}: {sprint.goal}
 								</p>
 							{/if}
-							<div
-								class="rounded-md border border-line bg-slate-50 dark:bg-slate-950 p-3"
-							>
-								<p
-									class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted"
-								>
+							<div class="rounded-control border border-line bg-surface p-3">
+								<p class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted">
 									{$t('cycles.linkedIssues', {
 										values: { count: sprintIssues[sprint.id]?.length ?? 0 }
 									})}
@@ -482,7 +465,7 @@
 										{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
 											<a
 												href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
-												class="block rounded border border-line bg-white dark:bg-slate-900 px-3 py-2 text-sm hover:border-blue-200 hover:bg-blue-50"
+												class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
 											>
 												<p class="font-medium text-fg">{issue.title}</p>
 												<p class="font-mono text-xs text-fg-muted">
@@ -497,19 +480,19 @@
 							<div class="mt-4 flex flex-wrap gap-2">
 								<button
 									onclick={() => openEditModal(sprint)}
-									class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-sm text-fg hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+									class="rounded-control border border-fg px-3 py-1.5 text-sm text-fg hover:bg-surface"
 								>
 									{$t('common.edit')}
 								</button>
 								<button
 									onclick={() => removeSprint(sprint)}
-									class="rounded-md border border-red-200 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
+									class="rounded-control border px-3 py-1.5 text-sm text-danger hover:bg-danger-soft"
 								>
 									{$t('common.delete')}
 								</button>
 								<button
 									onclick={() => updateSprintStatus(sprint, 'active')}
-									class="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
+									class="rounded-control bg-primary px-3 py-1.5 text-sm text-on-primary"
 								>
 									{$t('cycles.startSprint')}
 								</button>
@@ -520,18 +503,12 @@
 			{/if}
 		</section>
 
-		<section
-			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4 sm:p-5"
-		>
+		<section class="rounded-card border border-line bg-raised p-4 sm:p-5">
 			<details>
-				<summary
-					class="cursor-pointer list-none text-lg font-semibold text-fg"
-				>
+				<summary class="cursor-pointer list-none text-lg font-semibold text-fg">
 					<span class="inline-flex items-center gap-2"
 						>{$t('cycles.completedList')}
-						<span class="text-sm text-fg-muted"
-							>({completedSprints.length})</span
-						></span
+						<span class="text-sm text-fg-muted">({completedSprints.length})</span></span
 					>
 				</summary>
 				<div class="mt-4 space-y-3">
@@ -539,7 +516,7 @@
 						<p class="text-sm text-fg-muted">{$t('cycles.noCompleted')}</p>
 					{:else}
 						{#each completedSprints as sprint (sprint.id)}
-							<div class="rounded-lg border border-line p-4">
+							<div class="rounded-card border border-line p-4">
 								<div class="mb-2 flex items-start justify-between gap-2">
 									<div>
 										<p class="font-medium text-fg">{sprint.name}</p>
@@ -564,12 +541,8 @@
 										}
 									})}
 								/>
-								<div
-									class="mt-3 rounded-md border border-line bg-slate-50 dark:bg-slate-950 p-3"
-								>
-									<p
-										class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted"
-									>
+								<div class="mt-3 rounded-control border border-line bg-surface p-3">
+									<p class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted">
 										{$t('cycles.linkedIssues', {
 											values: { count: sprintIssues[sprint.id]?.length ?? 0 }
 										})}
@@ -583,7 +556,7 @@
 											{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
 												<a
 													href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
-													class="block rounded border border-line bg-white dark:bg-slate-900 px-3 py-2 text-sm hover:border-blue-200 hover:bg-blue-50"
+													class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
 												>
 													<p class="font-medium text-fg">
 														{issue.title}
@@ -606,18 +579,14 @@
 </div>
 
 {#if showCreateModal}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-		<div
-			class="w-full max-w-lg rounded-lg bg-white dark:bg-slate-900 p-6 shadow-xl"
-		>
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
+		<div class="w-full max-w-lg rounded-float bg-overlay p-6 shadow-overlay">
 			<h2 class="mb-4 text-lg font-semibold text-fg">
 				{$t('cycles.create')}
 			</h2>
 			<div class="space-y-4">
 				<div>
-					<label
-						for="create-name"
-						class="mb-1 block text-sm font-medium text-fg"
+					<label for="create-name" class="mb-1 block text-sm font-medium text-fg"
 						>{$t('cycles.name')}</label
 					>
 					<input
@@ -625,13 +594,11 @@
 						type="text"
 						bind:value={createForm.name}
 						placeholder={$t('cycles.namePlaceholder')}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:placeholder-slate-500"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 					/>
 				</div>
 				<div>
-					<label
-						for="create-goal"
-						class="mb-1 block text-sm font-medium text-fg"
+					<label for="create-goal" class="mb-1 block text-sm font-medium text-fg"
 						>{$t('cycles.goal')}</label
 					>
 					<textarea
@@ -639,34 +606,30 @@
 						bind:value={createForm.goal}
 						rows="3"
 						placeholder={$t('cycles.goalPlaceholder')}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:placeholder-slate-500"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 					></textarea>
 				</div>
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 					<div>
-						<label
-							for="create-start-date"
-							class="mb-1 block text-sm font-medium text-fg"
+						<label for="create-start-date" class="mb-1 block text-sm font-medium text-fg"
 							>{$t('cycles.startDate')}</label
 						>
 						<input
 							id="create-start-date"
 							type="date"
 							bind:value={createForm.start_date}
-							class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 						/>
 					</div>
 					<div>
-						<label
-							for="create-end-date"
-							class="mb-1 block text-sm font-medium text-fg"
+						<label for="create-end-date" class="mb-1 block text-sm font-medium text-fg"
 							>{$t('cycles.endDate')}</label
 						>
 						<input
 							id="create-end-date"
 							type="date"
 							bind:value={createForm.end_date}
-							class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 						/>
 					</div>
 				</div>
@@ -674,14 +637,14 @@
 			<div class="mt-6 flex justify-end gap-2">
 				<button
 					onclick={() => (showCreateModal = false)}
-					class="rounded-md border border-slate-300 dark:border-slate-600 px-4 py-2 text-sm text-fg hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+					class="rounded-control border border-fg px-4 py-2 text-sm text-fg hover:bg-surface"
 				>
 					{$t('common.cancel')}
 				</button>
 				<button
 					onclick={submitCreate}
 					disabled={saving}
-					class="rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
+					class="rounded-control bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-control disabled:cursor-not-allowed"
 				>
 					{saving ? $t('common.creating') : $t('common.create')}
 				</button>
@@ -691,65 +654,55 @@
 {/if}
 
 {#if showEditModal}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-		<div
-			class="w-full max-w-lg rounded-lg bg-white dark:bg-slate-900 p-6 shadow-xl"
-		>
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
+		<div class="w-full max-w-lg rounded-float bg-overlay p-6 shadow-overlay">
 			<h2 class="mb-4 text-lg font-semibold text-fg">
 				{$t('cycles.edit')}
 			</h2>
 			<div class="space-y-4">
 				<div>
-					<label
-						for="edit-name"
-						class="mb-1 block text-sm font-medium text-fg"
+					<label for="edit-name" class="mb-1 block text-sm font-medium text-fg"
 						>{$t('cycles.name')}</label
 					>
 					<input
 						id="edit-name"
 						type="text"
 						bind:value={editForm.name}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					/>
 				</div>
 				<div>
-					<label
-						for="edit-goal"
-						class="mb-1 block text-sm font-medium text-fg"
+					<label for="edit-goal" class="mb-1 block text-sm font-medium text-fg"
 						>{$t('cycles.goal')}</label
 					>
 					<textarea
 						id="edit-goal"
 						bind:value={editForm.goal}
 						rows="3"
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					></textarea>
 				</div>
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 					<div>
-						<label
-							for="edit-start-date"
-							class="mb-1 block text-sm font-medium text-fg"
+						<label for="edit-start-date" class="mb-1 block text-sm font-medium text-fg"
 							>{$t('cycles.startDate')}</label
 						>
 						<input
 							id="edit-start-date"
 							type="date"
 							bind:value={editForm.start_date}
-							class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 						/>
 					</div>
 					<div>
-						<label
-							for="edit-end-date"
-							class="mb-1 block text-sm font-medium text-fg"
+						<label for="edit-end-date" class="mb-1 block text-sm font-medium text-fg"
 							>{$t('cycles.endDate')}</label
 						>
 						<input
 							id="edit-end-date"
 							type="date"
 							bind:value={editForm.end_date}
-							class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 						/>
 					</div>
 				</div>
@@ -760,14 +713,14 @@
 						showEditModal = false;
 						editingSprint = null;
 					}}
-					class="rounded-md border border-slate-300 dark:border-slate-600 px-4 py-2 text-sm text-fg hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+					class="rounded-control border border-fg px-4 py-2 text-sm text-fg hover:bg-surface"
 				>
 					{$t('common.cancel')}
 				</button>
 				<button
 					onclick={submitEdit}
 					disabled={saving}
-					class="rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
+					class="rounded-control bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-control disabled:cursor-not-allowed"
 				>
 					{saving ? $t('common.saving') : $t('common.save')}
 				</button>

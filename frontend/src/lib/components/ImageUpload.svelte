@@ -106,9 +106,7 @@
 </script>
 
 <div class="space-y-2">
-	<label
-		class="inline-flex cursor-pointer items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
-	>
+	<label class="inline-flex cursor-pointer items-center gap-1 text-sm text-fg">
 		<span class="inline-flex items-center gap-1">
 			<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path
@@ -125,9 +123,9 @@
 
 	{#if uploading}
 		<div class="space-y-1">
-			<div class="h-2 w-full overflow-hidden rounded bg-slate-100 dark:bg-slate-800">
+			<div class="h-2 w-full overflow-hidden rounded bg-surface">
 				<div
-					class="h-full rounded bg-blue-500 transition-all duration-200"
+					class="h-full rounded bg-primary transition-all duration-200"
 					style={`width: ${progress}%;`}
 				></div>
 			</div>
@@ -136,9 +134,7 @@
 	{/if}
 
 	{#if previewUrl}
-		<div
-			class="overflow-hidden rounded-md border border-line bg-slate-50 dark:bg-slate-950 p-2"
-		>
+		<div class="overflow-hidden rounded-control border border-line bg-surface p-2">
 			{#if isImageUploadMime(previewMimeType)}
 				<img
 					src={previewUrl}

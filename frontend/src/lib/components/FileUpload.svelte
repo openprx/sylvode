@@ -255,7 +255,7 @@
 	{#if compact}
 		<button
 			type="button"
-			class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-sm text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-700"
+			class="inline-flex items-center gap-1 rounded-control border border-fg px-2.5 py-1.5 text-sm text-fg hover:bg-surface"
 			onclick={openFilePicker}
 		>
 			<span aria-hidden="true">📎</span>
@@ -265,10 +265,8 @@
 		<div
 			role="button"
 			tabindex="0"
-			class={`rounded-md border-2 border-dashed px-4 py-6 text-center transition ${
-				dragActive
-					? 'border-blue-400 bg-blue-50 dark:bg-blue-950/30'
-					: 'border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900'
+			class={`rounded-control border-2 border-dashed px-4 py-6 text-center transition ${
+				dragActive ? 'border-fg bg-surface' : 'border-input bg-surface'
 			}`}
 			onclick={openFilePicker}
 			ondragover={handleDragOver}
@@ -285,7 +283,7 @@
 				📎 {$t('issue.addAttachments')}
 			</p>
 			<p class="mt-1 text-xs text-fg-muted">{$t('issue.dragFilesHere')}</p>
-			<p class="mt-1 text-xs text-slate-400 dark:text-slate-500">
+			<p class="mt-1 text-xs text-fg-muted">
 				{$t('issue.maxFileSizeHint', { values: { size: Math.floor(maxSize / (1024 * 1024)) } })}
 			</p>
 		</div>
@@ -294,18 +292,14 @@
 	{#if pendingUploads.length > 0}
 		<div class="space-y-2">
 			{#each pendingUploads as pending (pending.id)}
-				<div
-					class="rounded-md border border-line bg-white px-3 py-2 text-sm dark:bg-slate-900"
-				>
+				<div class="rounded-control border border-line bg-raised px-3 py-2 text-sm">
 					<div class="mb-1 flex items-center justify-between gap-3">
 						<span class="truncate text-fg">{pending.filename}</span>
-						<span class="text-xs text-fg-muted"
-							>{$t('issue.uploading')} {pending.progress}%</span
-						>
+						<span class="text-xs text-fg-muted">{$t('issue.uploading')} {pending.progress}%</span>
 					</div>
-					<div class="h-2 w-full overflow-hidden rounded bg-slate-100 dark:bg-slate-700">
+					<div class="h-2 w-full overflow-hidden rounded bg-surface">
 						<div
-							class="h-full rounded bg-blue-500 transition-all duration-200"
+							class="h-full rounded bg-primary transition-all duration-200"
 							style={`width: ${pending.progress}%`}
 						></div>
 					</div>
@@ -318,7 +312,7 @@
 		<div class="grid gap-2 sm:grid-cols-2">
 			{#each value as file (file.url)}
 				<div
-					class="flex items-start gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm dark:bg-slate-900"
+					class="flex items-start gap-2 rounded-control border border-line bg-raised px-3 py-2 text-sm"
 				>
 					<div class="pt-0.5" aria-hidden="true">
 						{file.mimeType.startsWith('image/') ? '🖼️' : '📄'}
@@ -328,7 +322,7 @@
 							href={file.url}
 							target="_blank"
 							rel="noreferrer"
-							class="block truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+							class="block truncate text-fg underline"
 						>
 							{file.filename}
 						</a>
@@ -336,7 +330,7 @@
 					</div>
 					<button
 						type="button"
-						class="rounded p-1 text-fg-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+						class="rounded p-1 text-fg-muted hover:bg-surface hover:text-fg"
 						aria-label={$t('issue.removeAttachment')}
 						onclick={() => removeAttachment(file)}
 					>
