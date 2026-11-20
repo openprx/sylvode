@@ -92,9 +92,9 @@ mod tests {
 
     #[test]
     fn matches_inside_and_outside() {
-        let block = IpCidr::parse("172.16.0.0/12").unwrap();
-        assert!(block.contains(ip("172.31.255.254")));
-        assert!(!block.contains(ip("172.32.0.1")));
+        let block = IpCidr::parse("203.0.113.0/25").unwrap();
+        assert!(block.contains(ip("203.0.113.127")));
+        assert!(!block.contains(ip("203.0.113.128")));
         assert!(!block.contains(ip("::1")));
         assert!(IpCidr::parse("::1/128").unwrap().contains(ip("::1")));
         assert!(IpCidr::parse("0.0.0.0/0").unwrap().contains(ip("8.8.8.8")));
@@ -103,10 +103,10 @@ mod tests {
 
     #[test]
     fn single_address_and_mapped_v6() {
-        let block = IpCidr::parse("10.1.2.3").unwrap();
-        assert!(block.contains(ip("10.1.2.3")));
-        assert!(block.contains(ip("::ffff:10.1.2.3")));
-        assert!(!block.contains(ip("10.1.2.4")));
+        let block = IpCidr::parse("198.51.100.3").unwrap();
+        assert!(block.contains(ip("198.51.100.3")));
+        assert!(block.contains(ip("::ffff:198.51.100.3")));
+        assert!(!block.contains(ip("198.51.100.4")));
     }
 
     #[test]
