@@ -3,7 +3,8 @@
 		"dataTable": {
 			"selectAll": "选择本页所有行",
 			"selectRow": "选择 {title}",
-			"selected": "已选择 {count} 行",
+			"selectedOne": "已选择 1 行",
+			"selectedMany": "已选择 {count} 行",
 			"sortBy": "按{column}排序",
 			"actions": "操作",
 			"loading": "正在加载",
