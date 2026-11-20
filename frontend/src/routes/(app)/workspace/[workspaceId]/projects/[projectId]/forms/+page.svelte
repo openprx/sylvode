@@ -1,11 +1,9 @@
 <script lang="ts">
-	import { writable } from 'svelte/store';
 	import ProjectPluginSettingsLink from '#lib/components/plugins/ProjectPluginSettingsLink.svelte';
 	import CreatorPluginLink from '#lib/components/plugins/CreatorPluginLink.svelte';
 	import FormPluginToolbar from '#lib/components/plugins/FormPluginToolbar.svelte';
 	import RecordPluginPanels from '#lib/components/plugins/RecordPluginPanels.svelte';
 	import RecordPluginActions from '#lib/components/plugins/RecordPluginActions.svelte';
-	import type { RecordPluginActionSurface } from '#lib/plugins/placements.js';
 	import { taskEditorAction } from '#lib/workbench/edit-surface.js';
 	import {
 		Activity,
@@ -38,14 +36,12 @@
 	import { getContext, onMount, tick, untrack } from 'svelte';
 	import { WORKBENCH_CONTEXT, type TaskWorkbench } from '#lib/workbench/tabs.js';
 	import {
-		FormsRefreshLatch,
 		formsFingerprint,
 		formsDraftDirty,
 		cloneFormsSnapshot,
 		restoredFormsSnapshot,
 		recordWriteVersion,
 		mayRefreshForms,
-		type FormsDraftVersion,
 		type FormsSessionSnapshot
 	} from '#lib/workbench/forms-session.js';
 	import { page } from '$app/state';
@@ -63,27 +59,21 @@
 		type FormChildRecord,
 		type FormPermissionAction,
 		type FormPermissions,
-		type FormRecordComment,
-		type FormRecordImportPreview,
 		type FormRecordImportRow,
 		type FormRecord,
-		type FormRecordLink,
 		type FormRelationTarget,
 		type FormView,
 		type UniversalForm
 	} from '#lib/api/forms.js';
 
-	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
-	import { projectsApi, type Project, type ScenarioTemplate } from '#lib/api/projects.js';
+	import { membersApi } from '#lib/api/members.js';
+	import { projectsApi, type ScenarioTemplate } from '#lib/api/projects.js';
 	import Button from '#lib/components/Button.svelte';
 	import FormDesignerWorkspace from '#lib/components/forms/FormDesignerWorkspace.svelte';
 	import OptionValueBadges from '#lib/components/forms/OptionValueBadges.svelte';
 	import LayoutSettingsSheet from '#lib/components/forms/LayoutSettingsSheet.svelte';
 	import RecordGrid, { type GridBadge } from '#lib/components/forms/RecordGrid.svelte';
-	import RecordSidePanel, {
-		PANEL_DEFAULT_WIDTH,
-		type PanelStatus
-	} from '#lib/components/forms/RecordSidePanel.svelte';
+	import RecordSidePanel from '#lib/components/forms/RecordSidePanel.svelte';
 	import ViewBar from '#lib/components/forms/ViewBar.svelte';
 	import type { SimpleFilter } from '#lib/components/forms/ViewArrangementControls.svelte';
 	import { buildDetailSections, headerFields } from '#lib/forms/detail-layout.js';
@@ -116,701 +106,116 @@
 
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import { locale, t } from 'svelte-i18n';
+	import { blankFieldDraft } from '#lib/forms/designer-schema.js';
+	import {
+		detailLayoutModes,
+		detailPageWidgetKeys,
+		detailPageWidgetOptions,
+		fieldTypeOptions,
+		formPermissionActions,
+		recordPageSize,
+		SORTABLE_TYPES
+	} from '#lib/forms/page-constants.js';
+	import type {
+		AttachmentBundleEntry,
+		AttachmentBundleExport,
+		CalendarExceptionDateMap,
+		CalendarGridGroup,
+		CalendarRecordOccurrence,
+		CalendarResourceRow,
+		CardCoverAspect,
+		CardCoverFit,
+		CardCoverPosition,
+		CardFieldLimit,
+		CardLayoutMode,
+		DesignerSchemaChange,
+		DetailHeaderDraft,
+		DetailHighlightDraft,
+		DetailLayoutSection,
+		DetailLayoutSectionDensity,
+		DetailLayoutSectionDraft,
+		DetailPageCompositionDraft,
+		DetailPageWidgetDensity,
+		DetailPageWidgetEntry,
+		DetailPageWidgetKey,
+		DetailPageWidgetRegion,
+		FieldConditionDraft,
+		FieldConditionItem,
+		FieldConditionOperator,
+		FieldDraft,
+		FormRecordScope,
+		GanttScale,
+		GanttTask,
+		GanttTimeline,
+		ImportMappingTransform,
+		ParsedViewFilter,
+		ParsedViewFilterExpression,
+		ParsedViewFilterGroup,
+		PivotAggregate,
+		PivotColumnLimit,
+		PivotRowLimit,
+		PivotSortMode,
+		PivotTable,
+		PivotTotalsMode,
+		PivotValueDisplay,
+		SignatureDraftScope,
+		TimelineEventLayout,
+		ViewCalendarDayScope,
+		ViewCalendarLayout,
+		ViewCalendarRange,
+		ViewCalendarRecurrence,
+		ViewFilterDraft,
+		ViewFilterGroupDraft,
+		ViewFilterLogic,
+		ViewFilterOperator,
+		ViewSortDirection,
+		ViewTimelineSource,
+		ViewVisibility,
+		ZipFileInput
+	} from '#lib/forms/page-types.js';
+	import { defaultPermissionActions } from '#lib/forms/permission-drafts.js';
+	import { FormsPage } from '#lib/forms/state/forms-page.js';
+	import { setFormsPageContext } from '#lib/forms/state/context.js';
 
-	type ImportMappingTransform =
-		| 'none'
-		| 'trim'
-		| 'uppercase'
-		| 'lowercase'
-		| 'capitalize'
-		| 'titlecase'
-		| 'normalize_spaces'
-		| 'strip_non_digits'
-		| 'slugify';
+	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
+	const recordEditorAction = taskEditorAction();
+	const fp = new FormsPage({ workbench, recordEditorAction });
+	setFormsPageContext(fp);
+	const s = fp.state;
 
-	type ImportWizardStep = 'source' | 'mapping' | 'preview' | 'commit';
-
-	type AttachmentBundleEntry = {
-		record_id: string;
-		record_title: string;
-		field_key: string;
-		field_label: string;
-		field_type: string;
-		url: string;
-		download_url: string;
-		thumbnail_url: string | null;
-		media_metadata?: Record<string, unknown> | null;
-		file_name: string;
-		content_type: string;
-		byte_size: number;
-		storage_key: string | null;
-		attachment_id: string | null;
-		source: string;
-	};
-
-	type AttachmentBundleExport = {
-		form_id: string;
-		form_key: string;
-		view_id: string | null;
-		view_name: string | null;
-		exported_at: string;
-		record_count: number;
-		attachment_count: number;
-		bundle_format: string;
-		attachments: AttachmentBundleEntry[];
-	};
-
-	type ZipFileInput = { path: string; data: string | Uint8Array };
-	type StoredViewArrangement = arrangement.StoredArrangement;
-
-	const recordPluginActions: RecordPluginActionSurface = writable(null);
 	const workspaceId = $derived(requireRouteParam(page.params.workspaceId, 'workspaceId'));
 	const projectId = $derived(requireRouteParam(page.params.projectId, 'projectId'));
 
-	const fieldTypeOptions: FormFieldType[] = [
-		'text',
-		'phone',
-		'email',
-		'address',
-		'location',
-		'scan',
-		'signature',
-		'autonumber',
-		'member',
-		'textarea',
-		'rich_text',
-		'number',
-		'integer',
-		'amount',
-		'rating',
-		'progress',
-		'date',
-		'datetime',
-		'single_select',
-		'multi_select',
-		'boolean',
-		'relation',
-		'child_table',
-		'attachment',
-		'image',
-		'formula',
-		'ai_summary'
-	];
-
-	const formPermissionActions: FormPermissionAction[] = [
-		'form.view',
-		'form.design',
-		'record.create',
-		'record.update',
-		'record.delete',
-		'record.export'
-	];
-
-	const detailPageWidgetOptions: {
-		key: DetailPageWidgetKey;
-		labelKey: string;
-		descriptionKey: string;
-	}[] = [
-		{
-			key: 'children',
-			labelKey: 'forms.detailPageWidgetChildren',
-			descriptionKey: 'forms.detailPageWidgetChildrenDescription'
-		},
-
-		{
-			key: 'links',
-			labelKey: 'forms.detailPageWidgetLinks',
-			descriptionKey: 'forms.detailPageWidgetLinksDescription'
-		},
-
-		{
-			key: 'comments',
-			labelKey: 'forms.detailPageWidgetComments',
-			descriptionKey: 'forms.detailPageWidgetCommentsDescription'
-		},
-
-		{
-			key: 'attachments',
-			labelKey: 'forms.detailPageWidgetAttachments',
-			descriptionKey: 'forms.detailPageWidgetAttachmentsDescription'
-		},
-
-		{
-			key: 'events',
-			labelKey: 'forms.detailPageWidgetEvents',
-			descriptionKey: 'forms.detailPageWidgetEventsDescription'
-		}
-	];
-
-	const detailPageWidgetKeys = new Set(detailPageWidgetOptions.map((option) => option.key));
-
-	type FieldDraft = {
-		field_id?: string;
-		key: string;
-		label: string;
-		type: FormFieldType;
-		required: boolean;
-		optionsText: string;
-		optionColorsText: string;
-		optionDisabledText: string;
-		optionArchivedText: string;
-		optionDescriptionsText: string;
-		optionGroupsText: string;
-		currency: string;
-		scale: string;
-		placeholder: string;
-		helpText: string;
-		defaultValue: string;
-		validationMin: string;
-		validationMax: string;
-		validationPattern: string;
-		validationMaxLength: string;
-		listVisible: boolean;
-		detailVisible: boolean;
-		conditionalHiddenWhenText: string;
-		conditionalReadOnlyWhenText: string;
-		readOnly: boolean;
-		formulaOp: string;
-		formulaArgsText: string;
-		formulaScale: string;
-		formulaRelationKey: string;
-		formulaChildField: string;
-		relationTargetType: string;
-		relationFormKey: string;
-		relationKey: string;
-		relationType: string;
-		relationDisplayField: string;
-		attachmentAcceptText: string;
-		attachmentMaxSizeMb: string;
-		attachmentMultiple: boolean;
-		attachmentPreview: boolean;
-		attachmentThumbnailFormat: string;
-		attachmentPreviewFormat: string;
-		attachmentVariantsText: string;
-		attachmentStoragePolicy: string;
-		attachmentRetentionDays: string;
-		attachmentSignedUrlTtlMinutes: string;
-	};
-
-	type DesignerSchemaChange = {
-		kind: 'delete' | 'rename' | 'type_change';
-		field_id?: string;
-		fieldKey: string;
-		fieldLabel: string;
-		from?: string;
-		to?: string;
-		valueCount: number;
-		indexedCount: number;
-		dependencyCount: number;
-		blockingDependencyCount: number;
-	};
-
-	type DetailPageWidgetKey = 'children' | 'links' | 'comments' | 'attachments' | 'events';
-	type DetailPageWidgetRegion = 'sidebar' | 'below';
-	type DetailPageWidgetDensity = 'comfortable' | 'compact';
-
-	type DetailPageWidgetEntry = {
-		key: DetailPageWidgetKey;
-		enabled: boolean;
-		title: string;
-		description: string;
-		emptyText: string;
-		showCount: boolean;
-		hideEmpty: boolean;
-		collapsible: boolean;
-		defaultCollapsed: boolean;
-		density: DetailPageWidgetDensity;
-		limit: string;
-	};
-
-	type DetailPageCompositionDraft = { widgetRegion: DetailPageWidgetRegion; fieldColumns: 1 | 2 };
-
-	type ChildEditorState = {
-		relationFieldKey: string;
-		childFormId: string;
-		recordId?: string;
-		title: string;
-		draft: Record<string, unknown>;
-	};
-
-	type ViewFilterOperator = 'contains' | 'equals' | 'not_equals' | 'not_empty';
-	type ViewSortDirection = 'asc' | 'desc';
-	type ViewVisibility = 'shared' | 'private';
-	type ViewFilterLogic = 'all' | 'any';
-	type ViewCalendarRange = 'week' | 'month';
-	type ViewCalendarRecurrence = 'none' | 'daily' | 'weekly' | 'monthly';
-	type ViewCalendarDayScope = 'all' | 'workweek';
-	type ViewCalendarLayout = 'grid' | 'agenda';
-	type CardLayoutMode = 'standard' | 'gallery' | 'compact' | 'list';
-	type CardFieldLimit = 3 | 6 | 9 | 99;
-	type CardCoverAspect = 'auto' | 'wide' | 'square' | 'portrait';
-	type CardCoverFit = 'cover' | 'contain';
-	type CardCoverPosition = 'top' | 'left' | 'hidden';
-	type PivotAggregate = 'sum' | 'count' | 'avg';
-	type PivotTotalsMode = 'all' | 'rows' | 'columns' | 'none';
-	type PivotValueDisplay = 'value' | 'percent_row' | 'percent_column' | 'percent_total';
-
-	type PivotSortMode =
-		| 'label'
-		| 'row_total_desc'
-		| 'row_total_asc'
-		| 'column_total_desc'
-		| 'column_total_asc';
-
-	type PivotRowLimit = 0 | 2 | 5 | 10;
-	type PivotColumnLimit = 0 | 2 | 5 | 10;
-	type CalendarExceptionDateMap = Record<string, string[]>;
-	type FormRecordScope = 'all' | 'owned';
-	type DetailLayoutSectionDensity = 'comfortable' | 'compact';
-
-	type DetailLayoutSection = {
-		key: string;
-		title: string;
-		description: string;
-		columns: 1 | 2 | 3;
-		density: DetailLayoutSectionDensity;
-		hideEmptyFields: boolean;
-		collapsible: boolean;
-		defaultCollapsed: boolean;
-		fields: FormField[];
-	};
-
-	type DetailLayoutSectionDraft = {
-		key: string;
-		title: string;
-		description: string;
-		columns: 1 | 2 | 3;
-		density: DetailLayoutSectionDensity;
-		hideEmptyFields: boolean;
-		collapsible: boolean;
-		defaultCollapsed: boolean;
-		fields: string[];
-	};
-
-	type DetailHeaderDraft = { subtitleField: string; badgeField: string };
-	type DetailHighlightDraft = { fields: string[] };
-
-	type ViewFilterDraft = {
-		field: string;
-		operator: ViewFilterOperator;
-		value: string;
-		disabled?: boolean;
-	};
-
-	type ViewFilterGroupDraft = {
-		logic: ViewFilterLogic;
-		filters: ViewFilterDraft[];
-		disabled?: boolean;
-	};
-
-	type ParsedViewFilterExpression =
-		| {
-				kind: 'condition';
-				filter: ParsedViewFilter;
-				disabled?: boolean;
-		  }
-		| {
-				kind: 'group';
-				logic: ViewFilterLogic;
-				children: ParsedViewFilterExpression[];
-				disabled?: boolean;
-		  };
-
-	type CalendarRecordOccurrence = {
-		key: string;
-		record: FormRecord;
-		date: string;
-		startDate: string;
-		endDate: string;
-		recurring: boolean;
-		spanStart: boolean;
-		spanEnd: boolean;
-		spanDays: number;
-	};
-
-	type CalendarGridGroup = {
-		key: string;
-		label: string;
-		date: string;
-		records: CalendarRecordOccurrence[];
-	};
-
-	type CalendarResourceRow = {
-		key: string;
-		label: string;
-		records: FormRecord[];
-		groups: CalendarGridGroup[];
-	};
-
-	type GanttTask = {
-		record: FormRecord;
-		start: string;
-		end: string;
-		dependencyValue: string;
-		startOffset: number;
-		span: number;
-	};
-
-	type GanttScale = 'day' | 'week' | 'month';
-
-	type GanttTimeline = {
-		startField: FormField | null;
-		endField: FormField | null;
-		groupField: FormField | null;
-		dependencyField: FormField | null;
-		scale: GanttScale;
-		dates: string[];
-		lanes: Array<{ key: string; label: string; tasks: GanttTask[] }>;
-	};
-
-	type PivotTable = {
-		rowField: FormField | null;
-		columnField: FormField | null;
-		valueField: FormField | null;
-		valueCurrency: string;
-		aggregate: PivotAggregate;
-		totalsMode: PivotTotalsMode;
-		valueDisplay: PivotValueDisplay;
-		sortMode: PivotSortMode;
-		emptyBuckets: boolean;
-		hideZeroBuckets: boolean;
-		showCounts: boolean;
-		heatmap: boolean;
-		rowLimit: PivotRowLimit;
-		columnLimit: PivotColumnLimit;
-		maxCellValue: number;
-		columns: Array<{ key: string; label: string; total: number }>;
-		rows: Array<{
-			key: string;
-			label: string;
-			total: number;
-			cells: Record<string, number>;
-			cellCounts: Record<string, number>;
-		}>;
-		grandTotal: number;
-	};
-
-	type PivotDrilldownSelection = {
-		rowKey: string | null;
-		rowLabel: string;
-		columnKey: string | null;
-		columnLabel: string;
-	};
-
-	type ViewTimelineSource = 'records' | 'events';
-	type TimelineEventLayout = 'summary' | 'detailed';
-
-	const recordEditorAction = taskEditorAction();
-	let project = $state<Project | null>(null);
-	let scenarioTemplates = $state<ScenarioTemplate[]>([]);
-	let forms = $state<UniversalForm[]>([]);
-	let formViews = $state<FormView[]>([]);
-	let records = $state<FormRecord[]>([]);
-	let filterPreviewRecords = $state<FormRecord[]>([]);
-	let formEvents = $state<BusinessEvent[]>([]);
-	let printJobs = $state<FormRecord[]>([]);
-	let recordAttachments = $state<FormAttachment[]>([]);
-	let recordAttachmentSignedUrls = $state<Record<string, string>>({});
-	let aggregates = $state<Record<string, FormAggregate>>({});
-	let formPermissions = $state<FormPermissions | null>(null);
-	let selectedFormId = $state('');
-	let selectedViewId = $state(precedence.ALL_RECORDS_VIEW_ID);
-	// The working arrangement is compared with the config the draft produced right after the saved
-	// view was applied, so representation differences in stored configs never read as changes.
-	let viewBaseline = $state({
-		viewId: '',
-		type: 'grid',
-		key: '',
-		config: {} as Record<string, unknown>
-	});
-	let viewConflict = $state(false);
-	let saveViewOpen = $state(false);
-	let saveViewName = $state('');
-	let saveViewError = $state<string | null>(null);
-	let resetUndo = $state<StoredViewArrangement | null>(null);
-	let serverRecordTotal = $state(0);
-	let panelRecordId = $state<string | null>(null);
-	let panelStatus = $state<PanelStatus>('ready');
-	let panelError = $state('');
-	let panelDetailsLoading = $state(false);
-	let panelWidth = $state(PANEL_DEFAULT_WIDTH);
-	let panelAppsOpen = $state(false);
-	let panelHistoryDepth = 0;
-	let recordGrid = $state<RecordGrid | null>(null);
-	let recordPanel = $state<RecordSidePanel | null>(null);
-	let liveMessage = $state('');
-	let panelMode = $state<'docked' | 'overlay' | 'sheet'>('docked');
-	let selectedRecord = $state<FormRecord | null>(null);
-	let focusedRecordIds = $state<string[]>([]);
-	let selectedRecordLinks = $state<FormRecordLink[]>([]);
-	let selectedRecordChildren = $state<FormChildRecord[]>([]);
-	let selectedRecordComments = $state<FormRecordComment[]>([]);
-	let workspaceMembers = $state<WorkspaceMember[]>([]);
-	let workspaceMembersLoading = $state(false);
-	let relationTargets = $state<Record<string, FormRelationTarget[]>>({});
-	let relationTargetsLoading = $state(false);
-	let loading = $state(true);
-	let templatesLoading = $state(false);
-	let recordsLoading = $state(false);
-	let eventsLoading = $state(false);
-	let recordCommentsLoading = $state(false);
-	let formSubmitting = $state(false);
-	let installingTemplateKey = $state<string | null>(null);
-	let viewSubmitting = $state(false);
-	let exportingRecords = $state(false);
-	let exportedCurrentViewJsonRecordCount = $state<number | null>(null);
-	let exportedAttachmentManifestCount = $state<number | null>(null);
-	let exportedAttachmentBundleCount = $state<number | null>(null);
-	let exportedAttachmentPackageCount = $state<number | null>(null);
-	let exportedAttachmentPackageFileCount = $state<number | null>(null);
-	let permissionsLoading = $state(false);
-	let permissionsSaving = $state(false);
-	let importPreviewing = $state(false);
-	let importingRecords = $state(false);
-	let recordSubmitting = $state(false);
-	let attachmentSubmittingField = $state<string | null>(null);
-	let deletingAttachmentId = $state<string | null>(null);
-	let linkSubmitting = $state(false);
-	let recordCommentSubmitting = $state(false);
-	let deletingRecordId = $state<string | null>(null);
-	let restoringRecordId = $state<string | null>(null);
-	let lastDeletedRecord = $state<{ id: string; title: string } | null>(null);
-	let recordEditorPanel = $state<HTMLElement | null>(null);
-	let updatingKanbanRecordId = $state<string | null>(null);
-	let draggingKanbanRecordId = $state<string | null>(null);
-	let selectedKanbanRecordIds = $state<string[]>([]);
-	let bulkKanbanTarget = $state('');
-	let bulkMovingKanban = $state(false);
-	let updatingCalendarRecordId = $state<string | null>(null);
-	let draggingCalendarRecordId = $state<string | null>(null);
-	let appliedCalendarFilterKey = $state<string | null>(null);
-	let copiedCalendarScheduleKey = $state<string | null>(null);
-	let shiftedCalendarScheduleKey = $state<string | null>(null);
-	let appliedCardGroupFilterKey = $state<string | null>(null);
-	let updatingGanttRecordId = $state<string | null>(null);
-	let draggingGanttRecordId = $state<string | null>(null);
-	let updatingCardRecordId = $state<string | null>(null);
-	let collapsedCardGroupKeys = $state<string[]>([]);
-	let updatingTimelineRecordId = $state<string | null>(null);
-	let copiedCardRecordId = $state<string | null>(null);
-	let copiedCardGroupRecordIdsKey = $state<string | null>(null);
-	let exportedCardGroupRecordsKey = $state<string | null>(null);
-	let exportedCardRecordId = $state<string | null>(null);
-	let copiedTimelineEventAction = $state<string | null>(null);
-	let exportedTimelineEventAction = $state<string | null>(null);
-	let exportedTimelineEventsCsvCount = $state<number | null>(null);
-	let exportedTimelineEventsJsonCount = $state<number | null>(null);
-	let copiedTimelineEventIdsCount = $state<number | null>(null);
-	let copiedTimelineAggregateIdsCount = $state<number | null>(null);
-	let pinnedTimelineEventIds = $state<string[]>([]);
-	let copiedPivotDrilldownKey = $state<string | null>(null);
-	let exportedPivotDrilldownKey = $state<string | null>(null);
-	let appliedPivotDrilldownFilterKey = $state<string | null>(null);
-	let copiedPivotCellKey = $state<string | null>(null);
-	let copiedPivotTableMatrix = $state(false);
-	let exportedPivotTableMatrix = $state(false);
-	let copiedFilterExpressionRecordIds = $state<string | null>(null);
-	let copiedFilterExpressionJson = $state<string | null>(null);
-	let copiedFilterExpressionSummary = $state<string | null>(null);
-	let copiedFilterExpressionCsvRecordIds = $state<string | null>(null);
-	let copiedFilterExpressionJsonRecordIds = $state<string | null>(null);
-	let exportedFilterExpressionJson = $state<string | null>(null);
-	let exportedFilterExpressionSummary = $state<string | null>(null);
-	let exportedFilterExpressionRecordIds = $state<string | null>(null);
-	let exportedFilterExpressionJsonRecordIds = $state<string | null>(null);
-	let pivotDrilldown = $state<PivotDrilldownSelection | null>(null);
-	let showCreateForm = $state(false);
-	let showImportRecords = $state(false);
-	let editingRecordId = $state<string | null>(null);
-	let recordDraft = $state<Record<string, unknown>>({});
-	let recordTitle = $state('');
-
-	let linkDraft = $state({
-		target_type: 'form_record',
-		target_id: '',
-		relation_key: 'contains',
-		relation_type: 'parent_child'
-	});
-
-	let recordCommentDraft = $state('');
-	let childEditor = $state<ChildEditorState | null>(null);
-	let childSubmitting = $state(false);
-	let deletingChildRecordId = $state<string | null>(null);
-
-	let formDraft = $state({
-		key: '',
-		name: '',
-		description: '',
-		title_template: '{id}',
-		schemaText: JSON.stringify({ version: 'openpr.form.schema.v1', fields: [] }, null, 2)
-	});
-
-	let viewDraft = $state({
-		key: '',
-		name: '',
-		view_type: 'grid' as FormView['view_type'],
-		columns: [] as string[],
-		filters: [] as ViewFilterDraft[],
-		filterRootLogic: 'all' as ViewFilterLogic,
-		filterGroups: [] as ViewFilterGroupDraft[],
-		filterField: '',
-		filterOperator: 'contains' as ViewFilterOperator,
-		filterValue: '',
-		sortField: '',
-		sortDirection: 'asc' as ViewSortDirection,
-		groupBy: '',
-		pivotRowField: '',
-		pivotColumnField: '',
-		pivotValueField: '',
-		pivotAggregate: 'sum' as PivotAggregate,
-		pivotTotals: 'all' as PivotTotalsMode,
-		pivotValueDisplay: 'value' as PivotValueDisplay,
-		pivotSort: 'label' as PivotSortMode,
-		pivotEmptyBuckets: false,
-		pivotHideZeroBuckets: false,
-		pivotShowCounts: false,
-		pivotHeatmap: false,
-		pivotRowLimit: 0 as PivotRowLimit,
-		pivotColumnLimit: 0 as PivotColumnLimit,
-		ganttStartField: '',
-		ganttEndField: '',
-		ganttGroupBy: '',
-		ganttDependencyField: '',
-		ganttScale: 'day' as GanttScale,
-		swimlaneBy: '',
-		wipLimits: {} as Record<string, string>,
-		dateField: '',
-		calendarRange: 'week' as ViewCalendarRange,
-		calendarFocusDate: '',
-		calendarRecurrence: 'none' as ViewCalendarRecurrence,
-		calendarDayScope: 'all' as ViewCalendarDayScope,
-		calendarLayout: 'grid' as ViewCalendarLayout,
-		calendarHideEmptyDays: false,
-		calendarEndField: '',
-		calendarResourceBy: '',
-		calendarExceptionRecordId: '',
-		calendarExceptionDate: '',
-		calendarExceptionDates: {} as CalendarExceptionDateMap,
-		cardTitleField: '',
-		cardSubtitleField: '',
-		cardBadgeField: '',
-		cardCoverField: '',
-		cardLayout: 'standard' as CardLayoutMode,
-		cardCoverAspect: 'auto' as CardCoverAspect,
-		cardCoverFit: 'cover' as CardCoverFit,
-		cardCoverPosition: 'top' as CardCoverPosition,
-		cardFieldLimit: 6 as CardFieldLimit,
-		cardHideEmptyFields: false,
-		cardShowTimestamps: false,
-		cardShowRecordId: false,
-		cardFieldKeys: [] as string[],
-		timelineSource: 'records' as ViewTimelineSource,
-		timelineEventLayout: 'summary' as TimelineEventLayout,
-		timelineEventType: '',
-		timelineEventActor: '',
-		timelineEventAggregate: '',
-		timelineEventQuery: '',
-		timelineEventFrom: '',
-		timelineEventTo: '',
-		timelineTitleField: '',
-		timelineSubtitleField: '',
-		visibility: 'shared' as ViewVisibility,
-		isDefault: false
-	});
-
-	let fieldDrafts = $state<FieldDraft[]>([blankFieldDraft()]);
-	let activeMode = $state<FormWorkflowMode>('data');
-
-	type DetailLayoutMode = 'header' | 'highlights' | 'composition' | 'sections' | 'widgets';
-
-	const detailLayoutModes: Array<{ key: DetailLayoutMode; labelKey: string }> = [
-		{ key: 'header', labelKey: 'forms.detailHeader' },
-		{ key: 'highlights', labelKey: 'forms.detailHighlights' },
-		{ key: 'composition', labelKey: 'forms.detailPageComposition' },
-		{ key: 'sections', labelKey: 'forms.detailLayoutSections' },
-		{ key: 'widgets', labelKey: 'forms.detailPageWidgets' }
-	];
-
-	let detailLayoutMode = $state<DetailLayoutMode>('header');
-	let viewToolsExpanded = $state(false);
-	let recordEditorOpen = $state(false);
-	let recordPage = $state(1);
-	const recordPageSize = 20;
-	let designerFieldDrafts = $state<FieldDraft[]>([]);
-	let designerFieldUsage = $state<FormFieldUsage[]>([]);
-	let designerFieldDependencies = $state<FormFieldDependency[]>([]);
-	let designerUsageLoading = $state(false);
-	let selectedDesignerFieldIndex = $state(0);
-	let designerSaving = $state(false);
-	let detailPageCompositionDraft = $state<DetailPageCompositionDraft>({
-		widgetRegion: 'sidebar',
-		fieldColumns: 2
-	});
-	let detailPageCompositionSaving = $state(false);
-	let detailPageCompositionSyncedFingerprint = $state('');
-	let detailPageWidgetSaving = $state(false);
-	let detailLayoutSectionDrafts = $state<DetailLayoutSectionDraft[]>([]);
-	let detailLayoutSectionSaving = $state(false);
-	let detailLayoutSectionSyncedFingerprint = $state('');
-	let detailHeaderDraft = $state<DetailHeaderDraft>({ subtitleField: '', badgeField: '' });
-	let detailHeaderSaving = $state(false);
-	let detailHeaderSyncedFingerprint = $state('');
-	let detailHighlightDraft = $state<DetailHighlightDraft>({ fields: [] });
-	let detailHighlightSaving = $state(false);
-	let detailHighlightSyncedFingerprint = $state('');
-	let designerSyncedFormId = $state('');
-	let designerConfirmOpen = $state(false);
-	let pendingDesignerSchema = $state<Record<string, unknown> | null>(null);
-	let pendingDesignerChanges = $state<DesignerSchemaChange[]>([]);
-	let showAdvancedSchema = $state(false);
-	let importText = $state('');
-	let importRows = $state<FormRecordImportRow[]>([]);
-	let importPreview = $state<FormRecordImportPreview | null>(null);
-	let exportedImportTemplate = $state(false);
-	let importedImportFileName = $state('');
-	let importedImportFileLoaded = $state(false);
-	let importMappingHeaders = $state<string[]>([]);
-	let importMappingSelections = $state<string[]>([]);
-	let importMappingTransforms = $state<ImportMappingTransform[]>([]);
-	let importMappingApplied = $state(false);
-	let importMappingTemplateAvailable = $state(false);
-	let importMappingTemplateSaved = $state(false);
-	let importMappingTemplateRestored = $state(false);
-	let importWizardStep = $state<ImportWizardStep>('source');
-	let memberPermissionDraft = $state<Record<FormPermissionAction, boolean>>(
-		defaultPermissionActions()
+	const selectedForm = $derived.by(
+		() => s.forms.find((form) => form.id === s.selectedFormId) ?? null
 	);
-	let memberRecordScopeDraft = $state<FormRecordScope>('all');
-	let memberFieldReadDraft = $state<Record<string, boolean>>({});
-	let memberFieldWriteDraft = $state<Record<string, boolean>>({});
-	const selectedForm = $derived.by(() => forms.find((form) => form.id === selectedFormId) ?? null);
-	const printJobForm = $derived.by(() => forms.find((form) => form.key === 'print_job') ?? null);
+	const printJobForm = $derived.by(() => s.forms.find((form) => form.key === 'print_job') ?? null);
 	const fields = $derived(selectedForm ? parseFields(selectedForm.schema) : []);
 	const detailVisibleFields = $derived(
 		fields.filter((field) => field.visibility?.detail !== false)
 	);
-	const savedView = $derived(formViews.find((view) => view.id === selectedViewId) ?? null);
+	const savedView = $derived(s.formViews.find((view) => view.id === s.selectedViewId) ?? null);
 	const baseView = $derived(savedView ?? (selectedForm ? builtInView(selectedForm) : null));
 	const draftViewConfig = $derived(viewConfigFromDraft());
 	const arrangementModified = $derived(
 		!!baseView &&
-			viewBaseline.viewId === baseView.id &&
-			(viewBaseline.type !== viewDraft.view_type ||
-				viewBaseline.key !== arrangement.normalizedViewConfig(draftViewConfig))
+			s.viewBaseline.viewId === baseView.id &&
+			(s.viewBaseline.type !== s.viewDraft.view_type ||
+				s.viewBaseline.key !== arrangement.normalizedViewConfig(draftViewConfig))
 	);
 	const selectedView = $derived<FormView | null>(
 		baseView && arrangementModified
-			? { ...baseView, view_type: viewDraft.view_type, config: draftViewConfig }
+			? { ...baseView, view_type: s.viewDraft.view_type, config: draftViewConfig }
 			: baseView
 	);
 	const recordQuery = $derived(
 		arrangement.serverQueryFor(
-			savedView && { id: savedView.id, config: viewBaseline.config },
+			savedView && { id: savedView.id, config: s.viewBaseline.config },
 			draftViewConfig,
 			{ modified: arrangementModified, isServerSortable }
 		)
 	);
-	const canDesign = $derived(formPermissions?.effective.actions['form.design'] ?? true);
+	const canDesign = $derived(s.formPermissions?.effective.actions['form.design'] ?? true);
 	const selectedViewColumns = $derived.by(() => viewColumns(selectedView));
 	const selectedViewType = $derived((selectedView?.view_type ?? 'grid') as FormView['view_type']);
 	const detailUrlRecordId = $derived(
@@ -818,28 +223,28 @@
 	);
 
 	const focusedRecords = $derived.by(() => {
-		if (focusedRecordIds.length === 0) return [];
+		if (s.focusedRecordIds.length === 0) return [];
 
-		const focusedIds = new Set(focusedRecordIds);
+		const focusedIds = new Set(s.focusedRecordIds);
 
-		return records.filter((record) => focusedIds.has(record.id));
+		return s.records.filter((record) => focusedIds.has(record.id));
 	});
 
 	const memberHiddenFieldLabels = $derived(
 		fields
-			.filter((field) => memberFieldReadDraft[field.key] === false)
+			.filter((field) => s.memberFieldReadDraft[field.key] === false)
 			.map((field) => fieldLabel(field))
 	);
 	const memberHiddenFieldKeys = $derived(
-		fields.filter((field) => memberFieldReadDraft[field.key] === false).map((field) => field.key)
+		fields.filter((field) => s.memberFieldReadDraft[field.key] === false).map((field) => field.key)
 	);
 	const memberLockedFieldLabels = $derived(
 		fields
-			.filter((field) => memberFieldWriteDraft[field.key] === false)
+			.filter((field) => s.memberFieldWriteDraft[field.key] === false)
 			.map((field) => fieldLabel(field))
 	);
 	const memberLockedFieldKeys = $derived(
-		fields.filter((field) => memberFieldWriteDraft[field.key] === false).map((field) => field.key)
+		fields.filter((field) => s.memberFieldWriteDraft[field.key] === false).map((field) => field.key)
 	);
 	const listableFields = $derived(fields.filter((field) => field.visibility?.list !== false));
 
@@ -895,9 +300,9 @@
 		)
 	);
 	const timelineEditableSelectFields = $derived(cardEditableSelectFields);
-	const viewRecords = $derived.by(() => applyViewRecordConfig(records));
+	const viewRecords = $derived.by(() => applyViewRecordConfig(s.records));
 	const recordPageCount = $derived(Math.max(1, Math.ceil(viewRecords.length / recordPageSize)));
-	const normalizedRecordPage = $derived(Math.min(Math.max(recordPage, 1), recordPageCount));
+	const normalizedRecordPage = $derived(Math.min(Math.max(s.recordPage, 1), recordPageCount));
 
 	const paginatedViewRecords = $derived.by(() => {
 		const start = (normalizedRecordPage - 1) * recordPageSize;
@@ -920,18 +325,18 @@
 	const calendarResourceField = $derived.by(() => viewCalendarResourceField());
 	const calendarResourceLanes = $derived.by(() => groupCalendarResourceLanes(viewRecords));
 	const timelineRecords = $derived.by(() => recordsByUpdatedAt(viewRecords));
-	const timelineEventTypes = $derived.by(() => eventTypes(formEvents));
-	const timelineEventActors = $derived.by(() => eventActors(formEvents));
-	const timelineEventAggregates = $derived.by(() => eventAggregates(formEvents));
-	const timelineEvents = $derived.by(() => eventsByCreatedAt(filteredTimelineEvents(formEvents)));
+	const timelineEventTypes = $derived.by(() => eventTypes(s.formEvents));
+	const timelineEventActors = $derived.by(() => eventActors(s.formEvents));
+	const timelineEventAggregates = $derived.by(() => eventAggregates(s.formEvents));
+	const timelineEvents = $derived.by(() => eventsByCreatedAt(filteredTimelineEvents(s.formEvents)));
 	const timelineEventRows = $derived.by(() => orderedTimelineEvents(timelineEvents));
 
 	const selectedRecordEvents = $derived.by(() =>
-		selectedRecord
+		s.selectedRecord
 			? eventsByCreatedAt(
-					formEvents.filter(
+					s.formEvents.filter(
 						(event) =>
-							event.aggregate_type === 'form_record' && event.aggregate_id === selectedRecord?.id
+							event.aggregate_type === 'form_record' && event.aggregate_id === s.selectedRecord?.id
 					)
 				)
 			: []
@@ -939,11 +344,13 @@
 
 	const timelineTitlePermissionField = $derived.by(() => viewTimelineTitleField());
 	const timelineSubtitlePermissionField = $derived.by(() => viewTimelineSubtitleField());
-	const selectedDesignerField = $derived(designerFieldDrafts[selectedDesignerFieldIndex] ?? null);
+	const selectedDesignerField = $derived(
+		s.designerFieldDrafts[s.selectedDesignerFieldIndex] ?? null
+	);
 
 	const selectedDesignerFieldUsage = $derived(
 		selectedDesignerField
-			? (designerFieldUsage.find(
+			? (s.designerFieldUsage.find(
 					(usage) =>
 						(selectedDesignerField.field_id && usage.field_id === selectedDesignerField.field_id) ||
 						usage.field_key === selectedDesignerField.key
@@ -953,7 +360,7 @@
 
 	const selectedDesignerFieldDependencies = $derived(
 		selectedDesignerField
-			? designerFieldDependencies.filter(
+			? s.designerFieldDependencies.filter(
 					(dependency) =>
 						(selectedDesignerField.field_id &&
 							dependency.field_id === selectedDesignerField.field_id) ||
@@ -966,123 +373,99 @@
 		detailPageWidgetEntriesFromLayout(selectedForm?.detail_layout)
 	);
 
-	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
 	const currentUserId = $derived($authStore.user?.id ?? workbench?.current.userId ?? '');
-	let formsSessionKey = $state<string | null>(null);
-	let formsSessionUser: string | null = null;
-	let formsSessionRelease: (() => void) | null = null;
-	let formsSessionReady = $state(false);
-	let formsSessionRemoteChanged = $state(false);
-	let formsSessionRefreshFailed = $state(false);
-	let formsSessionConflict = $state(false);
-	let formsSessionReview = $state(false);
-	let formsSessionClean = $state<Record<string, string>>({});
-	let formsSessionRecordVersion = $state<FormsDraftVersion | null>(null);
-	let formsSessionSchemaVersion = $state<number | null>(null);
-	let formsSessionViewVersion = $state<string | null>(null);
-	let formsSessionGeneration = 0;
-	let formsSessionActivating = '';
-	let formsSessionOpening: Promise<void> | null = null;
-	let formsSessionOpenRequest = 0;
-	let formsSessionTransitioning = $state(false);
-	let formsSessionRoot = $state<HTMLElement | null>(null);
-	let formsSessionFocus: { selector: string; start: number | null; end: number | null } | null =
-		null;
-	const formsSessionLatch = new FormsRefreshLatch();
-	let formsSessionRemoteRecord = $state<FormRecord | null>(null);
-	let formsSessionRemoteSchema = $state<number | null>(null);
 
 	function formsDraftGroups() {
 		return {
-			record: { recordDraft, recordTitle },
-			view: viewDraft,
+			record: { recordDraft: s.recordDraft, recordTitle: s.recordTitle },
+			view: s.viewDraft,
 			design: {
-				designerFieldDrafts,
-				detailHeaderDraft,
-				detailHighlightDraft,
-				detailPageCompositionDraft,
-				detailLayoutSectionDrafts
+				designerFieldDrafts: s.designerFieldDrafts,
+				detailHeaderDraft: s.detailHeaderDraft,
+				detailHighlightDraft: s.detailHighlightDraft,
+				detailPageCompositionDraft: s.detailPageCompositionDraft,
+				detailLayoutSectionDrafts: s.detailLayoutSectionDrafts
 			},
-			create: { formDraft, fieldDrafts },
-			comment: recordCommentDraft,
-			child: childEditor
+			create: { formDraft: s.formDraft, fieldDrafts: s.fieldDrafts },
+			comment: s.recordCommentDraft,
+			child: s.childEditor
 		};
 	}
 	function cleanFormsGroup(group: string) {
 		const groups = formsDraftGroups();
-		formsSessionClean = {
-			...formsSessionClean,
+		s.formsSessionClean = {
+			...s.formsSessionClean,
 			[group]: formsFingerprint(groups[group as keyof typeof groups])
 		};
 	}
 	function cleanFormsSession() {
-		formsSessionClean = Object.fromEntries(
+		s.formsSessionClean = Object.fromEntries(
 			Object.entries(formsDraftGroups()).map(([key, value]) => [key, formsFingerprint(value)])
 		);
-		formsSessionSchemaVersion = selectedForm?.schema_version ?? null;
-		formsSessionViewVersion = selectedView?.updated_at ?? null;
+		s.formsSessionSchemaVersion = selectedForm?.schema_version ?? null;
+		s.formsSessionViewVersion = selectedView?.updated_at ?? null;
 	}
 	function formsSessionDirty() {
 		// View changes are kept automatically (per user, on this device): never unsaved work.
 		const groups: Partial<ReturnType<typeof formsDraftGroups>> = formsDraftGroups();
 		delete groups.view;
-		return formsDraftDirty(groups, formsSessionClean);
+		return formsDraftDirty(groups, s.formsSessionClean);
 	}
 	function formsSessionSaving() {
 		return (
-			formSubmitting ||
-			viewSubmitting ||
-			recordSubmitting ||
-			designerSaving ||
-			childSubmitting ||
-			detailHeaderSaving ||
-			detailHighlightSaving ||
-			detailPageCompositionSaving ||
-			detailLayoutSectionSaving ||
-			detailPageWidgetSaving ||
-			!!attachmentSubmittingField ||
-			bulkMovingKanban ||
-			!!updatingKanbanRecordId ||
-			!!updatingCalendarRecordId ||
-			!!updatingGanttRecordId ||
-			!!updatingCardRecordId ||
-			!!updatingTimelineRecordId
+			s.formSubmitting ||
+			s.viewSubmitting ||
+			s.recordSubmitting ||
+			s.designerSaving ||
+			s.childSubmitting ||
+			s.detailHeaderSaving ||
+			s.detailHighlightSaving ||
+			s.detailPageCompositionSaving ||
+			s.detailLayoutSectionSaving ||
+			s.detailPageWidgetSaving ||
+			!!s.attachmentSubmittingField ||
+			s.bulkMovingKanban ||
+			!!s.updatingKanbanRecordId ||
+			!!s.updatingCalendarRecordId ||
+			!!s.updatingGanttRecordId ||
+			!!s.updatingCardRecordId ||
+			!!s.updatingTimelineRecordId
 		);
 	}
 	function formsSessionState() {
 		return $state.snapshot({
-			selectedViewId,
-			selectedRecordId: selectedRecord?.id ?? null,
-			focusedRecordIds,
-			activeMode,
-			recordPage,
-			recordEditorOpen,
-			editingRecordId,
-			recordDraft,
-			recordTitle,
-			recordCommentDraft,
-			childEditor,
-			linkDraft,
-			formDraft,
-			fieldDrafts,
-			showCreateForm,
-			viewDraft,
-			viewToolsExpanded,
-			designerFieldDrafts,
-			selectedDesignerFieldIndex,
-			showAdvancedSchema,
-			detailLayoutMode,
-			detailHeaderDraft,
-			detailHighlightDraft,
-			detailPageCompositionDraft,
-			detailLayoutSectionDrafts,
-			collapsedCardGroupKeys,
-			selectedKanbanRecordIds,
-			pinnedTimelineEventIds,
-			formsSessionConflict,
-			focus: formsSessionFocus,
+			selectedViewId: s.selectedViewId,
+			selectedRecordId: s.selectedRecord?.id ?? null,
+			focusedRecordIds: s.focusedRecordIds,
+			activeMode: s.activeMode,
+			recordPage: s.recordPage,
+			recordEditorOpen: s.recordEditorOpen,
+			editingRecordId: s.editingRecordId,
+			recordDraft: s.recordDraft,
+			recordTitle: s.recordTitle,
+			recordCommentDraft: s.recordCommentDraft,
+			childEditor: s.childEditor,
+			linkDraft: s.linkDraft,
+			formDraft: s.formDraft,
+			fieldDrafts: s.fieldDrafts,
+			showCreateForm: s.showCreateForm,
+			viewDraft: s.viewDraft,
+			viewToolsExpanded: s.viewToolsExpanded,
+			designerFieldDrafts: s.designerFieldDrafts,
+			selectedDesignerFieldIndex: s.selectedDesignerFieldIndex,
+			showAdvancedSchema: s.showAdvancedSchema,
+			detailLayoutMode: s.detailLayoutMode,
+			detailHeaderDraft: s.detailHeaderDraft,
+			detailHighlightDraft: s.detailHighlightDraft,
+			detailPageCompositionDraft: s.detailPageCompositionDraft,
+			detailLayoutSectionDrafts: s.detailLayoutSectionDrafts,
+			collapsedCardGroupKeys: s.collapsedCardGroupKeys,
+			selectedKanbanRecordIds: s.selectedKanbanRecordIds,
+			pinnedTimelineEventIds: s.pinnedTimelineEventIds,
+			formsSessionConflict: s.formsSessionConflict,
+			focus: s.formsSessionFocus,
 			scroll: Array.from(
-				formsSessionRoot?.querySelectorAll<HTMLElement>(
+				s.formsSessionRoot?.querySelectorAll<HTMLElement>(
 					'.overflow-x-auto,.overflow-auto,.overflow-y-auto'
 				) ?? []
 			).map((element) => ({ left: element.scrollLeft, top: element.scrollTop }))
@@ -1090,111 +473,111 @@
 	}
 	function captureFormsSession(): FormsSessionSnapshot {
 		return cloneFormsSnapshot({
-			formId: selectedFormId || null,
+			formId: s.selectedFormId || null,
 			state: formsSessionState(),
-			clean: $state.snapshot(formsSessionClean),
-			formSchemaVersion: formsSessionSchemaVersion,
-			recordVersion: $state.snapshot(formsSessionRecordVersion),
-			viewUpdatedAt: formsSessionViewVersion
+			clean: $state.snapshot(s.formsSessionClean),
+			formSchemaVersion: s.formsSessionSchemaVersion,
+			recordVersion: $state.snapshot(s.formsSessionRecordVersion),
+			viewUpdatedAt: s.formsSessionViewVersion
 		});
 	}
 	function releaseFormsSession() {
-		formsSessionRelease?.();
-		formsSessionRelease = null;
-		formsSessionKey = null;
-		formsSessionUser = null;
+		s.formsSessionRelease?.();
+		s.formsSessionRelease = null;
+		s.formsSessionKey = null;
+		s.formsSessionUser = null;
 	}
 	async function attachFormsSession() {
 		const user = workbench?.current.userId;
-		const key = selectedFormId
-			? `forms:${projectId}:${selectedFormId}`
+		const key = s.selectedFormId
+			? `forms:${projectId}:${s.selectedFormId}`
 			: `forms-entry:${projectId}`;
-		if (!workbench || !user || (formsSessionKey === key && formsSessionUser === user)) return;
+		if (!workbench || !user || (s.formsSessionKey === key && s.formsSessionUser === user)) return;
 		// Never render a cached snapshot as authority. The live resource read must succeed first.
-		const id = selectedFormId;
-		const generation = formsSessionGeneration;
+		const id = s.selectedFormId;
+		const generation = s.formsSessionGeneration;
 		const authorized = id ? await formsApi.get(id) : await projectsApi.get(projectId);
 		if (
 			authorized.code !== 0 ||
 			!authorized.data ||
 			workbench.current.userId !== user ||
-			generation !== formsSessionGeneration ||
-			id !== selectedFormId
+			generation !== s.formsSessionGeneration ||
+			id !== s.selectedFormId
 		)
 			return;
 		const urlForm = page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
 		if (urlForm && urlForm !== id) return;
-		const cached = restoredFormsSnapshot(workbench.snapshot(key), selectedFormId || null, true);
+		const cached = restoredFormsSnapshot(workbench.snapshot(key), s.selectedFormId || null, true);
 		if (cached) {
 			const saved = cached.state as ReturnType<typeof formsSessionState>;
-			selectedRecord = records.find((row) => row.id === saved.selectedRecordId) ?? null;
-			if (selectedRecord)
+			s.selectedRecord = s.records.find((row) => row.id === saved.selectedRecordId) ?? null;
+			if (s.selectedRecord)
 				await Promise.all([
 					loadSelectedRecordLinks(),
 					loadSelectedRecordChildren(),
 					loadSelectedRecordComments(),
-					loadRecordAttachments(selectedRecord.id)
+					loadRecordAttachments(s.selectedRecord.id)
 				]);
-			if (generation !== formsSessionGeneration || workbench.current.userId !== user) return;
+			if (generation !== s.formsSessionGeneration || workbench.current.userId !== user) return;
 			({
-				selectedViewId,
-				focusedRecordIds,
-				activeMode,
-				recordPage,
-				recordEditorOpen,
-				editingRecordId,
-				recordDraft,
-				recordTitle,
-				recordCommentDraft,
-				childEditor,
-				linkDraft,
-				formDraft,
-				fieldDrafts,
-				showCreateForm,
-				viewDraft,
-				viewToolsExpanded,
-				designerFieldDrafts,
-				selectedDesignerFieldIndex,
-				showAdvancedSchema,
-				detailLayoutMode,
-				detailHeaderDraft,
-				detailHighlightDraft,
-				detailPageCompositionDraft,
-				detailLayoutSectionDrafts,
-				collapsedCardGroupKeys,
-				selectedKanbanRecordIds,
-				pinnedTimelineEventIds,
-				formsSessionConflict
+				selectedViewId: s.selectedViewId,
+				focusedRecordIds: s.focusedRecordIds,
+				activeMode: s.activeMode,
+				recordPage: s.recordPage,
+				recordEditorOpen: s.recordEditorOpen,
+				editingRecordId: s.editingRecordId,
+				recordDraft: s.recordDraft,
+				recordTitle: s.recordTitle,
+				recordCommentDraft: s.recordCommentDraft,
+				childEditor: s.childEditor,
+				linkDraft: s.linkDraft,
+				formDraft: s.formDraft,
+				fieldDrafts: s.fieldDrafts,
+				showCreateForm: s.showCreateForm,
+				viewDraft: s.viewDraft,
+				viewToolsExpanded: s.viewToolsExpanded,
+				designerFieldDrafts: s.designerFieldDrafts,
+				selectedDesignerFieldIndex: s.selectedDesignerFieldIndex,
+				showAdvancedSchema: s.showAdvancedSchema,
+				detailLayoutMode: s.detailLayoutMode,
+				detailHeaderDraft: s.detailHeaderDraft,
+				detailHighlightDraft: s.detailHighlightDraft,
+				detailPageCompositionDraft: s.detailPageCompositionDraft,
+				detailLayoutSectionDrafts: s.detailLayoutSectionDrafts,
+				collapsedCardGroupKeys: s.collapsedCardGroupKeys,
+				selectedKanbanRecordIds: s.selectedKanbanRecordIds,
+				pinnedTimelineEventIds: s.pinnedTimelineEventIds,
+				formsSessionConflict: s.formsSessionConflict
 			} = saved);
-			if (activeMode === 'detail') activeMode = 'data';
-			formsSessionFocus = saved.focus ?? null;
-			formsSessionClean = cached.clean;
-			formsSessionSchemaVersion = cached.formSchemaVersion;
-			formsSessionRecordVersion = cached.recordVersion;
-			formsSessionViewVersion = cached.viewUpdatedAt;
-			formsSessionRemoteRecord =
-				records.find((row) => row.id === cached.recordVersion?.recordId) ?? null;
-			formsSessionRemoteSchema = selectedForm?.schema_version ?? null;
-			formsSessionRemoteChanged = !!(
+			if (s.activeMode === 'detail') s.activeMode = 'data';
+			s.formsSessionFocus = saved.focus ?? null;
+			s.formsSessionClean = cached.clean;
+			s.formsSessionSchemaVersion = cached.formSchemaVersion;
+			s.formsSessionRecordVersion = cached.recordVersion;
+			s.formsSessionViewVersion = cached.viewUpdatedAt;
+			s.formsSessionRemoteRecord =
+				s.records.find((row) => row.id === cached.recordVersion?.recordId) ?? null;
+			s.formsSessionRemoteSchema = selectedForm?.schema_version ?? null;
+			s.formsSessionRemoteChanged = !!(
 				cached.recordVersion &&
-				formsSessionRemoteRecord &&
-				(cached.recordVersion.updatedAt !== formsSessionRemoteRecord.updated_at ||
-					cached.recordVersion.schemaVersion !== formsSessionRemoteSchema)
+				s.formsSessionRemoteRecord &&
+				(cached.recordVersion.updatedAt !== s.formsSessionRemoteRecord.updated_at ||
+					cached.recordVersion.schemaVersion !== s.formsSessionRemoteSchema)
 			);
 		}
-		formsSessionKey = key;
-		formsSessionUser = user;
-		formsSessionRelease = workbench.register(key, {
+		s.formsSessionKey = key;
+		s.formsSessionUser = user;
+		s.formsSessionRelease = workbench.register(key, {
 			capture: captureFormsSession,
 			dirty: formsSessionDirty,
 			refresh: refreshFormsSession
 		});
-		workbench.setTitle(key, selectedForm?.name ?? project?.name ?? 'Forms');
+		workbench.setTitle(key, selectedForm?.name ?? s.project?.name ?? 'Forms');
 		if (cached) {
 			await tick();
-			if (generation !== formsSessionGeneration || key !== formsSessionKey) return;
+			if (generation !== s.formsSessionGeneration || key !== s.formsSessionKey) return;
 			const scroll = (cached.state as ReturnType<typeof formsSessionState>).scroll;
-			formsSessionRoot
+			s.formsSessionRoot
 				?.querySelectorAll<HTMLElement>('.overflow-x-auto,.overflow-auto,.overflow-y-auto')
 				.forEach((element, index) => {
 					const position = scroll?.[index];
@@ -1203,9 +586,9 @@
 						element.scrollTop = position.top;
 					}
 				});
-			const focus = formsSessionFocus;
+			const focus = s.formsSessionFocus;
 			if (focus) {
-				const input = formsSessionRoot?.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+				const input = s.formsSessionRoot?.querySelector<HTMLInputElement | HTMLTextAreaElement>(
 					focus.selector
 				);
 				input?.focus({ preventScroll: true });
@@ -1218,9 +601,9 @@
 		}
 	}
 	async function refreshFormsSession() {
-		const key = formsSessionKey;
-		const user = formsSessionUser;
-		const id = selectedFormId;
+		const key = s.formsSessionKey;
+		const user = s.formsSessionUser;
+		const id = s.selectedFormId;
 		if (
 			!key ||
 			!user ||
@@ -1230,12 +613,12 @@
 				visible: document.visibilityState === 'visible',
 				online: navigator.onLine,
 				saving: formsSessionSaving(),
-				loading
+				loading: s.loading
 			})
 		)
 			return;
-		await formsSessionLatch.run(async () => {
-			const generation = formsSessionGeneration;
+		await s.formsSessionLatch.run(async () => {
+			const generation = s.formsSessionGeneration;
 			try {
 				const [freshForms, freshForm, freshViews, freshRecords] = await Promise.all([
 					formsApi.list(projectId, { page: 1, per_page: 100 }),
@@ -1246,8 +629,8 @@
 						: Promise.resolve({ code: 0, data: { items: [] as FormRecord[] } })
 				]);
 				if (
-					generation !== formsSessionGeneration ||
-					key !== formsSessionKey ||
+					generation !== s.formsSessionGeneration ||
+					key !== s.formsSessionKey ||
 					workbench.current.userId !== user
 				)
 					return;
@@ -1256,42 +639,42 @@
 						(result) => result.code !== 0 || !result.data
 					)
 				) {
-					formsSessionRefreshFailed = true;
+					s.formsSessionRefreshFailed = true;
 					return;
 				}
-				formsSessionRefreshFailed = false;
+				s.formsSessionRefreshFailed = false;
 				const rows = freshRecords.data?.items ?? [];
 				const currentForm = id ? (freshForm.data as UniversalForm) : null;
-				formsSessionRemoteRecord = rows.find((row) => row.id === editingRecordId) ?? null;
-				formsSessionRemoteSchema = currentForm?.schema_version ?? null;
+				s.formsSessionRemoteRecord = rows.find((row) => row.id === s.editingRecordId) ?? null;
+				s.formsSessionRemoteSchema = currentForm?.schema_version ?? null;
 				const changed =
 					formsFingerprint({
 						forms: freshForms.data?.items,
 						views: freshViews.data,
 						records: rows
-					}) !== formsFingerprint({ forms, views: formViews, records });
-				if (formsSessionDirty() || editingRecordId !== null || recordEditorOpen) {
+					}) !== formsFingerprint({ forms: s.forms, views: s.formViews, records: s.records });
+				if (formsSessionDirty() || s.editingRecordId !== null || s.recordEditorOpen) {
 					if (changed) {
-						formsSessionRemoteChanged = true;
+						s.formsSessionRemoteChanged = true;
 						workbench.markChanged(key);
 					}
 					return; // Whole editing snapshot and its original CAS remain intact.
 				}
-				forms = freshForms.data?.items ?? [];
+				s.forms = freshForms.data?.items ?? [];
 				if (!id) return;
-				formViews = sortViewsByDefault(freshViews.data ?? []);
-				records = rows;
-				filterPreviewRecords = rows;
-				if (selectedRecord)
-					selectedRecord = rows.find((row) => row.id === selectedRecord?.id) ?? null;
+				s.formViews = sortViewsByDefault(freshViews.data ?? []);
+				s.records = rows;
+				s.filterPreviewRecords = rows;
+				if (s.selectedRecord)
+					s.selectedRecord = rows.find((row) => row.id === s.selectedRecord?.id) ?? null;
 				// Retain local filters/selection; only replace clean schema/design baselines.
-				designerSyncedFormId = '';
+				s.designerSyncedFormId = '';
 				syncDesignerDrafts(currentForm);
 				cleanFormsGroup('design');
-				formsSessionSchemaVersion = currentForm?.schema_version ?? null;
-				formsSessionRemoteChanged = false;
+				s.formsSessionSchemaVersion = currentForm?.schema_version ?? null;
+				s.formsSessionRemoteChanged = false;
 			} catch {
-				if (generation === formsSessionGeneration) formsSessionRefreshFailed = true;
+				if (generation === s.formsSessionGeneration) s.formsSessionRefreshFailed = true;
 			}
 		});
 	}
@@ -1300,19 +683,19 @@
 		data: Parameters<typeof formsApi.updateRecord>[1]
 	) {
 		const record =
-			records.find((row) => row.id === recordId) ??
-			(selectedRecord?.id === recordId ? selectedRecord : null);
+			s.records.find((row) => row.id === recordId) ??
+			(s.selectedRecord?.id === recordId ? s.selectedRecord : null);
 		const version = recordWriteVersion(
 			recordId,
-			formsSessionRecordVersion,
+			s.formsSessionRecordVersion,
 			record,
-			formsSessionSchemaVersion ?? selectedForm?.schema_version ?? null
+			s.formsSessionSchemaVersion ?? selectedForm?.schema_version ?? null
 		);
 		if (!version) return { code: 409, message: $t('forms.session.conflict'), data: null };
 		const result = await formsApi.updateRecord(recordId, { ...data, ...version });
 		if (result.code === 409) {
-			formsSessionConflict = true;
-			formsSessionRemoteChanged = true;
+			s.formsSessionConflict = true;
+			s.formsSessionRemoteChanged = true;
 			window.setTimeout(() => {
 				void refreshFormsSession();
 			}, 0);
@@ -1330,34 +713,34 @@
 			}))
 		)
 			return;
-		const id = selectedFormId;
-		const recordId = editingRecordId;
-		formsSessionGeneration++;
+		const id = s.selectedFormId;
+		const recordId = s.editingRecordId;
+		s.formsSessionGeneration++;
 		const fresh = await formsApi.get(id);
 		if (fresh.code !== 0 || !fresh.data) {
-			formsSessionRefreshFailed = true;
+			s.formsSessionRefreshFailed = true;
 			return;
 		}
-		forms = forms.map((item) => (item.id === id ? fresh.data! : item));
+		s.forms = s.forms.map((item) => (item.id === id ? fresh.data! : item));
 		const loaded = await loadFormState(id, { syncUrl: false });
 		if (!loaded) {
-			formsSessionRefreshFailed = true;
+			s.formsSessionRefreshFailed = true;
 			return;
 		}
 		const record =
-			records.find((row) => row.id === recordId) ??
-			filterPreviewRecords.find((row) => row.id === recordId);
+			s.records.find((row) => row.id === recordId) ??
+			s.filterPreviewRecords.find((row) => row.id === recordId);
 		if (record) openRecordEditDrawer(record);
 		cleanFormsSession();
-		formsSessionConflict = false;
-		formsSessionRemoteChanged = false;
-		formsSessionReview = false;
-		formsSessionRefreshFailed = false;
-		formsSessionRemoteRecord = null;
-		formsSessionRemoteSchema = null;
-		if (formsSessionKey) {
-			workbench?.markChanged(formsSessionKey, false);
-			workbench?.markDirty(formsSessionKey, false);
+		s.formsSessionConflict = false;
+		s.formsSessionRemoteChanged = false;
+		s.formsSessionReview = false;
+		s.formsSessionRefreshFailed = false;
+		s.formsSessionRemoteRecord = null;
+		s.formsSessionRemoteSchema = null;
+		if (s.formsSessionKey) {
+			workbench?.markChanged(s.formsSessionKey, false);
+			workbench?.markDirty(s.formsSessionKey, false);
 		}
 	}
 
@@ -1369,19 +752,19 @@
 			workbench.block(target.href);
 			return;
 		}
-		if (formsSessionActivating === formId) return;
-		const request = ++formsSessionOpenRequest;
-		if (formsSessionOpening) await formsSessionOpening;
-		if (request !== formsSessionOpenRequest) return;
+		if (s.formsSessionActivating === formId) return;
+		const request = ++s.formsSessionOpenRequest;
+		if (s.formsSessionOpening) await s.formsSessionOpening;
+		if (request !== s.formsSessionOpenRequest) return;
 		const opening = (async () => {
 			releaseFormsSession();
-			formsSessionGeneration++;
-			formsSessionActivating = formId;
-			formsSessionTransitioning = true;
-			formsSessionConflict = false;
-			formsSessionRemoteChanged = false;
-			formsSessionRefreshFailed = false;
-			formsSessionReview = false;
+			s.formsSessionGeneration++;
+			s.formsSessionActivating = formId;
+			s.formsSessionTransitioning = true;
+			s.formsSessionConflict = false;
+			s.formsSessionRemoteChanged = false;
+			s.formsSessionRefreshFailed = false;
+			s.formsSessionReview = false;
 			try {
 				if (options.syncUrl !== false) {
 					await syncFormUrl(formId);
@@ -1390,19 +773,19 @@
 					if (admitted !== formId) return;
 				}
 				await loadFormState(formId, { syncUrl: false });
-				if (formsSessionReady) await restoreRecordDetailFromUrl();
+				if (s.formsSessionReady) await restoreRecordDetailFromUrl();
 				cleanFormsSession();
-				if (formsSessionReady) await attachFormsSession();
+				if (s.formsSessionReady) await attachFormsSession();
 			} finally {
-				formsSessionActivating = '';
-				formsSessionTransitioning = false;
+				s.formsSessionActivating = '';
+				s.formsSessionTransitioning = false;
 			}
 		})();
-		formsSessionOpening = opening;
+		s.formsSessionOpening = opening;
 		try {
 			await opening;
 		} finally {
-			if (formsSessionOpening === opening) formsSessionOpening = null;
+			if (s.formsSessionOpening === opening) s.formsSessionOpening = null;
 		}
 	}
 	function rememberFormsFocus(event: FocusEvent) {
@@ -1415,21 +798,21 @@
 				? `#${CSS.escape(input.id)}`
 				: null;
 		if (selector)
-			formsSessionFocus = { selector, start: input.selectionStart, end: input.selectionEnd };
+			s.formsSessionFocus = { selector, start: input.selectionStart, end: input.selectionEnd };
 	}
 	function formsReviewText(value: unknown): string {
 		return typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value ?? '');
 	}
 	$effect(() => {
-		if (formsSessionKey) workbench?.markDirty(formsSessionKey, formsSessionDirty());
+		if (s.formsSessionKey) workbench?.markDirty(s.formsSessionKey, formsSessionDirty());
 	});
 	onMount(() => {
 		const unsubscribe = workbench?.subscribe(() => {
-			if (formsSessionReady && !formsSessionActivating) void attachFormsSession();
+			if (s.formsSessionReady && !s.formsSessionActivating) void attachFormsSession();
 		});
 		return () => {
 			unsubscribe?.();
-			formsSessionLatch.dispose();
+			s.formsSessionLatch.dispose();
 			releaseFormsSession();
 		};
 	});
@@ -1437,10 +820,10 @@
 	$effect(() => {
 		const formId = page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
 		if (
-			formsSessionReady &&
+			s.formsSessionReady &&
 			formId &&
-			formId !== selectedFormId &&
-			formId !== formsSessionActivating
+			formId !== s.selectedFormId &&
+			formId !== s.formsSessionActivating
 		)
 			void openForm(formId, { syncUrl: false });
 	});
@@ -1454,9 +837,9 @@
 		]);
 
 		await restoreRecordDetailFromUrl();
-		loading = false;
-		if (!formsSessionKey) cleanFormsSession();
-		formsSessionReady = true;
+		s.loading = false;
+		if (!s.formsSessionKey) cleanFormsSession();
+		s.formsSessionReady = true;
 		await attachFormsSession();
 	});
 
@@ -1464,42 +847,42 @@
 		const response = await projectsApi.get(projectId);
 
 		if (response.code === 0 && response.data) {
-			project = response.data;
+			s.project = response.data;
 		}
 	}
 
 	async function loadScenarioTemplates() {
-		templatesLoading = true;
+		s.templatesLoading = true;
 
 		const response = await projectsApi.listScenarioTemplates({ project_type_key: 'custom_form' });
 
-		templatesLoading = false;
+		s.templatesLoading = false;
 
 		if (response.code !== 0) {
 			toast.error(response.message);
-			scenarioTemplates = [];
+			s.scenarioTemplates = [];
 
 			return;
 		}
 
-		scenarioTemplates = response.data?.items ?? [];
+		s.scenarioTemplates = response.data?.items ?? [];
 	}
 
 	async function loadWorkspaceMembers() {
-		workspaceMembersLoading = true;
+		s.workspaceMembersLoading = true;
 
 		const response = await membersApi.list(workspaceId);
 
-		workspaceMembersLoading = false;
+		s.workspaceMembersLoading = false;
 
 		if (response.code !== 0) {
-			workspaceMembers = [];
+			s.workspaceMembers = [];
 			toast.error(response.message);
 
 			return;
 		}
 
-		workspaceMembers = response.data?.items ?? [];
+		s.workspaceMembers = response.data?.items ?? [];
 	}
 
 	async function loadForms() {
@@ -1507,16 +890,16 @@
 
 		if (response.code !== 0) {
 			toast.error(response.message);
-			forms = [];
+			s.forms = [];
 
 			return;
 		}
 
-		forms = response.data?.items ?? [];
+		s.forms = response.data?.items ?? [];
 
 		const urlFormId = page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
 
-		if (urlFormId && forms.some((form) => form.id === urlFormId)) {
+		if (urlFormId && s.forms.some((form) => form.id === urlFormId)) {
 			await openForm(urlFormId, { syncUrl: false });
 		} else {
 			clearSelectedFormState();
@@ -1526,30 +909,30 @@
 	}
 
 	function clearSelectedFormState() {
-		selectedFormId = '';
-		records = [];
-		filterPreviewRecords = [];
-		formViews = [];
-		formEvents = [];
-		formPermissions = null;
-		memberPermissionDraft = defaultPermissionActions();
-		memberFieldReadDraft = {};
-		memberFieldWriteDraft = {};
-		selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
-		panelRecordId = null;
-		selectedRecord = null;
-		selectedRecordLinks = [];
-		selectedRecordChildren = [];
-		selectedRecordComments = [];
-		recordCommentDraft = '';
-		recordAttachments = [];
-		relationTargets = {};
-		designerFieldDrafts = [];
-		designerSyncedFormId = '';
-		activeMode = 'data';
-		editingRecordId = null;
-		recordEditorOpen = false;
-		recordPage = 1;
+		s.selectedFormId = '';
+		s.records = [];
+		s.filterPreviewRecords = [];
+		s.formViews = [];
+		s.formEvents = [];
+		s.formPermissions = null;
+		s.memberPermissionDraft = defaultPermissionActions();
+		s.memberFieldReadDraft = {};
+		s.memberFieldWriteDraft = {};
+		s.selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
+		s.panelRecordId = null;
+		s.selectedRecord = null;
+		s.selectedRecordLinks = [];
+		s.selectedRecordChildren = [];
+		s.selectedRecordComments = [];
+		s.recordCommentDraft = '';
+		s.recordAttachments = [];
+		s.relationTargets = {};
+		s.designerFieldDrafts = [];
+		s.designerSyncedFormId = '';
+		s.activeMode = 'data';
+		s.editingRecordId = null;
+		s.recordEditorOpen = false;
+		s.recordPage = 1;
 	}
 
 	async function syncFormUrl(formId: string) {
@@ -1570,33 +953,33 @@
 	}
 
 	async function loadFormState(formId: string, options: { syncUrl?: boolean } = {}) {
-		const form = forms.find((item) => item.id === formId);
+		const form = s.forms.find((item) => item.id === formId);
 
 		if (!form) return false;
 
-		selectedFormId = form.id;
-		selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
-		panelRecordId = null;
-		editingRecordId = null;
-		recordEditorOpen = false;
-		recordPage = 1;
+		s.selectedFormId = form.id;
+		s.selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
+		s.panelRecordId = null;
+		s.editingRecordId = null;
+		s.recordEditorOpen = false;
+		s.recordPage = 1;
 
 		// Record ids belong to the form they were focused from; keeping them
 		// across a form switch filters every view down to zero rows.
-		focusedRecordIds = [];
+		s.focusedRecordIds = [];
 
-		lastDeletedRecord = null;
-		selectedRecord = null;
-		selectedRecordLinks = [];
-		selectedRecordChildren = [];
-		selectedRecordComments = [];
-		recordCommentDraft = '';
-		recordAttachments = [];
-		relationTargets = {};
-		formViews = [];
-		formPermissions = null;
-		formEvents = [];
-		activeMode = 'data';
+		s.lastDeletedRecord = null;
+		s.selectedRecord = null;
+		s.selectedRecordLinks = [];
+		s.selectedRecordChildren = [];
+		s.selectedRecordComments = [];
+		s.recordCommentDraft = '';
+		s.recordAttachments = [];
+		s.relationTargets = {};
+		s.formViews = [];
+		s.formPermissions = null;
+		s.formEvents = [];
+		s.activeMode = 'data';
 		syncDesignerDrafts(form);
 		syncDetailHeaderDraft(form);
 		syncDetailHighlightDraft(form);
@@ -1611,88 +994,88 @@
 	}
 
 	async function loadFormViews() {
-		if (!selectedFormId) {
-			formViews = [];
-			selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
+		if (!s.selectedFormId) {
+			s.formViews = [];
+			s.selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
 
 			return;
 		}
 
-		const response = await formsApi.listViews(selectedFormId);
+		const response = await formsApi.listViews(s.selectedFormId);
 
 		if (response.code !== 0) {
 			toast.error(response.message);
-			formViews = [];
-			selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
+			s.formViews = [];
+			s.selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
 			applyView(precedence.ALL_RECORDS_VIEW_ID);
 
 			return;
 		}
 
-		formViews = sortViewsByDefault(response.data ?? []);
+		s.formViews = sortViewsByDefault(response.data ?? []);
 		const urlForm = page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
 		const resolved = precedence.resolveInitialView({
-			views: formViews,
-			urlViewId: urlForm === selectedFormId ? page.url.searchParams.get('view') : null,
-			rememberedViewId: precedence.readRememberedView(currentUserId, selectedFormId)
+			views: s.formViews,
+			urlViewId: urlForm === s.selectedFormId ? page.url.searchParams.get('view') : null,
+			rememberedViewId: precedence.readRememberedView(currentUserId, s.selectedFormId)
 		});
-		if (resolved.dropRemembered) precedence.forgetRememberedView(currentUserId, selectedFormId);
+		if (resolved.dropRemembered) precedence.forgetRememberedView(currentUserId, s.selectedFormId);
 		applyView(resolved.viewId);
 	}
 
 	async function loadFormPermissions() {
-		if (!selectedFormId) {
-			formPermissions = null;
-			memberPermissionDraft = defaultPermissionActions();
-			memberRecordScopeDraft = 'all';
-			memberFieldReadDraft = {};
-			memberFieldWriteDraft = {};
+		if (!s.selectedFormId) {
+			s.formPermissions = null;
+			s.memberPermissionDraft = defaultPermissionActions();
+			s.memberRecordScopeDraft = 'all';
+			s.memberFieldReadDraft = {};
+			s.memberFieldWriteDraft = {};
 
 			return;
 		}
 
-		permissionsLoading = true;
+		s.permissionsLoading = true;
 
-		const response = await formsApi.getPermissions(selectedFormId);
+		const response = await formsApi.getPermissions(s.selectedFormId);
 
-		permissionsLoading = false;
+		s.permissionsLoading = false;
 
 		if (response.code !== 0 || !response.data) {
-			formPermissions = null;
-			memberPermissionDraft = defaultPermissionActions();
-			memberRecordScopeDraft = 'all';
-			memberFieldReadDraft = defaultFieldReadDraft();
-			memberFieldWriteDraft = defaultFieldWriteDraft();
+			s.formPermissions = null;
+			s.memberPermissionDraft = defaultPermissionActions();
+			s.memberRecordScopeDraft = 'all';
+			s.memberFieldReadDraft = defaultFieldReadDraft();
+			s.memberFieldWriteDraft = defaultFieldWriteDraft();
 			toast.error(response.message);
 
 			return;
 		}
 
-		formPermissions = response.data;
-		memberPermissionDraft = rolePermissionActions(response.data, 'member');
-		memberRecordScopeDraft = roleRecordScope(response.data, 'member');
-		memberFieldReadDraft = roleFieldReadPermissions(response.data, 'member');
-		memberFieldWriteDraft = roleFieldWritePermissions(response.data, 'member');
+		s.formPermissions = response.data;
+		s.memberPermissionDraft = rolePermissionActions(response.data, 'member');
+		s.memberRecordScopeDraft = roleRecordScope(response.data, 'member');
+		s.memberFieldReadDraft = roleFieldReadPermissions(response.data, 'member');
+		s.memberFieldWriteDraft = roleFieldWritePermissions(response.data, 'member');
 	}
 
 	async function saveMemberPermissions() {
 		if (!selectedForm) return;
 
-		permissionsSaving = true;
+		s.permissionsSaving = true;
 
 		const response = await formsApi.updatePermissions(selectedForm.id, [
 			{
 				subject_type: 'role',
 				subject_id: 'member',
 				policy: {
-					actions: memberPermissionDraft,
-					record_scope: memberRecordScopeDraft,
+					actions: s.memberPermissionDraft,
+					record_scope: s.memberRecordScopeDraft,
 					fields: memberFieldPolicy()
 				}
 			}
 		]);
 
-		permissionsSaving = false;
+		s.permissionsSaving = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -1700,91 +1083,91 @@
 			return;
 		}
 
-		formPermissions = response.data;
-		memberPermissionDraft = rolePermissionActions(response.data, 'member');
-		memberRecordScopeDraft = roleRecordScope(response.data, 'member');
-		memberFieldReadDraft = roleFieldReadPermissions(response.data, 'member');
-		memberFieldWriteDraft = roleFieldWritePermissions(response.data, 'member');
+		s.formPermissions = response.data;
+		s.memberPermissionDraft = rolePermissionActions(response.data, 'member');
+		s.memberRecordScopeDraft = roleRecordScope(response.data, 'member');
+		s.memberFieldReadDraft = roleFieldReadPermissions(response.data, 'member');
+		s.memberFieldWriteDraft = roleFieldWritePermissions(response.data, 'member');
 		toast.success($t('forms.permissionsSaved'));
 	}
 
 	async function loadRecords() {
-		if (!selectedFormId) return false;
+		if (!s.selectedFormId) return false;
 
-		recordsLoading = true;
+		s.recordsLoading = true;
 		const query = recordQuery;
-		loadedRecordQuery = JSON.stringify([selectedFormId, query]);
+		s.loadedRecordQuery = JSON.stringify([s.selectedFormId, query]);
 
 		const [response, previewResponse] = await Promise.all([
-			formsApi.listRecords(selectedFormId, {
+			formsApi.listRecords(s.selectedFormId, {
 				page: 1,
 				per_page: query.per_page,
 				view_id: query.view_id,
 				sort: query.sort
 			}),
-			formsApi.listRecords(selectedFormId, { page: 1, per_page: 100 })
+			formsApi.listRecords(s.selectedFormId, { page: 1, per_page: 100 })
 		]);
 
 		if (response.code !== 0) {
 			toast.error(response.message);
-			records = [];
+			s.records = [];
 		} else {
-			records = response.data?.items ?? [];
-			serverRecordTotal = response.data?.total ?? records.length;
+			s.records = response.data?.items ?? [];
+			s.serverRecordTotal = response.data?.total ?? s.records.length;
 
 			if (
-				selectedRecord &&
-				selectedRecord.id !== panelRecordId &&
-				!records.some((record) => record.id === selectedRecord?.id)
+				s.selectedRecord &&
+				s.selectedRecord.id !== s.panelRecordId &&
+				!s.records.some((record) => record.id === s.selectedRecord?.id)
 			) {
-				selectedRecord = null;
-				selectedRecordLinks = [];
-				selectedRecordChildren = [];
-				selectedRecordComments = [];
+				s.selectedRecord = null;
+				s.selectedRecordLinks = [];
+				s.selectedRecordChildren = [];
+				s.selectedRecordComments = [];
 				void syncRecordDetailUrl(null);
 			}
 		}
 
 		if (previewResponse.code === 0) {
-			filterPreviewRecords = previewResponse.data?.items ?? [];
+			s.filterPreviewRecords = previewResponse.data?.items ?? [];
 		} else {
-			filterPreviewRecords = records;
+			s.filterPreviewRecords = s.records;
 		}
 
 		await loadAggregates();
 		await loadRelationTargets();
 		await loadFormEvents();
 		resetRecordDraft();
-		recordsLoading = false;
+		s.recordsLoading = false;
 		return response.code === 0 && previewResponse.code === 0;
 	}
 
 	async function loadFormEvents() {
-		if (!selectedFormId) {
-			formEvents = [];
+		if (!s.selectedFormId) {
+			s.formEvents = [];
 
 			return;
 		}
 
-		eventsLoading = true;
+		s.eventsLoading = true;
 
-		const response = await formsApi.listEvents(selectedFormId);
+		const response = await formsApi.listEvents(s.selectedFormId);
 
-		eventsLoading = false;
+		s.eventsLoading = false;
 
 		if (response.code !== 0) {
-			formEvents = [];
+			s.formEvents = [];
 			toast.error(response.message);
 
 			return;
 		}
 
-		formEvents = response.data?.items ?? [];
+		s.formEvents = response.data?.items ?? [];
 	}
 
 	async function loadPrintJobs() {
 		if (!printJobForm) {
-			printJobs = [];
+			s.printJobs = [];
 
 			return;
 		}
@@ -1792,13 +1175,13 @@
 		const response = await formsApi.listRecords(printJobForm.id, { page: 1, per_page: 8 });
 
 		if (response.code === 0 && response.data) {
-			printJobs = response.data.items ?? [];
+			s.printJobs = response.data.items ?? [];
 		}
 	}
 
 	async function loadRelationTargets() {
 		if (!selectedForm) {
-			relationTargets = {};
+			s.relationTargets = {};
 
 			return;
 		}
@@ -1808,12 +1191,12 @@
 		);
 
 		if (relationFields.length === 0) {
-			relationTargets = {};
+			s.relationTargets = {};
 
 			return;
 		}
 
-		relationTargetsLoading = true;
+		s.relationTargetsLoading = true;
 
 		const entries = await Promise.all(
 			relationFields.map(async (field) => {
@@ -1829,13 +1212,13 @@
 			})
 		);
 
-		relationTargets = Object.fromEntries(entries);
-		relationTargetsLoading = false;
+		s.relationTargets = Object.fromEntries(entries);
+		s.relationTargetsLoading = false;
 	}
 
 	async function loadAggregates() {
-		if (!selectedFormId || !selectedForm) {
-			aggregates = {};
+		if (!s.selectedFormId || !selectedForm) {
+			s.aggregates = {};
 
 			return;
 		}
@@ -1846,13 +1229,13 @@
 
 		const results = await Promise.all(
 			fieldsToAggregate.map(async (field) => {
-				const response = await formsApi.aggregate(selectedFormId, field.key, 'sum');
+				const response = await formsApi.aggregate(s.selectedFormId, field.key, 'sum');
 
 				return [field.key, response.code === 0 && response.data ? response.data : null] as const;
 			})
 		);
 
-		aggregates = Object.fromEntries(
+		s.aggregates = Object.fromEntries(
 			results.filter((entry): entry is readonly [string, FormAggregate] => Boolean(entry[1]))
 		);
 	}
@@ -1861,8 +1244,8 @@
 		let schema: Record<string, unknown>;
 
 		try {
-			const parsed = showAdvancedSchema
-				? (JSON.parse(formDraft.schemaText) as unknown)
+			const parsed = s.showAdvancedSchema
+				? (JSON.parse(s.formDraft.schemaText) as unknown)
 				: buildSchemaFromDrafts();
 
 			if (!isRecord(parsed)) throw new Error($t('forms.schemaMustBeObject'));
@@ -1874,17 +1257,17 @@
 			return;
 		}
 
-		formSubmitting = true;
+		s.formSubmitting = true;
 
 		const response = await formsApi.create(projectId, {
-			key: formDraft.key.trim(),
-			name: formDraft.name.trim(),
-			description: formDraft.description.trim(),
-			title_template: formDraft.title_template.trim() || '{id}',
+			key: s.formDraft.key.trim(),
+			name: s.formDraft.name.trim(),
+			description: s.formDraft.description.trim(),
+			title_template: s.formDraft.title_template.trim() || '{id}',
 			schema
 		});
 
-		formSubmitting = false;
+		s.formSubmitting = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -1892,12 +1275,12 @@
 			return;
 		}
 
-		forms = [response.data, ...forms];
-		showCreateForm = false;
+		s.forms = [response.data, ...s.forms];
+		s.showCreateForm = false;
 		resetFormDraft();
 		toast.success($t('forms.formCreated'));
 		await openForm(response.data.id);
-		activeMode = 'design';
+		s.activeMode = 'design';
 		void loadDesignerSafety(response.data);
 	}
 
@@ -1914,23 +1297,23 @@
 			return;
 		}
 
-		recordSubmitting = true;
+		s.recordSubmitting = true;
 
-		const wasEditing = Boolean(editingRecordId);
+		const wasEditing = Boolean(s.editingRecordId);
 
-		const response = editingRecordId
-			? await updateRecordWithVersion(editingRecordId, {
-					title: recordTitle.trim() || undefined,
+		const response = s.editingRecordId
+			? await updateRecordWithVersion(s.editingRecordId, {
+					title: s.recordTitle.trim() || undefined,
 					values,
 					source: { type: 'web' }
 				})
 			: await formsApi.createRecord(selectedForm.id, {
-					title: recordTitle.trim() || undefined,
+					title: s.recordTitle.trim() || undefined,
 					values,
 					source: { type: 'web' }
 				});
 
-		recordSubmitting = false;
+		s.recordSubmitting = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -1942,21 +1325,21 @@
 			await createParentChildLinksFromRelationFields(response.data, values);
 		}
 
-		records = editingRecordId
-			? records.map((record) => (record.id === response.data?.id ? response.data : record))
-			: [response.data, ...records];
+		s.records = s.editingRecordId
+			? s.records.map((record) => (record.id === response.data?.id ? response.data : record))
+			: [response.data, ...s.records];
 
-		filterPreviewRecords = editingRecordId
-			? filterPreviewRecords.map((record) =>
+		s.filterPreviewRecords = s.editingRecordId
+			? s.filterPreviewRecords.map((record) =>
 					record.id === response.data?.id ? response.data : record
 				)
-			: [response.data, ...filterPreviewRecords];
+			: [response.data, ...s.filterPreviewRecords];
 
-		selectedRecord = response.data;
-		editingRecordId = null;
-		recordEditorOpen = false;
-		if (panelRecordId) announce($t('forms.recordPanel.announceSaved'));
-		recordAttachments = [];
+		s.selectedRecord = response.data;
+		s.editingRecordId = null;
+		s.recordEditorOpen = false;
+		if (s.panelRecordId) announce($t('forms.recordPanel.announceSaved'));
+		s.recordAttachments = [];
 		resetRecordDraft();
 		toast.success(wasEditing ? $t('forms.recordUpdated') : $t('forms.recordSaved'));
 
@@ -2013,11 +1396,11 @@
 			return;
 		}
 
-		deletingRecordId = record.id;
+		s.deletingRecordId = record.id;
 
 		const response = await formsApi.deleteRecord(record.id);
 
-		deletingRecordId = null;
+		s.deletingRecordId = null;
 
 		if (response.code !== 0) {
 			toast.error(response.message);
@@ -2025,25 +1408,25 @@
 			return;
 		}
 
-		lastDeletedRecord = { id: record.id, title: label };
-		if (panelRecordId === record.id) closeRecordPanel();
-		records = records.filter((item) => item.id !== record.id);
-		filterPreviewRecords = filterPreviewRecords.filter((item) => item.id !== record.id);
-		printJobs = printJobs.filter((item) => item.id !== record.id);
+		s.lastDeletedRecord = { id: record.id, title: label };
+		if (s.panelRecordId === record.id) closeRecordPanel();
+		s.records = s.records.filter((item) => item.id !== record.id);
+		s.filterPreviewRecords = s.filterPreviewRecords.filter((item) => item.id !== record.id);
+		s.printJobs = s.printJobs.filter((item) => item.id !== record.id);
 
-		if (selectedRecord?.id === record.id) {
-			selectedRecord = null;
-			selectedRecordLinks = [];
-			selectedRecordChildren = [];
-			selectedRecordComments = [];
-			recordCommentDraft = '';
+		if (s.selectedRecord?.id === record.id) {
+			s.selectedRecord = null;
+			s.selectedRecordLinks = [];
+			s.selectedRecordChildren = [];
+			s.selectedRecordComments = [];
+			s.recordCommentDraft = '';
 		}
 
-		if (editingRecordId === record.id) {
+		if (s.editingRecordId === record.id) {
 			cancelEditRecord();
 		}
 
-		focusedRecordIds = focusedRecordIds.filter((item) => item !== record.id);
+		s.focusedRecordIds = s.focusedRecordIds.filter((item) => item !== record.id);
 		toast.success($t('forms.recordDeleted'));
 		await loadAggregates();
 	}
@@ -2053,15 +1436,15 @@
 	 * undo one instead of leaving the record unreachable.
 	 */
 	async function handleRestoreLastDeletedRecord() {
-		const target = lastDeletedRecord;
+		const target = s.lastDeletedRecord;
 
 		if (!target) return;
 
-		restoringRecordId = target.id;
+		s.restoringRecordId = target.id;
 
 		const response = await formsApi.restoreRecord(target.id);
 
-		restoringRecordId = null;
+		s.restoringRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -2069,13 +1452,13 @@
 			return;
 		}
 
-		lastDeletedRecord = null;
+		s.lastDeletedRecord = null;
 		toast.success($t('forms.recordRestored'));
 		await loadRecords();
 	}
 
 	function dismissLastDeletedRecord() {
-		lastDeletedRecord = null;
+		s.lastDeletedRecord = null;
 	}
 
 	async function copyRecordId(record: FormRecord) {
@@ -2089,7 +1472,7 @@
 			// Clipboard permissions are browser-dependent; keep the record action non-blocking.
 		}
 
-		copiedCardRecordId = record.id;
+		s.copiedCardRecordId = record.id;
 		toast.success($t('forms.recordIdCopied'));
 	}
 
@@ -2121,7 +1504,7 @@
 			// Clipboard permissions are browser-dependent; keep calendar operations non-blocking.
 		}
 
-		copiedCalendarScheduleKey = calendarScheduleKey(occurrence);
+		s.copiedCalendarScheduleKey = calendarScheduleKey(occurrence);
 		toast.success($t('forms.calendarScheduleCopied'));
 	}
 
@@ -2163,14 +1546,14 @@
 			);
 		}
 
-		updatingCalendarRecordId = occurrence.record.id;
+		s.updatingCalendarRecordId = occurrence.record.id;
 
 		const response = await updateRecordWithVersion(occurrence.record.id, {
 			values: nextValues,
 			source: { type: 'web', origin: 'calendar_shift' }
 		});
 
-		updatingCalendarRecordId = null;
+		s.updatingCalendarRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -2179,7 +1562,7 @@
 		}
 
 		replaceLocalRecord(response.data);
-		shiftedCalendarScheduleKey = `${occurrence.record.id}:${nextStart}`;
+		s.shiftedCalendarScheduleKey = `${occurrence.record.id}:${nextStart}`;
 		toast.success($t('forms.calendarShifted'));
 		await loadAggregates();
 	}
@@ -2220,7 +1603,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedCardRecordId = record.id;
+		s.exportedCardRecordId = record.id;
 		toast.success($t('forms.recordExported'));
 	}
 
@@ -2268,7 +1651,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedCardGroupRecordsKey = cardGroupFilterKey(group);
+		s.exportedCardGroupRecordsKey = cardGroupFilterKey(group);
 		toast.success(
 			$t('forms.cardGroupRecordsExported', { values: { count: group.records.length } })
 		);
@@ -2289,7 +1672,7 @@
 			// Clipboard permissions are browser-dependent; keep timeline operations non-blocking.
 		}
 
-		copiedTimelineEventAction = `${event.id}:${action}`;
+		s.copiedTimelineEventAction = `${event.id}:${action}`;
 		toast.success($t('forms.timelineEventCopied'));
 	}
 
@@ -2308,7 +1691,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedTimelineEventAction = `${event.id}:details`;
+		s.exportedTimelineEventAction = `${event.id}:details`;
 		toast.success($t('forms.timelineEventExported'));
 	}
 
@@ -2325,7 +1708,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedTimelineEventsCsvCount = events.length;
+		s.exportedTimelineEventsCsvCount = events.length;
 		toast.success($t('forms.timelineEventsExported', { values: { count: events.length } }));
 	}
 
@@ -2344,7 +1727,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedTimelineEventsJsonCount = events.length;
+		s.exportedTimelineEventsJsonCount = events.length;
 		toast.success($t('forms.timelineEventsJsonExported', { values: { count: events.length } }));
 	}
 
@@ -2361,7 +1744,7 @@
 			// Clipboard permissions are browser-dependent; keep event-set operations non-blocking.
 		}
 
-		copiedTimelineEventIdsCount = events.length;
+		s.copiedTimelineEventIdsCount = events.length;
 		toast.success($t('forms.timelineEventsCopied', { values: { count: events.length } }));
 	}
 
@@ -2386,20 +1769,20 @@
 			// Clipboard permissions are browser-dependent; keep event-set operations non-blocking.
 		}
 
-		copiedTimelineAggregateIdsCount = aggregateKeys.length;
+		s.copiedTimelineAggregateIdsCount = aggregateKeys.length;
 		toast.success(
 			$t('forms.timelineAggregatesCopied', { values: { count: aggregateKeys.length } })
 		);
 	}
 
 	function timelineEventPinned(event: BusinessEvent): boolean {
-		return pinnedTimelineEventIds.includes(event.id);
+		return s.pinnedTimelineEventIds.includes(event.id);
 	}
 
 	function orderedTimelineEvents(events: BusinessEvent[]): BusinessEvent[] {
-		if (pinnedTimelineEventIds.length === 0) return events;
+		if (s.pinnedTimelineEventIds.length === 0) return events;
 
-		const pinnedOrder = new Map(pinnedTimelineEventIds.map((id, index) => [id, index]));
+		const pinnedOrder = new Map(s.pinnedTimelineEventIds.map((id, index) => [id, index]));
 
 		return [
 			...events
@@ -2411,13 +1794,16 @@
 
 	function toggleTimelineEventPinned(event: BusinessEvent) {
 		if (timelineEventPinned(event)) {
-			pinnedTimelineEventIds = pinnedTimelineEventIds.filter((id) => id !== event.id);
+			s.pinnedTimelineEventIds = s.pinnedTimelineEventIds.filter((id) => id !== event.id);
 			toast.success($t('forms.timelineEventUnpinned'));
 
 			return;
 		}
 
-		pinnedTimelineEventIds = [event.id, ...pinnedTimelineEventIds.filter((id) => id !== event.id)];
+		s.pinnedTimelineEventIds = [
+			event.id,
+			...s.pinnedTimelineEventIds.filter((id) => id !== event.id)
+		];
 
 		toast.success($t('forms.timelineEventPinned'));
 	}
@@ -2427,7 +1813,7 @@
 
 		if (!record) return;
 
-		focusedRecordIds = [record.id];
+		s.focusedRecordIds = [record.id];
 
 		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
 
@@ -2449,7 +1835,7 @@
 
 		if (recordIds.length === 0) return;
 
-		focusedRecordIds = recordIds;
+		s.focusedRecordIds = recordIds;
 
 		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
 
@@ -2462,18 +1848,18 @@
 	) {
 		if (target === 'actor' && !event.actor_id) return;
 
-		viewDraft = {
-			...viewDraft,
+		s.viewDraft = {
+			...s.viewDraft,
 			view_type: 'timeline',
 			timelineSource: 'events',
 			timelineEventLayout: selectedTimelineEventLayout(),
-			timelineEventType: target === 'type' ? event.event_type : viewDraft.timelineEventType,
+			timelineEventType: target === 'type' ? event.event_type : s.viewDraft.timelineEventType,
 			timelineEventActor:
-				target === 'actor' ? (event.actor_id ?? '') : viewDraft.timelineEventActor,
+				target === 'actor' ? (event.actor_id ?? '') : s.viewDraft.timelineEventActor,
 			timelineEventAggregate:
 				target === 'aggregate'
 					? timelineEventAggregateKey(event)
-					: viewDraft.timelineEventAggregate,
+					: s.viewDraft.timelineEventAggregate,
 			timelineTitleField: '',
 			timelineSubtitleField: ''
 		};
@@ -2500,8 +1886,8 @@
 
 		dayEnd.setHours(23, 59, 0, 0);
 
-		viewDraft = {
-			...viewDraft,
+		s.viewDraft = {
+			...s.viewDraft,
 			view_type: 'timeline',
 			timelineSource: 'events',
 			timelineEventLayout: selectedTimelineEventLayout(),
@@ -2515,17 +1901,17 @@
 	}
 
 	function clearFocusedRecord() {
-		focusedRecordIds = [];
+		s.focusedRecordIds = [];
 	}
 
 	function replaceLocalRecord(record: FormRecord) {
-		records = records.map((item) => (item.id === record.id ? record : item));
-		filterPreviewRecords = filterPreviewRecords.map((item) =>
+		s.records = s.records.map((item) => (item.id === record.id ? record : item));
+		s.filterPreviewRecords = s.filterPreviewRecords.map((item) =>
 			item.id === record.id ? record : item
 		);
 
-		if (selectedRecord?.id === record.id) {
-			selectedRecord = record;
+		if (s.selectedRecord?.id === record.id) {
+			s.selectedRecord = record;
 		}
 	}
 
@@ -2538,14 +1924,14 @@
 			return;
 		}
 
-		updatingKanbanRecordId = record.id;
+		s.updatingKanbanRecordId = record.id;
 
 		const response = await updateRecordWithVersion(record.id, {
 			values: { ...record.values, [field.key]: value },
 			source: { type: 'web', origin: 'kanban' }
 		});
 
-		updatingKanbanRecordId = null;
+		s.updatingKanbanRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -2561,14 +1947,14 @@
 	async function updateCardRecordSelectField(record: FormRecord, field: FormField, value: string) {
 		if (!value || record.values[field.key] === value) return;
 
-		updatingCardRecordId = record.id;
+		s.updatingCardRecordId = record.id;
 
 		const response = await updateRecordWithVersion(record.id, {
 			values: { ...record.values, [field.key]: value },
 			source: { type: 'web', origin: 'card' }
 		});
 
-		updatingCardRecordId = null;
+		s.updatingCardRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -2582,19 +1968,19 @@
 	}
 
 	function cardGroupCollapseKey(group: { key: string }): string {
-		return `${selectedViewId || selectedView?.id || 'card'}:${group.key}`;
+		return `${s.selectedViewId || selectedView?.id || 'card'}:${group.key}`;
 	}
 
 	function cardGroupCollapsed(group: { key: string }): boolean {
-		return collapsedCardGroupKeys.includes(cardGroupCollapseKey(group));
+		return s.collapsedCardGroupKeys.includes(cardGroupCollapseKey(group));
 	}
 
 	function toggleCardGroup(group: { key: string }) {
 		const key = cardGroupCollapseKey(group);
 
-		collapsedCardGroupKeys = collapsedCardGroupKeys.includes(key)
-			? collapsedCardGroupKeys.filter((item) => item !== key)
-			: [...collapsedCardGroupKeys, key];
+		s.collapsedCardGroupKeys = s.collapsedCardGroupKeys.includes(key)
+			? s.collapsedCardGroupKeys.filter((item) => item !== key)
+			: [...s.collapsedCardGroupKeys, key];
 	}
 
 	function cardGroupFilterKey(group: { key: string; label: string }): string {
@@ -2618,7 +2004,7 @@
 			// Clipboard permissions are browser-dependent; keep group operations non-blocking.
 		}
 
-		copiedCardGroupRecordIdsKey = cardGroupFilterKey(group);
+		s.copiedCardGroupRecordIdsKey = cardGroupFilterKey(group);
 		toast.success(
 			$t('forms.cardGroupRecordIdsCopied', { values: { count: group.records.length } })
 		);
@@ -2627,7 +2013,7 @@
 	function focusCardGroupRecords(group: { records: FormRecord[] }) {
 		if (group.records.length === 0) return;
 
-		focusedRecordIds = group.records.map((record) => record.id);
+		s.focusedRecordIds = group.records.map((record) => record.id);
 
 		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
 
@@ -2691,7 +2077,7 @@
 
 		setViewDraftFilterGroups(nextGroups);
 		updateViewDraftFilterRootLogic('all');
-		appliedCardGroupFilterKey = cardGroupFilterKey(group);
+		s.appliedCardGroupFilterKey = cardGroupFilterKey(group);
 		toast.success($t('forms.cardGroupFilterApplied'));
 	}
 
@@ -2702,14 +2088,14 @@
 	) {
 		if (!value || record.values[field.key] === value) return;
 
-		updatingTimelineRecordId = record.id;
+		s.updatingTimelineRecordId = record.id;
 
 		const response = await updateRecordWithVersion(record.id, {
 			values: { ...record.values, [field.key]: value },
 			source: { type: 'web', origin: 'timeline' }
 		});
 
-		updatingTimelineRecordId = null;
+		s.updatingTimelineRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -2723,23 +2109,23 @@
 	}
 
 	function selectedKanbanRecords(): FormRecord[] {
-		const selectedIds = new Set(selectedKanbanRecordIds);
+		const selectedIds = new Set(s.selectedKanbanRecordIds);
 
-		return records.filter((record) => selectedIds.has(record.id));
+		return s.records.filter((record) => selectedIds.has(record.id));
 	}
 
 	function isKanbanRecordSelected(recordId: string): boolean {
-		return selectedKanbanRecordIds.includes(recordId);
+		return s.selectedKanbanRecordIds.includes(recordId);
 	}
 
 	function setKanbanRecordSelected(recordId: string, selected: boolean) {
-		selectedKanbanRecordIds = selected
-			? Array.from(new Set([...selectedKanbanRecordIds, recordId]))
-			: selectedKanbanRecordIds.filter((id) => id !== recordId);
+		s.selectedKanbanRecordIds = selected
+			? Array.from(new Set([...s.selectedKanbanRecordIds, recordId]))
+			: s.selectedKanbanRecordIds.filter((id) => id !== recordId);
 	}
 
 	function clearKanbanSelection() {
-		selectedKanbanRecordIds = [];
+		s.selectedKanbanRecordIds = [];
 	}
 
 	function kanbanBulkMoveAllowed(selectedRecords: FormRecord[], targetValue: string): boolean {
@@ -2750,7 +2136,7 @@
 		if (limit === null) return true;
 
 		const selectedIds = new Set(selectedRecords.map((record) => record.id));
-		const currentTargetCount = records.filter(
+		const currentTargetCount = s.records.filter(
 			(record) =>
 				!selectedIds.has(record.id) &&
 				String(record.values[kanbanGroupField.key] ?? '') === targetValue
@@ -2760,7 +2146,7 @@
 	}
 
 	async function bulkMoveKanbanRecords() {
-		if (!kanbanGroupField || !bulkKanbanTarget) return;
+		if (!kanbanGroupField || !s.bulkKanbanTarget) return;
 
 		const selectedRecords = selectedKanbanRecords();
 
@@ -2770,26 +2156,26 @@
 			return;
 		}
 
-		if (!kanbanBulkMoveAllowed(selectedRecords, bulkKanbanTarget)) {
+		if (!kanbanBulkMoveAllowed(selectedRecords, s.bulkKanbanTarget)) {
 			toast.error($t('forms.kanbanWipLimitReached'));
 
 			return;
 		}
 
-		bulkMovingKanban = true;
+		s.bulkMovingKanban = true;
 
 		const updatedRecords: FormRecord[] = [];
 
 		for (const record of selectedRecords) {
-			if (String(record.values[kanbanGroupField.key] ?? '') === bulkKanbanTarget) continue;
+			if (String(record.values[kanbanGroupField.key] ?? '') === s.bulkKanbanTarget) continue;
 
 			const response = await updateRecordWithVersion(record.id, {
-				values: { ...record.values, [kanbanGroupField.key]: bulkKanbanTarget },
+				values: { ...record.values, [kanbanGroupField.key]: s.bulkKanbanTarget },
 				source: { type: 'web', origin: 'kanban_bulk' }
 			});
 
 			if (response.code !== 0 || !response.data) {
-				bulkMovingKanban = false;
+				s.bulkMovingKanban = false;
 				toast.error(response.message);
 
 				return;
@@ -2798,18 +2184,18 @@
 			updatedRecords.push(response.data);
 		}
 
-		bulkMovingKanban = false;
+		s.bulkMovingKanban = false;
 
 		if (updatedRecords.length > 0) {
 			const updatedById = new Map(updatedRecords.map((record) => [record.id, record]));
 
-			records = records.map((record) => updatedById.get(record.id) ?? record);
-			filterPreviewRecords = filterPreviewRecords.map(
+			s.records = s.records.map((record) => updatedById.get(record.id) ?? record);
+			s.filterPreviewRecords = s.filterPreviewRecords.map(
 				(record) => updatedById.get(record.id) ?? record
 			);
 
-			if (selectedRecord && updatedById.has(selectedRecord.id)) {
-				selectedRecord = updatedById.get(selectedRecord.id) ?? selectedRecord;
+			if (s.selectedRecord && updatedById.has(s.selectedRecord.id)) {
+				s.selectedRecord = updatedById.get(s.selectedRecord.id) ?? s.selectedRecord;
 			}
 		}
 
@@ -2819,7 +2205,7 @@
 	}
 
 	function handleKanbanDragStart(event: DragEvent, record: FormRecord) {
-		draggingKanbanRecordId = record.id;
+		s.draggingKanbanRecordId = record.id;
 		event.dataTransfer?.setData('text/plain', record.id);
 
 		if (event.dataTransfer) {
@@ -2828,13 +2214,13 @@
 	}
 
 	function handleKanbanDragEnd() {
-		draggingKanbanRecordId = null;
+		s.draggingKanbanRecordId = null;
 	}
 
 	function handleKanbanDragOver(event: DragEvent, groupLabel: string) {
-		if (!draggingKanbanRecordId || !kanbanGroupField) return;
+		if (!s.draggingKanbanRecordId || !kanbanGroupField) return;
 
-		const record = records.find((item) => item.id === draggingKanbanRecordId);
+		const record = s.records.find((item) => item.id === s.draggingKanbanRecordId);
 
 		if (!record || !kanbanMoveAllowed(record, groupLabel)) {
 			if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';
@@ -2850,13 +2236,13 @@
 	async function handleKanbanDrop(event: DragEvent, groupLabel: string) {
 		event.preventDefault();
 
-		const recordId = event.dataTransfer?.getData('text/plain') || draggingKanbanRecordId;
+		const recordId = event.dataTransfer?.getData('text/plain') || s.draggingKanbanRecordId;
 
-		draggingKanbanRecordId = null;
+		s.draggingKanbanRecordId = null;
 
 		if (!recordId || !kanbanGroupField) return;
 
-		const record = records.find((item) => item.id === recordId);
+		const record = s.records.find((item) => item.id === recordId);
 
 		if (!record) return;
 
@@ -2887,14 +2273,14 @@
 			return;
 		}
 
-		updatingCalendarRecordId = record.id;
+		s.updatingCalendarRecordId = record.id;
 
 		const response = await updateRecordWithVersion(record.id, {
 			values: nextValues,
 			source: { type: 'web', origin: 'calendar' }
 		});
 
-		updatingCalendarRecordId = null;
+		s.updatingCalendarRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -2931,14 +2317,14 @@
 			return;
 		}
 
-		updatingCalendarRecordId = record.id;
+		s.updatingCalendarRecordId = record.id;
 
 		const response = await updateRecordWithVersion(record.id, {
 			values: nextValues,
 			source: { type: 'web', origin: 'calendar_series' }
 		});
 
-		updatingCalendarRecordId = null;
+		s.updatingCalendarRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -2964,7 +2350,7 @@
 
 		if (calendarRecordIsoDate(record, endField) === nextEnd) return;
 
-		updatingCalendarRecordId = record.id;
+		s.updatingCalendarRecordId = record.id;
 
 		const response = await updateRecordWithVersion(record.id, {
 			values: {
@@ -2974,7 +2360,7 @@
 			source: { type: 'web', origin: 'calendar_end_resize' }
 		});
 
-		updatingCalendarRecordId = null;
+		s.updatingCalendarRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -2988,7 +2374,7 @@
 	}
 
 	function handleCalendarDragStart(event: DragEvent, record: FormRecord) {
-		draggingCalendarRecordId = record.id;
+		s.draggingCalendarRecordId = record.id;
 		event.dataTransfer?.setData('text/plain', record.id);
 
 		if (event.dataTransfer) {
@@ -2997,11 +2383,11 @@
 	}
 
 	function handleCalendarDragEnd() {
-		draggingCalendarRecordId = null;
+		s.draggingCalendarRecordId = null;
 	}
 
 	function handleCalendarDragOver(event: DragEvent) {
-		if (!draggingCalendarRecordId || !calendarDateField) return;
+		if (!s.draggingCalendarRecordId || !calendarDateField) return;
 
 		event.preventDefault();
 
@@ -3011,13 +2397,13 @@
 	async function handleCalendarDrop(event: DragEvent, isoDate: string) {
 		event.preventDefault();
 
-		const recordId = event.dataTransfer?.getData('text/plain') || draggingCalendarRecordId;
+		const recordId = event.dataTransfer?.getData('text/plain') || s.draggingCalendarRecordId;
 
-		draggingCalendarRecordId = null;
+		s.draggingCalendarRecordId = null;
 
 		if (!recordId || !calendarDateField) return;
 
-		const record = records.find((item) => item.id === recordId);
+		const record = s.records.find((item) => item.id === recordId);
 
 		if (!record) return;
 
@@ -3051,14 +2437,14 @@
 			return;
 		}
 
-		updatingGanttRecordId = record.id;
+		s.updatingGanttRecordId = record.id;
 
 		const response = await updateRecordWithVersion(record.id, {
 			values: nextValues,
 			source: { type: 'web', origin: 'gantt' }
 		});
 
-		updatingGanttRecordId = null;
+		s.updatingGanttRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -3080,7 +2466,7 @@
 
 		if (calendarRecordIsoDate(record, endField) === nextEnd) return;
 
-		updatingGanttRecordId = record.id;
+		s.updatingGanttRecordId = record.id;
 
 		const response = await updateRecordWithVersion(record.id, {
 			values: {
@@ -3090,7 +2476,7 @@
 			source: { type: 'web', origin: 'gantt_resize' }
 		});
 
-		updatingGanttRecordId = null;
+		s.updatingGanttRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -3112,7 +2498,7 @@
 	}
 
 	function handleGanttDragStart(event: DragEvent, record: FormRecord) {
-		draggingGanttRecordId = record.id;
+		s.draggingGanttRecordId = record.id;
 		event.dataTransfer?.setData('text/plain', record.id);
 
 		if (event.dataTransfer) {
@@ -3121,11 +2507,11 @@
 	}
 
 	function handleGanttDragEnd() {
-		draggingGanttRecordId = null;
+		s.draggingGanttRecordId = null;
 	}
 
 	function handleGanttDragOver(event: DragEvent) {
-		if (!draggingGanttRecordId || !ganttTimeline.startField) return;
+		if (!s.draggingGanttRecordId || !ganttTimeline.startField) return;
 
 		event.preventDefault();
 
@@ -3135,13 +2521,13 @@
 	async function handleGanttDrop(event: DragEvent, isoDate: string) {
 		event.preventDefault();
 
-		const recordId = event.dataTransfer?.getData('text/plain') || draggingGanttRecordId;
+		const recordId = event.dataTransfer?.getData('text/plain') || s.draggingGanttRecordId;
 
-		draggingGanttRecordId = null;
+		s.draggingGanttRecordId = null;
 
 		if (!recordId || !ganttTimeline.startField) return;
 
-		const record = records.find((item) => item.id === recordId);
+		const record = s.records.find((item) => item.id === recordId);
 
 		if (!record) return;
 
@@ -3152,14 +2538,14 @@
 		const url = new URL(page.url.href);
 
 		if (record) {
-			url.searchParams.set('form', selectedFormId);
+			url.searchParams.set('form', s.selectedFormId);
 			url.searchParams.set('record', record.id);
 		} else {
 			url.searchParams.delete('record');
 			url.searchParams.delete('record_id');
 
-			if (selectedFormId) {
-				url.searchParams.set('form', selectedFormId);
+			if (s.selectedFormId) {
+				url.searchParams.set('form', s.selectedFormId);
 			} else {
 				url.searchParams.delete('form');
 				url.searchParams.delete('form_id');
@@ -3177,7 +2563,7 @@
 	async function restoreRecordDetailFromUrl() {
 		const recordId = detailUrlRecordId;
 
-		if (recordId && recordId !== panelRecordId) await openRecordPanel(recordId, 'none');
+		if (recordId && recordId !== s.panelRecordId) await openRecordPanel(recordId, 'none');
 	}
 
 	/** Every view opens a record the same way: in the side panel next to the list. */
@@ -3186,27 +2572,27 @@
 	}
 
 	function closeRecordDetail() {
-		selectedRecord = null;
-		selectedRecordLinks = [];
-		selectedRecordChildren = [];
-		selectedRecordComments = [];
-		recordCommentDraft = '';
-		recordAttachments = [];
-		activeMode = 'data';
+		s.selectedRecord = null;
+		s.selectedRecordLinks = [];
+		s.selectedRecordChildren = [];
+		s.selectedRecordComments = [];
+		s.recordCommentDraft = '';
+		s.recordAttachments = [];
+		s.activeMode = 'data';
 		void syncRecordDetailUrl(null);
 	}
 
 	function startEditRecord(record: FormRecord) {
-		formsSessionRecordVersion = {
+		s.formsSessionRecordVersion = {
 			recordId: record.id,
 			updatedAt: record.updated_at,
 			schemaVersion: selectedForm?.schema_version ?? 0
 		};
-		selectedRecord = record;
-		editingRecordId = record.id;
-		activeMode = 'data';
-		recordTitle = record.title;
-		recordDraft = Object.fromEntries(
+		s.selectedRecord = record;
+		s.editingRecordId = record.id;
+		s.activeMode = 'data';
+		s.recordTitle = record.title;
+		s.recordDraft = Object.fromEntries(
 			fields.map((field) => [field.key, draftValueForField(field, record)])
 		);
 		void loadRecordAttachments(record.id);
@@ -3214,27 +2600,27 @@
 	}
 
 	function openRecordCreateDrawer() {
-		editingRecordId = null;
-		selectedRecord = null;
-		recordAttachments = [];
+		s.editingRecordId = null;
+		s.selectedRecord = null;
+		s.recordAttachments = [];
 		resetRecordDraft();
-		activeMode = 'data';
-		recordEditorOpen = true;
+		s.activeMode = 'data';
+		s.recordEditorOpen = true;
 	}
 
 	function openRecordEditDrawer(record: FormRecord) {
 		startEditRecord(record);
-		recordEditorOpen = true;
+		s.recordEditorOpen = true;
 	}
 
 	function closeRecordEditorDrawer() {
-		recordEditorOpen = false;
+		s.recordEditorOpen = false;
 		cancelEditRecord();
 	}
 
 	/** Task-local editor: navigation chrome stays reachable; do not trap Tab globally. */
 	function handleGlobalKeydown(event: KeyboardEvent) {
-		if (!recordEditorOpen || !recordEditorPanel?.contains(document.activeElement)) return;
+		if (!s.recordEditorOpen || !s.recordEditorPanel?.contains(document.activeElement)) return;
 		if (event.key === 'Escape') {
 			event.preventDefault();
 			closeRecordEditorDrawer();
@@ -3243,33 +2629,26 @@
 
 	$effect(() => {
 		// Editor closed (saved or cancelled) while a record was open: back to the panel's Edit.
-		if (!recordEditorOpen && untrack(() => panelRecordId))
+		if (!s.recordEditorOpen && untrack(() => s.panelRecordId))
 			void tick().then(() =>
 				document.querySelector<HTMLElement>('[data-record-panel-edit]')?.focus()
 			);
 	});
 
 	function goToRecordPage(page: number) {
-		recordPage = Math.min(Math.max(page, 1), recordPageCount);
+		s.recordPage = Math.min(Math.max(page, 1), recordPageCount);
 	}
 
 	function cancelEditRecord() {
-		editingRecordId = null;
-		recordTitle = '';
+		s.editingRecordId = null;
+		s.recordTitle = '';
 		resetRecordDraft();
 
-		if (selectedRecord) {
-			void loadRecordAttachments(selectedRecord.id);
+		if (s.selectedRecord) {
+			void loadRecordAttachments(s.selectedRecord.id);
 		} else {
-			recordAttachments = [];
+			s.recordAttachments = [];
 		}
-	}
-
-	function defaultPermissionActions(): Record<FormPermissionAction, boolean> {
-		return Object.fromEntries(formPermissionActions.map((action) => [action, true])) as Record<
-			FormPermissionAction,
-			boolean
-		>;
 	}
 
 	function rolePermissionActions(
@@ -3339,8 +2718,8 @@
 		for (const field of fields) {
 			const fieldPolicy: { read?: boolean; write?: boolean } = {};
 
-			if (memberFieldReadDraft[field.key] === false) fieldPolicy.read = false;
-			if (memberFieldWriteDraft[field.key] === false) fieldPolicy.write = false;
+			if (s.memberFieldReadDraft[field.key] === false) fieldPolicy.read = false;
+			if (s.memberFieldWriteDraft[field.key] === false) fieldPolicy.write = false;
 			if (Object.keys(fieldPolicy).length > 0) policy[field.key] = fieldPolicy;
 		}
 
@@ -3348,26 +2727,26 @@
 	}
 
 	function setMemberPermission(action: FormPermissionAction, enabled: boolean) {
-		memberPermissionDraft = { ...memberPermissionDraft, [action]: enabled };
+		s.memberPermissionDraft = { ...s.memberPermissionDraft, [action]: enabled };
 	}
 
 	function setMemberRecordScope(scope: FormRecordScope) {
-		memberRecordScopeDraft = scope;
+		s.memberRecordScopeDraft = scope;
 	}
 
 	function setMemberFieldRead(fieldKey: string, enabled: boolean) {
-		memberFieldReadDraft = { ...memberFieldReadDraft, [fieldKey]: enabled };
+		s.memberFieldReadDraft = { ...s.memberFieldReadDraft, [fieldKey]: enabled };
 
 		if (!enabled) {
-			memberFieldWriteDraft = { ...memberFieldWriteDraft, [fieldKey]: false };
+			s.memberFieldWriteDraft = { ...s.memberFieldWriteDraft, [fieldKey]: false };
 		}
 	}
 
 	function setMemberFieldWrite(fieldKey: string, enabled: boolean) {
-		memberFieldWriteDraft = { ...memberFieldWriteDraft, [fieldKey]: enabled };
+		s.memberFieldWriteDraft = { ...s.memberFieldWriteDraft, [fieldKey]: enabled };
 
 		if (enabled) {
-			memberFieldReadDraft = { ...memberFieldReadDraft, [fieldKey]: true };
+			s.memberFieldReadDraft = { ...s.memberFieldReadDraft, [fieldKey]: true };
 		}
 	}
 
@@ -3376,64 +2755,64 @@
 	}
 
 	async function loadSelectedRecordLinks() {
-		if (!selectedRecord) {
-			selectedRecordLinks = [];
-			selectedRecordChildren = [];
-			selectedRecordComments = [];
+		if (!s.selectedRecord) {
+			s.selectedRecordLinks = [];
+			s.selectedRecordChildren = [];
+			s.selectedRecordComments = [];
 
 			return;
 		}
 
-		const response = await formsApi.listRecordLinks(selectedRecord.id);
+		const response = await formsApi.listRecordLinks(s.selectedRecord.id);
 
 		if (response.code === 0 && response.data) {
-			selectedRecordLinks = response.data;
+			s.selectedRecordLinks = response.data;
 		}
 	}
 
 	async function loadSelectedRecordChildren() {
-		if (!selectedRecord) {
-			selectedRecordChildren = [];
+		if (!s.selectedRecord) {
+			s.selectedRecordChildren = [];
 
 			return;
 		}
 
-		const response = await formsApi.listRecordChildren(selectedRecord.id, { per_page: 100 });
+		const response = await formsApi.listRecordChildren(s.selectedRecord.id, { per_page: 100 });
 
 		if (response.code === 0 && response.data) {
-			selectedRecordChildren = response.data.items;
+			s.selectedRecordChildren = response.data.items;
 		}
 	}
 
 	async function loadSelectedRecordComments() {
-		if (!selectedRecord) {
-			selectedRecordComments = [];
+		if (!s.selectedRecord) {
+			s.selectedRecordComments = [];
 
 			return;
 		}
 
-		recordCommentsLoading = true;
+		s.recordCommentsLoading = true;
 
-		const response = await formsApi.listRecordComments(selectedRecord.id, { per_page: 20 });
+		const response = await formsApi.listRecordComments(s.selectedRecord.id, { per_page: 20 });
 
-		recordCommentsLoading = false;
+		s.recordCommentsLoading = false;
 
 		if (response.code !== 0) {
-			selectedRecordComments = [];
+			s.selectedRecordComments = [];
 			toast.error(response.message);
 
 			return;
 		}
 
-		selectedRecordComments = response.data?.items ?? [];
+		s.selectedRecordComments = response.data?.items ?? [];
 	}
 
 	async function reloadSelectedRecord() {
-		if (!selectedRecord) return;
+		if (!s.selectedRecord) return;
 
-		const recordId = selectedRecord.id;
+		const recordId = s.selectedRecord.id;
 		const response = await formsApi.getRecord(recordId);
-		if (selectedRecord?.id !== recordId) return;
+		if (s.selectedRecord?.id !== recordId) return;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -3441,24 +2820,24 @@
 			return;
 		}
 
-		selectedRecord = response.data;
+		s.selectedRecord = response.data;
 		replaceLocalRecord(response.data);
 	}
 
 	async function handleCreateLink() {
-		if (!selectedRecord) return;
+		if (!s.selectedRecord) return;
 
-		linkSubmitting = true;
+		s.linkSubmitting = true;
 
-		const response = await formsApi.createRecordLink(selectedRecord.id, {
-			target_type: linkDraft.target_type.trim() || 'form_record',
-			target_id: linkDraft.target_id.trim(),
-			relation_key: linkDraft.relation_key.trim() || 'related',
-			relation_type: linkDraft.relation_type.trim() || 'reference',
+		const response = await formsApi.createRecordLink(s.selectedRecord.id, {
+			target_type: s.linkDraft.target_type.trim() || 'form_record',
+			target_id: s.linkDraft.target_id.trim(),
+			relation_key: s.linkDraft.relation_key.trim() || 'related',
+			relation_type: s.linkDraft.relation_type.trim() || 'reference',
 			metadata: { source: 'web' }
 		});
 
-		linkSubmitting = false;
+		s.linkSubmitting = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -3466,22 +2845,22 @@
 			return;
 		}
 
-		selectedRecordLinks = [response.data, ...selectedRecordLinks];
-		linkDraft = { ...linkDraft, target_id: '' };
+		s.selectedRecordLinks = [response.data, ...s.selectedRecordLinks];
+		s.linkDraft = { ...s.linkDraft, target_id: '' };
 		toast.success($t('forms.linkCreated'));
 		await loadSelectedRecordChildren();
 	}
 
 	async function handleCreateRecordComment() {
-		if (!selectedRecord) return;
+		if (!s.selectedRecord) return;
 
-		const body = recordCommentDraft.trim();
+		const body = s.recordCommentDraft.trim();
 
 		if (!body) return;
 
-		recordCommentSubmitting = true;
+		s.recordCommentSubmitting = true;
 
-		const response = await formsApi.createRecordComment(selectedRecord.id, {
+		const response = await formsApi.createRecordComment(s.selectedRecord.id, {
 			body,
 			metadata: {
 				source: 'web',
@@ -3490,7 +2869,7 @@
 			}
 		});
 
-		recordCommentSubmitting = false;
+		s.recordCommentSubmitting = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -3498,12 +2877,12 @@
 			return;
 		}
 
-		selectedRecordComments = [
+		s.selectedRecordComments = [
 			response.data,
-			...selectedRecordComments.filter((item) => item.id !== response.data?.id)
+			...s.selectedRecordComments.filter((item) => item.id !== response.data?.id)
 		];
 
-		recordCommentDraft = '';
+		s.recordCommentDraft = '';
 		await loadFormEvents();
 		toast.success($t('forms.recordCommentAdded'));
 	}
@@ -3511,7 +2890,7 @@
 	function childFormForRelationField(field: FormField): UniversalForm | null {
 		const formKey = field.relation?.form_key;
 
-		return formKey ? (forms.find((form) => form.key === formKey) ?? null) : null;
+		return formKey ? (s.forms.find((form) => form.key === formKey) ?? null) : null;
 	}
 
 	function parentChildRelationFields(): FormField[] {
@@ -3524,7 +2903,7 @@
 	}
 
 	function childFieldsForForm(formId: string): FormField[] {
-		const childForm = forms.find((form) => form.id === formId);
+		const childForm = s.forms.find((form) => form.id === formId);
 
 		return childForm ? parseFields(childForm.schema) : [];
 	}
@@ -3540,7 +2919,7 @@
 
 		if (!childForm) return;
 
-		childEditor = {
+		s.childEditor = {
 			relationFieldKey: field.key,
 			childFormId: childForm.id,
 			title: '',
@@ -3549,7 +2928,7 @@
 	}
 
 	function startEditChildRecord(child: FormChildRecord) {
-		const childForm = forms.find((form) => form.id === child.record.form_id);
+		const childForm = s.forms.find((form) => form.id === child.record.form_id);
 
 		if (!childForm) return;
 
@@ -3565,7 +2944,7 @@
 
 		const childFields = parseFields(childForm.schema);
 
-		childEditor = {
+		s.childEditor = {
 			relationFieldKey: relationField.key,
 			childFormId: childForm.id,
 			recordId: child.record.id,
@@ -3577,19 +2956,19 @@
 	}
 
 	function cancelChildEditor() {
-		childEditor = null;
+		s.childEditor = null;
 	}
 
 	async function saveChildRecord() {
-		if (!selectedRecord || !childEditor) return;
+		if (!s.selectedRecord || !s.childEditor) return;
 
-		const relationField = fields.find((field) => field.key === childEditor?.relationFieldKey);
-		const childForm = forms.find((form) => form.id === childEditor?.childFormId);
+		const relationField = fields.find((field) => field.key === s.childEditor?.relationFieldKey);
+		const childForm = s.forms.find((form) => form.id === s.childEditor?.childFormId);
 
 		if (!relationField || !childForm) return;
 
-		const editedChild = childEditor.recordId
-			? selectedRecordChildren.find((item) => item.record.id === childEditor?.recordId)
+		const editedChild = s.childEditor.recordId
+			? s.selectedRecordChildren.find((item) => item.record.id === s.childEditor?.recordId)
 			: undefined;
 
 		let values: Record<string, unknown>;
@@ -3597,7 +2976,7 @@
 		try {
 			values = buildValuesFromDraft(
 				parseFields(childForm.schema),
-				childEditor.draft,
+				s.childEditor.draft,
 				editedChild?.record.values
 			);
 		} catch (error) {
@@ -3606,21 +2985,21 @@
 			return;
 		}
 
-		childSubmitting = true;
+		s.childSubmitting = true;
 
-		const response = childEditor.recordId
-			? await updateRecordWithVersion(childEditor.recordId, {
-					title: childEditor.title.trim() || undefined,
+		const response = s.childEditor.recordId
+			? await updateRecordWithVersion(s.childEditor.recordId, {
+					title: s.childEditor.title.trim() || undefined,
 					values,
-					source: { type: 'web', parent_record_id: selectedRecord.id }
+					source: { type: 'web', parent_record_id: s.selectedRecord.id }
 				})
 			: await formsApi.createRecord(childForm.id, {
-					title: childEditor.title.trim() || undefined,
+					title: s.childEditor.title.trim() || undefined,
 					values,
-					source: { type: 'web', parent_record_id: selectedRecord.id }
+					source: { type: 'web', parent_record_id: s.selectedRecord.id }
 				});
 
-		childSubmitting = false;
+		s.childSubmitting = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -3628,8 +3007,8 @@
 			return;
 		}
 
-		if (!childEditor.recordId) {
-			const linkResponse = await formsApi.createRecordLink(selectedRecord.id, {
+		if (!s.childEditor.recordId) {
+			const linkResponse = await formsApi.createRecordLink(s.selectedRecord.id, {
 				target_type: 'form_record',
 				target_id: response.data.id,
 				relation_key: relationField.relation?.relation_key || relationField.key,
@@ -3646,7 +3025,7 @@
 			}
 		}
 
-		childEditor = null;
+		s.childEditor = null;
 
 		await Promise.all([
 			reloadSelectedRecord(),
@@ -3672,11 +3051,11 @@
 			return;
 		}
 
-		deletingChildRecordId = child.record.id;
+		s.deletingChildRecordId = child.record.id;
 
 		const response = await formsApi.deleteRecord(child.record.id);
 
-		deletingChildRecordId = null;
+		s.deletingChildRecordId = null;
 
 		if (response.code !== 0) {
 			toast.error(response.message);
@@ -3684,7 +3063,7 @@
 			return;
 		}
 
-		if (childEditor?.recordId === child.record.id) childEditor = null;
+		if (s.childEditor?.recordId === child.record.id) s.childEditor = null;
 
 		await Promise.all([
 			reloadSelectedRecord(),
@@ -3701,11 +3080,11 @@
 	}
 
 	function handleModeChange(mode: FormWorkflowMode) {
-		activeMode = mode;
+		s.activeMode = mode;
 
 		if (mode !== 'data') {
-			recordEditorOpen = false;
-			editingRecordId = null;
+			s.recordEditorOpen = false;
+			s.editingRecordId = null;
 		}
 
 		if (mode === 'design') {
@@ -3725,9 +3104,9 @@
 			next[field.key] = defaultDraftValueForField(field);
 		}
 
-		recordDraft = next;
-		recordTitle = '';
-		formsSessionRecordVersion = null;
+		s.recordDraft = next;
+		s.recordTitle = '';
+		s.formsSessionRecordVersion = null;
 		cleanFormsGroup('record');
 	}
 
@@ -3740,15 +3119,15 @@
 	}
 
 	function buildRecordPayload(formFields: FormField[]): Record<string, unknown> {
-		return buildValuesFromDraft(formFields, recordDraft, editedRecordValues());
+		return buildValuesFromDraft(formFields, s.recordDraft, editedRecordValues());
 	}
 
 	function editedRecordValues(): Record<string, unknown> | undefined {
-		if (!editingRecordId) return undefined;
+		if (!s.editingRecordId) return undefined;
 
-		const current = records.find((record) => record.id === editingRecordId) ?? selectedRecord;
+		const current = s.records.find((record) => record.id === s.editingRecordId) ?? s.selectedRecord;
 
-		return current?.id === editingRecordId ? current.values : undefined;
+		return current?.id === s.editingRecordId ? current.values : undefined;
 	}
 
 	/**
@@ -3769,8 +3148,8 @@
 
 			const value = recordValueFromDraftValue(field, draft[field.key], {
 				relationTarget: (relationField, recordId) =>
-					relationTargets[relationField.key]?.find((item) => item.record_id === recordId),
-				member: (userId) => workspaceMembers.find((item) => item.user_id === userId),
+					s.relationTargets[relationField.key]?.find((item) => item.record_id === recordId),
+				member: (userId) => s.workspaceMembers.find((item) => item.user_id === userId),
 				existingValue: existingValues?.[field.key]
 			});
 
@@ -4040,16 +3419,16 @@
 		const fingerprint = detailPageCompositionFingerprint(form);
 
 		if (!form) {
-			detailPageCompositionDraft = { widgetRegion: 'sidebar', fieldColumns: 2 };
-			detailPageCompositionSyncedFingerprint = '';
+			s.detailPageCompositionDraft = { widgetRegion: 'sidebar', fieldColumns: 2 };
+			s.detailPageCompositionSyncedFingerprint = '';
 
 			return;
 		}
 
-		if (detailPageCompositionSyncedFingerprint === fingerprint) return;
+		if (s.detailPageCompositionSyncedFingerprint === fingerprint) return;
 
-		detailPageCompositionDraft = detailPageCompositionDraftFromForm(form);
-		detailPageCompositionSyncedFingerprint = fingerprint;
+		s.detailPageCompositionDraft = detailPageCompositionDraftFromForm(form);
+		s.detailPageCompositionSyncedFingerprint = fingerprint;
 	}
 
 	function detailHeaderDraftFromForm(form: UniversalForm | null = selectedForm): DetailHeaderDraft {
@@ -4073,16 +3452,16 @@
 		const fingerprint = detailHeaderFingerprint(form);
 
 		if (!form) {
-			detailHeaderDraft = { subtitleField: '', badgeField: '' };
-			detailHeaderSyncedFingerprint = '';
+			s.detailHeaderDraft = { subtitleField: '', badgeField: '' };
+			s.detailHeaderSyncedFingerprint = '';
 
 			return;
 		}
 
-		if (detailHeaderSyncedFingerprint === fingerprint) return;
+		if (s.detailHeaderSyncedFingerprint === fingerprint) return;
 
-		detailHeaderDraft = detailHeaderDraftFromForm(form);
-		detailHeaderSyncedFingerprint = fingerprint;
+		s.detailHeaderDraft = detailHeaderDraftFromForm(form);
+		s.detailHeaderSyncedFingerprint = fingerprint;
 	}
 
 	function detailHighlightDraftFromForm(
@@ -4114,16 +3493,16 @@
 		const fingerprint = detailHighlightFingerprint(form);
 
 		if (!form) {
-			detailHighlightDraft = { fields: [] };
-			detailHighlightSyncedFingerprint = '';
+			s.detailHighlightDraft = { fields: [] };
+			s.detailHighlightSyncedFingerprint = '';
 
 			return;
 		}
 
-		if (detailHighlightSyncedFingerprint === fingerprint) return;
+		if (s.detailHighlightSyncedFingerprint === fingerprint) return;
 
-		detailHighlightDraft = detailHighlightDraftFromForm(form);
-		detailHighlightSyncedFingerprint = fingerprint;
+		s.detailHighlightDraft = detailHighlightDraftFromForm(form);
+		s.detailHighlightSyncedFingerprint = fingerprint;
 	}
 
 	function detailLayoutSectionDraftsFromForm(
@@ -4230,20 +3609,20 @@
 		const fingerprint = detailLayoutFingerprint(form);
 
 		if (!form) {
-			detailLayoutSectionDrafts = [];
-			detailLayoutSectionSyncedFingerprint = '';
+			s.detailLayoutSectionDrafts = [];
+			s.detailLayoutSectionSyncedFingerprint = '';
 
 			return;
 		}
 
-		if (detailLayoutSectionSyncedFingerprint === fingerprint) return;
+		if (s.detailLayoutSectionSyncedFingerprint === fingerprint) return;
 
-		detailLayoutSectionDrafts = detailLayoutSectionDraftsFromForm(form);
-		detailLayoutSectionSyncedFingerprint = fingerprint;
+		s.detailLayoutSectionDrafts = detailLayoutSectionDraftsFromForm(form);
+		s.detailLayoutSectionSyncedFingerprint = fingerprint;
 	}
 
 	function nextDetailLayoutSectionKey(
-		sections: DetailLayoutSectionDraft[] = detailLayoutSectionDrafts,
+		sections: DetailLayoutSectionDraft[] = s.detailLayoutSectionDrafts,
 		prefix = 'section'
 	): string {
 		const used = new Set(sections.map((section) => section.key));
@@ -4291,42 +3670,42 @@
 
 	function detailLayoutFieldAssignedTo(fieldKey: string): string {
 		return (
-			detailLayoutSectionDrafts.find((section) => section.fields.includes(fieldKey))?.key ?? ''
+			s.detailLayoutSectionDrafts.find((section) => section.fields.includes(fieldKey))?.key ?? ''
 		);
 	}
 
 	function updateDetailLayoutSectionTitle(index: number, title: string) {
-		detailLayoutSectionDrafts = detailLayoutSectionDrafts.map((section, sectionIndex) =>
+		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
 			sectionIndex === index ? { ...section, title } : section
 		);
 	}
 
 	function updateDetailLayoutSectionDescription(index: number, description: string) {
-		detailLayoutSectionDrafts = detailLayoutSectionDrafts.map((section, sectionIndex) =>
+		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
 			sectionIndex === index ? { ...section, description } : section
 		);
 	}
 
 	function updateDetailLayoutSectionColumns(index: number, columns: 1 | 2 | 3) {
-		detailLayoutSectionDrafts = detailLayoutSectionDrafts.map((section, sectionIndex) =>
+		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
 			sectionIndex === index ? { ...section, columns } : section
 		);
 	}
 
 	function updateDetailLayoutSectionDensity(index: number, density: DetailLayoutSectionDensity) {
-		detailLayoutSectionDrafts = detailLayoutSectionDrafts.map((section, sectionIndex) =>
+		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
 			sectionIndex === index ? { ...section, density } : section
 		);
 	}
 
 	function updateDetailLayoutSectionHideEmptyFields(index: number, hideEmptyFields: boolean) {
-		detailLayoutSectionDrafts = detailLayoutSectionDrafts.map((section, sectionIndex) =>
+		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
 			sectionIndex === index ? { ...section, hideEmptyFields } : section
 		);
 	}
 
 	function updateDetailLayoutSectionCollapsible(index: number, collapsible: boolean) {
-		detailLayoutSectionDrafts = detailLayoutSectionDrafts.map((section, sectionIndex) =>
+		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
 			sectionIndex === index
 				? {
 						...section,
@@ -4338,7 +3717,7 @@
 	}
 
 	function updateDetailLayoutSectionDefaultCollapsed(index: number, defaultCollapsed: boolean) {
-		detailLayoutSectionDrafts = detailLayoutSectionDrafts.map((section, sectionIndex) =>
+		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
 			sectionIndex === index
 				? {
 						...section,
@@ -4351,11 +3730,11 @@
 	function addDetailLayoutSection() {
 		const key = nextDetailLayoutSectionKey();
 
-		detailLayoutSectionDrafts = [
-			...detailLayoutSectionDrafts,
+		s.detailLayoutSectionDrafts = [
+			...s.detailLayoutSectionDrafts,
 			{
 				key,
-				title: `${$t('forms.detailSectionMain')} ${detailLayoutSectionDrafts.length + 1}`,
+				title: `${$t('forms.detailSectionMain')} ${s.detailLayoutSectionDrafts.length + 1}`,
 				description: '',
 				columns: 2,
 				density: 'comfortable',
@@ -4368,9 +3747,9 @@
 	}
 
 	function removeDetailLayoutSection(index: number) {
-		if (detailLayoutSectionDrafts.length <= 1) return;
+		if (s.detailLayoutSectionDrafts.length <= 1) return;
 
-		detailLayoutSectionDrafts = detailLayoutSectionDrafts.filter(
+		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.filter(
 			(_, sectionIndex) => sectionIndex !== index
 		);
 	}
@@ -4378,16 +3757,16 @@
 	function moveDetailLayoutSection(index: number, direction: -1 | 1) {
 		const nextIndex = index + direction;
 
-		if (nextIndex < 0 || nextIndex >= detailLayoutSectionDrafts.length) return;
+		if (nextIndex < 0 || nextIndex >= s.detailLayoutSectionDrafts.length) return;
 
-		const next = [...detailLayoutSectionDrafts];
+		const next = [...s.detailLayoutSectionDrafts];
 
 		[next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-		detailLayoutSectionDrafts = next;
+		s.detailLayoutSectionDrafts = next;
 	}
 
 	function setDetailLayoutSectionField(index: number, fieldKey: string, checked: boolean) {
-		detailLayoutSectionDrafts = detailLayoutSectionDrafts.map((section, sectionIndex) => {
+		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) => {
 			const withoutField = section.fields.filter((key) => key !== fieldKey);
 
 			if (sectionIndex !== index) return { ...section, fields: withoutField };
@@ -4400,7 +3779,7 @@
 	}
 
 	function moveDetailLayoutSectionField(index: number, fieldKey: string, direction: -1 | 1) {
-		const section = detailLayoutSectionDrafts[index];
+		const section = s.detailLayoutSectionDrafts[index];
 
 		if (!section) return;
 
@@ -4415,32 +3794,32 @@
 			nextFields[nextFieldIndex],
 			nextFields[fieldIndex]
 		];
-		detailLayoutSectionDrafts = detailLayoutSectionDrafts.map((item, sectionIndex) =>
+		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((item, sectionIndex) =>
 			sectionIndex === index ? { ...item, fields: nextFields } : item
 		);
 	}
 
 	function setDetailHeaderDraft(patch: Partial<DetailHeaderDraft>) {
-		detailHeaderDraft = { ...detailHeaderDraft, ...patch };
+		s.detailHeaderDraft = { ...s.detailHeaderDraft, ...patch };
 	}
 
 	function setDetailHighlightField(fieldKey: string, checked: boolean) {
-		const nextFields = detailHighlightDraft.fields.filter((key) => key !== fieldKey);
+		const nextFields = s.detailHighlightDraft.fields.filter((key) => key !== fieldKey);
 
 		if (checked && nextFields.length < 4) nextFields.push(fieldKey);
 
-		detailHighlightDraft = { fields: nextFields };
+		s.detailHighlightDraft = { fields: nextFields };
 	}
 
 	function moveDetailHighlightField(fieldKey: string, direction: -1 | 1) {
-		const fields = [...detailHighlightDraft.fields];
+		const fields = [...s.detailHighlightDraft.fields];
 		const index = fields.indexOf(fieldKey);
 		const nextIndex = index + direction;
 
 		if (index < 0 || nextIndex < 0 || nextIndex >= fields.length) return;
 
 		[fields[index], fields[nextIndex]] = [fields[nextIndex], fields[index]];
-		detailHighlightDraft = { fields };
+		s.detailHighlightDraft = { fields };
 	}
 
 	function fieldLabel(field: FormField): string {
@@ -4452,11 +3831,11 @@
 	}
 
 	function memberFieldHidden(field: FormField): boolean {
-		return memberFieldReadDraft[field.key] === false;
+		return s.memberFieldReadDraft[field.key] === false;
 	}
 
 	function memberFieldLocked(field: FormField): boolean {
-		return memberFieldWriteDraft[field.key] === false;
+		return s.memberFieldWriteDraft[field.key] === false;
 	}
 
 	function fieldHasConditionalHidden(field: FormField): boolean {
@@ -4882,14 +4261,6 @@
 		return value?.disabled === true || value?.enabled === false;
 	}
 
-	type ParsedViewFilter = {
-		field: FormField;
-		operator: ViewFilterOperator;
-		value: string;
-	};
-
-	type ParsedViewFilterGroup = { logic: ViewFilterLogic; filters: ParsedViewFilter[] };
-
 	function parsedViewFilterExpressionFromValue(value: unknown): ParsedViewFilterExpression | null {
 		if (!isRecord(value)) return null;
 
@@ -5175,8 +4546,8 @@
 			});
 		}
 
-		if (focusedRecordIds.length > 0) {
-			const focusedIds = new Set(focusedRecordIds);
+		if (s.focusedRecordIds.length > 0) {
+			const focusedIds = new Set(s.focusedRecordIds);
 
 			nextRecords = nextRecords.filter((record) => focusedIds.has(record.id));
 		}
@@ -5243,7 +4614,8 @@
 
 		if (!parsed) return null;
 
-		return filterPreviewRecords.filter((record) => recordMatchesViewFilter(record, parsed)).length;
+		return s.filterPreviewRecords.filter((record) => recordMatchesViewFilter(record, parsed))
+			.length;
 	}
 
 	function viewDraftFilterGroupMatchCount(group: ViewFilterGroupDraft): number | null {
@@ -5254,7 +4626,7 @@
 
 		if (parsedFilters.length === 0) return null;
 
-		return filterPreviewRecords.filter((record) => {
+		return s.filterPreviewRecords.filter((record) => {
 			const matches = parsedFilters.map((filter) => recordMatchesViewFilter(record, filter));
 
 			return group.logic === 'any' ? matches.some(Boolean) : matches.every(Boolean);
@@ -5275,14 +4647,14 @@
 
 		if (groups.length === 0) return null;
 
-		return filterPreviewRecords.filter((record) => {
+		return s.filterPreviewRecords.filter((record) => {
 			const groupMatches = groups.map((group) => {
 				const matches = group.filters.map((filter) => recordMatchesViewFilter(record, filter));
 
 				return group.logic === 'any' ? matches.some(Boolean) : matches.every(Boolean);
 			});
 
-			return viewDraft.filterRootLogic === 'any'
+			return s.viewDraft.filterRootLogic === 'any'
 				? groupMatches.some(Boolean)
 				: groupMatches.every(Boolean);
 		});
@@ -5382,7 +4754,7 @@
 
 		if (groups.length === 0) return '';
 
-		const rootLogic = viewDraft.filterRootLogic === 'any' ? 'ANY group' : 'ALL groups';
+		const rootLogic = s.viewDraft.filterRootLogic === 'any' ? 'ANY group' : 'ALL groups';
 		const lines = [`Filter expression: ${rootLogic}`];
 
 		for (const [groupIndex, group] of groups.entries()) {
@@ -5434,7 +4806,7 @@
 			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
 		}
 
-		copiedFilterExpressionRecordIds = recordIds;
+		s.copiedFilterExpressionRecordIds = recordIds;
 		toast.success($t('forms.filterExpressionRecordIdsCopied'));
 	}
 
@@ -5451,7 +4823,7 @@
 			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
 		}
 
-		copiedFilterExpressionJson = expressionJson;
+		s.copiedFilterExpressionJson = expressionJson;
 		toast.success($t('forms.filterExpressionJsonCopied'));
 	}
 
@@ -5468,7 +4840,7 @@
 			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
 		}
 
-		copiedFilterExpressionSummary = expressionSummary;
+		s.copiedFilterExpressionSummary = expressionSummary;
 		toast.success($t('forms.filterExpressionSummaryCopied'));
 	}
 
@@ -5486,7 +4858,7 @@
 			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
 		}
 
-		copiedFilterExpressionJsonRecordIds = viewDraftFilterExpressionRecordIdsText(records);
+		s.copiedFilterExpressionJsonRecordIds = viewDraftFilterExpressionRecordIdsText(records);
 		toast.success($t('forms.filterExpressionRecordsJsonCopied'));
 	}
 
@@ -5504,7 +4876,7 @@
 			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
 		}
 
-		copiedFilterExpressionCsvRecordIds = viewDraftFilterExpressionRecordIdsText(records);
+		s.copiedFilterExpressionCsvRecordIds = viewDraftFilterExpressionRecordIdsText(records);
 		toast.success($t('forms.filterExpressionRecordsCsvCopied'));
 	}
 
@@ -5521,7 +4893,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedFilterExpressionJson = expressionJson;
+		s.exportedFilterExpressionJson = expressionJson;
 		toast.success($t('forms.filterExpressionJsonExported'));
 	}
 
@@ -5538,7 +4910,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedFilterExpressionSummary = expressionSummary;
+		s.exportedFilterExpressionSummary = expressionSummary;
 		toast.success($t('forms.filterExpressionSummaryExported'));
 	}
 
@@ -5547,7 +4919,7 @@
 
 		if (recordIds.length === 0) return;
 
-		focusedRecordIds = recordIds;
+		s.focusedRecordIds = recordIds;
 		toast.success($t('forms.focusedRecords', { values: { count: recordIds.length } }));
 	}
 
@@ -5565,7 +4937,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedFilterExpressionRecordIds = viewDraftFilterExpressionRecordIdsText(records);
+		s.exportedFilterExpressionRecordIds = viewDraftFilterExpressionRecordIdsText(records);
 		toast.success($t('forms.filterExpressionRecordsExported'));
 	}
 
@@ -5583,7 +4955,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedFilterExpressionJsonRecordIds = viewDraftFilterExpressionRecordIdsText(records);
+		s.exportedFilterExpressionJsonRecordIds = viewDraftFilterExpressionRecordIdsText(records);
 		toast.success($t('forms.filterExpressionRecordsJsonExported'));
 	}
 
@@ -6012,7 +5384,7 @@
 	}
 
 	function buildPivotDrilldownRecords(sourceRecords: FormRecord[]): FormRecord[] {
-		const drilldown = pivotDrilldown;
+		const drilldown = s.pivotDrilldown;
 
 		if (!drilldown || !pivotTable.rowField || !pivotTable.columnField) return [];
 
@@ -6057,50 +5429,50 @@
 		row: { key: string; label: string } | null,
 		column: { key: string; label: string } | null
 	) {
-		pivotDrilldown = {
+		s.pivotDrilldown = {
 			rowKey: row?.key ?? null,
 			rowLabel: row?.label ?? $t('forms.pivotTotal'),
 			columnKey: column?.key ?? null,
 			columnLabel: column?.label ?? $t('forms.pivotTotal')
 		};
 
-		copiedPivotDrilldownKey = null;
-		exportedPivotDrilldownKey = null;
-		appliedPivotDrilldownFilterKey = null;
+		s.copiedPivotDrilldownKey = null;
+		s.exportedPivotDrilldownKey = null;
+		s.appliedPivotDrilldownFilterKey = null;
 	}
 
 	function pivotDrilldownKey(): string | null {
-		if (!pivotDrilldown) return null;
+		if (!s.pivotDrilldown) return null;
 
-		return `${pivotDrilldown.rowKey ?? '__all__'}:${pivotDrilldown.columnKey ?? '__all__'}`;
+		return `${s.pivotDrilldown.rowKey ?? '__all__'}:${s.pivotDrilldown.columnKey ?? '__all__'}`;
 	}
 
 	function pivotDrilldownFilterDrafts(): ViewFilterDraft[] {
-		if (!pivotDrilldown) return [];
+		if (!s.pivotDrilldown) return [];
 
 		const filters: ViewFilterDraft[] = [];
 
 		if (
-			pivotDrilldown.rowKey !== null &&
+			s.pivotDrilldown.rowKey !== null &&
 			pivotTable.rowField &&
-			pivotDrilldown.rowLabel !== $t('forms.unspecified')
+			s.pivotDrilldown.rowLabel !== $t('forms.unspecified')
 		) {
 			filters.push({
 				field: pivotTable.rowField.key,
 				operator: 'equals',
-				value: pivotDrilldown.rowLabel
+				value: s.pivotDrilldown.rowLabel
 			});
 		}
 
 		if (
-			pivotDrilldown.columnKey !== null &&
+			s.pivotDrilldown.columnKey !== null &&
 			pivotTable.columnField &&
-			pivotDrilldown.columnLabel !== $t('forms.unspecified')
+			s.pivotDrilldown.columnLabel !== $t('forms.unspecified')
 		) {
 			filters.push({
 				field: pivotTable.columnField.key,
 				operator: 'equals',
-				value: pivotDrilldown.columnLabel
+				value: s.pivotDrilldown.columnLabel
 			});
 		}
 
@@ -6154,7 +5526,7 @@
 
 		setViewDraftFilterGroups(nextGroups);
 		updateViewDraftFilterRootLogic('all');
-		appliedPivotDrilldownFilterKey = pivotDrilldownKey();
+		s.appliedPivotDrilldownFilterKey = pivotDrilldownKey();
 		toast.success($t('forms.pivotDrilldownFiltersApplied'));
 	}
 
@@ -6174,12 +5546,12 @@
 			// Clipboard permissions are browser-dependent; keep pivot operations non-blocking.
 		}
 
-		copiedPivotCellKey = `${row.label}:${column.label}`;
+		s.copiedPivotCellKey = `${row.label}:${column.label}`;
 		toast.success($t('forms.pivotCellCopied'));
 	}
 
 	async function copyPivotDrilldownRecordIds() {
-		if (!pivotDrilldown || pivotDrilldownRecords.length === 0) return;
+		if (!s.pivotDrilldown || pivotDrilldownRecords.length === 0) return;
 
 		const recordIds = pivotDrilldownRecords.map((record) => record.id);
 		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
@@ -6192,12 +5564,12 @@
 			// Clipboard permissions are browser-dependent; keep pivot operations non-blocking.
 		}
 
-		copiedPivotDrilldownKey = pivotDrilldownKey();
+		s.copiedPivotDrilldownKey = pivotDrilldownKey();
 		toast.success($t('forms.pivotDrilldownIdsCopied'));
 	}
 
 	function exportPivotDrilldownRecordsCsv() {
-		if (!selectedForm || !pivotDrilldown || pivotDrilldownRecords.length === 0) return;
+		if (!selectedForm || !s.pivotDrilldown || pivotDrilldownRecords.length === 0) return;
 
 		const csv = recordsCsv(pivotDrilldownRecords);
 		const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -6210,7 +5582,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedPivotDrilldownKey = pivotDrilldownKey();
+		s.exportedPivotDrilldownKey = pivotDrilldownKey();
 		toast.success($t('forms.pivotDrilldownExported'));
 	}
 
@@ -6275,7 +5647,7 @@
 			// Clipboard permissions are browser-dependent; keep pivot operations non-blocking.
 		}
 
-		copiedPivotTableMatrix = true;
+		s.copiedPivotTableMatrix = true;
 		toast.success($t('forms.pivotTableCopied'));
 	}
 
@@ -6294,7 +5666,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedPivotTableMatrix = true;
+		s.exportedPivotTableMatrix = true;
 		toast.success($t('forms.pivotTableExported'));
 	}
 
@@ -6303,8 +5675,8 @@
 
 		if (recordIds.length === 0) return;
 
-		focusedRecordIds = recordIds;
-		pivotDrilldown = null;
+		s.focusedRecordIds = recordIds;
+		s.pivotDrilldown = null;
 
 		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
 
@@ -6381,8 +5753,9 @@
 	function kanbanColumnRecordCount(groupLabel: string): number {
 		if (!kanbanGroupField) return 0;
 
-		return records.filter((item) => String(item.values[kanbanGroupField.key] ?? '') === groupLabel)
-			.length;
+		return s.records.filter(
+			(item) => String(item.values[kanbanGroupField.key] ?? '') === groupLabel
+		).length;
 	}
 
 	function kanbanWipLabel(groupLabel: string, count: number): string {
@@ -6601,13 +5974,13 @@
 	}
 
 	function viewDraftCalendarFocusBaseDate(): string {
-		if (isIsoDate(viewDraft.calendarFocusDate)) return viewDraft.calendarFocusDate;
+		if (isIsoDate(s.viewDraft.calendarFocusDate)) return s.viewDraft.calendarFocusDate;
 
 		const selectedFocusDate = viewCalendarFocusDate();
 
 		if (selectedFocusDate) return selectedFocusDate;
 
-		const field = fieldByKey(viewDraft.dateField) ?? calendarDateField;
+		const field = fieldByKey(s.viewDraft.dateField) ?? calendarDateField;
 		const sourceDates = viewRecords
 			.map((record) => calendarRecordIsoDate(record, field))
 			.filter((date): date is string => Boolean(date))
@@ -6617,9 +5990,9 @@
 	}
 
 	function shiftViewDraftCalendarFocus(amount: number) {
-		if (viewDraft.view_type !== 'calendar') return;
+		if (s.viewDraft.view_type !== 'calendar') return;
 
-		const range = viewDraft.calendarRange;
+		const range = s.viewDraft.calendarRange;
 		const baseDate = viewDraftCalendarFocusBaseDate();
 
 		const nextDate =
@@ -6627,7 +6000,7 @@
 				? addIsoMonths(monthStartIso(baseDate), amount)
 				: addIsoDays(weekStartIso(baseDate), amount * 7);
 
-		viewDraft = { ...viewDraft, calendarFocusDate: nextDate };
+		s.viewDraft = { ...s.viewDraft, calendarFocusDate: nextDate };
 	}
 
 	function selectedCalendarExceptionDates(): CalendarExceptionDateMap {
@@ -6739,7 +6112,7 @@
 	function timelineEventRecord(event: BusinessEvent): FormRecord | null {
 		if (event.aggregate_type !== 'form_record') return null;
 
-		return records.find((record) => record.id === event.aggregate_id) ?? null;
+		return s.records.find((record) => record.id === event.aggregate_id) ?? null;
 	}
 
 	function timelineEventJson(value: unknown): string {
@@ -7231,7 +6604,7 @@
 
 		setViewDraftFilterGroups(nextGroups);
 		updateViewDraftFilterRootLogic('all');
-		appliedCalendarFilterKey = calendarBucketFilterKey(isoDate, resource);
+		s.appliedCalendarFilterKey = calendarBucketFilterKey(isoDate, resource);
 		toast.success($t('forms.calendarBucketFiltersApplied'));
 	}
 
@@ -7620,7 +6993,7 @@
 
 	function syncLegacyViewFilterFields(
 		filterGroups: ViewFilterGroupDraft[]
-	): Pick<typeof viewDraft, 'filters' | 'filterField' | 'filterOperator' | 'filterValue'> {
+	): Pick<typeof s.viewDraft, 'filters' | 'filterField' | 'filterOperator' | 'filterValue'> {
 		const filters = filterGroups[0]?.filters ?? [];
 		const filter = filters[0];
 
@@ -7644,7 +7017,7 @@
 			const filterGroups = viewDraftFilterGroupsFromView(view);
 			const sort = viewConfigRecord(view, 'sort');
 
-			viewDraft = {
+			s.viewDraft = {
 				key: view.key,
 				name: view.name,
 				view_type: view.view_type,
@@ -7717,7 +7090,7 @@
 			return;
 		}
 
-		viewDraft = {
+		s.viewDraft = {
 			key: '',
 			name: '',
 			view_type: 'grid',
@@ -7789,32 +7162,33 @@
 			visibility: 'shared',
 			isDefault: false
 		};
-		formsSessionViewVersion = selectedView?.updated_at ?? null;
+		s.formsSessionViewVersion = selectedView?.updated_at ?? null;
 		cleanFormsGroup('view');
 	}
 
 	function startNewViewDraft(type: FormView['view_type']) {
 		// A new view starts from what is on screen: same filters and sort, the chosen type.
-		viewDraft = { ...viewDraft, view_type: type };
+		s.viewDraft = { ...s.viewDraft, view_type: type };
 		if (type !== 'grid') openLayoutSettings();
 	}
 
 	function setViewDraftColumn(fieldKey: string, checked: boolean) {
-		viewDraft = {
-			...viewDraft,
+		s.viewDraft = {
+			...s.viewDraft,
 			columns: checked
-				? Array.from(new Set([...viewDraft.columns, fieldKey]))
-				: viewDraft.columns.filter((key) => key !== fieldKey)
+				? Array.from(new Set([...s.viewDraft.columns, fieldKey]))
+				: s.viewDraft.columns.filter((key) => key !== fieldKey)
 		};
 	}
 
 	function viewDraftHasColumn(fieldKey: string): boolean {
-		return viewDraft.columns.includes(fieldKey);
+		return s.viewDraft.columns.includes(fieldKey);
 	}
 
 	function viewDraftColumnFields(): FormField[] {
 		const listable = fields.filter((field) => field.visibility?.list !== false);
-		const draftColumns = viewDraft.columns.length > 0 ? viewDraft.columns : defaultViewColumns();
+		const draftColumns =
+			s.viewDraft.columns.length > 0 ? s.viewDraft.columns : defaultViewColumns();
 
 		return orderedFieldsByKeys(
 			listable.filter((field) => draftColumns.includes(field.key)),
@@ -7823,7 +7197,7 @@
 	}
 
 	function viewDraftCardFields(): FormField[] {
-		return orderedFieldsByKeys(viewDraftColumnFields(), viewDraft.cardFieldKeys);
+		return orderedFieldsByKeys(viewDraftColumnFields(), s.viewDraft.cardFieldKeys);
 	}
 
 	function validViewDraftCardFieldKeys(): string[] {
@@ -7845,8 +7219,8 @@
 			fieldsInOrder[fieldIndex]
 		];
 
-		viewDraft = {
-			...viewDraft,
+		s.viewDraft = {
+			...s.viewDraft,
 			cardFieldKeys: fieldsInOrder.map((field) => field.key)
 		};
 	}
@@ -7861,23 +7235,23 @@
 			.filter((group) => group.filters.length > 0)
 			.slice(0, 5);
 
-		viewDraft = {
-			...viewDraft,
+		s.viewDraft = {
+			...s.viewDraft,
 			filterGroups: nextGroups,
 			...syncLegacyViewFilterFields(nextGroups)
 		};
 	}
 
 	function updateViewDraftFilterRootLogic(logic: ViewFilterLogic) {
-		viewDraft = { ...viewDraft, filterRootLogic: logic };
+		s.viewDraft = { ...s.viewDraft, filterRootLogic: logic };
 	}
 
 	function setViewDraftFilters(filters: ViewFilterDraft[], groupIndex = 0) {
 		const nextFilters = filters.slice(0, 5);
 
 		const nextGroups =
-			viewDraft.filterGroups.length > 0
-				? viewDraft.filterGroups.map((group) => ({ ...group, filters: [...group.filters] }))
+			s.viewDraft.filterGroups.length > 0
+				? s.viewDraft.filterGroups.map((group) => ({ ...group, filters: [...group.filters] }))
 				: [{ logic: 'all' as ViewFilterLogic, filters: [] }];
 
 		nextGroups[groupIndex] = {
@@ -7889,7 +7263,7 @@
 	}
 
 	function updateViewDraftFilterGroupLogic(groupIndex: number, logic: ViewFilterLogic) {
-		const nextGroups = viewDraft.filterGroups.map((group, itemIndex) =>
+		const nextGroups = s.viewDraft.filterGroups.map((group, itemIndex) =>
 			itemIndex === groupIndex ? { ...group, logic } : group
 		);
 
@@ -7909,10 +7283,10 @@
 	}
 
 	function addViewDraftFilterGroup() {
-		if (viewDraft.filterGroups.length >= 5) return;
+		if (s.viewDraft.filterGroups.length >= 5) return;
 
 		setViewDraftFilterGroups([
-			...viewDraft.filterGroups,
+			...s.viewDraft.filterGroups,
 			{
 				logic: 'any',
 				filters: [{ field: '', operator: 'contains', value: '' }]
@@ -7922,7 +7296,7 @@
 
 	function removeViewDraftFilterGroup(groupIndex: number) {
 		setViewDraftFilterGroups(
-			viewDraft.filterGroups.filter((_, itemIndex) => itemIndex !== groupIndex)
+			s.viewDraft.filterGroups.filter((_, itemIndex) => itemIndex !== groupIndex)
 		);
 	}
 
@@ -7931,7 +7305,7 @@
 
 		if (!group || group.filters.length === 0) return false;
 
-		return viewDraft.filterGroups.length < 5 && !wouldExceedFilterLimit(group.filters.length);
+		return s.viewDraft.filterGroups.length < 5 && !wouldExceedFilterLimit(group.filters.length);
 	}
 
 	function duplicateViewDraftFilterGroup(groupIndex: number) {
@@ -7939,7 +7313,7 @@
 
 		syncVisibleFilterGroups();
 
-		const nextGroups = viewDraft.filterGroups.map((group) => ({
+		const nextGroups = s.viewDraft.filterGroups.map((group) => ({
 			logic: group.logic,
 			filters: group.filters.map((filter) => ({ ...filter }))
 		}));
@@ -7991,9 +7365,9 @@
 	function moveViewDraftFilterGroup(groupIndex: number, direction: -1 | 1) {
 		const targetIndex = groupIndex + direction;
 
-		if (targetIndex < 0 || targetIndex >= viewDraft.filterGroups.length) return;
+		if (targetIndex < 0 || targetIndex >= s.viewDraft.filterGroups.length) return;
 
-		const nextGroups = viewDraft.filterGroups.map((group) => ({
+		const nextGroups = s.viewDraft.filterGroups.map((group) => ({
 			...group,
 			filters: [...group.filters]
 		}));
@@ -8006,9 +7380,9 @@
 	}
 
 	function visibleViewDraftFilterGroups(): ViewFilterGroupDraft[] {
-		if (viewDraft.filterGroups.length > 0) return viewDraft.filterGroups;
+		if (s.viewDraft.filterGroups.length > 0) return s.viewDraft.filterGroups;
 
-		return [{ logic: 'all', filters: viewDraft.filters }];
+		return [{ logic: 'all', filters: s.viewDraft.filters }];
 	}
 
 	function filterLabelSuffix(groupIndex: number, filterIndex: number): string {
@@ -8016,20 +7390,20 @@
 	}
 
 	function hasReachedFilterLimit(): boolean {
-		return viewDraft.filterGroups.reduce((count, group) => count + group.filters.length, 0) >= 10;
+		return s.viewDraft.filterGroups.reduce((count, group) => count + group.filters.length, 0) >= 10;
 	}
 
 	function wouldExceedFilterLimit(extraCount: number): boolean {
 		return (
-			viewDraft.filterGroups.reduce((count, group) => count + group.filters.length, 0) +
+			s.viewDraft.filterGroups.reduce((count, group) => count + group.filters.length, 0) +
 				extraCount >
 			10
 		);
 	}
 
 	function syncVisibleFilterGroups() {
-		if (viewDraft.filterGroups.length === 0) {
-			setViewDraftFilterGroups([{ logic: 'all', filters: viewDraft.filters }]);
+		if (s.viewDraft.filterGroups.length === 0) {
+			setViewDraftFilterGroups([{ logic: 'all', filters: s.viewDraft.filters }]);
 		}
 	}
 
@@ -8141,7 +7515,7 @@
 	}
 
 	function validViewFilterGroups(): ViewFilterGroupDraft[] {
-		return viewDraft.filterGroups
+		return s.viewDraft.filterGroups
 			.map((group) => ({
 				logic: group.logic,
 				filters: group.filters
@@ -8165,7 +7539,7 @@
 		if (filterGroups.length === 0) return null;
 
 		return {
-			logic: viewDraft.filterRootLogic,
+			logic: s.viewDraft.filterRootLogic,
 			children: filterGroups.map((group) => ({
 				logic: group.logic,
 				disabled: group.disabled || undefined,
@@ -8182,75 +7556,75 @@
 	}
 
 	function viewDraftKanbanGroupField(): FormField | null {
-		return fieldByKey(viewDraft.groupBy);
+		return fieldByKey(s.viewDraft.groupBy);
 	}
 
 	function viewDraftSwimlaneFieldCandidates(): FormField[] {
-		if (viewDraft.view_type !== 'kanban') return [];
+		if (s.viewDraft.view_type !== 'kanban') return [];
 
 		return fields.filter(
-			(field) => field.visibility?.list !== false && field.key !== viewDraft.groupBy
+			(field) => field.visibility?.list !== false && field.key !== s.viewDraft.groupBy
 		);
 	}
 
 	function validViewDraftSwimlaneBy(): string {
-		if (viewDraft.view_type !== 'kanban' || !viewDraft.swimlaneBy) return '';
-		if (viewDraft.swimlaneBy === viewDraft.groupBy) return '';
+		if (s.viewDraft.view_type !== 'kanban' || !s.viewDraft.swimlaneBy) return '';
+		if (s.viewDraft.swimlaneBy === s.viewDraft.groupBy) return '';
 
-		return viewDraftSwimlaneFieldCandidates().some((field) => field.key === viewDraft.swimlaneBy)
-			? viewDraft.swimlaneBy
+		return viewDraftSwimlaneFieldCandidates().some((field) => field.key === s.viewDraft.swimlaneBy)
+			? s.viewDraft.swimlaneBy
 			: '';
 	}
 
 	function viewDraftCalendarResourceFieldCandidates(): FormField[] {
-		if (viewDraft.view_type !== 'calendar') return [];
+		if (s.viewDraft.view_type !== 'calendar') return [];
 
 		return fields.filter(
-			(field) => field.visibility?.list !== false && field.key !== viewDraft.dateField
+			(field) => field.visibility?.list !== false && field.key !== s.viewDraft.dateField
 		);
 	}
 
 	function viewDraftCalendarEndFieldCandidates(): FormField[] {
-		if (viewDraft.view_type !== 'calendar') return [];
+		if (s.viewDraft.view_type !== 'calendar') return [];
 
 		return fields.filter(
 			(field) =>
 				field.visibility?.list !== false &&
-				field.key !== viewDraft.dateField &&
+				field.key !== s.viewDraft.dateField &&
 				['date', 'datetime'].includes(field.type ?? 'text')
 		);
 	}
 
 	function validViewDraftCalendarEndField(): string {
-		if (viewDraft.view_type !== 'calendar' || !viewDraft.calendarEndField) return '';
-		if (viewDraft.calendarEndField === viewDraft.dateField) return '';
+		if (s.viewDraft.view_type !== 'calendar' || !s.viewDraft.calendarEndField) return '';
+		if (s.viewDraft.calendarEndField === s.viewDraft.dateField) return '';
 
 		return viewDraftCalendarEndFieldCandidates().some(
-			(field) => field.key === viewDraft.calendarEndField
+			(field) => field.key === s.viewDraft.calendarEndField
 		)
-			? viewDraft.calendarEndField
+			? s.viewDraft.calendarEndField
 			: '';
 	}
 
 	function validViewDraftCalendarResourceBy(): string {
-		if (viewDraft.view_type !== 'calendar' || !viewDraft.calendarResourceBy) return '';
-		if (viewDraft.calendarResourceBy === viewDraft.dateField) return '';
+		if (s.viewDraft.view_type !== 'calendar' || !s.viewDraft.calendarResourceBy) return '';
+		if (s.viewDraft.calendarResourceBy === s.viewDraft.dateField) return '';
 
 		return viewDraftCalendarResourceFieldCandidates().some(
-			(field) => field.key === viewDraft.calendarResourceBy
+			(field) => field.key === s.viewDraft.calendarResourceBy
 		)
-			? viewDraft.calendarResourceBy
+			? s.viewDraft.calendarResourceBy
 			: '';
 	}
 
 	function viewDraftPivotDimensionFieldCandidates(): FormField[] {
-		if (viewDraft.view_type !== 'pivot') return [];
+		if (s.viewDraft.view_type !== 'pivot') return [];
 
 		return fields.filter((field) => field.visibility?.list !== false);
 	}
 
 	function viewDraftPivotValueFieldCandidates(): FormField[] {
-		if (viewDraft.view_type !== 'pivot') return [];
+		if (s.viewDraft.view_type !== 'pivot') return [];
 
 		return fields.filter(
 			(field) =>
@@ -8260,54 +7634,54 @@
 	}
 
 	function validViewDraftPivotRowField(): string {
-		if (viewDraft.view_type !== 'pivot' || !viewDraft.pivotRowField) return '';
+		if (s.viewDraft.view_type !== 'pivot' || !s.viewDraft.pivotRowField) return '';
 
 		return viewDraftPivotDimensionFieldCandidates().some(
-			(field) => field.key === viewDraft.pivotRowField
+			(field) => field.key === s.viewDraft.pivotRowField
 		)
-			? viewDraft.pivotRowField
+			? s.viewDraft.pivotRowField
 			: '';
 	}
 
 	function validViewDraftPivotColumnField(): string {
-		if (viewDraft.view_type !== 'pivot' || !viewDraft.pivotColumnField) return '';
-		if (viewDraft.pivotColumnField === viewDraft.pivotRowField) return '';
+		if (s.viewDraft.view_type !== 'pivot' || !s.viewDraft.pivotColumnField) return '';
+		if (s.viewDraft.pivotColumnField === s.viewDraft.pivotRowField) return '';
 
 		return viewDraftPivotDimensionFieldCandidates().some(
-			(field) => field.key === viewDraft.pivotColumnField
+			(field) => field.key === s.viewDraft.pivotColumnField
 		)
-			? viewDraft.pivotColumnField
+			? s.viewDraft.pivotColumnField
 			: '';
 	}
 
 	function validViewDraftPivotValueField(): string {
-		if (viewDraft.view_type !== 'pivot' || !viewDraft.pivotValueField) return '';
+		if (s.viewDraft.view_type !== 'pivot' || !s.viewDraft.pivotValueField) return '';
 
 		return viewDraftPivotValueFieldCandidates().some(
-			(field) => field.key === viewDraft.pivotValueField
+			(field) => field.key === s.viewDraft.pivotValueField
 		)
-			? viewDraft.pivotValueField
+			? s.viewDraft.pivotValueField
 			: '';
 	}
 
 	function swapViewDraftPivotAxes() {
 		if (
-			viewDraft.view_type !== 'pivot' ||
-			!viewDraft.pivotRowField ||
-			!viewDraft.pivotColumnField
+			s.viewDraft.view_type !== 'pivot' ||
+			!s.viewDraft.pivotRowField ||
+			!s.viewDraft.pivotColumnField
 		) {
 			return;
 		}
 
-		viewDraft = {
-			...viewDraft,
-			pivotRowField: viewDraft.pivotColumnField,
-			pivotColumnField: viewDraft.pivotRowField
+		s.viewDraft = {
+			...s.viewDraft,
+			pivotRowField: s.viewDraft.pivotColumnField,
+			pivotColumnField: s.viewDraft.pivotRowField
 		};
 	}
 
 	function viewDraftGanttDateFieldCandidates(): FormField[] {
-		if (viewDraft.view_type !== 'gantt') return [];
+		if (s.viewDraft.view_type !== 'gantt') return [];
 
 		return fields.filter(
 			(field) =>
@@ -8316,73 +7690,73 @@
 	}
 
 	function viewDraftGanttGroupFieldCandidates(): FormField[] {
-		if (viewDraft.view_type !== 'gantt') return [];
+		if (s.viewDraft.view_type !== 'gantt') return [];
 
 		return fields.filter(
 			(field) =>
 				field.visibility?.list !== false &&
-				field.key !== viewDraft.ganttStartField &&
-				field.key !== viewDraft.ganttEndField
+				field.key !== s.viewDraft.ganttStartField &&
+				field.key !== s.viewDraft.ganttEndField
 		);
 	}
 
 	function viewDraftGanttDependencyFieldCandidates(): FormField[] {
-		if (viewDraft.view_type !== 'gantt') return [];
+		if (s.viewDraft.view_type !== 'gantt') return [];
 
 		return fields.filter(
 			(field) =>
 				field.visibility?.list !== false &&
-				field.key !== viewDraft.ganttStartField &&
-				field.key !== viewDraft.ganttEndField &&
-				field.key !== viewDraft.ganttGroupBy
+				field.key !== s.viewDraft.ganttStartField &&
+				field.key !== s.viewDraft.ganttEndField &&
+				field.key !== s.viewDraft.ganttGroupBy
 		);
 	}
 
 	function validViewDraftGanttStartField(): string {
-		if (viewDraft.view_type !== 'gantt' || !viewDraft.ganttStartField) return '';
+		if (s.viewDraft.view_type !== 'gantt' || !s.viewDraft.ganttStartField) return '';
 
 		return viewDraftGanttDateFieldCandidates().some(
-			(field) => field.key === viewDraft.ganttStartField
+			(field) => field.key === s.viewDraft.ganttStartField
 		)
-			? viewDraft.ganttStartField
+			? s.viewDraft.ganttStartField
 			: '';
 	}
 
 	function validViewDraftGanttEndField(): string {
-		if (viewDraft.view_type !== 'gantt' || !viewDraft.ganttEndField) return '';
-		if (viewDraft.ganttEndField === viewDraft.ganttStartField) return '';
+		if (s.viewDraft.view_type !== 'gantt' || !s.viewDraft.ganttEndField) return '';
+		if (s.viewDraft.ganttEndField === s.viewDraft.ganttStartField) return '';
 
 		return viewDraftGanttDateFieldCandidates().some(
-			(field) => field.key === viewDraft.ganttEndField
+			(field) => field.key === s.viewDraft.ganttEndField
 		)
-			? viewDraft.ganttEndField
+			? s.viewDraft.ganttEndField
 			: '';
 	}
 
 	function validViewDraftGanttGroupBy(): string {
-		if (viewDraft.view_type !== 'gantt' || !viewDraft.ganttGroupBy) return '';
+		if (s.viewDraft.view_type !== 'gantt' || !s.viewDraft.ganttGroupBy) return '';
 
 		return viewDraftGanttGroupFieldCandidates().some(
-			(field) => field.key === viewDraft.ganttGroupBy
+			(field) => field.key === s.viewDraft.ganttGroupBy
 		)
-			? viewDraft.ganttGroupBy
+			? s.viewDraft.ganttGroupBy
 			: '';
 	}
 
 	function validViewDraftGanttDependencyField(): string {
-		if (viewDraft.view_type !== 'gantt' || !viewDraft.ganttDependencyField) return '';
+		if (s.viewDraft.view_type !== 'gantt' || !s.viewDraft.ganttDependencyField) return '';
 
 		return viewDraftGanttDependencyFieldCandidates().some(
-			(field) => field.key === viewDraft.ganttDependencyField
+			(field) => field.key === s.viewDraft.ganttDependencyField
 		)
-			? viewDraft.ganttDependencyField
+			? s.viewDraft.ganttDependencyField
 			: '';
 	}
 
 	function validViewDraftCalendarExceptionDates(): CalendarExceptionDateMap {
-		const next = calendarExceptionDateMap(viewDraft.calendarExceptionDates);
-		const recordId = viewDraft.calendarExceptionRecordId.trim();
-		const date = viewDraft.calendarExceptionDate.trim();
+		const next = calendarExceptionDateMap(s.viewDraft.calendarExceptionDates);
+		const recordId = s.viewDraft.calendarExceptionRecordId.trim();
+		const date = s.viewDraft.calendarExceptionDate.trim();
 
 		if (recordId && isIsoDate(date)) {
 			next[recordId] = Array.from(new Set([...(next[recordId] ?? []), date])).sort();
@@ -8392,7 +7766,7 @@
 	}
 
 	function calendarExceptionRecordLabel(recordId: string): string {
-		const record = records.find((item) => item.id === recordId);
+		const record = s.records.find((item) => item.id === recordId);
 
 		return record ? record.title : recordId;
 	}
@@ -8417,27 +7791,27 @@
 	}
 
 	function addViewDraftCalendarException() {
-		const recordId = viewDraft.calendarExceptionRecordId.trim();
-		const date = viewDraft.calendarExceptionDate.trim();
+		const recordId = s.viewDraft.calendarExceptionRecordId.trim();
+		const date = s.viewDraft.calendarExceptionDate.trim();
 
 		if (!recordId || !isIsoDate(date)) return;
 
-		const nextDates = new Set(viewDraft.calendarExceptionDates[recordId] ?? []);
+		const nextDates = new Set(s.viewDraft.calendarExceptionDates[recordId] ?? []);
 
 		nextDates.add(date);
 
-		viewDraft = {
-			...viewDraft,
+		s.viewDraft = {
+			...s.viewDraft,
 			calendarExceptionDate: '',
 			calendarExceptionDates: {
-				...viewDraft.calendarExceptionDates,
+				...s.viewDraft.calendarExceptionDates,
 				[recordId]: Array.from(nextDates).sort()
 			}
 		};
 	}
 
 	function removeViewDraftCalendarException(recordId: string, date: string) {
-		const next = { ...viewDraft.calendarExceptionDates };
+		const next = { ...s.viewDraft.calendarExceptionDates };
 		const dates = (next[recordId] ?? []).filter((item) => item !== date);
 
 		if (dates.length > 0) {
@@ -8446,19 +7820,19 @@
 			delete next[recordId];
 		}
 
-		viewDraft = { ...viewDraft, calendarExceptionDates: next };
+		s.viewDraft = { ...s.viewDraft, calendarExceptionDates: next };
 	}
 
 	function viewDraftKanbanWipOptions(): string[] {
 		const field = viewDraftKanbanGroupField();
 
-		if (viewDraft.view_type !== 'kanban' || field?.type !== 'single_select') return [];
+		if (s.viewDraft.view_type !== 'kanban' || field?.type !== 'single_select') return [];
 
 		return kanbanMoveOptions(field);
 	}
 
 	function setViewDraftWipLimit(option: string, value: string) {
-		const nextLimits = { ...viewDraft.wipLimits };
+		const nextLimits = { ...s.viewDraft.wipLimits };
 		const trimmed = value.trim();
 
 		if (!trimmed) {
@@ -8467,14 +7841,14 @@
 			nextLimits[option] = trimmed;
 		}
 
-		viewDraft = { ...viewDraft, wipLimits: nextLimits };
+		s.viewDraft = { ...s.viewDraft, wipLimits: nextLimits };
 	}
 
 	function validViewDraftWipLimits(): Record<string, number> {
 		const limits: Record<string, number> = {};
 
 		for (const option of viewDraftKanbanWipOptions()) {
-			const raw = viewDraft.wipLimits[option];
+			const raw = s.viewDraft.wipLimits[option];
 
 			if (!raw?.trim()) continue;
 
@@ -8490,9 +7864,9 @@
 
 	function viewConfigFromDraft(): Record<string, unknown> {
 		const config: Record<string, unknown> = {
-			columns: viewDraft.columns.length > 0 ? viewDraft.columns : defaultViewColumns(),
+			columns: s.viewDraft.columns.length > 0 ? s.viewDraft.columns : defaultViewColumns(),
 			density: 'compact',
-			visibility: viewDraft.visibility
+			visibility: s.viewDraft.visibility
 		};
 
 		const filterGroups = validViewFilterGroups();
@@ -8508,14 +7882,14 @@
 			config.filter = filters[0];
 		}
 
-		if (viewDraft.sortField) {
+		if (s.viewDraft.sortField) {
 			config.sort = {
-				field: viewDraft.sortField,
-				direction: viewDraft.sortDirection
+				field: s.viewDraft.sortField,
+				direction: s.viewDraft.sortDirection
 			};
 		}
 
-		if (viewDraft.groupBy) config.group_by = viewDraft.groupBy;
+		if (s.viewDraft.groupBy) config.group_by = s.viewDraft.groupBy;
 
 		const swimlaneBy = validViewDraftSwimlaneBy();
 
@@ -8524,9 +7898,9 @@
 		const wipLimits = validViewDraftWipLimits();
 
 		if (Object.keys(wipLimits).length > 0) config.wip_limits = wipLimits;
-		if (viewDraft.dateField) config.date_field = viewDraft.dateField;
+		if (s.viewDraft.dateField) config.date_field = s.viewDraft.dateField;
 
-		if (viewDraft.view_type === 'pivot') {
+		if (s.viewDraft.view_type === 'pivot') {
 			const pivotRowField = validViewDraftPivotRowField();
 			const pivotColumnField = validViewDraftPivotColumnField();
 			const pivotValueField = validViewDraftPivotValueField();
@@ -8535,26 +7909,27 @@
 			if (pivotColumnField) config.pivot_column_field = pivotColumnField;
 			if (pivotValueField) config.pivot_value_field = pivotValueField;
 
-			config.pivot_aggregate = viewDraft.pivotAggregate;
-			config.pivot_totals = viewDraft.pivotTotals;
-			config.pivot_value_display = viewDraft.pivotValueDisplay;
-			config.pivot_sort = viewDraft.pivotSort;
+			config.pivot_aggregate = s.viewDraft.pivotAggregate;
+			config.pivot_totals = s.viewDraft.pivotTotals;
+			config.pivot_value_display = s.viewDraft.pivotValueDisplay;
+			config.pivot_sort = s.viewDraft.pivotSort;
 
-			if (viewDraft.pivotEmptyBuckets) config.pivot_empty_buckets = true;
-			if (viewDraft.pivotHideZeroBuckets) config.pivot_hide_zero_buckets = true;
-			if (viewDraft.pivotShowCounts) config.pivot_show_counts = true;
-			if (viewDraft.pivotHeatmap) config.pivot_heatmap = true;
-			if (viewDraft.pivotRowLimit > 0) config.pivot_row_limit = viewDraft.pivotRowLimit;
-			if (viewDraft.pivotColumnLimit > 0) config.pivot_column_limit = viewDraft.pivotColumnLimit;
+			if (s.viewDraft.pivotEmptyBuckets) config.pivot_empty_buckets = true;
+			if (s.viewDraft.pivotHideZeroBuckets) config.pivot_hide_zero_buckets = true;
+			if (s.viewDraft.pivotShowCounts) config.pivot_show_counts = true;
+			if (s.viewDraft.pivotHeatmap) config.pivot_heatmap = true;
+			if (s.viewDraft.pivotRowLimit > 0) config.pivot_row_limit = s.viewDraft.pivotRowLimit;
+			if (s.viewDraft.pivotColumnLimit > 0)
+				config.pivot_column_limit = s.viewDraft.pivotColumnLimit;
 		}
 
-		if (viewDraft.view_type === 'gantt') {
+		if (s.viewDraft.view_type === 'gantt') {
 			const ganttStartField = validViewDraftGanttStartField();
 			const ganttEndField = validViewDraftGanttEndField();
 			const ganttGroupBy = validViewDraftGanttGroupBy();
 			const ganttDependencyField = validViewDraftGanttDependencyField();
 
-			config.gantt_scale = viewDraft.ganttScale;
+			config.gantt_scale = s.viewDraft.ganttScale;
 
 			if (ganttStartField) config.gantt_start_field = ganttStartField;
 			if (ganttEndField) config.gantt_end_field = ganttEndField;
@@ -8562,23 +7937,23 @@
 			if (ganttDependencyField) config.gantt_dependency_field = ganttDependencyField;
 		}
 
-		if (viewDraft.view_type === 'calendar') {
-			config.calendar_range = viewDraft.calendarRange;
+		if (s.viewDraft.view_type === 'calendar') {
+			config.calendar_range = s.viewDraft.calendarRange;
 
-			if (isIsoDate(viewDraft.calendarFocusDate))
-				config.calendar_focus_date = viewDraft.calendarFocusDate;
+			if (isIsoDate(s.viewDraft.calendarFocusDate))
+				config.calendar_focus_date = s.viewDraft.calendarFocusDate;
 
-			config.calendar_day_scope = viewDraft.calendarDayScope;
-			config.calendar_layout = viewDraft.calendarLayout;
+			config.calendar_day_scope = s.viewDraft.calendarDayScope;
+			config.calendar_layout = s.viewDraft.calendarLayout;
 
-			if (viewDraft.calendarHideEmptyDays) config.calendar_hide_empty_days = true;
+			if (s.viewDraft.calendarHideEmptyDays) config.calendar_hide_empty_days = true;
 
 			const calendarEndField = validViewDraftCalendarEndField();
 
 			if (calendarEndField) config.calendar_end_field = calendarEndField;
 
-			if (viewDraft.calendarRecurrence !== 'none') {
-				config.calendar_recurrence = viewDraft.calendarRecurrence;
+			if (s.viewDraft.calendarRecurrence !== 'none') {
+				config.calendar_recurrence = s.viewDraft.calendarRecurrence;
 			}
 
 			const calendarResourceBy = validViewDraftCalendarResourceBy();
@@ -8592,87 +7967,77 @@
 			}
 		}
 
-		if (viewDraft.view_type === 'card') {
-			if (viewDraft.cardTitleField) config.card_title_field = viewDraft.cardTitleField;
+		if (s.viewDraft.view_type === 'card') {
+			if (s.viewDraft.cardTitleField) config.card_title_field = s.viewDraft.cardTitleField;
 
-			if (viewDraft.cardSubtitleField && viewDraft.cardSubtitleField !== viewDraft.cardTitleField) {
-				config.card_subtitle_field = viewDraft.cardSubtitleField;
+			if (
+				s.viewDraft.cardSubtitleField &&
+				s.viewDraft.cardSubtitleField !== s.viewDraft.cardTitleField
+			) {
+				config.card_subtitle_field = s.viewDraft.cardSubtitleField;
 			}
 
 			if (
-				viewDraft.cardBadgeField &&
-				viewDraft.cardBadgeField !== viewDraft.cardTitleField &&
-				viewDraft.cardBadgeField !== viewDraft.cardSubtitleField
+				s.viewDraft.cardBadgeField &&
+				s.viewDraft.cardBadgeField !== s.viewDraft.cardTitleField &&
+				s.viewDraft.cardBadgeField !== s.viewDraft.cardSubtitleField
 			) {
-				config.card_badge_field = viewDraft.cardBadgeField;
+				config.card_badge_field = s.viewDraft.cardBadgeField;
 			}
 
-			if (viewDraft.cardCoverField) config.card_cover_field = viewDraft.cardCoverField;
-			if (viewDraft.cardLayout !== 'standard') config.card_layout = viewDraft.cardLayout;
-			if (viewDraft.cardCoverAspect !== 'auto')
-				config.card_cover_aspect = viewDraft.cardCoverAspect;
-			if (viewDraft.cardCoverFit !== 'cover') config.card_cover_fit = viewDraft.cardCoverFit;
-			if (viewDraft.cardCoverPosition !== 'top')
-				config.card_cover_position = viewDraft.cardCoverPosition;
-			if (viewDraft.cardFieldLimit !== 6) config.card_field_limit = viewDraft.cardFieldLimit;
-			if (viewDraft.cardHideEmptyFields) config.card_hide_empty_fields = true;
-			if (viewDraft.cardShowTimestamps) config.card_show_timestamps = true;
-			if (viewDraft.cardShowRecordId) config.card_show_record_id = true;
+			if (s.viewDraft.cardCoverField) config.card_cover_field = s.viewDraft.cardCoverField;
+			if (s.viewDraft.cardLayout !== 'standard') config.card_layout = s.viewDraft.cardLayout;
+			if (s.viewDraft.cardCoverAspect !== 'auto')
+				config.card_cover_aspect = s.viewDraft.cardCoverAspect;
+			if (s.viewDraft.cardCoverFit !== 'cover') config.card_cover_fit = s.viewDraft.cardCoverFit;
+			if (s.viewDraft.cardCoverPosition !== 'top')
+				config.card_cover_position = s.viewDraft.cardCoverPosition;
+			if (s.viewDraft.cardFieldLimit !== 6) config.card_field_limit = s.viewDraft.cardFieldLimit;
+			if (s.viewDraft.cardHideEmptyFields) config.card_hide_empty_fields = true;
+			if (s.viewDraft.cardShowTimestamps) config.card_show_timestamps = true;
+			if (s.viewDraft.cardShowRecordId) config.card_show_record_id = true;
 
 			const cardFieldKeys = validViewDraftCardFieldKeys();
 
 			if (cardFieldKeys.length > 0) config.card_fields = cardFieldKeys;
 		}
 
-		if (viewDraft.view_type === 'timeline') {
-			config.timeline_source = viewDraft.timelineSource;
+		if (s.viewDraft.view_type === 'timeline') {
+			config.timeline_source = s.viewDraft.timelineSource;
 
-			if (viewDraft.timelineSource === 'records' && viewDraft.timelineTitleField)
-				config.timeline_title_field = viewDraft.timelineTitleField;
+			if (s.viewDraft.timelineSource === 'records' && s.viewDraft.timelineTitleField)
+				config.timeline_title_field = s.viewDraft.timelineTitleField;
 
 			if (
-				viewDraft.timelineSource === 'records' &&
-				viewDraft.timelineSubtitleField &&
-				viewDraft.timelineSubtitleField !== viewDraft.timelineTitleField
+				s.viewDraft.timelineSource === 'records' &&
+				s.viewDraft.timelineSubtitleField &&
+				s.viewDraft.timelineSubtitleField !== s.viewDraft.timelineTitleField
 			) {
-				config.timeline_subtitle_field = viewDraft.timelineSubtitleField;
+				config.timeline_subtitle_field = s.viewDraft.timelineSubtitleField;
 			}
 
-			if (viewDraft.timelineSource === 'events') {
-				config.timeline_event_layout = viewDraft.timelineEventLayout;
+			if (s.viewDraft.timelineSource === 'events') {
+				config.timeline_event_layout = s.viewDraft.timelineEventLayout;
 
-				if (viewDraft.timelineEventType) config.timeline_event_type = viewDraft.timelineEventType;
-				if (viewDraft.timelineEventActor)
-					config.timeline_event_actor = viewDraft.timelineEventActor;
-				if (viewDraft.timelineEventAggregate)
-					config.timeline_event_aggregate = viewDraft.timelineEventAggregate;
-				if (viewDraft.timelineEventQuery.trim())
-					config.timeline_event_query = viewDraft.timelineEventQuery.trim();
-				if (viewDraft.timelineEventFrom.trim())
-					config.timeline_event_from = viewDraft.timelineEventFrom.trim();
-				if (viewDraft.timelineEventTo.trim())
-					config.timeline_event_to = viewDraft.timelineEventTo.trim();
+				if (s.viewDraft.timelineEventType)
+					config.timeline_event_type = s.viewDraft.timelineEventType;
+				if (s.viewDraft.timelineEventActor)
+					config.timeline_event_actor = s.viewDraft.timelineEventActor;
+				if (s.viewDraft.timelineEventAggregate)
+					config.timeline_event_aggregate = s.viewDraft.timelineEventAggregate;
+				if (s.viewDraft.timelineEventQuery.trim())
+					config.timeline_event_query = s.viewDraft.timelineEventQuery.trim();
+				if (s.viewDraft.timelineEventFrom.trim())
+					config.timeline_event_from = s.viewDraft.timelineEventFrom.trim();
+				if (s.viewDraft.timelineEventTo.trim())
+					config.timeline_event_to = s.viewDraft.timelineEventTo.trim();
 			}
 		}
 
-		config.is_default = viewDraft.isDefault;
+		config.is_default = s.viewDraft.isDefault;
 
 		return config;
 	}
-
-	const SORTABLE_TYPES = new Set([
-		'amount',
-		'number',
-		'integer',
-		'boolean',
-		'date',
-		'datetime',
-		'text',
-		'textarea',
-		'rich_text',
-		'single_select',
-		'ai_summary'
-	]);
 
 	function isServerSortable(key: string): boolean {
 		if (['title', 'created_at', 'updated_at'].includes(key)) return true;
@@ -8702,23 +8067,23 @@
 
 	/** Applies a view (saved or built-in) and brings back this user's working changes to it. */
 	function applyView(viewId: string) {
-		selectedViewId = viewId;
+		s.selectedViewId = viewId;
 		const view =
-			formViews.find((item) => item.id === viewId) ??
+			s.formViews.find((item) => item.id === viewId) ??
 			(selectedForm ? builtInView(selectedForm) : null);
 		if (!view) return;
 		resetViewDraft(view);
 		const config = viewConfigFromDraft();
-		viewBaseline = {
+		s.viewBaseline = {
 			viewId: view.id,
-			type: viewDraft.view_type,
+			type: s.viewDraft.view_type,
 			key: arrangement.normalizedViewConfig(config),
 			config
 		};
-		const stored = arrangement.readArrangement(currentUserId, selectedFormId, view.id);
+		const stored = arrangement.readArrangement(currentUserId, s.selectedFormId, view.id);
 		if (!stored) return;
 		if (stored.base_updated_at !== (savedView ? view.updated_at : null)) {
-			arrangement.clearArrangement(currentUserId, selectedFormId, view.id);
+			arrangement.clearArrangement(currentUserId, s.selectedFormId, view.id);
 			toast.info($t('forms.views.updatedElsewhere', { values: { name: view.name } }));
 			return;
 		}
@@ -8733,24 +8098,23 @@
 	/** Switches the view; `remember` marks an explicit choice (kept per user and form, put in the URL). */
 	function showView(viewId: string, options: { remember: boolean }) {
 		applyView(viewId);
-		viewConflict = false;
-		resetUndo = null;
+		s.viewConflict = false;
+		s.resetUndo = null;
 		if (!options.remember) return;
-		precedence.writeRememberedView(currentUserId, selectedFormId, viewId);
+		precedence.writeRememberedView(currentUserId, s.selectedFormId, viewId);
 		const url = new URL(page.url.href);
 		url.searchParams.set('view', viewId);
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- same route, query only
 		void goto(url, { replace: true, reset: false });
 	}
 
-	let arrangementTimer: ReturnType<typeof setTimeout> | undefined;
 	$effect(() => {
 		const view = baseView;
-		const [modified, config, type] = [arrangementModified, draftViewConfig, viewDraft.view_type];
-		const [user, formId] = [currentUserId, selectedFormId];
-		if (!view || !formId || untrack(() => viewBaseline.viewId) !== view.id) return;
-		clearTimeout(arrangementTimer);
-		arrangementTimer = setTimeout(() => {
+		const [modified, config, type] = [arrangementModified, draftViewConfig, s.viewDraft.view_type];
+		const [user, formId] = [currentUserId, s.selectedFormId];
+		if (!view || !formId || untrack(() => s.viewBaseline.viewId) !== view.id) return;
+		clearTimeout(s.arrangementTimer);
+		s.arrangementTimer = setTimeout(() => {
 			const base = untrack(() => savedView?.updated_at ?? null);
 			if (!modified) arrangement.clearArrangement(user, formId, view.id);
 			else
@@ -8763,54 +8127,52 @@
 		}, 300);
 	});
 
-	let loadedRecordQuery = '';
-	let recordQueryTimer: ReturnType<typeof setTimeout> | undefined;
 	$effect(() => {
-		const key = JSON.stringify([selectedFormId, recordQuery]);
-		clearTimeout(recordQueryTimer);
-		if (!untrack(() => loadedRecordQuery) || key === untrack(() => loadedRecordQuery)) return;
-		recordQueryTimer = setTimeout(() => void loadRecords(), 300);
+		const key = JSON.stringify([s.selectedFormId, recordQuery]);
+		clearTimeout(s.recordQueryTimer);
+		if (!untrack(() => s.loadedRecordQuery) || key === untrack(() => s.loadedRecordQuery)) return;
+		s.recordQueryTimer = setTimeout(() => void loadRecords(), 300);
 	});
 
 	function resetArrangement() {
 		if (!baseView) return;
-		clearTimeout(arrangementTimer);
+		clearTimeout(s.arrangementTimer);
 		const undo = {
 			base_updated_at: null,
-			view_type: viewDraft.view_type,
+			view_type: s.viewDraft.view_type,
 			config: draftViewConfig,
 			at: ''
 		};
-		arrangement.clearArrangement(currentUserId, selectedFormId, baseView.id);
+		arrangement.clearArrangement(currentUserId, s.selectedFormId, baseView.id);
 		applyView(baseView.id);
-		resetUndo = undo;
+		s.resetUndo = undo;
 		announce($t('forms.views.resetDone'));
 		setTimeout(() => {
-			if (resetUndo === undo) resetUndo = null;
+			if (s.resetUndo === undo) s.resetUndo = null;
 		}, 6000);
 	}
 
 	function undoReset() {
-		const undo = resetUndo;
+		const undo = s.resetUndo;
 		if (!undo || !baseView) return;
-		resetUndo = null;
+		s.resetUndo = null;
 		resetViewDraft({ ...baseView, view_type: undo.view_type, config: undo.config });
 	}
 
 	async function writeView(request: Promise<ApiResult<FormView>>): Promise<FormView | null> {
-		viewSubmitting = true;
+		s.viewSubmitting = true;
 		const response = await request;
-		viewSubmitting = false;
-		if (response.code === 409) viewConflict = true;
+		s.viewSubmitting = false;
+		if (response.code === 409) s.viewConflict = true;
 		if (response.code !== 0 || !response.data) {
 			if (response.code !== 409) toast.error(response.message);
 			return null;
 		}
 		const view = response.data;
-		const next = formViews.some((item) => item.id === view.id)
-			? formViews.map((item) => (item.id === view.id ? view : item))
-			: [...formViews, view];
-		formViews = viewIsDefault(view)
+		const next = s.formViews.some((item) => item.id === view.id)
+			? s.formViews.map((item) => (item.id === view.id ? view : item))
+			: [...s.formViews, view];
+		s.formViews = viewIsDefault(view)
 			? normalizeLocalDefaultViews(next, view.id)
 			: sortViewsByDefault(next);
 		return view;
@@ -8818,24 +8180,24 @@
 
 	async function saveViewAs(input: { name: string; visibility: 'private' | 'shared' }) {
 		if (!selectedForm || !baseView) return;
-		saveViewError = null;
+		s.saveViewError = null;
 		const from = baseView.id;
 		const config = { ...draftViewConfig, visibility: input.visibility, is_default: false };
 		const key = arrangement.generateViewKey(input.name);
 		const request = formsApi.createView(selectedForm.id, {
 			key,
 			name: input.name,
-			view_type: viewDraft.view_type,
+			view_type: s.viewDraft.view_type,
 			config
 		});
 		const saving = await request;
 		if (saving.code !== 0 || !saving.data) {
-			saveViewError = saving.message;
+			s.saveViewError = saving.message;
 			return;
 		}
 		await writeView(Promise.resolve(saving));
-		arrangement.clearArrangement(currentUserId, selectedFormId, from);
-		saveViewOpen = false;
+		arrangement.clearArrangement(currentUserId, s.selectedFormId, from);
+		s.saveViewOpen = false;
 		showView(saving.data.id, { remember: true });
 		announce($t('forms.views.viewSaved'));
 		toast.success($t('forms.views.viewSaved'));
@@ -8850,16 +8212,16 @@
 			is_default: viewIsDefault(view)
 		};
 		const body = patch ?? {
-			view_type: viewDraft.view_type,
+			view_type: s.viewDraft.view_type,
 			config: { ...draftViewConfig, ...audience }
 		};
 		const updated = await writeView(
 			formsApi.updateView(view.id, { ...body, expected_updated_at: view.updated_at })
 		);
 		if (!updated) return;
-		viewConflict = false;
+		s.viewConflict = false;
 		if (!patch) {
-			arrangement.clearArrangement(currentUserId, selectedFormId, view.id);
+			arrangement.clearArrangement(currentUserId, s.selectedFormId, view.id);
 			applyView(view.id);
 		}
 		toast.success($t('forms.views.viewUpdated'));
@@ -8873,17 +8235,17 @@
 			toast.error(response.message);
 			return;
 		}
-		formViews = formViews.filter((item) => item.id !== view.id);
-		arrangement.clearArrangement(currentUserId, selectedFormId, view.id);
-		if (precedence.readRememberedView(currentUserId, selectedFormId) === view.id)
-			precedence.forgetRememberedView(currentUserId, selectedFormId);
+		s.formViews = s.formViews.filter((item) => item.id !== view.id);
+		arrangement.clearArrangement(currentUserId, s.selectedFormId, view.id);
+		if (precedence.readRememberedView(currentUserId, s.selectedFormId) === view.id)
+			precedence.forgetRememberedView(currentUserId, s.selectedFormId);
 		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
 		toast.success($t('forms.views.viewDeleted'));
 	}
 
 	function openSaveView(name?: string) {
-		saveViewError = null;
-		saveViewName =
+		s.saveViewError = null;
+		s.saveViewName =
 			name ??
 			arrangement.suggestViewName(
 				baseView ?? { name: '' },
@@ -8898,49 +8260,48 @@
 				},
 				(field) => $t('forms.views.byField', { values: { field } })
 			);
-		saveViewOpen = true;
+		s.saveViewOpen = true;
 	}
 
 	function openLayoutSettings() {
-		if (panelRecordId) closeRecordPanel(false);
-		viewToolsExpanded = true;
+		if (s.panelRecordId) closeRecordPanel(false);
+		s.viewToolsExpanded = true;
 	}
 
 	function setDraftFilters(filters: SimpleFilter[], logic: 'all' | 'any') {
 		const filterGroups = filters.length > 0 ? [{ logic, filters }] : [];
-		viewDraft = { ...viewDraft, filterGroups, ...syncLegacyViewFilterFields(filterGroups) };
+		s.viewDraft = { ...s.viewDraft, filterGroups, ...syncLegacyViewFilterFields(filterGroups) };
 	}
 
 	// --- record side panel ---------------------------------------------------------------
 	const panelRecord = $derived(
-		panelRecordId
-			? (records.find((record) => record.id === panelRecordId) ??
-					(selectedRecord?.id === panelRecordId ? selectedRecord : null))
+		s.panelRecordId
+			? (s.records.find((record) => record.id === s.panelRecordId) ??
+					(s.selectedRecord?.id === s.panelRecordId ? s.selectedRecord : null))
 			: null
 	);
 	const panelPosition = $derived(
-		panelRecordId ? viewRecords.findIndex((record) => record.id === panelRecordId) : -1
+		s.panelRecordId ? viewRecords.findIndex((record) => record.id === s.panelRecordId) : -1
 	);
 	const fieldCtx = $derived<FieldDisplayContext>({
 		locale: $locale ?? 'en',
 		formKey: selectedForm?.key ?? '',
-		members: new Map(workspaceMembers.map((member) => [member.user_id, member])),
-		attachmentsByField: recordAttachments.reduce<Record<string, FormAttachment[]>>(
+		members: new Map(s.workspaceMembers.map((member) => [member.user_id, member])),
+		attachmentsByField: s.recordAttachments.reduce<Record<string, FormAttachment[]>>(
 			(groups, item) => {
-				if (item.record_id === panelRecordId) (groups[item.field_key] ??= []).push(item);
+				if (item.record_id === s.panelRecordId) (groups[item.field_key] ??= []).push(item);
 				return groups;
 			},
 			{}
 		),
-		signedUrls: recordAttachmentSignedUrls,
+		signedUrls: s.recordAttachmentSignedUrls,
 		relationTitle: (field, id) =>
-			relationTargets[field.key]?.find((item) => item.record_id === id)?.display
+			s.relationTargets[field.key]?.find((item) => item.record_id === id)?.display
 	});
 
-	let announceTimer: ReturnType<typeof setTimeout> | undefined;
 	function announce(message: string, delay = 0) {
-		clearTimeout(announceTimer);
-		announceTimer = setTimeout(() => (liveMessage = message), delay);
+		clearTimeout(s.announceTimer);
+		s.announceTimer = setTimeout(() => (s.liveMessage = message), delay);
 	}
 
 	function recordHref(recordId: string): string {
@@ -8948,7 +8309,7 @@
 	}
 
 	function canChangeRecord(record: FormRecord, action: 'record.update' | 'record.delete'): boolean {
-		const effective = formPermissions?.effective;
+		const effective = s.formPermissions?.effective;
 		if (!effective) return true;
 		return (
 			effective.actions[action] &&
@@ -8956,27 +8317,24 @@
 		);
 	}
 
-	// URL writes run one at a time: a replace issued while a push is still in flight would abort
-	// it, and the panel's history depth (what Close and Back undo) would no longer be true.
-	let recordUrlWrite: Promise<void> = Promise.resolve();
 	function setRecordUrl(recordId: string | null, mode: 'push' | 'replace'): Promise<void> {
-		recordUrlWrite = recordUrlWrite
+		s.recordUrlWrite = s.recordUrlWrite
 			.then(async () => {
 				const url = new URL(page.url.href);
 				url.searchParams.delete('record_id');
 				if (recordId) url.searchParams.set('record', recordId);
 				else url.searchParams.delete('record');
-				if (recordId) url.searchParams.set('form', selectedFormId);
+				if (recordId) url.searchParams.set('form', s.selectedFormId);
 				if (url.href === page.url.href) return;
 				// eslint-disable-next-line svelte/no-navigation-without-resolve -- same route, query only
 				await goto(url, { replace: mode === 'replace', reset: false });
-				if (mode === 'push' && page.url.href === url.href) panelHistoryDepth += 1;
+				if (mode === 'push' && page.url.href === url.href) s.panelHistoryDepth += 1;
 			})
 			.catch((error: unknown) => {
 				// A superseded navigation must not stop later URL writes.
 				console.warn('record URL update was not applied', error);
 			});
-		return recordUrlWrite;
+		return s.recordUrlWrite;
 	}
 
 	async function openRecordPanel(
@@ -8985,15 +8343,15 @@
 	) {
 		const id = typeof target === 'string' ? target : target.id;
 		const local =
-			typeof target === 'string' ? (records.find((record) => record.id === id) ?? null) : target;
-		viewToolsExpanded = false;
-		if (!panelRecordId) panelWidth = arrangement.readPanelWidth(currentUserId) ?? panelWidth;
-		panelRecordId = id;
-		panelStatus = local ? 'ready' : 'loading';
-		panelError = '';
-		selectedRecord = local;
+			typeof target === 'string' ? (s.records.find((record) => record.id === id) ?? null) : target;
+		s.viewToolsExpanded = false;
+		if (!s.panelRecordId) s.panelWidth = arrangement.readPanelWidth(currentUserId) ?? s.panelWidth;
+		s.panelRecordId = id;
+		s.panelStatus = local ? 'ready' : 'loading';
+		s.panelError = '';
+		s.selectedRecord = local;
 		const index = viewRecords.findIndex((record) => record.id === id);
-		if (index >= 0) recordPage = Math.floor(index / recordPageSize) + 1;
+		if (index >= 0) s.recordPage = Math.floor(index / recordPageSize) + 1;
 		if (history !== 'none') await setRecordUrl(id, history);
 		if (local && index >= 0)
 			announce(
@@ -9004,57 +8362,56 @@
 			);
 		const started = Date.now();
 		const response = await formsApi.getRecord(id);
-		if (panelRecordId !== id) return;
+		if (s.panelRecordId !== id) return;
 		const elapsed = Date.now() - started;
 		if (!local && elapsed > 200 && elapsed < 500)
 			await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
 		if (response.code === 0 && response.data && !response.data.archived_at) {
-			selectedRecord = response.data;
-			panelStatus = 'ready';
-			panelDetailsLoading = true;
+			s.selectedRecord = response.data;
+			s.panelStatus = 'ready';
+			s.panelDetailsLoading = true;
 			await Promise.all([
 				loadSelectedRecordLinks(),
 				loadSelectedRecordChildren(),
 				loadRecordAttachments(id)
 			]);
-			panelDetailsLoading = false;
-		} else if (response.code === 404 || response.data?.archived_at) panelStatus = 'missing';
+			s.panelDetailsLoading = false;
+		} else if (response.code === 404 || response.data?.archived_at) s.panelStatus = 'missing';
 		else if (!local) {
-			panelStatus = response.code === 403 ? 'forbidden' : 'error';
-			panelError = response.message;
+			s.panelStatus = response.code === 403 ? 'forbidden' : 'error';
+			s.panelError = response.message;
 		}
 	}
 
 	function closeRecordPanel(restoreFocus = true) {
-		const id = panelRecordId;
+		const id = s.panelRecordId;
 		if (!id) return;
-		const index = recordGrid?.rowIndex(id) ?? -1;
-		panelRecordId = null;
-		selectedRecord = null;
-		selectedRecordLinks = [];
-		selectedRecordChildren = [];
+		const index = s.recordGrid?.rowIndex(id) ?? -1;
+		s.panelRecordId = null;
+		s.selectedRecord = null;
+		s.selectedRecordLinks = [];
+		s.selectedRecordChildren = [];
 		announce($t('forms.recordPanel.announceClosed'));
-		void recordUrlWrite.then(() => {
-			if (panelHistoryDepth > 0) {
-				history.go(-panelHistoryDepth);
-				panelHistoryDepth = 0;
+		void s.recordUrlWrite.then(() => {
+			if (s.panelHistoryDepth > 0) {
+				history.go(-s.panelHistoryDepth);
+				s.panelHistoryDepth = 0;
 			} else void setRecordUrl(null, 'replace');
 		});
 		if (!restoreFocus) return;
-		pendingRowFocus = id;
+		s.pendingRowFocus = id;
 		void tick().then(() => {
-			if (recordGrid && viewRecords.some((record) => record.id === id)) recordGrid.focusRow(id);
-			else if (recordGrid) recordGrid.focusIndex(Math.max(index, 0));
+			if (s.recordGrid && viewRecords.some((record) => record.id === id)) s.recordGrid.focusRow(id);
+			else if (s.recordGrid) s.recordGrid.focusIndex(Math.max(index, 0));
 			else document.querySelector<HTMLElement>(`[data-record-open="${CSS.escape(id)}"]`)?.focus();
 		});
 	}
 
-	// Closing can navigate (history.back); focus the row again once that navigation settles.
-	let pendingRowFocus: string | null = null;
 	afterNavigate(() => {
-		const id = pendingRowFocus;
-		pendingRowFocus = null;
-		if (id && !panelRecordId && document.activeElement === document.body) recordGrid?.focusRow(id);
+		const id = s.pendingRowFocus;
+		s.pendingRowFocus = null;
+		if (id && !s.panelRecordId && document.activeElement === document.body)
+			s.recordGrid?.focusRow(id);
 	});
 
 	function stepRecordPanel(delta: 1 | -1) {
@@ -9066,17 +8423,17 @@
 	// Back / Forward open and close the panel; the panel's own writes never reach this branch.
 	$effect(() => {
 		const id = detailUrlRecordId;
-		if (!formsSessionReady || formsSessionActivating || !selectedFormId) return;
+		if (!s.formsSessionReady || s.formsSessionActivating || !s.selectedFormId) return;
 		untrack(() => {
-			if (id && id !== panelRecordId) {
-				panelHistoryDepth = Math.max(0, panelHistoryDepth - 1);
+			if (id && id !== s.panelRecordId) {
+				s.panelHistoryDepth = Math.max(0, s.panelHistoryDepth - 1);
 				void openRecordPanel(id, 'none');
-			} else if (!id && panelRecordId) {
-				panelHistoryDepth = 0;
-				const closing = panelRecordId;
-				panelRecordId = null;
-				selectedRecord = null;
-				void tick().then(() => recordGrid?.focusRow(closing));
+			} else if (!id && s.panelRecordId) {
+				s.panelHistoryDepth = 0;
+				const closing = s.panelRecordId;
+				s.panelRecordId = null;
+				s.selectedRecord = null;
+				void tick().then(() => s.recordGrid?.focusRow(closing));
 			}
 		});
 	});
@@ -9119,15 +8476,15 @@
 	async function exportCurrentView() {
 		if (!selectedForm) return;
 
-		exportingRecords = true;
+		s.exportingRecords = true;
 
 		const response = await formsApi.exportRecords(selectedForm.id, {
-			view_id: selectedViewId || undefined,
-			columns: selectedViewId ? undefined : visibleFields.map((field) => field.key),
+			view_id: s.selectedViewId || undefined,
+			columns: s.selectedViewId ? undefined : visibleFields.map((field) => field.key),
 			format: 'csv'
 		});
 
-		exportingRecords = false;
+		s.exportingRecords = false;
 
 		if (response.code !== 0 || !response.data || !response.data.csv) {
 			toast.error(response.message || $t('forms.exportFailed'));
@@ -9151,15 +8508,15 @@
 	async function exportCurrentViewJson() {
 		if (!selectedForm) return;
 
-		exportingRecords = true;
+		s.exportingRecords = true;
 
 		const response = await formsApi.exportRecords(selectedForm.id, {
-			view_id: selectedViewId || undefined,
-			columns: selectedViewId ? undefined : visibleFields.map((field) => field.key),
+			view_id: s.selectedViewId || undefined,
+			columns: s.selectedViewId ? undefined : visibleFields.map((field) => field.key),
 			format: 'json'
 		});
 
-		exportingRecords = false;
+		s.exportingRecords = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message || $t('forms.exportFailed'));
@@ -9179,7 +8536,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedCurrentViewJsonRecordCount = response.data.rows.length;
+		s.exportedCurrentViewJsonRecordCount = response.data.rows.length;
 		toast.success($t('forms.recordsJsonExported'));
 	}
 
@@ -9211,7 +8568,7 @@
 		const manifest = {
 			form_id: selectedForm.id,
 			form_key: selectedForm.key,
-			view_id: selectedViewId || null,
+			view_id: s.selectedViewId || null,
 			view_name: selectedView?.name ?? null,
 			exported_at: new Date().toISOString(),
 			record_count: viewRecords.length,
@@ -9231,7 +8588,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedAttachmentManifestCount = attachments.length;
+		s.exportedAttachmentManifestCount = attachments.length;
 		toast.success($t('forms.attachmentManifestExported'));
 	}
 
@@ -9243,11 +8600,11 @@
 		);
 		const recordIds = new Set(viewRecords.map((record) => record.id));
 
-		exportingRecords = true;
+		s.exportingRecords = true;
 
 		const metadataResponse = await formsApi.listAttachments(selectedForm.id, { per_page: 200 });
 
-		exportingRecords = false;
+		s.exportingRecords = false;
 
 		if (metadataResponse.code !== 0 || !metadataResponse.data) {
 			toast.error(metadataResponse.message || $t('forms.exportFailed'));
@@ -9347,7 +8704,7 @@
 		return {
 			form_id: selectedForm.id,
 			form_key: selectedForm.key,
-			view_id: selectedViewId || null,
+			view_id: s.selectedViewId || null,
 			view_name: selectedView?.name ?? null,
 			exported_at: new Date().toISOString(),
 			record_count: viewRecords.length,
@@ -9374,7 +8731,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedAttachmentBundleCount = bundle.attachments.length;
+		s.exportedAttachmentBundleCount = bundle.attachments.length;
 		toast.success($t('forms.attachmentBundleExported'));
 	}
 
@@ -9442,8 +8799,8 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedAttachmentPackageCount = bundle.attachments.length;
-		exportedAttachmentPackageFileCount = packagedFiles.length;
+		s.exportedAttachmentPackageCount = bundle.attachments.length;
+		s.exportedAttachmentPackageFileCount = packagedFiles.length;
 		toast.success($t('forms.attachmentPackageExported'));
 	}
 
@@ -9606,35 +8963,35 @@
 	}
 
 	function openImportRecords() {
-		importText = sampleImportText();
-		importRows = [];
-		importPreview = null;
-		importWizardStep = 'source';
-		exportedImportTemplate = false;
-		importedImportFileName = '';
-		importedImportFileLoaded = false;
+		s.importText = sampleImportText();
+		s.importRows = [];
+		s.importPreview = null;
+		s.importWizardStep = 'source';
+		s.exportedImportTemplate = false;
+		s.importedImportFileName = '';
+		s.importedImportFileLoaded = false;
 		refreshImportMappingFromText();
-		showImportRecords = true;
+		s.showImportRecords = true;
 	}
 
 	function closeImportRecords() {
-		showImportRecords = false;
-		importPreview = null;
-		importWizardStep = 'source';
+		s.showImportRecords = false;
+		s.importPreview = null;
+		s.importWizardStep = 'source';
 	}
 
 	function resetImportPreviewForSourceChange() {
-		importRows = [];
-		importPreview = null;
-		importWizardStep = 'source';
+		s.importRows = [];
+		s.importPreview = null;
+		s.importWizardStep = 'source';
 	}
 
 	function continueImportFromSource() {
 		refreshImportMappingFromText();
-		importPreview = null;
+		s.importPreview = null;
 
-		if (importMappingHeaders.length > 0) {
-			importWizardStep = 'mapping';
+		if (s.importMappingHeaders.length > 0) {
+			s.importWizardStep = 'mapping';
 
 			return;
 		}
@@ -9643,7 +9000,7 @@
 	}
 
 	function continueImportFromMapping() {
-		if (importMappingHeaders.length > 0 && !importMappingApplied) {
+		if (s.importMappingHeaders.length > 0 && !s.importMappingApplied) {
 			applyImportMapping();
 		}
 
@@ -9692,7 +9049,7 @@
 		anchor.click();
 		anchor.remove();
 		URL.revokeObjectURL(url);
-		exportedImportTemplate = true;
+		s.exportedImportTemplate = true;
 		toast.success($t('forms.importTemplateExported'));
 	}
 
@@ -9703,10 +9060,10 @@
 		if (!file) return;
 
 		try {
-			importText = await file.text();
+			s.importText = await file.text();
 			resetImportPreviewForSourceChange();
-			importedImportFileName = file.name;
-			importedImportFileLoaded = true;
+			s.importedImportFileName = file.name;
+			s.importedImportFileLoaded = true;
 			refreshImportMappingFromText();
 			toast.success($t('forms.importFileLoaded', { values: { name: file.name } }));
 		} catch {
@@ -9717,7 +9074,7 @@
 	}
 
 	function refreshImportMappingFromText() {
-		const trimmed = importText.trim();
+		const trimmed = s.importText.trim();
 
 		if (!trimmed || trimmed.startsWith('[')) {
 			resetImportMappingState();
@@ -9728,24 +9085,24 @@
 		const headers = parseCsvLines(trimmed)[0]?.map((header) => header.trim()) ?? [];
 		const savedTemplate = readImportMappingTemplate(headers);
 
-		importMappingHeaders = headers;
-		importMappingSelections =
+		s.importMappingHeaders = headers;
+		s.importMappingSelections =
 			savedTemplate?.selections ?? headers.map((header) => defaultImportMappingSelection(header));
-		importMappingTransforms = savedTemplate?.transforms ?? headers.map(() => 'trim');
-		importMappingApplied = false;
-		importMappingTemplateAvailable = Boolean(savedTemplate);
-		importMappingTemplateSaved = false;
-		importMappingTemplateRestored = Boolean(savedTemplate);
+		s.importMappingTransforms = savedTemplate?.transforms ?? headers.map(() => 'trim');
+		s.importMappingApplied = false;
+		s.importMappingTemplateAvailable = Boolean(savedTemplate);
+		s.importMappingTemplateSaved = false;
+		s.importMappingTemplateRestored = Boolean(savedTemplate);
 	}
 
 	function resetImportMappingState() {
-		importMappingHeaders = [];
-		importMappingSelections = [];
-		importMappingTransforms = [];
-		importMappingApplied = false;
-		importMappingTemplateAvailable = false;
-		importMappingTemplateSaved = false;
-		importMappingTemplateRestored = false;
+		s.importMappingHeaders = [];
+		s.importMappingSelections = [];
+		s.importMappingTransforms = [];
+		s.importMappingApplied = false;
+		s.importMappingTemplateAvailable = false;
+		s.importMappingTemplateSaved = false;
+		s.importMappingTemplateRestored = false;
 	}
 
 	function defaultImportMappingSelection(header: string): string {
@@ -9754,7 +9111,7 @@
 		return fieldForImportHeader(header)?.key ?? '__skip';
 	}
 
-	function importMappingTemplateKey(headers = importMappingHeaders): string {
+	function importMappingTemplateKey(headers = s.importMappingHeaders): string {
 		if (!selectedForm || headers.length === 0) return '';
 
 		return `openpr:forms:import-mapping:${selectedForm.id}:${headers.join('\u001f')}`;
@@ -9783,7 +9140,7 @@
 	}
 
 	function readImportMappingTemplate(
-		headers = importMappingHeaders
+		headers = s.importMappingHeaders
 	): { selections: string[]; transforms: ImportMappingTransform[] } | null {
 		if (typeof window === 'undefined') return null;
 
@@ -9827,16 +9184,16 @@
 
 		const key = importMappingTemplateKey();
 
-		if (!key || importMappingHeaders.length === 0) {
+		if (!key || s.importMappingHeaders.length === 0) {
 			toast.error($t('forms.importMappingTemplateUnavailable'));
 
 			return;
 		}
 
-		const selections = importMappingSelections.map((selection) =>
+		const selections = s.importMappingSelections.map((selection) =>
 			isValidImportMappingSelection(selection) ? selection : '__skip'
 		);
-		const transforms = importMappingTransforms.map((transform) =>
+		const transforms = s.importMappingTransforms.map((transform) =>
 			isValidImportMappingTransform(transform) ? transform : 'trim'
 		);
 
@@ -9844,18 +9201,18 @@
 			key,
 			JSON.stringify({
 				form_id: selectedForm?.id,
-				headers: importMappingHeaders,
+				headers: s.importMappingHeaders,
 				selections,
 				transforms,
 				updated_at: new Date().toISOString()
 			})
 		);
 
-		importMappingSelections = selections;
-		importMappingTransforms = transforms;
-		importMappingTemplateAvailable = true;
-		importMappingTemplateSaved = true;
-		importMappingTemplateRestored = false;
+		s.importMappingSelections = selections;
+		s.importMappingTransforms = transforms;
+		s.importMappingTemplateAvailable = true;
+		s.importMappingTemplateSaved = true;
+		s.importMappingTemplateRestored = false;
 		toast.success($t('forms.importMappingTemplateSaved'));
 	}
 
@@ -9868,28 +9225,28 @@
 			return;
 		}
 
-		importMappingSelections = savedTemplate.selections;
-		importMappingTransforms = savedTemplate.transforms;
-		importMappingApplied = false;
-		importMappingTemplateAvailable = true;
-		importMappingTemplateRestored = true;
+		s.importMappingSelections = savedTemplate.selections;
+		s.importMappingTransforms = savedTemplate.transforms;
+		s.importMappingApplied = false;
+		s.importMappingTemplateAvailable = true;
+		s.importMappingTemplateRestored = true;
 		toast.success($t('forms.importMappingTemplateRestored'));
 	}
 
 	function applyImportMapping() {
-		const lines = parseCsvLines(importText.trim());
+		const lines = parseCsvLines(s.importText.trim());
 
-		if (lines.length < 2 || importMappingHeaders.length === 0) {
+		if (lines.length < 2 || s.importMappingHeaders.length === 0) {
 			toast.error($t('forms.importNeedsRows'));
 
 			return;
 		}
 
-		const selectedColumns = importMappingSelections
+		const selectedColumns = s.importMappingSelections
 			.map((selection, index) => ({
 				selection,
 				index,
-				transform: importMappingTransforms[index] ?? 'trim'
+				transform: s.importMappingTransforms[index] ?? 'trim'
 			}))
 			.filter((column) => column.selection !== '__skip');
 
@@ -9912,11 +9269,11 @@
 				)
 		];
 
-		importText = remappedRows.map((row) => row.map(csvCell).join(',')).join('\n');
-		importRows = [];
-		importPreview = null;
-		importMappingApplied = true;
-		importWizardStep = 'mapping';
+		s.importText = remappedRows.map((row) => row.map(csvCell).join(',')).join('\n');
+		s.importRows = [];
+		s.importPreview = null;
+		s.importMappingApplied = true;
+		s.importWizardStep = 'mapping';
 		toast.success($t('forms.importMappingApplied'));
 	}
 
@@ -9951,7 +9308,7 @@
 	}
 
 	function parseImportRowsFromText(): FormRecordImportRow[] {
-		const trimmed = importText.trim();
+		const trimmed = s.importText.trim();
 
 		if (!trimmed) throw new Error($t('forms.importEmpty'));
 
@@ -10122,11 +9479,11 @@
 			return;
 		}
 
-		importPreviewing = true;
+		s.importPreviewing = true;
 
 		const response = await formsApi.previewImportRecords(selectedForm.id, rows);
 
-		importPreviewing = false;
+		s.importPreviewing = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message || $t('forms.importFailed'));
@@ -10134,20 +9491,20 @@
 			return;
 		}
 
-		importRows = rows;
-		importPreview = response.data;
-		importWizardStep = 'preview';
+		s.importRows = rows;
+		s.importPreview = response.data;
+		s.importWizardStep = 'preview';
 		toast.success($t('forms.importPreviewReady'));
 	}
 
 	async function commitImportRecords() {
-		if (!selectedForm || importRows.length === 0) return;
+		if (!selectedForm || s.importRows.length === 0) return;
 
-		importingRecords = true;
+		s.importingRecords = true;
 
-		const response = await formsApi.importRecords(selectedForm.id, importRows);
+		const response = await formsApi.importRecords(selectedForm.id, s.importRows);
 
-		importingRecords = false;
+		s.importingRecords = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message || $t('forms.importFailed'));
@@ -10155,27 +9512,27 @@
 			return;
 		}
 
-		importPreview = response.data;
+		s.importPreview = response.data;
 
 		if (response.data.invalid_rows > 0) {
-			importWizardStep = 'preview';
+			s.importWizardStep = 'preview';
 			toast.error($t('forms.importHasInvalidRows'));
 
 			return;
 		}
 
-		importWizardStep = 'commit';
-		showImportRecords = false;
+		s.importWizardStep = 'commit';
+		s.showImportRecords = false;
 		await loadRecords();
 		toast.success($t('forms.recordsImported', { values: { count: response.data.created_count } }));
 	}
 
 	function relationTargetOptions(field: FormField): FormRelationTarget[] {
-		return relationTargets[field.key] ?? [];
+		return s.relationTargets[field.key] ?? [];
 	}
 
 	function relationDraftValue(field: FormField): string {
-		const value = recordDraft[field.key];
+		const value = s.recordDraft[field.key];
 
 		if (typeof value === 'string') return value;
 		if (isRecord(value) && typeof value.record_id === 'string') return value.record_id;
@@ -10183,58 +9540,8 @@
 		return '';
 	}
 
-	function blankFieldDraft(): FieldDraft {
-		return {
-			field_id: undefined,
-			key: '',
-			label: '',
-			type: 'text',
-			required: false,
-			optionsText: '',
-			optionColorsText: '',
-			optionDisabledText: '',
-			optionArchivedText: '',
-			optionDescriptionsText: '',
-			optionGroupsText: '',
-			currency: 'CNY',
-			scale: '2',
-			placeholder: '',
-			helpText: '',
-			defaultValue: '',
-			validationMin: '',
-			validationMax: '',
-			validationPattern: '',
-			validationMaxLength: '',
-			listVisible: true,
-			detailVisible: true,
-			conditionalHiddenWhenText: '',
-			conditionalReadOnlyWhenText: '',
-			readOnly: false,
-			formulaOp: 'add',
-			formulaArgsText: '',
-			formulaScale: '2',
-			formulaRelationKey: '',
-			formulaChildField: '',
-			relationTargetType: 'form_record',
-			relationFormKey: '',
-			relationKey: 'related',
-			relationType: 'relation',
-			relationDisplayField: '',
-			attachmentAcceptText: '',
-			attachmentMaxSizeMb: '',
-			attachmentMultiple: false,
-			attachmentPreview: true,
-			attachmentThumbnailFormat: 'png',
-			attachmentPreviewFormat: 'png',
-			attachmentVariantsText: '',
-			attachmentStoragePolicy: 'local',
-			attachmentRetentionDays: '',
-			attachmentSignedUrlTtlMinutes: '10'
-		};
-	}
-
 	function resetFormDraft() {
-		formDraft = {
+		s.formDraft = {
 			key: '',
 			name: '',
 			description: '',
@@ -10242,8 +9549,8 @@
 			schemaText: JSON.stringify({ version: 'openpr.form.schema.v1', fields: [] }, null, 2)
 		};
 
-		fieldDrafts = [blankFieldDraft()];
-		showAdvancedSchema = false;
+		s.fieldDrafts = [blankFieldDraft()];
+		s.showAdvancedSchema = false;
 	}
 
 	function normalizeTemplateSchema(schema: Record<string, unknown>): Record<string, unknown> {
@@ -10278,7 +9585,7 @@
 	function applyScenarioTemplate(template: ScenarioTemplate) {
 		const schema = normalizeTemplateSchema(template.field_schema);
 
-		formDraft = {
+		s.formDraft = {
 			key: templateFormKey(template),
 			name: scenarioTemplateName(template, $t),
 			description: scenarioTemplateDescription(template, $t),
@@ -10286,21 +9593,21 @@
 			schemaText: JSON.stringify(schema, null, 2)
 		};
 
-		fieldDrafts = fieldDraftsFromSchema(schema);
-		showAdvancedSchema = false;
+		s.fieldDrafts = fieldDraftsFromSchema(schema);
+		s.showAdvancedSchema = false;
 		toast.success($t('forms.templateApplied'));
 	}
 
 	function uniqueTemplateKey(template: ScenarioTemplate): string {
 		const base = templateFormKey(template);
 
-		if (!forms.some((form) => form.key === base)) return base;
+		if (!s.forms.some((form) => form.key === base)) return base;
 
 		return `${base}_${Date.now().toString(36)}`;
 	}
 
 	async function installScenarioTemplate(template: ScenarioTemplate) {
-		installingTemplateKey = template.key;
+		s.installingTemplateKey = template.key;
 
 		const schema = normalizeTemplateSchema(template.field_schema);
 
@@ -10312,7 +9619,7 @@
 			title_template: templateTitleTemplate(schema)
 		});
 
-		installingTemplateKey = null;
+		s.installingTemplateKey = null;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -10320,12 +9627,12 @@
 			return;
 		}
 
-		forms = [response.data, ...forms.filter((form) => form.id !== response.data?.id)];
+		s.forms = [response.data, ...s.forms.filter((form) => form.id !== response.data?.id)];
 
-		showCreateForm = false;
+		s.showCreateForm = false;
 		toast.success($t('forms.templateInstalled'));
 		await openForm(response.data.id);
-		activeMode = 'design';
+		s.activeMode = 'design';
 		void loadDesignerSafety(response.data);
 	}
 
@@ -10413,7 +9720,7 @@
 	}
 
 	function buildSchemaFromDrafts(
-		drafts: FieldDraft[] = fieldDrafts,
+		drafts: FieldDraft[] = s.fieldDrafts,
 		syncFormDraft = true
 	): Record<string, unknown> {
 		const fields = drafts
@@ -10668,7 +9975,7 @@
 
 		const schema = { version: 'openpr.form.schema.v1', fields: schemaFields };
 
-		if (syncFormDraft) formDraft.schemaText = JSON.stringify(schema, null, 2);
+		if (syncFormDraft) s.formDraft.schemaText = JSON.stringify(schema, null, 2);
 
 		return schema;
 	}
@@ -10806,29 +10113,6 @@
 			})
 			.filter((variant) => /^[a-z0-9_-]{1,32}$/.test(variant.kind));
 	}
-
-	type FieldConditionOperator =
-		| 'equals'
-		| 'not_equals'
-		| 'contains'
-		| 'not_contains'
-		| 'is_empty'
-		| 'not_empty'
-		| 'gt'
-		| 'gte'
-		| 'lt'
-		| 'lte';
-
-	type FieldConditionItem = {
-		field: string;
-		equals?: string;
-		operator?: FieldConditionOperator;
-		value?: string;
-	};
-
-	type FieldConditionDraft =
-		| FieldConditionItem
-		| { logic: 'all' | 'any'; conditions: FieldConditionItem[] };
 
 	function normalizeFieldConditionOperator(value: string): FieldConditionOperator | null {
 		const normalized = value.trim().toLowerCase();
@@ -11171,68 +10455,68 @@
 	}
 
 	function addFieldDraft() {
-		fieldDrafts = [...fieldDrafts, blankFieldDraft()];
+		s.fieldDrafts = [...s.fieldDrafts, blankFieldDraft()];
 	}
 
 	function removeFieldDraft(index: number) {
-		fieldDrafts =
-			fieldDrafts.length > 1
-				? fieldDrafts.filter((_, itemIndex) => itemIndex !== index)
+		s.fieldDrafts =
+			s.fieldDrafts.length > 1
+				? s.fieldDrafts.filter((_, itemIndex) => itemIndex !== index)
 				: [blankFieldDraft()];
 	}
 
 	function syncDesignerDrafts(form: UniversalForm | null = selectedForm) {
 		if (!form) {
-			designerFieldDrafts = [];
-			designerFieldUsage = [];
-			designerFieldDependencies = [];
-			designerSyncedFormId = '';
-			selectedDesignerFieldIndex = 0;
+			s.designerFieldDrafts = [];
+			s.designerFieldUsage = [];
+			s.designerFieldDependencies = [];
+			s.designerSyncedFormId = '';
+			s.selectedDesignerFieldIndex = 0;
 
 			return;
 		}
 
-		if (designerSyncedFormId === form.id) return;
+		if (s.designerSyncedFormId === form.id) return;
 
-		designerFieldDrafts = fieldDraftsFromSchema(form.schema);
-		designerSyncedFormId = form.id;
-		selectedDesignerFieldIndex = 0;
+		s.designerFieldDrafts = fieldDraftsFromSchema(form.schema);
+		s.designerSyncedFormId = form.id;
+		s.selectedDesignerFieldIndex = 0;
 	}
 
 	async function loadDesignerSafety(form: UniversalForm | null = selectedForm) {
 		if (!form) {
-			designerFieldUsage = [];
-			designerFieldDependencies = [];
+			s.designerFieldUsage = [];
+			s.designerFieldDependencies = [];
 
 			return;
 		}
 
-		designerUsageLoading = true;
+		s.designerUsageLoading = true;
 
 		const [usageResponse, dependencyResponse] = await Promise.all([
 			formsApi.getFieldUsage(form.id),
 			formsApi.getFieldDependencies(form.id)
 		]);
 
-		designerUsageLoading = false;
+		s.designerUsageLoading = false;
 
 		if (usageResponse.code !== 0) {
-			designerFieldUsage = [];
+			s.designerFieldUsage = [];
 			toast.error(usageResponse.message);
 		} else {
-			designerFieldUsage = usageResponse.data?.fields ?? [];
+			s.designerFieldUsage = usageResponse.data?.fields ?? [];
 		}
 
 		if (dependencyResponse.code !== 0) {
-			designerFieldDependencies = [];
+			s.designerFieldDependencies = [];
 			toast.error(dependencyResponse.message);
 		} else {
-			designerFieldDependencies = dependencyResponse.data?.dependencies ?? [];
+			s.designerFieldDependencies = dependencyResponse.data?.dependencies ?? [];
 		}
 	}
 
 	function blockingDependenciesForField(field: FieldDraft): FormFieldDependency[] {
-		return designerFieldDependencies.filter(
+		return s.designerFieldDependencies.filter(
 			(dependency) =>
 				dependency.blocking &&
 				((field.field_id && dependency.field_id === field.field_id) ||
@@ -11246,7 +10530,7 @@
 
 	function usageForSchemaField(field: FormField | FieldDraft): FormFieldUsage | null {
 		return (
-			designerFieldUsage.find(
+			s.designerFieldUsage.find(
 				(usage) =>
 					(field.field_id && usage.field_id === field.field_id) || usage.field_key === field.key
 			) ?? null
@@ -11254,7 +10538,7 @@
 	}
 
 	function dependenciesForSchemaField(field: FormField | FieldDraft): FormFieldDependency[] {
-		return designerFieldDependencies.filter(
+		return s.designerFieldDependencies.filter(
 			(dependency) =>
 				(field.field_id && dependency.field_id === field.field_id) ||
 				dependency.field_key === field.key
@@ -11332,9 +10616,9 @@
 	}
 
 	function closeDesignerConfirm() {
-		designerConfirmOpen = false;
-		pendingDesignerSchema = null;
-		pendingDesignerChanges = [];
+		s.designerConfirmOpen = false;
+		s.pendingDesignerSchema = null;
+		s.pendingDesignerChanges = [];
 	}
 
 	function addDesignerField(type: FormFieldType = 'text') {
@@ -11345,14 +10629,14 @@
 			label: $t(`forms.fieldTypes.${type}`)
 		};
 
-		designerFieldDrafts = [...designerFieldDrafts, field];
-		selectedDesignerFieldIndex = designerFieldDrafts.length - 1;
+		s.designerFieldDrafts = [...s.designerFieldDrafts, field];
+		s.selectedDesignerFieldIndex = s.designerFieldDrafts.length - 1;
 	}
 
 	function nextDesignerFieldKey(type: FormFieldType): string {
 		const base = type.replaceAll('-', '_');
-		const used = new Set(designerFieldDrafts.map((field) => field.key));
-		let index = designerFieldDrafts.length + 1;
+		const used = new Set(s.designerFieldDrafts.map((field) => field.key));
+		let index = s.designerFieldDrafts.length + 1;
 		let key = `${base}_${index}`;
 
 		while (used.has(key)) {
@@ -11364,13 +10648,13 @@
 	}
 
 	function updateDesignerField(index: number, patch: Partial<FieldDraft>) {
-		designerFieldDrafts = designerFieldDrafts.map((field, itemIndex) =>
+		s.designerFieldDrafts = s.designerFieldDrafts.map((field, itemIndex) =>
 			itemIndex === index ? { ...field, ...patch } : field
 		);
 	}
 
 	function duplicateDesignerField(index: number) {
-		const field = designerFieldDrafts[index];
+		const field = s.designerFieldDrafts[index];
 
 		if (!field) return;
 
@@ -11381,19 +10665,19 @@
 			label: `${field.label || field.key} ${$t('forms.copySuffix')}`
 		};
 
-		designerFieldDrafts = [
-			...designerFieldDrafts.slice(0, index + 1),
+		s.designerFieldDrafts = [
+			...s.designerFieldDrafts.slice(0, index + 1),
 			duplicate,
-			...designerFieldDrafts.slice(index + 1)
+			...s.designerFieldDrafts.slice(index + 1)
 		];
 
-		selectedDesignerFieldIndex = index + 1;
+		s.selectedDesignerFieldIndex = index + 1;
 	}
 
 	function removeDesignerField(index: number) {
-		if (designerFieldDrafts.length <= 1) return;
+		if (s.designerFieldDrafts.length <= 1) return;
 
-		const field = designerFieldDrafts[index];
+		const field = s.designerFieldDrafts[index];
 
 		if (field && blockingDependenciesForField(field).length > 0) {
 			toast.error($t('forms.deleteBlockedByDependencies'));
@@ -11401,20 +10685,20 @@
 			return;
 		}
 
-		designerFieldDrafts = designerFieldDrafts.filter((_, itemIndex) => itemIndex !== index);
-		selectedDesignerFieldIndex = Math.max(0, Math.min(index, designerFieldDrafts.length - 1));
+		s.designerFieldDrafts = s.designerFieldDrafts.filter((_, itemIndex) => itemIndex !== index);
+		s.selectedDesignerFieldIndex = Math.max(0, Math.min(index, s.designerFieldDrafts.length - 1));
 	}
 
 	function moveDesignerField(index: number, direction: -1 | 1) {
 		const nextIndex = index + direction;
 
-		if (nextIndex < 0 || nextIndex >= designerFieldDrafts.length) return;
+		if (nextIndex < 0 || nextIndex >= s.designerFieldDrafts.length) return;
 
-		const next = [...designerFieldDrafts];
+		const next = [...s.designerFieldDrafts];
 
 		[next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-		designerFieldDrafts = next;
-		selectedDesignerFieldIndex = nextIndex;
+		s.designerFieldDrafts = next;
+		s.selectedDesignerFieldIndex = nextIndex;
 	}
 
 	async function saveDesignerSchema() {
@@ -11423,19 +10707,19 @@
 		let schema: Record<string, unknown>;
 
 		try {
-			schema = buildSchemaFromDrafts(designerFieldDrafts, false);
+			schema = buildSchemaFromDrafts(s.designerFieldDrafts, false);
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : $t('forms.invalidSchema'));
 
 			return;
 		}
 
-		const changes = collectDesignerSchemaChanges(designerFieldDrafts);
+		const changes = collectDesignerSchemaChanges(s.designerFieldDrafts);
 
 		if (changes.length > 0) {
-			pendingDesignerSchema = schema;
-			pendingDesignerChanges = changes;
-			designerConfirmOpen = true;
+			s.pendingDesignerSchema = schema;
+			s.pendingDesignerChanges = changes;
+			s.designerConfirmOpen = true;
 
 			return;
 		}
@@ -11444,27 +10728,27 @@
 	}
 
 	async function confirmDesignerSchemaSave() {
-		if (!pendingDesignerSchema) return;
+		if (!s.pendingDesignerSchema) return;
 
-		const schema = pendingDesignerSchema;
+		const schema = s.pendingDesignerSchema;
 
-		designerConfirmOpen = false;
-		pendingDesignerSchema = null;
-		pendingDesignerChanges = [];
+		s.designerConfirmOpen = false;
+		s.pendingDesignerSchema = null;
+		s.pendingDesignerChanges = [];
 		await persistDesignerSchema(schema);
 	}
 
 	async function persistDesignerSchema(schema: Record<string, unknown>) {
 		if (!selectedForm) return;
 
-		designerSaving = true;
+		s.designerSaving = true;
 
 		const response = await formsApi.update(selectedForm.id, {
 			schema,
-			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
+			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
-		designerSaving = false;
+		s.designerSaving = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -11472,16 +10756,16 @@
 			return;
 		}
 
-		forms = forms.map((form) => (form.id === response.data?.id ? response.data : form));
-		designerSyncedFormId = '';
+		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
+		s.designerSyncedFormId = '';
 		syncDesignerDrafts(response.data);
-		detailHeaderSyncedFingerprint = '';
+		s.detailHeaderSyncedFingerprint = '';
 		syncDetailHeaderDraft(response.data);
-		detailHighlightSyncedFingerprint = '';
+		s.detailHighlightSyncedFingerprint = '';
 		syncDetailHighlightDraft(response.data);
-		detailPageCompositionSyncedFingerprint = '';
+		s.detailPageCompositionSyncedFingerprint = '';
 		syncDetailPageCompositionDraft(response.data);
-		detailLayoutSectionSyncedFingerprint = '';
+		s.detailLayoutSectionSyncedFingerprint = '';
 		syncDetailLayoutSectionDrafts(response.data);
 		await loadDesignerSafety(response.data);
 		toast.success($t('forms.designSaved'));
@@ -11491,20 +10775,20 @@
 	async function saveDetailHeader() {
 		if (!selectedForm) return;
 
-		detailHeaderSaving = true;
+		s.detailHeaderSaving = true;
 
 		const response = await formsApi.update(selectedForm.id, {
 			detail_layout: {
 				...(selectedForm.detail_layout ?? {}),
 				header: {
-					subtitle_field: detailHeaderDraft.subtitleField || undefined,
-					badge_field: detailHeaderDraft.badgeField || undefined
+					subtitle_field: s.detailHeaderDraft.subtitleField || undefined,
+					badge_field: s.detailHeaderDraft.badgeField || undefined
 				}
 			},
-			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
+			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
-		detailHeaderSaving = false;
+		s.detailHeaderSaving = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -11512,8 +10796,8 @@
 			return;
 		}
 
-		forms = forms.map((form) => (form.id === response.data?.id ? response.data : form));
-		detailHeaderSyncedFingerprint = '';
+		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
+		s.detailHeaderSyncedFingerprint = '';
 		syncDetailHeaderDraft(response.data);
 		toast.success($t('forms.detailHeaderSaved'));
 	}
@@ -11521,17 +10805,17 @@
 	async function saveDetailHighlights() {
 		if (!selectedForm) return;
 
-		detailHighlightSaving = true;
+		s.detailHighlightSaving = true;
 
 		const response = await formsApi.update(selectedForm.id, {
 			detail_layout: {
 				...(selectedForm.detail_layout ?? {}),
-				highlights: detailHighlightDraft.fields
+				highlights: s.detailHighlightDraft.fields
 			},
-			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
+			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
-		detailHighlightSaving = false;
+		s.detailHighlightSaving = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -11539,8 +10823,8 @@
 			return;
 		}
 
-		forms = forms.map((form) => (form.id === response.data?.id ? response.data : form));
-		detailHighlightSyncedFingerprint = '';
+		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
+		s.detailHighlightSyncedFingerprint = '';
 		syncDetailHighlightDraft(response.data);
 		toast.success($t('forms.detailHighlightsSaved'));
 	}
@@ -11548,21 +10832,21 @@
 	async function saveDetailPageComposition() {
 		if (!selectedForm) return;
 
-		detailPageCompositionSaving = true;
+		s.detailPageCompositionSaving = true;
 
 		const response = await formsApi.update(selectedForm.id, {
 			detail_layout: {
 				...(selectedForm.detail_layout ?? {}),
 				page: {
 					...(isRecord(selectedForm.detail_layout?.page) ? selectedForm.detail_layout.page : {}),
-					widget_region: detailPageCompositionDraft.widgetRegion,
-					field_columns: detailPageCompositionDraft.fieldColumns
+					widget_region: s.detailPageCompositionDraft.widgetRegion,
+					field_columns: s.detailPageCompositionDraft.fieldColumns
 				}
 			},
-			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
+			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
-		detailPageCompositionSaving = false;
+		s.detailPageCompositionSaving = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -11570,8 +10854,8 @@
 			return;
 		}
 
-		forms = forms.map((form) => (form.id === response.data?.id ? response.data : form));
-		detailPageCompositionSyncedFingerprint = '';
+		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
+		s.detailPageCompositionSyncedFingerprint = '';
 		syncDetailPageCompositionDraft(response.data);
 		toast.success($t('forms.detailPageCompositionSaved'));
 	}
@@ -11579,16 +10863,16 @@
 	async function saveDetailLayoutSections() {
 		if (!selectedForm) return;
 
-		const sections = detailLayoutSectionPayload(detailLayoutSectionDrafts);
+		const sections = detailLayoutSectionPayload(s.detailLayoutSectionDrafts);
 
-		detailLayoutSectionSaving = true;
+		s.detailLayoutSectionSaving = true;
 
 		const response = await formsApi.update(selectedForm.id, {
 			detail_layout: { ...(selectedForm.detail_layout ?? {}), sections },
-			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
+			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
-		detailLayoutSectionSaving = false;
+		s.detailLayoutSectionSaving = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -11596,8 +10880,8 @@
 			return;
 		}
 
-		forms = forms.map((form) => (form.id === response.data?.id ? response.data : form));
-		detailLayoutSectionSyncedFingerprint = '';
+		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
+		s.detailLayoutSectionSyncedFingerprint = '';
 		syncDetailLayoutSectionDrafts(response.data);
 		toast.success($t('forms.detailLayoutSectionsSaved'));
 	}
@@ -11605,17 +10889,17 @@
 	async function persistDetailPageWidgets(entries: DetailPageWidgetEntry[]) {
 		if (!selectedForm) return;
 
-		detailPageWidgetSaving = true;
+		s.detailPageWidgetSaving = true;
 
 		const response = await formsApi.update(selectedForm.id, {
 			detail_layout: {
 				...(selectedForm.detail_layout ?? {}),
 				widgets: detailPageWidgetPayload(entries)
 			},
-			expected_schema_version: formsSessionSchemaVersion ?? selectedForm.schema_version
+			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
 		});
 
-		detailPageWidgetSaving = false;
+		s.detailPageWidgetSaving = false;
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
@@ -11623,7 +10907,7 @@
 			return;
 		}
 
-		forms = forms.map((form) => (form.id === response.data?.id ? response.data : form));
+		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
 		toast.success($t('forms.detailPageWidgetsSaved'));
 	}
 
@@ -11736,11 +11020,11 @@
 	}
 
 	function setDraftValue(fieldKey: string, value: unknown) {
-		recordDraft = { ...recordDraft, [fieldKey]: value };
+		s.recordDraft = { ...s.recordDraft, [fieldKey]: value };
 	}
 
 	function attachmentUrl(field: FormField): string {
-		const value = recordDraft[field.key];
+		const value = s.recordDraft[field.key];
 
 		if (typeof value === 'string') return value.trim();
 		if (isRecord(value) && typeof value.url === 'string') return value.url.trim();
@@ -11839,13 +11123,13 @@
 	}
 
 	function fieldAttachments(fieldKey: string): FormAttachment[] {
-		return recordAttachments.filter(
+		return s.recordAttachments.filter(
 			(attachment) => attachment.field_key === fieldKey && !attachment.archived_at
 		);
 	}
 
 	function attachmentSignedUrl(attachment: FormAttachment): string {
-		return safeLinkUrl(recordAttachmentSignedUrls[attachment.id] || attachment.url);
+		return safeLinkUrl(s.recordAttachmentSignedUrls[attachment.id] || attachment.url);
 	}
 
 	function attachmentThumbnailUrl(attachment: FormAttachment): string {
@@ -11856,7 +11140,7 @@
 		const active = attachments.filter((attachment) => !attachment.archived_at && attachment.url);
 
 		if (active.length === 0) {
-			recordAttachmentSignedUrls = {};
+			s.recordAttachmentSignedUrls = {};
 
 			return;
 		}
@@ -11871,7 +11155,7 @@
 			})
 		);
 
-		recordAttachmentSignedUrls = Object.fromEntries(
+		s.recordAttachmentSignedUrls = Object.fromEntries(
 			entries.filter((entry): entry is [string, string] => Array.isArray(entry))
 		);
 	}
@@ -11885,9 +11169,9 @@
 	}
 
 	function selectedRecordAttachmentUrls(field: FormField): string[] {
-		if (!selectedRecord) return [];
+		if (!s.selectedRecord) return [];
 
-		return attachmentManifestUrls(selectedRecord.values[field.key]);
+		return attachmentManifestUrls(s.selectedRecord.values[field.key]);
 	}
 
 	function selectedRecordAttachmentValueUrls(field: FormField): string[] {
@@ -11920,21 +11204,22 @@
 
 		if (response.code !== 0) {
 			toast.error(response.message);
-			recordAttachments = [];
+			s.recordAttachments = [];
 
 			return;
 		}
 
-		recordAttachments = response.data?.items ?? [];
-		await loadAttachmentSignedUrls(recordAttachments);
+		s.recordAttachments = response.data?.items ?? [];
+		await loadAttachmentSignedUrls(s.recordAttachments);
 	}
 
 	async function syncRecordAttachmentValue(field: FormField, value: string) {
-		if (!editingRecordId) return;
+		if (!s.editingRecordId) return;
 
-		const currentRecord = records.find((record) => record.id === editingRecordId) ?? selectedRecord;
-		const values = { ...(currentRecord?.values ?? recordDraft), [field.key]: value };
-		const response = await updateRecordWithVersion(editingRecordId, {
+		const currentRecord =
+			s.records.find((record) => record.id === s.editingRecordId) ?? s.selectedRecord;
+		const values = { ...(currentRecord?.values ?? s.recordDraft), [field.key]: value };
+		const response = await updateRecordWithVersion(s.editingRecordId, {
 			values,
 			source: { type: 'web', origin: 'attachment' }
 		});
@@ -11946,12 +11231,12 @@
 		}
 
 		replaceLocalRecord(response.data);
-		selectedRecord = response.data;
-		recordDraft = { ...recordDraft, [field.key]: value };
+		s.selectedRecord = response.data;
+		s.recordDraft = { ...s.recordDraft, [field.key]: value };
 	}
 
 	async function createAttachmentForField(field: FormField) {
-		if (!selectedForm || !editingRecordId) {
+		if (!selectedForm || !s.editingRecordId) {
 			toast.error($t('forms.attachmentSaveRecordFirst'));
 
 			return;
@@ -11971,35 +11256,35 @@
 			return;
 		}
 
-		attachmentSubmittingField = field.key;
+		s.attachmentSubmittingField = field.key;
 
 		const fileName = attachmentFileName(url, field);
 
 		const response = await formsApi.createAttachment(selectedForm.id, {
 			field_key: field.key,
-			record_id: editingRecordId,
+			record_id: s.editingRecordId,
 			file_name: fileName,
 			content_type: attachmentContentType(fileName, field),
 			byte_size: 0,
-			storage_key: `form-records/${editingRecordId}/${field.key}/${Date.now()}-${fileName}`,
+			storage_key: `form-records/${s.editingRecordId}/${field.key}/${Date.now()}-${fileName}`,
 			url
 		});
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
-			attachmentSubmittingField = null;
+			s.attachmentSubmittingField = null;
 
 			return;
 		}
 
-		recordAttachments = [
+		s.recordAttachments = [
 			response.data,
-			...recordAttachments.filter((item) => item.id !== response.data?.id)
+			...s.recordAttachments.filter((item) => item.id !== response.data?.id)
 		];
 
-		await loadAttachmentSignedUrls(recordAttachments);
+		await loadAttachmentSignedUrls(s.recordAttachments);
 		await syncRecordAttachmentValue(field, response.data.url);
-		attachmentSubmittingField = null;
+		s.attachmentSubmittingField = null;
 		toast.success($t('forms.attachmentLinked'));
 	}
 
@@ -12011,13 +11296,13 @@
 
 		if (!file) return;
 
-		if (!selectedForm || !editingRecordId) {
+		if (!selectedForm || !s.editingRecordId) {
 			toast.error($t('forms.attachmentSaveRecordFirst'));
 
 			return;
 		}
 
-		attachmentSubmittingField = field.key;
+		s.attachmentSubmittingField = field.key;
 
 		const storageName = attachmentStorageName(
 			file.name || (field.type === 'image' ? `${field.key}.png` : `${field.key}.bin`)
@@ -12025,75 +11310,75 @@
 		const uploaded = await uploadFormAttachmentFile(file);
 
 		if (!uploaded) {
-			attachmentSubmittingField = null;
+			s.attachmentSubmittingField = null;
 
 			return;
 		}
 
 		const response = await formsApi.createAttachment(selectedForm.id, {
 			field_key: field.key,
-			record_id: editingRecordId,
+			record_id: s.editingRecordId,
 			file_name: file.name || storageName,
 			content_type: file.type || attachmentContentType(storageName, field),
 			byte_size: file.size,
-			storage_key: `form-records/${editingRecordId}/${field.key}/server-upload-${Date.now()}-${uploaded.filename}`,
+			storage_key: `form-records/${s.editingRecordId}/${field.key}/server-upload-${Date.now()}-${uploaded.filename}`,
 			url: uploaded.url,
 			thumbnail_url: uploaded.thumbnail_url
 		});
 
 		if (response.code !== 0 || !response.data) {
 			toast.error(response.message);
-			attachmentSubmittingField = null;
+			s.attachmentSubmittingField = null;
 
 			return;
 		}
 
-		recordAttachments = [
+		s.recordAttachments = [
 			response.data,
-			...recordAttachments.filter((item) => item.id !== response.data?.id)
+			...s.recordAttachments.filter((item) => item.id !== response.data?.id)
 		];
 
-		await loadAttachmentSignedUrls(recordAttachments);
+		await loadAttachmentSignedUrls(s.recordAttachments);
 		await syncRecordAttachmentValue(field, response.data.url);
-		attachmentSubmittingField = null;
+		s.attachmentSubmittingField = null;
 		toast.success($t('forms.attachmentLinked'));
 	}
 
 	async function removeAttachment(field: FormField, attachment: FormAttachment) {
-		deletingAttachmentId = attachment.id;
+		s.deletingAttachmentId = attachment.id;
 
 		const response = await formsApi.deleteAttachment(attachment.id);
 
 		if (response.code !== 0) {
 			toast.error(response.message);
-			deletingAttachmentId = null;
+			s.deletingAttachmentId = null;
 
 			return;
 		}
 
-		recordAttachments = recordAttachments.filter((item) => item.id !== attachment.id);
+		s.recordAttachments = s.recordAttachments.filter((item) => item.id !== attachment.id);
 
-		const remainingSignedUrls = { ...recordAttachmentSignedUrls };
+		const remainingSignedUrls = { ...s.recordAttachmentSignedUrls };
 
 		delete remainingSignedUrls[attachment.id];
-		recordAttachmentSignedUrls = remainingSignedUrls;
+		s.recordAttachmentSignedUrls = remainingSignedUrls;
 
 		if (attachment.url?.startsWith('blob:')) {
 			URL.revokeObjectURL(attachment.url);
 		}
 
-		const currentValue = recordValueUrl(recordDraft[field.key]);
+		const currentValue = recordValueUrl(s.recordDraft[field.key]);
 
 		if (currentValue === attachment.url) {
 			await syncRecordAttachmentValue(field, '');
 		}
 
-		deletingAttachmentId = null;
+		s.deletingAttachmentId = null;
 		toast.success($t('forms.attachmentRemoved'));
 	}
 
 	function draftArray(fieldKey: string): string[] {
-		const value = recordDraft[fieldKey];
+		const value = s.recordDraft[fieldKey];
 
 		return Array.isArray(value)
 			? value.filter((item): item is string => typeof item === 'string')
@@ -12116,24 +11401,24 @@
 	}
 
 	function draftString(fieldKey: string): string {
-		const value = recordDraft[fieldKey];
+		const value = s.recordDraft[fieldKey];
 
 		return typeof value === 'string' ? value : '';
 	}
 
 	function updateChildDraftValue(fieldKey: string, value: unknown) {
-		if (!childEditor) return;
+		if (!s.childEditor) return;
 
-		childEditor = {
-			...childEditor,
-			draft: { ...childEditor.draft, [fieldKey]: value }
+		s.childEditor = {
+			...s.childEditor,
+			draft: { ...s.childEditor.draft, [fieldKey]: value }
 		};
 	}
 
 	function updateChildTitle(value: string) {
-		if (!childEditor) return;
+		if (!s.childEditor) return;
 
-		childEditor = { ...childEditor, title: value };
+		s.childEditor = { ...s.childEditor, title: value };
 	}
 
 	function draftArrayFrom(draft: Record<string, unknown>, fieldKey: string): string[] {
@@ -12151,13 +11436,13 @@
 	}
 
 	function isChildDraftOptionSelected(fieldKey: string, option: string): boolean {
-		return childEditor ? draftArrayFrom(childEditor.draft, fieldKey).includes(option) : false;
+		return s.childEditor ? draftArrayFrom(s.childEditor.draft, fieldKey).includes(option) : false;
 	}
 
 	function toggleChildDraftOption(fieldKey: string, option: string, checked: boolean) {
-		if (!childEditor) return;
+		if (!s.childEditor) return;
 
-		const current = draftArrayFrom(childEditor.draft, fieldKey);
+		const current = draftArrayFrom(s.childEditor.draft, fieldKey);
 
 		updateChildDraftValue(
 			fieldKey,
@@ -12184,7 +11469,7 @@
 	function optionDisabledForChildSingleDraft(field: FormField, option: string): boolean {
 		return (
 			(optionDisabled(field, option) || optionArchived(field, option)) &&
-			(!childEditor || draftStringFrom(childEditor.draft, field.key) !== option)
+			(!s.childEditor || draftStringFrom(s.childEditor.draft, field.key) !== option)
 		);
 	}
 
@@ -12194,10 +11479,6 @@
 			!isChildDraftOptionSelected(field.key, option)
 		);
 	}
-
-	type SignatureDraftScope = 'record' | 'child';
-
-	let activeSignatureCanvas: HTMLCanvasElement | null = null;
 
 	function signatureImageValue(draft: Record<string, unknown>, fieldKey: string): string {
 		const value = draft[fieldKey];
@@ -12281,7 +11562,7 @@
 
 		context.beginPath();
 		context.moveTo(point.x, point.y);
-		activeSignatureCanvas = canvas;
+		s.activeSignatureCanvas = canvas;
 
 		try {
 			canvas.setPointerCapture(event.pointerId);
@@ -12303,7 +11584,7 @@
 
 		const canvas = event.currentTarget;
 
-		if (activeSignatureCanvas !== canvas) return;
+		if (s.activeSignatureCanvas !== canvas) return;
 
 		const context = prepareSignatureCanvas(canvas);
 
@@ -12327,9 +11608,9 @@
 
 		const canvas = event.currentTarget;
 
-		if (activeSignatureCanvas !== canvas) return;
+		if (s.activeSignatureCanvas !== canvas) return;
 
-		activeSignatureCanvas = null;
+		s.activeSignatureCanvas = null;
 
 		if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
 		if (!readOnly) captureSignatureCanvas(canvas, fieldKey, scope);
@@ -12378,7 +11659,7 @@
 	}
 
 	function childRecordFields(child: FormChildRecord): FormField[] {
-		const childForm = forms.find((form) => form.id === child.record.form_id);
+		const childForm = s.forms.find((form) => form.id === child.record.form_id);
 
 		return childForm
 			? parseFields(childForm.schema).filter((field) => field.visibility?.list !== false)
@@ -12393,7 +11674,7 @@
 		const childForm = childFormForRelationField(field);
 		const relationKey = childRelationKeyForField(field);
 
-		return selectedRecordChildren.filter(
+		return s.selectedRecordChildren.filter(
 			(child) =>
 				child.relation_key === relationKey && (!childForm || child.record.form_id === childForm.id)
 		);
@@ -12444,7 +11725,7 @@
 </script>
 
 {#snippet formsSessionNotice()}
-	{#if formsSessionRefreshFailed}
+	{#if s.formsSessionRefreshFailed}
 		<p
 			class="rounded border border-line bg-warning-soft p-3 text-sm"
 			role="status"
@@ -12453,14 +11734,14 @@
 			{$t('forms.session.refreshFailed')}
 		</p>
 	{/if}
-	{#if formsSessionRemoteChanged || formsSessionConflict}
+	{#if s.formsSessionRemoteChanged || s.formsSessionConflict}
 		<section
 			class="rounded border border-line bg-warning-soft p-3 text-sm"
 			role="status"
 			data-testid="task-remote-change"
 		>
 			<p>{$t('forms.session.remoteChanged')}</p>
-			{#if formsSessionConflict}<p data-testid="task-conflict">
+			{#if s.formsSessionConflict}<p data-testid="task-conflict">
 					{$t('forms.session.conflict')}
 				</p>{/if}
 			<div class="mt-2 flex gap-2">
@@ -12469,7 +11750,7 @@
 					class="rounded border px-3 py-1"
 					data-testid="task-review"
 					onclick={() => {
-						formsSessionReview = !formsSessionReview;
+						s.formsSessionReview = !s.formsSessionReview;
 					}}>{$t('forms.session.review')}</button
 				>
 				<button
@@ -12481,9 +11762,9 @@
 					}}>{$t('forms.session.reload')}</button
 				>
 			</div>
-			{#if formsSessionReview}
+			{#if s.formsSessionReview}
 				<div class="mt-3 space-y-2" data-testid="task-review-content">
-					{#if formsSessionRemoteRecord}
+					{#if s.formsSessionRemoteRecord}
 						<table class="w-full text-left">
 							<thead
 								><tr
@@ -12493,14 +11774,14 @@
 								></thead
 							><tbody>
 								<tr
-									><th>Title</th><td class="whitespace-pre-wrap">{recordTitle}</td><td
-										class="whitespace-pre-wrap">{formsSessionRemoteRecord.title}</td
+									><th>Title</th><td class="whitespace-pre-wrap">{s.recordTitle}</td><td
+										class="whitespace-pre-wrap">{s.formsSessionRemoteRecord.title}</td
 									></tr
 								>
-								{#each Object.entries(recordDraft) as [key, value]}<tr
+								{#each Object.entries(s.recordDraft) as [key, value]}<tr
 										><th>{key}</th><td class="whitespace-pre-wrap">{formsReviewText(value)}</td><td
 											class="whitespace-pre-wrap"
-											>{formsReviewText(formsSessionRemoteRecord.values[key])}</td
+											>{formsReviewText(s.formsSessionRemoteRecord.values[key])}</td
 										></tr
 									>{/each}
 							</tbody>
@@ -12512,7 +11793,7 @@
 						class="rounded border px-3 py-1"
 						data-testid="task-keep-draft"
 						onclick={() => {
-							formsSessionReview = false;
+							s.formsSessionReview = false;
 						}}>{$t('forms.session.keepDraft')}</button
 					>
 				</div>
@@ -12522,16 +11803,16 @@
 {/snippet}
 
 <svelte:window onkeydown={handleGlobalKeydown} />
-<div class="sr-only" role="status" aria-live="polite" data-record-live-region>{liveMessage}</div>
+<div class="sr-only" role="status" aria-live="polite" data-record-live-region>{s.liveMessage}</div>
 
 <div
 	class="mx-auto max-w-7xl space-y-5"
-	bind:this={formsSessionRoot}
+	bind:this={s.formsSessionRoot}
 	onfocusout={rememberFormsFocus}
-	aria-busy={formsSessionTransitioning}
-	inert={formsSessionTransitioning}
+	aria-busy={s.formsSessionTransitioning}
+	inert={s.formsSessionTransitioning}
 >
-	{#if !recordEditorOpen}{@render formsSessionNotice()}{/if}
+	{#if !s.recordEditorOpen}{@render formsSessionNotice()}{/if}
 	<div
 		class="flex flex-col gap-3 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between"
 	>
@@ -12547,7 +11828,7 @@
 				<span class="mx-1 text-fg-muted">/</span>
 
 				<a href={`/workspace/${workspaceId}/projects/${projectId}`} class="hover:text-fg"
-					>{project?.name ?? $t('forms.projectFallback')}</a
+					>{s.project?.name ?? $t('forms.projectFallback')}</a
 				>
 			</div>
 
@@ -12563,19 +11844,19 @@
 				{$t('forms.refresh')}
 			</Button>
 
-			<Button onclick={() => (showCreateForm = !showCreateForm)}>
+			<Button onclick={() => (s.showCreateForm = !s.showCreateForm)}>
 				<Plus class="mr-2 h-4 w-4" aria-hidden="true" />
 				{$t('forms.newForm')}
 			</Button>
 		</div>
 	</div>
 
-	{#if loading}
+	{#if s.loading}
 		<div class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted">
 			{$t('forms.loadingForms')}
 		</div>
 	{:else}
-		{#if showCreateForm || forms.length === 0}
+		{#if s.showCreateForm || s.forms.length === 0}
 			<section class="rounded-card border border-line bg-raised p-4">
 				<div class="mb-4 flex items-start justify-between gap-4">
 					<div>
@@ -12604,7 +11885,7 @@
 						<Button
 							size="sm"
 							variant="secondary"
-							loading={templatesLoading}
+							loading={s.templatesLoading}
 							onclick={loadScenarioTemplates}
 						>
 							<RefreshCw class="mr-2 h-4 w-4" aria-hidden="true" />
@@ -12612,9 +11893,9 @@
 						</Button>
 					</div>
 
-					{#if scenarioTemplates.length > 0}
+					{#if s.scenarioTemplates.length > 0}
 						<div class="mt-3 grid gap-2 lg:grid-cols-3">
-							{#each scenarioTemplates as template}
+							{#each s.scenarioTemplates as template}
 								<div class="rounded-card border border-line bg-raised p-3">
 									<div class="flex items-start justify-between gap-3">
 										<div class="min-w-0">
@@ -12646,7 +11927,7 @@
 
 										<Button
 											size="sm"
-											loading={installingTemplateKey === template.key}
+											loading={s.installingTemplateKey === template.key}
 											onclick={() => installScenarioTemplate(template)}
 										>
 											<Plus class="mr-2 h-4 w-4" aria-hidden="true" />
@@ -12658,7 +11939,7 @@
 						</div>
 					{:else}
 						<p class="mt-3 text-sm text-fg-muted">
-							{templatesLoading ? $t('common.loading') : $t('forms.noTemplates')}
+							{s.templatesLoading ? $t('common.loading') : $t('forms.noTemplates')}
 						</p>
 					{/if}
 				</div>
@@ -12669,7 +11950,7 @@
 
 						<input
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-							bind:value={formDraft.key}
+							bind:value={s.formDraft.key}
 						/>
 					</label>
 
@@ -12678,7 +11959,7 @@
 
 						<input
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-							bind:value={formDraft.name}
+							bind:value={s.formDraft.name}
 						/>
 					</label>
 
@@ -12687,7 +11968,7 @@
 
 						<input
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-							bind:value={formDraft.title_template}
+							bind:value={s.formDraft.title_template}
 						/>
 					</label>
 
@@ -12696,7 +11977,7 @@
 
 						<input
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-							bind:value={formDraft.description}
+							bind:value={s.formDraft.description}
 						/>
 					</label>
 				</div>
@@ -12723,7 +12004,7 @@
 					</div>
 
 					<div class="divide-y divide-line">
-						{#each fieldDrafts as field, index}
+						{#each s.fieldDrafts as field, index}
 							<div class="grid gap-3 p-3 md:grid-cols-[1fr_1fr_160px_90px_44px]">
 								<label class="space-y-1">
 									<span class="text-xs font-medium text-fg-muted">{$t('forms.fieldKey')}</span>
@@ -12772,7 +12053,7 @@
 									<button
 										type="button"
 										class="inline-flex h-9 w-9 items-center justify-center rounded-control text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-										disabled={fieldDrafts.length === 1}
+										disabled={s.fieldDrafts.length === 1}
 										onclick={() => removeFieldDraft(index)}
 										aria-label={$t('forms.removeField')}
 										><Trash2 class="h-4 w-4" aria-hidden="true" /></button
@@ -12825,37 +12106,37 @@
 						type="button"
 						class="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-fg hover:bg-surface"
 						onclick={() => {
-							if (!showAdvancedSchema) buildSchemaFromDrafts();
+							if (!s.showAdvancedSchema) buildSchemaFromDrafts();
 
-							showAdvancedSchema = !showAdvancedSchema;
+							s.showAdvancedSchema = !s.showAdvancedSchema;
 						}}
 					>
 						<span>{$t('forms.advancedSchema')}</span>
 						<span class="text-xs text-fg-muted"
-							>{showAdvancedSchema ? $t('forms.hideAdvanced') : $t('forms.showAdvanced')}</span
+							>{s.showAdvancedSchema ? $t('forms.hideAdvanced') : $t('forms.showAdvanced')}</span
 						>
 					</button>
 
-					{#if showAdvancedSchema}
+					{#if s.showAdvancedSchema}
 						<label class="block space-y-1 border-t border-line p-3">
 							<span class="text-sm font-medium text-fg">{$t('forms.schemaJson')}</span>
 
 							<textarea
 								class="h-56 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
-								bind:value={formDraft.schemaText}></textarea>
+								bind:value={s.formDraft.schemaText}></textarea>
 						</label>
 					{/if}
 				</div>
 
 				<div class="mt-4 flex justify-end">
-					<Button loading={formSubmitting} onclick={handleCreateForm}
+					<Button loading={s.formSubmitting} onclick={handleCreateForm}
 						>{$t('forms.createForm')}</Button
 					>
 				</div>
 			</section>
 		{/if}
 
-		{#if forms.length > 0 && !selectedForm}
+		{#if s.forms.length > 0 && !selectedForm}
 			<section class="rounded-card border border-line bg-raised p-4" data-form-list-home>
 				<div class="mb-4">
 					<div>
@@ -12870,7 +12151,7 @@
 				</div>
 
 				<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-					{#each forms as form}
+					{#each s.forms as form}
 						<button
 							type="button"
 							class="min-h-40 rounded-card border border-line bg-nav p-4 text-left transition-colors hover:border-input hover:bg-surface"
@@ -12918,9 +12199,9 @@
 			</section>
 		{/if}
 
-		{#if forms.length > 0 && selectedForm}
+		{#if s.forms.length > 0 && selectedForm}
 			<section class="space-y-4">
-				{#if activeMode === 'data'}
+				{#if s.activeMode === 'data'}
 					<section
 						class="rounded-card border border-line bg-raised p-4"
 						data-form-data-list-toolbar
@@ -12933,13 +12214,13 @@
 									</h3>
 
 									<span class="rounded-control bg-surface px-2 py-0.5 text-xs text-fg-muted">
-										{#if recordsLoading}
+										{#if s.recordsLoading}
 											{$t('common.loading')}
-										{:else if viewRecords.length === records.length}
-											{$t('forms.rows', { values: { count: records.length } })}
+										{:else if viewRecords.length === s.records.length}
+											{$t('forms.rows', { values: { count: s.records.length } })}
 										{:else}
 											{$t('forms.filteredRows', {
-												values: { visible: viewRecords.length, total: records.length }
+												values: { visible: viewRecords.length, total: s.records.length }
 											})}
 										{/if}
 									</span>
@@ -12952,11 +12233,11 @@
 
 									<select
 										id="form-switcher"
-										value={selectedFormId}
+										value={s.selectedFormId}
 										onchange={handleFormChange}
 										class="h-8 min-w-40 rounded-control border border-input bg-field px-2 text-xs text-fg"
 									>
-										{#each forms as form}
+										{#each s.forms as form}
 											<option value={form.id}>{form.name}</option>
 										{/each}
 									</select>
@@ -13018,7 +12299,7 @@
 								</h3>
 
 								<p class="mt-1 text-sm text-fg-muted">
-									{$t(`forms.modeContext.${activeMode}`, { values: { name: selectedForm.name } })}
+									{$t(`forms.modeContext.${s.activeMode}`, { values: { name: selectedForm.name } })}
 								</p>
 							</div>
 
@@ -13028,16 +12309,16 @@
 							</Button>
 						</div>
 
-						<FormWorkflowTabs {activeMode} onModeChange={handleModeChange} />
+						<FormWorkflowTabs activeMode={s.activeMode} onModeChange={handleModeChange} />
 					</section>
 				{/if}
 
-				{#if formPermissions && activeMode !== 'permissions' && activeMode !== 'data'}
+				{#if s.formPermissions && s.activeMode !== 'permissions' && s.activeMode !== 'data'}
 					<section
 						class="rounded-card border border-line bg-raised px-3 py-2 text-sm"
 						data-permission-state-summary
-						data-permission-state-mode={activeMode}
-						data-permission-state-scope={memberRecordScopeDraft}
+						data-permission-state-mode={s.activeMode}
+						data-permission-state-scope={s.memberRecordScopeDraft}
 						data-permission-state-hidden-fields={memberHiddenFieldLabels.join('|')}
 						data-permission-state-locked-fields={memberLockedFieldLabels.join('|')}
 					>
@@ -13050,7 +12331,7 @@
 
 							<span class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
 								>{$t('forms.recordScope')}: {$t(
-									`forms.recordScopes.${memberRecordScopeDraft}`
+									`forms.recordScopes.${s.memberRecordScopeDraft}`
 								)}</span
 							>
 
@@ -13070,7 +12351,7 @@
 					</section>
 				{/if}
 
-				{#if activeMode === 'permissions'}
+				{#if s.activeMode === 'permissions'}
 					<section
 						class="rounded-card border border-line bg-raised p-4"
 						data-form-mode="permissions"
@@ -13090,12 +12371,12 @@
 								</p>
 							</div>
 
-							<Button size="sm" loading={permissionsSaving} onclick={saveMemberPermissions}
+							<Button size="sm" loading={s.permissionsSaving} onclick={saveMemberPermissions}
 								>{$t('forms.savePermissions')}</Button
 							>
 						</div>
 
-						{#if permissionsLoading}
+						{#if s.permissionsLoading}
 							<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 						{:else}
 							<div class="grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)]">
@@ -13115,7 +12396,7 @@
 											<input
 												type="checkbox"
 												class="h-4 w-4 rounded border-input accent-primary"
-												checked={memberPermissionDraft[action]}
+												checked={s.memberPermissionDraft[action]}
 												onchange={(event) =>
 													setMemberPermission(
 														action,
@@ -13136,7 +12417,7 @@
 									>
 
 									<select
-										value={memberRecordScopeDraft}
+										value={s.memberRecordScopeDraft}
 										onchange={(event) =>
 											setMemberRecordScope(selectValue(event) as FormRecordScope)}
 										class="mt-2 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -13164,13 +12445,13 @@
 										<div class="flex gap-3 text-xs text-fg-muted">
 											<span
 												data-field-read-denied-count={fields.filter(
-													(field) => memberFieldReadDraft[field.key] === false
+													(field) => s.memberFieldReadDraft[field.key] === false
 												).length}
 											>
 												{$t('forms.fieldReadDeniedCount', {
 													values: {
 														count: fields.filter(
-															(field) => memberFieldReadDraft[field.key] === false
+															(field) => s.memberFieldReadDraft[field.key] === false
 														).length
 													}
 												})}
@@ -13178,13 +12459,13 @@
 
 											<span
 												data-field-write-denied-count={fields.filter(
-													(field) => memberFieldWriteDraft[field.key] === false
+													(field) => s.memberFieldWriteDraft[field.key] === false
 												).length}
 											>
 												{$t('forms.fieldWriteDeniedCount', {
 													values: {
 														count: fields.filter(
-															(field) => memberFieldWriteDraft[field.key] === false
+															(field) => s.memberFieldWriteDraft[field.key] === false
 														).length
 													}
 												})}
@@ -13247,7 +12528,7 @@
 													<input
 														type="checkbox"
 														class="h-4 w-4 rounded border-input accent-primary"
-														checked={memberFieldReadDraft[field.key] ?? true}
+														checked={s.memberFieldReadDraft[field.key] ?? true}
 														data-field-read-permission={field.key}
 														onchange={(event) =>
 															setMemberFieldRead(
@@ -13265,7 +12546,7 @@
 													<input
 														type="checkbox"
 														class="h-4 w-4 rounded border-input accent-primary"
-														checked={memberFieldWriteDraft[field.key] ?? true}
+														checked={s.memberFieldWriteDraft[field.key] ?? true}
 														data-field-write-permission={field.key}
 														onchange={(event) =>
 															setMemberFieldWrite(
@@ -13284,21 +12565,21 @@
 								</div>
 							</div>
 
-							{#if formPermissions}
+							{#if s.formPermissions}
 								<div class="mt-3 rounded-control bg-nav px-3 py-2 text-xs text-fg-muted">
 									{$t('forms.currentEffectiveRole', {
-										values: { role: formPermissions.effective.role }
+										values: { role: s.formPermissions.effective.role }
 									})} · {formPermissionActions
-										.filter((action) => formPermissions?.effective.actions[action])
+										.filter((action) => s.formPermissions?.effective.actions[action])
 										.map(permissionActionLabel)
 										.join(' / ')} · {$t(
-										`forms.recordScopes.${formPermissions.effective.record_scope}`
+										`forms.recordScopes.${s.formPermissions.effective.record_scope}`
 									)}
 								</div>
 							{/if}
 						{/if}
 					</section>
-				{:else if activeMode === 'importExport'}
+				{:else if s.activeMode === 'importExport'}
 					<section
 						class="rounded-card border border-line bg-raised p-4"
 						data-form-mode="import-export"
@@ -13327,7 +12608,7 @@
 								onclick={exportImportTemplate}
 								disabled={!selectedForm || visibleFields.length === 0}
 								data-import-template-export
-								data-import-template-exported={exportedImportTemplate ? 'true' : undefined}
+								data-import-template-exported={s.exportedImportTemplate ? 'true' : undefined}
 							>
 								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
@@ -13338,7 +12619,7 @@
 								type="button"
 								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								onclick={exportCurrentView}
-								disabled={exportingRecords}
+								disabled={s.exportingRecords}
 							>
 								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
@@ -13349,9 +12630,9 @@
 								type="button"
 								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								onclick={exportCurrentViewJson}
-								disabled={exportingRecords}
+								disabled={s.exportingRecords}
 								data-current-view-export-json
-								data-current-view-json-record-count={exportedCurrentViewJsonRecordCount ?? ''}
+								data-current-view-json-record-count={s.exportedCurrentViewJsonRecordCount ?? ''}
 							>
 								<FileText class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
@@ -13362,9 +12643,9 @@
 								type="button"
 								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								onclick={exportAttachmentManifest}
-								disabled={exportingRecords}
+								disabled={s.exportingRecords}
 								data-attachment-manifest-export
-								data-attachment-manifest-count={exportedAttachmentManifestCount ?? ''}
+								data-attachment-manifest-count={s.exportedAttachmentManifestCount ?? ''}
 							>
 								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
@@ -13375,9 +12656,9 @@
 								type="button"
 								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								onclick={() => void exportAttachmentBundle()}
-								disabled={exportingRecords}
+								disabled={s.exportingRecords}
 								data-attachment-bundle-export
-								data-attachment-bundle-count={exportedAttachmentBundleCount ?? ''}
+								data-attachment-bundle-count={s.exportedAttachmentBundleCount ?? ''}
 							>
 								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
@@ -13388,10 +12669,10 @@
 								type="button"
 								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								onclick={() => void exportAttachmentPackage()}
-								disabled={exportingRecords}
+								disabled={s.exportingRecords}
 								data-attachment-package-export
-								data-attachment-package-count={exportedAttachmentPackageCount ?? ''}
-								data-attachment-package-file-count={exportedAttachmentPackageFileCount ?? ''}
+								data-attachment-package-count={s.exportedAttachmentPackageCount ?? ''}
+								data-attachment-package-file-count={s.exportedAttachmentPackageFileCount ?? ''}
 							>
 								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
@@ -13399,24 +12680,24 @@
 							</button>
 						</div>
 					</section>
-				{:else if activeMode === 'design' || activeMode === 'layout'}
+				{:else if s.activeMode === 'design' || s.activeMode === 'layout'}
 					<div
 						class="grid min-w-0 gap-4"
-						data-form-mode={activeMode === 'design' ? 'field-design' : 'detail-layout'}
+						data-form-mode={s.activeMode === 'design' ? 'field-design' : 'detail-layout'}
 					>
-						{#if activeMode === 'design'}
+						{#if s.activeMode === 'design'}
 							<FormDesignerWorkspace
 								form={selectedForm}
-								fieldDrafts={designerFieldDrafts}
+								fieldDrafts={s.designerFieldDrafts}
 								{fieldTypeOptions}
-								selectedIndex={selectedDesignerFieldIndex}
+								selectedIndex={s.selectedDesignerFieldIndex}
 								selectedFieldUsage={selectedDesignerFieldUsage}
 								selectedFieldDependencies={selectedDesignerFieldDependencies}
 								hiddenFieldKeys={memberHiddenFieldKeys}
 								lockedFieldKeys={memberLockedFieldKeys}
-								usageLoading={designerUsageLoading}
-								saving={designerSaving}
-								onSelectField={(index) => (selectedDesignerFieldIndex = index)}
+								usageLoading={s.designerUsageLoading}
+								saving={s.designerSaving}
+								onSelectField={(index) => (s.selectedDesignerFieldIndex = index)}
 								onAppendField={addDesignerField}
 								onUpdateField={updateDesignerField}
 								onDuplicateField={duplicateDesignerField}
@@ -13426,7 +12707,7 @@
 							/>
 						{/if}
 
-						{#if activeMode === 'layout'}
+						{#if s.activeMode === 'layout'}
 							<div class="space-y-4">
 								<div
 									class="flex flex-wrap gap-1 rounded-card border border-line bg-raised p-1"
@@ -13435,19 +12716,19 @@
 									{#each detailLayoutModes as mode}
 										<button
 											type="button"
-											class="inline-flex h-9 items-center rounded-control px-3 text-sm font-medium transition-colors {detailLayoutMode ===
+											class="inline-flex h-9 items-center rounded-control px-3 text-sm font-medium transition-colors {s.detailLayoutMode ===
 											mode.key
 												? 'rf-filled bg-primary text-on-primary'
 												: 'text-fg-muted hover:bg-surface hover:text-fg'}"
-											aria-current={detailLayoutMode === mode.key ? 'page' : undefined}
+											aria-current={s.detailLayoutMode === mode.key ? 'page' : undefined}
 											data-detail-layout-tab={mode.key}
-											onclick={() => (detailLayoutMode = mode.key)}>{$t(mode.labelKey)}</button
+											onclick={() => (s.detailLayoutMode = mode.key)}>{$t(mode.labelKey)}</button
 										>
 									{/each}
 								</div>
 
 								<section
-									class="rounded-card border border-line bg-raised p-4 {detailLayoutMode ===
+									class="rounded-card border border-line bg-raised p-4 {s.detailLayoutMode ===
 									'header'
 										? ''
 										: 'hidden'}"
@@ -13470,8 +12751,8 @@
 											>
 
 											<select
-												value={detailHeaderDraft.subtitleField}
-												disabled={detailHeaderSaving}
+												value={s.detailHeaderDraft.subtitleField}
+												disabled={s.detailHeaderSaving}
 												class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 												data-detail-header-subtitle-field
 												onchange={(event) =>
@@ -13496,8 +12777,8 @@
 											>
 
 											<select
-												value={detailHeaderDraft.badgeField}
-												disabled={detailHeaderSaving}
+												value={s.detailHeaderDraft.badgeField}
+												disabled={s.detailHeaderSaving}
 												class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 												data-detail-header-badge-field
 												onchange={(event) =>
@@ -13519,7 +12800,7 @@
 
 									<div class="mt-3 flex justify-end">
 										<span data-detail-header-save>
-											<Button size="sm" loading={detailHeaderSaving} onclick={saveDetailHeader}
+											<Button size="sm" loading={s.detailHeaderSaving} onclick={saveDetailHeader}
 												>{$t('forms.saveDetailHeader')}</Button
 											>
 										</span>
@@ -13527,7 +12808,7 @@
 								</section>
 
 								<section
-									class="rounded-card border border-line bg-raised p-4 {detailLayoutMode ===
+									class="rounded-card border border-line bg-raised p-4 {s.detailLayoutMode ===
 									'highlights'
 										? ''
 										: 'hidden'}"
@@ -13544,14 +12825,14 @@
 											</p>
 										</div>
 
-										{#if detailHighlightSaving}
+										{#if s.detailHighlightSaving}
 											<span class="text-xs font-medium text-fg-muted">{$t('common.saving')}</span>
 										{/if}
 									</div>
 
 									<div class="space-y-2">
 										{#each detailVisibleFields as field}
-											{@const highlightIndex = detailHighlightDraft.fields.indexOf(field.key)}
+											{@const highlightIndex = s.detailHighlightDraft.fields.indexOf(field.key)}
 											{@const isChecked = highlightIndex >= 0}
 
 											<div
@@ -13564,8 +12845,8 @@
 														type="checkbox"
 														class="h-4 w-4 rounded border-input accent-primary"
 														checked={isChecked}
-														disabled={detailHighlightSaving ||
-															(!isChecked && detailHighlightDraft.fields.length >= 4)}
+														disabled={s.detailHighlightSaving ||
+															(!isChecked && s.detailHighlightDraft.fields.length >= 4)}
 														aria-label={fieldLabel(field)}
 														data-detail-highlight-toggle={field.key}
 														onchange={(event) =>
@@ -13592,7 +12873,7 @@
 													<button
 														type="button"
 														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-														disabled={!isChecked || highlightIndex === 0 || detailHighlightSaving}
+														disabled={!isChecked || highlightIndex === 0 || s.detailHighlightSaving}
 														aria-label={$t('forms.moveHighlightUp')}
 														title={$t('forms.moveHighlightUp')}
 														data-detail-highlight-move-up={field.key}
@@ -13604,8 +12885,8 @@
 														type="button"
 														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 														disabled={!isChecked ||
-															highlightIndex === detailHighlightDraft.fields.length - 1 ||
-															detailHighlightSaving}
+															highlightIndex === s.detailHighlightDraft.fields.length - 1 ||
+															s.detailHighlightSaving}
 														aria-label={$t('forms.moveHighlightDown')}
 														title={$t('forms.moveHighlightDown')}
 														data-detail-highlight-move-down={field.key}
@@ -13620,14 +12901,14 @@
 									<div class="mt-3 flex items-center justify-between gap-3">
 										<span class="text-xs text-fg-muted"
 											>{$t('forms.detailHighlightsLimit', {
-												values: { count: detailHighlightDraft.fields.length }
+												values: { count: s.detailHighlightDraft.fields.length }
 											})}</span
 										>
 
 										<span data-detail-highlights-save>
 											<Button
 												size="sm"
-												loading={detailHighlightSaving}
+												loading={s.detailHighlightSaving}
 												onclick={saveDetailHighlights}>{$t('forms.saveDetailHighlights')}</Button
 											>
 										</span>
@@ -13635,7 +12916,7 @@
 								</section>
 
 								<section
-									class="rounded-card border border-line bg-raised p-4 {detailLayoutMode ===
+									class="rounded-card border border-line bg-raised p-4 {s.detailLayoutMode ===
 									'composition'
 										? ''
 										: 'hidden'}"
@@ -13657,13 +12938,13 @@
 										>
 
 										<select
-											value={detailPageCompositionDraft.widgetRegion}
-											disabled={detailPageCompositionSaving}
+											value={s.detailPageCompositionDraft.widgetRegion}
+											disabled={s.detailPageCompositionSaving}
 											class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 											data-detail-page-widget-region
 											onchange={(event) =>
-												(detailPageCompositionDraft = {
-													...detailPageCompositionDraft,
+												(s.detailPageCompositionDraft = {
+													...s.detailPageCompositionDraft,
 													widgetRegion:
 														event.currentTarget instanceof HTMLSelectElement
 															? detailPageWidgetRegion(event.currentTarget.value)
@@ -13681,13 +12962,13 @@
 										>
 
 										<select
-											value={String(detailPageCompositionDraft.fieldColumns)}
-											disabled={detailPageCompositionSaving}
+											value={String(s.detailPageCompositionDraft.fieldColumns)}
+											disabled={s.detailPageCompositionSaving}
 											class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 											data-detail-page-field-columns
 											onchange={(event) =>
-												(detailPageCompositionDraft = {
-													...detailPageCompositionDraft,
+												(s.detailPageCompositionDraft = {
+													...s.detailPageCompositionDraft,
 													fieldColumns:
 														event.currentTarget instanceof HTMLSelectElement
 															? detailPageFieldColumns(event.currentTarget.value)
@@ -13703,7 +12984,7 @@
 										<span data-detail-page-composition-save>
 											<Button
 												size="sm"
-												loading={detailPageCompositionSaving}
+												loading={s.detailPageCompositionSaving}
 												onclick={saveDetailPageComposition}
 												>{$t('forms.saveDetailPageComposition')}</Button
 											>
@@ -13712,7 +12993,7 @@
 								</section>
 
 								<section
-									class="rounded-card border border-line bg-raised p-4 {detailLayoutMode ===
+									class="rounded-card border border-line bg-raised p-4 {s.detailLayoutMode ===
 									'sections'
 										? ''
 										: 'hidden'}"
@@ -13736,7 +13017,7 @@
 									</div>
 
 									<div class="space-y-3">
-										{#each detailLayoutSectionDrafts as section, sectionIndex}
+										{#each s.detailLayoutSectionDrafts as section, sectionIndex}
 											<div
 												class="rounded-card border border-line p-3"
 												data-detail-layout-section-row={section.key}
@@ -13770,7 +13051,7 @@
 
 														<select
 															value={String(section.columns)}
-															disabled={detailLayoutSectionSaving}
+															disabled={s.detailLayoutSectionSaving}
 															class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 															data-detail-layout-section-columns={section.key}
 															onchange={(event) =>
@@ -13796,7 +13077,7 @@
 
 														<select
 															value={section.density}
-															disabled={detailLayoutSectionSaving}
+															disabled={s.detailLayoutSectionSaving}
 															class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 															data-detail-layout-section-density={section.key}
 															onchange={(event) =>
@@ -13821,7 +13102,7 @@
 														<button
 															type="button"
 															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-															disabled={sectionIndex === 0 || detailLayoutSectionSaving}
+															disabled={sectionIndex === 0 || s.detailLayoutSectionSaving}
 															aria-label={$t('forms.moveSectionUp')}
 															title={$t('forms.moveSectionUp')}
 															data-detail-layout-section-move-up={section.key}
@@ -13832,8 +13113,8 @@
 														<button
 															type="button"
 															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-															disabled={sectionIndex === detailLayoutSectionDrafts.length - 1 ||
-																detailLayoutSectionSaving}
+															disabled={sectionIndex === s.detailLayoutSectionDrafts.length - 1 ||
+																s.detailLayoutSectionSaving}
 															aria-label={$t('forms.moveSectionDown')}
 															title={$t('forms.moveSectionDown')}
 															data-detail-layout-section-move-down={section.key}
@@ -13844,8 +13125,8 @@
 														<button
 															type="button"
 															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-															disabled={detailLayoutSectionDrafts.length <= 1 ||
-																detailLayoutSectionSaving}
+															disabled={s.detailLayoutSectionDrafts.length <= 1 ||
+																s.detailLayoutSectionSaving}
 															aria-label={$t('forms.removeDetailSection')}
 															title={$t('forms.removeDetailSection')}
 															data-detail-layout-section-remove={section.key}
@@ -13863,7 +13144,7 @@
 													<textarea
 														value={section.description}
 														rows="2"
-														disabled={detailLayoutSectionSaving}
+														disabled={s.detailLayoutSectionSaving}
 														placeholder={$t('forms.detailLayoutSectionDescriptionPlaceholder')}
 														class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 														data-detail-layout-section-description={section.key}
@@ -13881,7 +13162,7 @@
 														type="checkbox"
 														class="h-4 w-4 rounded border-input accent-primary"
 														checked={section.hideEmptyFields}
-														disabled={detailLayoutSectionSaving}
+														disabled={s.detailLayoutSectionSaving}
 														data-detail-layout-section-hide-empty-fields={section.key}
 														onchange={(event) =>
 															updateDetailLayoutSectionHideEmptyFields(
@@ -13901,7 +13182,7 @@
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
 															checked={section.collapsible}
-															disabled={detailLayoutSectionSaving}
+															disabled={s.detailLayoutSectionSaving}
 															data-detail-layout-section-collapsible={section.key}
 															onchange={(event) =>
 																updateDetailLayoutSectionCollapsible(
@@ -13920,7 +13201,7 @@
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
 															checked={section.defaultCollapsed}
-															disabled={detailLayoutSectionSaving || !section.collapsible}
+															disabled={s.detailLayoutSectionSaving || !section.collapsible}
 															data-detail-layout-section-default-collapsed={section.key}
 															onchange={(event) =>
 																updateDetailLayoutSectionDefaultCollapsed(
@@ -13950,7 +13231,7 @@
 																type="checkbox"
 																class="h-4 w-4 rounded border-input accent-primary"
 																checked={section.fields.includes(field.key)}
-																disabled={detailLayoutSectionSaving}
+																disabled={s.detailLayoutSectionSaving}
 																aria-label={`${$t('forms.detailLayoutField')}: ${fieldLabel(field)} / ${section.title}`}
 																onchange={(event) =>
 																	setDetailLayoutSectionField(
@@ -13976,7 +13257,7 @@
 																<button
 																	type="button"
 																	class="inline-flex h-7 w-7 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-																	disabled={fieldIndex <= 0 || detailLayoutSectionSaving}
+																	disabled={fieldIndex <= 0 || s.detailLayoutSectionSaving}
 																	aria-label={$t('forms.moveFieldUp')}
 																	title={$t('forms.moveFieldUp')}
 																	data-detail-layout-field-move-up={`${section.key}:${field.key}`}
@@ -13990,7 +13271,7 @@
 																	class="inline-flex h-7 w-7 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																	disabled={fieldIndex < 0 ||
 																		fieldIndex === section.fields.length - 1 ||
-																		detailLayoutSectionSaving}
+																		s.detailLayoutSectionSaving}
 																	aria-label={$t('forms.moveFieldDown')}
 																	title={$t('forms.moveFieldDown')}
 																	data-detail-layout-field-move-down={`${section.key}:${field.key}`}
@@ -14010,7 +13291,7 @@
 										<span data-detail-layout-section-save>
 											<Button
 												size="sm"
-												loading={detailLayoutSectionSaving}
+												loading={s.detailLayoutSectionSaving}
 												onclick={saveDetailLayoutSections}>{$t('forms.saveDetailSections')}</Button
 											>
 										</span>
@@ -14018,7 +13299,7 @@
 								</section>
 
 								<section
-									class="rounded-card border border-line bg-raised p-4 {detailLayoutMode ===
+									class="rounded-card border border-line bg-raised p-4 {s.detailLayoutMode ===
 									'widgets'
 										? ''
 										: 'hidden'}"
@@ -14035,7 +13316,7 @@
 											</p>
 										</div>
 
-										{#if detailPageWidgetSaving}
+										{#if s.detailPageWidgetSaving}
 											<span class="text-xs font-medium text-fg-muted">{$t('common.saving')}</span>
 										{/if}
 									</div>
@@ -14054,7 +13335,7 @@
 														type="checkbox"
 														class="h-4 w-4 rounded border-input accent-primary"
 														checked={widget.enabled}
-														disabled={detailPageWidgetSaving}
+														disabled={s.detailPageWidgetSaving}
 														aria-label={$t(option.labelKey)}
 														data-detail-page-widget-toggle={widget.key}
 														onchange={(event) =>
@@ -14083,7 +13364,7 @@
 
 														<input
 															value={widget.title}
-															disabled={detailPageWidgetSaving}
+															disabled={s.detailPageWidgetSaving}
 															placeholder={$t(option.labelKey)}
 															class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
 															data-detail-page-widget-title={widget.key}
@@ -14104,7 +13385,7 @@
 
 														<textarea
 															value={widget.description}
-															disabled={detailPageWidgetSaving}
+															disabled={s.detailPageWidgetSaving}
 															rows="2"
 															placeholder={$t('forms.detailPageWidgetDescriptionPlaceholder')}
 															class="w-full resize-y rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
@@ -14128,7 +13409,7 @@
 															min="1"
 															max="50"
 															value={widget.limit}
-															disabled={detailPageWidgetSaving}
+															disabled={s.detailPageWidgetSaving}
 															placeholder={$t('forms.detailPageWidgetLimitDefault')}
 															class="w-28 rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
 															data-detail-page-widget-limit={widget.key}
@@ -14149,7 +13430,7 @@
 
 														<select
 															value={widget.density}
-															disabled={detailPageWidgetSaving}
+															disabled={s.detailPageWidgetSaving}
 															class="w-40 rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
 															data-detail-page-widget-density={widget.key}
 															onchange={(event) =>
@@ -14175,7 +13456,7 @@
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.showCount}
-															disabled={detailPageWidgetSaving}
+															disabled={s.detailPageWidgetSaving}
 															data-detail-page-widget-show-count={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetShowCount(
@@ -14194,7 +13475,7 @@
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.hideEmpty}
-															disabled={detailPageWidgetSaving}
+															disabled={s.detailPageWidgetSaving}
 															data-detail-page-widget-hide-empty={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetHideEmpty(
@@ -14213,7 +13494,7 @@
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.collapsible}
-															disabled={detailPageWidgetSaving}
+															disabled={s.detailPageWidgetSaving}
 															data-detail-page-widget-collapsible={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetCollapsible(
@@ -14232,7 +13513,7 @@
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.defaultCollapsed}
-															disabled={detailPageWidgetSaving || !widget.collapsible}
+															disabled={s.detailPageWidgetSaving || !widget.collapsible}
 															data-detail-page-widget-default-collapsed={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetDefaultCollapsed(
@@ -14253,7 +13534,7 @@
 
 														<textarea
 															value={widget.emptyText}
-															disabled={detailPageWidgetSaving}
+															disabled={s.detailPageWidgetSaving}
 															rows="2"
 															placeholder={$t('forms.detailPageWidgetEmptyTextPlaceholder')}
 															class="w-full resize-y rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
@@ -14272,7 +13553,7 @@
 													<button
 														type="button"
 														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-														disabled={index === 0 || detailPageWidgetSaving}
+														disabled={index === 0 || s.detailPageWidgetSaving}
 														aria-label={$t('forms.moveWidgetUp')}
 														title={$t('forms.moveWidgetUp')}
 														data-detail-page-widget-move-up={widget.key}
@@ -14284,7 +13565,7 @@
 														type="button"
 														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 														disabled={index === selectedDetailPageWidgetEntries.length - 1 ||
-															detailPageWidgetSaving}
+															s.detailPageWidgetSaving}
 														aria-label={$t('forms.moveWidgetDown')}
 														title={$t('forms.moveWidgetDown')}
 														data-detail-page-widget-move-down={widget.key}
@@ -14301,12 +13582,12 @@
 					</div>
 				{:else}
 					<div class="grid min-w-0 gap-4">
-						{#if activeMode === 'data'}
+						{#if s.activeMode === 'data'}
 							<div class="flex min-w-0 items-start gap-4" data-record-list-stack>
 								<LayoutSettingsSheet
-									open={viewToolsExpanded}
+									open={s.viewToolsExpanded}
 									viewName={selectedView?.name ?? ''}
-									onclose={() => (viewToolsExpanded = false)}
+									onclose={() => (s.viewToolsExpanded = false)}
 								>
 									<section class="w-full" data-view-tools-expanded-panel>
 										<div class="space-y-4">
@@ -14319,201 +13600,219 @@
 															>
 
 															<select
-																value={viewDraft.view_type}
+																value={s.viewDraft.view_type}
 																onchange={(event) =>
-																	(viewDraft = {
-																		...viewDraft,
+																	(s.viewDraft = {
+																		...s.viewDraft,
 																		view_type: selectValue(event) as FormView['view_type'],
 																		pivotRowField:
-																			selectValue(event) === 'pivot' ? viewDraft.pivotRowField : '',
+																			selectValue(event) === 'pivot'
+																				? s.viewDraft.pivotRowField
+																				: '',
 																		pivotColumnField:
 																			selectValue(event) === 'pivot'
-																				? viewDraft.pivotColumnField
+																				? s.viewDraft.pivotColumnField
 																				: '',
 																		pivotValueField:
 																			selectValue(event) === 'pivot'
-																				? viewDraft.pivotValueField
+																				? s.viewDraft.pivotValueField
 																				: '',
 																		pivotAggregate:
 																			selectValue(event) === 'pivot'
-																				? viewDraft.pivotAggregate
+																				? s.viewDraft.pivotAggregate
 																				: 'sum',
 																		pivotTotals:
 																			selectValue(event) === 'pivot'
-																				? viewDraft.pivotTotals
+																				? s.viewDraft.pivotTotals
 																				: 'all',
 																		pivotValueDisplay:
 																			selectValue(event) === 'pivot'
-																				? viewDraft.pivotValueDisplay
+																				? s.viewDraft.pivotValueDisplay
 																				: 'value',
 																		pivotSort:
 																			selectValue(event) === 'pivot'
-																				? viewDraft.pivotSort
+																				? s.viewDraft.pivotSort
 																				: 'label',
 																		pivotEmptyBuckets:
 																			selectValue(event) === 'pivot'
-																				? viewDraft.pivotEmptyBuckets
+																				? s.viewDraft.pivotEmptyBuckets
 																				: false,
 																		pivotHideZeroBuckets:
 																			selectValue(event) === 'pivot'
-																				? viewDraft.pivotHideZeroBuckets
+																				? s.viewDraft.pivotHideZeroBuckets
 																				: false,
 																		pivotShowCounts:
 																			selectValue(event) === 'pivot'
-																				? viewDraft.pivotShowCounts
+																				? s.viewDraft.pivotShowCounts
 																				: false,
 																		pivotHeatmap:
 																			selectValue(event) === 'pivot'
-																				? viewDraft.pivotHeatmap
+																				? s.viewDraft.pivotHeatmap
 																				: false,
 																		pivotRowLimit:
-																			selectValue(event) === 'pivot' ? viewDraft.pivotRowLimit : 0,
+																			selectValue(event) === 'pivot'
+																				? s.viewDraft.pivotRowLimit
+																				: 0,
 																		pivotColumnLimit:
 																			selectValue(event) === 'pivot'
-																				? viewDraft.pivotColumnLimit
+																				? s.viewDraft.pivotColumnLimit
 																				: 0,
 																		ganttStartField:
 																			selectValue(event) === 'gantt'
-																				? viewDraft.ganttStartField
+																				? s.viewDraft.ganttStartField
 																				: '',
 																		ganttEndField:
-																			selectValue(event) === 'gantt' ? viewDraft.ganttEndField : '',
+																			selectValue(event) === 'gantt'
+																				? s.viewDraft.ganttEndField
+																				: '',
 																		ganttGroupBy:
-																			selectValue(event) === 'gantt' ? viewDraft.ganttGroupBy : '',
+																			selectValue(event) === 'gantt'
+																				? s.viewDraft.ganttGroupBy
+																				: '',
 																		ganttDependencyField:
 																			selectValue(event) === 'gantt'
-																				? viewDraft.ganttDependencyField
+																				? s.viewDraft.ganttDependencyField
 																				: '',
 																		ganttScale:
-																			selectValue(event) === 'gantt' ? viewDraft.ganttScale : 'day',
+																			selectValue(event) === 'gantt'
+																				? s.viewDraft.ganttScale
+																				: 'day',
 																		swimlaneBy:
-																			selectValue(event) === 'kanban' ? viewDraft.swimlaneBy : '',
+																			selectValue(event) === 'kanban' ? s.viewDraft.swimlaneBy : '',
 																		calendarRange:
 																			selectValue(event) === 'calendar'
-																				? viewDraft.calendarRange
+																				? s.viewDraft.calendarRange
 																				: 'week',
 																		calendarFocusDate:
 																			selectValue(event) === 'calendar'
-																				? viewDraft.calendarFocusDate
+																				? s.viewDraft.calendarFocusDate
 																				: '',
 																		calendarRecurrence:
 																			selectValue(event) === 'calendar'
-																				? viewDraft.calendarRecurrence
+																				? s.viewDraft.calendarRecurrence
 																				: 'none',
 																		calendarDayScope:
 																			selectValue(event) === 'calendar'
-																				? viewDraft.calendarDayScope
+																				? s.viewDraft.calendarDayScope
 																				: 'all',
 																		calendarLayout:
 																			selectValue(event) === 'calendar'
-																				? viewDraft.calendarLayout
+																				? s.viewDraft.calendarLayout
 																				: 'grid',
 																		calendarHideEmptyDays:
 																			selectValue(event) === 'calendar'
-																				? viewDraft.calendarHideEmptyDays
+																				? s.viewDraft.calendarHideEmptyDays
 																				: false,
 																		calendarEndField:
 																			selectValue(event) === 'calendar'
-																				? viewDraft.calendarEndField
+																				? s.viewDraft.calendarEndField
 																				: '',
 																		calendarResourceBy:
 																			selectValue(event) === 'calendar'
-																				? viewDraft.calendarResourceBy
+																				? s.viewDraft.calendarResourceBy
 																				: '',
 																		calendarExceptionRecordId:
 																			selectValue(event) === 'calendar'
-																				? viewDraft.calendarExceptionRecordId
+																				? s.viewDraft.calendarExceptionRecordId
 																				: '',
 																		calendarExceptionDate:
 																			selectValue(event) === 'calendar'
-																				? viewDraft.calendarExceptionDate
+																				? s.viewDraft.calendarExceptionDate
 																				: '',
 																		calendarExceptionDates:
 																			selectValue(event) === 'calendar'
-																				? viewDraft.calendarExceptionDates
+																				? s.viewDraft.calendarExceptionDates
 																				: {},
 																		cardTitleField:
-																			selectValue(event) === 'card' ? viewDraft.cardTitleField : '',
+																			selectValue(event) === 'card'
+																				? s.viewDraft.cardTitleField
+																				: '',
 																		cardSubtitleField:
 																			selectValue(event) === 'card'
-																				? viewDraft.cardSubtitleField
+																				? s.viewDraft.cardSubtitleField
 																				: '',
 																		cardBadgeField:
-																			selectValue(event) === 'card' ? viewDraft.cardBadgeField : '',
+																			selectValue(event) === 'card'
+																				? s.viewDraft.cardBadgeField
+																				: '',
 																		cardCoverField:
-																			selectValue(event) === 'card' ? viewDraft.cardCoverField : '',
+																			selectValue(event) === 'card'
+																				? s.viewDraft.cardCoverField
+																				: '',
 																		cardLayout:
 																			selectValue(event) === 'card'
-																				? viewDraft.cardLayout
+																				? s.viewDraft.cardLayout
 																				: 'standard',
 																		cardCoverAspect:
 																			selectValue(event) === 'card'
-																				? viewDraft.cardCoverAspect
+																				? s.viewDraft.cardCoverAspect
 																				: 'auto',
 																		cardCoverFit:
 																			selectValue(event) === 'card'
-																				? viewDraft.cardCoverFit
+																				? s.viewDraft.cardCoverFit
 																				: 'cover',
 																		cardCoverPosition:
 																			selectValue(event) === 'card'
-																				? viewDraft.cardCoverPosition
+																				? s.viewDraft.cardCoverPosition
 																				: 'top',
 																		cardFieldLimit:
-																			selectValue(event) === 'card' ? viewDraft.cardFieldLimit : 6,
+																			selectValue(event) === 'card'
+																				? s.viewDraft.cardFieldLimit
+																				: 6,
 																		cardHideEmptyFields:
 																			selectValue(event) === 'card'
-																				? viewDraft.cardHideEmptyFields
+																				? s.viewDraft.cardHideEmptyFields
 																				: false,
 																		cardShowTimestamps:
 																			selectValue(event) === 'card'
-																				? viewDraft.cardShowTimestamps
+																				? s.viewDraft.cardShowTimestamps
 																				: false,
 																		cardShowRecordId:
 																			selectValue(event) === 'card'
-																				? viewDraft.cardShowRecordId
+																				? s.viewDraft.cardShowRecordId
 																				: false,
 																		timelineSource:
 																			selectValue(event) === 'timeline'
-																				? viewDraft.timelineSource
+																				? s.viewDraft.timelineSource
 																				: 'records',
 																		timelineEventLayout:
 																			selectValue(event) === 'timeline'
-																				? viewDraft.timelineEventLayout
+																				? s.viewDraft.timelineEventLayout
 																				: 'summary',
 																		timelineEventType:
 																			selectValue(event) === 'timeline'
-																				? viewDraft.timelineEventType
+																				? s.viewDraft.timelineEventType
 																				: '',
 																		timelineEventActor:
 																			selectValue(event) === 'timeline'
-																				? viewDraft.timelineEventActor
+																				? s.viewDraft.timelineEventActor
 																				: '',
 																		timelineEventAggregate:
 																			selectValue(event) === 'timeline'
-																				? viewDraft.timelineEventAggregate
+																				? s.viewDraft.timelineEventAggregate
 																				: '',
 																		timelineEventQuery:
 																			selectValue(event) === 'timeline'
-																				? viewDraft.timelineEventQuery
+																				? s.viewDraft.timelineEventQuery
 																				: '',
 																		timelineEventFrom:
 																			selectValue(event) === 'timeline'
-																				? viewDraft.timelineEventFrom
+																				? s.viewDraft.timelineEventFrom
 																				: '',
 																		timelineEventTo:
 																			selectValue(event) === 'timeline'
-																				? viewDraft.timelineEventTo
+																				? s.viewDraft.timelineEventTo
 																				: '',
 																		timelineTitleField:
 																			selectValue(event) === 'timeline'
-																				? viewDraft.timelineTitleField
+																				? s.viewDraft.timelineTitleField
 																				: '',
 																		timelineSubtitleField:
 																			selectValue(event) === 'timeline'
-																				? viewDraft.timelineSubtitleField
+																				? s.viewDraft.timelineSubtitleField
 																				: '',
 																		wipLimits:
-																			selectValue(event) === 'kanban' ? viewDraft.wipLimits : {}
+																			selectValue(event) === 'kanban' ? s.viewDraft.wipLimits : {}
 																	})}
 																class="w-full rounded-card border border-input bg-raised px-3 py-2 text-sm text-fg"
 															>
@@ -14528,56 +13827,56 @@
 															</select>
 														</label>
 
-														{#if viewDraft.view_type === 'timeline'}
+														{#if s.viewDraft.view_type === 'timeline'}
 															<label class="space-y-1">
 																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineSource')}</span
 																>
 
 																<select
-																	value={viewDraft.timelineSource}
+																	value={s.viewDraft.timelineSource}
 																	onchange={(event) => {
 																		const timelineSource = selectValue(event) as ViewTimelineSource;
 
-																		viewDraft = {
-																			...viewDraft,
+																		s.viewDraft = {
+																			...s.viewDraft,
 																			timelineSource,
 																			timelineEventLayout:
 																				timelineSource === 'events'
-																					? viewDraft.timelineEventLayout
+																					? s.viewDraft.timelineEventLayout
 																					: 'summary',
 																			timelineEventType:
 																				timelineSource === 'events'
-																					? viewDraft.timelineEventType
+																					? s.viewDraft.timelineEventType
 																					: '',
 																			timelineEventActor:
 																				timelineSource === 'events'
-																					? viewDraft.timelineEventActor
+																					? s.viewDraft.timelineEventActor
 																					: '',
 																			timelineEventAggregate:
 																				timelineSource === 'events'
-																					? viewDraft.timelineEventAggregate
+																					? s.viewDraft.timelineEventAggregate
 																					: '',
 																			timelineEventQuery:
 																				timelineSource === 'events'
-																					? viewDraft.timelineEventQuery
+																					? s.viewDraft.timelineEventQuery
 																					: '',
 																			timelineEventFrom:
 																				timelineSource === 'events'
-																					? viewDraft.timelineEventFrom
+																					? s.viewDraft.timelineEventFrom
 																					: '',
 																			timelineEventTo:
 																				timelineSource === 'events'
-																					? viewDraft.timelineEventTo
+																					? s.viewDraft.timelineEventTo
 																					: '',
 																			timelineTitleField:
 																				timelineSource === 'events'
 																					? ''
-																					: viewDraft.timelineTitleField,
+																					: s.viewDraft.timelineTitleField,
 																			timelineSubtitleField:
 																				timelineSource === 'events'
 																					? ''
-																					: viewDraft.timelineSubtitleField
+																					: s.viewDraft.timelineSubtitleField
 																		};
 																	}}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14595,11 +13894,11 @@
 																>
 
 																<select
-																	value={viewDraft.timelineEventLayout}
-																	disabled={viewDraft.timelineSource !== 'events'}
+																	value={s.viewDraft.timelineEventLayout}
+																	disabled={s.viewDraft.timelineSource !== 'events'}
 																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			timelineEventLayout: timelineEventLayout(selectValue(event))
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14619,11 +13918,11 @@
 																>
 
 																<select
-																	value={viewDraft.timelineEventType}
-																	disabled={viewDraft.timelineSource !== 'events'}
+																	value={s.viewDraft.timelineEventType}
+																	disabled={s.viewDraft.timelineSource !== 'events'}
 																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			timelineEventType: selectValue(event)
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14642,11 +13941,11 @@
 																>
 
 																<select
-																	value={viewDraft.timelineEventActor}
-																	disabled={viewDraft.timelineSource !== 'events'}
+																	value={s.viewDraft.timelineEventActor}
+																	disabled={s.viewDraft.timelineSource !== 'events'}
 																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			timelineEventActor: selectValue(event)
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14665,11 +13964,11 @@
 																>
 
 																<select
-																	value={viewDraft.timelineEventAggregate}
-																	disabled={viewDraft.timelineSource !== 'events'}
+																	value={s.viewDraft.timelineEventAggregate}
+																	disabled={s.viewDraft.timelineSource !== 'events'}
 																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			timelineEventAggregate: selectValue(event)
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14688,11 +13987,11 @@
 																>
 
 																<input
-																	value={viewDraft.timelineEventQuery}
-																	disabled={viewDraft.timelineSource !== 'events'}
+																	value={s.viewDraft.timelineEventQuery}
+																	disabled={s.viewDraft.timelineSource !== 'events'}
 																	oninput={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			timelineEventQuery: inputValue(event)
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14707,11 +14006,11 @@
 
 																<input
 																	type="datetime-local"
-																	value={viewDraft.timelineEventFrom}
-																	disabled={viewDraft.timelineSource !== 'events'}
+																	value={s.viewDraft.timelineEventFrom}
+																	disabled={s.viewDraft.timelineSource !== 'events'}
 																	oninput={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			timelineEventFrom: inputValue(event)
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14725,11 +14024,11 @@
 
 																<input
 																	type="datetime-local"
-																	value={viewDraft.timelineEventTo}
-																	disabled={viewDraft.timelineSource !== 'events'}
+																	value={s.viewDraft.timelineEventTo}
+																	disabled={s.viewDraft.timelineSource !== 'events'}
 																	oninput={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			timelineEventTo: inputValue(event)
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14742,18 +14041,18 @@
 																>
 
 																<select
-																	value={viewDraft.timelineTitleField}
-																	disabled={viewDraft.timelineSource === 'events'}
+																	value={s.viewDraft.timelineTitleField}
+																	disabled={s.viewDraft.timelineSource === 'events'}
 																	onchange={(event) => {
 																		const timelineTitleField = selectValue(event);
 
-																		viewDraft = {
-																			...viewDraft,
+																		s.viewDraft = {
+																			...s.viewDraft,
 																			timelineTitleField,
 																			timelineSubtitleField:
-																				viewDraft.timelineSubtitleField === timelineTitleField
+																				s.viewDraft.timelineSubtitleField === timelineTitleField
 																					? ''
-																					: viewDraft.timelineSubtitleField
+																					: s.viewDraft.timelineSubtitleField
 																		};
 																	}}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14772,35 +14071,35 @@
 																>
 
 																<select
-																	value={viewDraft.timelineSubtitleField}
-																	disabled={viewDraft.timelineSource === 'events'}
+																	value={s.viewDraft.timelineSubtitleField}
+																	disabled={s.viewDraft.timelineSource === 'events'}
 																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			timelineSubtitleField: selectValue(event)
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
-																	{#each fields.filter((field) => field.visibility?.list !== false && field.key !== viewDraft.timelineTitleField) as field}
+																	{#each fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.timelineTitleField) as field}
 																		<option value={field.key}>{fieldLabel(field)}</option>
 																	{/each}
 																</select>
 															</label>
 														{/if}
 
-														{#if viewDraft.view_type === 'card'}
+														{#if s.viewDraft.view_type === 'card'}
 															<label class="space-y-1">
 																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.cardCoverAspect')}</span
 																>
 
 																<select
-																	value={viewDraft.cardCoverAspect}
+																	value={s.viewDraft.cardCoverAspect}
 																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			cardCoverAspect: viewCardCoverAspect(selectValue(event))
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14821,10 +14120,10 @@
 																>
 
 																<select
-																	value={viewDraft.cardCoverFit}
+																	value={s.viewDraft.cardCoverFit}
 																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			cardCoverFit: viewCardCoverFit(selectValue(event))
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14840,10 +14139,10 @@
 																>
 
 																<select
-																	value={viewDraft.cardCoverPosition}
+																	value={s.viewDraft.cardCoverPosition}
 																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			cardCoverPosition: viewCardCoverPosition(selectValue(event))
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -14893,7 +14192,7 @@
 																		size="sm"
 																		variant="secondary"
 																		onclick={addViewDraftFilterGroup}
-																		disabled={viewDraft.filterGroups.length >= 5}
+																		disabled={s.viewDraft.filterGroups.length >= 5}
 																	>
 																		<Plus class="mr-2 h-4 w-4" aria-hidden="true" />
 																		{$t('forms.addFilterGroup')}
@@ -14927,7 +14226,7 @@
 																		>
 
 																		<select
-																			value={viewDraft.filterRootLogic}
+																			value={s.viewDraft.filterRootLogic}
 																			onchange={(event) =>
 																				updateViewDraftFilterRootLogic(
 																					selectValue(event) as ViewFilterLogic
@@ -14963,7 +14262,7 @@
 																		disabled={!expressionRecordIdsText}
 																		aria-label={$t('forms.copyFilterExpressionRecordIds')}
 																		data-filter-expression-copy-ids
-																		data-filter-expression-copied={copiedFilterExpressionRecordIds ===
+																		data-filter-expression-copied={s.copiedFilterExpressionRecordIds ===
 																		expressionRecordIdsText
 																			? 'true'
 																			: undefined}
@@ -14980,7 +14279,7 @@
 																		disabled={!expressionJsonText}
 																		aria-label={$t('forms.copyFilterExpressionJson')}
 																		data-filter-expression-copy-json
-																		data-filter-expression-json-copied={copiedFilterExpressionJson ===
+																		data-filter-expression-json-copied={s.copiedFilterExpressionJson ===
 																		expressionJsonText
 																			? 'true'
 																			: undefined}
@@ -14997,7 +14296,7 @@
 																		disabled={!expressionJsonText}
 																		aria-label={$t('forms.exportFilterExpressionJson')}
 																		data-filter-expression-export-config-json
-																		data-filter-expression-config-json-exported={exportedFilterExpressionJson ===
+																		data-filter-expression-config-json-exported={s.exportedFilterExpressionJson ===
 																		expressionJsonText
 																			? 'true'
 																			: undefined}
@@ -15014,7 +14313,7 @@
 																		disabled={!expressionSummaryText}
 																		aria-label={$t('forms.copyFilterExpressionSummary')}
 																		data-filter-expression-copy-summary
-																		data-filter-expression-summary-copied={copiedFilterExpressionSummary ===
+																		data-filter-expression-summary-copied={s.copiedFilterExpressionSummary ===
 																		expressionSummaryText
 																			? 'true'
 																			: undefined}
@@ -15031,7 +14330,7 @@
 																		disabled={!expressionSummaryText}
 																		aria-label={$t('forms.exportFilterExpressionSummary')}
 																		data-filter-expression-export-summary
-																		data-filter-expression-summary-exported={exportedFilterExpressionSummary ===
+																		data-filter-expression-summary-exported={s.exportedFilterExpressionSummary ===
 																		expressionSummaryText
 																			? 'true'
 																			: undefined}
@@ -15062,7 +14361,7 @@
 																			exportViewDraftFilterExpressionCsv(expressionMatchingRecords)}
 																		disabled={!expressionRecordIdsText}
 																		data-filter-expression-export-csv
-																		data-filter-expression-exported={exportedFilterExpressionRecordIds ===
+																		data-filter-expression-exported={s.exportedFilterExpressionRecordIds ===
 																		expressionRecordIdsText
 																			? 'true'
 																			: undefined}
@@ -15081,7 +14380,7 @@
 																			)}
 																		disabled={!expressionRecordIdsText}
 																		data-filter-expression-copy-matches-csv
-																		data-filter-expression-matches-csv-copied={copiedFilterExpressionCsvRecordIds ===
+																		data-filter-expression-matches-csv-copied={s.copiedFilterExpressionCsvRecordIds ===
 																		expressionRecordIdsText
 																			? 'true'
 																			: undefined}
@@ -15100,7 +14399,7 @@
 																			)}
 																		disabled={!expressionRecordIdsText}
 																		data-filter-expression-copy-matches-json
-																		data-filter-expression-matches-json-copied={copiedFilterExpressionJsonRecordIds ===
+																		data-filter-expression-matches-json-copied={s.copiedFilterExpressionJsonRecordIds ===
 																		expressionRecordIdsText
 																			? 'true'
 																			: undefined}
@@ -15119,7 +14418,7 @@
 																			)}
 																		disabled={!expressionRecordIdsText}
 																		data-filter-expression-export-json
-																		data-filter-expression-json-exported={exportedFilterExpressionJsonRecordIds ===
+																		data-filter-expression-json-exported={s.exportedFilterExpressionJsonRecordIds ===
 																		expressionRecordIdsText
 																			? 'true'
 																			: undefined}
@@ -15255,7 +14554,7 @@
 																			>
 																		</div>
 
-																		{#if viewDraft.filterGroups.length > 1}
+																		{#if s.viewDraft.filterGroups.length > 1}
 																			<button
 																				type="button"
 																				class="rounded-control p-2 text-fg-muted hover:bg-surface hover:text-danger"
@@ -15461,9 +14760,12 @@
 																>
 
 																<select
-																	value={viewDraft.sortField}
+																	value={s.viewDraft.sortField}
 																	onchange={(event) =>
-																		(viewDraft = { ...viewDraft, sortField: selectValue(event) })}
+																		(s.viewDraft = {
+																			...s.viewDraft,
+																			sortField: selectValue(event)
+																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
@@ -15480,11 +14782,11 @@
 																>
 
 																<select
-																	value={viewDraft.sortDirection}
-																	disabled={!viewDraft.sortField}
+																	value={s.viewDraft.sortDirection}
+																	disabled={!s.viewDraft.sortField}
 																	onchange={(event) =>
-																		(viewDraft = {
-																			...viewDraft,
+																		(s.viewDraft = {
+																			...s.viewDraft,
 																			sortDirection: selectValue(event) as ViewSortDirection
 																		})}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15500,17 +14802,17 @@
 																>
 
 																<select
-																	value={viewDraft.groupBy}
+																	value={s.viewDraft.groupBy}
 																	onchange={(event) => {
 																		const groupBy = selectValue(event);
 
-																		viewDraft = {
-																			...viewDraft,
+																		s.viewDraft = {
+																			...s.viewDraft,
 																			groupBy,
 																			swimlaneBy:
-																				viewDraft.swimlaneBy === groupBy
+																				s.viewDraft.swimlaneBy === groupBy
 																					? ''
-																					: viewDraft.swimlaneBy,
+																					: s.viewDraft.swimlaneBy,
 																			wipLimits: {}
 																		};
 																	}}
@@ -15524,24 +14826,24 @@
 																</select>
 															</label>
 
-															{#if viewDraft.view_type === 'pivot'}
+															{#if s.viewDraft.view_type === 'pivot'}
 																<label class="space-y-1">
 																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotRowField')}</span
 																	>
 
 																	<select
-																		value={viewDraft.pivotRowField}
+																		value={s.viewDraft.pivotRowField}
 																		onchange={(event) => {
 																			const pivotRowField = selectValue(event);
 
-																			viewDraft = {
-																				...viewDraft,
+																			s.viewDraft = {
+																				...s.viewDraft,
 																				pivotRowField,
 																				pivotColumnField:
-																					viewDraft.pivotColumnField === pivotRowField
+																					s.viewDraft.pivotColumnField === pivotRowField
 																						? ''
-																						: viewDraft.pivotColumnField
+																						: s.viewDraft.pivotColumnField
 																			};
 																		}}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15560,17 +14862,17 @@
 																	>
 
 																	<select
-																		value={viewDraft.pivotColumnField}
+																		value={s.viewDraft.pivotColumnField}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotColumnField: selectValue(event)
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																		{#each viewDraftPivotDimensionFieldCandidates().filter((field) => field.key !== viewDraft.pivotRowField) as field}
+																		{#each viewDraftPivotDimensionFieldCandidates().filter((field) => field.key !== s.viewDraft.pivotRowField) as field}
 																			<option value={field.key}>{fieldLabel(field)}</option>
 																		{/each}
 																	</select>
@@ -15582,10 +14884,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.pivotValueField}
+																		value={s.viewDraft.pivotValueField}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotValueField: selectValue(event)
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15604,10 +14906,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.pivotAggregate}
+																		value={s.viewDraft.pivotAggregate}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotAggregate: viewPivotAggregate(selectValue(event))
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15624,10 +14926,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.pivotTotals}
+																		value={s.viewDraft.pivotTotals}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotTotals: viewPivotTotalsMode(selectValue(event))
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15646,10 +14948,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.pivotValueDisplay}
+																		value={s.viewDraft.pivotValueDisplay}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotValueDisplay: viewPivotValueDisplay(selectValue(event))
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15675,10 +14977,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.pivotSort}
+																		value={s.viewDraft.pivotSort}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotSort: viewPivotSortMode(selectValue(event))
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15705,10 +15007,10 @@
 																	>
 
 																	<select
-																		value={String(viewDraft.pivotRowLimit)}
+																		value={String(s.viewDraft.pivotRowLimit)}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotRowLimit: viewPivotRowLimit(selectValue(event))
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15726,10 +15028,10 @@
 																	>
 
 																	<select
-																		value={String(viewDraft.pivotColumnLimit)}
+																		value={String(s.viewDraft.pivotColumnLimit)}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotColumnLimit: viewPivotColumnLimit(selectValue(event))
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15747,11 +15049,11 @@
 																	<input
 																		type="checkbox"
 																		class="h-4 w-4 rounded border-input accent-primary"
-																		checked={viewDraft.pivotEmptyBuckets}
+																		checked={s.viewDraft.pivotEmptyBuckets}
 																		data-pivot-empty-buckets-control
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotEmptyBuckets:
 																					event.currentTarget instanceof HTMLInputElement
 																						? event.currentTarget.checked
@@ -15770,11 +15072,11 @@
 																	<input
 																		type="checkbox"
 																		class="h-4 w-4 rounded border-input accent-primary"
-																		checked={viewDraft.pivotHideZeroBuckets}
+																		checked={s.viewDraft.pivotHideZeroBuckets}
 																		data-pivot-hide-zero-buckets-control
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotHideZeroBuckets:
 																					event.currentTarget instanceof HTMLInputElement
 																						? event.currentTarget.checked
@@ -15793,11 +15095,11 @@
 																	<input
 																		type="checkbox"
 																		class="h-4 w-4 rounded border-input accent-primary"
-																		checked={viewDraft.pivotShowCounts}
+																		checked={s.viewDraft.pivotShowCounts}
 																		data-pivot-show-counts-control
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotShowCounts:
 																					event.currentTarget instanceof HTMLInputElement
 																						? event.currentTarget.checked
@@ -15815,11 +15117,11 @@
 																	<input
 																		type="checkbox"
 																		class="h-4 w-4 rounded border-input accent-primary"
-																		checked={viewDraft.pivotHeatmap}
+																		checked={s.viewDraft.pivotHeatmap}
 																		data-pivot-heatmap-control
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				pivotHeatmap:
 																					event.currentTarget instanceof HTMLInputElement
 																						? event.currentTarget.checked
@@ -15833,8 +15135,8 @@
 																<div class="flex items-end">
 																	<button
 																		type="button"
-																		disabled={!viewDraft.pivotRowField ||
-																			!viewDraft.pivotColumnField}
+																		disabled={!s.viewDraft.pivotRowField ||
+																			!s.viewDraft.pivotColumnField}
 																		class="inline-flex h-10 items-center gap-2 rounded-control border border-input bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:cursor-not-allowed disabled:bg-surface disabled:text-fg-muted"
 																		data-pivot-swap-axes
 																		onclick={swapViewDraftPivotAxes}
@@ -15845,32 +15147,32 @@
 																</div>
 															{/if}
 
-															{#if viewDraft.view_type === 'gantt'}
+															{#if s.viewDraft.view_type === 'gantt'}
 																<label class="space-y-1">
 																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.ganttStartField')}</span
 																	>
 
 																	<select
-																		value={viewDraft.ganttStartField}
+																		value={s.viewDraft.ganttStartField}
 																		onchange={(event) => {
 																			const ganttStartField = selectValue(event);
 
-																			viewDraft = {
-																				...viewDraft,
+																			s.viewDraft = {
+																				...s.viewDraft,
 																				ganttStartField,
 																				ganttEndField:
-																					viewDraft.ganttEndField === ganttStartField
+																					s.viewDraft.ganttEndField === ganttStartField
 																						? ''
-																						: viewDraft.ganttEndField,
+																						: s.viewDraft.ganttEndField,
 																				ganttGroupBy:
-																					viewDraft.ganttGroupBy === ganttStartField
+																					s.viewDraft.ganttGroupBy === ganttStartField
 																						? ''
-																						: viewDraft.ganttGroupBy,
+																						: s.viewDraft.ganttGroupBy,
 																				ganttDependencyField:
-																					viewDraft.ganttDependencyField === ganttStartField
+																					s.viewDraft.ganttDependencyField === ganttStartField
 																						? ''
-																						: viewDraft.ganttDependencyField
+																						: s.viewDraft.ganttDependencyField
 																			};
 																		}}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15889,28 +15191,28 @@
 																	>
 
 																	<select
-																		value={viewDraft.ganttEndField}
+																		value={s.viewDraft.ganttEndField}
 																		onchange={(event) => {
 																			const ganttEndField = selectValue(event);
 
-																			viewDraft = {
-																				...viewDraft,
+																			s.viewDraft = {
+																				...s.viewDraft,
 																				ganttEndField,
 																				ganttGroupBy:
-																					viewDraft.ganttGroupBy === ganttEndField
+																					s.viewDraft.ganttGroupBy === ganttEndField
 																						? ''
-																						: viewDraft.ganttGroupBy,
+																						: s.viewDraft.ganttGroupBy,
 																				ganttDependencyField:
-																					viewDraft.ganttDependencyField === ganttEndField
+																					s.viewDraft.ganttDependencyField === ganttEndField
 																						? ''
-																						: viewDraft.ganttDependencyField
+																						: s.viewDraft.ganttDependencyField
 																			};
 																		}}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.ganttNoEndField')}</option>
 
-																		{#each viewDraftGanttDateFieldCandidates().filter((field) => field.key !== viewDraft.ganttStartField) as field}
+																		{#each viewDraftGanttDateFieldCandidates().filter((field) => field.key !== s.viewDraft.ganttStartField) as field}
 																			<option value={field.key}>{fieldLabel(field)}</option>
 																		{/each}
 																	</select>
@@ -15922,15 +15224,15 @@
 																	>
 
 																	<select
-																		value={viewDraft.ganttGroupBy}
+																		value={s.viewDraft.ganttGroupBy}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				ganttGroupBy: selectValue(event),
 																				ganttDependencyField:
-																					viewDraft.ganttDependencyField === selectValue(event)
+																					s.viewDraft.ganttDependencyField === selectValue(event)
 																						? ''
-																						: viewDraft.ganttDependencyField
+																						: s.viewDraft.ganttDependencyField
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
@@ -15948,10 +15250,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.ganttDependencyField}
+																		value={s.viewDraft.ganttDependencyField}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				ganttDependencyField: selectValue(event)
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15970,10 +15272,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.ganttScale}
+																		value={s.viewDraft.ganttScale}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				ganttScale: selectValue(event) as GanttScale
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -15985,17 +15287,17 @@
 																</label>
 															{/if}
 
-															{#if viewDraft.view_type === 'kanban'}
+															{#if s.viewDraft.view_type === 'kanban'}
 																<label class="space-y-1">
 																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.swimlaneField')}</span
 																	>
 
 																	<select
-																		value={viewDraft.swimlaneBy}
+																		value={s.viewDraft.swimlaneBy}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				swimlaneBy: selectValue(event)
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16015,21 +15317,21 @@
 																>
 
 																<select
-																	value={viewDraft.dateField}
+																	value={s.viewDraft.dateField}
 																	onchange={(event) => {
 																		const dateField = selectValue(event);
 
-																		viewDraft = {
-																			...viewDraft,
+																		s.viewDraft = {
+																			...s.viewDraft,
 																			dateField,
 																			calendarEndField:
-																				viewDraft.calendarEndField === dateField
+																				s.viewDraft.calendarEndField === dateField
 																					? ''
-																					: viewDraft.calendarEndField,
+																					: s.viewDraft.calendarEndField,
 																			calendarResourceBy:
-																				viewDraft.calendarResourceBy === dateField
+																				s.viewDraft.calendarResourceBy === dateField
 																					? ''
-																					: viewDraft.calendarResourceBy
+																					: s.viewDraft.calendarResourceBy
 																		};
 																	}}
 																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -16042,17 +15344,17 @@
 																</select>
 															</label>
 
-															{#if viewDraft.view_type === 'calendar'}
+															{#if s.viewDraft.view_type === 'calendar'}
 																<label class="space-y-1">
 																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarEndField')}</span
 																	>
 
 																	<select
-																		value={viewDraft.calendarEndField}
+																		value={s.viewDraft.calendarEndField}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				calendarEndField: selectValue(event)
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16071,10 +15373,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.calendarResourceBy}
+																		value={s.viewDraft.calendarResourceBy}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				calendarResourceBy: selectValue(event)
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16093,10 +15395,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.calendarRange}
+																		value={s.viewDraft.calendarRange}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				calendarRange: selectValue(event) as ViewCalendarRange
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16124,12 +15426,12 @@
 
 																		<input
 																			type="date"
-																			value={viewDraft.calendarFocusDate}
+																			value={s.viewDraft.calendarFocusDate}
 																			aria-label={$t('forms.calendarFocusDate')}
 																			data-calendar-focus-date-control
 																			oninput={(event) =>
-																				(viewDraft = {
-																					...viewDraft,
+																				(s.viewDraft = {
+																					...s.viewDraft,
 																					calendarFocusDate: inputValue(event)
 																				})}
 																			class="min-w-0 rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16153,10 +15455,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.calendarRecurrence}
+																		value={s.viewDraft.calendarRecurrence}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				calendarRecurrence: selectValue(
 																					event
 																				) as ViewCalendarRecurrence
@@ -16184,10 +15486,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.calendarDayScope}
+																		value={s.viewDraft.calendarDayScope}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				calendarDayScope: selectValue(event) as ViewCalendarDayScope
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16205,10 +15507,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.calendarLayout}
+																		value={s.viewDraft.calendarLayout}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				calendarLayout: selectValue(event) as ViewCalendarLayout
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16226,11 +15528,11 @@
 																	<input
 																		type="checkbox"
 																		class="h-4 w-4 rounded border-input accent-primary"
-																		checked={viewDraft.calendarHideEmptyDays}
+																		checked={s.viewDraft.calendarHideEmptyDays}
 																		data-calendar-hide-empty-days-control
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				calendarHideEmptyDays:
 																					event.currentTarget instanceof HTMLInputElement
 																						? event.currentTarget.checked
@@ -16248,17 +15550,17 @@
 																class="space-y-2 rounded-card border border-line p-3 lg:col-span-2"
 															>
 																<div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_180px_auto]">
-																	{#if viewDraft.view_type === 'calendar'}
+																	{#if s.viewDraft.view_type === 'calendar'}
 																		<label class="space-y-1">
 																			<span class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.calendarExceptionRecord')}</span
 																			>
 
 																			<select
-																				value={viewDraft.calendarExceptionRecordId}
+																				value={s.viewDraft.calendarExceptionRecordId}
 																				onchange={(event) =>
-																					(viewDraft = {
-																						...viewDraft,
+																					(s.viewDraft = {
+																						...s.viewDraft,
 																						calendarExceptionRecordId: selectValue(event)
 																					})}
 																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16272,17 +15574,17 @@
 																		</label>
 																	{/if}
 
-																	{#if viewDraft.view_type === 'card'}
+																	{#if s.viewDraft.view_type === 'card'}
 																		<label class="space-y-1">
 																			<span class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.cardFieldLimit')}</span
 																			>
 
 																			<select
-																				value={String(viewDraft.cardFieldLimit)}
+																				value={String(s.viewDraft.cardFieldLimit)}
 																				onchange={(event) =>
-																					(viewDraft = {
-																						...viewDraft,
+																					(s.viewDraft = {
+																						...s.viewDraft,
 																						cardFieldLimit: viewCardFieldLimit(selectValue(event))
 																					})}
 																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16300,11 +15602,11 @@
 																			<input
 																				type="checkbox"
 																				class="h-4 w-4 rounded border-input accent-primary"
-																				checked={viewDraft.cardHideEmptyFields}
+																				checked={s.viewDraft.cardHideEmptyFields}
 																				data-card-hide-empty-fields-control
 																				onchange={(event) =>
-																					(viewDraft = {
-																						...viewDraft,
+																					(s.viewDraft = {
+																						...s.viewDraft,
 																						cardHideEmptyFields:
 																							event.currentTarget instanceof HTMLInputElement
 																								? event.currentTarget.checked
@@ -16323,11 +15625,11 @@
 																			<input
 																				type="checkbox"
 																				class="h-4 w-4 rounded border-input accent-primary"
-																				checked={viewDraft.cardShowTimestamps}
+																				checked={s.viewDraft.cardShowTimestamps}
 																				data-card-show-timestamps-control
 																				onchange={(event) =>
-																					(viewDraft = {
-																						...viewDraft,
+																					(s.viewDraft = {
+																						...s.viewDraft,
 																						cardShowTimestamps:
 																							event.currentTarget instanceof HTMLInputElement
 																								? event.currentTarget.checked
@@ -16346,11 +15648,11 @@
 																			<input
 																				type="checkbox"
 																				class="h-4 w-4 rounded border-input accent-primary"
-																				checked={viewDraft.cardShowRecordId}
+																				checked={s.viewDraft.cardShowRecordId}
 																				data-card-show-record-id-control
 																				onchange={(event) =>
-																					(viewDraft = {
-																						...viewDraft,
+																					(s.viewDraft = {
+																						...s.viewDraft,
 																						cardShowRecordId:
 																							event.currentTarget instanceof HTMLInputElement
 																								? event.currentTarget.checked
@@ -16364,7 +15666,7 @@
 																		</label>
 																	{/if}
 
-																	{#if viewDraft.view_type === 'calendar'}
+																	{#if s.viewDraft.view_type === 'calendar'}
 																		<label class="space-y-1">
 																			<span class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.calendarExceptionDate')}</span
@@ -16372,10 +15674,10 @@
 
 																			<input
 																				type="date"
-																				value={viewDraft.calendarExceptionDate}
+																				value={s.viewDraft.calendarExceptionDate}
 																				oninput={(event) =>
-																					(viewDraft = {
-																						...viewDraft,
+																					(s.viewDraft = {
+																						...s.viewDraft,
 																						calendarExceptionDate: inputValue(event)
 																					})}
 																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16386,8 +15688,8 @@
 																	<div class="flex items-end">
 																		<button
 																			type="button"
-																			disabled={!viewDraft.calendarExceptionRecordId ||
-																				!isIsoDate(viewDraft.calendarExceptionDate)}
+																			disabled={!s.viewDraft.calendarExceptionRecordId ||
+																				!isIsoDate(s.viewDraft.calendarExceptionDate)}
 																			class="inline-flex h-10 items-center gap-2 rounded-control rf-filled bg-primary text-on-primary px-3 text-sm font-medium disabled:bg-surface disabled:text-fg-muted"
 																			onclick={addViewDraftCalendarException}
 																		>
@@ -16434,17 +15736,17 @@
 																</div>
 															</div>
 
-															{#if viewDraft.view_type === 'card'}
+															{#if s.viewDraft.view_type === 'card'}
 																<label class="space-y-1">
 																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.cardLayout')}</span
 																	>
 
 																	<select
-																		value={viewDraft.cardLayout}
+																		value={s.viewDraft.cardLayout}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				cardLayout: selectValue(event) as CardLayoutMode
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16464,31 +15766,31 @@
 																	>
 
 																	<select
-																		value={viewDraft.cardTitleField}
+																		value={s.viewDraft.cardTitleField}
 																		onchange={(event) => {
 																			const cardTitleField = selectValue(event);
 
-																			viewDraft = {
-																				...viewDraft,
+																			s.viewDraft = {
+																				...s.viewDraft,
 																				cardTitleField,
 																				cardSubtitleField:
-																					viewDraft.cardSubtitleField === cardTitleField
+																					s.viewDraft.cardSubtitleField === cardTitleField
 																						? ''
-																						: viewDraft.cardSubtitleField,
+																						: s.viewDraft.cardSubtitleField,
 																				cardBadgeField:
-																					viewDraft.cardBadgeField === cardTitleField
+																					s.viewDraft.cardBadgeField === cardTitleField
 																						? ''
-																						: viewDraft.cardBadgeField,
+																						: s.viewDraft.cardBadgeField,
 																				cardFieldKeys:
 																					cardTitleField &&
-																					viewDraft.cardFieldKeys[0] !== cardTitleField
+																					s.viewDraft.cardFieldKeys[0] !== cardTitleField
 																						? [
 																								cardTitleField,
-																								...viewDraft.cardFieldKeys.filter(
+																								...s.viewDraft.cardFieldKeys.filter(
 																									(key) => key !== cardTitleField
 																								)
 																							]
-																						: viewDraft.cardFieldKeys
+																						: s.viewDraft.cardFieldKeys
 																			};
 																		}}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16507,21 +15809,21 @@
 																	>
 
 																	<select
-																		value={viewDraft.cardSubtitleField}
+																		value={s.viewDraft.cardSubtitleField}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				cardSubtitleField: selectValue(event),
 																				cardBadgeField:
-																					viewDraft.cardBadgeField === selectValue(event)
+																					s.viewDraft.cardBadgeField === selectValue(event)
 																						? ''
-																						: viewDraft.cardBadgeField
+																						: s.viewDraft.cardBadgeField
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																		{#each fields.filter((field) => field.visibility?.list !== false && field.key !== viewDraft.cardTitleField) as field}
+																		{#each fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.cardTitleField) as field}
 																			<option value={field.key}>{fieldLabel(field)}</option>
 																		{/each}
 																	</select>
@@ -16533,17 +15835,17 @@
 																	>
 
 																	<select
-																		value={viewDraft.cardBadgeField}
+																		value={s.viewDraft.cardBadgeField}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				cardBadgeField: selectValue(event)
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																		{#each fields.filter((field) => field.visibility?.list !== false && field.key !== viewDraft.cardTitleField && field.key !== viewDraft.cardSubtitleField) as field}
+																		{#each fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.cardTitleField && field.key !== s.viewDraft.cardSubtitleField) as field}
 																			<option value={field.key}>{fieldLabel(field)}</option>
 																		{/each}
 																	</select>
@@ -16555,10 +15857,10 @@
 																	>
 
 																	<select
-																		value={viewDraft.cardCoverField}
+																		value={s.viewDraft.cardCoverField}
 																		onchange={(event) =>
-																			(viewDraft = {
-																				...viewDraft,
+																			(s.viewDraft = {
+																				...s.viewDraft,
 																				cardCoverField: selectValue(event)
 																			})}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -16573,7 +15875,7 @@
 															{/if}
 														</div>
 
-														{#if viewDraft.view_type === 'card' && viewDraftCardFields().length > 0}
+														{#if s.viewDraft.view_type === 'card' && viewDraftCardFields().length > 0}
 															<div class="space-y-2 rounded-card border border-line bg-raised p-3">
 																<div>
 																	<h5 class="text-xs font-semibold uppercase text-fg-muted">
@@ -16653,7 +15955,7 @@
 																				step="1"
 																				inputmode="numeric"
 																				placeholder={$t('forms.kanbanNoWipLimit')}
-																				value={viewDraft.wipLimits[option] ?? ''}
+																				value={s.viewDraft.wipLimits[option] ?? ''}
 																				oninput={(event) =>
 																					setViewDraftWipLimit(option, inputValue(event))}
 																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -16681,7 +15983,7 @@
 
 													<span class="text-xs text-fg-muted"
 														>{$t('forms.selectedColumns', {
-															values: { count: viewDraft.columns.length }
+															values: { count: s.viewDraft.columns.length }
 														})}</span
 													>
 												</summary>
@@ -16694,7 +15996,7 @@
 
 														<span class="text-xs text-fg-muted"
 															>{$t('forms.selectedColumns', {
-																values: { count: viewDraft.columns.length }
+																values: { count: s.viewDraft.columns.length }
 															})}</span
 														>
 													</div>
@@ -16765,7 +16067,7 @@
 									</section>
 								</LayoutSettingsSheet>
 
-								{#if recordEditorOpen}
+								{#if s.recordEditorOpen}
 									<div
 										use:recordEditorAction
 										class="pointer-events-auto absolute inset-0 z-30 flex justify-end bg-scrim"
@@ -16783,13 +16085,13 @@
 										></button>
 
 										<section
-											bind:this={recordEditorPanel}
+											bind:this={s.recordEditorPanel}
 											class="relative z-10 flex h-full w-full max-w-3xl flex-col overflow-y-auto bg-overlay p-4 shadow-sheet"
 										>
 											<div class="mb-3 flex items-center justify-between gap-3">
 												<div>
 													<h3 id="record-editor-title" class="text-base font-semibold text-fg">
-														{editingRecordId ? $t('forms.editRecord') : $t('forms.newRecord')}
+														{s.editingRecordId ? $t('forms.editRecord') : $t('forms.newRecord')}
 													</h3>
 
 													<span class="text-xs text-fg-muted">{$t('forms.decimalHint')}</span>
@@ -16810,7 +16112,7 @@
 
 													<input
 														class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-														bind:value={recordTitle}
+														bind:value={s.recordTitle}
 														placeholder={selectedForm.title_template}
 													/>
 												</label>
@@ -16822,12 +16124,15 @@
 														fieldType(field) === 'signature' ||
 														fieldType(field) === 'child_table'
 															? 'md:col-span-2'
-															: ''} {fieldHiddenByCondition(field, recordDraft) ? 'hidden' : ''}"
+															: ''} {fieldHiddenByCondition(field, s.recordDraft) ? 'hidden' : ''}"
 														data-record-edit-field={field.key}
-														data-conditional-hidden={fieldHiddenByCondition(field, recordDraft)
+														data-conditional-hidden={fieldHiddenByCondition(field, s.recordDraft)
 															? field.key
 															: undefined}
-														data-conditional-readonly={fieldReadOnlyByCondition(field, recordDraft)
+														data-conditional-readonly={fieldReadOnlyByCondition(
+															field,
+															s.recordDraft
+														)
 															? field.key
 															: undefined}
 													>
@@ -16860,8 +16165,8 @@
 														{#if fieldType(field) === 'boolean'}
 															<input
 																type="checkbox"
-																checked={Boolean(recordDraft[field.key])}
-																disabled={fieldReadOnlyByCondition(field, recordDraft)}
+																checked={Boolean(s.recordDraft[field.key])}
+																disabled={fieldReadOnlyByCondition(field, s.recordDraft)}
 																onchange={(event) =>
 																	setDraftValue(
 																		field.key,
@@ -16874,13 +16179,13 @@
 														{:else if fieldType(field) === 'single_select'}
 															<select
 																value={draftString(field.key)}
-																disabled={fieldReadOnlyByCondition(field, recordDraft)}
+																disabled={fieldReadOnlyByCondition(field, s.recordDraft)}
 																onchange={(event) => setDraftValue(field.key, selectValue(event))}
 																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 															>
 																<option value="">{$t('forms.selectPlaceholder')}</option>
 
-																{#each recordSelectOptions(field, recordDraft) as option}
+																{#each recordSelectOptions(field, s.recordDraft) as option}
 																	<option
 																		value={option}
 																		disabled={optionDisabledForSingleDraft(field, option)}
@@ -16901,7 +16206,7 @@
 															<div
 																class="grid gap-2 rounded-control border border-input bg-field p-2 text-sm"
 															>
-																{#each recordSelectOptions(field, recordDraft) as option}
+																{#each recordSelectOptions(field, s.recordDraft) as option}
 																	<label
 																		class="flex items-start gap-2 text-fg"
 																		data-option-description={optionDescription(field, option) ||
@@ -16912,7 +16217,7 @@
 																			type="checkbox"
 																			class="h-4 w-4 rounded border-input accent-primary"
 																			checked={isDraftOptionSelected(field.key, option)}
-																			disabled={fieldReadOnlyByCondition(field, recordDraft) ||
+																			disabled={fieldReadOnlyByCondition(field, s.recordDraft) ||
 																				optionDisabledForMultiDraft(field, option)}
 																			data-option-disabled={optionDisabled(field, option)
 																				? option
@@ -16945,13 +16250,13 @@
 														{:else if fieldType(field) === 'relation' && field.relation?.form_key}
 															<select
 																value={relationDraftValue(field)}
-																disabled={fieldReadOnlyByCondition(field, recordDraft) ||
-																	relationTargetsLoading}
+																disabled={fieldReadOnlyByCondition(field, s.recordDraft) ||
+																	s.relationTargetsLoading}
 																onchange={(event) => setDraftValue(field.key, selectValue(event))}
 																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 															>
 																<option value="">
-																	{relationTargetsLoading
+																	{s.relationTargetsLoading
 																		? $t('forms.loadingRelationTargets')
 																		: $t('forms.selectRelationTarget')}
 																</option>
@@ -16972,18 +16277,18 @@
 														{:else if fieldType(field) === 'member'}
 															<select
 																value={draftString(field.key)}
-																disabled={fieldReadOnlyByCondition(field, recordDraft) ||
-																	workspaceMembersLoading}
+																disabled={fieldReadOnlyByCondition(field, s.recordDraft) ||
+																	s.workspaceMembersLoading}
 																onchange={(event) => setDraftValue(field.key, selectValue(event))}
 																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 															>
 																<option value="">
-																	{workspaceMembersLoading
+																	{s.workspaceMembersLoading
 																		? $t('forms.loadingMembers')
 																		: $t('forms.selectMemberPlaceholder')}
 																</option>
 
-																{#each workspaceMembers as member (member.user_id)}
+																{#each s.workspaceMembers as member (member.user_id)}
 																	<option value={member.user_id}
 																		>{member.name || member.email || member.user_id}</option
 																	>
@@ -16998,7 +16303,7 @@
 																		value={attachmentUrl(field)}
 																		placeholder={fieldPlaceholder(field) ||
 																			$t('forms.attachmentUrlPlaceholder')}
-																		readonly={fieldReadOnlyByCondition(field, recordDraft)}
+																		readonly={fieldReadOnlyByCondition(field, s.recordDraft)}
 																		oninput={(event) => setDraftValue(field.key, inputValue(event))}
 																		data-attachment-url-input={field.key}
 																	/>
@@ -17006,10 +16311,10 @@
 																	<Button
 																		size="sm"
 																		variant="secondary"
-																		disabled={fieldReadOnlyByCondition(field, recordDraft) ||
-																			!editingRecordId ||
+																		disabled={fieldReadOnlyByCondition(field, s.recordDraft) ||
+																			!s.editingRecordId ||
 																			!attachmentUrl(field)}
-																		loading={attachmentSubmittingField === field.key}
+																		loading={s.attachmentSubmittingField === field.key}
 																		onclick={() => createAttachmentForField(field)}
 																	>
 																		<FileUp class="mr-2 h-4 w-4" aria-hidden="true" />
@@ -17028,8 +16333,8 @@
 																			type="file"
 																			class="sr-only"
 																			accept={attachmentAcceptAttr(field)}
-																			disabled={fieldReadOnlyByCondition(field, recordDraft) ||
-																				!editingRecordId}
+																			disabled={fieldReadOnlyByCondition(field, s.recordDraft) ||
+																				!s.editingRecordId}
 																			onchange={(event) =>
 																				createAttachmentFromLocalFile(field, event)}
 																			data-attachment-file-input={field.key}
@@ -17045,7 +16350,7 @@
 																	{/if}
 																</div>
 
-																{#if !editingRecordId}
+																{#if !s.editingRecordId}
 																	<p class="text-xs text-fg-muted">
 																		{$t('forms.attachmentSaveRecordFirst')}
 																	</p>
@@ -17120,8 +16425,8 @@
 																				<Button
 																					size="sm"
 																					variant="danger"
-																					disabled={fieldReadOnlyByCondition(field, recordDraft)}
-																					loading={deletingAttachmentId === attachment.id}
+																					disabled={fieldReadOnlyByCondition(field, s.recordDraft)}
+																					loading={s.deletingAttachmentId === attachment.id}
 																					onclick={() => removeAttachment(field, attachment)}
 																					>{$t('forms.attachmentRemove')}</Button
 																				>
@@ -17135,7 +16440,7 @@
 																class="min-h-24 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																value={draftString(field.key)}
 																placeholder={fieldPlaceholder(field)}
-																readonly={fieldReadOnlyByCondition(field, recordDraft)}
+																readonly={fieldReadOnlyByCondition(field, s.recordDraft)}
 																maxlength={field.validation?.max_length}
 																oninput={(event) => setDraftValue(field.key, inputValue(event))}
 															></textarea>
@@ -17150,28 +16455,28 @@
 																			event,
 																			field.key,
 																			'record',
-																			fieldReadOnlyByCondition(field, recordDraft)
+																			fieldReadOnlyByCondition(field, s.recordDraft)
 																		)}
 																	onpointermove={(event) =>
 																		moveSignatureStroke(
 																			event,
 																			field.key,
 																			'record',
-																			fieldReadOnlyByCondition(field, recordDraft)
+																			fieldReadOnlyByCondition(field, s.recordDraft)
 																		)}
 																	onpointerup={(event) =>
 																		endSignatureStroke(
 																			event,
 																			field.key,
 																			'record',
-																			fieldReadOnlyByCondition(field, recordDraft)
+																			fieldReadOnlyByCondition(field, s.recordDraft)
 																		)}
 																	onpointercancel={(event) =>
 																		endSignatureStroke(
 																			event,
 																			field.key,
 																			'record',
-																			fieldReadOnlyByCondition(field, recordDraft)
+																			fieldReadOnlyByCondition(field, s.recordDraft)
 																		)}
 																></canvas>
 
@@ -17179,18 +16484,18 @@
 																	<Button
 																		size="sm"
 																		variant="secondary"
-																		disabled={fieldReadOnlyByCondition(field, recordDraft)}
+																		disabled={fieldReadOnlyByCondition(field, s.recordDraft)}
 																		onclick={() =>
 																			clearSignatureCanvas(
 																				field.key,
 																				'record',
-																				fieldReadOnlyByCondition(field, recordDraft)
+																				fieldReadOnlyByCondition(field, s.recordDraft)
 																			)}>{$t('forms.signatureClear')}</Button
 																	>
 
-																	{#if signatureImageValue(recordDraft, field.key)}
+																	{#if signatureImageValue(s.recordDraft, field.key)}
 																		<img
-																			src={signatureImageValue(recordDraft, field.key)}
+																			src={signatureImageValue(s.recordDraft, field.key)}
 																			alt={fieldLabel(field)}
 																			class="h-10 max-w-48 rounded border border-line bg-raised object-contain"
 																			data-signature-preview={field.key}
@@ -17202,7 +16507,7 @@
 																	class="min-h-16 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs text-fg"
 																	value={draftString(field.key)}
 																	placeholder={fieldPlaceholder(field)}
-																	readonly={fieldReadOnlyByCondition(field, recordDraft)}
+																	readonly={fieldReadOnlyByCondition(field, s.recordDraft)}
 																	maxlength={field.validation?.max_length}
 																	oninput={(event) => setDraftValue(field.key, inputValue(event))}
 																	data-signature-value={field.key}></textarea>
@@ -17243,7 +16548,7 @@
 																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																value={draftString(field.key)}
 																placeholder={fieldPlaceholder(field)}
-																readonly={fieldReadOnlyByCondition(field, recordDraft)}
+																readonly={fieldReadOnlyByCondition(field, s.recordDraft)}
 																min={field.validation?.min}
 																max={field.validation?.max}
 																pattern={field.validation?.pattern}
@@ -17268,8 +16573,8 @@
 											</div>
 
 											<div class="mt-4 flex justify-end">
-												<Button loading={recordSubmitting} onclick={handleSaveRecord}>
-													{#if editingRecordId}
+												<Button loading={s.recordSubmitting} onclick={handleSaveRecord}>
+													{#if s.editingRecordId}
 														<Pencil class="mr-2 h-4 w-4" aria-hidden="true" />
 														{$t('forms.saveRecord')}
 													{:else}
@@ -17285,13 +16590,13 @@
 								<section
 									class="w-full min-w-0 flex-1 overflow-hidden rounded-card border border-line bg-raised"
 									data-record-list-panel
-									inert={panelMode === 'sheet' && !!panelRecordId}
+									inert={s.panelMode === 'sheet' && !!s.panelRecordId}
 								>
 									<ViewBar
-										views={formViews}
+										views={s.formViews}
 										view={savedView}
-										currentId={selectedViewId}
-										currentType={viewDraft.view_type}
+										currentId={s.selectedViewId}
+										currentType={s.viewDraft.view_type}
 										modified={arrangementModified}
 										can={{
 											manage:
@@ -17303,32 +16608,33 @@
 											setDefault: canDesign,
 											create: true
 										}}
-										busy={viewSubmitting}
-										saveOpen={saveViewOpen}
-										saveError={saveViewError}
-										suggestedName={saveViewName}
+										busy={s.viewSubmitting}
+										saveOpen={s.saveViewOpen}
+										saveError={s.saveViewError}
+										suggestedName={s.saveViewName}
 										fields={listableFields}
 										sortableKeys={listableFields.map((field) => field.key).filter(isServerSortable)}
-										filters={(viewDraft.filterGroups[0]?.filters ?? []) as SimpleFilter[]}
-										filterLogic={viewDraft.filterGroups[0]?.logic ?? 'all'}
-										advancedFilters={viewDraft.filterGroups.length > 1 ||
-											viewDraft.filterRootLogic !== 'all'}
-										sort={viewDraft.sortField
-											? { field: viewDraft.sortField, direction: viewDraft.sortDirection }
+										filters={(s.viewDraft.filterGroups[0]?.filters ?? []) as SimpleFilter[]}
+										filterLogic={s.viewDraft.filterGroups[0]?.logic ?? 'all'}
+										advancedFilters={s.viewDraft.filterGroups.length > 1 ||
+											s.viewDraft.filterRootLogic !== 'all'}
+										sort={s.viewDraft.sortField
+											? { field: s.viewDraft.sortField, direction: s.viewDraft.sortDirection }
 											: null}
-										columns={viewDraft.columns.length > 0
-											? viewDraft.columns
+										columns={s.viewDraft.columns.length > 0
+											? s.viewDraft.columns
 											: defaultViewColumns()}
 										hiddenByPermission={new Set(
 											listableFields.filter(memberFieldHidden).map((field) => field.key)
 										)}
-										partialNotice={recordQuery.clientFilter && serverRecordTotal > records.length
+										partialNotice={recordQuery.clientFilter &&
+										s.serverRecordTotal > s.records.length
 											? $t('forms.views.partialFilter', {
-													values: { loaded: records.length, total: serverRecordTotal }
+													values: { loaded: s.records.length, total: s.serverRecordTotal }
 												})
 											: null}
-										conflict={viewConflict}
-										undoAvailable={!!resetUndo}
+										conflict={s.viewConflict}
+										undoAvailable={!!s.resetUndo}
 										onselect={(id) => showView(id, { remember: true })}
 										oncreate={startNewViewDraft}
 										onupdate={() => void updateCurrentView()}
@@ -17346,27 +16652,27 @@
 											)}
 										onreset={resetArrangement}
 										onundo={undoReset}
-										onreloadview={() => showView(selectedViewId, { remember: false })}
+										onreloadview={() => showView(s.selectedViewId, { remember: false })}
 										ondelete={() => void deleteView()}
-										onsaveopen={(open) => (open ? openSaveView() : (saveViewOpen = false))}
+										onsaveopen={(open) => (open ? openSaveView() : (s.saveViewOpen = false))}
 										onsave={(input) => void saveViewAs(input)}
 										onfilters={setDraftFilters}
 										onsort={(sort) =>
-											(viewDraft = {
-												...viewDraft,
+											(s.viewDraft = {
+												...s.viewDraft,
 												sortField: sort?.field ?? '',
 												sortDirection: sort?.direction ?? 'asc'
 											})}
-										oncolumns={(columns) => (viewDraft = { ...viewDraft, columns })}
+										oncolumns={(columns) => (s.viewDraft = { ...s.viewDraft, columns })}
 									/>
-									{#if lastDeletedRecord}
+									{#if s.lastDeletedRecord}
 										<div
 											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-warning-soft px-4 py-2 text-sm text-warning"
-											data-record-restore-banner={lastDeletedRecord.id}
+											data-record-restore-banner={s.lastDeletedRecord.id}
 										>
 											<span
 												>{$t('forms.recordDeletedRestoreHint', {
-													values: { title: lastDeletedRecord.title }
+													values: { title: s.lastDeletedRecord.title }
 												})}</span
 											>
 
@@ -17374,7 +16680,7 @@
 												<Button
 													size="sm"
 													variant="secondary"
-													loading={restoringRecordId === lastDeletedRecord.id}
+													loading={s.restoringRecordId === s.lastDeletedRecord.id}
 													onclick={handleRestoreLastDeletedRecord}
 												>
 													<RefreshCw class="mr-2 h-4 w-4" aria-hidden="true" />
@@ -17410,7 +16716,7 @@
 										</div>
 									{/if}
 
-									{#if records.length === 0}
+									{#if s.records.length === 0}
 										<div class="p-8 text-center text-sm text-fg-muted">
 											<FileText class="mx-auto mb-3 h-8 w-8 text-fg-muted" aria-hidden="true" />
 
@@ -17424,13 +16730,13 @@
 										</div>
 									{:else if selectedViewType === 'grid'}
 										<RecordGrid
-											bind:this={recordGrid}
+											bind:this={s.recordGrid}
 											records={paginatedViewRecords}
 											fields={visibleFields}
 											ctx={fieldCtx}
-											currentId={panelRecordId}
-											sort={viewDraft.sortField
-												? { field: viewDraft.sortField, direction: viewDraft.sortDirection }
+											currentId={s.panelRecordId}
+											sort={s.viewDraft.sortField
+												? { field: s.viewDraft.sortField, direction: s.viewDraft.sortDirection }
 												: null}
 											sortableKeys={visibleFields
 												.map((field) => field.key)
@@ -17438,7 +16744,7 @@
 											page={normalizedRecordPage}
 											pageCount={recordPageCount}
 											total={viewRecords.length}
-											deletingId={deletingRecordId}
+											deletingId={s.deletingRecordId}
 											{recordHref}
 											headerBadges={(field) => gridBadges(field, null)}
 											cellBadges={gridBadges}
@@ -17447,12 +16753,12 @@
 											onopen={(record, options) =>
 												void openRecordPanel(record, options.replace ? 'replace' : 'push')}
 											onclosepanel={() => closeRecordPanel()}
-											onfocuspanel={() => recordPanel?.focusHeading()}
+											onfocuspanel={() => s.recordPanel?.focusHeading()}
 											onedit={openRecordEditDrawer}
 											ondelete={(record) => void handleDeleteRecord(record)}
 											onsort={(sort) =>
-												(viewDraft = {
-													...viewDraft,
+												(s.viewDraft = {
+													...s.viewDraft,
 													sortField: sort?.field ?? '',
 													sortDirection: sort?.direction ?? 'asc'
 												})}
@@ -17720,7 +17026,7 @@
 																				data-gantt-bar-start={task.start}
 																				data-gantt-bar-end={task.end}
 																				data-gantt-bar-dependency={task.dependencyValue}
-																				data-gantt-updating={updatingGanttRecordId ===
+																				data-gantt-updating={s.updatingGanttRecordId ===
 																				task.record.id
 																					? 'true'
 																					: 'false'}
@@ -17743,7 +17049,7 @@
 																							event.stopPropagation();
 																							extendGanttTaskEnd(task);
 																						}}
-																						disabled={updatingGanttRecordId === task.record.id}
+																						disabled={s.updatingGanttRecordId === task.record.id}
 																						aria-label={$t('forms.ganttResizeEnd')}
 																						data-gantt-resize-end={task.record.id}>+1</button
 																					>
@@ -17937,7 +17243,7 @@
 														class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface"
 														onclick={copyPivotTableMatrix}
 														data-pivot-copy-table
-														data-pivot-table-copied={copiedPivotTableMatrix ? 'true' : undefined}
+														data-pivot-table-copied={s.copiedPivotTableMatrix ? 'true' : undefined}
 													>
 														<Copy class="h-3.5 w-3.5" aria-hidden="true" />
 														{$t('forms.copyPivotTable')}
@@ -17948,7 +17254,7 @@
 														class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface"
 														onclick={exportPivotTableMatrixCsv}
 														data-pivot-export-table
-														data-pivot-table-exported={exportedPivotTableMatrix
+														data-pivot-table-exported={s.exportedPivotTableMatrix
 															? 'true'
 															: undefined}
 													>
@@ -18106,7 +17412,7 @@
 																			onclick={() => copyPivotCellValue(row, column, cellValue)}
 																			aria-label={$t('forms.copyPivotCellValue')}
 																			data-pivot-cell-copy={`${row.label}:${column.label}`}
-																			data-pivot-cell-copied={copiedPivotCellKey ===
+																			data-pivot-cell-copied={s.copiedPivotCellKey ===
 																			`${row.label}:${column.label}`
 																				? 'true'
 																				: undefined}
@@ -18181,21 +17487,21 @@
 													{/if}
 												</table>
 
-												{#if pivotDrilldown}
+												{#if s.pivotDrilldown}
 													<section
 														class="mt-4 rounded-card border border-line bg-raised p-4"
-														data-pivot-drilldown={`${pivotDrilldown.rowLabel}:${pivotDrilldown.columnLabel}`}
-														data-pivot-drilldown-copied={copiedPivotDrilldownKey ===
+														data-pivot-drilldown={`${s.pivotDrilldown.rowLabel}:${s.pivotDrilldown.columnLabel}`}
+														data-pivot-drilldown-copied={s.copiedPivotDrilldownKey ===
 														pivotDrilldownKey()
-															? `${pivotDrilldown.rowLabel}:${pivotDrilldown.columnLabel}`
+															? `${s.pivotDrilldown.rowLabel}:${s.pivotDrilldown.columnLabel}`
 															: undefined}
-														data-pivot-drilldown-exported={exportedPivotDrilldownKey ===
+														data-pivot-drilldown-exported={s.exportedPivotDrilldownKey ===
 														pivotDrilldownKey()
-															? `${pivotDrilldown.rowLabel}:${pivotDrilldown.columnLabel}`
+															? `${s.pivotDrilldown.rowLabel}:${s.pivotDrilldown.columnLabel}`
 															: undefined}
-														data-pivot-drilldown-filters-applied={appliedPivotDrilldownFilterKey ===
+														data-pivot-drilldown-filters-applied={s.appliedPivotDrilldownFilterKey ===
 														pivotDrilldownKey()
-															? `${pivotDrilldown.rowLabel}:${pivotDrilldown.columnLabel}`
+															? `${s.pivotDrilldown.rowLabel}:${s.pivotDrilldown.columnLabel}`
 															: undefined}
 														data-record-count={pivotDrilldownRecords.length}
 													>
@@ -18208,8 +17514,8 @@
 																<p class="mt-1 text-xs text-fg-muted">
 																	{$t('forms.pivotDrilldownFor', {
 																		values: {
-																			row: pivotDrilldown.rowLabel,
-																			column: pivotDrilldown.columnLabel,
+																			row: s.pivotDrilldown.rowLabel,
+																			column: s.pivotDrilldown.columnLabel,
 																			count: pivotDrilldownRecords.length
 																		}
 																	})}
@@ -18234,7 +17540,7 @@
 																	onclick={exportPivotDrilldownRecordsCsv}
 																	disabled={pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-export-csv
-																	data-pivot-drilldown-exported={exportedPivotDrilldownKey ===
+																	data-pivot-drilldown-exported={s.exportedPivotDrilldownKey ===
 																	pivotDrilldownKey()
 																		? 'true'
 																		: undefined}
@@ -18249,7 +17555,7 @@
 																	onclick={applyPivotDrilldownFilters}
 																	disabled={!canApplyPivotDrilldownFilters()}
 																	data-pivot-drilldown-apply-filters
-																	data-pivot-drilldown-filters-applied={appliedPivotDrilldownFilterKey ===
+																	data-pivot-drilldown-filters-applied={s.appliedPivotDrilldownFilterKey ===
 																	pivotDrilldownKey()
 																		? 'true'
 																		: undefined}
@@ -18272,7 +17578,7 @@
 																<button
 																	type="button"
 																	class="rounded-control p-1.5 text-fg-muted hover:bg-surface hover:text-fg"
-																	onclick={() => (pivotDrilldown = null)}
+																	onclick={() => (s.pivotDrilldown = null)}
 																	aria-label={$t('common.close')}>x</button
 																>
 															</div>
@@ -18371,7 +17677,7 @@
 														<button
 															type="button"
 															class="inline-flex shrink-0 items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-															disabled={deletingRecordId === record.id}
+															disabled={s.deletingRecordId === record.id}
 															onclick={() => handleDeleteRecord(record)}
 															aria-label={$t('forms.deleteRecord')}
 															><Trash2 class="h-4 w-4" aria-hidden="true" /></button
@@ -18475,8 +17781,8 @@
 														>
 
 														<select
-															value={bulkKanbanTarget}
-															onchange={(event) => (bulkKanbanTarget = selectValue(event))}
+															value={s.bulkKanbanTarget}
+															onchange={(event) => (s.bulkKanbanTarget = selectValue(event))}
 															class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 														>
 															<option value="">{$t('forms.viewNoRule')}</option>
@@ -18490,10 +17796,10 @@
 													<Button
 														size="sm"
 														onclick={bulkMoveKanbanRecords}
-														loading={bulkMovingKanban}
+														loading={s.bulkMovingKanban}
 														disabled={selectedKanbanRecords().length === 0 ||
-															!bulkKanbanTarget ||
-															!kanbanBulkMoveAllowed(selectedKanbanRecords(), bulkKanbanTarget)}
+															!s.bulkKanbanTarget ||
+															!kanbanBulkMoveAllowed(selectedKanbanRecords(), s.bulkKanbanTarget)}
 														>{$t('forms.kanbanBulkMove')}</Button
 													>
 
@@ -18501,7 +17807,7 @@
 														size="sm"
 														variant="secondary"
 														onclick={clearKanbanSelection}
-														disabled={selectedKanbanRecords().length === 0 || bulkMovingKanban}
+														disabled={selectedKanbanRecords().length === 0 || s.bulkMovingKanban}
 														>{$t('forms.clearSelection')}</Button
 													>
 												</div>
@@ -18576,7 +17882,7 @@
 																	<div class="space-y-2 p-2">
 																		{#each group.records as record}
 																			<article
-																				class={`rounded-card border border-line bg-raised p-3 transition-opacity ${draggingKanbanRecordId === record.id ? 'opacity-60' : ''}`}
+																				class={`rounded-card border border-line bg-raised p-3 transition-opacity ${s.draggingKanbanRecordId === record.id ? 'opacity-60' : ''}`}
 																				draggable={Boolean(kanbanGroupField)}
 																				data-kanban-card={record.id}
 																				role="listitem"
@@ -18590,7 +17896,7 @@
 																							type="checkbox"
 																							class="mt-0.5 h-4 w-4 rounded border-input accent-primary"
 																							checked={isKanbanRecordSelected(record.id)}
-																							disabled={bulkMovingKanban}
+																							disabled={s.bulkMovingKanban}
 																							onchange={(event) =>
 																								setKanbanRecordSelected(
 																									record.id,
@@ -18614,7 +17920,7 @@
 																					<button
 																						type="button"
 																						class="inline-flex shrink-0 items-center rounded-control p-1 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-																						disabled={deletingRecordId === record.id}
+																						disabled={s.deletingRecordId === record.id}
 																						onclick={() => handleDeleteRecord(record)}
 																						aria-label={$t('forms.deleteRecord')}
 																						><Trash2
@@ -18678,7 +17984,7 @@
 																						value={String(
 																							record.values[kanbanGroupField.key] ?? ''
 																						)}
-																						disabled={updatingKanbanRecordId === record.id}
+																						disabled={s.updatingKanbanRecordId === record.id}
 																						aria-label={`${$t('forms.kanbanMoveTo')} ${fieldLabel(kanbanGroupField)}`}
 																						onchange={(event) =>
 																							updateKanbanRecordField(
@@ -18859,7 +18165,7 @@
 																					aria-label={$t('forms.applyCalendarBucketFilters')}
 																					title={$t('forms.applyCalendarBucketFilters')}
 																					data-calendar-agenda-apply-filters={`${group.date}:${calendarResourceField ? resource.key : '__all__'}`}
-																					data-calendar-filters-applied={appliedCalendarFilterKey ===
+																					data-calendar-filters-applied={s.appliedCalendarFilterKey ===
 																					calendarBucketFilterKey(group.date, resource)
 																						? 'true'
 																						: undefined}
@@ -18889,11 +18195,11 @@
 																					data-calendar-start={occurrence.startDate}
 																					data-calendar-end={occurrence.endDate}
 																					data-calendar-span-days={occurrence.spanDays}
-																					data-calendar-schedule-copied={copiedCalendarScheduleKey ===
+																					data-calendar-schedule-copied={s.copiedCalendarScheduleKey ===
 																					calendarScheduleKey(occurrence)
 																						? 'true'
 																						: undefined}
-																					data-calendar-shifted={shiftedCalendarScheduleKey ===
+																					data-calendar-shifted={s.shiftedCalendarScheduleKey ===
 																					calendarScheduleKey(occurrence)
 																						? 'true'
 																						: undefined}
@@ -18962,7 +18268,7 @@
 																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																							onclick={() =>
 																								shiftCalendarOccurrence(occurrence, -1)}
-																							disabled={updatingCalendarRecordId === record.id ||
+																							disabled={s.updatingCalendarRecordId === record.id ||
 																								!canShiftCalendarOccurrence(occurrence)}
 																							aria-label={$t('forms.calendarShiftPreviousDay')}
 																							title={$t('forms.calendarShiftPreviousDay')}
@@ -18979,7 +18285,7 @@
 																							type="button"
 																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																							onclick={() => shiftCalendarOccurrence(occurrence, 1)}
-																							disabled={updatingCalendarRecordId === record.id ||
+																							disabled={s.updatingCalendarRecordId === record.id ||
 																								!canShiftCalendarOccurrence(occurrence)}
 																							aria-label={$t('forms.calendarShiftNextDay')}
 																							title={$t('forms.calendarShiftNextDay')}
@@ -19010,7 +18316,7 @@
 																						<button
 																							type="button"
 																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-																							disabled={deletingRecordId === record.id}
+																							disabled={s.deletingRecordId === record.id}
 																							onclick={() => handleDeleteRecord(record)}
 																							aria-label={$t('forms.deleteRecord')}
 																							><Trash2
@@ -19063,7 +18369,7 @@
 																					aria-label={$t('forms.applyCalendarBucketFilters')}
 																					title={$t('forms.applyCalendarBucketFilters')}
 																					data-calendar-apply-filters={`${group.date}:${calendarResourceField ? resource.key : '__all__'}`}
-																					data-calendar-filters-applied={appliedCalendarFilterKey ===
+																					data-calendar-filters-applied={s.appliedCalendarFilterKey ===
 																					calendarBucketFilterKey(group.date, resource)
 																						? 'true'
 																						: undefined}
@@ -19084,7 +18390,7 @@
 																				{@const record = occurrence.record}
 
 																				<article
-																					class={`rounded-card border border-line bg-raised p-3 transition-opacity ${draggingCalendarRecordId === record.id ? 'opacity-60' : ''}`}
+																					class={`rounded-card border border-line bg-raised p-3 transition-opacity ${s.draggingCalendarRecordId === record.id ? 'opacity-60' : ''}`}
 																					draggable={Boolean(calendarDateField) &&
 																						!occurrence.recurring}
 																					data-calendar-card={record.id}
@@ -19097,11 +18403,11 @@
 																					data-calendar-span-start={occurrence.spanStart}
 																					data-calendar-span-end={occurrence.spanEnd}
 																					data-calendar-span-days={occurrence.spanDays}
-																					data-calendar-schedule-copied={copiedCalendarScheduleKey ===
+																					data-calendar-schedule-copied={s.copiedCalendarScheduleKey ===
 																					calendarScheduleKey(occurrence)
 																						? 'true'
 																						: undefined}
-																					data-calendar-shifted={shiftedCalendarScheduleKey ===
+																					data-calendar-shifted={s.shiftedCalendarScheduleKey ===
 																					calendarScheduleKey(occurrence)
 																						? 'true'
 																						: undefined}
@@ -19153,7 +18459,8 @@
 																								class="inline-flex items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																								onclick={() =>
 																									shiftCalendarOccurrence(occurrence, -1)}
-																								disabled={updatingCalendarRecordId === record.id ||
+																								disabled={s.updatingCalendarRecordId ===
+																									record.id ||
 																									!canShiftCalendarOccurrence(occurrence)}
 																								aria-label={$t('forms.calendarShiftPreviousDay')}
 																								title={$t('forms.calendarShiftPreviousDay')}
@@ -19171,7 +18478,8 @@
 																								class="inline-flex items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																								onclick={() =>
 																									shiftCalendarOccurrence(occurrence, 1)}
-																								disabled={updatingCalendarRecordId === record.id ||
+																								disabled={s.updatingCalendarRecordId ===
+																									record.id ||
 																									!canShiftCalendarOccurrence(occurrence)}
 																								aria-label={$t('forms.calendarShiftNextDay')}
 																								title={$t('forms.calendarShiftNextDay')}
@@ -19202,7 +18510,7 @@
 																							<button
 																								type="button"
 																								class="inline-flex items-center rounded-control p-1 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-																								disabled={deletingRecordId === record.id}
+																								disabled={s.deletingRecordId === record.id}
 																								onclick={() => handleDeleteRecord(record)}
 																								aria-label={$t('forms.deleteRecord')}
 																								><Trash2
@@ -19233,7 +18541,7 @@
 																											record,
 																											calendarDateField
 																										)}
-																										disabled={updatingCalendarRecordId ===
+																										disabled={s.updatingCalendarRecordId ===
 																											record.id}
 																										aria-label={`${$t('forms.calendarSeriesDate')} ${record.title}`}
 																										data-calendar-series-date={`${record.id}:${occurrence.date}`}
@@ -19272,7 +18580,7 @@
 																								record,
 																								calendarDateField
 																							)}
-																							disabled={updatingCalendarRecordId === record.id}
+																							disabled={s.updatingCalendarRecordId === record.id}
 																							aria-label={`${$t('forms.calendarSetDate')} ${fieldLabel(calendarDateField)}`}
 																							onchange={(event) =>
 																								updateCalendarRecordDate(
@@ -19297,7 +18605,7 @@
 																									record,
 																									calendarEndField
 																								)}
-																								disabled={updatingCalendarRecordId === record.id}
+																								disabled={s.updatingCalendarRecordId === record.id}
 																								aria-label={`${$t('forms.calendarEndDate')} ${record.title}`}
 																								data-calendar-end-date={`${record.id}:${occurrence.startDate}`}
 																								onchange={(event) =>
@@ -19333,8 +18641,10 @@
 													: selectedCardLayout === 'compact' || selectedCardLayout === 'list'
 														? 'overflow-visible rounded-control border border-line bg-raised'
 														: 'overflow-hidden rounded-card border border-line bg-raised'}
-												data-card-copied={copiedCardRecordId === record.id ? record.id : undefined}
-												data-card-exported={exportedCardRecordId === record.id
+												data-card-copied={s.copiedCardRecordId === record.id
+													? record.id
+													: undefined}
+												data-card-exported={s.exportedCardRecordId === record.id
 													? record.id
 													: undefined}
 												data-card-compact-row={selectedCardLayout === 'compact'
@@ -19489,7 +18799,7 @@
 																<button
 																	type="button"
 																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-																	disabled={deletingRecordId === record.id}
+																	disabled={s.deletingRecordId === record.id}
 																	data-card-action={`${record.id}:delete`}
 																	onclick={() => handleDeleteRecord(record)}
 																>
@@ -19608,7 +18918,7 @@
 
 																<select
 																	value={String(record.values[field.key] ?? '')}
-																	disabled={updatingCardRecordId === record.id}
+																	disabled={s.updatingCardRecordId === record.id}
 																	aria-label={`${$t('forms.cardUpdateField')} ${fieldLabel(field)}`}
 																	data-card-select={`${record.id}:${field.key}`}
 																	onchange={(event) =>
@@ -19652,11 +18962,11 @@
 														data-card-group={group.label}
 														data-card-group-collapsed={collapsed ? 'true' : 'false'}
 														data-record-count={group.records.length}
-														data-card-group-record-ids-copied={copiedCardGroupRecordIdsKey ===
+														data-card-group-record-ids-copied={s.copiedCardGroupRecordIdsKey ===
 														cardGroupFilterKey(group)
 															? 'true'
 															: undefined}
-														data-card-group-records-exported={exportedCardGroupRecordsKey ===
+														data-card-group-records-exported={s.exportedCardGroupRecordsKey ===
 														cardGroupFilterKey(group)
 															? 'true'
 															: undefined}
@@ -19722,7 +19032,7 @@
 																	disabled={!canApplyCardGroupFilter(group)}
 																	onclick={() => applyCardGroupFilter(group)}
 																	data-card-group-apply-filter={`${cardGroupField?.key ?? '__none__'}:${group.label}`}
-																	data-card-group-filter-applied={appliedCardGroupFilterKey ===
+																	data-card-group-filter-applied={s.appliedCardGroupFilterKey ===
 																	cardGroupFilterKey(group)
 																		? 'true'
 																		: undefined}
@@ -19790,16 +19100,16 @@
 											data-timeline-event-query={selectedTimelineEventQuery()}
 											data-timeline-event-from={selectedTimelineEventFrom()}
 											data-timeline-event-to={selectedTimelineEventTo()}
-											data-timeline-event-pinned-ids={pinnedTimelineEventIds.join('|')}
-											data-timeline-events-exported={exportedTimelineEventsCsvCount ?? undefined}
-											data-timeline-events-json-exported={exportedTimelineEventsJsonCount ??
+											data-timeline-event-pinned-ids={s.pinnedTimelineEventIds.join('|')}
+											data-timeline-events-exported={s.exportedTimelineEventsCsvCount ?? undefined}
+											data-timeline-events-json-exported={s.exportedTimelineEventsJsonCount ??
 												undefined}
-											data-timeline-event-ids-copied={copiedTimelineEventIdsCount ?? undefined}
-											data-timeline-aggregate-ids-copied={copiedTimelineAggregateIdsCount ??
+											data-timeline-event-ids-copied={s.copiedTimelineEventIdsCount ?? undefined}
+											data-timeline-aggregate-ids-copied={s.copiedTimelineAggregateIdsCount ??
 												undefined}
 										>
 											{#if selectedTimelineSource() === 'events'}
-												{#if eventsLoading}
+												{#if s.eventsLoading}
 													<div class="px-4 py-6 text-sm text-fg-muted">
 														{$t('common.loading')}
 													</div>
@@ -19924,15 +19234,15 @@
 																		<details
 																			class="relative"
 																			data-timeline-event-menu={event.id}
-																			data-timeline-event-copied={copiedTimelineEventAction?.startsWith(
+																			data-timeline-event-copied={s.copiedTimelineEventAction?.startsWith(
 																				`${event.id}:`
 																			)
-																				? copiedTimelineEventAction
+																				? s.copiedTimelineEventAction
 																				: undefined}
-																			data-timeline-event-exported={exportedTimelineEventAction?.startsWith(
+																			data-timeline-event-exported={s.exportedTimelineEventAction?.startsWith(
 																				`${event.id}:`
 																			)
-																				? exportedTimelineEventAction
+																				? s.exportedTimelineEventAction
 																				: undefined}
 																		>
 																			<summary
@@ -20269,7 +19579,7 @@
 																<button
 																	type="button"
 																	class="inline-flex shrink-0 items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-																	disabled={deletingRecordId === record.id}
+																	disabled={s.deletingRecordId === record.id}
 																	onclick={() => handleDeleteRecord(record)}
 																	aria-label={$t('forms.deleteRecord')}
 																	><Trash2 class="h-4 w-4" aria-hidden="true" /></button
@@ -20320,7 +19630,7 @@
 
 																			<select
 																				value={String(record.values[field.key] ?? '')}
-																				disabled={updatingTimelineRecordId === record.id}
+																				disabled={s.updatingTimelineRecordId === record.id}
 																				aria-label={`${$t('forms.timelineUpdateField')} ${fieldLabel(field)}`}
 																				data-timeline-select={`${record.id}:${field.key}`}
 																				onchange={(event) =>
@@ -20346,13 +19656,13 @@
 										</div>
 									{/if}
 								</section>
-								{#if panelRecordId && selectedForm}
+								{#if s.panelRecordId && selectedForm}
 									<RecordSidePanel
-										bind:this={recordPanel}
-										bind:appsOpen={panelAppsOpen}
+										bind:this={s.recordPanel}
+										bind:appsOpen={s.panelAppsOpen}
 										record={panelRecord}
-										status={panelStatus}
-										errorMessage={panelError}
+										status={s.panelStatus}
+										errorMessage={s.panelError}
 										inView={panelPosition >= 0}
 										form={selectedForm}
 										sections={buildDetailSections(selectedForm, fields, {
@@ -20365,19 +19675,19 @@
 											rows: childRecordsForRelationField(field),
 											columns: childGridFieldsForRelationField(field)
 										})}
-										detailsLoading={panelDetailsLoading}
+										detailsLoading={s.panelDetailsLoading}
 										position={panelPosition >= 0
 											? { index: panelPosition + 1, total: viewRecords.length }
 											: null}
-										fullPageHref={recordHref(panelRecordId)}
+										fullPageHref={recordHref(s.panelRecordId)}
 										{recordHref}
 										recordUrl={new URL(page.url.href).href}
 										memberName={(id) =>
-											workspaceMembers.find((member) => member.user_id === id)?.name ??
+											s.workspaceMembers.find((member) => member.user_id === id)?.name ??
 											$t('forms.fieldValue.unknownMember')}
 										canEdit={!!panelRecord && canChangeRecord(panelRecord, 'record.update')}
 										canDelete={!!panelRecord && canChangeRecord(panelRecord, 'record.delete')}
-										canRestore={lastDeletedRecord?.id === panelRecordId}
+										canRestore={s.lastDeletedRecord?.id === s.panelRecordId}
 										showConfigBadges={canDesign}
 										configBadges={(field) =>
 											[
@@ -20390,21 +19700,21 @@
 										plugins={{
 											workspaceId,
 											projectId,
-											surface: recordPluginActions,
+											surface: s.recordPluginActions,
 											enabled: selectedForm.project_id === projectId
 										}}
-										width={panelWidth}
-										inert={recordEditorOpen}
+										width={s.panelWidth}
+										inert={s.recordEditorOpen}
 										onclose={() => closeRecordPanel()}
 										onprev={() => stepRecordPanel(-1)}
 										onnext={() => stepRecordPanel(1)}
 										onedit={() => panelRecord && openRecordEditDrawer(panelRecord)}
 										ondelete={() => panelRecord && void handleDeleteRecord(panelRecord)}
 										onrestore={() => void handleRestoreLastDeletedRecord()}
-										onretry={() => panelRecordId && void openRecordPanel(panelRecordId, 'none')}
+										onretry={() => s.panelRecordId && void openRecordPanel(s.panelRecordId, 'none')}
 										onshowall={() => showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false })}
 										onresize={(px) => {
-											panelWidth = px;
+											s.panelWidth = px;
 											arrangement.writePanelWidth(currentUserId, px);
 										}}
 										onopenrelation={(id, sameForm, event) => {
@@ -20413,11 +19723,11 @@
 											void openRecordPanel(id, 'push');
 										}}
 										onpluginapplied={() => void reloadSelectedRecord()}
-										onfocuslist={() => recordGrid?.focusRow(panelRecordId)}
+										onfocuslist={() => s.recordGrid?.focusRow(s.panelRecordId)}
 										onannounce={announce}
-										onmodechange={(mode) => (panelMode = mode)}
+										onmodechange={(mode) => (s.panelMode = mode)}
 										onmoredetails={() => {
-											activeMode = 'detail';
+											s.activeMode = 'detail';
 											void loadSelectedRecordComments();
 										}}
 									/>
@@ -20425,27 +19735,27 @@
 							</div>
 						{/if}
 
-						{#if activeMode === 'detail'}
+						{#if s.activeMode === 'detail'}
 							<aside
 								class="rounded-card border border-line bg-raised"
-								data-record-detail-drawer={selectedRecord?.id ?? ''}
+								data-record-detail-drawer={s.selectedRecord?.id ?? ''}
 								data-record-detail-url-record={detailUrlRecordId}
 							>
-								{#if selectedRecord}
+								{#if s.selectedRecord}
 									<div class="border-b border-line p-4">
 										<div class="flex items-start justify-between gap-3">
 											<div class="min-w-0">
 												<h3 class="truncate text-base font-semibold text-fg">
-													{selectedRecord.title}
+													{s.selectedRecord.title}
 												</h3>
 
 												<p class="mt-1 font-mono text-xs text-fg-muted">
-													{selectedRecord.id}
+													{s.selectedRecord.id}
 												</p>
 
 												<p class="mt-2 text-xs text-fg-muted">
 													{$t('forms.updatedAt', {
-														values: { date: formatDate(selectedRecord.updated_at) }
+														values: { date: formatDate(s.selectedRecord.updated_at) }
 													})}
 												</p>
 											</div>
@@ -20460,14 +19770,14 @@
 													/>
 												{/if}
 												<RecordPluginActions
-													recordId={selectedRecord.id}
-													surface={recordPluginActions}
+													recordId={s.selectedRecord.id}
+													surface={s.recordPluginActions}
 												/>
 												<Button
 													size="sm"
 													variant="secondary"
 													onclick={() => {
-														if (selectedRecord) startEditRecord(selectedRecord);
+														if (s.selectedRecord) startEditRecord(s.selectedRecord);
 													}}
 												>
 													<Pencil class="mr-2 h-4 w-4" aria-hidden="true" />
@@ -20479,14 +19789,14 @@
 													class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface hover:text-fg"
 													aria-label={$t('common.close')}
 													onclick={closeRecordDetail}
-													data-record-detail-close={selectedRecord.id}
+													data-record-detail-close={s.selectedRecord.id}
 													><X class="h-4 w-4" aria-hidden="true" /></button
 												>
 											</div>
 										</div>
 									</div>
 
-									{#if selectedRecord.project_id === projectId}
+									{#if s.selectedRecord.project_id === projectId}
 										{#if selectedForm?.key === 'order_line'}
 											<CreatorPluginLink
 												{workspaceId}
@@ -20495,25 +19805,25 @@
 												slot="form.record.detail"
 											/>
 										{/if}
-										{#key selectedRecord.id}
+										{#key s.selectedRecord.id}
 											<RecordPluginPanels
-												recordId={selectedRecord.id}
-												surface={recordPluginActions}
+												recordId={s.selectedRecord.id}
+												surface={s.recordPluginActions}
 												onApplied={() => void reloadSelectedRecord()}
 											/>
 										{/key}
 									{/if}
 
-									<div class="divide-y divide-line" data-record-detail-layout={selectedRecord.id}>
+									<div class="divide-y divide-line" data-record-detail-layout={s.selectedRecord.id}>
 										{#each detailLayoutSections() as section}
 											<details
 												class={section.density === 'compact' ? 'px-4 py-3' : 'px-4 py-4'}
 												open={!section.collapsible || !section.defaultCollapsed}
 												ontoggle={(event) => keepDetailSectionOpen(event, section.collapsible)}
-												data-record-detail-section={`${selectedRecord.id}:${section.key}`}
-												data-record-detail-section-density={`${selectedRecord.id}:${section.key}:${section.density}`}
-												data-record-detail-section-collapsible={`${selectedRecord.id}:${section.key}:${section.collapsible}:${section.defaultCollapsed}`}
-												data-record-detail-section-open={`${selectedRecord.id}:${section.key}:${!section.collapsible || !section.defaultCollapsed}`}
+												data-record-detail-section={`${s.selectedRecord.id}:${section.key}`}
+												data-record-detail-section-density={`${s.selectedRecord.id}:${section.key}:${section.density}`}
+												data-record-detail-section-collapsible={`${s.selectedRecord.id}:${section.key}:${section.collapsible}:${section.defaultCollapsed}`}
+												data-record-detail-section-open={`${s.selectedRecord.id}:${section.key}:${!section.collapsible || !section.defaultCollapsed}`}
 											>
 												<summary
 													class={section.collapsible
@@ -20528,7 +19838,7 @@
 												{#if section.description}
 													<p
 														class="mb-3 text-sm text-fg-muted"
-														data-record-detail-section-description={`${selectedRecord.id}:${section.key}`}
+														data-record-detail-section-description={`${s.selectedRecord.id}:${section.key}`}
 													>
 														{section.description}
 													</p>
@@ -20536,12 +19846,12 @@
 
 												<dl
 													class={detailLayoutSectionGridClass(section.columns, section.density)}
-													data-record-detail-section-columns={`${selectedRecord.id}:${section.key}:${section.columns}`}
+													data-record-detail-section-columns={`${s.selectedRecord.id}:${section.key}:${section.columns}`}
 												>
-													{#each detailLayoutSectionFieldsForRecord(section, selectedRecord) as field}
+													{#each detailLayoutSectionFieldsForRecord(section, s.selectedRecord) as field}
 														<div
 															class={detailLayoutSectionFieldClass(field, section.columns)}
-															data-record-detail-field={`${selectedRecord.id}:${section.key}:${field.key}`}
+															data-record-detail-field={`${s.selectedRecord.id}:${section.key}:${field.key}`}
 														>
 															<dt
 																class="flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase text-fg-muted"
@@ -20564,7 +19874,7 @@
 																	>
 																{/if}
 
-																{#if recordFieldHiddenByCondition(field, selectedRecord)}
+																{#if recordFieldHiddenByCondition(field, s.selectedRecord)}
 																	<span
 																		class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-record-detail-conditional-hidden={field.key}
@@ -20572,7 +19882,7 @@
 																	>
 																{/if}
 
-																{#if recordFieldReadOnlyByCondition(field, selectedRecord)}
+																{#if recordFieldReadOnlyByCondition(field, s.selectedRecord)}
 																	<span
 																		class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-record-detail-conditional-readonly={field.key}
@@ -20589,7 +19899,7 @@
 
 																	<div
 																		class="overflow-hidden rounded-control border border-line"
-																		data-record-detail-child-table-widget={`${selectedRecord.id}:${section.key}:${field.key}`}
+																		data-record-detail-child-table-widget={`${s.selectedRecord.id}:${section.key}:${field.key}`}
 																		data-record-detail-child-table-relation-key={childRelationKeyForField(
 																			field
 																		)}
@@ -20601,14 +19911,14 @@
 																			<div class="min-w-0">
 																				<div
 																					class="truncate text-xs font-semibold uppercase text-fg-muted"
-																					data-record-detail-child-table-title={`${selectedRecord.id}:${field.key}`}
+																					data-record-detail-child-table-title={`${s.selectedRecord.id}:${field.key}`}
 																				>
 																					{fieldLabel(field)}
 																				</div>
 
 																				<div
 																					class="mt-0.5 text-[11px] text-fg-muted"
-																					data-record-detail-child-table-meta={`${selectedRecord.id}:${field.key}`}
+																					data-record-detail-child-table-meta={`${s.selectedRecord.id}:${field.key}`}
 																				>
 																					{childForm?.name ?? childRelationKeyForField(field)} · {childRelationKeyForField(
 																						field
@@ -20691,7 +20001,7 @@
 																										<button
 																											type="button"
 																											class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-																											disabled={deletingChildRecordId ===
+																											disabled={s.deletingChildRecordId ===
 																												child.record.id}
 																											onclick={() => deleteChildRecord(child)}
 																											aria-label={$t('forms.deleteChildRecord')}
@@ -20720,7 +20030,7 @@
 																{:else}
 																	<OptionValueBadges
 																		{field}
-																		value={selectedRecord.values[field.key]}
+																		value={s.selectedRecord.values[field.key]}
 																	/>
 																{/if}
 															</dd>
@@ -20733,7 +20043,7 @@
 										{#if parentChildRelationFields().length > 0}
 											<section
 												class="px-4 py-4"
-												data-record-detail-section={`${selectedRecord.id}:child_tables`}
+												data-record-detail-section={`${s.selectedRecord.id}:child_tables`}
 											>
 												<h4 class="mb-3 text-xs font-semibold uppercase text-fg-muted">
 													{$t('forms.childRecords')}
@@ -20747,7 +20057,7 @@
 
 														<div
 															class="overflow-hidden rounded-control border border-line"
-															data-record-detail-child-table-widget={`${selectedRecord.id}:child_tables:${relationField.key}`}
+															data-record-detail-child-table-widget={`${s.selectedRecord.id}:child_tables:${relationField.key}`}
 															data-record-detail-child-table-relation-key={childRelationKeyForField(
 																relationField
 															)}
@@ -20759,14 +20069,14 @@
 																<div class="min-w-0">
 																	<div
 																		class="truncate text-xs font-semibold uppercase text-fg-muted"
-																		data-record-detail-child-table-title={`${selectedRecord.id}:${relationField.key}`}
+																		data-record-detail-child-table-title={`${s.selectedRecord.id}:${relationField.key}`}
 																	>
 																		{fieldLabel(relationField)}
 																	</div>
 
 																	<div
 																		class="mt-0.5 text-[11px] text-fg-muted"
-																		data-record-detail-child-table-meta={`${selectedRecord.id}:${relationField.key}`}
+																		data-record-detail-child-table-meta={`${s.selectedRecord.id}:${relationField.key}`}
 																	>
 																		{childForm?.name ?? childRelationKeyForField(relationField)} · {childRelationKeyForField(
 																			relationField
@@ -20849,7 +20159,8 @@
 																							<button
 																								type="button"
 																								class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-																								disabled={deletingChildRecordId === child.record.id}
+																								disabled={s.deletingChildRecordId ===
+																									child.record.id}
 																								onclick={() => deleteChildRecord(child)}
 																								aria-label={$t('forms.deleteChildRecord')}
 																								data-record-detail-child-table-delete-row={`${relationField.key}:${child.record.id}`}
@@ -20905,11 +20216,11 @@
 												</div>
 											</div>
 
-											{#if childEditor}
+											{#if s.childEditor}
 												<div class="mb-3 rounded-card border border-line bg-surface p-3">
 													<div class="mb-3 flex items-center justify-between gap-3">
 														<h5 class="text-sm font-semibold text-fg">
-															{childEditor.recordId
+															{s.childEditor.recordId
 																? $t('forms.editChildRecord')
 																: $t('forms.addChildRecord')}
 														</h5>
@@ -20926,29 +20237,29 @@
 
 															<input
 																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-																value={childEditor.title}
+																value={s.childEditor.title}
 																oninput={(event) => updateChildTitle(inputValue(event))}
 															/>
 														</label>
 
-														{#each childFieldsForForm(childEditor.childFormId) as childField}
+														{#each childFieldsForForm(s.childEditor.childFormId) as childField}
 															<label
 																class="space-y-1 text-sm {fieldHiddenByCondition(
 																	childField,
-																	childEditor.draft
+																	s.childEditor.draft
 																)
 																	? 'hidden'
 																	: ''}"
 																data-child-record-edit-field={childField.key}
 																data-conditional-hidden={fieldHiddenByCondition(
 																	childField,
-																	childEditor.draft
+																	s.childEditor.draft
 																)
 																	? childField.key
 																	: undefined}
 																data-conditional-readonly={fieldReadOnlyByCondition(
 																	childField,
-																	childEditor.draft
+																	s.childEditor.draft
 																)
 																	? childField.key
 																	: undefined}
@@ -20968,10 +20279,10 @@
 																		<input
 																			type="checkbox"
 																			class="h-4 w-4 rounded border-input accent-primary"
-																			checked={childEditor.draft[childField.key] === true}
+																			checked={s.childEditor.draft[childField.key] === true}
 																			disabled={fieldReadOnlyByCondition(
 																				childField,
-																				childEditor.draft
+																				s.childEditor.draft
 																			)}
 																			onchange={(event) =>
 																				updateChildDraftValue(
@@ -20984,10 +20295,10 @@
 																	</div>
 																{:else if fieldType(childField) === 'single_select' && fieldOptions(childField).length > 0}
 																	<select
-																		value={draftStringFrom(childEditor.draft, childField.key)}
+																		value={draftStringFrom(s.childEditor.draft, childField.key)}
 																		disabled={fieldReadOnlyByCondition(
 																			childField,
-																			childEditor.draft
+																			s.childEditor.draft
 																		)}
 																		onchange={(event) =>
 																			updateChildDraftValue(childField.key, selectValue(event))}
@@ -20995,7 +20306,7 @@
 																	>
 																		<option value="">{$t('forms.selectPlaceholder')}</option>
 
-																		{#each recordSelectOptions(childField, childEditor.draft) as option}
+																		{#each recordSelectOptions(childField, s.childEditor.draft) as option}
 																			<option
 																				value={option}
 																				disabled={optionDisabledForChildSingleDraft(
@@ -21022,7 +20333,7 @@
 																	<div
 																		class="grid gap-2 rounded-control border border-input bg-field p-2 text-sm"
 																	>
-																		{#each recordSelectOptions(childField, childEditor.draft) as option}
+																		{#each recordSelectOptions(childField, s.childEditor.draft) as option}
 																			<label
 																				class="flex items-start gap-2 text-fg"
 																				data-option-description={optionDescription(
@@ -21041,7 +20352,7 @@
 																					)}
 																					disabled={fieldReadOnlyByCondition(
 																						childField,
-																						childEditor.draft
+																						s.childEditor.draft
 																					) || optionDisabledForChildMultiDraft(childField, option)}
 																					data-option-disabled={optionDisabled(childField, option)
 																						? option
@@ -21075,22 +20386,22 @@
 																	</div>
 																{:else if fieldType(childField) === 'member'}
 																	<select
-																		value={draftStringFrom(childEditor.draft, childField.key)}
+																		value={draftStringFrom(s.childEditor.draft, childField.key)}
 																		disabled={fieldReadOnlyByCondition(
 																			childField,
-																			childEditor.draft
-																		) || workspaceMembersLoading}
+																			s.childEditor.draft
+																		) || s.workspaceMembersLoading}
 																		onchange={(event) =>
 																			updateChildDraftValue(childField.key, selectValue(event))}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																	>
 																		<option value="">
-																			{workspaceMembersLoading
+																			{s.workspaceMembersLoading
 																				? $t('forms.loadingMembers')
 																				: $t('forms.selectMemberPlaceholder')}
 																		</option>
 
-																		{#each workspaceMembers as member (member.user_id)}
+																		{#each s.workspaceMembers as member (member.user_id)}
 																			<option value={member.user_id}
 																				>{member.name || member.email || member.user_id}</option
 																			>
@@ -21099,11 +20410,11 @@
 																{:else if fieldType(childField) === 'textarea' || fieldType(childField) === 'rich_text'}
 																	<textarea
 																		class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-																		value={draftStringFrom(childEditor.draft, childField.key)}
+																		value={draftStringFrom(s.childEditor.draft, childField.key)}
 																		placeholder={fieldPlaceholder(childField)}
 																		readonly={fieldReadOnlyByCondition(
 																			childField,
-																			childEditor.draft
+																			s.childEditor.draft
 																		)}
 																		maxlength={childField.validation?.max_length}
 																		oninput={(event) =>
@@ -21123,10 +20434,10 @@
 																					event,
 																					childField.key,
 																					'child',
-																					childEditor
+																					s.childEditor
 																						? fieldReadOnlyByCondition(
 																								childField,
-																								childEditor.draft
+																								s.childEditor.draft
 																							)
 																						: true
 																				)}
@@ -21135,10 +20446,10 @@
 																					event,
 																					childField.key,
 																					'child',
-																					childEditor
+																					s.childEditor
 																						? fieldReadOnlyByCondition(
 																								childField,
-																								childEditor.draft
+																								s.childEditor.draft
 																							)
 																						: true
 																				)}
@@ -21147,10 +20458,10 @@
 																					event,
 																					childField.key,
 																					'child',
-																					childEditor
+																					s.childEditor
 																						? fieldReadOnlyByCondition(
 																								childField,
-																								childEditor.draft
+																								s.childEditor.draft
 																							)
 																						: true
 																				)}
@@ -21159,10 +20470,10 @@
 																					event,
 																					childField.key,
 																					'child',
-																					childEditor
+																					s.childEditor
 																						? fieldReadOnlyByCondition(
 																								childField,
-																								childEditor.draft
+																								s.childEditor.draft
 																							)
 																						: true
 																				)}
@@ -21174,25 +20485,25 @@
 																				variant="secondary"
 																				disabled={fieldReadOnlyByCondition(
 																					childField,
-																					childEditor.draft
+																					s.childEditor.draft
 																				)}
 																				onclick={() =>
 																					clearSignatureCanvas(
 																						childField.key,
 																						'child',
-																						childEditor
+																						s.childEditor
 																							? fieldReadOnlyByCondition(
 																									childField,
-																									childEditor.draft
+																									s.childEditor.draft
 																								)
 																							: true
 																					)}>{$t('forms.signatureClear')}</Button
 																			>
 
-																			{#if signatureImageValue(childEditor.draft, childField.key)}
+																			{#if signatureImageValue(s.childEditor.draft, childField.key)}
 																				<img
 																					src={signatureImageValue(
-																						childEditor.draft,
+																						s.childEditor.draft,
 																						childField.key
 																					)}
 																					alt={fieldLabel(childField)}
@@ -21204,11 +20515,11 @@
 
 																		<textarea
 																			class="min-h-16 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs text-fg"
-																			value={draftStringFrom(childEditor.draft, childField.key)}
+																			value={draftStringFrom(s.childEditor.draft, childField.key)}
 																			placeholder={fieldPlaceholder(childField)}
 																			readonly={fieldReadOnlyByCondition(
 																				childField,
-																				childEditor.draft
+																				s.childEditor.draft
 																			)}
 																			maxlength={childField.validation?.max_length}
 																			oninput={(event) =>
@@ -21219,7 +20530,7 @@
 																	<input
 																		type="text"
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg-muted"
-																		value={draftStringFrom(childEditor.draft, childField.key)}
+																		value={draftStringFrom(s.childEditor.draft, childField.key)}
 																		placeholder={$t('forms.autonumberGeneratedAfterSave')}
 																		readonly
 																		data-child-autonumber-field={childField.key}
@@ -21258,11 +20569,11 @@
 																				? '0.01'
 																				: undefined}
 																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-																		value={draftStringFrom(childEditor.draft, childField.key)}
+																		value={draftStringFrom(s.childEditor.draft, childField.key)}
 																		placeholder={fieldPlaceholder(childField)}
 																		readonly={fieldReadOnlyByCondition(
 																			childField,
-																			childEditor.draft
+																			s.childEditor.draft
 																		)}
 																		min={childField.validation?.min}
 																		max={childField.validation?.max}
@@ -21287,7 +20598,7 @@
 															>{$t('common.cancel')}</Button
 														>
 
-														<Button size="sm" loading={childSubmitting} onclick={saveChildRecord}>
+														<Button size="sm" loading={s.childSubmitting} onclick={saveChildRecord}>
 															<Pencil class="mr-2 h-4 w-4" aria-hidden="true" />
 															{$t('forms.saveRecord')}
 														</Button>
@@ -21406,7 +20717,8 @@
 																							<button
 																								type="button"
 																								class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-																								disabled={deletingChildRecordId === child.record.id}
+																								disabled={s.deletingChildRecordId ===
+																									child.record.id}
 																								onclick={() => deleteChildRecord(child)}
 																								aria-label={$t('forms.deleteChildRecord')}
 																								data-child-table-delete-row={`${relationField.key}:${child.record.id}`}
@@ -21433,7 +20745,7 @@
 														</section>
 													{/each}
 												</div>
-											{:else if selectedRecordChildren.length > 0}
+											{:else if s.selectedRecordChildren.length > 0}
 												<div class="overflow-hidden rounded-control border border-line">
 													<table class="min-w-full divide-y divide-line text-xs">
 														<thead class="bg-nav">
@@ -21457,7 +20769,7 @@
 														</thead>
 
 														<tbody class="divide-y divide-line">
-															{#each selectedRecordChildren as child}
+															{#each s.selectedRecordChildren as child}
 																<tr>
 																	<td class="px-3 py-2 font-medium text-fg">{child.record.title}</td
 																	>
@@ -21493,7 +20805,7 @@
 																			<button
 																				type="button"
 																				class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
-																				disabled={deletingChildRecordId === child.record.id}
+																				disabled={s.deletingChildRecordId === child.record.id}
 																				onclick={() => deleteChildRecord(child)}
 																				aria-label={$t('forms.deleteChildRecord')}
 																				><Trash2 class="h-4 w-4" aria-hidden="true" /></button
@@ -21521,7 +20833,7 @@
 										</div>
 
 										<div class="space-y-2">
-											{#each selectedRecordLinks as item}
+											{#each s.selectedRecordLinks as item}
 												<div class="rounded-card border border-line px-3 py-2 text-xs">
 													<div class="font-medium text-fg">
 														{item.relation_key} / {item.relation_type}
@@ -21533,7 +20845,7 @@
 												</div>
 											{/each}
 
-											{#if selectedRecordLinks.length === 0}
+											{#if s.selectedRecordLinks.length === 0}
 												<p class="text-sm text-fg-muted">
 													{$t('forms.noLinkedData')}
 												</p>
@@ -21543,20 +20855,20 @@
 										<div class="mt-3 space-y-2">
 											<input
 												class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-												bind:value={linkDraft.target_id}
+												bind:value={s.linkDraft.target_id}
 												placeholder={$t('forms.targetPlaceholder')}
 											/>
 
 											<div class="grid grid-cols-2 gap-2">
 												<input
 													class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-													bind:value={linkDraft.relation_key}
+													bind:value={s.linkDraft.relation_key}
 													placeholder={$t('forms.relationKeyPlaceholder')}
 												/>
 
 												<input
 													class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-													bind:value={linkDraft.relation_type}
+													bind:value={s.linkDraft.relation_type}
 													placeholder={$t('forms.relationTypePlaceholder')}
 												/>
 											</div>
@@ -21564,8 +20876,8 @@
 											<Button
 												size="sm"
 												variant="secondary"
-												loading={linkSubmitting}
-												disabled={!linkDraft.target_id.trim()}
+												loading={s.linkSubmitting}
+												disabled={!s.linkDraft.target_id.trim()}
 												onclick={handleCreateLink}
 											>
 												<Link class="mr-2 h-4 w-4" aria-hidden="true" />
@@ -21575,8 +20887,8 @@
 
 										<div
 											class="mt-4 border-t border-line pt-4"
-											data-record-detail-comments={selectedRecord.id}
-											data-record-detail-comment-count={selectedRecordComments.length}
+											data-record-detail-comments={s.selectedRecord.id}
+											data-record-detail-comment-count={s.selectedRecordComments.length}
 										>
 											<div class="mb-3 flex items-center gap-2">
 												<FileText class="h-4 w-4 text-fg-muted" aria-hidden="true" />
@@ -21587,7 +20899,7 @@
 											</div>
 
 											<div class="space-y-2">
-												{#each selectedRecordComments.slice(0, 5) as comment}
+												{#each s.selectedRecordComments.slice(0, 5) as comment}
 													<div
 														class="rounded-card border border-line px-3 py-2 text-xs"
 														data-record-detail-comment={comment.id}
@@ -21618,14 +20930,14 @@
 													</div>
 												{/each}
 
-												{#if recordCommentsLoading && selectedRecordComments.length === 0}
+												{#if s.recordCommentsLoading && s.selectedRecordComments.length === 0}
 													<p class="text-sm text-fg-muted">
 														{$t('common.loading')}
 													</p>
-												{:else if selectedRecordComments.length === 0}
+												{:else if s.selectedRecordComments.length === 0}
 													<p
 														class="text-sm text-fg-muted"
-														data-record-detail-comments-empty={selectedRecord.id}
+														data-record-detail-comments-empty={s.selectedRecord.id}
 													>
 														{$t('forms.noRecordComments')}
 													</p>
@@ -21634,16 +20946,16 @@
 												<div class="space-y-2 pt-1">
 													<textarea
 														class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-														bind:value={recordCommentDraft}
+														bind:value={s.recordCommentDraft}
 														placeholder={$t('forms.recordCommentPlaceholder')}
-														data-record-detail-comment-input={selectedRecord.id}></textarea>
+														data-record-detail-comment-input={s.selectedRecord.id}></textarea>
 
-													<span data-record-detail-comment-submit={selectedRecord.id}>
+													<span data-record-detail-comment-submit={s.selectedRecord.id}>
 														<Button
 															size="sm"
 															variant="secondary"
-															loading={recordCommentSubmitting}
-															disabled={!recordCommentDraft.trim()}
+															loading={s.recordCommentSubmitting}
+															disabled={!s.recordCommentDraft.trim()}
 															onclick={handleCreateRecordComment}>{$t('forms.addComment')}</Button
 														>
 													</span>
@@ -21654,8 +20966,8 @@
 										{#if selectedRecordAttachmentFields().length > 0}
 											<div
 												class="mt-4 border-t border-line pt-4"
-												data-record-detail-attachments={selectedRecord.id}
-												data-record-detail-attachment-count={recordAttachments.filter(
+												data-record-detail-attachments={s.selectedRecord.id}
+												data-record-detail-attachment-count={s.recordAttachments.filter(
 													(attachment) => !attachment.archived_at
 												).length}
 											>
@@ -21779,7 +21091,7 @@
 
 										<div
 											class="mt-4 border-t border-line pt-4"
-											data-record-detail-event-history={selectedRecord.id}
+											data-record-detail-event-history={s.selectedRecord.id}
 											data-record-detail-event-count={selectedRecordEvents.length}
 										>
 											<div class="mb-3 flex items-center gap-2">
@@ -21856,7 +21168,7 @@
 												{#if selectedRecordEvents.length === 0}
 													<p
 														class="text-sm text-fg-muted"
-														data-record-detail-event-empty={selectedRecord.id}
+														data-record-detail-event-empty={s.selectedRecord.id}
 													>
 														{$t('forms.noRecordEvents')}
 													</p>
@@ -21879,22 +21191,22 @@
 </div>
 
 <Modal
-	bind:open={showImportRecords}
+	bind:open={s.showImportRecords}
 	title={$t('forms.importRecords')}
 	maxWidthClass="max-w-4xl"
 	onclose={closeImportRecords}
 >
-	<div class="space-y-4" data-import-wizard data-import-wizard-step={importWizardStep}>
+	<div class="space-y-4" data-import-wizard data-import-wizard-step={s.importWizardStep}>
 		<div class="grid gap-2 sm:grid-cols-4" aria-label={$t('forms.importWizardSteps')}>
 			{#each ['source', 'mapping', 'preview', 'commit'] as step, index}
-				{@const current = importWizardStep === step}
+				{@const current = s.importWizardStep === step}
 				{@const complete =
-					(step === 'source' && importText.trim().length > 0) ||
-					(step === 'mapping' && (importMappingApplied || importMappingHeaders.length === 0)) ||
-					(step === 'preview' && Boolean(importPreview)) ||
+					(step === 'source' && s.importText.trim().length > 0) ||
+					(step === 'mapping' && (s.importMappingApplied || s.importMappingHeaders.length === 0)) ||
+					(step === 'preview' && Boolean(s.importPreview)) ||
 					(step === 'commit' &&
-						(importPreview?.valid_rows ?? 0) > 0 &&
-						importPreview?.invalid_rows === 0)}
+						(s.importPreview?.valid_rows ?? 0) > 0 &&
+						s.importPreview?.invalid_rows === 0)}
 
 				<div
 					class={current
@@ -21915,7 +21227,7 @@
 			{/each}
 		</div>
 
-		{#if importWizardStep === 'source'}
+		{#if s.importWizardStep === 'source'}
 			<section class="space-y-3" data-import-wizard-panel="source">
 				<div class="flex flex-wrap items-center justify-between gap-2">
 					<label class="block text-sm font-medium text-fg" for="form-import-text"
@@ -21938,8 +21250,8 @@
 							accept=".csv,.json,text/csv,application/json"
 							onchange={loadImportFile}
 							data-import-file-upload
-							data-import-file-loaded={importedImportFileLoaded ? 'true' : undefined}
-							data-import-file-name={importedImportFileName}
+							data-import-file-loaded={s.importedImportFileLoaded ? 'true' : undefined}
+							data-import-file-name={s.importedImportFileName}
 						/>
 
 						<button
@@ -21948,7 +21260,7 @@
 							onclick={exportImportTemplate}
 							disabled={!selectedForm || visibleFields.length === 0}
 							data-import-template-export
-							data-import-template-exported={exportedImportTemplate ? 'true' : undefined}
+							data-import-template-exported={s.exportedImportTemplate ? 'true' : undefined}
 						>
 							<FileDown class="h-3.5 w-3.5" aria-hidden="true" />
 							{$t('forms.downloadImportTemplate')}
@@ -21956,20 +21268,20 @@
 					</div>
 				</div>
 
-				{#if importedImportFileName}
+				{#if s.importedImportFileName}
 					<p class="text-xs text-fg-muted">
-						{$t('forms.importFileLoadedName', { values: { name: importedImportFileName } })}
+						{$t('forms.importFileLoadedName', { values: { name: s.importedImportFileName } })}
 					</p>
 				{/if}
 
 				<textarea
 					id="form-import-text"
 					class="min-h-72 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
-					value={importText}
+					value={s.importText}
 					oninput={(event) => {
-						importText = inputValue(event);
-						importedImportFileName = '';
-						importedImportFileLoaded = false;
+						s.importText = inputValue(event);
+						s.importedImportFileName = '';
+						s.importedImportFileLoaded = false;
 						resetImportPreviewForSourceChange();
 						refreshImportMappingFromText();
 					}}></textarea>
@@ -21978,15 +21290,17 @@
 			</section>
 		{/if}
 
-		{#if importWizardStep === 'mapping'}
+		{#if s.importWizardStep === 'mapping'}
 			<section
 				class="space-y-3 rounded-card border border-line bg-nav p-3"
 				data-import-wizard-panel="mapping"
 				data-import-mapping-wizard
-				data-import-mapping-applied={importMappingApplied ? 'true' : undefined}
-				data-import-mapping-template-available={importMappingTemplateAvailable ? 'true' : undefined}
-				data-import-mapping-template-saved={importMappingTemplateSaved ? 'true' : undefined}
-				data-import-mapping-template-restored={importMappingTemplateRestored ? 'true' : undefined}
+				data-import-mapping-applied={s.importMappingApplied ? 'true' : undefined}
+				data-import-mapping-template-available={s.importMappingTemplateAvailable
+					? 'true'
+					: undefined}
+				data-import-mapping-template-saved={s.importMappingTemplateSaved ? 'true' : undefined}
+				data-import-mapping-template-restored={s.importMappingTemplateRestored ? 'true' : undefined}
 			>
 				<div class="flex flex-wrap items-center justify-between gap-2">
 					<div>
@@ -22011,7 +21325,7 @@
 							type="button"
 							class="inline-flex items-center rounded-control border border-input bg-raised px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 							onclick={restoreImportMappingTemplate}
-							disabled={!importMappingTemplateAvailable}
+							disabled={!s.importMappingTemplateAvailable}
 							data-import-mapping-template-restore
 							>{$t('forms.restoreImportMappingTemplate')}</button
 						>
@@ -22026,7 +21340,7 @@
 				</div>
 
 				<div class="grid max-h-[46vh] gap-2 overflow-auto pr-1 sm:grid-cols-2">
-					{#each importMappingHeaders as header, index}
+					{#each s.importMappingHeaders as header, index}
 						<label class="block space-y-1 text-xs" data-import-mapping-row={index}>
 							<span class="font-medium text-fg-muted"
 								>{header || $t('forms.importUnnamedColumn')}</span
@@ -22034,9 +21348,9 @@
 
 							<select
 								class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
-								bind:value={importMappingSelections[index]}
+								bind:value={s.importMappingSelections[index]}
 								onchange={() => {
-									importMappingApplied = false;
+									s.importMappingApplied = false;
 								}}
 								data-import-mapping-column={index}
 							>
@@ -22052,9 +21366,9 @@
 
 							<select
 								class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
-								bind:value={importMappingTransforms[index]}
+								bind:value={s.importMappingTransforms[index]}
 								onchange={() => {
-									importMappingApplied = false;
+									s.importMappingApplied = false;
 								}}
 								data-import-mapping-transform={index}
 							>
@@ -22078,9 +21392,9 @@
 			</section>
 		{/if}
 
-		{#if importWizardStep === 'preview'}
+		{#if s.importWizardStep === 'preview'}
 			<section class="space-y-3" data-import-wizard-panel="preview">
-				{#if importPreview}
+				{#if s.importPreview}
 					<div class="grid gap-2 sm:grid-cols-3">
 						<div class="rounded-card border border-line bg-raised p-3">
 							<p class="text-xs text-fg-muted">
@@ -22088,7 +21402,7 @@
 							</p>
 
 							<p class="mt-1 text-2xl font-semibold text-fg">
-								{importPreview.total_rows}
+								{s.importPreview.total_rows}
 							</p>
 						</div>
 
@@ -22098,7 +21412,7 @@
 							</p>
 
 							<p class="mt-1 text-2xl font-semibold text-success">
-								{importPreview.valid_rows}
+								{s.importPreview.valid_rows}
 							</p>
 						</div>
 
@@ -22106,7 +21420,7 @@
 							<p class="text-xs text-danger">{$t('forms.importInvalidRows')}</p>
 
 							<p class="mt-1 text-2xl font-semibold text-danger">
-								{importPreview.invalid_rows}
+								{s.importPreview.invalid_rows}
 							</p>
 						</div>
 					</div>
@@ -22120,9 +21434,9 @@
 							<span class="text-fg-muted">
 								{$t('forms.importPreviewSummary', {
 									values: {
-										total: importPreview.total_rows,
-										valid: importPreview.valid_rows,
-										invalid: importPreview.invalid_rows
+										total: s.importPreview.total_rows,
+										valid: s.importPreview.valid_rows,
+										invalid: s.importPreview.invalid_rows
 									}
 								})}
 							</span>
@@ -22140,7 +21454,7 @@
 								</thead>
 
 								<tbody class="divide-y divide-line">
-									{#each importPreview.rows as row}
+									{#each s.importPreview.rows as row}
 										<tr>
 											<td class="px-3 py-2 font-mono text-xs text-fg-muted">{row.row_number}</td>
 
@@ -22166,7 +21480,7 @@
 			</section>
 		{/if}
 
-		{#if importWizardStep === 'commit'}
+		{#if s.importWizardStep === 'commit'}
 			<section
 				class="rounded-card border border-line bg-success-soft p-4"
 				data-import-wizard-panel="commit"
@@ -22176,9 +21490,9 @@
 				</p>
 
 				<p class="mt-1 text-sm text-success">
-					{#if importPreview}
+					{#if s.importPreview}
 						{$t('forms.importReadyToCommitDescription', {
-							values: { count: importPreview.valid_rows }
+							values: { count: s.importPreview.valid_rows }
 						})}
 					{/if}
 				</p>
@@ -22189,14 +21503,14 @@
 			class="flex flex-col-reverse gap-2 border-t border-line pt-3 sm:flex-row sm:items-center sm:justify-between"
 		>
 			<div class="flex gap-2">
-				{#if importWizardStep !== 'source'}
+				{#if s.importWizardStep !== 'source'}
 					<Button
 						variant="secondary"
 						onclick={() => {
-							importWizardStep =
-								importWizardStep === 'mapping'
+							s.importWizardStep =
+								s.importWizardStep === 'mapping'
 									? 'source'
-									: importWizardStep === 'preview'
+									: s.importWizardStep === 'preview'
 										? 'mapping'
 										: 'preview';
 						}}
@@ -22210,26 +21524,26 @@
 			<div class="flex justify-end gap-2">
 				<Button variant="secondary" onclick={closeImportRecords}>{$t('common.cancel')}</Button>
 
-				{#if importWizardStep === 'source'}
+				{#if s.importWizardStep === 'source'}
 					<Button
-						disabled={!importText.trim()}
-						loading={importPreviewing}
+						disabled={!s.importText.trim()}
+						loading={s.importPreviewing}
 						onclick={continueImportFromSource}
 					>
 						{$t('forms.importContinueToMapping')}
 						<ChevronRight class="ml-2 h-4 w-4" aria-hidden="true" />
 					</Button>
-				{:else if importWizardStep === 'mapping'}
-					<Button loading={importPreviewing} onclick={continueImportFromMapping}>
+				{:else if s.importWizardStep === 'mapping'}
+					<Button loading={s.importPreviewing} onclick={continueImportFromMapping}>
 						{$t('forms.previewImport')}
 						<ChevronRight class="ml-2 h-4 w-4" aria-hidden="true" />
 					</Button>
 				{:else}
 					<Button
-						loading={importingRecords}
-						disabled={!importPreview ||
-							importPreview.invalid_rows > 0 ||
-							importPreview.valid_rows === 0}
+						loading={s.importingRecords}
+						disabled={!s.importPreview ||
+							s.importPreview.invalid_rows > 0 ||
+							s.importPreview.valid_rows === 0}
 						onclick={commitImportRecords}
 					>
 						<FileUp class="mr-2 h-4 w-4" aria-hidden="true" />
@@ -22242,7 +21556,7 @@
 </Modal>
 
 <Modal
-	bind:open={designerConfirmOpen}
+	bind:open={s.designerConfirmOpen}
 	title={$t('forms.schemaChangeConfirmTitle')}
 	maxWidthClass="max-w-3xl"
 	onclose={closeDesignerConfirm}
@@ -22269,7 +21583,7 @@
 				</thead>
 
 				<tbody class="divide-y divide-line bg-raised">
-					{#each pendingDesignerChanges as change}
+					{#each s.pendingDesignerChanges as change}
 						<tr>
 							<td class="px-3 py-2 text-fg">
 								{#if change.kind === 'delete'}
@@ -22318,7 +21632,7 @@
 	{#snippet footer()}
 		<Button variant="secondary" onclick={closeDesignerConfirm}>{$t('common.cancel')}</Button>
 
-		<Button variant="dangerSolid" loading={designerSaving} onclick={confirmDesignerSchemaSave}
+		<Button variant="dangerSolid" loading={s.designerSaving} onclick={confirmDesignerSchemaSave}
 			>{$t('forms.confirmSchemaSave')}</Button
 		>
 	{/snippet}
