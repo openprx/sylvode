@@ -6,7 +6,8 @@
 	import { governanceExtApi, type AuditReport } from '#lib/api/governance-ext.js';
 	import { toast } from '#lib/stores/toast.js';
 
-	const projectId = $derived(page.params.pid || '');
+	const projectId = $derived(page.params.projectId || '');
+	const workspaceId = $derived(page.params.workspaceId || '');
 	const reportId = $derived(page.params.id || '');
 
 	let loading = $state(true);
@@ -63,7 +64,7 @@
 				<p class="mt-1 text-sm text-slate-500">{reportId}</p>
 			</div>
 			<a
-				href={`/projects/${projectId}/audit-reports`}
+				href={`/workspace/${workspaceId}/projects/${projectId}/audit-reports`}
 				class="rounded-md border border-slate-300 px-3 py-2 text-xs hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-900"
 			>
 				{$t('governanceExt.backToList')}

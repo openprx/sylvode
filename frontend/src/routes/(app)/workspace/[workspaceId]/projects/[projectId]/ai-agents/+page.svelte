@@ -17,7 +17,7 @@
 	import Modal from '#lib/components/Modal.svelte';
 	import Input from '#lib/components/Input.svelte';
 
-	const projectId = $derived(page.params.pid || '');
+	const projectId = $derived(page.params.projectId || '');
 	const canManage = $derived(isAdminUser($authStore.user));
 
 	let loading = $state(false);
