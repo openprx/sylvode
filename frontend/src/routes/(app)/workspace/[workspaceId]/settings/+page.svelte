@@ -7,6 +7,7 @@
 	import { resolve } from '$app/paths';
 	import { workspacesApi, type Workspace } from '#lib/api/workspaces.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import Card from '#lib/components/Card.svelte';
 	import Input from '#lib/components/Input.svelte';
@@ -65,8 +66,14 @@
 
 	async function handleDeleteWorkspace() {
 		if (!workspace) return;
+		const nameValues = { values: { name: workspace.name } };
 		if (
-			!confirm(get(t)('workspace.deleteConfirmIrreversible', { values: { name: workspace.name } }))
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('workspace.deleteTitle', nameValues),
+				body: get(t)('workspace.deleteBody'),
+				confirmLabel: get(t)('workspace.deleteAction', nameValues)
+			}))
 		) {
 			return;
 		}
@@ -95,9 +102,7 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('common.loading')}
 		</div>
 	{:else}
@@ -172,7 +177,7 @@
 		{/if}
 
 		<Card>
-			<h2 class="text-lg font-semibold text-red-700">{$t('workspace.dangerZone')}</h2>
+			<h2 class="text-lg font-semibold text-danger">{$t('workspace.dangerZone')}</h2>
 			<p class="mt-2 text-sm text-fg-muted">{$t('workspace.deleteDesc')}</p>
 			<div class="mt-4">
 				<Button variant="danger" loading={deleting} onclick={handleDeleteWorkspace}
