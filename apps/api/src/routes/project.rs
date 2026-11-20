@@ -1965,13 +1965,37 @@ pub async fn list_projects(
         updated_at: platform::timestamp::Timestamp,
     }
 
+    // A connected application sees the projects of its grant only: a grant limited to some
+    // projects adds the id filter to every statement that reads or counts the list.
+    let granted_projects: Option<Vec<Uuid>> =
+        crate::oauth::delegated::current().and_then(|context| match &context.projects {
+            crate::oauth::scopes::ProjectScope::All => None,
+            crate::oauth::scopes::ProjectScope::Selected(ids) => Some(ids.to_vec()),
+        });
+    let project_filter = if granted_projects.is_some() {
+        " AND id = ANY($2)"
+    } else {
+        ""
+    };
+    let filter_values = |mut values: Vec<sea_orm::Value>| {
+        if let Some(ids) = &granted_projects {
+            values.insert(1, ids.clone().into());
+        }
+        values
+    };
+    let (limit_param, offset_param) = if granted_projects.is_some() {
+        ("$3", "$4")
+    } else {
+        ("$2", "$3")
+    };
+
     let window = list_projects_window(&query);
     let projects = match window {
         None => {
             ProjectRow::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT id, workspace_id, key, name, description, type_key, type_settings, created_at, updated_at FROM projects WHERE workspace_id = $1 ORDER BY created_at DESC",
-                vec![workspace_id.into()],
+                format!("SELECT id, workspace_id, key, name, description, type_key, type_settings, created_at, updated_at FROM projects WHERE workspace_id = $1{project_filter} ORDER BY created_at DESC"),
+                filter_values(vec![workspace_id.into()]),
             ))
             .all(&state.db)
             .await?
@@ -1979,12 +2003,12 @@ pub async fn list_projects(
         Some((page, per_page)) => {
             ProjectRow::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT id, workspace_id, key, name, description, type_key, type_settings, created_at, updated_at FROM projects WHERE workspace_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3",
-                vec![
+                format!("SELECT id, workspace_id, key, name, description, type_key, type_settings, created_at, updated_at FROM projects WHERE workspace_id = $1{project_filter} ORDER BY created_at DESC, id DESC LIMIT {limit_param} OFFSET {offset_param}"),
+                filter_values(vec![
                     workspace_id.into(),
                     per_page.into(),
                     page.saturating_sub(1).saturating_mul(per_page).into(),
-                ],
+                ]),
             ))
             .all(&state.db)
             .await?
@@ -2042,8 +2066,8 @@ pub async fn list_projects(
     }
     let total = CountRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT COUNT(*)::bigint AS total FROM projects WHERE workspace_id = $1",
-        vec![workspace_id.into()],
+        format!("SELECT COUNT(*)::bigint AS total FROM projects WHERE workspace_id = $1{project_filter}"),
+        filter_values(vec![workspace_id.into()]),
     ))
     .one(&state.db)
     .await?
