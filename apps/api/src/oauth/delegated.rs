@@ -596,6 +596,72 @@ pub async fn resolve_target(
     }
 }
 
+/// A project a grant can see, with its display data.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReachableProject {
+    pub key: String,
+    pub name: String,
+}
+
+/// Which of `project_ids` a grant can reach right now, in one query.
+///
+/// This is the single definition of project visibility for a grant at the time something is
+/// delivered or listed outside the request path (the event stream asks it per batch). It states
+/// the same rules as the request path: [`Target::is_reachable_by`] (the project belongs to the
+/// grant's workspace and is in its project set) and the membership the token validation requires
+/// (the user is still a member of that workspace). In Sylvode a project is visible to every
+/// member of its workspace and the role cap (an owner or admin acts as `member`) does not change
+/// what a member may read, so no role enters the question. A project that does not exist is
+/// absent from the answer, exactly as an unresolvable target is refused.
+pub async fn reachable_projects(
+    db: &DatabaseConnection,
+    grantee: Grantee,
+    scope: &ProjectScope,
+    project_ids: &[Uuid],
+) -> Result<HashMap<Uuid, ReachableProject>, DbErr> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        id: Uuid,
+        key: String,
+        name: String,
+    }
+    if project_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let (all, selected): (bool, Vec<Uuid>) = match scope {
+        ProjectScope::All => (true, Vec::new()),
+        ProjectScope::Selected(ids) => (false, ids.to_vec()),
+    };
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT p.id, p.key, p.name FROM projects p \
+         WHERE p.id = ANY($1) AND p.workspace_id = $2 \
+           AND ($3 OR p.id = ANY($4)) \
+           AND EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = p.workspace_id AND m.user_id = $5)",
+        vec![
+            project_ids.to_vec().into(),
+            grantee.workspace_id.into(),
+            all.into(),
+            selected.into(),
+            grantee.user_id.into(),
+        ],
+    ))
+    .all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.id,
+                ReachableProject {
+                    key: row.key,
+                    name: row.name,
+                },
+            )
+        })
+        .collect())
+}
+
 // ---------------------------------------------------------------------------------------------
 // Process-wide state: rate limits and the use stamp
 // ---------------------------------------------------------------------------------------------

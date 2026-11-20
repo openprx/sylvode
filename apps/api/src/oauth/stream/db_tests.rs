@@ -1382,6 +1382,155 @@ async fn an_event_about_a_project_that_is_gone_is_not_sent_even_in_backfill() {
     world.finish().await;
 }
 
+/// What the API's delegated path decides about a project target for a grant: the target
+/// resolver and the reachability rule the middleware applies before a handler runs.
+async fn api_reaches_project(world: &World, grant: &Grant, project: Uuid) -> bool {
+    use crate::oauth::delegated::{Grantee, Resolver, resolve_target};
+    let scope = grant_scope(world, grant).await;
+    let params = vec![("project_id".to_owned(), project.to_string())];
+    let grantee = Grantee {
+        user_id: world.user(),
+        workspace_id: world.ws(),
+    };
+    match resolve_target(world.db(), Resolver::Project("project_id"), &params, grantee)
+        .await
+        .expect("the resolver runs")
+    {
+        Some(target) => target.is_reachable_by(world.ws(), &scope),
+        None => false,
+    }
+}
+
+async fn grant_scope(world: &World, grant: &Grant) -> crate::oauth::scopes::ProjectScope {
+    use crate::oauth::scopes::ProjectScope;
+    #[derive(FromQueryResult)]
+    struct Mode {
+        project_mode: String,
+    }
+    #[derive(FromQueryResult)]
+    struct Pid {
+        project_id: Uuid,
+    }
+    let mode = Mode::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT project_mode FROM oauth_grants WHERE id = $1",
+        vec![grant.id.into()],
+    ))
+    .one(world.db())
+    .await
+    .expect("mode")
+    .expect("the grant exists");
+    if mode.project_mode == "all" {
+        return ProjectScope::All;
+    }
+    let ids: Vec<Uuid> = Pid::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT project_id FROM oauth_grant_projects WHERE grant_id = $1",
+        vec![grant.id.into()],
+    ))
+    .all(world.db())
+    .await
+    .expect("ids")
+    .into_iter()
+    .map(|row| row.project_id)
+    .collect();
+    ProjectScope::Selected(Arc::from(ids))
+}
+
+#[tokio::test]
+async fn delivery_never_reaches_a_project_the_api_refuses_for_the_grant() {
+    use crate::oauth::scopes::ProjectScope;
+    use crate::oauth::stream::envelope::GrantView;
+    let Some(world) = World::new("agrees_with_api").await else {
+        return;
+    };
+    let missing = Uuid::new_v4();
+    let candidates = [world.p1(), world.p2, world.p3, missing];
+    let grants = [
+        world.grant("selected", &[world.p1()], &BOTH).await,
+        // A project of another workspace in the set must not widen the grant.
+        world.grant("selected", &[world.p1(), world.p3], &BOTH).await,
+        world.grant("all", &[], &BOTH).await,
+    ];
+    for grant in &grants {
+        let scope = grant_scope(&world, grant).await;
+        let view = GrantView {
+            grant_id: grant.id,
+            user_id: world.user(),
+            workspace_id: world.ws(),
+            scopes: crate::oauth::scopes::ScopeSet::from_scopes(&[
+                crate::oauth::scopes::Scope::NotificationsRead,
+                crate::oauth::scopes::Scope::TasksRead,
+            ]),
+            projects: scope.clone(),
+        };
+        let visible = super::visible_projects(world.db(), &view, &candidates)
+            .await
+            .expect("visible projects");
+        for project in candidates {
+            let api = api_reaches_project(&world, grant, project).await;
+            assert_eq!(
+                visible.contains_key(&project),
+                api,
+                "project {project}, scope {scope:?}: the stream and the API disagree"
+            );
+        }
+        assert!(
+            !visible.contains_key(&world.p3),
+            "another workspace's project is never visible"
+        );
+        assert!(
+            !visible.contains_key(&missing),
+            "a project that does not exist is never visible"
+        );
+        if matches!(scope, ProjectScope::Selected(_)) {
+            assert!(
+                !visible.contains_key(&world.p2),
+                "a project outside the set is never visible"
+            );
+        }
+    }
+    // Delivered events follow: an event of every candidate project, one connection per grant.
+    let (mut sse, _) = world.open_ready(&grants[1].token).await;
+    for project in [world.p3, world.p2, world.p1()] {
+        world.task(project, "completed").await;
+    }
+    let delivered = sse.event(PATIENCE).await;
+    assert_eq!(delivered.data()["project"]["id"], world.p1().to_string());
+    assert!(
+        sse.silent_for(Duration::from_millis(1200)).await,
+        "nothing else is delivered"
+    );
+    drop(sse);
+
+    // Without membership nothing is visible and the API refuses the token itself.
+    exec(
+        world.db(),
+        "DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
+        vec![world.ws().into(), world.user().into()],
+    )
+    .await;
+    let view = GrantView {
+        grant_id: grants[2].id,
+        user_id: world.user(),
+        workspace_id: world.ws(),
+        scopes: crate::oauth::scopes::ScopeSet::from_scopes(&[crate::oauth::scopes::Scope::TasksRead]),
+        projects: ProjectScope::All,
+    };
+    let visible = super::visible_projects(world.db(), &view, &candidates)
+        .await
+        .expect("visible projects");
+    assert!(visible.is_empty(), "a former member sees no project");
+    let refused = crate::oauth::validate::validate_access_token(
+        world.db(),
+        &grants[2].token,
+        crate::oauth::validate::AudienceRule::Api(crate::oauth::validate::ForwardCredential::new(None, None, None)),
+    )
+    .await;
+    assert!(refused.is_err(), "the API refuses a token of a former member");
+    world.finish().await;
+}
+
 #[tokio::test]
 async fn losing_the_project_from_the_grant_stops_its_events_within_the_cache_bound() {
     let Some(world) = World::new("project_dropped").await else {
