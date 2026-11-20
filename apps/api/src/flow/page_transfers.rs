@@ -1020,6 +1020,7 @@ async fn commit_once(
         target_update,
         &target_bytes,
         Some(&row.target_frontier),
+        None,
     )
     .await?
     {
@@ -1036,6 +1037,7 @@ async fn commit_once(
             update,
             &bytes,
             Some(&row.source_frontier),
+            None,
         )
         .await?
         {
@@ -1450,6 +1452,7 @@ async fn undo_once(
         target_update,
         &target_bytes,
         Some(&expected_target),
+        None,
     )
     .await?
     {
@@ -1466,6 +1469,7 @@ async fn undo_once(
             update,
             &bytes,
             Some(&expected_source),
+            None,
         )
         .await?
         {

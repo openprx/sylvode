@@ -1236,6 +1236,7 @@ async fn execute_document_update(
             update_id,
             &bytes,
             expected_frontier.as_deref(),
+            None,
         )
         .await?
         {
@@ -2957,6 +2958,7 @@ async fn create_collection_embed(
             update_id,
             &bytes,
             expected_frontier.as_deref(),
+            None,
         )
         .await?
         {

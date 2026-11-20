@@ -884,6 +884,7 @@ async fn plan_document(
         update_id,
         &request.bytes,
         request.expected_frontier.as_deref(),
+        None,
     )
     .await?
     {
