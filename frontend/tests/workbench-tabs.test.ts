@@ -33,8 +33,13 @@ suite.check(
 			refresh: async () => {}
 		});
 		restored.capture();
-		assertEqual(restored.visit('/flow/ninth'), false, 'in-session ninth blocked');
+		for (const tab of restored.current.tabs) restored.markDirty(tab.key, true);
+		assertEqual(restored.canOpen('/flow/ninth'), false, 'ninth refused when all eight unsaved');
+		assertEqual(restored.visit('/flow/ninth').kind, 'blocked', 'in-session ninth blocked');
+		assertEqual(restored.current.pending?.key, 'flow:ninth', 'pending remembers the target');
 		assertEqual(restored.current.active, 'flow:deep-link', 'active URL unchanged');
+		restored.resolvePending(null);
+		assertEqual(restored.current.pending, null, 'cancel clears pending');
 		assertEqual(restored.close('flow:deep-link').kind, 'confirm', 'store close guarded');
 		assertEqual(
 			restored.snapshot<{ draft: string }>('flow:deep-link')?.draft,
@@ -181,7 +186,121 @@ suite.check('eight full tabs can reorder without applying the open-tab capacity 
 	for (let i = 0; i < 8; i++) state.visit(`/flow/full-${i}`);
 	assertEqual(state.moveTab('flow:full-7', 0), true, 'full-cap reorder works');
 	assertEqual(state.current.tabs.length, 8, 'count unchanged');
-	assertEqual(state.current.limit, false, 'capacity warning not triggered');
+	assertEqual(state.current.pending, null, 'capacity gate not triggered');
 	assertEqual(state.current.active, 'flow:full-7', 'active stays same despite movement');
+});
+const open = (state: TaskWorkbench, n: number, prefix = 'p') => {
+	for (let i = 0; i < n; i++) state.visit(`/flow/${prefix}${i}`);
+};
+const keys = (state: TaskWorkbench) => state.current.tabs.map((tab) => tab.key).join(',');
+suite.check('the ninth item closes the least recently used saved tab and reports it', () => {
+	const state = new TaskWorkbench();
+	state.activateUser('lru');
+	open(state, 8);
+	state.visit('/flow/p0');
+	state.visit('/flow/p1');
+	const seen: string[] = [];
+	state.onReplaced = (dropped, title) => seen.push(`${dropped.key}>${title}`);
+	const result = state.visit('/flow/p8');
+	assertEqual(result.kind, 'replaced', 'replaced');
+	assertEqual(result.kind === 'replaced' ? result.dropped.key : '', 'flow:p2', 'LRU dropped');
+	assertEqual(state.current.tabs.length, 8, 'still eight');
+	assertEqual(state.current.active, 'flow:p8', 'new tab active');
+	assertEqual(seen.join(), 'flow:p2>Flow', 'callback');
+});
+suite.check('unsaved tabs, including auxiliary drafts, are never evicted', () => {
+	const state = new TaskWorkbench();
+	state.activateUser('lru-dirty');
+	open(state, 8);
+	state.visit('/flow/p7');
+	state.markDirty('flow:p0', true);
+	let aux = true;
+	state.retainAuxiliary('flow:p1', 'slot', { dirty: () => aux, dispose: () => {} });
+	const result = state.visit('/flow/p8');
+	assertEqual(result.kind === 'replaced' ? result.dropped.key : '', 'flow:p2', 'next saved tab');
+	assertEqual(
+		state.current.tabs.some((tab) => tab.key === 'flow:p0'),
+		true,
+		'dirty kept'
+	);
+	assertEqual(
+		state.current.tabs.some((tab) => tab.key === 'flow:p1'),
+		true,
+		'auxiliary kept'
+	);
+	aux = false;
+});
+suite.check('the active tab is not evicted and all-unsaved blocks with resolvePending', () => {
+	const state = new TaskWorkbench();
+	state.activateUser('all-dirty');
+	open(state, 8);
+	for (const tab of state.current.tabs) state.markDirty(tab.key, true);
+	assertEqual(state.canOpen('/flow/extra'), false, 'cannot open');
+	assertEqual(state.canOpen('/flow/p3'), true, 'existing key opens');
+	state.block('/flow/extra');
+	assertEqual(state.current.pending?.href, '/flow/extra', 'pending href');
+	assertEqual(state.resolvePending('flow:p3').kind, 'confirm', 'dirty close asks first');
+	const done = state.resolvePending('flow:p3', true);
+	assertEqual(done.kind === 'closed' ? done.href : '', '/flow/extra', 'returns pending href');
+	assertEqual(state.current.pending, null, 'pending cleared');
+	assertEqual(state.visit('/flow/extra').kind, 'opened', 'now opens');
+	assertEqual(state.current.tabs.length, 8, 'eight');
+	state.activateUser('active-only');
+	open(state, 8);
+	for (const tab of state.current.tabs) if (tab.key !== 'flow:p7') state.markDirty(tab.key, true);
+	assertEqual(state.canOpen('/flow/extra'), false, 'active clean tab is not a candidate');
+	assertEqual(state.visit('/flow/extra').kind, 'blocked', 'active clean tab is not evicted');
+});
+suite.check('reopening a dropped tab restores its position, scroll and title', () => {
+	const state = new TaskWorkbench();
+	state.activateUser('reopen');
+	open(state, 8);
+	state.setTitle('flow:p1', 'Named');
+	state.setScroll('flow:p1', 120);
+	for (const id of [0, 2, 3, 4, 5, 6, 7]) state.visit(`/flow/p${id}`);
+	const before = keys(state);
+	const result = state.visit('/flow/p8');
+	assertEqual(result.kind === 'replaced' ? result.dropped.key : '', 'flow:p1', 'dropped p1');
+	const dropped = result.kind === 'replaced' ? result.dropped : null;
+	assertEqual(state.visit(dropped?.url ?? '').kind, 'replaced', 'reopen evicts another');
+	const tab = state.current.tabs.find((item) => item.key === 'flow:p1');
+	assertEqual(tab?.title, 'Named', 'title restored');
+	assertEqual(tab?.scroll, 120, 'scroll restored');
+	assertEqual(state.current.tabs.indexOf(tab!), 1, 'position restored');
+	assertEqual(state.current.active, 'flow:p1', 'active');
+	assertEqual(before.split(',').length, 8, 'eight before');
+});
+suite.check('closeSaved keeps unsaved tabs and the excepted tab', () => {
+	const state = new TaskWorkbench();
+	state.activateUser('close-saved');
+	open(state, 4);
+	state.markDirty('flow:p1', true);
+	assertEqual(state.closeSaved('flow:p3').join(), 'flow:p0,flow:p2', 'closed saved');
+	assertEqual(keys(state), 'flow:p1,flow:p3', 'remaining');
+});
+suite.check('lastActive persists and the restore trim uses it', () => {
+	const first = new TaskWorkbench();
+	first.activateUser('persist-lru');
+	open(first, 8);
+	first.visit('/flow/p0');
+	const restored = new TaskWorkbench();
+	restored.activateUser('persist-lru');
+	assertEqual(
+		restored.current.tabs.every((tab) => tab.lastActive > 0),
+		true,
+		'stamps restored'
+	);
+	restored.restoreRoute('/flow/new');
+	assertEqual(
+		restored.current.tabs.some((tab) => tab.key === 'flow:p1'),
+		false,
+		'LRU trimmed'
+	);
+	assertEqual(
+		restored.current.tabs.some((tab) => tab.key === 'flow:p0'),
+		true,
+		'recent kept'
+	);
+	assertEqual(restored.current.restoredTrimmed, true, 'notice flag');
 });
 finish(suite.result());
