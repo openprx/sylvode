@@ -762,9 +762,26 @@ fn every_flow_route_is_registered_behind_the_typed_database_failure_boundary() {
         vec!["main.rs"],
         "only the application router seals a Flow router"
     );
+    // The OAuth module registers its own routes (`oauth/router.rs` merges them into the router in
+    // main.rs). They are not Flow routes, and the guard below keeps it that way: nothing under
+    // `oauth/` may name a Flow or collaboration handler, so a Flow route can not hide there.
+    let outside_oauth: Vec<String> = mentions(".route(")
+        .into_iter()
+        .filter(|path| !path.starts_with("oauth/"))
+        .collect();
     assert_eq!(
-        mentions(".route("),
+        outside_oauth,
         vec!["main.rs"],
         "routes are registered in main.rs only, where the wiring check above reads them"
     );
+    for needle in ["routes::flow", "routes::collab", "crate::flow::", "api::flow::"] {
+        let hits: Vec<String> = mentions(needle)
+            .into_iter()
+            .filter(|path| path.starts_with("oauth/"))
+            .collect();
+        assert!(
+            hits.is_empty(),
+            "the OAuth module must not wire Flow handlers ({needle}): {hits:?}"
+        );
+    }
 }
