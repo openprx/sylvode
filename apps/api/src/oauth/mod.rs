@@ -14,3 +14,11 @@ pub mod scopes;
 pub mod tokens;
 pub mod validate;
 
+#[cfg(test)]
+mod db_tests;
+#[cfg(test)]
+mod hygiene_tests;
+#[cfg(test)]
+mod migration_tests;
+#[cfg(test)]
+mod test_support;
