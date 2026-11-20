@@ -64,6 +64,8 @@
 		"smoke:restaurant-ordering": "node scripts/smoke-restaurant-ordering.mjs",
 		"lint": "prettier --check . && eslint .",
 		"design-lint": "node scripts/design-lint.mjs",
+		"test:ui": "node scripts/run-ui-tests.mjs",
+		"test:ui-browser": "node scripts/ui-behaviour.mjs",
 		"codemod:tokens": "node scripts/codemod-tokens.mjs",
 		"test:codemod-tokens": "bun test tests/codemod-tokens.test.ts",
 		"ui-shots": "node scripts/ui-shots.mjs",
