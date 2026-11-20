@@ -135,6 +135,7 @@
 	--radius-md: var(--rf-radius-md); /* 8 */
 	--radius-lg: var(--rf-radius-lg); /* 12 */
 	--radius-xl: var(--rf-radius-xl); /* 16 */
+	--radius-row: var(--rf-radius-sm); /* 6: list row, menu item, navigation item (rounded-row) */
 	--radius-control: var(--rf-radius-button); /* 4: button, field, chip */
 	--radius-card: var(--rf-radius-card); /* 8 */
 	--radius-float: var(--rf-radius-dialog); /* 12: menu, popover, dialog, sheet */

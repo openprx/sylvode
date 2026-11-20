@@ -261,7 +261,7 @@
 						{#each group.types as type}
 							<button
 								type="button"
-								class="flex min-h-10 items-center justify-between gap-2 rounded-control px-3 text-left text-sm text-fg hover:bg-surface"
+								class="flex min-h-10 items-center justify-between gap-2 rounded-row px-3 text-left text-sm text-fg hover:bg-surface"
 								data-field-library-type={type}
 								onclick={() => {
 									onAppendField?.(type);

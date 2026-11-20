@@ -27,7 +27,7 @@ so adding a component never touches a shared export list.
 ## Adding a component (five lines)
 
 1. Create `lib/ui/<name>/` with `<Name>.svelte`.
-2. Style with `var(--rf-*)` tokens in the component's `<style>`; no raw palette, hex, `dark:` or `rounded-sm|md|lg|xl`.
+2. Style with `var(--rf-*)` tokens in the component's `<style>`; no raw palette, hex, `dark:` or `rounded-sm|md|lg|xl`. In Tailwind classes a list row, menu item or navigation item uses `rounded-row` (6px), a button, field or chip `rounded-control` (4px).
 3. Add `Gallery.svelte` rendering each variant once with `data-gallery="<name>:<variant>"`; `/admin/ui` finds it by glob.
 4. Add `locale.en.json` and `locale.zh.json` with keys under `ui.<name>.*` (or `states.*`); the app merges them.
 5. Add `<name>.test.ts` (see Tests) and run `bun run test:ui`, `bun run design-lint`, `bun run check`.

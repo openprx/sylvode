@@ -1496,7 +1496,7 @@
 						<li>
 							<button
 								type="button"
-								class="w-full rounded-[var(--rf-radius-sm)] px-2 py-1.5 text-left text-sm text-fg hover:bg-surface"
+								class="w-full rounded-row px-2 py-1.5 text-left text-sm text-fg hover:bg-surface"
 								onclick={() => {
 									const sourceId = moveInsideFor;
 									moveInsideFor = null;
