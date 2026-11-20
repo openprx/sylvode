@@ -14,7 +14,6 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"smoke:project-template": "node scripts/smoke-project-template-wizard.mjs",
 		"smoke:template-work-items": "node scripts/smoke-template-work-items.mjs",
-		"smoke:forms-ui": "node scripts/smoke-forms-ui.mjs",
 		"smoke:forms-record-list": "node scripts/smoke-forms-record-list.mjs",
 		"test:forms-page": "node scripts/run-forms-page-tests.mjs",
 		"forms-split:dom": "node scripts/forms-split/forms-dom-equivalence.mjs",
