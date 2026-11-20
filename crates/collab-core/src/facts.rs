@@ -91,6 +91,14 @@ impl BaseFacts {
         if engine.has_duplicate_logical_ids() || engine.has_editor_structure().ok()? {
             return None;
         }
+        // A list this long takes the full computation in the window (`ROOT_LIST_FALLBACK_LEN`), so
+        // its facts would never be read: skip the projection that makes them.
+        if engine
+            .root_list_len()
+            .is_some_and(|len| len > crate::window_check::ROOT_LIST_FALLBACK_LEN)
+        {
+            return None;
+        }
         let editor_doc = engine.has_editor_doc().ok()?;
         let snapshot = engine.semantic_snapshot().ok()?;
         check_snapshot(&snapshot, &DocumentLimits::default()).ok()?;

@@ -17,6 +17,8 @@ thread_local! {
     static ROOT_FORKS: Cell<usize> = const { Cell::new(0) };
     static UNIT_EVALUATIONS: Cell<usize> = const { Cell::new(0) };
     static FALLBACKS: Cell<usize> = const { Cell::new(0) };
+    static DIRECT_REFUSALS: Cell<usize> = const { Cell::new(0) };
+    static FALLBACK_REASONS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static PLACEMENT_WALKS: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -73,6 +75,22 @@ pub fn record_fallback() {
     FALLBACKS.with(|count| count.set(count.get() + 1));
 }
 
+/// One refusal that the incremental window check produced itself, from its exact totals, without
+/// the full computation.
+pub fn record_direct_refusal() {
+    DIRECT_REFUSALS.with(|count| count.set(count.get() + 1));
+}
+
+/// The name of the reason a window fell back, for tests that account for every reason.
+pub fn record_fallback_reason(reason: &str) {
+    FALLBACK_REASONS.with(|log| log.borrow_mut().push(reason.to_owned()));
+}
+
+/// The reasons of the fallbacks recorded since the last [`reset`], in order.
+pub fn fallback_reasons() -> Vec<String> {
+    FALLBACK_REASONS.with(|log| log.borrow().clone())
+}
+
 /// One full walk of the placement tree (`editor_structure::placements`). Recorded by the
 /// structured-page path of the window check (work package C2); the counting test asserts none
 /// happens for an ordinary update.
@@ -114,6 +132,8 @@ pub struct WindowCounts {
     pub unit_evaluations: usize,
     /// Fallbacks to the full computation (`record_fallback`).
     pub fallbacks: usize,
+    /// Refusals the check produced itself (`record_direct_refusal`).
+    pub direct_refusals: usize,
     /// Full placement-tree walks (`record_placement_walk`).
     pub placement_walks: usize,
 }
@@ -124,6 +144,7 @@ pub fn window_counts() -> WindowCounts {
         block_reads: BLOCK_READS.with(Cell::get),
         unit_evaluations: UNIT_EVALUATIONS.with(Cell::get),
         fallbacks: FALLBACKS.with(Cell::get),
+        direct_refusals: DIRECT_REFUSALS.with(Cell::get),
         placement_walks: PLACEMENT_WALKS.with(Cell::get),
     }
 }
@@ -138,6 +159,8 @@ pub fn reset() {
     ROOT_FORKS.with(|count| count.set(0));
     UNIT_EVALUATIONS.with(|count| count.set(0));
     FALLBACKS.with(|count| count.set(0));
+    DIRECT_REFUSALS.with(|count| count.set(0));
+    FALLBACK_REASONS.with(|log| log.borrow_mut().clear());
     PLACEMENT_WALKS.with(|count| count.set(0));
 }
 
@@ -159,6 +182,7 @@ mod tests {
             block_reads: 1,
             unit_evaluations: 2,
             fallbacks: 1,
+            direct_refusals: 0,
             placement_walks: 1,
         };
         assert_eq!(window_counts(), expected);
