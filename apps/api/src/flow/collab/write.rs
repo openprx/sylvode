@@ -48,7 +48,8 @@
 
 #![allow(clippy::items_after_statements, clippy::too_long_first_doc_paragraph)]
 
-use std::time::Duration;
+use crate::flow::block_registry::RegistrationAllowance;
+use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use parking_lot::Mutex;
@@ -85,7 +86,8 @@ use super::snapshot::{self, SnapshotAdvancer, Trigger};
 /// approach without any of them individually exceeding it.
 ///
 /// Deliberately does **not** cover `COMMIT`: see [`run_locked_phase`].
-const LOCKED_PHASE_STAGING_BUDGET: Duration = Duration::from_millis(DOCUMENT_LOCK_HOLD_MS_MAX.saturating_mul(4));
+pub(crate) const LOCKED_PHASE_STAGING_BUDGET: Duration =
+    Duration::from_millis(DOCUMENT_LOCK_HOLD_MS_MAX.saturating_mul(4));
 
 #[cfg(test)]
 struct PreparedPause {
@@ -794,6 +796,7 @@ async fn stage_locked_writes(
     request: &UpdateRequest,
     prepared: &Prepared,
     dispatch_max_attempts: i32,
+    registration: RegistrationAllowance,
 ) -> Result<StagedOutcome, ApiError> {
     if prepared.minimum_editor_model >= 4 {
         crate::flow::scope::require_editor_model_readers(tx, prepared.minimum_editor_model).await?;
@@ -815,7 +818,7 @@ async fn stage_locked_writes(
         Err(err) => return Err(err),
     }
 
-    stage_one_document(tx, request, prepared, dispatch_max_attempts).await
+    stage_one_document(tx, request, prepared, dispatch_max_attempts, registration).await
 }
 
 /// `limits-v1.md`'s `document_lock_wait_ms_max` / `document_lock_hold_ms_max`, applied
@@ -864,6 +867,7 @@ pub(crate) async fn stage_one_document(
     request: &UpdateRequest,
     prepared: &Prepared,
     dispatch_max_attempts: i32,
+    registration: RegistrationAllowance,
 ) -> Result<StagedOutcome, ApiError> {
     #[derive(FromQueryResult)]
     struct LockedHead {
@@ -1030,6 +1034,7 @@ pub(crate) async fn stage_one_document(
         prepared.observed.object_id,
         new_head_seq,
         &prepared.logical_blocks,
+        registration,
     )
     .await?;
     Ok(StagedOutcome::Ready(StagedWrite {
@@ -1077,6 +1082,7 @@ async fn run_locked_phase(
     // it is a conservative in-process superset rather than a newly chosen, narrower timer.
     #[cfg(test)]
     let _locked_phase_measurement = begin_locked_phase_measurement(request.document_id);
+    let started = Instant::now();
     let tx = match db.begin().await {
         Ok(tx) => tx,
         Err(err) => {
@@ -1089,7 +1095,13 @@ async fn run_locked_phase(
     // before the arms below move `tx` into `rollback`/`commit`.
     let staged = tokio::time::timeout(
         staging_budget,
-        stage_locked_writes(&tx, request, prepared, dispatch_max_attempts),
+        stage_locked_writes(
+            &tx,
+            request,
+            prepared,
+            dispatch_max_attempts,
+            RegistrationAllowance::within(started, staging_budget),
+        ),
     )
     .await;
 

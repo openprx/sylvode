@@ -81,7 +81,7 @@ struct ParentRow {
 }
 
 pub async fn list_comments(db: &DatabaseConnection, object_id: Uuid) -> Result<FlowCommentList, ApiError> {
-    super::block_anchors::baseline_for_read(db, object_id).await?;
+    super::block_anchors::complete_registration(db, object_id).await?;
     let limit = i64::try_from(LIST_CAP.saturating_add(1)).unwrap_or(i64::MAX);
     let rows = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
