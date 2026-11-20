@@ -50,7 +50,10 @@ pub async fn require_admitted(db: &DatabaseConnection, object: Uuid) -> Result<(
     }
     let (doc, seq, frontier) = document(db, object).await?;
     let mut engine = super::document::load_head_engine(db, doc).await?;
-    if engine.has_editor_doc() {
+    if engine
+        .has_editor_doc()
+        .map_err(|e| super::command::map_collab_error(&e))?
+    {
         return Ok(());
     }
     let unsupported = engine.initialize_page_editor().is_err();
@@ -159,12 +162,18 @@ pub async fn decorate(db: &DatabaseConnection, object: Uuid, user: Uuid, view: &
     view["body_assets_supported"] = json!(scope::capabilities(db).await?.minimum_reader_version >= 4);
     view["rendered_export_asset_mode"] = json!("authenticated_current_references_no_bytes");
     view["historical_asset_reads_supported"] = json!(false);
-    view["editor_structure_state"] = json!(if engine.has_editor_structure() {
+    view["editor_structure_state"] = json!(if engine
+        .has_editor_structure()
+        .map_err(|e| super::command::map_collab_error(&e))?
+    {
         "ready"
     } else {
         "initialization_required"
     });
-    view["editor_state"] = json!(if engine.has_editor_doc() {
+    view["editor_state"] = json!(if engine
+        .has_editor_doc()
+        .map_err(|e| super::command::map_collab_error(&e))?
+    {
         "ready"
     } else if engine.initialize_page_editor().is_ok() {
         "migration_required"

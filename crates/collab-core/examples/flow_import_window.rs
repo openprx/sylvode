@@ -1,5 +1,5 @@
 //! Local, in-process measurement of the isolated-apply worker's metered window for the Flow
-//! write path: `import_update_causally_complete` -> `semantic_snapshot` -> `check_snapshot`,
+//! write path: `import_client_update` -> `semantic_snapshot` -> `check_snapshot`,
 //! on a base document loaded outside the window (exactly the worker's `decode_apply_and_check`
 //! sequence, minus the `SIGPROF` timer and counting allocator).
 //!
@@ -30,7 +30,7 @@
 //! Besides the window, the binary reports standalone costs of the parts inside it:
 //! - `raw`: `LoroDoc::import` of the same update on a freshly loaded base, with nothing around it;
 //! - `guard`: `import - raw`, the cost the update-scoped downgrade guard (plus the id-cache
-//!   rebuild) adds inside `import_update_causally_complete`;
+//!   rebuild) adds inside `import_client_update`;
 //! - `floor_pre`: a full `minimum_editor_model` walk on a freshly loaded base, the work the old
 //!   importer did before every import (kept as the reference cost);
 //! - `floor_post`: `minimum_editor_model` on the imported state after the window, which the fused
@@ -193,12 +193,7 @@ fn sample(fixture: &Fixture, samples: &mut Samples) -> Result<(), String> {
     let err = |e: collab_core::CollabError| e.to_string();
     // The window, exactly as the worker runs it.
     let mut engine = LoroCollabEngine::load(&fixture.base).map_err(err)?;
-    let ((), import) = timed(|| {
-        engine
-            .import_update_causally_complete(&fixture.update)
-            .map(|_| ())
-            .map_err(err)
-    })?;
+    let ((), import) = timed(|| engine.import_client_update(&fixture.update).map(|_| ()).map_err(err))?;
     let (semantic, semantic_ms) = timed(|| engine.semantic_snapshot().map_err(err))?;
     let ((), check) = timed(|| check_snapshot(&semantic, &DocumentLimits::default()).map_err(|v| format!("{v:?}")))?;
     // The same update applied by Loro alone, on its own freshly loaded copy of the base.

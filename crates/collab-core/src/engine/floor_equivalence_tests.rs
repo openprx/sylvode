@@ -33,7 +33,7 @@ use crate::walk_counter;
 
 const ASSET: &str = "00000000-0000-4000-8000-000000000001";
 
-fn image_attrs() -> Value {
+pub(super) fn image_attrs() -> Value {
     serde_json::json!({"asset_id": ASSET, "alt": "", "caption": "", "indent": 0})
 }
 
@@ -77,6 +77,46 @@ fn reference_import(engine: &LoroCollabEngine, update: &[u8], causal: bool) -> R
     Ok(fork)
 }
 
+/// Which import entry an update goes through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Entry {
+    /// `import_update`: replay of accepted history.
+    Lenient,
+    /// `import_update_causally_complete`: replay of a package, or a host-side import.
+    Causal,
+    /// `import_client_update`: the write path. Also refuses new shadow roots.
+    Client,
+}
+
+impl From<bool> for Entry {
+    fn from(causal: bool) -> Self {
+        if causal { Self::Causal } else { Self::Lenient }
+    }
+}
+
+/// Whether applying `update` to a fork of `engine` adds an op on a reserved root of the wrong type,
+/// read from the fork's op log through the library's own JSON export (a different route from the
+/// scan under test). An update that stays pending adds nothing.
+fn update_adds_a_shadow_root(engine: &LoroCollabEngine, update: &[u8]) -> bool {
+    let fork = engine.doc.fork();
+    let before = fork.oplog_vv();
+    let _ = fork.import(update);
+    let after = fork.oplog_vv();
+    fork.export_json_updates(&before, &after)
+        .unwrap()
+        .changes
+        .iter()
+        .flat_map(|change| change.ops.iter())
+        .any(|op| {
+            matches!(&op.container, loro::ContainerID::Root { name, container_type }
+                if crate::reserved_roots::is_shadow_root(name, *container_type))
+        })
+}
+
+fn is_reserved_refusal<T>(result: &Result<T, CollabError>) -> bool {
+    matches!(result, Err(CollabError::OperationFailed { reason }) if reason == crate::reserved_roots::SHADOW_ROOT_REASON)
+}
+
 fn is_downgrade<T>(result: &Result<T, CollabError>) -> bool {
     matches!(result, Err(CollabError::OperationFailed { reason }) if reason == "editor_model_floor_downgrade")
 }
@@ -100,23 +140,30 @@ struct Step {
     arm: Arm,
     accepted: bool,
     downgrade: bool,
+    /// Refused on the client path because the update adds a shadow root.
+    shadow_refused: bool,
 }
 
 /// Runs `update` through the guard and the reference and asserts that they decide alike. The
 /// base must be valid (it passes the floor walk). Returns what happened. Leaves `engine` holding
 /// the imported state exactly as the importer does, accepted or not.
-fn step(engine: &mut LoroCollabEngine, update: &[u8], causal: bool, label: &str) -> Step {
+fn step(engine: &mut LoroCollabEngine, update: &[u8], entry: impl Into<Entry>, label: &str) -> Step {
+    let entry = entry.into();
+    let causal = entry != Entry::Lenient;
     assert!(
         engine.compute_minimum_editor_model().is_ok(),
         "{label}: the base must be valid"
     );
     let reference = reference_import(engine, update, causal);
-    let marker_before = model5_marker(&engine.doc);
+    let shadow_expected = entry == Entry::Client
+        && !matches!(reference, Err(CollabError::CausalDependencyMissing))
+        && update_adds_a_shadow_root(engine, update);
+    let marker_before = model5_marker(&engine.doc).unwrap();
     walk_counter::reset();
-    let new = if causal {
-        engine.import_update_causally_complete(update)
-    } else {
-        engine.import_update(update)
+    let new = match entry {
+        Entry::Lenient => engine.import_update(update),
+        Entry::Causal => engine.import_update_causally_complete(update),
+        Entry::Client => engine.import_client_update(update),
     };
     let (_, narrow, historical) = walk_counter::guard_counts();
     let (floor_walks, block_reads) = walk_counter::counts();
@@ -125,7 +172,23 @@ fn step(engine: &mut LoroCollabEngine, update: &[u8], causal: bool, label: &str)
         (0, 0),
         "{label}: the guard walked the document"
     );
-    let marker_after = model5_marker(&engine.doc);
+    let marker_after = model5_marker(&engine.doc).unwrap();
+
+    // The one decision the client path adds: a new shadow root is refused with its own reason,
+    // and nothing else is: without a shadow op the entry decides like the causal import.
+    if shadow_expected {
+        assert!(
+            is_reserved_refusal(&new),
+            "{label}: a shadow root was not refused: {new:?}"
+        );
+        return Step {
+            arm: Arm::NoSuspectOp,
+            accepted: false,
+            downgrade: false,
+            shadow_refused: true,
+        };
+    }
+    assert!(!is_reserved_refusal(&new), "{label}: refused without a shadow op");
 
     // Decision equivalence. An update that leaves an unreadable document is refused by the
     // projection that follows every import in the worker, so "accepted" is import + projection.
@@ -167,10 +230,11 @@ fn step(engine: &mut LoroCollabEngine, update: &[u8], causal: bool, label: &str)
         arm,
         accepted: new_state_ok,
         downgrade: is_downgrade(&new),
+        shadow_refused: false,
     }
 }
 
-fn block(engine: &mut LoroCollabEngine, id: &str, index: u32) {
+pub(super) fn block(engine: &mut LoroCollabEngine, id: &str, index: u32) {
     engine
         .apply_content_operation(&Operation::CreateNode {
             id: NodeId::from(id),
@@ -182,7 +246,7 @@ fn block(engine: &mut LoroCollabEngine, id: &str, index: u32) {
 }
 
 /// A page at editor floor 1 (flat), 4 (structured) or 5 (structured, marker and an image).
-fn page(floor: u32, blocks: usize, seed: u64) -> LoroCollabEngine {
+pub(super) fn page(floor: u32, blocks: usize, seed: u64) -> LoroCollabEngine {
     let mut engine = LoroCollabEngine::new_empty(seed);
     engine.initialize_page_editor().unwrap();
     if floor >= 4 {
@@ -200,7 +264,7 @@ fn page(floor: u32, blocks: usize, seed: u64) -> LoroCollabEngine {
     engine
 }
 
-fn children(doc: &LoroDoc) -> LoroList {
+pub(super) fn children(doc: &LoroDoc) -> LoroList {
     match doc.get_map("doc").get("children") {
         Some(ValueOrContainer::Container(Container::List(list))) => list,
         _ => panic!("no root list"),
@@ -215,7 +279,7 @@ fn node_name(map: &LoroMap) -> Option<String> {
 }
 
 /// Indices in `doc.children` whose block map has an atom (`atom`) or non-atom (`!atom`) kind.
-fn indices_of(doc: &LoroDoc, atom: bool) -> Vec<usize> {
+pub(super) fn indices_of(doc: &LoroDoc, atom: bool) -> Vec<usize> {
     let list = children(doc);
     (0..list.len())
         .filter(|&index| match list.get(index) {
@@ -227,7 +291,7 @@ fn indices_of(doc: &LoroDoc, atom: bool) -> Vec<usize> {
         .collect()
 }
 
-fn map_at(doc: &LoroDoc, index: usize) -> LoroMap {
+pub(super) fn map_at(doc: &LoroDoc, index: usize) -> LoroMap {
     match children(doc).get(index) {
         Some(ValueOrContainer::Container(Container::Map(map))) => map,
         _ => panic!("no block map at {index}"),
@@ -235,7 +299,7 @@ fn map_at(doc: &LoroDoc, index: usize) -> LoroMap {
 }
 
 /// An update authored by a raw Loro peer (not an engine) on top of `engine`'s current state.
-fn raw_update(engine: &LoroCollabEngine, peer: u64, edit: impl FnOnce(&LoroDoc)) -> Vec<u8> {
+pub(super) fn raw_update(engine: &LoroCollabEngine, peer: u64, edit: impl FnOnce(&LoroDoc)) -> Vec<u8> {
     let raw = LoroDoc::new();
     raw.import(&engine.export_snapshot().unwrap()).unwrap();
     raw.set_peer_id(peer).unwrap();
@@ -246,7 +310,7 @@ fn raw_update(engine: &LoroCollabEngine, peer: u64, edit: impl FnOnce(&LoroDoc))
 }
 
 /// The `counter@peer` text of a normal container id, the form JSON ops use for element ids.
-fn id_text(id: &loro::ContainerID) -> String {
+pub(super) fn id_text(id: &loro::ContainerID) -> String {
     match id {
         loro::ContainerID::Normal { peer, counter, .. } => format!("{counter}@{peer}"),
         loro::ContainerID::Root { .. } => panic!("not a normal container id"),
@@ -301,7 +365,12 @@ fn forged_delete_update(
 }
 
 /// One op on a new root container `name` of `kind`, an update that adds a shadow root.
-fn shadow_root_update(engine: &LoroCollabEngine, peer: u64, name: &str, kind: loro::ContainerType) -> Vec<u8> {
+pub(super) fn shadow_root_update(
+    engine: &LoroCollabEngine,
+    peer: u64,
+    name: &str,
+    kind: loro::ContainerType,
+) -> Vec<u8> {
     use loro::ContainerType as T;
     raw_update(engine, peer, |raw| match kind {
         T::Text => raw.get_text(name).insert(0, "x").unwrap(),
@@ -315,7 +384,7 @@ fn shadow_root_update(engine: &LoroCollabEngine, peer: u64, name: &str, kind: lo
     })
 }
 
-const SHADOWABLE: [loro::ContainerType; 5] = [
+pub(super) const SHADOWABLE: [loro::ContainerType; 5] = [
     loro::ContainerType::Text,
     loro::ContainerType::List,
     loro::ContainerType::MovableList,
@@ -337,7 +406,7 @@ const ROOT_NAMES: [&str; 3] = ["doc", crate::editor_structure::META, crate::edit
 
 /// Appends a raw atom block map (no placement, no marker): valid on a flat page, where it alone
 /// holds the floor at 5.
-fn push_raw_atom(raw: &LoroDoc, kind: &str) -> loro::ContainerID {
+pub(super) fn push_raw_atom(raw: &LoroDoc, kind: &str) -> loro::ContainerID {
     let list = children(raw);
     let map = list.insert_container(list.len(), LoroMap::new()).unwrap();
     map.insert("nodeName", kind).unwrap();
@@ -352,21 +421,21 @@ fn push_raw_atom(raw: &LoroDoc, kind: &str) -> loro::ContainerID {
     map.id()
 }
 
-fn set_model(raw: &LoroDoc, model: &str) {
+pub(super) fn set_model(raw: &LoroDoc, model: &str) {
     raw.get_map(crate::editor_structure::META)
         .insert("model", model)
         .unwrap();
 }
 
 /// A flat page whose only floor-5 support is a raw atom block map (no marker).
-fn flat_page_with_raw_atom(seed: u64) -> LoroCollabEngine {
+pub(super) fn flat_page_with_raw_atom(seed: u64) -> LoroCollabEngine {
     let mut engine = page(1, 6, seed);
     let update = raw_update(&engine, 50_000 + seed, |raw| {
         push_raw_atom(raw, "image");
     });
     engine.import_update(&update).unwrap();
     assert_eq!(engine.minimum_editor_model().unwrap(), 5);
-    assert!(!model5_marker(&engine.doc));
+    assert!(!model5_marker(&engine.doc).unwrap());
     engine
 }
 
@@ -377,12 +446,15 @@ struct Tally {
     accepted: usize,
     refused: usize,
     floors: BTreeMap<u32, usize>,
+    shadow_refusals: usize,
+    shadow_accepted_on_replay: usize,
 }
 
 impl Tally {
     fn record(&mut self, step: &Step) {
         *self.arms.entry((step.arm, step.accepted)).or_default() += 1;
         self.downgrades += usize::from(step.downgrade);
+        self.shadow_refusals += usize::from(step.shadow_refused);
         if step.accepted {
             self.accepted += 1;
         } else {
@@ -393,10 +465,20 @@ impl Tally {
 
 /// Runs one update through `step`; if it leaves an unreadable document the engine is restored
 /// to the accepted state it had (the worker discards such an engine).
-fn checked_step(engine: &mut LoroCollabEngine, update: &[u8], causal: bool, label: &str, tally: &mut Tally) {
+fn checked_step(engine: &mut LoroCollabEngine, update: &[u8], entry: impl Into<Entry>, label: &str, tally: &mut Tally) {
+    let entry = entry.into();
     let backup = engine.fork().unwrap();
-    let outcome = step(engine, update, causal, label);
+    let shadow = update_adds_a_shadow_root(engine, update);
+    let outcome = step(engine, update, entry, label);
     tally.record(&outcome);
+    if shadow && entry != Entry::Client && outcome.accepted {
+        tally.shadow_accepted_on_replay += 1;
+    }
+    if outcome.shadow_refused {
+        // The worker discards a refused engine.
+        *engine = backup;
+        return;
+    }
     // The fused floor must equal the walk on every state, or both must fail.
     let fused = engine.semantic_snapshot_with_floor();
     let walk = engine.compute_minimum_editor_model();
@@ -713,7 +795,12 @@ fn run_sequence(floor: u32, seed: u64, steps: usize, tally: &mut Tally) {
     let mut snapshots = vec![(server.frontier(), server.export_snapshot().unwrap())];
     for index in 0..steps {
         let label = format!("floor {floor} seed {seed:#x} step {index}");
-        let causal = rng.below(2) == 0;
+        // Replay entries and the client write path, a third each.
+        let causal = match rng.below(3) {
+            0 => Entry::Lenient,
+            1 => Entry::Causal,
+            _ => Entry::Client,
+        };
         match rng.below(10) {
             0..=3 => {
                 // A client edit, sometimes concurrent with a server-side edit.
@@ -820,6 +907,12 @@ fn floor_guard_matches_reference_across_random_histories() {
         assert!(tally.floors.contains_key(&floor), "floor {floor} never reached");
     }
     assert!(tally.downgrades > 0, "no downgrade was exercised");
+    // Shadow roots: refused on the client path, still accepted by the replay entries.
+    assert!(tally.shadow_refusals > 0, "no shadow root reached the client path");
+    assert!(
+        tally.shadow_accepted_on_replay > 0,
+        "no shadow root reached a replay entry"
+    );
 }
 
 // ---------------------------------------------------------------------------------------
