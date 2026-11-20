@@ -3565,6 +3565,66 @@ mod database_tests {
         scratch.drop_self().await;
     }
 
+    /// A REST content command on an existing Page while a reader lease is missing is refused as
+    /// `feature_disabled{scope_runtime_not_ready}` (not `server_draining`/`contention`), leaves the
+    /// head where it was, and is accepted once every lease is live.
+    #[tokio::test]
+    async fn a_content_command_is_refused_as_feature_disabled_until_every_reader_lease_is_live() {
+        use crate::flow::scope_runtime::fixture::{clear_readers, register_reader};
+        let scratch = scratch_or_skip!("content_command_reader_leases");
+        let db = &scratch.db;
+        let state = state_for(db.clone());
+        let fx = seed_workspace(db).await;
+        let object_id = create_page(&state, &fx, None)
+            .await
+            .expect("the Page is created while the scratch database models every component");
+
+        let set_title = |title: &str| ExecuteCommandInput {
+            origin: CommandOrigin::first_request_from(EventSurface::Rest),
+            object_id,
+            actor_id: fx.owner_id,
+            principal_kind: "user".to_string(),
+            role: "owner".to_string(),
+            command_type: "set_title".to_string(),
+            payload: serde_json::json!({ "title": title }),
+            expected_frontier: None,
+            idempotency_key: Uuid::new_v4().to_string(),
+            message: None,
+            origin_client_id: "reader-lease-test".to_string(),
+        };
+
+        let baseline = execute_command(&state, set_title("Before the outage"))
+            .await
+            .expect("a content command is accepted while every lease is live");
+
+        // Only the api process has registered.
+        clear_readers(db).await;
+        register_reader(db, "api", true).await;
+        let err = execute_command(&state, set_title("During the outage"))
+            .await
+            .expect_err("a content command needs every component");
+        assert_eq!(err.kind(), ApiErrorKind::FeatureDisabled, "unexpected refusal: {err:?}");
+        assert!(
+            format!("{err:?}").contains("scope_runtime_not_ready"),
+            "unexpected refusal: {err:?}"
+        );
+
+        // The worker and maintenance components register: the same command is accepted, and its
+        // sequence follows the baseline directly, so the refused attempt wrote nothing.
+        register_reader(db, "worker", true).await;
+        register_reader(db, "maintenance", true).await;
+        let accepted = execute_command(&state, set_title("After the outage"))
+            .await
+            .expect("all three leases live accept the content command");
+        assert_eq!(
+            accepted.accepted_seq,
+            baseline.accepted_seq + 1,
+            "the refused command must not have advanced the head"
+        );
+
+        scratch.drop_self().await;
+    }
+
     /// `archive_tier_by_object_scope` plus the v0.4 baseline fixture named by the gate. The member
     /// has only `default_member_level=edit`; the ordinary non-root Page must succeed through both
     /// transitions even when it has a child, because tree shape does not request a cascade.
