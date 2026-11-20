@@ -5,8 +5,8 @@
 //! `nodeName`, `attributes`, and `children`). Both are projected into [`InlineSpan`]s. A document
 //! that has neither marks nor a prosemirror map is unchanged.
 //!
-//! Reading never calls `get_map` / `get_text`: those attach a root container even when the key is
-//! absent. A typed read by container id (`editor_structure::root_container`) stays empty for a document that has never opened the editor.
+//! Roots are read by typed container id (`editor_structure::root_container`). On a document that
+//! has never opened the editor the read registers an empty root and finds nothing in it.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

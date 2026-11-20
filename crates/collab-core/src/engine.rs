@@ -200,9 +200,9 @@ fn loro_value_to_json(value: &LoroValue) -> Value {
     }
 }
 
-/// The model-5 marker (`flow_editor_structure_meta.model == "rich_page_v5"`). Root map accessors
-/// register missing roots; a model query must leave legacy documents untouched, so this reads by
-/// path.
+/// The model-5 marker (`flow_editor_structure_meta.model == "rich_page_v5"`), read by typed
+/// container id. The read registers an empty root on a legacy document; its frontier and semantic
+/// hash are unchanged.
 pub(crate) fn model5_marker(doc: &LoroDoc) -> bool {
     matches!(
         crate::editor_structure::root_container(doc, crate::editor_structure::META, ContainerType::Map),
