@@ -43,18 +43,18 @@
 	});
 
 	const linkClass =
-		'inline-flex min-h-11 items-center rounded px-2 text-sm font-medium text-blue-700 hover:underline dark:text-blue-300';
+		'inline-flex min-h-11 items-center rounded px-2 text-sm font-medium text-fg underline';
 
 	const badgeClass: Record<string, string> = {
-		controlled: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100',
-		read_only: 'bg-slate-100 text-fg dark:bg-slate-800',
-		unconfigured: 'bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100',
-		no_access: 'bg-red-100 text-red-900 dark:bg-red-900 dark:text-red-100'
+		controlled: 'bg-surface text-fg',
+		read_only: 'bg-surface text-fg',
+		unconfigured: 'bg-warning-soft text-fg',
+		no_access: 'bg-danger-soft text-danger'
 	};
 </script>
 
 <article
-	class="not-prose my-3 rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
+	class="not-prose my-3 rounded-card border border-line bg-raised p-4"
 	data-testid="flow-bridge-card"
 	data-source-scope={scopeId}
 	data-mode={mode}
@@ -92,12 +92,12 @@
 					{$t('flow.bridge.card.restricted')}
 				</p>
 			{:else if !content}
-				<p class="text-sm text-slate-500">{$t('common.loading')}</p>
+				<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 			{:else if content.kind === 'failed'}
-				<p class="text-sm text-red-600" role="alert">{$t('flow.bridge.card.contentFailed')}</p>
+				<p class="text-sm text-danger" role="alert">{$t('flow.bridge.card.contentFailed')}</p>
 			{:else if content.kind === 'record'}
 				{#if content.fields.length === 0}
-					<p class="text-sm text-slate-500">{$t('flow.bridge.card.emptyRecord')}</p>
+					<p class="text-sm text-fg-muted">{$t('flow.bridge.card.emptyRecord')}</p>
 				{:else}
 					<dl class="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
 						{#each content.fields as field (field.label)}
@@ -110,7 +110,7 @@
 				<p class="text-sm text-fg">
 					{content.description || $t('flow.bridge.card.noDescription')}
 				</p>
-				<p class="mt-1 text-xs text-slate-500">
+				<p class="mt-1 text-xs text-fg-muted">
 					{$t('flow.bridge.card.fieldCount', { values: { count: content.fieldCount } })}
 				</p>
 			{/if}
@@ -157,7 +157,7 @@
 		{/if}
 		<button
 			type="button"
-			class="ml-auto inline-flex min-h-11 items-center rounded px-3 text-sm font-medium text-danger hover:bg-red-50 dark:hover:bg-red-950"
+			class="ml-auto inline-flex min-h-11 items-center rounded px-3 text-sm font-medium text-danger hover:bg-danger-soft"
 			data-testid="flow-bridge-card-remove"
 			onclick={() => onremove(reference.reference_id)}
 		>

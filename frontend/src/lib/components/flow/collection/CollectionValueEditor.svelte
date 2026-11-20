@@ -41,8 +41,7 @@
 		}
 	}
 
-	const inputClass =
-		'min-h-11 w-full rounded border border-slate-300 bg-white px-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900';
+	const inputClass = 'min-h-11 w-full rounded border border-input bg-field px-2 text-sm text-fg';
 
 	const selected = $derived(Array.isArray(value) ? (value as readonly string[]) : []);
 
@@ -138,22 +137,19 @@
 		onkeydown={onKeydown}
 	>
 		{#if field.options.length === 0}
-			<span class="text-xs text-slate-500">{$t('flow.collection.value.noOptions')}</span>
+			<span class="text-xs text-fg-muted">{$t('flow.collection.value.noOptions')}</span>
 		{/if}
 		{#each field.options as option (option)}
 			<button
 				type="button"
-				class="min-h-11 rounded border px-2 text-sm {selected.includes(
-					option
-				)
-					? 'border-blue-500 bg-blue-50 text-blue-800 dark:bg-blue-950 dark:text-blue-100'
-					: 'border-slate-300 dark:border-slate-600'}"
+				class="min-h-11 rounded border px-2 text-sm {selected.includes(option)
+					? 'border-fg bg-selected text-fg'
+					: 'border-line-strong'}"
 				aria-pressed={selected.includes(option)}
 				onclick={() => toggleOption(option)}>{option}</button
 			>
 		{/each}
 	</div>
 {:else}
-	<span class="text-xs text-slate-500" bind:this={host}>{$t('flow.collection.value.readOnly')}</span
-	>
+	<span class="text-xs text-fg-muted" bind:this={host}>{$t('flow.collection.value.readOnly')}</span>
 {/if}
