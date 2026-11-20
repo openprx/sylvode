@@ -28,7 +28,7 @@
 		"reason": "default and fallback colours of a workflow state: data a user changes with a colour picker and the API stores, not styling"
 	},
 	{
-		"file": "src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte",
+		"file": "src/lib/forms/state/attachments.ts",
 		"rules": [
 			"hex"
 		],

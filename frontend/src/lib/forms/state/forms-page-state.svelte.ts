@@ -1,5 +1,4 @@
-import type { FormsPage } from '#lib/forms/state/forms-page.js';
-import { writable } from 'svelte/store';
+import { writable, fromStore } from 'svelte/store';
 import type { RecordPluginActionSurface } from '#lib/plugins/placements.js';
 import { type FormsDraftVersion, FormsRefreshLatch } from '#lib/workbench/forms-session.js';
 import type {
@@ -18,7 +17,8 @@ import type {
 	FormRecordLink,
 	FormRelationTarget,
 	FormView,
-	UniversalForm
+	UniversalForm,
+	FormField
 } from '#lib/api/forms.js';
 import type { WorkspaceMember } from '#lib/api/members.js';
 import type { Project, ScenarioTemplate } from '#lib/api/projects.js';
@@ -30,7 +30,16 @@ import {
 } from '#lib/components/forms/RecordSidePanel.svelte';
 import * as precedence from '#lib/forms/view-precedence.js';
 import type { FormWorkflowMode } from '#lib/components/forms/FormWorkflowTabs.svelte';
-import { blankFieldDraft } from '#lib/forms/designer-schema.js';
+import { page } from '$app/state';
+import type { FieldDisplayContext } from '#lib/forms/field-display.js';
+import * as arrangement from '#lib/forms/view-arrangement.js';
+import { requireRouteParam } from '#lib/utils/route-params.js';
+import { recordPageSize } from '#lib/forms/page-constants.js';
+import { authStore } from '#lib/stores/auth.js';
+import { blankFieldDraft, parseFields } from '#lib/forms/designer-schema.js';
+import { detailPageWidgetEntriesFromLayout } from '#lib/forms/detail-layout-drafts.js';
+import { fieldLabel } from '#lib/forms/field-options.js';
+import { currentLocale } from '#lib/forms/i18n.js';
 import type {
 	CalendarExceptionDateMap,
 	CardCoverAspect,
@@ -72,8 +81,31 @@ import type {
 	ViewVisibility
 } from '#lib/forms/page-types.js';
 import { defaultPermissionActions } from '#lib/forms/permission-drafts.js';
+import { groupRecordsByField, recordsByUpdatedAt } from '#lib/forms/record-grouping.js';
+import type { FormsPage } from '#lib/forms/state/forms-page.js';
+import {
+	builtInView,
+	kanbanMoveOptions,
+	viewCalendarLayout,
+	viewCardCoverAspect,
+	viewCardCoverFit,
+	viewCardCoverPosition,
+	viewCardFieldLimit,
+	viewCardLayout,
+	viewColumns,
+	viewConfigBoolean,
+	viewConfigString
+} from '#lib/forms/view-config.js';
+import {
+	eventActors,
+	eventAggregates,
+	eventsByCreatedAt,
+	eventTypes
+} from '#lib/forms/views/timeline-events.js';
 
-/** Every piece of reactive state of the forms page (fields only; deriveds join in W0-D). */
+const authUser = fromStore(authStore);
+
+/** Every piece of reactive state of the forms page (fields, deriveds and the workbench accessor). */
 export class FormsPageState {
 	readonly fp: FormsPage;
 
@@ -524,4 +556,333 @@ export class FormsPageState {
 
 	// owner: attachments
 	activeSignatureCanvas: HTMLCanvasElement | null = null;
+
+	// deriveds
+	readonly workspaceId = $derived(requireRouteParam(page.params.workspaceId, 'workspaceId'));
+
+	readonly projectId = $derived(requireRouteParam(page.params.projectId, 'projectId'));
+
+	readonly selectedForm = $derived.by(
+		() => this.forms.find((form) => form.id === this.selectedFormId) ?? null
+	);
+
+	readonly printJobForm = $derived.by(
+		() => this.forms.find((form) => form.key === 'print_job') ?? null
+	);
+
+	readonly fields = $derived(this.selectedForm ? parseFields(this.selectedForm.schema) : []);
+
+	readonly detailVisibleFields = $derived(
+		this.fields.filter((field) => field.visibility?.detail !== false)
+	);
+
+	readonly savedView = $derived(
+		this.formViews.find((view) => view.id === this.selectedViewId) ?? null
+	);
+
+	readonly baseView = $derived(
+		this.savedView ?? (this.selectedForm ? builtInView(this.selectedForm) : null)
+	);
+
+	readonly draftViewConfig = $derived.by(() => this.fp.viewDraft.viewConfigFromDraft());
+
+	readonly arrangementModified = $derived(
+		!!this.baseView &&
+			this.viewBaseline.viewId === this.baseView.id &&
+			(this.viewBaseline.type !== this.viewDraft.view_type ||
+				this.viewBaseline.key !== arrangement.normalizedViewConfig(this.draftViewConfig))
+	);
+
+	readonly selectedView = $derived<FormView | null>(
+		this.baseView && this.arrangementModified
+			? { ...this.baseView, view_type: this.viewDraft.view_type, config: this.draftViewConfig }
+			: this.baseView
+	);
+
+	readonly recordQuery = $derived.by(() =>
+		arrangement.serverQueryFor(
+			this.savedView && { id: this.savedView.id, config: this.viewBaseline.config },
+			this.draftViewConfig,
+			{ modified: this.arrangementModified, isServerSortable: this.fp.views.isServerSortable }
+		)
+	);
+
+	readonly canDesign = $derived(this.formPermissions?.effective.actions['form.design'] ?? true);
+
+	readonly selectedViewColumns = $derived.by(() => viewColumns(this.selectedView));
+
+	readonly selectedViewType = $derived(
+		(this.selectedView?.view_type ?? 'grid') as FormView['view_type']
+	);
+
+	readonly detailUrlRecordId = $derived(
+		page.url.searchParams.get('record') ?? page.url.searchParams.get('record_id') ?? ''
+	);
+
+	readonly focusedRecords = $derived.by(() => {
+		if (this.focusedRecordIds.length === 0) return [];
+
+		const focusedIds = new Set(this.focusedRecordIds);
+
+		return this.records.filter((record) => focusedIds.has(record.id));
+	});
+
+	readonly memberHiddenFieldLabels = $derived(
+		this.fields
+			.filter((field) => this.memberFieldReadDraft[field.key] === false)
+			.map((field) => fieldLabel(field))
+	);
+
+	readonly memberHiddenFieldKeys = $derived(
+		this.fields
+			.filter((field) => this.memberFieldReadDraft[field.key] === false)
+			.map((field) => field.key)
+	);
+
+	readonly memberLockedFieldLabels = $derived(
+		this.fields
+			.filter((field) => this.memberFieldWriteDraft[field.key] === false)
+			.map((field) => fieldLabel(field))
+	);
+
+	readonly memberLockedFieldKeys = $derived(
+		this.fields
+			.filter((field) => this.memberFieldWriteDraft[field.key] === false)
+			.map((field) => field.key)
+	);
+
+	readonly listableFields = $derived(
+		this.fields.filter((field) => field.visibility?.list !== false)
+	);
+
+	readonly visibleFields = $derived.by(() => {
+		if (this.selectedViewColumns.length === 0) return this.listableFields;
+
+		const byKey = new Map(this.listableFields.map((field) => [field.key, field]));
+		const ordered = this.selectedViewColumns
+			.map((key) => byKey.get(key))
+			.filter((field): field is FormField => Boolean(field));
+
+		return ordered.length > 0 ? ordered : this.listableFields;
+	});
+
+	readonly cardFields = $derived.by(() =>
+		this.fp.viewCards
+			.orderedCardFieldsForView(this.selectedView)
+			.slice(0, viewCardFieldLimit(this.selectedView?.config?.card_field_limit))
+	);
+
+	readonly selectedCardLayout = $derived(viewCardLayout(this.selectedView?.config?.card_layout));
+
+	readonly selectedCardCoverAspect = $derived(
+		viewCardCoverAspect(this.selectedView?.config?.card_cover_aspect)
+	);
+
+	readonly selectedCardCoverFit = $derived(
+		viewCardCoverFit(this.selectedView?.config?.card_cover_fit)
+	);
+
+	readonly selectedCardCoverPosition = $derived(
+		viewCardCoverPosition(this.selectedView?.config?.card_cover_position)
+	);
+
+	readonly selectedCardHideEmptyFields = $derived(
+		viewConfigBoolean(this.selectedView, 'card_hide_empty_fields')
+	);
+
+	readonly selectedCardShowTimestamps = $derived(
+		viewConfigBoolean(this.selectedView, 'card_show_timestamps')
+	);
+
+	readonly selectedCardShowRecordId = $derived(
+		viewConfigBoolean(this.selectedView, 'card_show_record_id')
+	);
+
+	readonly selectedCalendarLayout = $derived(
+		viewCalendarLayout(this.selectedView?.config?.calendar_layout)
+	);
+
+	readonly selectedCalendarHideEmptyDays = $derived(
+		viewConfigBoolean(this.selectedView, 'calendar_hide_empty_days')
+	);
+
+	readonly cardGroupField = $derived.by(() =>
+		this.selectedViewType === 'card'
+			? this.fp.viewRecords.fieldByKey(viewConfigString(this.selectedView, 'group_by'))
+			: null
+	);
+
+	readonly cardGroups = $derived.by(() =>
+		this.cardGroupField ? groupRecordsByField(this.viewRecords, this.cardGroupField) : []
+	);
+
+	readonly cardEditableSelectFields = $derived(
+		this.cardFields.filter(
+			(field) => field.type === 'single_select' && kanbanMoveOptions(field).length > 0
+		)
+	);
+
+	readonly timelineEditableSelectFields = $derived(this.cardEditableSelectFields);
+
+	readonly viewRecords = $derived.by(() => this.fp.viewRecords.applyViewRecordConfig(this.records));
+
+	readonly recordPageCount = $derived(
+		Math.max(1, Math.ceil(this.viewRecords.length / recordPageSize))
+	);
+
+	readonly normalizedRecordPage = $derived(
+		Math.min(Math.max(this.recordPage, 1), this.recordPageCount)
+	);
+
+	readonly paginatedViewRecords = $derived.by(() => {
+		const start = (this.normalizedRecordPage - 1) * recordPageSize;
+
+		return this.viewRecords.slice(start, start + recordPageSize);
+	});
+
+	readonly kanbanGroupField = $derived.by(() => this.fp.viewKanban.viewGroupField());
+
+	readonly kanbanGroups = $derived.by(() =>
+		groupRecordsByField(this.viewRecords, this.kanbanGroupField)
+	);
+
+	readonly kanbanSwimlaneField = $derived.by(() => this.fp.viewKanban.viewSwimlaneField());
+
+	readonly kanbanSwimlanes = $derived.by(() =>
+		this.fp.viewKanban.groupKanbanSwimlanes(this.viewRecords)
+	);
+
+	readonly pivotTable = $derived.by(() => this.fp.viewPivot.buildPivotTable(this.viewRecords));
+
+	readonly pivotDrilldownRecords = $derived.by(() =>
+		this.fp.viewPivot.buildPivotDrilldownRecords(this.viewRecords)
+	);
+
+	readonly ganttTimeline = $derived.by(() =>
+		this.fp.viewGantt.buildGanttTimeline(this.viewRecords)
+	);
+
+	readonly calendarDateField = $derived.by(() => this.fp.viewCalendar.viewDateField());
+
+	readonly calendarEndField = $derived.by(() => this.fp.viewCalendar.viewCalendarEndField());
+
+	readonly calendarGridGroups = $derived.by(() =>
+		this.fp.viewCalendar.groupRecordsByCalendarGrid(this.viewRecords, this.calendarDateField)
+	);
+
+	readonly calendarResourceField = $derived.by(() =>
+		this.fp.viewCalendar.viewCalendarResourceField()
+	);
+
+	readonly calendarResourceLanes = $derived.by(() =>
+		this.fp.viewCalendar.groupCalendarResourceLanes(this.viewRecords)
+	);
+
+	readonly timelineRecords = $derived.by(() => recordsByUpdatedAt(this.viewRecords));
+
+	readonly timelineEventTypes = $derived.by(() => eventTypes(this.formEvents));
+
+	readonly timelineEventActors = $derived.by(() => eventActors(this.formEvents));
+
+	readonly timelineEventAggregates = $derived.by(() => eventAggregates(this.formEvents));
+
+	readonly timelineEvents = $derived.by(() =>
+		eventsByCreatedAt(this.fp.viewTimeline.filteredTimelineEvents(this.formEvents))
+	);
+
+	readonly timelineEventRows = $derived.by(() =>
+		this.fp.viewTimeline.orderedTimelineEvents(this.timelineEvents)
+	);
+
+	readonly selectedRecordEvents = $derived.by(() =>
+		this.selectedRecord
+			? eventsByCreatedAt(
+					this.formEvents.filter(
+						(event) =>
+							event.aggregate_type === 'form_record' &&
+							event.aggregate_id === this.selectedRecord?.id
+					)
+				)
+			: []
+	);
+
+	readonly timelineTitlePermissionField = $derived.by(() =>
+		this.fp.viewTimeline.viewTimelineTitleField()
+	);
+
+	readonly timelineSubtitlePermissionField = $derived.by(() =>
+		this.fp.viewTimeline.viewTimelineSubtitleField()
+	);
+
+	readonly selectedDesignerField = $derived(
+		this.designerFieldDrafts[this.selectedDesignerFieldIndex] ?? null
+	);
+
+	readonly selectedDesignerFieldUsage = $derived(
+		this.selectedDesignerField
+			? (this.designerFieldUsage.find(
+					(usage) =>
+						(this.selectedDesignerField.field_id &&
+							usage.field_id === this.selectedDesignerField.field_id) ||
+						usage.field_key === this.selectedDesignerField.key
+				) ?? null)
+			: null
+	);
+
+	readonly selectedDesignerFieldDependencies = $derived(
+		this.selectedDesignerField
+			? this.designerFieldDependencies.filter(
+					(dependency) =>
+						(this.selectedDesignerField.field_id &&
+							dependency.field_id === this.selectedDesignerField.field_id) ||
+						dependency.field_key === this.selectedDesignerField.key
+				)
+			: []
+	);
+
+	readonly selectedDetailPageWidgetEntries = $derived.by(() =>
+		detailPageWidgetEntriesFromLayout(this.selectedForm?.detail_layout)
+	);
+
+	readonly currentUserId = $derived(
+		authUser.current.user?.id ?? this.workbench?.current.userId ?? ''
+	);
+
+	// --- record side panel ---------------------------------------------------------------
+	readonly panelRecord = $derived(
+		this.panelRecordId
+			? (this.records.find((record) => record.id === this.panelRecordId) ??
+					(this.selectedRecord?.id === this.panelRecordId ? this.selectedRecord : null))
+			: null
+	);
+
+	readonly panelPosition = $derived(
+		this.panelRecordId
+			? this.viewRecords.findIndex((record) => record.id === this.panelRecordId)
+			: -1
+	);
+
+	readonly fieldCtx = $derived<FieldDisplayContext>({
+		locale: currentLocale() ?? 'en',
+		formKey: this.selectedForm?.key ?? '',
+		members: new Map(this.workspaceMembers.map((member) => [member.user_id, member])),
+		attachmentsByField: this.recordAttachments.reduce<Record<string, FormAttachment[]>>(
+			(groups, item) => {
+				if (item.record_id === this.panelRecordId) (groups[item.field_key] ??= []).push(item);
+				return groups;
+			},
+			{}
+		),
+		signedUrls: this.recordAttachmentSignedUrls,
+		relationTitle: (field, id) =>
+			this.relationTargets[field.key]?.find((item) => item.record_id === id)?.display
+	});
+
+	get workbench() {
+		return this.fp.deps.workbench;
+	}
+
+	/** `$state.snapshot` for the controllers, which are plain .ts files and cannot use runes. */
+	readonly snapshot = <T>(value: T): ReturnType<typeof $state.snapshot<T>> =>
+		$state.snapshot(value);
 }

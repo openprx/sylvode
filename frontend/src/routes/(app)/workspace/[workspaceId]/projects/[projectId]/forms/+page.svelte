@@ -32,71 +32,28 @@
 		X
 	} from '@lucide/svelte';
 
-	import { afterNavigate, goto } from '$app/navigation';
+	import { afterNavigate } from '$app/navigation';
 	import { getContext, onMount, tick, untrack } from 'svelte';
 	import { WORKBENCH_CONTEXT, type TaskWorkbench } from '#lib/workbench/tabs.js';
-	import {
-		formsFingerprint,
-		formsDraftDirty,
-		cloneFormsSnapshot,
-		restoredFormsSnapshot,
-		recordWriteVersion,
-		mayRefreshForms,
-		type FormsSessionSnapshot
-	} from '#lib/workbench/forms-session.js';
 	import { page } from '$app/state';
-	import { apiClient, type ApiResult } from '#lib/api/client.js';
 
-	import {
-		formsApi,
-		type BusinessEvent,
-		type FormAggregate,
-		type FormAttachment,
-		type FormFieldDependency,
-		type FormFieldUsage,
-		type FormField,
-		type FormFieldType,
-		type FormChildRecord,
-		type FormPermissionAction,
-		type FormPermissions,
-		type FormRecordImportRow,
-		type FormRecord,
-		type FormRelationTarget,
-		type FormView,
-		type UniversalForm
-	} from '#lib/api/forms.js';
+	import { type FormRecord, type FormView } from '#lib/api/forms.js';
 
-	import { membersApi } from '#lib/api/members.js';
-	import { projectsApi, type ScenarioTemplate } from '#lib/api/projects.js';
 	import Button from '#lib/components/Button.svelte';
 	import FormDesignerWorkspace from '#lib/components/forms/FormDesignerWorkspace.svelte';
 	import OptionValueBadges from '#lib/components/forms/OptionValueBadges.svelte';
 	import LayoutSettingsSheet from '#lib/components/forms/LayoutSettingsSheet.svelte';
-	import RecordGrid, { type GridBadge } from '#lib/components/forms/RecordGrid.svelte';
+	import RecordGrid from '#lib/components/forms/RecordGrid.svelte';
 	import RecordSidePanel from '#lib/components/forms/RecordSidePanel.svelte';
 	import ViewBar from '#lib/components/forms/ViewBar.svelte';
 	import type { SimpleFilter } from '#lib/components/forms/ViewArrangementControls.svelte';
 	import { buildDetailSections, headerFields } from '#lib/forms/detail-layout.js';
-	import type { FieldDisplayContext } from '#lib/forms/field-display.js';
 	import * as arrangement from '#lib/forms/view-arrangement.js';
 	import * as precedence from '#lib/forms/view-precedence.js';
-	import { authStore } from '#lib/stores/auth.js';
-	import FormWorkflowTabs, {
-		type FormWorkflowMode
-	} from '#lib/components/forms/FormWorkflowTabs.svelte';
+	import FormWorkflowTabs from '#lib/components/forms/FormWorkflowTabs.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 
-	import {
-		draftValueFromRecordValue,
-		emptyDraftValue,
-		isMissingRequiredValue,
-		parseJsonish,
-		recordValueFromDraftValue
-	} from '#lib/forms/record-values.js';
-
-	import { toast } from '#lib/stores/toast.js';
-	import { confirmAction } from '#lib/ui/dialog/confirm.js';
-	import { safeImageUrl, safeLinkUrl } from '#lib/utils/safe-url.js';
+	import { safeLinkUrl } from '#lib/utils/safe-url.js';
 
 	import {
 		scenarioTemplateDescription,
@@ -104,78 +61,124 @@
 		scenarioTemplateName
 	} from '#lib/utils/project-type-i18n.js';
 
-	import { requireRouteParam } from '#lib/utils/route-params.js';
-	import { locale, t } from 'svelte-i18n';
-	import { blankFieldDraft } from '#lib/forms/designer-schema.js';
+	import { t } from 'svelte-i18n';
 	import {
 		detailLayoutModes,
-		detailPageWidgetKeys,
-		detailPageWidgetOptions,
 		fieldTypeOptions,
-		formPermissionActions,
-		recordPageSize,
-		SORTABLE_TYPES
+		formPermissionActions
 	} from '#lib/forms/page-constants.js';
 	import type {
-		AttachmentBundleEntry,
-		AttachmentBundleExport,
-		CalendarExceptionDateMap,
-		CalendarGridGroup,
-		CalendarRecordOccurrence,
-		CalendarResourceRow,
-		CardCoverAspect,
-		CardCoverFit,
-		CardCoverPosition,
-		CardFieldLimit,
 		CardLayoutMode,
-		DesignerSchemaChange,
-		DetailHeaderDraft,
-		DetailHighlightDraft,
-		DetailLayoutSection,
-		DetailLayoutSectionDensity,
-		DetailLayoutSectionDraft,
-		DetailPageCompositionDraft,
-		DetailPageWidgetDensity,
-		DetailPageWidgetEntry,
-		DetailPageWidgetKey,
-		DetailPageWidgetRegion,
-		FieldConditionDraft,
-		FieldConditionItem,
-		FieldConditionOperator,
-		FieldDraft,
 		FormRecordScope,
 		GanttScale,
-		GanttTask,
-		GanttTimeline,
-		ImportMappingTransform,
-		ParsedViewFilter,
-		ParsedViewFilterExpression,
-		ParsedViewFilterGroup,
-		PivotAggregate,
-		PivotColumnLimit,
-		PivotRowLimit,
-		PivotSortMode,
-		PivotTable,
-		PivotTotalsMode,
-		PivotValueDisplay,
-		SignatureDraftScope,
-		TimelineEventLayout,
 		ViewCalendarDayScope,
 		ViewCalendarLayout,
 		ViewCalendarRange,
 		ViewCalendarRecurrence,
-		ViewFilterDraft,
-		ViewFilterGroupDraft,
 		ViewFilterLogic,
 		ViewFilterOperator,
 		ViewSortDirection,
-		ViewTimelineSource,
-		ViewVisibility,
-		ZipFileInput
+		ViewTimelineSource
 	} from '#lib/forms/page-types.js';
-	import { defaultPermissionActions } from '#lib/forms/permission-drafts.js';
 	import { FormsPage } from '#lib/forms/state/forms-page.js';
 	import { setFormsPageContext } from '#lib/forms/state/context.js';
+	import {
+		attachmentAcceptAttr,
+		attachmentThumbnailUrl,
+		attachmentIsPreviewableImage,
+		signatureImageValue
+	} from '#lib/forms/attachment-files.js';
+	import {
+		calendarScheduleKey,
+		calendarDateInputValue,
+		calendarRecordIsoDate,
+		ganttDateLabel,
+		calendarAgendaGroups,
+		calendarAgendaRecordCount
+	} from '#lib/forms/calendar-dates.js';
+	import {
+		detailPageWidgetOption,
+		detailPageWidgetRegion,
+		detailPageFieldColumns,
+		keepDetailSectionOpen,
+		detailLayoutSectionGridClass,
+		detailLayoutSectionFieldClass,
+		detailLayoutSectionFieldsForRecord
+	} from '#lib/forms/detail-layout-drafts.js';
+	import { detailSectionColumns as detailLayoutSectionColumns } from '#lib/forms/detail-layout.js';
+	import {
+		fieldHasConditionalHidden,
+		fieldHasConditionalReadOnly,
+		recordFieldHiddenByCondition,
+		recordFieldReadOnlyByCondition,
+		recordsFieldHiddenByCondition,
+		recordsFieldReadOnlyByCondition,
+		fieldHiddenByCondition,
+		fieldReadOnlyByCondition
+	} from '#lib/forms/field-conditions.js';
+	import {
+		fieldLabel,
+		fieldType,
+		fieldOptions,
+		optionDisabled,
+		optionArchived,
+		recordSelectOptions,
+		optionDescription,
+		optionGroup,
+		optionDisplayLabel,
+		fieldPlaceholder,
+		formListFields,
+		formFieldSummary
+	} from '#lib/forms/field-options.js';
+	import { permissionActionLabel, permissionFieldList } from '#lib/forms/permission-drafts.js';
+	import { draftStringFrom, childRelationKeyForField } from '#lib/forms/record-draft-values.js';
+	import {
+		formsReviewText,
+		recordDisplay,
+		displayValue,
+		formatDate,
+		inputValue,
+		selectValue
+	} from '#lib/forms/record-format.js';
+	import {
+		isIsoDate,
+		viewCalendarRange,
+		viewCalendarDayScope,
+		viewPivotAggregate,
+		viewPivotTotalsMode,
+		viewPivotValueDisplay,
+		viewPivotSortMode,
+		viewPivotRowLimit,
+		viewPivotColumnLimit,
+		viewCardCoverAspect,
+		viewCardCoverFit,
+		viewCardCoverPosition,
+		cardCoverObjectClass,
+		cardCoverImageClass,
+		viewCardFieldLimit,
+		kanbanMoveOptions
+	} from '#lib/forms/view-config.js';
+	import {
+		viewDraftFilterExpressionRecordIdsText,
+		filterLabelSuffix
+	} from '#lib/forms/view-draft-parse.js';
+	import {
+		pivotShowRowTotals,
+		pivotShowColumnTotals,
+		pivotCellIntensity,
+		pivotCellHeatmapStyle,
+		formatPivotDisplayValue,
+		formatPivotTotalDisplayValue
+	} from '#lib/forms/views/pivot-format.js';
+	import {
+		timelineEventAggregateKeys,
+		timelineEventLayout,
+		timelineEventAggregateKey,
+		timelineEventTitle,
+		timelineEventSubtitle,
+		timelineEventJson,
+		timelineEventDetailsJson
+	} from '#lib/forms/views/timeline-events.js';
 
 	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
 	const recordEditorAction = taskEditorAction();
@@ -183,626 +186,353 @@
 	setFormsPageContext(fp);
 	const s = fp.state;
 
-	const workspaceId = $derived(requireRouteParam(page.params.workspaceId, 'workspaceId'));
-	const projectId = $derived(requireRouteParam(page.params.projectId, 'projectId'));
+	const {
+		cleanFormsSession,
+		formsSessionDirty,
+		releaseFormsSession,
+		attachFormsSession,
+		reloadFormsSession,
+		openForm,
+		rememberFormsFocus
+	} = fp.session;
+	const { loadProject, loadScenarioTemplates, loadWorkspaceMembers, loadForms, loadRecords } =
+		fp.loaders;
+	const {
+		handleSaveRecord,
+		handleDeleteRecord,
+		handleRestoreLastDeletedRecord,
+		dismissLastDeletedRecord,
+		clearFocusedRecord,
+		startEditRecord,
+		openRecordCreateDrawer,
+		openRecordEditDrawer,
+		closeRecordEditorDrawer,
+		handleGlobalKeydown,
+		handleFormChange,
+		handleModeChange,
+		relationTargetOptions,
+		relationDraftValue,
+		setDraftValue,
+		isDraftOptionSelected,
+		toggleDraftOption,
+		draftString,
+		optionDisabledForSingleDraft,
+		optionDisabledForMultiDraft
+	} = fp.records;
+	const {
+		restoreRecordDetailFromUrl,
+		selectRecord,
+		goToRecordPage,
+		loadSelectedRecordComments,
+		reloadSelectedRecord,
+		announce,
+		recordHref,
+		canChangeRecord,
+		openRecordPanel,
+		closeRecordPanel,
+		stepRecordPanel,
+		gridBadges
+	} = fp.recordPanel;
+	const {
+		closeRecordDetail,
+		handleCreateLink,
+		handleCreateRecordComment,
+		childFormForRelationField,
+		parentChildRelationFields,
+		childFieldsForForm,
+		startAddChildRecord,
+		startEditChildRecord,
+		cancelChildEditor,
+		saveChildRecord,
+		deleteChildRecord,
+		selectedRecordAttachmentFields,
+		selectedRecordAttachmentValueUrls,
+		updateChildDraftValue,
+		updateChildTitle,
+		isChildDraftOptionSelected,
+		toggleChildDraftOption,
+		optionDisabledForChildSingleDraft,
+		optionDisabledForChildMultiDraft,
+		childRecordFields,
+		childRecordsForRelationField,
+		childGridFieldsForRelationField
+	} = fp.recordDetail;
+	const {
+		attachmentUrl,
+		attachmentPreviewUrl,
+		fieldAttachments,
+		attachmentSignedUrl,
+		createAttachmentForField,
+		createAttachmentFromLocalFile,
+		removeAttachment,
+		startSignatureStroke,
+		moveSignatureStroke,
+		endSignatureStroke,
+		clearSignatureCanvas
+	} = fp.attachments;
+	const {
+		handleCreateForm,
+		applyScenarioTemplate,
+		installScenarioTemplate,
+		addFieldDraft,
+		removeFieldDraft
+	} = fp.createForm;
+	const {
+		buildSchemaFromDrafts,
+		closeDesignerConfirm,
+		addDesignerField,
+		updateDesignerField,
+		duplicateDesignerField,
+		removeDesignerField,
+		moveDesignerField,
+		saveDesignerSchema,
+		confirmDesignerSchemaSave
+	} = fp.designer;
+	const {
+		detailLayoutFieldAssignedTo,
+		updateDetailLayoutSectionTitle,
+		updateDetailLayoutSectionDescription,
+		updateDetailLayoutSectionColumns,
+		updateDetailLayoutSectionDensity,
+		updateDetailLayoutSectionHideEmptyFields,
+		updateDetailLayoutSectionCollapsible,
+		updateDetailLayoutSectionDefaultCollapsed,
+		addDetailLayoutSection,
+		removeDetailLayoutSection,
+		moveDetailLayoutSection,
+		setDetailLayoutSectionField,
+		moveDetailLayoutSectionField,
+		setDetailHeaderDraft,
+		setDetailHighlightField,
+		moveDetailHighlightField
+	} = fp.detailLayoutEditor;
+	const {
+		saveDetailHeader,
+		saveDetailHighlights,
+		saveDetailPageComposition,
+		saveDetailLayoutSections,
+		setDetailPageWidgetEnabled,
+		setDetailPageWidgetTitle,
+		setDetailPageWidgetDescription,
+		setDetailPageWidgetEmptyText,
+		setDetailPageWidgetShowCount,
+		setDetailPageWidgetHideEmpty,
+		setDetailPageWidgetCollapsible,
+		setDetailPageWidgetDefaultCollapsed,
+		setDetailPageWidgetDensity,
+		setDetailPageWidgetLimit,
+		moveDetailPageWidget
+	} = fp.detailLayoutSave;
+	const {
+		saveMemberPermissions,
+		setMemberPermission,
+		setMemberRecordScope,
+		setMemberFieldRead,
+		setMemberFieldWrite,
+		memberFieldHidden,
+		memberFieldLocked
+	} = fp.permissions;
+	const {
+		isServerSortable,
+		showView,
+		resetArrangement,
+		undoReset,
+		saveViewAs,
+		updateCurrentView,
+		deleteView,
+		openSaveView,
+		openLayoutSettings,
+		setDraftFilters
+	} = fp.views;
+	const { detailLayoutSections } = fp.viewRecords;
+	const {
+		defaultViewColumns,
+		startNewViewDraft,
+		setViewDraftColumn,
+		viewDraftHasColumn,
+		viewDraftCardFields,
+		moveViewDraftCardField
+	} = fp.viewDraft;
+	const {
+		shiftViewDraftCalendarFocus,
+		viewDraftSwimlaneFieldCandidates,
+		viewDraftCalendarResourceFieldCandidates,
+		viewDraftCalendarEndFieldCandidates,
+		viewDraftPivotDimensionFieldCandidates,
+		viewDraftPivotValueFieldCandidates,
+		swapViewDraftPivotAxes,
+		viewDraftGanttDateFieldCandidates,
+		viewDraftGanttGroupFieldCandidates,
+		viewDraftGanttDependencyFieldCandidates,
+		viewDraftCalendarExceptionItems,
+		addViewDraftCalendarException,
+		removeViewDraftCalendarException,
+		viewDraftKanbanWipOptions,
+		setViewDraftWipLimit
+	} = fp.viewDraftFields;
+	const {
+		updateViewDraftFilterRootLogic,
+		updateViewDraftFilterGroupLogic,
+		toggleViewDraftFilterGroupDisabled,
+		addViewDraftFilterGroup,
+		removeViewDraftFilterGroup,
+		canDuplicateViewDraftFilterGroup,
+		duplicateViewDraftFilterGroup,
+		canMergeViewDraftFilterGroup,
+		mergeViewDraftFilterGroupWithPrevious,
+		moveViewDraftFilterGroup,
+		visibleViewDraftFilterGroups,
+		hasReachedFilterLimit,
+		updateViewDraftFilter,
+		toggleViewDraftFilterDisabled,
+		addViewDraftFilter,
+		removeViewDraftFilter,
+		duplicateViewDraftFilter,
+		canSplitViewDraftFilterToGroup,
+		splitViewDraftFilterToGroup,
+		moveViewDraftFilter
+	} = fp.viewDraftFilters;
+	const {
+		viewDraftFilterMatchCount,
+		viewDraftFilterGroupMatchCount,
+		viewDraftFilterExpressionRecords,
+		viewDraftFilterExpressionJsonText,
+		viewDraftFilterExpressionSummaryText,
+		copyViewDraftFilterExpressionRecordIds,
+		copyViewDraftFilterExpressionJson,
+		copyViewDraftFilterExpressionSummary,
+		copyViewDraftFilterExpressionJsonRecords,
+		copyViewDraftFilterExpressionCsvRecords,
+		exportViewDraftFilterExpressionConfigJson,
+		exportViewDraftFilterExpressionSummary,
+		focusViewDraftFilterExpressionRecords,
+		exportViewDraftFilterExpressionCsv,
+		exportViewDraftFilterExpressionJson
+	} = fp.filterExpressionExport;
+	const {
+		pivotRowRecords,
+		pivotColumnRecords,
+		pivotCellRecords,
+		selectPivotDrilldown,
+		pivotDrilldownKey,
+		canApplyPivotDrilldownFilters,
+		applyPivotDrilldownFilters,
+		copyPivotCellValue,
+		copyPivotDrilldownRecordIds,
+		exportPivotDrilldownRecordsCsv,
+		copyPivotTableMatrix,
+		exportPivotTableMatrixCsv,
+		focusPivotDrilldownRecords
+	} = fp.viewPivot;
+	const {
+		updateKanbanRecordField,
+		selectedKanbanRecords,
+		isKanbanRecordSelected,
+		setKanbanRecordSelected,
+		clearKanbanSelection,
+		kanbanBulkMoveAllowed,
+		bulkMoveKanbanRecords,
+		handleKanbanDragStart,
+		handleKanbanDragEnd,
+		handleKanbanDragOver,
+		handleKanbanDrop,
+		kanbanColumnRecordCount,
+		kanbanWipLabel,
+		kanbanColumnWipExceeded,
+		kanbanSwimlaneRows
+	} = fp.viewKanban;
+	const {
+		copyCalendarSchedule,
+		canShiftCalendarOccurrence,
+		shiftCalendarOccurrence,
+		updateCalendarRecordDate,
+		updateCalendarSeriesDate,
+		updateCalendarRecordEndDate,
+		handleCalendarDragStart,
+		handleCalendarDragEnd,
+		handleCalendarDragOver,
+		handleCalendarDrop,
+		viewCalendarFocusDate,
+		calendarResourceRows,
+		calendarBucketFilterKey,
+		canApplyCalendarBucketFilters,
+		applyCalendarBucketFilters
+	} = fp.viewCalendar;
+	const {
+		extendGanttTaskEnd,
+		handleGanttDragStart,
+		handleGanttDragEnd,
+		handleGanttDragOver,
+		handleGanttDrop
+	} = fp.viewGantt;
+	const {
+		copyTimelineEventValue,
+		exportTimelineEventDetails,
+		exportTimelineEventsCsv,
+		exportTimelineEventsJson,
+		copyTimelineEventIds,
+		copyTimelineAggregateIds,
+		timelineEventPinned,
+		toggleTimelineEventPinned,
+		focusTimelineEventRecord,
+		timelineEventLinkedRecordIds,
+		focusTimelineEventRecords,
+		applyTimelineEventQuickFilter,
+		applyTimelineEventDayWindow,
+		updateTimelineRecordSelectField,
+		selectedTimelineSource,
+		selectedTimelineEventLayout,
+		selectedTimelineEventType,
+		selectedTimelineEventActor,
+		selectedTimelineEventAggregate,
+		selectedTimelineEventQuery,
+		selectedTimelineEventFrom,
+		selectedTimelineEventTo,
+		timelineTitle,
+		timelineSubtitle,
+		timelineEventRecord
+	} = fp.viewTimeline;
+	const {
+		copyRecordId,
+		exportCardRecordDetails,
+		exportCardGroupRecords,
+		updateCardRecordSelectField,
+		cardGroupCollapsed,
+		toggleCardGroup,
+		cardGroupFilterKey,
+		copyCardGroupRecordIds,
+		focusCardGroupRecords,
+		canApplyCardGroupFilter,
+		applyCardGroupFilter,
+		cardDisplayFields,
+		viewCardBadgeField,
+		cardTitle,
+		cardSubtitle,
+		cardBadge,
+		cardCoverUrl
+	} = fp.viewCards;
+	const {
+		exportCurrentView,
+		exportCurrentViewJson,
+		exportAttachmentManifest,
+		exportAttachmentBundle,
+		exportAttachmentPackage
+	} = fp.exporter;
+	const {
+		openImportRecords,
+		closeImportRecords,
+		resetImportPreviewForSourceChange,
+		continueImportFromSource,
+		continueImportFromMapping,
+		exportImportTemplate,
+		loadImportFile,
+		refreshImportMappingFromText,
+		saveImportMappingTemplate,
+		restoreImportMappingTemplate,
+		applyImportMapping,
+		commitImportRecords
+	} = fp.importer;
 
-	const selectedForm = $derived.by(
-		() => s.forms.find((form) => form.id === s.selectedFormId) ?? null
-	);
-	const printJobForm = $derived.by(() => s.forms.find((form) => form.key === 'print_job') ?? null);
-	const fields = $derived(selectedForm ? parseFields(selectedForm.schema) : []);
-	const detailVisibleFields = $derived(
-		fields.filter((field) => field.visibility?.detail !== false)
-	);
-	const savedView = $derived(s.formViews.find((view) => view.id === s.selectedViewId) ?? null);
-	const baseView = $derived(savedView ?? (selectedForm ? builtInView(selectedForm) : null));
-	const draftViewConfig = $derived(viewConfigFromDraft());
-	const arrangementModified = $derived(
-		!!baseView &&
-			s.viewBaseline.viewId === baseView.id &&
-			(s.viewBaseline.type !== s.viewDraft.view_type ||
-				s.viewBaseline.key !== arrangement.normalizedViewConfig(draftViewConfig))
-	);
-	const selectedView = $derived<FormView | null>(
-		baseView && arrangementModified
-			? { ...baseView, view_type: s.viewDraft.view_type, config: draftViewConfig }
-			: baseView
-	);
-	const recordQuery = $derived(
-		arrangement.serverQueryFor(
-			savedView && { id: savedView.id, config: s.viewBaseline.config },
-			draftViewConfig,
-			{ modified: arrangementModified, isServerSortable }
-		)
-	);
-	const canDesign = $derived(s.formPermissions?.effective.actions['form.design'] ?? true);
-	const selectedViewColumns = $derived.by(() => viewColumns(selectedView));
-	const selectedViewType = $derived((selectedView?.view_type ?? 'grid') as FormView['view_type']);
-	const detailUrlRecordId = $derived(
-		page.url.searchParams.get('record') ?? page.url.searchParams.get('record_id') ?? ''
-	);
-
-	const focusedRecords = $derived.by(() => {
-		if (s.focusedRecordIds.length === 0) return [];
-
-		const focusedIds = new Set(s.focusedRecordIds);
-
-		return s.records.filter((record) => focusedIds.has(record.id));
-	});
-
-	const memberHiddenFieldLabels = $derived(
-		fields
-			.filter((field) => s.memberFieldReadDraft[field.key] === false)
-			.map((field) => fieldLabel(field))
-	);
-	const memberHiddenFieldKeys = $derived(
-		fields.filter((field) => s.memberFieldReadDraft[field.key] === false).map((field) => field.key)
-	);
-	const memberLockedFieldLabels = $derived(
-		fields
-			.filter((field) => s.memberFieldWriteDraft[field.key] === false)
-			.map((field) => fieldLabel(field))
-	);
-	const memberLockedFieldKeys = $derived(
-		fields.filter((field) => s.memberFieldWriteDraft[field.key] === false).map((field) => field.key)
-	);
-	const listableFields = $derived(fields.filter((field) => field.visibility?.list !== false));
-
-	const visibleFields = $derived.by(() => {
-		if (selectedViewColumns.length === 0) return listableFields;
-
-		const byKey = new Map(listableFields.map((field) => [field.key, field]));
-		const ordered = selectedViewColumns
-			.map((key) => byKey.get(key))
-			.filter((field): field is FormField => Boolean(field));
-
-		return ordered.length > 0 ? ordered : listableFields;
-	});
-
-	const cardFields = $derived.by(() =>
-		orderedCardFieldsForView(selectedView).slice(
-			0,
-			viewCardFieldLimit(selectedView?.config?.card_field_limit)
-		)
-	);
-	const selectedCardLayout = $derived(viewCardLayout(selectedView?.config?.card_layout));
-	const selectedCardCoverAspect = $derived(
-		viewCardCoverAspect(selectedView?.config?.card_cover_aspect)
-	);
-	const selectedCardCoverFit = $derived(viewCardCoverFit(selectedView?.config?.card_cover_fit));
-	const selectedCardCoverPosition = $derived(
-		viewCardCoverPosition(selectedView?.config?.card_cover_position)
-	);
-	const selectedCardHideEmptyFields = $derived(
-		viewConfigBoolean(selectedView, 'card_hide_empty_fields')
-	);
-	const selectedCardShowTimestamps = $derived(
-		viewConfigBoolean(selectedView, 'card_show_timestamps')
-	);
-	const selectedCardShowRecordId = $derived(viewConfigBoolean(selectedView, 'card_show_record_id'));
-	const selectedCalendarLayout = $derived(
-		viewCalendarLayout(selectedView?.config?.calendar_layout)
-	);
-	const selectedCalendarHideEmptyDays = $derived(
-		viewConfigBoolean(selectedView, 'calendar_hide_empty_days')
-	);
-
-	const cardGroupField = $derived.by(() =>
-		selectedViewType === 'card' ? fieldByKey(viewConfigString(selectedView, 'group_by')) : null
-	);
-
-	const cardGroups = $derived.by(() =>
-		cardGroupField ? groupRecordsByField(viewRecords, cardGroupField) : []
-	);
-	const cardEditableSelectFields = $derived(
-		cardFields.filter(
-			(field) => field.type === 'single_select' && kanbanMoveOptions(field).length > 0
-		)
-	);
-	const timelineEditableSelectFields = $derived(cardEditableSelectFields);
-	const viewRecords = $derived.by(() => applyViewRecordConfig(s.records));
-	const recordPageCount = $derived(Math.max(1, Math.ceil(viewRecords.length / recordPageSize)));
-	const normalizedRecordPage = $derived(Math.min(Math.max(s.recordPage, 1), recordPageCount));
-
-	const paginatedViewRecords = $derived.by(() => {
-		const start = (normalizedRecordPage - 1) * recordPageSize;
-
-		return viewRecords.slice(start, start + recordPageSize);
-	});
-
-	const kanbanGroupField = $derived.by(() => viewGroupField());
-	const kanbanGroups = $derived.by(() => groupRecordsByField(viewRecords, kanbanGroupField));
-	const kanbanSwimlaneField = $derived.by(() => viewSwimlaneField());
-	const kanbanSwimlanes = $derived.by(() => groupKanbanSwimlanes(viewRecords));
-	const pivotTable = $derived.by(() => buildPivotTable(viewRecords));
-	const pivotDrilldownRecords = $derived.by(() => buildPivotDrilldownRecords(viewRecords));
-	const ganttTimeline = $derived.by(() => buildGanttTimeline(viewRecords));
-	const calendarDateField = $derived.by(() => viewDateField());
-	const calendarEndField = $derived.by(() => viewCalendarEndField());
-	const calendarGridGroups = $derived.by(() =>
-		groupRecordsByCalendarGrid(viewRecords, calendarDateField)
-	);
-	const calendarResourceField = $derived.by(() => viewCalendarResourceField());
-	const calendarResourceLanes = $derived.by(() => groupCalendarResourceLanes(viewRecords));
-	const timelineRecords = $derived.by(() => recordsByUpdatedAt(viewRecords));
-	const timelineEventTypes = $derived.by(() => eventTypes(s.formEvents));
-	const timelineEventActors = $derived.by(() => eventActors(s.formEvents));
-	const timelineEventAggregates = $derived.by(() => eventAggregates(s.formEvents));
-	const timelineEvents = $derived.by(() => eventsByCreatedAt(filteredTimelineEvents(s.formEvents)));
-	const timelineEventRows = $derived.by(() => orderedTimelineEvents(timelineEvents));
-
-	const selectedRecordEvents = $derived.by(() =>
-		s.selectedRecord
-			? eventsByCreatedAt(
-					s.formEvents.filter(
-						(event) =>
-							event.aggregate_type === 'form_record' && event.aggregate_id === s.selectedRecord?.id
-					)
-				)
-			: []
-	);
-
-	const timelineTitlePermissionField = $derived.by(() => viewTimelineTitleField());
-	const timelineSubtitlePermissionField = $derived.by(() => viewTimelineSubtitleField());
-	const selectedDesignerField = $derived(
-		s.designerFieldDrafts[s.selectedDesignerFieldIndex] ?? null
-	);
-
-	const selectedDesignerFieldUsage = $derived(
-		selectedDesignerField
-			? (s.designerFieldUsage.find(
-					(usage) =>
-						(selectedDesignerField.field_id && usage.field_id === selectedDesignerField.field_id) ||
-						usage.field_key === selectedDesignerField.key
-				) ?? null)
-			: null
-	);
-
-	const selectedDesignerFieldDependencies = $derived(
-		selectedDesignerField
-			? s.designerFieldDependencies.filter(
-					(dependency) =>
-						(selectedDesignerField.field_id &&
-							dependency.field_id === selectedDesignerField.field_id) ||
-						dependency.field_key === selectedDesignerField.key
-				)
-			: []
-	);
-
-	const selectedDetailPageWidgetEntries = $derived.by(() =>
-		detailPageWidgetEntriesFromLayout(selectedForm?.detail_layout)
-	);
-
-	const currentUserId = $derived($authStore.user?.id ?? workbench?.current.userId ?? '');
-
-	function formsDraftGroups() {
-		return {
-			record: { recordDraft: s.recordDraft, recordTitle: s.recordTitle },
-			view: s.viewDraft,
-			design: {
-				designerFieldDrafts: s.designerFieldDrafts,
-				detailHeaderDraft: s.detailHeaderDraft,
-				detailHighlightDraft: s.detailHighlightDraft,
-				detailPageCompositionDraft: s.detailPageCompositionDraft,
-				detailLayoutSectionDrafts: s.detailLayoutSectionDrafts
-			},
-			create: { formDraft: s.formDraft, fieldDrafts: s.fieldDrafts },
-			comment: s.recordCommentDraft,
-			child: s.childEditor
-		};
-	}
-	function cleanFormsGroup(group: string) {
-		const groups = formsDraftGroups();
-		s.formsSessionClean = {
-			...s.formsSessionClean,
-			[group]: formsFingerprint(groups[group as keyof typeof groups])
-		};
-	}
-	function cleanFormsSession() {
-		s.formsSessionClean = Object.fromEntries(
-			Object.entries(formsDraftGroups()).map(([key, value]) => [key, formsFingerprint(value)])
-		);
-		s.formsSessionSchemaVersion = selectedForm?.schema_version ?? null;
-		s.formsSessionViewVersion = selectedView?.updated_at ?? null;
-	}
-	function formsSessionDirty() {
-		// View changes are kept automatically (per user, on this device): never unsaved work.
-		const groups: Partial<ReturnType<typeof formsDraftGroups>> = formsDraftGroups();
-		delete groups.view;
-		return formsDraftDirty(groups, s.formsSessionClean);
-	}
-	function formsSessionSaving() {
-		return (
-			s.formSubmitting ||
-			s.viewSubmitting ||
-			s.recordSubmitting ||
-			s.designerSaving ||
-			s.childSubmitting ||
-			s.detailHeaderSaving ||
-			s.detailHighlightSaving ||
-			s.detailPageCompositionSaving ||
-			s.detailLayoutSectionSaving ||
-			s.detailPageWidgetSaving ||
-			!!s.attachmentSubmittingField ||
-			s.bulkMovingKanban ||
-			!!s.updatingKanbanRecordId ||
-			!!s.updatingCalendarRecordId ||
-			!!s.updatingGanttRecordId ||
-			!!s.updatingCardRecordId ||
-			!!s.updatingTimelineRecordId
-		);
-	}
-	function formsSessionState() {
-		return $state.snapshot({
-			selectedViewId: s.selectedViewId,
-			selectedRecordId: s.selectedRecord?.id ?? null,
-			focusedRecordIds: s.focusedRecordIds,
-			activeMode: s.activeMode,
-			recordPage: s.recordPage,
-			recordEditorOpen: s.recordEditorOpen,
-			editingRecordId: s.editingRecordId,
-			recordDraft: s.recordDraft,
-			recordTitle: s.recordTitle,
-			recordCommentDraft: s.recordCommentDraft,
-			childEditor: s.childEditor,
-			linkDraft: s.linkDraft,
-			formDraft: s.formDraft,
-			fieldDrafts: s.fieldDrafts,
-			showCreateForm: s.showCreateForm,
-			viewDraft: s.viewDraft,
-			viewToolsExpanded: s.viewToolsExpanded,
-			designerFieldDrafts: s.designerFieldDrafts,
-			selectedDesignerFieldIndex: s.selectedDesignerFieldIndex,
-			showAdvancedSchema: s.showAdvancedSchema,
-			detailLayoutMode: s.detailLayoutMode,
-			detailHeaderDraft: s.detailHeaderDraft,
-			detailHighlightDraft: s.detailHighlightDraft,
-			detailPageCompositionDraft: s.detailPageCompositionDraft,
-			detailLayoutSectionDrafts: s.detailLayoutSectionDrafts,
-			collapsedCardGroupKeys: s.collapsedCardGroupKeys,
-			selectedKanbanRecordIds: s.selectedKanbanRecordIds,
-			pinnedTimelineEventIds: s.pinnedTimelineEventIds,
-			formsSessionConflict: s.formsSessionConflict,
-			focus: s.formsSessionFocus,
-			scroll: Array.from(
-				s.formsSessionRoot?.querySelectorAll<HTMLElement>(
-					'.overflow-x-auto,.overflow-auto,.overflow-y-auto'
-				) ?? []
-			).map((element) => ({ left: element.scrollLeft, top: element.scrollTop }))
-		});
-	}
-	function captureFormsSession(): FormsSessionSnapshot {
-		return cloneFormsSnapshot({
-			formId: s.selectedFormId || null,
-			state: formsSessionState(),
-			clean: $state.snapshot(s.formsSessionClean),
-			formSchemaVersion: s.formsSessionSchemaVersion,
-			recordVersion: $state.snapshot(s.formsSessionRecordVersion),
-			viewUpdatedAt: s.formsSessionViewVersion
-		});
-	}
-	function releaseFormsSession() {
-		s.formsSessionRelease?.();
-		s.formsSessionRelease = null;
-		s.formsSessionKey = null;
-		s.formsSessionUser = null;
-	}
-	async function attachFormsSession() {
-		const user = workbench?.current.userId;
-		const key = s.selectedFormId
-			? `forms:${projectId}:${s.selectedFormId}`
-			: `forms-entry:${projectId}`;
-		if (!workbench || !user || (s.formsSessionKey === key && s.formsSessionUser === user)) return;
-		// Never render a cached snapshot as authority. The live resource read must succeed first.
-		const id = s.selectedFormId;
-		const generation = s.formsSessionGeneration;
-		const authorized = id ? await formsApi.get(id) : await projectsApi.get(projectId);
-		if (
-			authorized.code !== 0 ||
-			!authorized.data ||
-			workbench.current.userId !== user ||
-			generation !== s.formsSessionGeneration ||
-			id !== s.selectedFormId
-		)
-			return;
-		const urlForm = page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
-		if (urlForm && urlForm !== id) return;
-		const cached = restoredFormsSnapshot(workbench.snapshot(key), s.selectedFormId || null, true);
-		if (cached) {
-			const saved = cached.state as ReturnType<typeof formsSessionState>;
-			s.selectedRecord = s.records.find((row) => row.id === saved.selectedRecordId) ?? null;
-			if (s.selectedRecord)
-				await Promise.all([
-					loadSelectedRecordLinks(),
-					loadSelectedRecordChildren(),
-					loadSelectedRecordComments(),
-					loadRecordAttachments(s.selectedRecord.id)
-				]);
-			if (generation !== s.formsSessionGeneration || workbench.current.userId !== user) return;
-			({
-				selectedViewId: s.selectedViewId,
-				focusedRecordIds: s.focusedRecordIds,
-				activeMode: s.activeMode,
-				recordPage: s.recordPage,
-				recordEditorOpen: s.recordEditorOpen,
-				editingRecordId: s.editingRecordId,
-				recordDraft: s.recordDraft,
-				recordTitle: s.recordTitle,
-				recordCommentDraft: s.recordCommentDraft,
-				childEditor: s.childEditor,
-				linkDraft: s.linkDraft,
-				formDraft: s.formDraft,
-				fieldDrafts: s.fieldDrafts,
-				showCreateForm: s.showCreateForm,
-				viewDraft: s.viewDraft,
-				viewToolsExpanded: s.viewToolsExpanded,
-				designerFieldDrafts: s.designerFieldDrafts,
-				selectedDesignerFieldIndex: s.selectedDesignerFieldIndex,
-				showAdvancedSchema: s.showAdvancedSchema,
-				detailLayoutMode: s.detailLayoutMode,
-				detailHeaderDraft: s.detailHeaderDraft,
-				detailHighlightDraft: s.detailHighlightDraft,
-				detailPageCompositionDraft: s.detailPageCompositionDraft,
-				detailLayoutSectionDrafts: s.detailLayoutSectionDrafts,
-				collapsedCardGroupKeys: s.collapsedCardGroupKeys,
-				selectedKanbanRecordIds: s.selectedKanbanRecordIds,
-				pinnedTimelineEventIds: s.pinnedTimelineEventIds,
-				formsSessionConflict: s.formsSessionConflict
-			} = saved);
-			if (s.activeMode === 'detail') s.activeMode = 'data';
-			s.formsSessionFocus = saved.focus ?? null;
-			s.formsSessionClean = cached.clean;
-			s.formsSessionSchemaVersion = cached.formSchemaVersion;
-			s.formsSessionRecordVersion = cached.recordVersion;
-			s.formsSessionViewVersion = cached.viewUpdatedAt;
-			s.formsSessionRemoteRecord =
-				s.records.find((row) => row.id === cached.recordVersion?.recordId) ?? null;
-			s.formsSessionRemoteSchema = selectedForm?.schema_version ?? null;
-			s.formsSessionRemoteChanged = !!(
-				cached.recordVersion &&
-				s.formsSessionRemoteRecord &&
-				(cached.recordVersion.updatedAt !== s.formsSessionRemoteRecord.updated_at ||
-					cached.recordVersion.schemaVersion !== s.formsSessionRemoteSchema)
-			);
-		}
-		s.formsSessionKey = key;
-		s.formsSessionUser = user;
-		s.formsSessionRelease = workbench.register(key, {
-			capture: captureFormsSession,
-			dirty: formsSessionDirty,
-			refresh: refreshFormsSession
-		});
-		workbench.setTitle(key, selectedForm?.name ?? s.project?.name ?? 'Forms');
-		if (cached) {
-			await tick();
-			if (generation !== s.formsSessionGeneration || key !== s.formsSessionKey) return;
-			const scroll = (cached.state as ReturnType<typeof formsSessionState>).scroll;
-			s.formsSessionRoot
-				?.querySelectorAll<HTMLElement>('.overflow-x-auto,.overflow-auto,.overflow-y-auto')
-				.forEach((element, index) => {
-					const position = scroll?.[index];
-					if (position) {
-						element.scrollLeft = position.left;
-						element.scrollTop = position.top;
-					}
-				});
-			const focus = s.formsSessionFocus;
-			if (focus) {
-				const input = s.formsSessionRoot?.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-					focus.selector
-				);
-				input?.focus({ preventScroll: true });
-				try {
-					if (input && focus.start !== null) input.setSelectionRange(focus.start, focus.end);
-				} catch {
-					/* Nontext controls retain focus only. */
-				}
-			}
-		}
-	}
-	async function refreshFormsSession() {
-		const key = s.formsSessionKey;
-		const user = s.formsSessionUser;
-		const id = s.selectedFormId;
-		if (
-			!key ||
-			!user ||
-			!workbench ||
-			!mayRefreshForms({
-				active: workbench.current.active === key,
-				visible: document.visibilityState === 'visible',
-				online: navigator.onLine,
-				saving: formsSessionSaving(),
-				loading: s.loading
-			})
-		)
-			return;
-		await s.formsSessionLatch.run(async () => {
-			const generation = s.formsSessionGeneration;
-			try {
-				const [freshForms, freshForm, freshViews, freshRecords] = await Promise.all([
-					formsApi.list(projectId, { page: 1, per_page: 100 }),
-					id ? formsApi.get(id) : projectsApi.get(projectId),
-					id ? formsApi.listViews(id) : Promise.resolve({ code: 0, data: [] as FormView[] }),
-					id
-						? formsApi.listRecords(id, { page: 1, per_page: 100 })
-						: Promise.resolve({ code: 0, data: { items: [] as FormRecord[] } })
-				]);
-				if (
-					generation !== s.formsSessionGeneration ||
-					key !== s.formsSessionKey ||
-					workbench.current.userId !== user
-				)
-					return;
-				if (
-					[freshForms, freshForm, freshViews, freshRecords].some(
-						(result) => result.code !== 0 || !result.data
-					)
-				) {
-					s.formsSessionRefreshFailed = true;
-					return;
-				}
-				s.formsSessionRefreshFailed = false;
-				const rows = freshRecords.data?.items ?? [];
-				const currentForm = id ? (freshForm.data as UniversalForm) : null;
-				s.formsSessionRemoteRecord = rows.find((row) => row.id === s.editingRecordId) ?? null;
-				s.formsSessionRemoteSchema = currentForm?.schema_version ?? null;
-				const changed =
-					formsFingerprint({
-						forms: freshForms.data?.items,
-						views: freshViews.data,
-						records: rows
-					}) !== formsFingerprint({ forms: s.forms, views: s.formViews, records: s.records });
-				if (formsSessionDirty() || s.editingRecordId !== null || s.recordEditorOpen) {
-					if (changed) {
-						s.formsSessionRemoteChanged = true;
-						workbench.markChanged(key);
-					}
-					return; // Whole editing snapshot and its original CAS remain intact.
-				}
-				s.forms = freshForms.data?.items ?? [];
-				if (!id) return;
-				s.formViews = sortViewsByDefault(freshViews.data ?? []);
-				s.records = rows;
-				s.filterPreviewRecords = rows;
-				if (s.selectedRecord)
-					s.selectedRecord = rows.find((row) => row.id === s.selectedRecord?.id) ?? null;
-				// Retain local filters/selection; only replace clean schema/design baselines.
-				s.designerSyncedFormId = '';
-				syncDesignerDrafts(currentForm);
-				cleanFormsGroup('design');
-				s.formsSessionSchemaVersion = currentForm?.schema_version ?? null;
-				s.formsSessionRemoteChanged = false;
-			} catch {
-				if (generation === s.formsSessionGeneration) s.formsSessionRefreshFailed = true;
-			}
-		});
-	}
-	async function updateRecordWithVersion(
-		recordId: string,
-		data: Parameters<typeof formsApi.updateRecord>[1]
-	) {
-		const record =
-			s.records.find((row) => row.id === recordId) ??
-			(s.selectedRecord?.id === recordId ? s.selectedRecord : null);
-		const version = recordWriteVersion(
-			recordId,
-			s.formsSessionRecordVersion,
-			record,
-			s.formsSessionSchemaVersion ?? selectedForm?.schema_version ?? null
-		);
-		if (!version) return { code: 409, message: $t('forms.session.conflict'), data: null };
-		const result = await formsApi.updateRecord(recordId, { ...data, ...version });
-		if (result.code === 409) {
-			s.formsSessionConflict = true;
-			s.formsSessionRemoteChanged = true;
-			window.setTimeout(() => {
-				void refreshFormsSession();
-			}, 0);
-		}
-		return result;
-	}
-	async function reloadFormsSession() {
-		if (
-			formsSessionDirty() &&
-			!(await confirmAction({
-				tone: 'destructive',
-				title: $t('forms.dialogs.discardChanges.title'),
-				body: $t('forms.dialogs.discardChanges.body'),
-				confirmLabel: $t('forms.dialogs.discardChanges.confirm')
-			}))
-		)
-			return;
-		const id = s.selectedFormId;
-		const recordId = s.editingRecordId;
-		s.formsSessionGeneration++;
-		const fresh = await formsApi.get(id);
-		if (fresh.code !== 0 || !fresh.data) {
-			s.formsSessionRefreshFailed = true;
-			return;
-		}
-		s.forms = s.forms.map((item) => (item.id === id ? fresh.data! : item));
-		const loaded = await loadFormState(id, { syncUrl: false });
-		if (!loaded) {
-			s.formsSessionRefreshFailed = true;
-			return;
-		}
-		const record =
-			s.records.find((row) => row.id === recordId) ??
-			s.filterPreviewRecords.find((row) => row.id === recordId);
-		if (record) openRecordEditDrawer(record);
-		cleanFormsSession();
-		s.formsSessionConflict = false;
-		s.formsSessionRemoteChanged = false;
-		s.formsSessionReview = false;
-		s.formsSessionRefreshFailed = false;
-		s.formsSessionRemoteRecord = null;
-		s.formsSessionRemoteSchema = null;
-		if (s.formsSessionKey) {
-			workbench?.markChanged(s.formsSessionKey, false);
-			workbench?.markDirty(s.formsSessionKey, false);
-		}
-	}
-
-	async function openForm(formId: string, options: { syncUrl?: boolean } = {}) {
-		const target = new URL(page.url.href);
-		target.searchParams.set('form', formId);
-		target.searchParams.delete('form_id');
-		if (workbench?.current.userId && !workbench.canOpen(target.href)) {
-			workbench.block(target.href);
-			return;
-		}
-		if (s.formsSessionActivating === formId) return;
-		const request = ++s.formsSessionOpenRequest;
-		if (s.formsSessionOpening) await s.formsSessionOpening;
-		if (request !== s.formsSessionOpenRequest) return;
-		const opening = (async () => {
-			releaseFormsSession();
-			s.formsSessionGeneration++;
-			s.formsSessionActivating = formId;
-			s.formsSessionTransitioning = true;
-			s.formsSessionConflict = false;
-			s.formsSessionRemoteChanged = false;
-			s.formsSessionRefreshFailed = false;
-			s.formsSessionReview = false;
-			try {
-				if (options.syncUrl !== false) {
-					await syncFormUrl(formId);
-					const admitted =
-						page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
-					if (admitted !== formId) return;
-				}
-				await loadFormState(formId, { syncUrl: false });
-				if (s.formsSessionReady) await restoreRecordDetailFromUrl();
-				cleanFormsSession();
-				if (s.formsSessionReady) await attachFormsSession();
-			} finally {
-				s.formsSessionActivating = '';
-				s.formsSessionTransitioning = false;
-			}
-		})();
-		s.formsSessionOpening = opening;
-		try {
-			await opening;
-		} finally {
-			if (s.formsSessionOpening === opening) s.formsSessionOpening = null;
-		}
-	}
-	function rememberFormsFocus(event: FocusEvent) {
-		const input = event.target;
-		if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) return;
-		const field = input.closest<HTMLElement>('[data-record-edit-field]')?.dataset.recordEditField;
-		const selector = field
-			? `[data-record-edit-field="${CSS.escape(field)}"] ${input.tagName.toLowerCase()}`
-			: input.id
-				? `#${CSS.escape(input.id)}`
-				: null;
-		if (selector)
-			s.formsSessionFocus = { selector, start: input.selectionStart, end: input.selectionEnd };
-	}
-	function formsReviewText(value: unknown): string {
-		return typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value ?? '');
-	}
 	$effect(() => {
 		if (s.formsSessionKey) workbench?.markDirty(s.formsSessionKey, formsSessionDirty());
 	});
@@ -843,1790 +573,6 @@
 		await attachFormsSession();
 	});
 
-	async function loadProject() {
-		const response = await projectsApi.get(projectId);
-
-		if (response.code === 0 && response.data) {
-			s.project = response.data;
-		}
-	}
-
-	async function loadScenarioTemplates() {
-		s.templatesLoading = true;
-
-		const response = await projectsApi.listScenarioTemplates({ project_type_key: 'custom_form' });
-
-		s.templatesLoading = false;
-
-		if (response.code !== 0) {
-			toast.error(response.message);
-			s.scenarioTemplates = [];
-
-			return;
-		}
-
-		s.scenarioTemplates = response.data?.items ?? [];
-	}
-
-	async function loadWorkspaceMembers() {
-		s.workspaceMembersLoading = true;
-
-		const response = await membersApi.list(workspaceId);
-
-		s.workspaceMembersLoading = false;
-
-		if (response.code !== 0) {
-			s.workspaceMembers = [];
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.workspaceMembers = response.data?.items ?? [];
-	}
-
-	async function loadForms() {
-		const response = await formsApi.list(projectId, { page: 1, per_page: 100 });
-
-		if (response.code !== 0) {
-			toast.error(response.message);
-			s.forms = [];
-
-			return;
-		}
-
-		s.forms = response.data?.items ?? [];
-
-		const urlFormId = page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
-
-		if (urlFormId && s.forms.some((form) => form.id === urlFormId)) {
-			await openForm(urlFormId, { syncUrl: false });
-		} else {
-			clearSelectedFormState();
-		}
-
-		await loadPrintJobs();
-	}
-
-	function clearSelectedFormState() {
-		s.selectedFormId = '';
-		s.records = [];
-		s.filterPreviewRecords = [];
-		s.formViews = [];
-		s.formEvents = [];
-		s.formPermissions = null;
-		s.memberPermissionDraft = defaultPermissionActions();
-		s.memberFieldReadDraft = {};
-		s.memberFieldWriteDraft = {};
-		s.selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
-		s.panelRecordId = null;
-		s.selectedRecord = null;
-		s.selectedRecordLinks = [];
-		s.selectedRecordChildren = [];
-		s.selectedRecordComments = [];
-		s.recordCommentDraft = '';
-		s.recordAttachments = [];
-		s.relationTargets = {};
-		s.designerFieldDrafts = [];
-		s.designerSyncedFormId = '';
-		s.activeMode = 'data';
-		s.editingRecordId = null;
-		s.recordEditorOpen = false;
-		s.recordPage = 1;
-	}
-
-	async function syncFormUrl(formId: string) {
-		const url = new URL(page.url.href);
-
-		url.searchParams.set('form', formId);
-		url.searchParams.delete('form_id');
-		url.searchParams.delete('record');
-		url.searchParams.delete('record_id');
-		url.searchParams.delete('view');
-
-		const next = `${url.pathname}${url.search}${url.hash}`;
-		const current = `${page.url.pathname}${page.url.search}${page.url.hash}`;
-
-		if (next !== current) {
-			await goto(next, { replaceState: true, reset: false });
-		}
-	}
-
-	async function loadFormState(formId: string, options: { syncUrl?: boolean } = {}) {
-		const form = s.forms.find((item) => item.id === formId);
-
-		if (!form) return false;
-
-		s.selectedFormId = form.id;
-		s.selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
-		s.panelRecordId = null;
-		s.editingRecordId = null;
-		s.recordEditorOpen = false;
-		s.recordPage = 1;
-
-		// Record ids belong to the form they were focused from; keeping them
-		// across a form switch filters every view down to zero rows.
-		s.focusedRecordIds = [];
-
-		s.lastDeletedRecord = null;
-		s.selectedRecord = null;
-		s.selectedRecordLinks = [];
-		s.selectedRecordChildren = [];
-		s.selectedRecordComments = [];
-		s.recordCommentDraft = '';
-		s.recordAttachments = [];
-		s.relationTargets = {};
-		s.formViews = [];
-		s.formPermissions = null;
-		s.formEvents = [];
-		s.activeMode = 'data';
-		syncDesignerDrafts(form);
-		syncDetailHeaderDraft(form);
-		syncDetailHighlightDraft(form);
-		syncDetailPageCompositionDraft(form);
-		syncDetailLayoutSectionDrafts(form);
-
-		if (options.syncUrl !== false) await syncFormUrl(form.id);
-
-		await loadFormPermissions();
-		await loadFormViews();
-		return await loadRecords();
-	}
-
-	async function loadFormViews() {
-		if (!s.selectedFormId) {
-			s.formViews = [];
-			s.selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
-
-			return;
-		}
-
-		const response = await formsApi.listViews(s.selectedFormId);
-
-		if (response.code !== 0) {
-			toast.error(response.message);
-			s.formViews = [];
-			s.selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
-			applyView(precedence.ALL_RECORDS_VIEW_ID);
-
-			return;
-		}
-
-		s.formViews = sortViewsByDefault(response.data ?? []);
-		const urlForm = page.url.searchParams.get('form') ?? page.url.searchParams.get('form_id');
-		const resolved = precedence.resolveInitialView({
-			views: s.formViews,
-			urlViewId: urlForm === s.selectedFormId ? page.url.searchParams.get('view') : null,
-			rememberedViewId: precedence.readRememberedView(currentUserId, s.selectedFormId)
-		});
-		if (resolved.dropRemembered) precedence.forgetRememberedView(currentUserId, s.selectedFormId);
-		applyView(resolved.viewId);
-	}
-
-	async function loadFormPermissions() {
-		if (!s.selectedFormId) {
-			s.formPermissions = null;
-			s.memberPermissionDraft = defaultPermissionActions();
-			s.memberRecordScopeDraft = 'all';
-			s.memberFieldReadDraft = {};
-			s.memberFieldWriteDraft = {};
-
-			return;
-		}
-
-		s.permissionsLoading = true;
-
-		const response = await formsApi.getPermissions(s.selectedFormId);
-
-		s.permissionsLoading = false;
-
-		if (response.code !== 0 || !response.data) {
-			s.formPermissions = null;
-			s.memberPermissionDraft = defaultPermissionActions();
-			s.memberRecordScopeDraft = 'all';
-			s.memberFieldReadDraft = defaultFieldReadDraft();
-			s.memberFieldWriteDraft = defaultFieldWriteDraft();
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.formPermissions = response.data;
-		s.memberPermissionDraft = rolePermissionActions(response.data, 'member');
-		s.memberRecordScopeDraft = roleRecordScope(response.data, 'member');
-		s.memberFieldReadDraft = roleFieldReadPermissions(response.data, 'member');
-		s.memberFieldWriteDraft = roleFieldWritePermissions(response.data, 'member');
-	}
-
-	async function saveMemberPermissions() {
-		if (!selectedForm) return;
-
-		s.permissionsSaving = true;
-
-		const response = await formsApi.updatePermissions(selectedForm.id, [
-			{
-				subject_type: 'role',
-				subject_id: 'member',
-				policy: {
-					actions: s.memberPermissionDraft,
-					record_scope: s.memberRecordScopeDraft,
-					fields: memberFieldPolicy()
-				}
-			}
-		]);
-
-		s.permissionsSaving = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.formPermissions = response.data;
-		s.memberPermissionDraft = rolePermissionActions(response.data, 'member');
-		s.memberRecordScopeDraft = roleRecordScope(response.data, 'member');
-		s.memberFieldReadDraft = roleFieldReadPermissions(response.data, 'member');
-		s.memberFieldWriteDraft = roleFieldWritePermissions(response.data, 'member');
-		toast.success($t('forms.permissionsSaved'));
-	}
-
-	async function loadRecords() {
-		if (!s.selectedFormId) return false;
-
-		s.recordsLoading = true;
-		const query = recordQuery;
-		s.loadedRecordQuery = JSON.stringify([s.selectedFormId, query]);
-
-		const [response, previewResponse] = await Promise.all([
-			formsApi.listRecords(s.selectedFormId, {
-				page: 1,
-				per_page: query.per_page,
-				view_id: query.view_id,
-				sort: query.sort
-			}),
-			formsApi.listRecords(s.selectedFormId, { page: 1, per_page: 100 })
-		]);
-
-		if (response.code !== 0) {
-			toast.error(response.message);
-			s.records = [];
-		} else {
-			s.records = response.data?.items ?? [];
-			s.serverRecordTotal = response.data?.total ?? s.records.length;
-
-			if (
-				s.selectedRecord &&
-				s.selectedRecord.id !== s.panelRecordId &&
-				!s.records.some((record) => record.id === s.selectedRecord?.id)
-			) {
-				s.selectedRecord = null;
-				s.selectedRecordLinks = [];
-				s.selectedRecordChildren = [];
-				s.selectedRecordComments = [];
-				void syncRecordDetailUrl(null);
-			}
-		}
-
-		if (previewResponse.code === 0) {
-			s.filterPreviewRecords = previewResponse.data?.items ?? [];
-		} else {
-			s.filterPreviewRecords = s.records;
-		}
-
-		await loadAggregates();
-		await loadRelationTargets();
-		await loadFormEvents();
-		resetRecordDraft();
-		s.recordsLoading = false;
-		return response.code === 0 && previewResponse.code === 0;
-	}
-
-	async function loadFormEvents() {
-		if (!s.selectedFormId) {
-			s.formEvents = [];
-
-			return;
-		}
-
-		s.eventsLoading = true;
-
-		const response = await formsApi.listEvents(s.selectedFormId);
-
-		s.eventsLoading = false;
-
-		if (response.code !== 0) {
-			s.formEvents = [];
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.formEvents = response.data?.items ?? [];
-	}
-
-	async function loadPrintJobs() {
-		if (!printJobForm) {
-			s.printJobs = [];
-
-			return;
-		}
-
-		const response = await formsApi.listRecords(printJobForm.id, { page: 1, per_page: 8 });
-
-		if (response.code === 0 && response.data) {
-			s.printJobs = response.data.items ?? [];
-		}
-	}
-
-	async function loadRelationTargets() {
-		if (!selectedForm) {
-			s.relationTargets = {};
-
-			return;
-		}
-
-		const relationFields = fields.filter(
-			(field) => field.type === 'relation' && field.relation?.target_type !== 'external'
-		);
-
-		if (relationFields.length === 0) {
-			s.relationTargets = {};
-
-			return;
-		}
-
-		s.relationTargetsLoading = true;
-
-		const entries = await Promise.all(
-			relationFields.map(async (field) => {
-				const response = await formsApi.listRelationTargets(selectedForm.id, {
-					field_key: field.key,
-					per_page: 100
-				});
-
-				return [
-					field.key,
-					response.code === 0 && response.data ? response.data.items : []
-				] as const;
-			})
-		);
-
-		s.relationTargets = Object.fromEntries(entries);
-		s.relationTargetsLoading = false;
-	}
-
-	async function loadAggregates() {
-		if (!s.selectedFormId || !selectedForm) {
-			s.aggregates = {};
-
-			return;
-		}
-
-		const fieldsToAggregate = parseFields(selectedForm.schema).filter((field) =>
-			['amount', 'number', 'integer'].includes(field.type ?? 'text')
-		);
-
-		const results = await Promise.all(
-			fieldsToAggregate.map(async (field) => {
-				const response = await formsApi.aggregate(s.selectedFormId, field.key, 'sum');
-
-				return [field.key, response.code === 0 && response.data ? response.data : null] as const;
-			})
-		);
-
-		s.aggregates = Object.fromEntries(
-			results.filter((entry): entry is readonly [string, FormAggregate] => Boolean(entry[1]))
-		);
-	}
-
-	async function handleCreateForm() {
-		let schema: Record<string, unknown>;
-
-		try {
-			const parsed = s.showAdvancedSchema
-				? (JSON.parse(s.formDraft.schemaText) as unknown)
-				: buildSchemaFromDrafts();
-
-			if (!isRecord(parsed)) throw new Error($t('forms.schemaMustBeObject'));
-
-			schema = parsed;
-		} catch (error) {
-			toast.error(error instanceof Error ? error.message : $t('forms.invalidSchema'));
-
-			return;
-		}
-
-		s.formSubmitting = true;
-
-		const response = await formsApi.create(projectId, {
-			key: s.formDraft.key.trim(),
-			name: s.formDraft.name.trim(),
-			description: s.formDraft.description.trim(),
-			title_template: s.formDraft.title_template.trim() || '{id}',
-			schema
-		});
-
-		s.formSubmitting = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.forms = [response.data, ...s.forms];
-		s.showCreateForm = false;
-		resetFormDraft();
-		toast.success($t('forms.formCreated'));
-		await openForm(response.data.id);
-		s.activeMode = 'design';
-		void loadDesignerSafety(response.data);
-	}
-
-	async function handleSaveRecord() {
-		if (!selectedForm) return;
-
-		let values: Record<string, unknown>;
-
-		try {
-			values = buildRecordPayload(fields);
-		} catch (error) {
-			toast.error(error instanceof Error ? error.message : $t('forms.invalidRecordValues'));
-
-			return;
-		}
-
-		s.recordSubmitting = true;
-
-		const wasEditing = Boolean(s.editingRecordId);
-
-		const response = s.editingRecordId
-			? await updateRecordWithVersion(s.editingRecordId, {
-					title: s.recordTitle.trim() || undefined,
-					values,
-					source: { type: 'web' }
-				})
-			: await formsApi.createRecord(selectedForm.id, {
-					title: s.recordTitle.trim() || undefined,
-					values,
-					source: { type: 'web' }
-				});
-
-		s.recordSubmitting = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		if (!wasEditing) {
-			await createParentChildLinksFromRelationFields(response.data, values);
-		}
-
-		s.records = s.editingRecordId
-			? s.records.map((record) => (record.id === response.data?.id ? response.data : record))
-			: [response.data, ...s.records];
-
-		s.filterPreviewRecords = s.editingRecordId
-			? s.filterPreviewRecords.map((record) =>
-					record.id === response.data?.id ? response.data : record
-				)
-			: [response.data, ...s.filterPreviewRecords];
-
-		s.selectedRecord = response.data;
-		s.editingRecordId = null;
-		s.recordEditorOpen = false;
-		if (s.panelRecordId) announce($t('forms.recordPanel.announceSaved'));
-		s.recordAttachments = [];
-		resetRecordDraft();
-		toast.success(wasEditing ? $t('forms.recordUpdated') : $t('forms.recordSaved'));
-
-		await Promise.all([
-			reloadSelectedRecord(),
-			loadAggregates(),
-			loadSelectedRecordLinks(),
-			loadSelectedRecordChildren(),
-			loadSelectedRecordComments(),
-			loadPrintJobs()
-		]);
-	}
-
-	async function createParentChildLinksFromRelationFields(
-		record: FormRecord,
-		values: Record<string, unknown>
-	) {
-		const relationFields = fields.filter(
-			(field) =>
-				(field.type === 'relation' || field.type === 'child_table') &&
-				field.relation?.relation_type === 'parent_child'
-		);
-
-		for (const field of relationFields) {
-			const value = values[field.key];
-
-			if (!isRecord(value) || typeof value.record_id !== 'string' || !value.record_id) continue;
-
-			const response = await formsApi.createRecordLink(record.id, {
-				target_type: 'form_record',
-				target_id: value.record_id,
-				relation_key: field.relation?.relation_key || field.key,
-				relation_type: 'parent_child',
-				metadata: { source: 'web', relation_field: field.key }
-			});
-
-			if (response.code !== 0) {
-				toast.error(response.message);
-			}
-		}
-	}
-
-	async function handleDeleteRecord(record: FormRecord) {
-		const label = record.title || record.id;
-
-		if (
-			!(await confirmAction({
-				tone: 'destructive',
-				title: $t('forms.dialogs.deleteRecord.title', { values: { title: label } }),
-				body: $t('forms.dialogs.deleteRecord.body'),
-				confirmLabel: $t('forms.dialogs.deleteRecord.confirm', { values: { title: label } })
-			}))
-		) {
-			return;
-		}
-
-		s.deletingRecordId = record.id;
-
-		const response = await formsApi.deleteRecord(record.id);
-
-		s.deletingRecordId = null;
-
-		if (response.code !== 0) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.lastDeletedRecord = { id: record.id, title: label };
-		if (s.panelRecordId === record.id) closeRecordPanel();
-		s.records = s.records.filter((item) => item.id !== record.id);
-		s.filterPreviewRecords = s.filterPreviewRecords.filter((item) => item.id !== record.id);
-		s.printJobs = s.printJobs.filter((item) => item.id !== record.id);
-
-		if (s.selectedRecord?.id === record.id) {
-			s.selectedRecord = null;
-			s.selectedRecordLinks = [];
-			s.selectedRecordChildren = [];
-			s.selectedRecordComments = [];
-			s.recordCommentDraft = '';
-		}
-
-		if (s.editingRecordId === record.id) {
-			cancelEditRecord();
-		}
-
-		s.focusedRecordIds = s.focusedRecordIds.filter((item) => item !== record.id);
-		toast.success($t('forms.recordDeleted'));
-		await loadAggregates();
-	}
-
-	/**
-	 * Deletes are soft on the server, so surface the only entry point that can
-	 * undo one instead of leaving the record unreachable.
-	 */
-	async function handleRestoreLastDeletedRecord() {
-		const target = s.lastDeletedRecord;
-
-		if (!target) return;
-
-		s.restoringRecordId = target.id;
-
-		const response = await formsApi.restoreRecord(target.id);
-
-		s.restoringRecordId = null;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.lastDeletedRecord = null;
-		toast.success($t('forms.recordRestored'));
-		await loadRecords();
-	}
-
-	function dismissLastDeletedRecord() {
-		s.lastDeletedRecord = null;
-	}
-
-	async function copyRecordId(record: FormRecord) {
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(record.id);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep the record action non-blocking.
-		}
-
-		s.copiedCardRecordId = record.id;
-		toast.success($t('forms.recordIdCopied'));
-	}
-
-	function calendarScheduleKey(occurrence: CalendarRecordOccurrence): string {
-		return `${occurrence.record.id}:${occurrence.startDate}`;
-	}
-
-	async function copyCalendarSchedule(occurrence: CalendarRecordOccurrence) {
-		const value = JSON.stringify(
-			{
-				record_id: occurrence.record.id,
-				title: occurrence.record.title,
-				start: occurrence.startDate,
-				end: occurrence.endDate,
-				span_days: occurrence.spanDays,
-				recurring: occurrence.recurring
-			},
-			null,
-			2
-		);
-
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(value);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep calendar operations non-blocking.
-		}
-
-		s.copiedCalendarScheduleKey = calendarScheduleKey(occurrence);
-		toast.success($t('forms.calendarScheduleCopied'));
-	}
-
-	function canShiftCalendarOccurrence(occurrence: CalendarRecordOccurrence): boolean {
-		if (!calendarDateField || !['date', 'datetime'].includes(calendarDateField.type ?? 'text'))
-			return false;
-
-		return (
-			occurrence.spanStart &&
-			!occurrence.recurring &&
-			occurrence.startDate === calendarRecordIsoDate(occurrence.record, calendarDateField)
-		);
-	}
-
-	async function shiftCalendarOccurrence(occurrence: CalendarRecordOccurrence, days: number) {
-		if (!canShiftCalendarOccurrence(occurrence) || !calendarDateField) return;
-
-		const currentStart = calendarRecordIsoDate(occurrence.record, calendarDateField);
-
-		if (!currentStart) return;
-
-		const nextStart = addIsoDays(currentStart, days);
-		const endField = viewCalendarEndField();
-
-		const currentEnd = endField ? calendarRecordIsoDate(occurrence.record, endField) : null;
-
-		const duration =
-			currentEnd && currentEnd >= currentStart ? isoDayDiff(currentEnd, currentStart) : 0;
-
-		const nextValues = {
-			...occurrence.record.values,
-			[calendarDateField.key]: calendarDatePayloadValue(calendarDateField, nextStart)
-		};
-
-		if (endField && currentEnd) {
-			nextValues[endField.key] = calendarDatePayloadValue(
-				endField,
-				addIsoDays(nextStart, duration)
-			);
-		}
-
-		s.updatingCalendarRecordId = occurrence.record.id;
-
-		const response = await updateRecordWithVersion(occurrence.record.id, {
-			values: nextValues,
-			source: { type: 'web', origin: 'calendar_shift' }
-		});
-
-		s.updatingCalendarRecordId = null;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		replaceLocalRecord(response.data);
-		s.shiftedCalendarScheduleKey = `${occurrence.record.id}:${nextStart}`;
-		toast.success($t('forms.calendarShifted'));
-		await loadAggregates();
-	}
-
-	function cardRecordDetailsPayload(record: FormRecord) {
-		return {
-			id: record.id,
-			form_id: record.form_id,
-			form_key: selectedForm?.key ?? null,
-			title: record.title,
-			values: record.values,
-			source: record.source,
-			schema_version: record.schema_version ?? null,
-			created_by: record.created_by ?? null,
-			updated_by: record.updated_by ?? null,
-			archived_at: record.archived_at ?? null,
-			created_at: record.created_at,
-			updated_at: record.updated_at
-		};
-	}
-
-	function cardRecordDetailsJson(record: FormRecord): string {
-		return JSON.stringify(cardRecordDetailsPayload(record), null, 2);
-	}
-
-	function exportCardRecordDetails(record: FormRecord) {
-		if (!selectedForm) return;
-
-		const blob = new Blob([cardRecordDetailsJson(record)], {
-			type: 'application/json;charset=utf-8'
-		});
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-${record.id}-record.json`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedCardRecordId = record.id;
-		toast.success($t('forms.recordExported'));
-	}
-
-	function cardGroupRecordsDetailsJson(group: {
-		key: string;
-		label: string;
-		records: FormRecord[];
-	}): string {
-		return JSON.stringify(
-			{
-				form_id: selectedForm?.id ?? null,
-				form_key: selectedForm?.key ?? null,
-				group_by: cardGroupField?.key ?? null,
-				group_key: group.key,
-				group_label: group.label,
-				record_count: group.records.length,
-				records: group.records.map((record) => cardRecordDetailsPayload(record))
-			},
-			null,
-			2
-		);
-	}
-
-	function safeExportSlug(value: string): string {
-		return (
-			value
-				.trim()
-				.replace(/[^a-zA-Z0-9._-]+/g, '-')
-				.replace(/^-+|-+$/g, '') || 'group'
-		);
-	}
-
-	function exportCardGroupRecords(group: { key: string; label: string; records: FormRecord[] }) {
-		if (!selectedForm || group.records.length === 0) return;
-
-		const blob = new Blob([cardGroupRecordsDetailsJson(group)], {
-			type: 'application/json;charset=utf-8'
-		});
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-${cardGroupField?.key ?? 'group'}-${safeExportSlug(group.key)}-records.json`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedCardGroupRecordsKey = cardGroupFilterKey(group);
-		toast.success(
-			$t('forms.cardGroupRecordsExported', { values: { count: group.records.length } })
-		);
-	}
-
-	async function copyTimelineEventValue(
-		event: BusinessEvent,
-		value: string,
-		action: 'event-id' | 'aggregate' | 'details'
-	) {
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(value);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep timeline operations non-blocking.
-		}
-
-		s.copiedTimelineEventAction = `${event.id}:${action}`;
-		toast.success($t('forms.timelineEventCopied'));
-	}
-
-	function exportTimelineEventDetails(event: BusinessEvent) {
-		if (!selectedForm) return;
-
-		const blob = new Blob([timelineEventDetailsJson(event)], {
-			type: 'application/json;charset=utf-8'
-		});
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-${event.id}-details.json`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedTimelineEventAction = `${event.id}:details`;
-		toast.success($t('forms.timelineEventExported'));
-	}
-
-	function exportTimelineEventsCsv(events: BusinessEvent[]) {
-		if (!selectedForm || events.length === 0) return;
-
-		const blob = new Blob([timelineEventsCsv(events)], { type: 'text/csv;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-timeline-events.csv`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedTimelineEventsCsvCount = events.length;
-		toast.success($t('forms.timelineEventsExported', { values: { count: events.length } }));
-	}
-
-	function exportTimelineEventsJson(events: BusinessEvent[]) {
-		if (!selectedForm || events.length === 0) return;
-
-		const blob = new Blob([timelineEventsDetailsJson(events)], {
-			type: 'application/json;charset=utf-8'
-		});
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-timeline-events.json`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedTimelineEventsJsonCount = events.length;
-		toast.success($t('forms.timelineEventsJsonExported', { values: { count: events.length } }));
-	}
-
-	async function copyTimelineEventIds(events: BusinessEvent[]) {
-		if (events.length === 0) return;
-
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(events.map((event) => event.id).join('\n'));
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep event-set operations non-blocking.
-		}
-
-		s.copiedTimelineEventIdsCount = events.length;
-		toast.success($t('forms.timelineEventsCopied', { values: { count: events.length } }));
-	}
-
-	function timelineEventAggregateKeys(events: BusinessEvent[]): string[] {
-		return Array.from(
-			new Set(events.map((event) => timelineEventAggregateKey(event)).filter(Boolean))
-		);
-	}
-
-	async function copyTimelineAggregateIds(events: BusinessEvent[]) {
-		const aggregateKeys = timelineEventAggregateKeys(events);
-
-		if (aggregateKeys.length === 0) return;
-
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(aggregateKeys.join('\n'));
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep event-set operations non-blocking.
-		}
-
-		s.copiedTimelineAggregateIdsCount = aggregateKeys.length;
-		toast.success(
-			$t('forms.timelineAggregatesCopied', { values: { count: aggregateKeys.length } })
-		);
-	}
-
-	function timelineEventPinned(event: BusinessEvent): boolean {
-		return s.pinnedTimelineEventIds.includes(event.id);
-	}
-
-	function orderedTimelineEvents(events: BusinessEvent[]): BusinessEvent[] {
-		if (s.pinnedTimelineEventIds.length === 0) return events;
-
-		const pinnedOrder = new Map(s.pinnedTimelineEventIds.map((id, index) => [id, index]));
-
-		return [
-			...events
-				.filter((event) => pinnedOrder.has(event.id))
-				.sort((a, b) => (pinnedOrder.get(a.id) ?? 0) - (pinnedOrder.get(b.id) ?? 0)),
-			...events.filter((event) => !pinnedOrder.has(event.id))
-		];
-	}
-
-	function toggleTimelineEventPinned(event: BusinessEvent) {
-		if (timelineEventPinned(event)) {
-			s.pinnedTimelineEventIds = s.pinnedTimelineEventIds.filter((id) => id !== event.id);
-			toast.success($t('forms.timelineEventUnpinned'));
-
-			return;
-		}
-
-		s.pinnedTimelineEventIds = [
-			event.id,
-			...s.pinnedTimelineEventIds.filter((id) => id !== event.id)
-		];
-
-		toast.success($t('forms.timelineEventPinned'));
-	}
-
-	function focusTimelineEventRecord(event: BusinessEvent) {
-		const record = timelineEventRecord(event);
-
-		if (!record) return;
-
-		s.focusedRecordIds = [record.id];
-
-		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
-
-		toast.success($t('forms.timelineEventRecordFocused'));
-	}
-
-	function timelineEventLinkedRecordIds(events: BusinessEvent[]): string[] {
-		return Array.from(
-			new Set(
-				events
-					.map((event) => timelineEventRecord(event)?.id)
-					.filter((id): id is string => Boolean(id))
-			)
-		);
-	}
-
-	function focusTimelineEventRecords(events: BusinessEvent[]) {
-		const recordIds = timelineEventLinkedRecordIds(events);
-
-		if (recordIds.length === 0) return;
-
-		s.focusedRecordIds = recordIds;
-
-		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
-
-		toast.success($t('forms.focusedRecords', { values: { count: recordIds.length } }));
-	}
-
-	function applyTimelineEventQuickFilter(
-		event: BusinessEvent,
-		target: 'type' | 'actor' | 'aggregate'
-	) {
-		if (target === 'actor' && !event.actor_id) return;
-
-		s.viewDraft = {
-			...s.viewDraft,
-			view_type: 'timeline',
-			timelineSource: 'events',
-			timelineEventLayout: selectedTimelineEventLayout(),
-			timelineEventType: target === 'type' ? event.event_type : s.viewDraft.timelineEventType,
-			timelineEventActor:
-				target === 'actor' ? (event.actor_id ?? '') : s.viewDraft.timelineEventActor,
-			timelineEventAggregate:
-				target === 'aggregate'
-					? timelineEventAggregateKey(event)
-					: s.viewDraft.timelineEventAggregate,
-			timelineTitleField: '',
-			timelineSubtitleField: ''
-		};
-
-		toast.success($t('forms.timelineEventFilterApplied'));
-	}
-
-	function timelineEventDateTimeLocal(date: Date): string {
-		const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-
-		return localDate.toISOString().slice(0, 16);
-	}
-
-	function applyTimelineEventDayWindow(event: BusinessEvent) {
-		const eventDate = new Date(event.created_at);
-
-		if (!Number.isFinite(eventDate.getTime())) return;
-
-		const dayStart = new Date(eventDate);
-
-		dayStart.setHours(0, 0, 0, 0);
-
-		const dayEnd = new Date(eventDate);
-
-		dayEnd.setHours(23, 59, 0, 0);
-
-		s.viewDraft = {
-			...s.viewDraft,
-			view_type: 'timeline',
-			timelineSource: 'events',
-			timelineEventLayout: selectedTimelineEventLayout(),
-			timelineEventFrom: timelineEventDateTimeLocal(dayStart),
-			timelineEventTo: timelineEventDateTimeLocal(dayEnd),
-			timelineTitleField: '',
-			timelineSubtitleField: ''
-		};
-
-		toast.success($t('forms.timelineEventDateWindowApplied'));
-	}
-
-	function clearFocusedRecord() {
-		s.focusedRecordIds = [];
-	}
-
-	function replaceLocalRecord(record: FormRecord) {
-		s.records = s.records.map((item) => (item.id === record.id ? record : item));
-		s.filterPreviewRecords = s.filterPreviewRecords.map((item) =>
-			item.id === record.id ? record : item
-		);
-
-		if (s.selectedRecord?.id === record.id) {
-			s.selectedRecord = record;
-		}
-	}
-
-	async function updateKanbanRecordField(record: FormRecord, field: FormField, value: string) {
-		if (!value || record.values[field.key] === value) return;
-
-		if (!kanbanMoveAllowed(record, value)) {
-			toast.error($t('forms.kanbanWipLimitReached'));
-
-			return;
-		}
-
-		s.updatingKanbanRecordId = record.id;
-
-		const response = await updateRecordWithVersion(record.id, {
-			values: { ...record.values, [field.key]: value },
-			source: { type: 'web', origin: 'kanban' }
-		});
-
-		s.updatingKanbanRecordId = null;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		replaceLocalRecord(response.data);
-		toast.success($t('forms.kanbanStatusUpdated'));
-		await loadAggregates();
-	}
-
-	async function updateCardRecordSelectField(record: FormRecord, field: FormField, value: string) {
-		if (!value || record.values[field.key] === value) return;
-
-		s.updatingCardRecordId = record.id;
-
-		const response = await updateRecordWithVersion(record.id, {
-			values: { ...record.values, [field.key]: value },
-			source: { type: 'web', origin: 'card' }
-		});
-
-		s.updatingCardRecordId = null;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		replaceLocalRecord(response.data);
-		toast.success($t('forms.cardFieldUpdated'));
-		await loadAggregates();
-	}
-
-	function cardGroupCollapseKey(group: { key: string }): string {
-		return `${s.selectedViewId || selectedView?.id || 'card'}:${group.key}`;
-	}
-
-	function cardGroupCollapsed(group: { key: string }): boolean {
-		return s.collapsedCardGroupKeys.includes(cardGroupCollapseKey(group));
-	}
-
-	function toggleCardGroup(group: { key: string }) {
-		const key = cardGroupCollapseKey(group);
-
-		s.collapsedCardGroupKeys = s.collapsedCardGroupKeys.includes(key)
-			? s.collapsedCardGroupKeys.filter((item) => item !== key)
-			: [...s.collapsedCardGroupKeys, key];
-	}
-
-	function cardGroupFilterKey(group: { key: string; label: string }): string {
-		return `${cardGroupField?.key ?? '__none__'}:${group.key}:${group.label}`;
-	}
-
-	async function copyCardGroupRecordIds(group: {
-		key: string;
-		label: string;
-		records: FormRecord[];
-	}) {
-		if (group.records.length === 0) return;
-
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(group.records.map((record) => record.id).join('\n'));
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep group operations non-blocking.
-		}
-
-		s.copiedCardGroupRecordIdsKey = cardGroupFilterKey(group);
-		toast.success(
-			$t('forms.cardGroupRecordIdsCopied', { values: { count: group.records.length } })
-		);
-	}
-
-	function focusCardGroupRecords(group: { records: FormRecord[] }) {
-		if (group.records.length === 0) return;
-
-		s.focusedRecordIds = group.records.map((record) => record.id);
-
-		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
-
-		toast.success($t('forms.focusedRecords', { values: { count: group.records.length } }));
-	}
-
-	function cardGroupFilterDraft(group: { label: string }): ViewFilterDraft | null {
-		if (!cardGroupField) return null;
-
-		return {
-			field: cardGroupField.key,
-			operator: 'equals',
-			value: group.label
-		};
-	}
-
-	function canApplyCardGroupFilter(group: { label: string }): boolean {
-		const filter = cardGroupFilterDraft(group);
-
-		if (!filter) return false;
-
-		const currentGroups = visibleViewDraftFilterGroups().filter((item) => item.filters.length > 0);
-		const currentFilterCount = currentGroups.reduce(
-			(count, item) => count + item.filters.length,
-			0
-		);
-
-		if (currentFilterCount >= 10) return false;
-		if (currentGroups.length < 5) return true;
-
-		const lastGroup = currentGroups[currentGroups.length - 1];
-
-		return Boolean(lastGroup && lastGroup.filters.length < 5);
-	}
-
-	function applyCardGroupFilter(group: { key: string; label: string }) {
-		if (!canApplyCardGroupFilter(group)) return;
-
-		const filter = cardGroupFilterDraft(group);
-
-		if (!filter) return;
-
-		const currentGroups = visibleViewDraftFilterGroups()
-			.filter((item) => item.filters.length > 0)
-			.map((item) => ({
-				logic: item.logic,
-				disabled: item.disabled || undefined,
-				filters: item.filters.map((currentFilter) => ({ ...currentFilter }))
-			}));
-
-		const nextGroups =
-			currentGroups.length === 0
-				? [{ logic: 'all' as ViewFilterLogic, filters: [filter] }]
-				: currentGroups.length < 5
-					? [...currentGroups, { logic: 'all' as ViewFilterLogic, filters: [filter] }]
-					: currentGroups.map((item, index) =>
-							index === currentGroups.length - 1
-								? { ...item, filters: [...item.filters, filter] }
-								: item
-						);
-
-		setViewDraftFilterGroups(nextGroups);
-		updateViewDraftFilterRootLogic('all');
-		s.appliedCardGroupFilterKey = cardGroupFilterKey(group);
-		toast.success($t('forms.cardGroupFilterApplied'));
-	}
-
-	async function updateTimelineRecordSelectField(
-		record: FormRecord,
-		field: FormField,
-		value: string
-	) {
-		if (!value || record.values[field.key] === value) return;
-
-		s.updatingTimelineRecordId = record.id;
-
-		const response = await updateRecordWithVersion(record.id, {
-			values: { ...record.values, [field.key]: value },
-			source: { type: 'web', origin: 'timeline' }
-		});
-
-		s.updatingTimelineRecordId = null;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		replaceLocalRecord(response.data);
-		toast.success($t('forms.timelineFieldUpdated'));
-		await loadAggregates();
-	}
-
-	function selectedKanbanRecords(): FormRecord[] {
-		const selectedIds = new Set(s.selectedKanbanRecordIds);
-
-		return s.records.filter((record) => selectedIds.has(record.id));
-	}
-
-	function isKanbanRecordSelected(recordId: string): boolean {
-		return s.selectedKanbanRecordIds.includes(recordId);
-	}
-
-	function setKanbanRecordSelected(recordId: string, selected: boolean) {
-		s.selectedKanbanRecordIds = selected
-			? Array.from(new Set([...s.selectedKanbanRecordIds, recordId]))
-			: s.selectedKanbanRecordIds.filter((id) => id !== recordId);
-	}
-
-	function clearKanbanSelection() {
-		s.selectedKanbanRecordIds = [];
-	}
-
-	function kanbanBulkMoveAllowed(selectedRecords: FormRecord[], targetValue: string): boolean {
-		if (!kanbanGroupField || selectedRecords.length === 0) return false;
-
-		const limit = kanbanWipLimit(targetValue);
-
-		if (limit === null) return true;
-
-		const selectedIds = new Set(selectedRecords.map((record) => record.id));
-		const currentTargetCount = s.records.filter(
-			(record) =>
-				!selectedIds.has(record.id) &&
-				String(record.values[kanbanGroupField.key] ?? '') === targetValue
-		).length;
-
-		return currentTargetCount + selectedRecords.length <= limit;
-	}
-
-	async function bulkMoveKanbanRecords() {
-		if (!kanbanGroupField || !s.bulkKanbanTarget) return;
-
-		const selectedRecords = selectedKanbanRecords();
-
-		if (selectedRecords.length === 0) {
-			toast.error($t('forms.kanbanBulkSelectFirst'));
-
-			return;
-		}
-
-		if (!kanbanBulkMoveAllowed(selectedRecords, s.bulkKanbanTarget)) {
-			toast.error($t('forms.kanbanWipLimitReached'));
-
-			return;
-		}
-
-		s.bulkMovingKanban = true;
-
-		const updatedRecords: FormRecord[] = [];
-
-		for (const record of selectedRecords) {
-			if (String(record.values[kanbanGroupField.key] ?? '') === s.bulkKanbanTarget) continue;
-
-			const response = await updateRecordWithVersion(record.id, {
-				values: { ...record.values, [kanbanGroupField.key]: s.bulkKanbanTarget },
-				source: { type: 'web', origin: 'kanban_bulk' }
-			});
-
-			if (response.code !== 0 || !response.data) {
-				s.bulkMovingKanban = false;
-				toast.error(response.message);
-
-				return;
-			}
-
-			updatedRecords.push(response.data);
-		}
-
-		s.bulkMovingKanban = false;
-
-		if (updatedRecords.length > 0) {
-			const updatedById = new Map(updatedRecords.map((record) => [record.id, record]));
-
-			s.records = s.records.map((record) => updatedById.get(record.id) ?? record);
-			s.filterPreviewRecords = s.filterPreviewRecords.map(
-				(record) => updatedById.get(record.id) ?? record
-			);
-
-			if (s.selectedRecord && updatedById.has(s.selectedRecord.id)) {
-				s.selectedRecord = updatedById.get(s.selectedRecord.id) ?? s.selectedRecord;
-			}
-		}
-
-		clearKanbanSelection();
-		toast.success($t('forms.kanbanBulkMoved', { values: { count: selectedRecords.length } }));
-		await loadAggregates();
-	}
-
-	function handleKanbanDragStart(event: DragEvent, record: FormRecord) {
-		s.draggingKanbanRecordId = record.id;
-		event.dataTransfer?.setData('text/plain', record.id);
-
-		if (event.dataTransfer) {
-			event.dataTransfer.effectAllowed = 'move';
-		}
-	}
-
-	function handleKanbanDragEnd() {
-		s.draggingKanbanRecordId = null;
-	}
-
-	function handleKanbanDragOver(event: DragEvent, groupLabel: string) {
-		if (!s.draggingKanbanRecordId || !kanbanGroupField) return;
-
-		const record = s.records.find((item) => item.id === s.draggingKanbanRecordId);
-
-		if (!record || !kanbanMoveAllowed(record, groupLabel)) {
-			if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';
-
-			return;
-		}
-
-		event.preventDefault();
-
-		if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-	}
-
-	async function handleKanbanDrop(event: DragEvent, groupLabel: string) {
-		event.preventDefault();
-
-		const recordId = event.dataTransfer?.getData('text/plain') || s.draggingKanbanRecordId;
-
-		s.draggingKanbanRecordId = null;
-
-		if (!recordId || !kanbanGroupField) return;
-
-		const record = s.records.find((item) => item.id === recordId);
-
-		if (!record) return;
-
-		await updateKanbanRecordField(record, kanbanGroupField, groupLabel);
-	}
-
-	async function updateCalendarRecordDate(record: FormRecord, field: FormField, value: string) {
-		if (!value) return;
-
-		const endField = viewCalendarEndField();
-		const currentStart = calendarRecordIsoDate(record, field);
-		const currentEnd = endField ? calendarRecordIsoDate(record, endField) : null;
-		const duration =
-			currentStart && currentEnd && currentEnd >= currentStart
-				? isoDayDiff(currentEnd, currentStart)
-				: 0;
-		const nextValue = calendarDatePayloadValue(field, value);
-		const nextValues = { ...record.values, [field.key]: nextValue };
-
-		if (endField && currentEnd) {
-			nextValues[endField.key] = calendarDatePayloadValue(endField, addIsoDays(value, duration));
-		}
-
-		if (
-			record.values[field.key] === nextValues[field.key] &&
-			(!endField || record.values[endField.key] === nextValues[endField.key])
-		) {
-			return;
-		}
-
-		s.updatingCalendarRecordId = record.id;
-
-		const response = await updateRecordWithVersion(record.id, {
-			values: nextValues,
-			source: { type: 'web', origin: 'calendar' }
-		});
-
-		s.updatingCalendarRecordId = null;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		replaceLocalRecord(response.data);
-		toast.success($t('forms.calendarDateUpdated'));
-		await loadAggregates();
-	}
-
-	async function updateCalendarSeriesDate(record: FormRecord, field: FormField, value: string) {
-		if (!value) return;
-
-		const endField = viewCalendarEndField();
-		const currentStart = calendarRecordIsoDate(record, field);
-		const currentEnd = endField ? calendarRecordIsoDate(record, endField) : null;
-		const duration =
-			currentStart && currentEnd && currentEnd >= currentStart
-				? isoDayDiff(currentEnd, currentStart)
-				: 0;
-		const nextValue = calendarDatePayloadValue(field, value);
-		const nextValues = { ...record.values, [field.key]: nextValue };
-
-		if (endField && currentEnd) {
-			nextValues[endField.key] = calendarDatePayloadValue(endField, addIsoDays(value, duration));
-		}
-
-		if (
-			calendarRecordIsoDate(record, field) === value &&
-			(!endField || record.values[endField.key] === nextValues[endField.key])
-		) {
-			return;
-		}
-
-		s.updatingCalendarRecordId = record.id;
-
-		const response = await updateRecordWithVersion(record.id, {
-			values: nextValues,
-			source: { type: 'web', origin: 'calendar_series' }
-		});
-
-		s.updatingCalendarRecordId = null;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		replaceLocalRecord(response.data);
-		toast.success($t('forms.calendarSeriesUpdated'));
-		await loadAggregates();
-	}
-
-	async function updateCalendarRecordEndDate(
-		record: FormRecord,
-		endField: FormField,
-		value: string
-	) {
-		if (!value) return;
-
-		const startField = viewDateField();
-		const currentStart = startField ? calendarRecordIsoDate(record, startField) : null;
-		const nextEnd = currentStart && value < currentStart ? currentStart : value;
-
-		if (calendarRecordIsoDate(record, endField) === nextEnd) return;
-
-		s.updatingCalendarRecordId = record.id;
-
-		const response = await updateRecordWithVersion(record.id, {
-			values: {
-				...record.values,
-				[endField.key]: calendarDatePayloadValue(endField, nextEnd)
-			},
-			source: { type: 'web', origin: 'calendar_end_resize' }
-		});
-
-		s.updatingCalendarRecordId = null;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		replaceLocalRecord(response.data);
-		toast.success($t('forms.calendarEndDateUpdated'));
-		await loadAggregates();
-	}
-
-	function handleCalendarDragStart(event: DragEvent, record: FormRecord) {
-		s.draggingCalendarRecordId = record.id;
-		event.dataTransfer?.setData('text/plain', record.id);
-
-		if (event.dataTransfer) {
-			event.dataTransfer.effectAllowed = 'move';
-		}
-	}
-
-	function handleCalendarDragEnd() {
-		s.draggingCalendarRecordId = null;
-	}
-
-	function handleCalendarDragOver(event: DragEvent) {
-		if (!s.draggingCalendarRecordId || !calendarDateField) return;
-
-		event.preventDefault();
-
-		if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-	}
-
-	async function handleCalendarDrop(event: DragEvent, isoDate: string) {
-		event.preventDefault();
-
-		const recordId = event.dataTransfer?.getData('text/plain') || s.draggingCalendarRecordId;
-
-		s.draggingCalendarRecordId = null;
-
-		if (!recordId || !calendarDateField) return;
-
-		const record = s.records.find((item) => item.id === recordId);
-
-		if (!record) return;
-
-		await updateCalendarRecordDate(record, calendarDateField, isoDate);
-	}
-
-	async function updateGanttRecordDate(record: FormRecord, startField: FormField, value: string) {
-		if (!value) return;
-
-		const endField = viewGanttEndField();
-		const currentStart = calendarRecordIsoDate(record, startField);
-		const currentEnd = endField ? calendarRecordIsoDate(record, endField) : null;
-		const duration =
-			currentStart && currentEnd && currentEnd >= currentStart
-				? isoDayDiff(currentEnd, currentStart)
-				: 0;
-
-		const nextValues = {
-			...record.values,
-			[startField.key]: calendarDatePayloadValue(startField, value)
-		};
-
-		if (endField && currentEnd) {
-			nextValues[endField.key] = calendarDatePayloadValue(endField, addIsoDays(value, duration));
-		}
-
-		if (
-			record.values[startField.key] === nextValues[startField.key] &&
-			(!endField || record.values[endField.key] === nextValues[endField.key])
-		) {
-			return;
-		}
-
-		s.updatingGanttRecordId = record.id;
-
-		const response = await updateRecordWithVersion(record.id, {
-			values: nextValues,
-			source: { type: 'web', origin: 'gantt' }
-		});
-
-		s.updatingGanttRecordId = null;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		replaceLocalRecord(response.data);
-		toast.success($t('forms.ganttDateUpdated'));
-		await loadAggregates();
-	}
-
-	async function updateGanttRecordEndDate(record: FormRecord, endField: FormField, value: string) {
-		if (!value) return;
-
-		const startField = viewGanttStartField();
-		const currentStart = startField ? calendarRecordIsoDate(record, startField) : null;
-		const nextEnd = currentStart && value < currentStart ? currentStart : value;
-
-		if (calendarRecordIsoDate(record, endField) === nextEnd) return;
-
-		s.updatingGanttRecordId = record.id;
-
-		const response = await updateRecordWithVersion(record.id, {
-			values: {
-				...record.values,
-				[endField.key]: calendarDatePayloadValue(endField, nextEnd)
-			},
-			source: { type: 'web', origin: 'gantt_resize' }
-		});
-
-		s.updatingGanttRecordId = null;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		replaceLocalRecord(response.data);
-		toast.success($t('forms.ganttEndDateUpdated'));
-		await loadAggregates();
-	}
-
-	async function extendGanttTaskEnd(task: GanttTask) {
-		if (!ganttTimeline.endField) return;
-
-		const nextEnd = addGanttBucket(task.end, ganttTimeline.scale, 1);
-
-		await updateGanttRecordEndDate(task.record, ganttTimeline.endField, nextEnd);
-	}
-
-	function handleGanttDragStart(event: DragEvent, record: FormRecord) {
-		s.draggingGanttRecordId = record.id;
-		event.dataTransfer?.setData('text/plain', record.id);
-
-		if (event.dataTransfer) {
-			event.dataTransfer.effectAllowed = 'move';
-		}
-	}
-
-	function handleGanttDragEnd() {
-		s.draggingGanttRecordId = null;
-	}
-
-	function handleGanttDragOver(event: DragEvent) {
-		if (!s.draggingGanttRecordId || !ganttTimeline.startField) return;
-
-		event.preventDefault();
-
-		if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-	}
-
-	async function handleGanttDrop(event: DragEvent, isoDate: string) {
-		event.preventDefault();
-
-		const recordId = event.dataTransfer?.getData('text/plain') || s.draggingGanttRecordId;
-
-		s.draggingGanttRecordId = null;
-
-		if (!recordId || !ganttTimeline.startField) return;
-
-		const record = s.records.find((item) => item.id === recordId);
-
-		if (!record) return;
-
-		await updateGanttRecordDate(record, ganttTimeline.startField, isoDate);
-	}
-
-	async function syncRecordDetailUrl(record: FormRecord | null) {
-		const url = new URL(page.url.href);
-
-		if (record) {
-			url.searchParams.set('form', s.selectedFormId);
-			url.searchParams.set('record', record.id);
-		} else {
-			url.searchParams.delete('record');
-			url.searchParams.delete('record_id');
-
-			if (s.selectedFormId) {
-				url.searchParams.set('form', s.selectedFormId);
-			} else {
-				url.searchParams.delete('form');
-				url.searchParams.delete('form_id');
-			}
-		}
-
-		const next = `${url.pathname}${url.search}${url.hash}`;
-		const current = `${page.url.pathname}${page.url.search}${page.url.hash}`;
-
-		if (next !== current) {
-			await goto(next, { replaceState: true, reset: false });
-		}
-	}
-
-	async function restoreRecordDetailFromUrl() {
-		const recordId = detailUrlRecordId;
-
-		if (recordId && recordId !== s.panelRecordId) await openRecordPanel(recordId, 'none');
-	}
-
-	/** Every view opens a record the same way: in the side panel next to the list. */
-	async function selectRecord(record: FormRecord, options: { syncUrl?: boolean } = {}) {
-		await openRecordPanel(record, options.syncUrl === false ? 'none' : 'push');
-	}
-
-	function closeRecordDetail() {
-		s.selectedRecord = null;
-		s.selectedRecordLinks = [];
-		s.selectedRecordChildren = [];
-		s.selectedRecordComments = [];
-		s.recordCommentDraft = '';
-		s.recordAttachments = [];
-		s.activeMode = 'data';
-		void syncRecordDetailUrl(null);
-	}
-
-	function startEditRecord(record: FormRecord) {
-		s.formsSessionRecordVersion = {
-			recordId: record.id,
-			updatedAt: record.updated_at,
-			schemaVersion: selectedForm?.schema_version ?? 0
-		};
-		s.selectedRecord = record;
-		s.editingRecordId = record.id;
-		s.activeMode = 'data';
-		s.recordTitle = record.title;
-		s.recordDraft = Object.fromEntries(
-			fields.map((field) => [field.key, draftValueForField(field, record)])
-		);
-		void loadRecordAttachments(record.id);
-		cleanFormsGroup('record');
-	}
-
-	function openRecordCreateDrawer() {
-		s.editingRecordId = null;
-		s.selectedRecord = null;
-		s.recordAttachments = [];
-		resetRecordDraft();
-		s.activeMode = 'data';
-		s.recordEditorOpen = true;
-	}
-
-	function openRecordEditDrawer(record: FormRecord) {
-		startEditRecord(record);
-		s.recordEditorOpen = true;
-	}
-
-	function closeRecordEditorDrawer() {
-		s.recordEditorOpen = false;
-		cancelEditRecord();
-	}
-
-	/** Task-local editor: navigation chrome stays reachable; do not trap Tab globally. */
-	function handleGlobalKeydown(event: KeyboardEvent) {
-		if (!s.recordEditorOpen || !s.recordEditorPanel?.contains(document.activeElement)) return;
-		if (event.key === 'Escape') {
-			event.preventDefault();
-			closeRecordEditorDrawer();
-		}
-	}
-
 	$effect(() => {
 		// Editor closed (saved or cancelled) while a record was open: back to the panel's Edit.
 		if (!s.recordEditorOpen && untrack(() => s.panelRecordId))
@@ -2635,5487 +581,18 @@
 			);
 	});
 
-	function goToRecordPage(page: number) {
-		s.recordPage = Math.min(Math.max(page, 1), recordPageCount);
-	}
-
-	function cancelEditRecord() {
-		s.editingRecordId = null;
-		s.recordTitle = '';
-		resetRecordDraft();
-
-		if (s.selectedRecord) {
-			void loadRecordAttachments(s.selectedRecord.id);
-		} else {
-			s.recordAttachments = [];
-		}
-	}
-
-	function rolePermissionActions(
-		permissions: FormPermissions,
-		role: 'owner' | 'admin' | 'member'
-	): Record<FormPermissionAction, boolean> {
-		const row = permissions.policies.find(
-			(policy) => policy.subject_type === 'role' && policy.subject_id === role
-		);
-		const actions = row?.policy?.actions ?? {};
-
-		return Object.fromEntries(
-			formPermissionActions.map((action) => [action, actions[action] ?? true])
-		) as Record<FormPermissionAction, boolean>;
-	}
-
-	function roleRecordScope(
-		permissions: FormPermissions,
-		role: 'owner' | 'admin' | 'member'
-	): FormRecordScope {
-		const row = permissions.policies.find(
-			(policy) => policy.subject_type === 'role' && policy.subject_id === role
-		);
-
-		return row?.policy?.record_scope === 'owned' ? 'owned' : 'all';
-	}
-
-	function defaultFieldWriteDraft(): Record<string, boolean> {
-		return Object.fromEntries(fields.map((field) => [field.key, true]));
-	}
-
-	function defaultFieldReadDraft(): Record<string, boolean> {
-		return Object.fromEntries(fields.map((field) => [field.key, true]));
-	}
-
-	function roleFieldReadPermissions(
-		permissions: FormPermissions,
-		role: 'owner' | 'admin' | 'member'
-	): Record<string, boolean> {
-		const row = permissions.policies.find(
-			(policy) => policy.subject_type === 'role' && policy.subject_id === role
-		);
-		const fieldPolicies = row?.policy?.fields ?? {};
-
-		return Object.fromEntries(
-			fields.map((field) => [field.key, fieldPolicies[field.key]?.read ?? true])
-		);
-	}
-
-	function roleFieldWritePermissions(
-		permissions: FormPermissions,
-		role: 'owner' | 'admin' | 'member'
-	): Record<string, boolean> {
-		const row = permissions.policies.find(
-			(policy) => policy.subject_type === 'role' && policy.subject_id === role
-		);
-		const fieldPolicies = row?.policy?.fields ?? {};
-
-		return Object.fromEntries(
-			fields.map((field) => [field.key, fieldPolicies[field.key]?.write ?? true])
-		);
-	}
-
-	function memberFieldPolicy(): Record<string, { read?: boolean; write?: boolean }> {
-		const policy: Record<string, { read?: boolean; write?: boolean }> = {};
-
-		for (const field of fields) {
-			const fieldPolicy: { read?: boolean; write?: boolean } = {};
-
-			if (s.memberFieldReadDraft[field.key] === false) fieldPolicy.read = false;
-			if (s.memberFieldWriteDraft[field.key] === false) fieldPolicy.write = false;
-			if (Object.keys(fieldPolicy).length > 0) policy[field.key] = fieldPolicy;
-		}
-
-		return policy;
-	}
-
-	function setMemberPermission(action: FormPermissionAction, enabled: boolean) {
-		s.memberPermissionDraft = { ...s.memberPermissionDraft, [action]: enabled };
-	}
-
-	function setMemberRecordScope(scope: FormRecordScope) {
-		s.memberRecordScopeDraft = scope;
-	}
-
-	function setMemberFieldRead(fieldKey: string, enabled: boolean) {
-		s.memberFieldReadDraft = { ...s.memberFieldReadDraft, [fieldKey]: enabled };
-
-		if (!enabled) {
-			s.memberFieldWriteDraft = { ...s.memberFieldWriteDraft, [fieldKey]: false };
-		}
-	}
-
-	function setMemberFieldWrite(fieldKey: string, enabled: boolean) {
-		s.memberFieldWriteDraft = { ...s.memberFieldWriteDraft, [fieldKey]: enabled };
-
-		if (enabled) {
-			s.memberFieldReadDraft = { ...s.memberFieldReadDraft, [fieldKey]: true };
-		}
-	}
-
-	function permissionActionLabel(action: FormPermissionAction): string {
-		return $t(`forms.permissionActions.${action.replace('.', '_')}`);
-	}
-
-	async function loadSelectedRecordLinks() {
-		if (!s.selectedRecord) {
-			s.selectedRecordLinks = [];
-			s.selectedRecordChildren = [];
-			s.selectedRecordComments = [];
-
-			return;
-		}
-
-		const response = await formsApi.listRecordLinks(s.selectedRecord.id);
-
-		if (response.code === 0 && response.data) {
-			s.selectedRecordLinks = response.data;
-		}
-	}
-
-	async function loadSelectedRecordChildren() {
-		if (!s.selectedRecord) {
-			s.selectedRecordChildren = [];
-
-			return;
-		}
-
-		const response = await formsApi.listRecordChildren(s.selectedRecord.id, { per_page: 100 });
-
-		if (response.code === 0 && response.data) {
-			s.selectedRecordChildren = response.data.items;
-		}
-	}
-
-	async function loadSelectedRecordComments() {
-		if (!s.selectedRecord) {
-			s.selectedRecordComments = [];
-
-			return;
-		}
-
-		s.recordCommentsLoading = true;
-
-		const response = await formsApi.listRecordComments(s.selectedRecord.id, { per_page: 20 });
-
-		s.recordCommentsLoading = false;
-
-		if (response.code !== 0) {
-			s.selectedRecordComments = [];
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.selectedRecordComments = response.data?.items ?? [];
-	}
-
-	async function reloadSelectedRecord() {
-		if (!s.selectedRecord) return;
-
-		const recordId = s.selectedRecord.id;
-		const response = await formsApi.getRecord(recordId);
-		if (s.selectedRecord?.id !== recordId) return;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.selectedRecord = response.data;
-		replaceLocalRecord(response.data);
-	}
-
-	async function handleCreateLink() {
-		if (!s.selectedRecord) return;
-
-		s.linkSubmitting = true;
-
-		const response = await formsApi.createRecordLink(s.selectedRecord.id, {
-			target_type: s.linkDraft.target_type.trim() || 'form_record',
-			target_id: s.linkDraft.target_id.trim(),
-			relation_key: s.linkDraft.relation_key.trim() || 'related',
-			relation_type: s.linkDraft.relation_type.trim() || 'reference',
-			metadata: { source: 'web' }
-		});
-
-		s.linkSubmitting = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.selectedRecordLinks = [response.data, ...s.selectedRecordLinks];
-		s.linkDraft = { ...s.linkDraft, target_id: '' };
-		toast.success($t('forms.linkCreated'));
-		await loadSelectedRecordChildren();
-	}
-
-	async function handleCreateRecordComment() {
-		if (!s.selectedRecord) return;
-
-		const body = s.recordCommentDraft.trim();
-
-		if (!body) return;
-
-		s.recordCommentSubmitting = true;
-
-		const response = await formsApi.createRecordComment(s.selectedRecord.id, {
-			body,
-			metadata: {
-				source: 'web',
-				form_id: selectedForm?.id,
-				form_key: selectedForm?.key
-			}
-		});
-
-		s.recordCommentSubmitting = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.selectedRecordComments = [
-			response.data,
-			...s.selectedRecordComments.filter((item) => item.id !== response.data?.id)
-		];
-
-		s.recordCommentDraft = '';
-		await loadFormEvents();
-		toast.success($t('forms.recordCommentAdded'));
-	}
-
-	function childFormForRelationField(field: FormField): UniversalForm | null {
-		const formKey = field.relation?.form_key;
-
-		return formKey ? (s.forms.find((form) => form.key === formKey) ?? null) : null;
-	}
-
-	function parentChildRelationFields(): FormField[] {
-		return fields.filter(
-			(field) =>
-				(field.type === 'relation' || field.type === 'child_table') &&
-				field.relation?.relation_type === 'parent_child' &&
-				Boolean(childFormForRelationField(field))
-		);
-	}
-
-	function childFieldsForForm(formId: string): FormField[] {
-		const childForm = s.forms.find((form) => form.id === formId);
-
-		return childForm ? parseFields(childForm.schema) : [];
-	}
-
-	function defaultDraftForFields(formFields: FormField[]): Record<string, unknown> {
-		return Object.fromEntries(
-			formFields.map((field) => [field.key, defaultDraftValueForField(field)])
-		);
-	}
-
-	function startAddChildRecord(field: FormField) {
-		const childForm = childFormForRelationField(field);
-
-		if (!childForm) return;
-
-		s.childEditor = {
-			relationFieldKey: field.key,
-			childFormId: childForm.id,
-			title: '',
-			draft: defaultDraftForFields(parseFields(childForm.schema))
-		};
-	}
-
-	function startEditChildRecord(child: FormChildRecord) {
-		const childForm = s.forms.find((form) => form.id === child.record.form_id);
-
-		if (!childForm) return;
-
-		const relationField = fields.find(
-			(field) =>
-				(field.type === 'relation' || field.type === 'child_table') &&
-				field.relation?.relation_type === 'parent_child' &&
-				field.relation?.relation_key === child.relation_key &&
-				field.relation?.form_key === childForm.key
-		);
-
-		if (!relationField) return;
-
-		const childFields = parseFields(childForm.schema);
-
-		s.childEditor = {
-			relationFieldKey: relationField.key,
-			childFormId: childForm.id,
-			recordId: child.record.id,
-			title: child.record.title,
-			draft: Object.fromEntries(
-				childFields.map((field) => [field.key, draftValueForField(field, child.record)])
-			)
-		};
-	}
-
-	function cancelChildEditor() {
-		s.childEditor = null;
-	}
-
-	async function saveChildRecord() {
-		if (!s.selectedRecord || !s.childEditor) return;
-
-		const relationField = fields.find((field) => field.key === s.childEditor?.relationFieldKey);
-		const childForm = s.forms.find((form) => form.id === s.childEditor?.childFormId);
-
-		if (!relationField || !childForm) return;
-
-		const editedChild = s.childEditor.recordId
-			? s.selectedRecordChildren.find((item) => item.record.id === s.childEditor?.recordId)
-			: undefined;
-
-		let values: Record<string, unknown>;
-
-		try {
-			values = buildValuesFromDraft(
-				parseFields(childForm.schema),
-				s.childEditor.draft,
-				editedChild?.record.values
-			);
-		} catch (error) {
-			toast.error(error instanceof Error ? error.message : $t('forms.invalidRecordValues'));
-
-			return;
-		}
-
-		s.childSubmitting = true;
-
-		const response = s.childEditor.recordId
-			? await updateRecordWithVersion(s.childEditor.recordId, {
-					title: s.childEditor.title.trim() || undefined,
-					values,
-					source: { type: 'web', parent_record_id: s.selectedRecord.id }
-				})
-			: await formsApi.createRecord(childForm.id, {
-					title: s.childEditor.title.trim() || undefined,
-					values,
-					source: { type: 'web', parent_record_id: s.selectedRecord.id }
-				});
-
-		s.childSubmitting = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		if (!s.childEditor.recordId) {
-			const linkResponse = await formsApi.createRecordLink(s.selectedRecord.id, {
-				target_type: 'form_record',
-				target_id: response.data.id,
-				relation_key: relationField.relation?.relation_key || relationField.key,
-				relation_type: 'parent_child',
-				metadata: {
-					source: 'web',
-					inline_child: true,
-					relation_field: relationField.key
-				}
-			});
-
-			if (linkResponse.code !== 0) {
-				toast.error(linkResponse.message);
-			}
-		}
-
-		s.childEditor = null;
-
-		await Promise.all([
-			reloadSelectedRecord(),
-			loadSelectedRecordChildren(),
-			loadSelectedRecordLinks(),
-			loadAggregates()
-		]);
-
-		toast.success($t('forms.childRecordSaved'));
-	}
-
-	async function deleteChildRecord(child: FormChildRecord) {
-		const label = child.record.title || child.record.id;
-
-		if (
-			!(await confirmAction({
-				tone: 'destructive',
-				title: $t('forms.dialogs.deleteChildRecord.title', { values: { title: label } }),
-				body: $t('forms.dialogs.deleteChildRecord.body'),
-				confirmLabel: $t('forms.dialogs.deleteChildRecord.confirm', { values: { title: label } })
-			}))
-		) {
-			return;
-		}
-
-		s.deletingChildRecordId = child.record.id;
-
-		const response = await formsApi.deleteRecord(child.record.id);
-
-		s.deletingChildRecordId = null;
-
-		if (response.code !== 0) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		if (s.childEditor?.recordId === child.record.id) s.childEditor = null;
-
-		await Promise.all([
-			reloadSelectedRecord(),
-			loadSelectedRecordChildren(),
-			loadSelectedRecordLinks(),
-			loadAggregates()
-		]);
-
-		toast.success($t('forms.childRecordDeleted'));
-	}
-
-	function handleFormChange(event: Event) {
-		void openForm(selectValue(event));
-	}
-
-	function handleModeChange(mode: FormWorkflowMode) {
-		s.activeMode = mode;
-
-		if (mode !== 'data') {
-			s.recordEditorOpen = false;
-			s.editingRecordId = null;
-		}
-
-		if (mode === 'design') {
-			syncDesignerDrafts();
-			syncDetailHeaderDraft();
-			syncDetailHighlightDraft();
-			syncDetailPageCompositionDraft();
-			syncDetailLayoutSectionDrafts();
-			void loadDesignerSafety();
-		}
-	}
-
-	function resetRecordDraft() {
-		const next: Record<string, unknown> = {};
-
-		for (const field of fields) {
-			next[field.key] = defaultDraftValueForField(field);
-		}
-
-		s.recordDraft = next;
-		s.recordTitle = '';
-		s.formsSessionRecordVersion = null;
-		cleanFormsGroup('record');
-	}
-
-	function defaultDraftValueForField(field: FormField): unknown {
-		if (field.default_value !== undefined && field.default_value !== null) {
-			return draftValueFromRecordValue(field, field.default_value);
-		}
-
-		return emptyDraftValue(field);
-	}
-
-	function buildRecordPayload(formFields: FormField[]): Record<string, unknown> {
-		return buildValuesFromDraft(formFields, s.recordDraft, editedRecordValues());
-	}
-
-	function editedRecordValues(): Record<string, unknown> | undefined {
-		if (!s.editingRecordId) return undefined;
-
-		const current = s.records.find((record) => record.id === s.editingRecordId) ?? s.selectedRecord;
-
-		return current?.id === s.editingRecordId ? current.values : undefined;
-	}
-
-	/**
-	 * The API replaces the whole `values` map on PATCH, so every field the
-	 * payload omits is deleted from the stored record. The per-type mapping in
-	 * `#lib/forms/record-values` is exhaustive over `FormFieldType` to keep that
-	 * from silently happening again.
-	 */
-	function buildValuesFromDraft(
-		formFields: FormField[],
-		draft: Record<string, unknown>,
-		existingValues?: Record<string, unknown>
-	): Record<string, unknown> {
-		const values: Record<string, unknown> = {};
-
-		for (const field of formFields) {
-			if (fieldHiddenByCondition(field, draft)) continue;
-
-			const value = recordValueFromDraftValue(field, draft[field.key], {
-				relationTarget: (relationField, recordId) =>
-					s.relationTargets[relationField.key]?.find((item) => item.record_id === recordId),
-				member: (userId) => s.workspaceMembers.find((item) => item.user_id === userId),
-				existingValue: existingValues?.[field.key]
-			});
-
-			if (isMissingRequiredValue(field, value)) {
-				throw new Error(
-					fieldType(field) === 'child_table'
-						? $t('forms.childTableRequiredAfterSave', { values: { field: fieldLabel(field) } })
-						: $t('forms.fieldRequired', { values: { field: fieldLabel(field) } })
-				);
-			}
-
-			if (value === undefined) continue;
-
-			values[field.key] = value;
-		}
-
-		return values;
-	}
-
-	function draftValueForField(field: FormField, record: FormRecord): unknown {
-		return draftValueFromRecordValue(field, record.values[field.key]);
-	}
-
-	function parseFields(schema: Record<string, unknown>): FormField[] {
-		const rawFields = Array.isArray(schema.fields) ? schema.fields : [];
-
-		return rawFields
-			.filter(isRecord)
-			.map((field) => {
-				const rawType = typeof field.type === 'string' ? field.type : 'text';
-
-				return {
-					field_id: typeof field.field_id === 'string' ? field.field_id : undefined,
-					key: typeof field.key === 'string' ? field.key : '',
-					label: typeof field.label === 'string' ? field.label : undefined,
-					type: (rawType === 'select' ? 'single_select' : rawType) as FormField['type'],
-					required: Boolean(field.required),
-					options: Array.isArray(field.options)
-						? field.options.filter((item): item is string => typeof item === 'string')
-						: [],
-
-					option_colors: isRecord(field.option_colors)
-						? Object.fromEntries(
-								Object.entries(field.option_colors).filter(
-									(entry): entry is [string, string] =>
-										typeof entry[0] === 'string' && typeof entry[1] === 'string'
-								)
-							)
-						: undefined,
-
-					option_disabled: Array.isArray(field.option_disabled)
-						? field.option_disabled.filter((item): item is string => typeof item === 'string')
-						: undefined,
-
-					option_archived: Array.isArray(field.option_archived)
-						? field.option_archived.filter((item): item is string => typeof item === 'string')
-						: undefined,
-
-					option_descriptions: isRecord(field.option_descriptions)
-						? Object.fromEntries(
-								Object.entries(field.option_descriptions).filter(
-									(entry): entry is [string, string] =>
-										typeof entry[0] === 'string' && typeof entry[1] === 'string'
-								)
-							)
-						: undefined,
-
-					option_groups: isRecord(field.option_groups)
-						? Object.fromEntries(
-								Object.entries(field.option_groups).filter(
-									(entry): entry is [string, string] =>
-										typeof entry[0] === 'string' && typeof entry[1] === 'string'
-								)
-							)
-						: undefined,
-					amount: isRecord(field.amount) ? (field.amount as FormField['amount']) : undefined,
-					placeholder: typeof field.placeholder === 'string' ? field.placeholder : undefined,
-					help_text: typeof field.help_text === 'string' ? field.help_text : undefined,
-					default_value: field.default_value,
-					validation: isRecord(field.validation)
-						? (field.validation as FormField['validation'])
-						: undefined,
-
-					visibility: isRecord(field.visibility)
-						? (field.visibility as FormField['visibility'])
-						: undefined,
-
-					conditional: isRecord(field.conditional)
-						? (field.conditional as FormField['conditional'])
-						: undefined,
-					policy: isRecord(field.policy) ? (field.policy as FormField['policy']) : undefined,
-					formula: isRecord(field.formula) ? (field.formula as FormField['formula']) : undefined,
-					relation: isRecord(field.relation)
-						? (field.relation as FormField['relation'])
-						: undefined,
-					attachment: isRecord(field.attachment)
-						? (field.attachment as FormField['attachment'])
-						: undefined
-				};
-			})
-			.filter((field) => field.key);
-	}
-
-	function isRecord(value: unknown): value is Record<string, unknown> {
-		return typeof value === 'object' && value !== null && !Array.isArray(value);
-	}
-
-	function detailPageWidgetKey(value: unknown): DetailPageWidgetKey | null {
-		return typeof value === 'string' && detailPageWidgetKeys.has(value as DetailPageWidgetKey)
-			? (value as DetailPageWidgetKey)
-			: null;
-	}
-
-	function detailPageWidgetEntriesFromLayout(
-		layout: Record<string, unknown> | null | undefined
-	): DetailPageWidgetEntry[] {
-		const entries: DetailPageWidgetEntry[] = [];
-		const seen = new Set<DetailPageWidgetKey>();
-		const rawWidgets = isRecord(layout) && Array.isArray(layout.widgets) ? layout.widgets : [];
-
-		for (const rawWidget of rawWidgets) {
-			const key = isRecord(rawWidget)
-				? detailPageWidgetKey(rawWidget.key)
-				: detailPageWidgetKey(rawWidget);
-
-			if (!key || seen.has(key)) continue;
-
-			entries.push({
-				key,
-				enabled: isRecord(rawWidget) ? rawWidget.enabled !== false : true,
-				title: isRecord(rawWidget) && typeof rawWidget.title === 'string' ? rawWidget.title : '',
-				description:
-					isRecord(rawWidget) && typeof rawWidget.description === 'string'
-						? rawWidget.description
-						: '',
-				emptyText:
-					isRecord(rawWidget) && typeof rawWidget.empty_text === 'string'
-						? rawWidget.empty_text
-						: '',
-				showCount: isRecord(rawWidget) ? rawWidget.show_count === true : false,
-				hideEmpty: isRecord(rawWidget) ? rawWidget.hide_empty === true : false,
-				collapsible: isRecord(rawWidget) ? rawWidget.collapsible === true : false,
-				defaultCollapsed:
-					isRecord(rawWidget) && rawWidget.collapsible === true
-						? rawWidget.default_collapsed === true
-						: false,
-				density: isRecord(rawWidget) && rawWidget.density === 'compact' ? 'compact' : 'comfortable',
-				limit: isRecord(rawWidget) ? detailPageWidgetLimitText(rawWidget.limit) : ''
-			});
-
-			seen.add(key);
-		}
-
-		for (const option of detailPageWidgetOptions) {
-			if (!seen.has(option.key)) {
-				entries.push({
-					key: option.key,
-					enabled: true,
-					title: '',
-					description: '',
-					emptyText: '',
-					showCount: false,
-					hideEmpty: false,
-					collapsible: false,
-					defaultCollapsed: false,
-					density: 'comfortable',
-					limit: ''
-				});
-			}
-		}
-
-		return entries;
-	}
-
-	function detailPageWidgetOption(key: DetailPageWidgetKey) {
-		return (
-			detailPageWidgetOptions.find((option) => option.key === key) ?? detailPageWidgetOptions[0]
-		);
-	}
-
-	function detailPageWidgetPayload(entries: DetailPageWidgetEntry[]) {
-		return entries.map((entry) => ({
-			key: entry.key,
-			enabled: entry.enabled,
-			...(entry.title.trim() ? { title: entry.title.trim() } : {}),
-			...(entry.description.trim() ? { description: entry.description.trim() } : {}),
-			...(entry.emptyText.trim() ? { empty_text: entry.emptyText.trim() } : {}),
-			...(entry.showCount ? { show_count: true } : {}),
-			...(entry.hideEmpty ? { hide_empty: true } : {}),
-			...(entry.collapsible ? { collapsible: true } : {}),
-			...(entry.collapsible && entry.defaultCollapsed ? { default_collapsed: true } : {}),
-			...(entry.density === 'compact' ? { density: 'compact' } : {}),
-			...(detailPageWidgetLimitNumber(entry.limit)
-				? { limit: detailPageWidgetLimitNumber(entry.limit) }
-				: {})
-		}));
-	}
-
-	function detailPageWidgetLimitNumber(value: unknown): number | null {
-		const numericValue =
-			typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-
-		if (!Number.isFinite(numericValue)) return null;
-
-		const limit = Math.trunc(numericValue);
-
-		if (limit < 1 || limit > 50) return null;
-
-		return limit;
-	}
-
-	function detailPageWidgetLimitText(value: unknown): string {
-		const limit = detailPageWidgetLimitNumber(value);
-
-		return limit ? String(limit) : '';
-	}
-
-	function detailLayoutFingerprint(form: UniversalForm | null = selectedForm): string {
-		if (!form) return '';
-
-		return `${form.id}:${form.schema_version}:${JSON.stringify(form.detail_layout?.sections ?? [])}`;
-	}
-
-	function detailHeaderFingerprint(form: UniversalForm | null = selectedForm): string {
-		if (!form) return '';
-
-		return `${form.id}:${form.schema_version}:${JSON.stringify(form.detail_layout?.header ?? {})}`;
-	}
-
-	function detailHighlightFingerprint(form: UniversalForm | null = selectedForm): string {
-		if (!form) return '';
-
-		return `${form.id}:${form.schema_version}:${JSON.stringify(form.detail_layout?.highlights ?? [])}`;
-	}
-
-	function detailPageCompositionFingerprint(form: UniversalForm | null = selectedForm): string {
-		if (!form) return '';
-
-		return `${form.id}:${form.schema_version}:${JSON.stringify(form.detail_layout?.page ?? {})}`;
-	}
-
-	function detailPageWidgetRegion(value: unknown): DetailPageWidgetRegion {
-		return value === 'below' ? 'below' : 'sidebar';
-	}
-
-	function detailPageFieldColumns(value: unknown): 1 | 2 {
-		const numericValue =
-			typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-
-		return numericValue === 1 ? 1 : 2;
-	}
-
-	function detailPageCompositionDraftFromForm(
-		form: UniversalForm | null = selectedForm
-	): DetailPageCompositionDraft {
-		if (!form) return { widgetRegion: 'sidebar', fieldColumns: 2 };
-
-		const page = isRecord(form.detail_layout?.page) ? form.detail_layout.page : {};
-
-		return {
-			widgetRegion: detailPageWidgetRegion(page.widget_region),
-			fieldColumns: detailPageFieldColumns(page.field_columns)
-		};
-	}
-
-	function syncDetailPageCompositionDraft(form: UniversalForm | null = selectedForm) {
-		const fingerprint = detailPageCompositionFingerprint(form);
-
-		if (!form) {
-			s.detailPageCompositionDraft = { widgetRegion: 'sidebar', fieldColumns: 2 };
-			s.detailPageCompositionSyncedFingerprint = '';
-
-			return;
-		}
-
-		if (s.detailPageCompositionSyncedFingerprint === fingerprint) return;
-
-		s.detailPageCompositionDraft = detailPageCompositionDraftFromForm(form);
-		s.detailPageCompositionSyncedFingerprint = fingerprint;
-	}
-
-	function detailHeaderDraftFromForm(form: UniversalForm | null = selectedForm): DetailHeaderDraft {
-		if (!form) return { subtitleField: '', badgeField: '' };
-
-		const fieldKeys = new Set(parseFields(form.schema).map((field) => field.key));
-		const header = isRecord(form.detail_layout?.header) ? form.detail_layout.header : {};
-		const subtitleField =
-			typeof header.subtitle_field === 'string' && fieldKeys.has(header.subtitle_field)
-				? header.subtitle_field
-				: '';
-		const badgeField =
-			typeof header.badge_field === 'string' && fieldKeys.has(header.badge_field)
-				? header.badge_field
-				: '';
-
-		return { subtitleField, badgeField };
-	}
-
-	function syncDetailHeaderDraft(form: UniversalForm | null = selectedForm) {
-		const fingerprint = detailHeaderFingerprint(form);
-
-		if (!form) {
-			s.detailHeaderDraft = { subtitleField: '', badgeField: '' };
-			s.detailHeaderSyncedFingerprint = '';
-
-			return;
-		}
-
-		if (s.detailHeaderSyncedFingerprint === fingerprint) return;
-
-		s.detailHeaderDraft = detailHeaderDraftFromForm(form);
-		s.detailHeaderSyncedFingerprint = fingerprint;
-	}
-
-	function detailHighlightDraftFromForm(
-		form: UniversalForm | null = selectedForm
-	): DetailHighlightDraft {
-		if (!form) return { fields: [] };
-
-		const fields = parseFields(form.schema).filter((field) => field.visibility?.detail !== false);
-		const validFieldKeys = new Set(fields.map((field) => field.key));
-		const rawHighlights = Array.isArray(form.detail_layout?.highlights)
-			? form.detail_layout.highlights
-			: [];
-		const highlightFields: string[] = [];
-
-		for (const fieldKey of rawHighlights) {
-			if (
-				typeof fieldKey === 'string' &&
-				validFieldKeys.has(fieldKey) &&
-				!highlightFields.includes(fieldKey)
-			) {
-				highlightFields.push(fieldKey);
-			}
-		}
-
-		return { fields: highlightFields.slice(0, 4) };
-	}
-
-	function syncDetailHighlightDraft(form: UniversalForm | null = selectedForm) {
-		const fingerprint = detailHighlightFingerprint(form);
-
-		if (!form) {
-			s.detailHighlightDraft = { fields: [] };
-			s.detailHighlightSyncedFingerprint = '';
-
-			return;
-		}
-
-		if (s.detailHighlightSyncedFingerprint === fingerprint) return;
-
-		s.detailHighlightDraft = detailHighlightDraftFromForm(form);
-		s.detailHighlightSyncedFingerprint = fingerprint;
-	}
-
-	function detailLayoutSectionDraftsFromForm(
-		form: UniversalForm | null = selectedForm
-	): DetailLayoutSectionDraft[] {
-		if (!form) return [];
-
-		const detailFields = parseFields(form.schema).filter(
-			(field) => field.visibility?.detail !== false
-		);
-		const detailFieldKeys = detailFields.map((field) => field.key);
-		const validFieldKeys = new Set(detailFieldKeys);
-		const usedFieldKeys = new Set<string>();
-		const rawSections = Array.isArray(form.detail_layout?.sections)
-			? form.detail_layout.sections
-			: [];
-
-		const drafts = rawSections
-			.filter(isRecord)
-			.map((section, index) => {
-				const key =
-					typeof section.key === 'string' && section.key.trim().length > 0
-						? section.key.trim()
-						: `section_${index + 1}`;
-
-				const title =
-					typeof section.title === 'string' && section.title.trim().length > 0
-						? section.title.trim()
-						: typeof section.name === 'string' && section.name.trim().length > 0
-							? section.name.trim()
-							: `${$t('forms.detailSectionMain')} ${index + 1}`;
-
-				const description = detailLayoutSectionDescription(section.description);
-				const columns = detailLayoutSectionColumns(section.columns);
-				const density: DetailLayoutSectionDensity =
-					section.density === 'compact' ? 'compact' : 'comfortable';
-				const hideEmptyFields = section.hide_empty_fields === true;
-				const collapsible = section.collapsible === true;
-				const defaultCollapsed = collapsible && section.default_collapsed === true;
-
-				const sectionFields = detailLayoutFieldKeys(section).filter((fieldKey) => {
-					if (!validFieldKeys.has(fieldKey) || usedFieldKeys.has(fieldKey)) return false;
-
-					usedFieldKeys.add(fieldKey);
-
-					return true;
-				});
-
-				return {
-					key,
-					title,
-					description,
-					columns,
-					density,
-					hideEmptyFields,
-					collapsible,
-					defaultCollapsed,
-					fields: sectionFields
-				};
-			})
-			.filter(
-				(section) =>
-					section.fields.length > 0 ||
-					section.title.trim().length > 0 ||
-					section.description.trim().length > 0
-			);
-
-		const unplacedFields = detailFieldKeys.filter((fieldKey) => !usedFieldKeys.has(fieldKey));
-
-		if (drafts.length === 0) {
-			return [
-				{
-					key: 'main',
-					title: $t('forms.detailSectionMain'),
-					description: '',
-					columns: 2,
-					density: 'comfortable',
-					hideEmptyFields: false,
-					collapsible: false,
-					defaultCollapsed: false,
-					fields: detailFieldKeys
-				}
-			];
-		}
-
-		if (unplacedFields.length > 0) {
-			drafts.push({
-				key: nextDetailLayoutSectionKey(drafts, 'additional'),
-				title: $t('forms.detailSectionAdditional'),
-				description: '',
-				columns: 2,
-				density: 'comfortable',
-				hideEmptyFields: false,
-				collapsible: false,
-				defaultCollapsed: false,
-				fields: unplacedFields
-			});
-		}
-
-		return drafts;
-	}
-
-	function syncDetailLayoutSectionDrafts(form: UniversalForm | null = selectedForm) {
-		const fingerprint = detailLayoutFingerprint(form);
-
-		if (!form) {
-			s.detailLayoutSectionDrafts = [];
-			s.detailLayoutSectionSyncedFingerprint = '';
-
-			return;
-		}
-
-		if (s.detailLayoutSectionSyncedFingerprint === fingerprint) return;
-
-		s.detailLayoutSectionDrafts = detailLayoutSectionDraftsFromForm(form);
-		s.detailLayoutSectionSyncedFingerprint = fingerprint;
-	}
-
-	function nextDetailLayoutSectionKey(
-		sections: DetailLayoutSectionDraft[] = s.detailLayoutSectionDrafts,
-		prefix = 'section'
-	): string {
-		const used = new Set(sections.map((section) => section.key));
-		let index = sections.length + 1;
-		let key = `${prefix}_${index}`;
-
-		while (used.has(key)) {
-			index += 1;
-			key = `${prefix}_${index}`;
-		}
-
-		return key;
-	}
-
-	function detailLayoutSectionPayload(sections: DetailLayoutSectionDraft[]) {
-		const validFieldKeys = new Set(
-			fields.filter((field) => field.visibility?.detail !== false).map((field) => field.key)
-		);
-		const usedFieldKeys = new Set<string>();
-
-		return sections
-			.map((section, index) => {
-				const sectionFields = section.fields.filter((fieldKey) => {
-					if (!validFieldKeys.has(fieldKey) || usedFieldKeys.has(fieldKey)) return false;
-
-					usedFieldKeys.add(fieldKey);
-
-					return true;
-				});
-
-				return {
-					key: section.key.trim() || `section_${index + 1}`,
-					title: section.title.trim() || `${$t('forms.detailSectionMain')} ${index + 1}`,
-					...(section.description.trim() ? { description: section.description.trim() } : {}),
-					...(section.columns !== 2 ? { columns: section.columns } : {}),
-					...(section.density === 'compact' ? { density: 'compact' } : {}),
-					...(section.hideEmptyFields ? { hide_empty_fields: true } : {}),
-					...(section.collapsible ? { collapsible: true } : {}),
-					...(section.collapsible && section.defaultCollapsed ? { default_collapsed: true } : {}),
-					fields: sectionFields
-				};
-			})
-			.filter((section) => section.fields.length > 0);
-	}
-
-	function detailLayoutFieldAssignedTo(fieldKey: string): string {
-		return (
-			s.detailLayoutSectionDrafts.find((section) => section.fields.includes(fieldKey))?.key ?? ''
-		);
-	}
-
-	function updateDetailLayoutSectionTitle(index: number, title: string) {
-		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
-			sectionIndex === index ? { ...section, title } : section
-		);
-	}
-
-	function updateDetailLayoutSectionDescription(index: number, description: string) {
-		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
-			sectionIndex === index ? { ...section, description } : section
-		);
-	}
-
-	function updateDetailLayoutSectionColumns(index: number, columns: 1 | 2 | 3) {
-		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
-			sectionIndex === index ? { ...section, columns } : section
-		);
-	}
-
-	function updateDetailLayoutSectionDensity(index: number, density: DetailLayoutSectionDensity) {
-		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
-			sectionIndex === index ? { ...section, density } : section
-		);
-	}
-
-	function updateDetailLayoutSectionHideEmptyFields(index: number, hideEmptyFields: boolean) {
-		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
-			sectionIndex === index ? { ...section, hideEmptyFields } : section
-		);
-	}
-
-	function updateDetailLayoutSectionCollapsible(index: number, collapsible: boolean) {
-		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
-			sectionIndex === index
-				? {
-						...section,
-						collapsible,
-						defaultCollapsed: collapsible ? section.defaultCollapsed : false
-					}
-				: section
-		);
-	}
-
-	function updateDetailLayoutSectionDefaultCollapsed(index: number, defaultCollapsed: boolean) {
-		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) =>
-			sectionIndex === index
-				? {
-						...section,
-						defaultCollapsed: section.collapsible && defaultCollapsed
-					}
-				: section
-		);
-	}
-
-	function addDetailLayoutSection() {
-		const key = nextDetailLayoutSectionKey();
-
-		s.detailLayoutSectionDrafts = [
-			...s.detailLayoutSectionDrafts,
-			{
-				key,
-				title: `${$t('forms.detailSectionMain')} ${s.detailLayoutSectionDrafts.length + 1}`,
-				description: '',
-				columns: 2,
-				density: 'comfortable',
-				hideEmptyFields: false,
-				collapsible: false,
-				defaultCollapsed: false,
-				fields: []
-			}
-		];
-	}
-
-	function removeDetailLayoutSection(index: number) {
-		if (s.detailLayoutSectionDrafts.length <= 1) return;
-
-		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.filter(
-			(_, sectionIndex) => sectionIndex !== index
-		);
-	}
-
-	function moveDetailLayoutSection(index: number, direction: -1 | 1) {
-		const nextIndex = index + direction;
-
-		if (nextIndex < 0 || nextIndex >= s.detailLayoutSectionDrafts.length) return;
-
-		const next = [...s.detailLayoutSectionDrafts];
-
-		[next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-		s.detailLayoutSectionDrafts = next;
-	}
-
-	function setDetailLayoutSectionField(index: number, fieldKey: string, checked: boolean) {
-		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((section, sectionIndex) => {
-			const withoutField = section.fields.filter((key) => key !== fieldKey);
-
-			if (sectionIndex !== index) return { ...section, fields: withoutField };
-
-			return {
-				...section,
-				fields: checked ? [...withoutField, fieldKey] : withoutField
-			};
-		});
-	}
-
-	function moveDetailLayoutSectionField(index: number, fieldKey: string, direction: -1 | 1) {
-		const section = s.detailLayoutSectionDrafts[index];
-
-		if (!section) return;
-
-		const fieldIndex = section.fields.indexOf(fieldKey);
-		const nextFieldIndex = fieldIndex + direction;
-
-		if (fieldIndex < 0 || nextFieldIndex < 0 || nextFieldIndex >= section.fields.length) return;
-
-		const nextFields = [...section.fields];
-
-		[nextFields[fieldIndex], nextFields[nextFieldIndex]] = [
-			nextFields[nextFieldIndex],
-			nextFields[fieldIndex]
-		];
-		s.detailLayoutSectionDrafts = s.detailLayoutSectionDrafts.map((item, sectionIndex) =>
-			sectionIndex === index ? { ...item, fields: nextFields } : item
-		);
-	}
-
-	function setDetailHeaderDraft(patch: Partial<DetailHeaderDraft>) {
-		s.detailHeaderDraft = { ...s.detailHeaderDraft, ...patch };
-	}
-
-	function setDetailHighlightField(fieldKey: string, checked: boolean) {
-		const nextFields = s.detailHighlightDraft.fields.filter((key) => key !== fieldKey);
-
-		if (checked && nextFields.length < 4) nextFields.push(fieldKey);
-
-		s.detailHighlightDraft = { fields: nextFields };
-	}
-
-	function moveDetailHighlightField(fieldKey: string, direction: -1 | 1) {
-		const fields = [...s.detailHighlightDraft.fields];
-		const index = fields.indexOf(fieldKey);
-		const nextIndex = index + direction;
-
-		if (index < 0 || nextIndex < 0 || nextIndex >= fields.length) return;
-
-		[fields[index], fields[nextIndex]] = [fields[nextIndex], fields[index]];
-		s.detailHighlightDraft = { fields };
-	}
-
-	function fieldLabel(field: FormField): string {
-		return field.label?.trim() || field.key.replaceAll('_', ' ');
-	}
-
-	function permissionFieldList(labels: string[]): string {
-		return labels.length > 0 ? labels.join(', ') : $t('forms.noFieldPolicyEffects');
-	}
-
-	function memberFieldHidden(field: FormField): boolean {
-		return s.memberFieldReadDraft[field.key] === false;
-	}
-
-	function memberFieldLocked(field: FormField): boolean {
-		return s.memberFieldWriteDraft[field.key] === false;
-	}
-
-	function fieldHasConditionalHidden(field: FormField): boolean {
-		return Boolean(field.conditional?.hidden_when);
-	}
-
-	function fieldHasConditionalReadOnly(field: FormField): boolean {
-		return Boolean(field.conditional?.read_only_when);
-	}
-
-	function recordFieldHiddenByCondition(field: FormField, record: FormRecord): boolean {
-		return fieldHasConditionalHidden(field) && fieldHiddenByCondition(field, record.values);
-	}
-
-	function recordFieldReadOnlyByCondition(field: FormField, record: FormRecord): boolean {
-		return (
-			fieldHasConditionalReadOnly(field) &&
-			fieldConditionMatches(field.conditional?.read_only_when, record.values)
-		);
-	}
-
-	function recordsFieldHiddenByCondition(
-		field: FormField | null,
-		sourceRecords: FormRecord[]
-	): boolean {
-		return Boolean(
-			field &&
-			fieldHasConditionalHidden(field) &&
-			sourceRecords.some((record) => recordFieldHiddenByCondition(field, record))
-		);
-	}
-
-	function recordsFieldReadOnlyByCondition(
-		field: FormField | null,
-		sourceRecords: FormRecord[]
-	): boolean {
-		return Boolean(
-			field &&
-			fieldHasConditionalReadOnly(field) &&
-			sourceRecords.some((record) => recordFieldReadOnlyByCondition(field, record))
-		);
-	}
-
-	function fieldType(field: FormField): string {
-		return field.type ?? 'text';
-	}
-
-	function fieldOptions(field: FormField): string[] {
-		return field.options ?? [];
-	}
-
-	function fieldDisabledOptions(field: FormField): string[] {
-		return field.option_disabled ?? [];
-	}
-
-	function fieldArchivedOptions(field: FormField): string[] {
-		return field.option_archived ?? [];
-	}
-
-	function optionDisabled(field: FormField, option: string): boolean {
-		return fieldDisabledOptions(field).includes(option);
-	}
-
-	function optionArchived(field: FormField, option: string): boolean {
-		return fieldArchivedOptions(field).includes(option);
-	}
-
-	function recordSelectOptions(field: FormField, draft: Record<string, unknown>): string[] {
-		const selected = new Set<string>();
-		const value = draft[field.key];
-
-		if (typeof value === 'string') selected.add(value);
-
-		if (Array.isArray(value)) {
-			for (const item of value) {
-				if (typeof item === 'string') selected.add(item);
-			}
-		}
-
-		return fieldOptions(field).filter(
-			(option) => !optionArchived(field, option) || selected.has(option)
-		);
-	}
-
-	function optionDescription(field: FormField, option: string): string {
-		return (
-			field.option_descriptions?.[option]?.trim() ??
-			field.option_descriptions?.[option.trim()]?.trim() ??
-			''
-		);
-	}
-
-	function optionGroup(field: FormField, option: string): string {
-		return (
-			field.option_groups?.[option]?.trim() ?? field.option_groups?.[option.trim()]?.trim() ?? ''
-		);
-	}
-
-	function optionDisplayLabel(field: FormField, option: string): string {
-		const group = optionGroup(field, option);
-
-		return group ? `${group} / ${option}` : option;
-	}
-
-	function sanitizeOptionColor(value: unknown): string {
-		if (typeof value !== 'string') return '';
-
-		const trimmed = value.trim();
-
-		if (/^#[0-9a-f]{6}$/i.test(trimmed) || /^#[0-9a-f]{3}$/i.test(trimmed)) return trimmed;
-
-		return '';
-	}
-
-	function fieldPlaceholder(field: FormField): string {
-		if (field.placeholder) return field.placeholder;
-		if (fieldType(field) === 'amount') return field.amount?.currency ?? 'CNY';
-		if (fieldType(field) === 'multi_select') return fieldOptions(field).join(', ');
-
-		return '';
-	}
-
-	function viewColumns(view: FormView | null): string[] {
-		const columns = view?.config?.columns;
-
-		return Array.isArray(columns)
-			? columns.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-			: [];
-	}
-
-	function viewConfigStringArray(view: FormView | null, key: string): string[] {
-		const value = view?.config?.[key];
-
-		return Array.isArray(value)
-			? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-			: [];
-	}
-
-	function orderedFieldsByKeys(baseFields: FormField[], fieldKeys: string[]): FormField[] {
-		if (fieldKeys.length === 0) return baseFields;
-
-		const byKey = new Map(baseFields.map((field) => [field.key, field]));
-		const ordered = fieldKeys
-			.map((key) => byKey.get(key))
-			.filter((field): field is FormField => Boolean(field));
-		const orderedKeys = new Set(ordered.map((field) => field.key));
-
-		return [...ordered, ...baseFields.filter((field) => !orderedKeys.has(field.key))];
-	}
-
-	function viewCardFieldKeys(view: FormView | null): string[] {
-		return viewConfigStringArray(view, 'card_fields');
-	}
-
-	function orderedCardFieldsForView(view: FormView | null): FormField[] {
-		return orderedFieldsByKeys(visibleFields, viewCardFieldKeys(view));
-	}
-
-	function viewConfigString(view: FormView | null, key: string): string {
-		const value = view?.config?.[key];
-
-		return typeof value === 'string' ? value.trim() : '';
-	}
-
-	function viewConfigBoolean(view: FormView | null, key: string): boolean {
-		return view?.config?.[key] === true;
-	}
-
-	function viewConfigRecord(view: FormView | null, key: string): Record<string, unknown> | null {
-		const value = view?.config?.[key];
-
-		return isRecord(value) ? value : null;
-	}
-
-	function isIsoDate(value: string): boolean {
-		return /^\d{4}-\d{2}-\d{2}$/.test(value);
-	}
-
-	function calendarExceptionDateMap(value: unknown): CalendarExceptionDateMap {
-		if (!isRecord(value)) return {};
-
-		const next: CalendarExceptionDateMap = {};
-
-		for (const [recordId, dates] of Object.entries(value)) {
-			if (!recordId.trim() || !Array.isArray(dates)) continue;
-
-			const uniqueDates = Array.from(
-				new Set(
-					dates
-						.filter((date): date is string => typeof date === 'string' && isIsoDate(date.trim()))
-						.map((date) => date.trim())
-				)
-			).sort();
-
-			if (uniqueDates.length > 0) next[recordId] = uniqueDates;
-		}
-
-		return next;
-	}
-
-	function viewIsDefault(view: FormView | null): boolean {
-		return view?.config?.is_default === true;
-	}
-
-	function viewVisibility(view: FormView | null): ViewVisibility {
-		return view?.config?.visibility === 'private' ? 'private' : 'shared';
-	}
-
-	function sortViewsByDefault(views: FormView[]): FormView[] {
-		return [...views].sort((left, right) => {
-			if (viewIsDefault(left) === viewIsDefault(right)) {
-				return new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
-			}
-
-			return viewIsDefault(left) ? -1 : 1;
-		});
-	}
-
-	function normalizeLocalDefaultViews(nextViews: FormView[], defaultViewId: string): FormView[] {
-		return sortViewsByDefault(
-			nextViews.map((view) =>
-				view.id === defaultViewId
-					? view
-					: { ...view, config: { ...view.config, is_default: false } }
-			)
-		);
-	}
-
-	function viewFilterOperator(value: unknown): ViewFilterOperator {
-		return value === 'equals' || value === 'not_equals' || value === 'not_empty'
-			? value
-			: 'contains';
-	}
-
-	function viewFilterLogic(value: unknown): ViewFilterLogic {
-		return value === 'any' || value === 'or' ? 'any' : 'all';
-	}
-
-	function viewSortDirection(value: unknown): ViewSortDirection {
-		return value === 'desc' ? 'desc' : 'asc';
-	}
-
-	function viewCalendarRange(value: unknown): ViewCalendarRange {
-		return value === 'month' ? 'month' : 'week';
-	}
-
-	function viewCalendarDayScope(value: unknown): ViewCalendarDayScope {
-		return value === 'workweek' ? 'workweek' : 'all';
-	}
-
-	function viewCalendarLayout(value: unknown): ViewCalendarLayout {
-		return value === 'agenda' ? 'agenda' : 'grid';
-	}
-
-	function viewGanttScale(value: unknown): GanttScale {
-		return value === 'week' || value === 'month' ? value : 'day';
-	}
-
-	function viewPivotAggregate(value: unknown): PivotAggregate {
-		if (value === 'count' || value === 'avg') return value;
-
-		return 'sum';
-	}
-
-	function viewPivotTotalsMode(value: unknown): PivotTotalsMode {
-		if (value === 'rows' || value === 'columns' || value === 'none') return value;
-
-		return 'all';
-	}
-
-	function viewPivotValueDisplay(value: unknown): PivotValueDisplay {
-		if (value === 'percent_row' || value === 'percent_column' || value === 'percent_total') {
-			return value;
-		}
-
-		return 'value';
-	}
-
-	function viewPivotSortMode(value: unknown): PivotSortMode {
-		if (
-			value === 'row_total_desc' ||
-			value === 'row_total_asc' ||
-			value === 'column_total_desc' ||
-			value === 'column_total_asc'
-		) {
-			return value;
-		}
-
-		return 'label';
-	}
-
-	function viewPivotRowLimit(value: unknown): PivotRowLimit {
-		const numeric = typeof value === 'number' ? value : Number(value);
-
-		if (numeric === 2 || numeric === 5 || numeric === 10) return numeric;
-
-		return 0;
-	}
-
-	function viewPivotColumnLimit(value: unknown): PivotColumnLimit {
-		const numeric = typeof value === 'number' ? value : Number(value);
-
-		if (numeric === 2 || numeric === 5 || numeric === 10) return numeric;
-
-		return 0;
-	}
-
-	function pivotShowRowTotals(mode: PivotTotalsMode): boolean {
-		return mode === 'all' || mode === 'rows';
-	}
-
-	function pivotShowColumnTotals(mode: PivotTotalsMode): boolean {
-		return mode === 'all' || mode === 'columns';
-	}
-
-	function pivotCellIntensity(value: number, table: PivotTable): number {
-		if (!table.heatmap || table.maxCellValue <= 0) return 0;
-
-		const ratio = Math.min(Math.abs(value) / table.maxCellValue, 1);
-
-		return Math.round(ratio * 100);
-	}
-
-	function pivotCellHeatmapStyle(value: number, table: PivotTable): string {
-		const intensity = pivotCellIntensity(value, table);
-
-		if (intensity <= 0) return '';
-
-		// A sequential ramp from 6% to 24% of the chart-1 token over the cell's own ground, so it
-		// follows the theme. Proposed formula: the specification defines no ramp token.
-		const share = (6 + (intensity / 100) * 18).toFixed(1);
-
-		return `background-color: color-mix(in srgb, var(--rf-chart-1) ${share}%, transparent);`;
-	}
-
-	function viewCalendarRecurrence(value: unknown): ViewCalendarRecurrence {
-		if (value === 'daily' || value === 'weekly' || value === 'monthly') return value;
-
-		return 'none';
-	}
-
-	function viewCardLayout(value: unknown): CardLayoutMode {
-		if (value === 'list') return 'list';
-		if (value === 'compact') return 'compact';
-
-		return value === 'gallery' ? 'gallery' : 'standard';
-	}
-
-	function viewCardCoverAspect(value: unknown): CardCoverAspect {
-		if (value === 'wide' || value === 'square' || value === 'portrait') return value;
-
-		return 'auto';
-	}
-
-	function viewCardCoverFit(value: unknown): CardCoverFit {
-		return value === 'contain' ? 'contain' : 'cover';
-	}
-
-	function viewCardCoverPosition(value: unknown): CardCoverPosition {
-		if (value === 'left' || value === 'hidden') return value;
-
-		return 'top';
-	}
-
-	function cardCoverObjectClass(fit: CardCoverFit): string {
-		return fit === 'contain' ? 'bg-surface object-contain' : 'object-cover';
-	}
-
-	function cardCoverImageClass(
-		layout: CardLayoutMode,
-		aspect: CardCoverAspect,
-		fit: CardCoverFit
-	): string {
-		const resolvedAspect =
-			aspect === 'auto'
-				? layout === 'gallery'
-					? 'aspect-[4/3]'
-					: 'aspect-[16/9]'
-				: aspect === 'square'
-					? 'aspect-square'
-					: aspect === 'portrait'
-						? 'aspect-[3/4]'
-						: 'aspect-[16/9]';
-
-		return `${resolvedAspect} w-full ${cardCoverObjectClass(fit)}`;
-	}
-
-	function viewCardFieldLimit(value: unknown): CardFieldLimit {
-		const numeric = typeof value === 'number' ? value : Number(value);
-
-		if (numeric === 3 || numeric === 9 || numeric === 99) return numeric;
-
-		return 6;
-	}
-
-	function viewTimelineSource(value: unknown): ViewTimelineSource {
-		return value === 'events' ? 'events' : 'records';
-	}
-
-	function timelineEventLayout(value: unknown): TimelineEventLayout {
-		return value === 'detailed' ? 'detailed' : 'summary';
-	}
-
-	function viewFilterConfigFromRecord(filter: Record<string, unknown> | null): {
-		field: FormField;
-		operator: ViewFilterOperator;
-		value: string;
-	} | null {
-		if (!filter || typeof filter.field !== 'string') return null;
-
-		const field = fieldByKey(filter.field);
-
-		if (!field) return null;
-
-		return {
-			field,
-			operator: viewFilterOperator(filter.operator),
-			value: typeof filter.value === 'string' ? filter.value : ''
-		};
-	}
-
-	function viewFilterNodeDisabled(value: Record<string, unknown> | null): boolean {
-		return value?.disabled === true || value?.enabled === false;
-	}
-
-	function parsedViewFilterExpressionFromValue(value: unknown): ParsedViewFilterExpression | null {
-		if (!isRecord(value)) return null;
-
-		const filterRecord = isRecord(value.filter) ? value.filter : null;
-		const filter = viewFilterConfigFromRecord(filterRecord);
-
-		if (filter) {
-			return {
-				kind: 'condition',
-				filter,
-				disabled: viewFilterNodeDisabled(value) || viewFilterNodeDisabled(filterRecord)
-			};
-		}
-
-		if (typeof value.field === 'string') {
-			const inlineFilter = viewFilterConfigFromRecord(value);
-
-			return inlineFilter
-				? {
-						kind: 'condition',
-						filter: inlineFilter,
-						disabled: viewFilterNodeDisabled(value)
-					}
-				: null;
-		}
-
-		const rawChildren = Array.isArray(value.children)
-			? value.children
-			: Array.isArray(value.expressions)
-				? value.expressions
-				: [];
-
-		const children = rawChildren
-			.map(parsedViewFilterExpressionFromValue)
-			.filter((child): child is ParsedViewFilterExpression => Boolean(child));
-
-		return children.length > 0
-			? {
-					kind: 'group',
-					logic: viewFilterLogic(value.logic),
-					children,
-					disabled: viewFilterNodeDisabled(value)
-				}
-			: null;
-	}
-
-	function viewFilterGroups(): ParsedViewFilterGroup[] {
-		const config = selectedView?.config ?? {};
-		const groups = Array.isArray(config.filter_groups) ? config.filter_groups : [];
-
-		const parsedGroups = groups
-			.map((group) => {
-				if (!isRecord(group) || !Array.isArray(group.filters)) return null;
-
-				const filters = group.filters
-					.map((filter) => (isRecord(filter) ? viewFilterConfigFromRecord(filter) : null))
-					.filter((filter): filter is ParsedViewFilter => Boolean(filter));
-
-				return filters.length > 0 ? { logic: viewFilterLogic(group.logic), filters } : null;
-			})
-			.filter((group): group is ParsedViewFilterGroup => Boolean(group));
-
-		if (parsedGroups.length > 0) return parsedGroups;
-
-		const filters = Array.isArray(config.filters) ? config.filters : [];
-		const parsed = filters
-			.map((filter) => (isRecord(filter) ? viewFilterConfigFromRecord(filter) : null))
-			.filter((filter): filter is ParsedViewFilter => Boolean(filter));
-
-		if (parsed.length > 0) return [{ logic: 'all', filters: parsed }];
-
-		const legacyFilter = viewFilterConfigFromRecord(viewConfigRecord(selectedView, 'filter'));
-
-		return legacyFilter ? [{ logic: 'all', filters: [legacyFilter] }] : [];
-	}
-
-	function viewFilterExpression(): ParsedViewFilterExpression | null {
-		const config = selectedView?.config ?? {};
-		const expression = parsedViewFilterExpressionFromValue(config.filter_expression);
-
-		if (expression) return expression;
-
-		const groups = viewFilterGroups();
-
-		if (groups.length === 0) return null;
-
-		return {
-			kind: 'group',
-			logic: 'all',
-			children: groups.map((group) => ({
-				kind: 'group',
-				logic: group.logic,
-				children: group.filters.map((filter) => ({ kind: 'condition', filter }))
-			}))
-		};
-	}
-
-	function viewSortConfig(): { field: FormField; direction: ViewSortDirection } | null {
-		const sort = viewConfigRecord(selectedView, 'sort');
-
-		if (!sort || typeof sort.field !== 'string') return null;
-
-		const field = fieldByKey(sort.field);
-
-		if (!field) return null;
-
-		return { field, direction: viewSortDirection(sort.direction) };
-	}
-
-	function fieldByKey(fieldKey: string): FormField | null {
-		return fields.find((field) => field.key === fieldKey) ?? null;
-	}
-
-	function detailLayoutFieldKeys(section: Record<string, unknown>): string[] {
-		const rawFields = Array.isArray(section.fields) ? section.fields : [];
-
-		return rawFields
-			.map((field) => {
-				if (typeof field === 'string') return field;
-				if (isRecord(field) && typeof field.key === 'string') return field.key;
-
-				return '';
-			})
-			.filter((key) => key.trim().length > 0);
-	}
-
-	function detailLayoutSectionColumns(value: unknown, fallback: 1 | 2 | 3 = 2): 1 | 2 | 3 {
-		const numericValue =
-			typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-
-		return numericValue === 1 || numericValue === 2 || numericValue === 3 ? numericValue : fallback;
-	}
-
-	function detailLayoutSectionDescription(value: unknown): string {
-		return typeof value === 'string' ? value.trim() : '';
-	}
-
-	function detailLayoutSectionDensity(value: unknown): DetailLayoutSectionDensity {
-		return value === 'compact' ? 'compact' : 'comfortable';
-	}
-
-	function keepDetailSectionOpen(event: Event, collapsible: boolean) {
-		if (collapsible) return;
-
-		const details = event.currentTarget;
-
-		if (details instanceof HTMLDetailsElement && !details.open) details.open = true;
-	}
-
-	function detailLayoutSectionGridClass(
-		columns: 1 | 2 | 3,
-		density: DetailLayoutSectionDensity = 'comfortable'
-	): string {
-		const gap = density === 'compact' ? 'gap-2' : 'gap-3';
-
-		if (columns === 1) return `grid ${gap}`;
-		if (columns === 3) return `grid ${gap} sm:grid-cols-2 xl:grid-cols-3`;
-
-		return `grid ${gap} sm:grid-cols-2`;
-	}
-
-	function detailLayoutSectionFieldClass(field: FormField, columns: 1 | 2 | 3): string {
-		if (fieldType(field) !== 'child_table' || columns === 1) return 'min-w-0';
-
-		return columns === 3 ? 'min-w-0 sm:col-span-2 xl:col-span-3' : 'min-w-0 sm:col-span-2';
-	}
-
-	function recordValueIsEmpty(value: unknown): boolean {
-		if (value === null || value === undefined) return true;
-		if (typeof value === 'string') return value.trim().length === 0;
-		if (Array.isArray(value)) return value.length === 0 || value.every(recordValueIsEmpty);
-
-		if (isRecord(value)) {
-			if (typeof value.display === 'string') return value.display.trim().length === 0;
-			if (typeof value.name === 'string') return value.name.trim().length === 0;
-			if (typeof value.email === 'string') return value.email.trim().length === 0;
-			if (typeof value.title === 'string') return value.title.trim().length === 0;
-			if (typeof value.decimal === 'string') return value.decimal.trim().length === 0;
-			if ('value' in value) return recordValueIsEmpty(value.value);
-
-			return Object.keys(value).length === 0;
-		}
-
-		return false;
-	}
-
-	function detailLayoutSectionFieldsForRecord(
-		section: DetailLayoutSection,
-		record: FormRecord
-	): FormField[] {
-		if (!section.hideEmptyFields) return section.fields;
-
-		return section.fields.filter((field) => !recordValueIsEmpty(record.values[field.key]));
-	}
-
-	function detailLayoutSections(): DetailLayoutSection[] {
-		const detailFields = fields.filter((field) => field.visibility?.detail !== false);
-		const byKey = new Map(detailFields.map((field) => [field.key, field]));
-		const usedFieldKeys = new Set<string>();
-		const rawSections = Array.isArray(selectedForm?.detail_layout?.sections)
-			? selectedForm.detail_layout.sections
-			: [];
-
-		const sections = rawSections
-			.filter(isRecord)
-			.map((section, index) => {
-				const layoutFields = detailLayoutFieldKeys(section)
-					.map((key) => byKey.get(key))
-					.filter((field): field is FormField => Boolean(field));
-
-				if (layoutFields.length === 0) return null;
-
-				for (const field of layoutFields) usedFieldKeys.add(field.key);
-
-				const key =
-					typeof section.key === 'string' && section.key.trim().length > 0
-						? section.key.trim()
-						: `section_${index + 1}`;
-
-				const title =
-					typeof section.title === 'string' && section.title.trim().length > 0
-						? section.title.trim()
-						: typeof section.name === 'string' && section.name.trim().length > 0
-							? section.name.trim()
-							: $t('forms.detailSectionMain');
-
-				return {
-					key,
-					title,
-					description: detailLayoutSectionDescription(section.description),
-					columns: detailLayoutSectionColumns(section.columns),
-					density: detailLayoutSectionDensity(section.density),
-					hideEmptyFields: section.hide_empty_fields === true,
-					collapsible: section.collapsible === true,
-					defaultCollapsed: section.collapsible === true && section.default_collapsed === true,
-					fields: layoutFields
-				};
-			})
-			.filter((section): section is DetailLayoutSection => Boolean(section));
-
-		const unplacedFields = detailFields.filter((field) => !usedFieldKeys.has(field.key));
-
-		if (sections.length > 0 && unplacedFields.length > 0) {
-			sections.push({
-				key: 'additional',
-				title: $t('forms.detailSectionAdditional'),
-				description: '',
-				columns: 2,
-				density: 'comfortable',
-				hideEmptyFields: false,
-				collapsible: false,
-				defaultCollapsed: false,
-				fields: unplacedFields
-			});
-		}
-
-		if (sections.length > 0) return sections;
-
-		return [
-			{
-				key: 'main',
-				title: $t('forms.detailSectionMain'),
-				description: '',
-				columns: 2,
-				density: 'comfortable',
-				hideEmptyFields: false,
-				collapsible: false,
-				defaultCollapsed: false,
-				fields: detailFields
-			}
-		];
-	}
-
-	function applyViewRecordConfig(sourceRecords: FormRecord[]): FormRecord[] {
-		let nextRecords = [...sourceRecords];
-		const filterExpression = viewFilterExpression();
-
-		if (filterExpression) {
-			nextRecords = nextRecords.filter((record) => {
-				const matches = recordMatchesViewFilterExpression(record, filterExpression);
-
-				return matches !== false;
-			});
-		}
-
-		if (s.focusedRecordIds.length > 0) {
-			const focusedIds = new Set(s.focusedRecordIds);
-
-			nextRecords = nextRecords.filter((record) => focusedIds.has(record.id));
-		}
-
-		const sort = viewSortConfig();
-
-		if (sort) {
-			nextRecords.sort((left, right) =>
-				compareRecordField(left, right, sort.field, sort.direction)
-			);
-		}
-
-		return nextRecords;
-	}
-
-	function recordMatchesViewFilterExpression(
-		record: FormRecord,
-		expression: ParsedViewFilterExpression
-	): boolean | null {
-		if (expression.disabled) return null;
-
-		if (expression.kind === 'condition') {
-			return recordMatchesViewFilter(record, expression.filter);
-		}
-
-		const matches = expression.children
-			.map((child) => recordMatchesViewFilterExpression(record, child))
-			.filter((match): match is boolean => match !== null);
-
-		if (matches.length === 0) return null;
-
-		return expression.logic === 'any' ? matches.some(Boolean) : matches.every(Boolean);
-	}
-
-	function recordMatchesViewFilter(record: FormRecord, filter: ParsedViewFilter): boolean {
-		const expected = filter.value.trim().toLowerCase();
-		const actual = recordComparableText(record, filter.field);
-
-		if (filter.operator === 'not_empty') return actual.length > 0;
-		if (!expected) return true;
-		if (filter.operator === 'equals') return actual.toLowerCase() === expected;
-		if (filter.operator === 'not_equals') return actual.toLowerCase() !== expected;
-
-		return actual.toLowerCase().includes(expected);
-	}
-
-	function parsedViewDraftFilter(filter: ViewFilterDraft): ParsedViewFilter | null {
-		if (!filter.field) return null;
-		if (filter.operator !== 'not_empty' && !filter.value.trim()) return null;
-
-		const field = fieldByKey(filter.field);
-
-		if (!field) return null;
-
-		return {
-			field,
-			operator: filter.operator,
-			value: filter.operator === 'not_empty' ? '' : filter.value.trim()
-		};
-	}
-
-	function viewDraftFilterMatchCount(filter: ViewFilterDraft): number | null {
-		const parsed = parsedViewDraftFilter(filter);
-
-		if (!parsed) return null;
-
-		return s.filterPreviewRecords.filter((record) => recordMatchesViewFilter(record, parsed))
-			.length;
-	}
-
-	function viewDraftFilterGroupMatchCount(group: ViewFilterGroupDraft): number | null {
-		const parsedFilters = group.filters
-			.filter((filter) => !filter.disabled)
-			.map(parsedViewDraftFilter)
-			.filter((filter): filter is ParsedViewFilter => Boolean(filter));
-
-		if (parsedFilters.length === 0) return null;
-
-		return s.filterPreviewRecords.filter((record) => {
-			const matches = parsedFilters.map((filter) => recordMatchesViewFilter(record, filter));
-
-			return group.logic === 'any' ? matches.some(Boolean) : matches.every(Boolean);
-		}).length;
-	}
-
-	function viewDraftFilterExpressionRecords(): FormRecord[] | null {
-		const groups = visibleViewDraftFilterGroups()
-			.filter((group) => !group.disabled)
-			.map((group) => ({
-				logic: group.logic,
-				filters: group.filters
-					.filter((filter) => !filter.disabled)
-					.map(parsedViewDraftFilter)
-					.filter((filter): filter is ParsedViewFilter => Boolean(filter))
-			}))
-			.filter((group) => group.filters.length > 0);
-
-		if (groups.length === 0) return null;
-
-		return s.filterPreviewRecords.filter((record) => {
-			const groupMatches = groups.map((group) => {
-				const matches = group.filters.map((filter) => recordMatchesViewFilter(record, filter));
-
-				return group.logic === 'any' ? matches.some(Boolean) : matches.every(Boolean);
-			});
-
-			return s.viewDraft.filterRootLogic === 'any'
-				? groupMatches.some(Boolean)
-				: groupMatches.every(Boolean);
-		});
-	}
-
-	function viewDraftFilterExpressionRecordIdsText(records: FormRecord[] | null): string {
-		return records?.map((record) => record.id).join('\n') ?? '';
-	}
-
-	function csvCell(value: string): string {
-		return `"${value.replaceAll('"', '""')}"`;
-	}
-
-	function recordsCsv(records: FormRecord[]): string {
-		const exportFields = visibleFields.length > 0 ? visibleFields : fields.slice(0, 8);
-		const header = ['Record ID', 'Title', ...exportFields.map(fieldLabel)].map(csvCell).join(',');
-
-		const rows = records.map((record) =>
-			[
-				record.id,
-				record.title,
-				...exportFields.map((field) => {
-					const value = displayValue(record.values[field.key]);
-
-					return value === '-' ? '' : value;
-				})
-			]
-				.map(csvCell)
-				.join(',')
-		);
-
-		return [header, ...rows].join('\n');
-	}
-
-	function timelineEventsCsv(events: BusinessEvent[]): string {
-		const header = [
-			'Event ID',
-			'Type',
-			'Title',
-			'Subtitle',
-			'Aggregate Type',
-			'Aggregate ID',
-			'Actor',
-			'Created At',
-			'Payload',
-			'Metadata',
-			'Source'
-		]
-			.map(csvCell)
-			.join(',');
-
-		const rows = events.map((event) =>
-			[
-				event.id,
-				event.event_type,
-				timelineEventTitle(event),
-				timelineEventSubtitle(event),
-				event.aggregate_type,
-				event.aggregate_id,
-				event.actor_id ?? '',
-				event.created_at,
-				timelineEventJson(event.payload),
-				timelineEventJson(event.metadata),
-				timelineEventJson(event.source)
-			]
-				.map(csvCell)
-				.join(',')
-		);
-
-		return [header, ...rows].join('\n');
-	}
-
-	function viewDraftFilterExpressionCsv(records: FormRecord[]): string {
-		return recordsCsv(records);
-	}
-
-	function viewDraftFilterExpressionConfig(): Record<string, unknown> | null {
-		return viewFilterExpressionConfigFromGroups(validViewFilterGroups());
-	}
-
-	function viewDraftFilterExpressionJsonText(): string {
-		const expression = viewDraftFilterExpressionConfig();
-
-		return expression ? JSON.stringify(expression, null, 2) : '';
-	}
-
-	function filterOperatorSummary(operator: ViewFilterOperator): string {
-		if (operator === 'equals') return 'equals';
-		if (operator === 'not_equals') return 'does not equal';
-		if (operator === 'not_empty') return 'is not empty';
-
-		return 'contains';
-	}
-
-	function viewDraftFilterExpressionSummaryText(): string {
-		const groups = validViewFilterGroups();
-
-		if (groups.length === 0) return '';
-
-		const rootLogic = s.viewDraft.filterRootLogic === 'any' ? 'ANY group' : 'ALL groups';
-		const lines = [`Filter expression: ${rootLogic}`];
-
-		for (const [groupIndex, group] of groups.entries()) {
-			const groupLogic = group.logic === 'any' ? 'ANY condition' : 'ALL conditions';
-
-			lines.push(`Group ${groupIndex + 1}${group.disabled ? ' [disabled]' : ''}: ${groupLogic}`);
-
-			for (const [filterIndex, filter] of group.filters.entries()) {
-				const field = fieldByKey(filter.field);
-				const label = field ? fieldLabel(field) : filter.field;
-				const value = filter.operator === 'not_empty' ? '' : ` "${filter.value}"`;
-
-				lines.push(
-					`  ${groupIndex + 1}.${filterIndex + 1}${filter.disabled ? ' [disabled]' : ''}: ${label} ${filterOperatorSummary(filter.operator)}${value}`
-				);
-			}
-		}
-
-		return lines.join('\n');
-	}
-
-	function viewDraftFilterExpressionJson(records: FormRecord[]): string {
-		return JSON.stringify(
-			{
-				form_id: selectedForm?.id ?? null,
-				form_key: selectedForm?.key ?? null,
-				record_count: records.length,
-				record_ids: records.map((record) => record.id),
-				filter_expression: viewDraftFilterExpressionConfig(),
-				records: records.map((record) => cardRecordDetailsPayload(record))
-			},
-			null,
-			2
-		);
-	}
-
-	async function copyViewDraftFilterExpressionRecordIds(records: FormRecord[] | null) {
-		const recordIds = viewDraftFilterExpressionRecordIdsText(records);
-
-		if (!recordIds) return;
-
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(recordIds);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
-		}
-
-		s.copiedFilterExpressionRecordIds = recordIds;
-		toast.success($t('forms.filterExpressionRecordIdsCopied'));
-	}
-
-	async function copyViewDraftFilterExpressionJson(expressionJson: string) {
-		if (!expressionJson) return;
-
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(expressionJson);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
-		}
-
-		s.copiedFilterExpressionJson = expressionJson;
-		toast.success($t('forms.filterExpressionJsonCopied'));
-	}
-
-	async function copyViewDraftFilterExpressionSummary(expressionSummary: string) {
-		if (!expressionSummary) return;
-
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(expressionSummary);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
-		}
-
-		s.copiedFilterExpressionSummary = expressionSummary;
-		toast.success($t('forms.filterExpressionSummaryCopied'));
-	}
-
-	async function copyViewDraftFilterExpressionJsonRecords(records: FormRecord[] | null) {
-		if (!records || records.length === 0) return;
-
-		const json = viewDraftFilterExpressionJson(records);
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(json);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
-		}
-
-		s.copiedFilterExpressionJsonRecordIds = viewDraftFilterExpressionRecordIdsText(records);
-		toast.success($t('forms.filterExpressionRecordsJsonCopied'));
-	}
-
-	async function copyViewDraftFilterExpressionCsvRecords(records: FormRecord[] | null) {
-		if (!records || records.length === 0) return;
-
-		const csv = viewDraftFilterExpressionCsv(records);
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(csv);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
-		}
-
-		s.copiedFilterExpressionCsvRecordIds = viewDraftFilterExpressionRecordIdsText(records);
-		toast.success($t('forms.filterExpressionRecordsCsvCopied'));
-	}
-
-	function exportViewDraftFilterExpressionConfigJson(expressionJson: string) {
-		if (!selectedForm || !expressionJson) return;
-
-		const blob = new Blob([expressionJson], { type: 'application/json;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-filter-expression.json`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedFilterExpressionJson = expressionJson;
-		toast.success($t('forms.filterExpressionJsonExported'));
-	}
-
-	function exportViewDraftFilterExpressionSummary(expressionSummary: string) {
-		if (!selectedForm || !expressionSummary) return;
-
-		const blob = new Blob([expressionSummary], { type: 'text/plain;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-filter-expression-summary.txt`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedFilterExpressionSummary = expressionSummary;
-		toast.success($t('forms.filterExpressionSummaryExported'));
-	}
-
-	function focusViewDraftFilterExpressionRecords(records: FormRecord[] | null) {
-		const recordIds = records?.map((record) => record.id) ?? [];
-
-		if (recordIds.length === 0) return;
-
-		s.focusedRecordIds = recordIds;
-		toast.success($t('forms.focusedRecords', { values: { count: recordIds.length } }));
-	}
-
-	function exportViewDraftFilterExpressionCsv(records: FormRecord[] | null) {
-		if (!selectedForm || !records || records.length === 0) return;
-
-		const csv = viewDraftFilterExpressionCsv(records);
-		const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-filter-expression-matches.csv`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedFilterExpressionRecordIds = viewDraftFilterExpressionRecordIdsText(records);
-		toast.success($t('forms.filterExpressionRecordsExported'));
-	}
-
-	function exportViewDraftFilterExpressionJson(records: FormRecord[] | null) {
-		if (!selectedForm || !records || records.length === 0) return;
-
-		const json = viewDraftFilterExpressionJson(records);
-		const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-filter-expression-matches.json`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedFilterExpressionJsonRecordIds = viewDraftFilterExpressionRecordIdsText(records);
-		toast.success($t('forms.filterExpressionRecordsJsonExported'));
-	}
-
-	function recordComparableText(record: FormRecord, field: FormField): string {
-		const value = displayValue(record.values[field.key]);
-
-		return value === '-' ? '' : value;
-	}
-
-	function cardFieldHasDisplayValue(record: FormRecord, field: FormField): boolean {
-		const value = displayValue(record.values[field.key]).trim();
-
-		return value.length > 0 && value !== '-';
-	}
-
-	function cardDisplayFields(record: FormRecord): FormField[] {
-		if (!selectedCardHideEmptyFields) return cardFields;
-
-		return cardFields.filter((field) => cardFieldHasDisplayValue(record, field));
-	}
-
-	function recordSortValue(record: FormRecord, field: FormField): string | number {
-		const raw = record.values[field.key];
-		const type = field.type ?? 'text';
-
-		if (['amount', 'number', 'integer'].includes(type)) {
-			if (typeof raw === 'number') return raw;
-
-			if (typeof raw === 'string') {
-				const parsed = Number(raw);
-
-				return Number.isNaN(parsed) ? raw : parsed;
-			}
-
-			if (isRecord(raw)) {
-				const value = typeof raw.decimal === 'string' ? raw.decimal : raw.value;
-
-				if (typeof value === 'number') return value;
-
-				if (typeof value === 'string') {
-					const parsed = Number(value);
-
-					return Number.isNaN(parsed) ? value : parsed;
-				}
-			}
-		}
-
-		if (['date', 'datetime'].includes(type)) {
-			const time = new Date(recordDateSource(record, field)).getTime();
-
-			return Number.isNaN(time) ? 0 : time;
-		}
-
-		return recordComparableText(record, field).toLowerCase();
-	}
-
-	function compareRecordField(
-		left: FormRecord,
-		right: FormRecord,
-		field: FormField,
-		direction: ViewSortDirection
-	): number {
-		const leftValue = recordSortValue(left, field);
-		const rightValue = recordSortValue(right, field);
-		const multiplier = direction === 'desc' ? -1 : 1;
-
-		if (typeof leftValue === 'number' && typeof rightValue === 'number') {
-			return (leftValue - rightValue) * multiplier;
-		}
-
-		return String(leftValue).localeCompare(String(rightValue)) * multiplier;
-	}
-
-	function recordNumericValue(record: FormRecord, field: FormField | null): number {
-		if (!field) return 1;
-
-		const raw = record.values[field.key];
-
-		if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0;
-
-		if (typeof raw === 'string') {
-			const parsed = Number(raw);
-
-			return Number.isFinite(parsed) ? parsed : 0;
-		}
-
-		if (isRecord(raw)) {
-			const value = typeof raw.decimal === 'string' ? raw.decimal : raw.value;
-
-			if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-
-			if (typeof value === 'string') {
-				const parsed = Number(value);
-
-				return Number.isFinite(parsed) ? parsed : 0;
-			}
-		}
-
-		return 0;
-	}
-
-	function recordAmountCurrency(record: FormRecord, field: FormField | null): string {
-		if ((field?.type ?? 'text') !== 'amount') return '';
-
-		const configured = field?.amount?.currency;
-
-		if (configured) return configured;
-
-		const raw = field ? record.values[field.key] : null;
-
-		if (isRecord(raw) && typeof raw.currency === 'string') return raw.currency;
-
-		return '';
-	}
-
-	function pivotFieldBucket(
-		record: FormRecord,
-		field: FormField | null
-	): { key: string; label: string } {
-		const label = pivotFieldLabel(record, field);
-
-		if (!field) return { key: '__unspecified__', label };
-
-		const raw = record.values[field.key];
-
-		if (typeof raw === 'string' || typeof raw === 'number' || typeof raw === 'boolean') {
-			return { key: String(raw).toLowerCase(), label };
-		}
-
-		if (isRecord(raw)) {
-			if (typeof raw.record_id === 'string') return { key: raw.record_id, label };
-
-			if (typeof raw.value === 'string' || typeof raw.value === 'number') {
-				return { key: String(raw.value).toLowerCase(), label };
-			}
-		}
-
-		return { key: label.toLowerCase(), label };
-	}
-
-	function pivotFieldLabel(record: FormRecord, field: FormField | null): string {
-		if (!field) return $t('forms.unspecified');
-
-		const value = displayValue(record.values[field.key]);
-
-		return value && value !== '-' ? value : $t('forms.unspecified');
-	}
-
-	function formatPivotValue(
-		value: number,
-		field: FormField | null,
-		currency = '',
-		aggregate: PivotAggregate = 'sum'
-	): string {
-		if (aggregate !== 'count' && (field?.type ?? 'number') === 'amount') {
-			const scale = typeof field?.amount?.scale === 'number' ? field.amount.scale : 2;
-			const formatted = value.toFixed(scale);
-
-			return currency ? `${formatted} ${currency}` : formatted;
-		}
-
-		const formatted = Number.isInteger(value) ? String(value) : value.toFixed(2);
-
-		return formatted;
-	}
-
-	function formatPivotPercent(value: number, denominator: number): string {
-		if (Math.abs(denominator) < Number.EPSILON) return '0.00%';
-
-		return `${((value / denominator) * 100).toFixed(2)}%`;
-	}
-
-	function formatPivotDisplayValue(
-		value: number,
-		rowTotal = 0,
-		columnTotal = 0,
-		table: PivotTable
-	): string {
-		if (table.valueDisplay === 'percent_row') return formatPivotPercent(value, rowTotal);
-		if (table.valueDisplay === 'percent_column') return formatPivotPercent(value, columnTotal);
-		if (table.valueDisplay === 'percent_total') return formatPivotPercent(value, table.grandTotal);
-
-		return formatPivotValue(value, table.valueField, table.valueCurrency, table.aggregate);
-	}
-
-	function formatPivotTotalDisplayValue(
-		value: number,
-		totalKind: 'row' | 'column' | 'grand',
-		table: PivotTable
-	): string {
-		if (table.valueDisplay === 'percent_row' && totalKind === 'row') {
-			return formatPivotPercent(value, value);
-		}
-
-		if (table.valueDisplay === 'percent_column' && totalKind === 'column') {
-			return formatPivotPercent(value, value);
-		}
-
-		if (table.valueDisplay !== 'value') return formatPivotPercent(value, table.grandTotal);
-
-		return formatPivotValue(value, table.valueField, table.valueCurrency, table.aggregate);
-	}
-
-	function pivotAggregateValue(sum: number, count: number, aggregate: PivotAggregate): number {
-		if (aggregate === 'count') return count;
-		if (aggregate === 'avg') return count > 0 ? sum / count : 0;
-
-		return sum;
-	}
-
-	function sortPivotBuckets<T extends { label: string; total: number }>(
-		items: T[],
-		sortMode: PivotSortMode,
-		axis: 'row' | 'column'
-	): T[] {
-		const totalSort =
-			(axis === 'row' && (sortMode === 'row_total_desc' || sortMode === 'row_total_asc')) ||
-			(axis === 'column' && (sortMode === 'column_total_desc' || sortMode === 'column_total_asc'));
-
-		return [...items].sort((left, right) => {
-			if (totalSort) {
-				const totalDelta = sortMode.endsWith('_desc')
-					? right.total - left.total
-					: left.total - right.total;
-
-				if (totalDelta !== 0) return totalDelta;
-			}
-
-			return left.label.localeCompare(right.label);
-		});
-	}
-
-	function pivotConfiguredBuckets(field: FormField | null): Array<{ key: string; label: string }> {
-		if (field?.type !== 'single_select' || !Array.isArray(field.options)) return [];
-
-		const buckets = new Map<string, { key: string; label: string }>();
-
-		for (const option of field.options) {
-			const label = option.trim();
-
-			if (!label) continue;
-
-			const key = label.toLowerCase();
-
-			if (!buckets.has(key)) buckets.set(key, { key, label });
-		}
-
-		return Array.from(buckets.values());
-	}
-
-	function buildPivotTable(sourceRecords: FormRecord[]): PivotTable {
-		const rowField = viewPivotRowField();
-		const columnField = viewPivotColumnField();
-		const valueField = viewPivotValueField();
-		const aggregate = viewPivotAggregate(selectedView?.config?.pivot_aggregate);
-		const totalsMode = viewPivotTotalsMode(selectedView?.config?.pivot_totals);
-		const valueDisplay = viewPivotValueDisplay(selectedView?.config?.pivot_value_display);
-		const sortMode = viewPivotSortMode(selectedView?.config?.pivot_sort);
-		const emptyBuckets = viewConfigBoolean(selectedView, 'pivot_empty_buckets');
-		const hideZeroBuckets = viewConfigBoolean(selectedView, 'pivot_hide_zero_buckets');
-		const showCounts = viewConfigBoolean(selectedView, 'pivot_show_counts');
-		const heatmap = viewConfigBoolean(selectedView, 'pivot_heatmap');
-		const rowLimit = viewPivotRowLimit(selectedView?.config?.pivot_row_limit);
-		const columnLimit = viewPivotColumnLimit(selectedView?.config?.pivot_column_limit);
-
-		if (!rowField || !columnField || !valueField) {
-			return {
-				rowField,
-				columnField,
-				valueField,
-				valueCurrency: '',
-				aggregate,
-				totalsMode,
-				valueDisplay,
-				sortMode,
-				emptyBuckets,
-				hideZeroBuckets,
-				showCounts,
-				heatmap,
-				rowLimit,
-				columnLimit,
-				maxCellValue: 0,
-				columns: [],
-				rows: [],
-				grandTotal: 0
-			};
-		}
-
-		type PivotAccumulator = { sum: number; count: number };
-
-		const rowMap = new Map<
-			string,
-			{
-				key: string;
-				label: string;
-				total: PivotAccumulator;
-				cells: Record<string, PivotAccumulator>;
-			}
-		>();
-
-		const columnMap = new Map<string, { key: string; label: string; total: PivotAccumulator }>();
-		const grandTotal: PivotAccumulator = { sum: 0, count: 0 };
-		let valueCurrency = '';
-
-		const ensureRow = (bucket: { key: string; label: string }) => {
-			if (!rowMap.has(bucket.key)) {
-				rowMap.set(bucket.key, {
-					key: bucket.key,
-					label: bucket.label,
-					total: { sum: 0, count: 0 },
-					cells: {}
-				});
-			}
-
-			return rowMap.get(bucket.key);
-		};
-
-		const ensureColumn = (bucket: { key: string; label: string }) => {
-			if (!columnMap.has(bucket.key)) {
-				columnMap.set(bucket.key, {
-					key: bucket.key,
-					label: bucket.label,
-					total: { sum: 0, count: 0 }
-				});
-			}
-
-			return columnMap.get(bucket.key);
-		};
-
-		if (emptyBuckets) {
-			for (const bucket of pivotConfiguredBuckets(rowField)) ensureRow(bucket);
-			for (const bucket of pivotConfiguredBuckets(columnField)) ensureColumn(bucket);
-		}
-
-		for (const record of sourceRecords) {
-			const rowBucket = pivotFieldBucket(record, rowField);
-			const columnBucket = pivotFieldBucket(record, columnField);
-			const value = recordNumericValue(record, valueField);
-
-			if (!valueCurrency) valueCurrency = recordAmountCurrency(record, valueField);
-
-			const row = ensureRow(rowBucket);
-			const column = ensureColumn(columnBucket);
-
-			if (!row || !column) continue;
-			if (!row.cells[columnBucket.key]) row.cells[columnBucket.key] = { sum: 0, count: 0 };
-
-			row.cells[columnBucket.key].sum += value;
-			row.cells[columnBucket.key].count += 1;
-			row.total.sum += value;
-			row.total.count += 1;
-			column.total.sum += value;
-			column.total.count += 1;
-			grandTotal.sum += value;
-			grandTotal.count += 1;
-		}
-
-		const rows = sortPivotBuckets(
-			Array.from(rowMap.values()).map((row) => ({
-				key: row.key,
-				label: row.label,
-				total: pivotAggregateValue(row.total.sum, row.total.count, aggregate),
-				cells: Object.fromEntries(
-					Object.entries(row.cells).map(([key, cell]) => [
-						key,
-						pivotAggregateValue(cell.sum, cell.count, aggregate)
-					])
-				),
-				cellCounts: Object.fromEntries(
-					Object.entries(row.cells).map(([key, cell]) => [key, cell.count])
-				)
-			})),
-			sortMode,
-			'row'
-		);
-
-		const columns = sortPivotBuckets(
-			Array.from(columnMap.values()).map((column) => ({
-				key: column.key,
-				label: column.label,
-				total: pivotAggregateValue(column.total.sum, column.total.count, aggregate)
-			})),
-			sortMode,
-			'column'
-		);
-
-		const filteredRows = hideZeroBuckets
-			? rows.filter((row) => Math.abs(row.total) > Number.EPSILON)
-			: rows;
-
-		const filteredColumns = hideZeroBuckets
-			? columns.filter((column) => Math.abs(column.total) > Number.EPSILON)
-			: columns;
-
-		const visibleColumns =
-			columnLimit > 0 ? filteredColumns.slice(0, columnLimit) : filteredColumns;
-
-		const visibleRows = rowLimit > 0 ? filteredRows.slice(0, rowLimit) : filteredRows;
-		const maxCellValue = Math.max(
-			0,
-			...visibleRows.flatMap((row) =>
-				visibleColumns.map((column) => Math.abs(row.cells[column.key] ?? 0))
-			)
-		);
-
-		return {
-			rowField,
-			columnField,
-			valueField,
-			valueCurrency,
-			aggregate,
-			totalsMode,
-			valueDisplay,
-			sortMode,
-			emptyBuckets,
-			hideZeroBuckets,
-			showCounts,
-			heatmap,
-			rowLimit,
-			columnLimit,
-			maxCellValue,
-			columns: visibleColumns,
-			rows: visibleRows,
-			grandTotal: pivotAggregateValue(grandTotal.sum, grandTotal.count, aggregate)
-		};
-	}
-
-	function buildPivotDrilldownRecords(sourceRecords: FormRecord[]): FormRecord[] {
-		const drilldown = s.pivotDrilldown;
-
-		if (!drilldown || !pivotTable.rowField || !pivotTable.columnField) return [];
-
-		return sourceRecords.filter((record) => {
-			const rowBucket = pivotFieldBucket(record, pivotTable.rowField);
-			const columnBucket = pivotFieldBucket(record, pivotTable.columnField);
-			const rowMatches = drilldown.rowKey === null || rowBucket.key === drilldown.rowKey;
-			const columnMatches =
-				drilldown.columnKey === null || columnBucket.key === drilldown.columnKey;
-
-			return rowMatches && columnMatches;
-		});
-	}
-
-	function pivotRowRecords(row: { key: string }): FormRecord[] {
-		if (!pivotTable.rowField) return [];
-
-		return viewRecords.filter(
-			(record) => pivotFieldBucket(record, pivotTable.rowField).key === row.key
-		);
-	}
-
-	function pivotColumnRecords(column: { key: string }): FormRecord[] {
-		if (!pivotTable.columnField) return [];
-
-		return viewRecords.filter(
-			(record) => pivotFieldBucket(record, pivotTable.columnField).key === column.key
-		);
-	}
-
-	function pivotCellRecords(row: { key: string }, column: { key: string }): FormRecord[] {
-		if (!pivotTable.rowField || !pivotTable.columnField) return [];
-
-		return viewRecords.filter(
-			(record) =>
-				pivotFieldBucket(record, pivotTable.rowField).key === row.key &&
-				pivotFieldBucket(record, pivotTable.columnField).key === column.key
-		);
-	}
-
-	function selectPivotDrilldown(
-		row: { key: string; label: string } | null,
-		column: { key: string; label: string } | null
-	) {
-		s.pivotDrilldown = {
-			rowKey: row?.key ?? null,
-			rowLabel: row?.label ?? $t('forms.pivotTotal'),
-			columnKey: column?.key ?? null,
-			columnLabel: column?.label ?? $t('forms.pivotTotal')
-		};
-
-		s.copiedPivotDrilldownKey = null;
-		s.exportedPivotDrilldownKey = null;
-		s.appliedPivotDrilldownFilterKey = null;
-	}
-
-	function pivotDrilldownKey(): string | null {
-		if (!s.pivotDrilldown) return null;
-
-		return `${s.pivotDrilldown.rowKey ?? '__all__'}:${s.pivotDrilldown.columnKey ?? '__all__'}`;
-	}
-
-	function pivotDrilldownFilterDrafts(): ViewFilterDraft[] {
-		if (!s.pivotDrilldown) return [];
-
-		const filters: ViewFilterDraft[] = [];
-
-		if (
-			s.pivotDrilldown.rowKey !== null &&
-			pivotTable.rowField &&
-			s.pivotDrilldown.rowLabel !== $t('forms.unspecified')
-		) {
-			filters.push({
-				field: pivotTable.rowField.key,
-				operator: 'equals',
-				value: s.pivotDrilldown.rowLabel
-			});
-		}
-
-		if (
-			s.pivotDrilldown.columnKey !== null &&
-			pivotTable.columnField &&
-			s.pivotDrilldown.columnLabel !== $t('forms.unspecified')
-		) {
-			filters.push({
-				field: pivotTable.columnField.key,
-				operator: 'equals',
-				value: s.pivotDrilldown.columnLabel
-			});
-		}
-
-		return filters;
-	}
-
-	function canApplyPivotDrilldownFilters(): boolean {
-		const filters = pivotDrilldownFilterDrafts();
-
-		if (filters.length === 0) return false;
-
-		const currentGroups = visibleViewDraftFilterGroups().filter(
-			(group) => group.filters.length > 0
-		);
-		const currentFilterCount = currentGroups.reduce(
-			(count, group) => count + group.filters.length,
-			0
-		);
-
-		if (currentFilterCount + filters.length > 10) return false;
-		if (currentGroups.length < 5) return true;
-
-		const lastGroup = currentGroups[currentGroups.length - 1];
-
-		return Boolean(lastGroup && lastGroup.filters.length + filters.length <= 5);
-	}
-
-	function applyPivotDrilldownFilters() {
-		if (!canApplyPivotDrilldownFilters()) return;
-
-		const filters = pivotDrilldownFilterDrafts();
-
-		const currentGroups = visibleViewDraftFilterGroups()
-			.filter((group) => group.filters.length > 0)
-			.map((group) => ({
-				logic: group.logic,
-				disabled: group.disabled || undefined,
-				filters: group.filters.map((filter) => ({ ...filter }))
-			}));
-
-		const nextGroups =
-			currentGroups.length === 0
-				? [{ logic: 'all' as ViewFilterLogic, filters }]
-				: currentGroups.length < 5
-					? [...currentGroups, { logic: 'all' as ViewFilterLogic, filters }]
-					: currentGroups.map((group, index) =>
-							index === currentGroups.length - 1
-								? { ...group, filters: [...group.filters, ...filters] }
-								: group
-						);
-
-		setViewDraftFilterGroups(nextGroups);
-		updateViewDraftFilterRootLogic('all');
-		s.appliedPivotDrilldownFilterKey = pivotDrilldownKey();
-		toast.success($t('forms.pivotDrilldownFiltersApplied'));
-	}
-
-	async function copyPivotCellValue(
-		row: { key: string; label: string; total: number },
-		column: { key: string; label: string; total: number },
-		value: number
-	) {
-		const text = formatPivotDisplayValue(value, row.total, column.total, pivotTable);
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(text);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep pivot operations non-blocking.
-		}
-
-		s.copiedPivotCellKey = `${row.label}:${column.label}`;
-		toast.success($t('forms.pivotCellCopied'));
-	}
-
-	async function copyPivotDrilldownRecordIds() {
-		if (!s.pivotDrilldown || pivotDrilldownRecords.length === 0) return;
-
-		const recordIds = pivotDrilldownRecords.map((record) => record.id);
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(recordIds.join('\n'));
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep pivot operations non-blocking.
-		}
-
-		s.copiedPivotDrilldownKey = pivotDrilldownKey();
-		toast.success($t('forms.pivotDrilldownIdsCopied'));
-	}
-
-	function exportPivotDrilldownRecordsCsv() {
-		if (!selectedForm || !s.pivotDrilldown || pivotDrilldownRecords.length === 0) return;
-
-		const csv = recordsCsv(pivotDrilldownRecords);
-		const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-pivot-drilldown-records.csv`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedPivotDrilldownKey = pivotDrilldownKey();
-		toast.success($t('forms.pivotDrilldownExported'));
-	}
-
-	function pivotTableMatrixRows(table: PivotTable): string[][] {
-		if (!table.rowField || !table.columnField || !table.valueField) return [];
-
-		const header = [
-			fieldLabel(table.rowField),
-			...table.columns.map((column) => column.label),
-			...(pivotShowRowTotals(table.totalsMode) ? [$t('forms.pivotTotal')] : [])
-		];
-
-		const rows = table.rows.map((row) => [
-			row.label,
-			...table.columns.map((column) =>
-				formatPivotDisplayValue(row.cells[column.key] ?? 0, row.total, column.total, table)
-			),
-			...(pivotShowRowTotals(table.totalsMode)
-				? [formatPivotTotalDisplayValue(row.total, 'row', table)]
-				: [])
-		]);
-
-		if (pivotShowColumnTotals(table.totalsMode)) {
-			rows.push([
-				$t('forms.pivotTotal'),
-				...table.columns.map((column) =>
-					formatPivotTotalDisplayValue(column.total, 'column', table)
-				),
-				...(pivotShowRowTotals(table.totalsMode)
-					? [formatPivotTotalDisplayValue(table.grandTotal, 'grand', table)]
-					: [])
-			]);
-		}
-
-		return [header, ...rows];
-	}
-
-	function pivotTableMatrixText(table: PivotTable): string {
-		return pivotTableMatrixRows(table)
-			.map((row) => row.join('\t'))
-			.join('\n');
-	}
-
-	function pivotTableMatrixCsv(table: PivotTable): string {
-		return pivotTableMatrixRows(table)
-			.map((row) => row.map(csvCell).join(','))
-			.join('\n');
-	}
-
-	async function copyPivotTableMatrix() {
-		const text = pivotTableMatrixText(pivotTable);
-
-		if (!text) return;
-
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(text);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep pivot operations non-blocking.
-		}
-
-		s.copiedPivotTableMatrix = true;
-		toast.success($t('forms.pivotTableCopied'));
-	}
-
-	function exportPivotTableMatrixCsv() {
-		const csv = pivotTableMatrixCsv(pivotTable);
-
-		if (!selectedForm || !csv) return;
-
-		const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-pivot-matrix.csv`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedPivotTableMatrix = true;
-		toast.success($t('forms.pivotTableExported'));
-	}
-
-	function focusPivotDrilldownRecords() {
-		const recordIds = pivotDrilldownRecords.map((record) => record.id);
-
-		if (recordIds.length === 0) return;
-
-		s.focusedRecordIds = recordIds;
-		s.pivotDrilldown = null;
-
-		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
-
-		toast.success($t('forms.pivotDrilldownFocused'));
-	}
-
-	function viewGroupField(): FormField | null {
-		const configured = fieldByKey(viewConfigString(selectedView, 'group_by'));
-
-		if (configured) return configured;
-
-		const statusLike = visibleFields.find((field) =>
-			['single_select', 'boolean'].includes(field.type ?? 'text')
-		);
-
-		if (statusLike) return statusLike;
-
-		return visibleFields[0] ?? null;
-	}
-
-	function viewSwimlaneField(): FormField | null {
-		const configuredKey = viewConfigString(selectedView, 'swimlane_by');
-
-		if (!configuredKey || configuredKey === kanbanGroupField?.key) return null;
-
-		return fieldByKey(configuredKey);
-	}
-
-	function kanbanMoveOptions(field: FormField | null): string[] {
-		if (!field || field.type !== 'single_select') return [];
-
-		return Array.isArray(field.options)
-			? field.options.filter((option) => option.trim() && !optionArchived(field, option))
-			: [];
-	}
-
-	function kanbanWipLimits(): Record<string, number> {
-		const raw = selectedView?.config?.wip_limits;
-
-		if (!isRecord(raw)) return {};
-
-		const limits: Record<string, number> = {};
-
-		for (const [key, value] of Object.entries(raw)) {
-			const limit = typeof value === 'number' ? value : Number(value);
-
-			if (Number.isFinite(limit) && limit >= 0) {
-				limits[key] = Math.floor(limit);
-			}
-		}
-
-		return limits;
-	}
-
-	function kanbanWipLimit(label: string): number | null {
-		const limit = kanbanWipLimits()[label];
-
-		return typeof limit === 'number' ? limit : null;
-	}
-
-	function kanbanMoveAllowed(record: FormRecord, targetValue: string): boolean {
-		if (!kanbanGroupField) return false;
-		if (String(record.values[kanbanGroupField.key] ?? '') === targetValue) return true;
-
-		const limit = kanbanWipLimit(targetValue);
-
-		if (limit === null) return true;
-
-		const count = kanbanColumnRecordCount(targetValue);
-
-		return count < limit;
-	}
-
-	function kanbanColumnRecordCount(groupLabel: string): number {
-		if (!kanbanGroupField) return 0;
-
-		return s.records.filter(
-			(item) => String(item.values[kanbanGroupField.key] ?? '') === groupLabel
-		).length;
-	}
-
-	function kanbanWipLabel(groupLabel: string, count: number): string {
-		const limit = kanbanWipLimit(groupLabel);
-
-		return limit === null
-			? $t('forms.groupRecordCount', { values: { count } })
-			: $t('forms.kanbanWipCount', { values: { count, limit } });
-	}
-
-	function kanbanWipExceeded(groupLabel: string, count: number): boolean {
-		const limit = kanbanWipLimit(groupLabel);
-
-		return limit !== null && count >= limit;
-	}
-
-	function kanbanColumnWipExceeded(groupLabel: string): boolean {
-		return kanbanWipExceeded(groupLabel, kanbanColumnRecordCount(groupLabel));
-	}
-
-	function viewDateField(): FormField | null {
-		const configured = fieldByKey(viewConfigString(selectedView, 'date_field'));
-
-		if (configured) return configured;
-
-		return (
-			visibleFields.find((field) => ['date', 'datetime'].includes(field.type ?? 'text')) ?? null
-		);
-	}
-
-	function viewCardTitleField(): FormField | null {
-		const configured = fieldByKey(viewConfigString(selectedView, 'card_title_field'));
-
-		if (configured) return configured;
-
-		return null;
-	}
-
-	function viewCardSubtitleField(): FormField | null {
-		const configured = fieldByKey(viewConfigString(selectedView, 'card_subtitle_field'));
-
-		if (configured && configured.key !== viewCardTitleField()?.key) return configured;
-
-		return null;
-	}
-
-	function viewCardBadgeField(): FormField | null {
-		const configured = fieldByKey(viewConfigString(selectedView, 'card_badge_field'));
-		const titleField = viewCardTitleField();
-		const subtitleField = viewCardSubtitleField();
-
-		if (configured && configured.key !== titleField?.key && configured.key !== subtitleField?.key) {
-			return configured;
-		}
-
-		return null;
-	}
-
-	function viewCardCoverField(): FormField | null {
-		const configured = fieldByKey(viewConfigString(selectedView, 'card_cover_field'));
-
-		if (configured && ['image', 'attachment'].includes(configured.type ?? 'text'))
-			return configured;
-
-		return null;
-	}
-
-	function viewPivotRowField(): FormField | null {
-		return fieldByKey(viewConfigString(selectedView, 'pivot_row_field'));
-	}
-
-	function viewPivotColumnField(): FormField | null {
-		const rowField = viewPivotRowField();
-		const configured = fieldByKey(viewConfigString(selectedView, 'pivot_column_field'));
-
-		if (configured && configured.key !== rowField?.key) return configured;
-
-		return null;
-	}
-
-	function viewPivotValueField(): FormField | null {
-		const configured = fieldByKey(viewConfigString(selectedView, 'pivot_value_field'));
-
-		if (configured && ['amount', 'number', 'integer'].includes(configured.type ?? 'text'))
-			return configured;
-
-		return null;
-	}
-
-	function viewGanttStartField(): FormField | null {
-		const configured = fieldByKey(viewConfigString(selectedView, 'gantt_start_field'));
-
-		if (configured && ['date', 'datetime'].includes(configured.type ?? 'text')) return configured;
-
-		return (
-			visibleFields.find((field) => ['date', 'datetime'].includes(field.type ?? 'text')) ?? null
-		);
-	}
-
-	function viewGanttEndField(): FormField | null {
-		const startField = viewGanttStartField();
-		const configured = fieldByKey(viewConfigString(selectedView, 'gantt_end_field'));
-
-		if (
-			configured &&
-			configured.key !== startField?.key &&
-			['date', 'datetime'].includes(configured.type ?? 'text')
-		) {
-			return configured;
-		}
-
-		return null;
-	}
-
-	function viewGanttGroupField(): FormField | null {
-		const startField = viewGanttStartField();
-		const endField = viewGanttEndField();
-		const configured = fieldByKey(viewConfigString(selectedView, 'gantt_group_by'));
-
-		if (configured && configured.key !== startField?.key && configured.key !== endField?.key)
-			return configured;
-
-		return null;
-	}
-
-	function viewGanttDependencyField(): FormField | null {
-		const startField = viewGanttStartField();
-		const endField = viewGanttEndField();
-		const groupField = viewGanttGroupField();
-		const configured = fieldByKey(viewConfigString(selectedView, 'gantt_dependency_field'));
-
-		if (
-			configured &&
-			configured.key !== startField?.key &&
-			configured.key !== endField?.key &&
-			configured.key !== groupField?.key
-		) {
-			return configured;
-		}
-
-		return null;
-	}
-
-	function viewTimelineTitleField(): FormField | null {
-		const configured = fieldByKey(viewConfigString(selectedView, 'timeline_title_field'));
-
-		if (configured) return configured;
-
-		return null;
-	}
-
-	function viewTimelineSubtitleField(): FormField | null {
-		const configured = fieldByKey(viewConfigString(selectedView, 'timeline_subtitle_field'));
-
-		if (configured && configured.key !== viewTimelineTitleField()?.key) return configured;
-
-		return null;
-	}
-
-	function selectedTimelineSource(): ViewTimelineSource {
-		return viewTimelineSource(selectedView?.config?.timeline_source);
-	}
-
-	function selectedTimelineEventLayout(): TimelineEventLayout {
-		return timelineEventLayout(selectedView?.config?.timeline_event_layout);
-	}
-
-	function selectedTimelineEventType(): string {
-		return viewConfigString(selectedView, 'timeline_event_type');
-	}
-
-	function selectedTimelineEventActor(): string {
-		return viewConfigString(selectedView, 'timeline_event_actor');
-	}
-
-	function selectedTimelineEventAggregate(): string {
-		return viewConfigString(selectedView, 'timeline_event_aggregate');
-	}
-
-	function selectedTimelineEventQuery(): string {
-		return viewConfigString(selectedView, 'timeline_event_query').trim();
-	}
-
-	function selectedTimelineEventFrom(): string {
-		return viewConfigString(selectedView, 'timeline_event_from').trim();
-	}
-
-	function selectedTimelineEventTo(): string {
-		return viewConfigString(selectedView, 'timeline_event_to').trim();
-	}
-
-	function viewCalendarResourceField(): FormField | null {
-		const configuredKey = viewConfigString(selectedView, 'calendar_resource_by');
-
-		if (!configuredKey || configuredKey === calendarDateField?.key) return null;
-
-		return fieldByKey(configuredKey);
-	}
-
-	function viewCalendarEndField(): FormField | null {
-		const configuredKey = viewConfigString(selectedView, 'calendar_end_field');
-
-		if (!configuredKey || configuredKey === calendarDateField?.key) return null;
-
-		const configured = fieldByKey(configuredKey);
-
-		if (!configured || !['date', 'datetime'].includes(configured.type ?? 'text')) return null;
-
-		return configured;
-	}
-
-	function viewCalendarFocusDate(view: FormView | null = selectedView): string {
-		const focusDate = viewConfigString(view, 'calendar_focus_date');
-
-		return isIsoDate(focusDate) ? focusDate : '';
-	}
-
-	function viewDraftCalendarFocusBaseDate(): string {
-		if (isIsoDate(s.viewDraft.calendarFocusDate)) return s.viewDraft.calendarFocusDate;
-
-		const selectedFocusDate = viewCalendarFocusDate();
-
-		if (selectedFocusDate) return selectedFocusDate;
-
-		const field = fieldByKey(s.viewDraft.dateField) ?? calendarDateField;
-		const sourceDates = viewRecords
-			.map((record) => calendarRecordIsoDate(record, field))
-			.filter((date): date is string => Boolean(date))
-			.sort((left, right) => left.localeCompare(right));
-
-		return sourceDates[0] ?? new Date().toISOString().slice(0, 10);
-	}
-
-	function shiftViewDraftCalendarFocus(amount: number) {
-		if (s.viewDraft.view_type !== 'calendar') return;
-
-		const range = s.viewDraft.calendarRange;
-		const baseDate = viewDraftCalendarFocusBaseDate();
-
-		const nextDate =
-			range === 'month'
-				? addIsoMonths(monthStartIso(baseDate), amount)
-				: addIsoDays(weekStartIso(baseDate), amount * 7);
-
-		s.viewDraft = { ...s.viewDraft, calendarFocusDate: nextDate };
-	}
-
-	function selectedCalendarExceptionDates(): CalendarExceptionDateMap {
-		return calendarExceptionDateMap(selectedView?.config?.calendar_exception_dates);
-	}
-
-	function calendarExceptionDateSet(recordId: string): Set<string> {
-		return new Set(selectedCalendarExceptionDates()[recordId] ?? []);
-	}
-
-	function recordDisplay(record: FormRecord, field: FormField | null): string {
-		return field ? displayValue(record.values[field.key]) : '-';
-	}
-
-	function cardTitle(record: FormRecord): string {
-		const value = recordDisplay(record, viewCardTitleField());
-
-		return value && value !== '-' ? value : record.title;
-	}
-
-	function cardSubtitle(record: FormRecord): string {
-		const value = recordDisplay(record, viewCardSubtitleField());
-
-		return value && value !== '-' ? value : record.id.slice(0, 8);
-	}
-
-	function cardBadge(record: FormRecord): string {
-		const value = recordDisplay(record, viewCardBadgeField());
-
-		return value && value !== '-' ? value : '';
-	}
-
-	function recordMediaUrl(record: FormRecord, field: FormField | null): string {
-		if (!field) return '';
-
-		const raw = record.values[field.key];
-
-		if (typeof raw === 'string') return raw;
-
-		if (isRecord(raw)) {
-			if (typeof raw.url === 'string') return raw.url;
-			if (typeof raw.href === 'string') return raw.href;
-			if (typeof raw.src === 'string') return raw.src;
-		}
-
-		if (Array.isArray(raw)) {
-			const first = raw.find((item) => typeof item === 'string' || isRecord(item));
-
-			if (typeof first === 'string') return first;
-
-			if (isRecord(first)) {
-				if (typeof first.url === 'string') return first.url;
-				if (typeof first.href === 'string') return first.href;
-				if (typeof first.src === 'string') return first.src;
-			}
-		}
-
-		return '';
-	}
-
-	function cardCoverUrl(record: FormRecord): string {
-		return safeImageUrl(recordMediaUrl(record, viewCardCoverField()));
-	}
-
-	function timelineTitle(record: FormRecord): string {
-		const value = recordDisplay(record, viewTimelineTitleField());
-
-		return value && value !== '-' ? value : record.title;
-	}
-
-	function timelineSubtitle(record: FormRecord): string {
-		const value = recordDisplay(record, viewTimelineSubtitleField());
-
-		return value && value !== '-'
-			? value
-			: cardFields[0]
-				? recordDisplay(record, cardFields[0])
-				: record.id.slice(0, 8);
-	}
-
-	function eventValue(event: BusinessEvent, keys: string[]): string {
-		for (const source of [event.payload, event.metadata, event.source]) {
-			for (const key of keys) {
-				const value = source[key];
-
-				if (typeof value === 'string' && value.trim()) return value.trim();
-				if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-			}
-		}
-
-		return '';
-	}
-
-	function timelineEventAggregateKey(event: BusinessEvent): string {
-		return `${event.aggregate_type}:${event.aggregate_id}`;
-	}
-
-	function timelineEventTitle(event: BusinessEvent): string {
-		return eventValue(event, ['title', 'record_title', 'form_name']) || event.event_type;
-	}
-
-	function timelineEventSubtitle(event: BusinessEvent): string {
-		const actor = event.actor_id ? `${$t('forms.eventActor')} ${event.actor_id}` : '';
-		const aggregate = timelineEventAggregateKey(event);
-
-		return actor ? `${aggregate} · ${actor}` : aggregate;
-	}
-
-	function timelineEventRecord(event: BusinessEvent): FormRecord | null {
-		if (event.aggregate_type !== 'form_record') return null;
-
-		return s.records.find((record) => record.id === event.aggregate_id) ?? null;
-	}
-
-	function timelineEventJson(value: unknown): string {
-		if (!value || (isRecord(value) && Object.keys(value).length === 0)) return '{}';
-
-		return JSON.stringify(value, null, 2);
-	}
-
-	function timelineEventDetailsPayload(event: BusinessEvent) {
-		return {
-			id: event.id,
-			event_type: event.event_type,
-			created_at: event.created_at,
-			aggregate_type: event.aggregate_type,
-			aggregate_id: event.aggregate_id,
-			actor_id: event.actor_id,
-			title: timelineEventTitle(event),
-			subtitle: timelineEventSubtitle(event),
-			payload: event.payload,
-			metadata: event.metadata,
-			source: event.source
-		};
-	}
-
-	function timelineEventDetailsJson(event: BusinessEvent): string {
-		return JSON.stringify(timelineEventDetailsPayload(event), null, 2);
-	}
-
-	function timelineEventsDetailsJson(events: BusinessEvent[]): string {
-		return JSON.stringify(
-			events.map((event) => timelineEventDetailsPayload(event)),
-			null,
-			2
-		);
-	}
-
-	function timelineEventSearchText(event: BusinessEvent): string {
-		return [
-			event.id,
-			event.event_type,
-			event.aggregate_type,
-			event.aggregate_id,
-			event.actor_id ?? '',
-			timelineEventTitle(event),
-			timelineEventSubtitle(event),
-			timelineEventJson(event.payload),
-			timelineEventJson(event.metadata),
-			timelineEventJson(event.source)
-		]
-			.join('\n')
-			.toLowerCase();
-	}
-
-	function recordGroupLabel(record: FormRecord, field: FormField | null): string {
-		const value = recordDisplay(record, field);
-
-		return value && value !== '-' ? value : $t('forms.unspecified');
-	}
-
-	function recordDateSource(record: FormRecord, field: FormField | null): string {
-		const value = field ? record.values[field.key] : null;
-
-		if (typeof value === 'string' && value.trim()) return value;
-
-		if (isRecord(value)) {
-			if (typeof value.value === 'string' && value.value.trim()) return value.value;
-			if (typeof value.date === 'string' && value.date.trim()) return value.date;
-			if (typeof value.datetime === 'string' && value.datetime.trim()) return value.datetime;
-		}
-
-		return record.updated_at || record.created_at;
-	}
-
-	function calendarDateInputValue(record: FormRecord, field: FormField | null): string {
-		if (!field || !['date', 'datetime'].includes(field.type ?? 'text')) return '';
-
-		const source = recordDateSource(record, field);
-		const match = source.match(/^\d{4}-\d{2}-\d{2}/);
-
-		return match?.[0] ?? '';
-	}
-
-	function calendarRecordIsoDate(record: FormRecord, field: FormField | null): string | null {
-		const source = recordDateSource(record, field);
-		const match = source.match(/^\d{4}-\d{2}-\d{2}/);
-
-		return match?.[0] ?? null;
-	}
-
-	function addIsoDays(isoDate: string, days: number): string {
-		const date = new Date(`${isoDate}T00:00:00.000Z`);
-
-		date.setUTCDate(date.getUTCDate() + days);
-
-		return date.toISOString().slice(0, 10);
-	}
-
-	function isoDayDiff(left: string, right: string): number {
-		const leftTime = new Date(`${left}T00:00:00.000Z`).getTime();
-		const rightTime = new Date(`${right}T00:00:00.000Z`).getTime();
-
-		if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return 0;
-
-		return Math.round((leftTime - rightTime) / 86_400_000);
-	}
-
-	function addIsoMonths(isoDate: string, months: number): string {
-		const date = new Date(`${isoDate}T00:00:00.000Z`);
-		const day = date.getUTCDate();
-
-		date.setUTCMonth(date.getUTCMonth() + months, 1);
-
-		const maxDay = new Date(
-			Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)
-		).getUTCDate();
-
-		date.setUTCDate(Math.min(day, maxDay));
-
-		return date.toISOString().slice(0, 10);
-	}
-
-	function monthStartIso(isoDate: string): string {
-		const date = new Date(`${isoDate}T00:00:00.000Z`);
-
-		return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1))
-			.toISOString()
-			.slice(0, 10);
-	}
-
-	function weekStartIso(isoDate: string): string {
-		const date = new Date(`${isoDate}T00:00:00.000Z`);
-		const day = date.getUTCDay();
-		const offset = day === 0 ? -6 : 1 - day;
-
-		date.setUTCDate(date.getUTCDate() + offset);
-
-		return date.toISOString().slice(0, 10);
-	}
-
-	function monthDayCount(isoDate: string): number {
-		const date = new Date(`${isoDate}T00:00:00.000Z`);
-
-		return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
-	}
-
-	function ganttBucketStartIso(isoDate: string, scale: GanttScale): string {
-		if (scale === 'month') return monthStartIso(isoDate);
-		if (scale === 'week') return weekStartIso(isoDate);
-
-		return isoDate;
-	}
-
-	function addGanttBucket(isoDate: string, scale: GanttScale, amount: number): string {
-		if (scale === 'month') return addIsoMonths(isoDate, amount);
-		if (scale === 'week') return addIsoDays(isoDate, amount * 7);
-
-		return addIsoDays(isoDate, amount);
-	}
-
-	function ganttBucketLimit(scale: GanttScale): number {
-		if (scale === 'day') return 45;
-
-		return 18;
-	}
-
-	function calendarGridLabel(isoDate: string): string {
-		const date = new Date(`${isoDate}T00:00:00.000Z`);
-
-		return date.toLocaleDateString($locale === 'en' ? 'en-US' : 'zh-CN', {
-			month: '2-digit',
-			day: '2-digit',
-			weekday: 'short',
-			timeZone: 'UTC'
-		});
-	}
-
-	function isIsoWorkday(isoDate: string): boolean {
-		const day = new Date(`${isoDate}T00:00:00.000Z`).getUTCDay();
-
-		return day >= 1 && day <= 5;
-	}
-
-	function calendarDateInScope(isoDate: string): boolean {
-		const dayScope = viewCalendarDayScope(selectedView?.config?.calendar_day_scope);
-
-		return dayScope === 'all' || isIsoWorkday(isoDate);
-	}
-
-	function ganttDateLabel(isoDate: string, scale: GanttScale = 'day'): string {
-		const date = new Date(`${isoDate}T00:00:00.000Z`);
-
-		if (scale === 'month') {
-			return date.toLocaleDateString($locale === 'en' ? 'en-US' : 'zh-CN', {
-				year: 'numeric',
-				month: '2-digit',
-				timeZone: 'UTC'
-			});
-		}
-
-		return date.toLocaleDateString($locale === 'en' ? 'en-US' : 'zh-CN', {
-			month: '2-digit',
-			day: '2-digit',
-			timeZone: 'UTC'
-		});
-	}
-
-	function calendarOccurrenceDates(
-		baseDate: string,
-		gridStartDate: string,
-		gridEndDate: string,
-		recurrence: ViewCalendarRecurrence
-	): string[] {
-		if (recurrence === 'none') return [baseDate];
-		if (baseDate > gridEndDate) return [baseDate];
-
-		const dates: string[] = [];
-		let cursor = baseDate;
-
-		while (cursor <= gridEndDate) {
-			if (cursor >= gridStartDate) dates.push(cursor);
-
-			if (recurrence === 'daily') {
-				cursor = addIsoDays(cursor, 1);
-			} else if (recurrence === 'weekly') {
-				cursor = addIsoDays(cursor, 7);
-			} else {
-				cursor = addIsoMonths(cursor, 1);
-			}
-		}
-
-		return dates.length > 0 ? dates : [baseDate];
-	}
-
-	function calendarDatePayloadValue(field: FormField, value: string): string {
-		if ((field.type ?? 'date') === 'datetime') return `${value}T00:00:00.000Z`;
-
-		return value;
-	}
-
-	function groupRecordsByField(
-		sourceRecords: FormRecord[],
-		field: FormField | null
-	): Array<{ key: string; label: string; records: FormRecord[] }> {
-		const groups = new Map<string, { key: string; label: string; records: FormRecord[] }>();
-
-		if (field?.type === 'single_select' && Array.isArray(field.options)) {
-			for (const option of field.options) {
-				const label = option.trim();
-
-				if (label)
-					groups.set(label.toLowerCase(), { key: label.toLowerCase(), label, records: [] });
-			}
-		}
-
-		for (const record of sourceRecords) {
-			const label = recordGroupLabel(record, field);
-			const key = label.toLowerCase();
-			const existing = groups.get(key);
-
-			if (existing) {
-				existing.records.push(record);
-			} else {
-				groups.set(key, { key, label, records: [record] });
-			}
-		}
-
-		return Array.from(groups.values()).sort((left, right) => left.label.localeCompare(right.label));
-	}
-
-	function groupKanbanSwimlanes(sourceRecords: FormRecord[]): Array<{
-		key: string;
-		label: string;
-		records: FormRecord[];
-		groups: Array<{ key: string; label: string; records: FormRecord[] }>;
-	}> {
-		if (!kanbanSwimlaneField) return [];
-
-		return groupRecordsByField(sourceRecords, kanbanSwimlaneField).map((swimlane) => ({
-			...swimlane,
-			groups: groupRecordsByField(swimlane.records, kanbanGroupField)
-		}));
-	}
-
-	function kanbanSwimlaneRows(): Array<{
-		key: string;
-		label: string;
-		records: FormRecord[];
-		groups: Array<{ key: string; label: string; records: FormRecord[] }>;
-	}> {
-		if (kanbanSwimlaneField) return kanbanSwimlanes;
-
-		return [
-			{
-				key: '__all__',
-				label: '',
-				records: viewRecords,
-				groups: kanbanGroups
-			}
-		];
-	}
-
-	function groupRecordsByCalendarGrid(
-		sourceRecords: FormRecord[],
-		field: FormField | null,
-		scopeRecords: FormRecord[] = sourceRecords
-	): CalendarGridGroup[] {
-		const dated = sourceRecords
-			.map((record) => ({ record, date: calendarRecordIsoDate(record, field) }))
-			.filter((item): item is { record: FormRecord; date: string } => Boolean(item.date));
-		const scopedDates = scopeRecords
-			.map((record) => calendarRecordIsoDate(record, field))
-			.filter((date): date is string => Boolean(date));
-		const focusDate = viewCalendarFocusDate();
-		const startDate =
-			focusDate ||
-			(scopedDates.sort((left, right) => left.localeCompare(right))[0] ??
-				dated.map((item) => item.date).sort((left, right) => left.localeCompare(right))[0] ??
-				new Date().toISOString().slice(0, 10));
-		const range = viewCalendarRange(selectedView?.config?.calendar_range);
-		const gridStartDate = range === 'month' ? monthStartIso(startDate) : startDate;
-		const gridDayCount = range === 'month' ? monthDayCount(startDate) : 7;
-		const gridEndDate = addIsoDays(gridStartDate, gridDayCount - 1);
-		const recurrence = viewCalendarRecurrence(selectedView?.config?.calendar_recurrence);
-		const groups = new Map<string, CalendarGridGroup>();
-
-		for (let index = 0; index < gridDayCount; index += 1) {
-			const date = addIsoDays(gridStartDate, index);
-
-			if (calendarDateInScope(date)) {
-				groups.set(date, { key: date, label: calendarGridLabel(date), date, records: [] });
-			}
-		}
-
-		for (const { record, date } of dated) {
-			const rawEnd = calendarEndField ? calendarRecordIsoDate(record, calendarEndField) : null;
-
-			const endDate = rawEnd && rawEnd >= date ? rawEnd : date;
-			const spanDays = isoDayDiff(endDate, date) + 1;
-			const exceptionDates = calendarExceptionDateSet(record.id);
-
-			for (const occurrenceDate of calendarOccurrenceDates(
-				date,
-				gridStartDate,
-				gridEndDate,
-				recurrence
-			)) {
-				if (exceptionDates.has(occurrenceDate)) continue;
-
-				const occurrenceEndDate = addIsoDays(occurrenceDate, spanDays - 1);
-				let bucketDate = occurrenceDate < gridStartDate ? gridStartDate : occurrenceDate;
-
-				while (bucketDate <= occurrenceEndDate && bucketDate <= gridEndDate) {
-					if (!calendarDateInScope(bucketDate)) {
-						bucketDate = addIsoDays(bucketDate, 1);
-
-						continue;
-					}
-
-					if (!groups.has(bucketDate)) {
-						groups.set(bucketDate, {
-							key: bucketDate,
-							label: calendarGridLabel(bucketDate),
-							date: bucketDate,
-							records: []
-						});
-					}
-
-					groups.get(bucketDate)?.records.push({
-						key: `${record.id}:${occurrenceDate}:${bucketDate}`,
-						record,
-						date: bucketDate,
-						startDate: occurrenceDate,
-						endDate: occurrenceEndDate,
-						recurring: occurrenceDate !== date,
-						spanStart: bucketDate === occurrenceDate,
-						spanEnd: bucketDate === occurrenceEndDate,
-						spanDays
-					});
-
-					bucketDate = addIsoDays(bucketDate, 1);
-				}
-			}
-		}
-
-		const orderedGroups = Array.from(groups.values()).sort((left, right) =>
-			left.date.localeCompare(right.date)
-		);
-
-		return selectedCalendarHideEmptyDays
-			? orderedGroups.filter((group) => group.records.length > 0)
-			: orderedGroups;
-	}
-
-	function groupCalendarResourceLanes(sourceRecords: FormRecord[]): CalendarResourceRow[] {
-		if (!calendarResourceField) return [];
-
-		return groupRecordsByField(sourceRecords, calendarResourceField).map((resource) => ({
-			...resource,
-			groups: groupRecordsByCalendarGrid(resource.records, calendarDateField, sourceRecords)
-		}));
-	}
-
-	function calendarResourceRows(): CalendarResourceRow[] {
-		if (calendarResourceField) return calendarResourceLanes;
-
-		return [
-			{
-				key: '__all__',
-				label: '',
-				records: viewRecords,
-				groups: calendarGridGroups
-			}
-		];
-	}
-
-	function calendarBucketFilterKey(isoDate: string, resource: CalendarResourceRow): string {
-		return `${isoDate}:${calendarResourceField ? resource.key : '__all__'}`;
-	}
-
-	function calendarBucketFilterDrafts(
-		isoDate: string,
-		resource: CalendarResourceRow
-	): ViewFilterDraft[] {
-		if (!calendarDateField) return [];
-
-		const filters: ViewFilterDraft[] = [
-			{
-				field: calendarDateField.key,
-				operator: (calendarDateField.type ?? 'date') === 'datetime' ? 'contains' : 'equals',
-				value: isoDate
-			}
-		];
-
-		if (calendarResourceField && resource.key !== '__all__') {
-			filters.push({
-				field: calendarResourceField.key,
-				operator: 'equals',
-				value: resource.label
-			});
-		}
-
-		return filters;
-	}
-
-	function canApplyCalendarBucketFilters(isoDate: string, resource: CalendarResourceRow): boolean {
-		const filters = calendarBucketFilterDrafts(isoDate, resource);
-
-		if (filters.length === 0) return false;
-
-		const currentGroups = visibleViewDraftFilterGroups().filter(
-			(group) => group.filters.length > 0
-		);
-		const currentFilterCount = currentGroups.reduce(
-			(count, group) => count + group.filters.length,
-			0
-		);
-
-		if (currentFilterCount + filters.length > 10) return false;
-		if (currentGroups.length < 5) return true;
-
-		const lastGroup = currentGroups[currentGroups.length - 1];
-
-		return Boolean(lastGroup && lastGroup.filters.length + filters.length <= 5);
-	}
-
-	function applyCalendarBucketFilters(isoDate: string, resource: CalendarResourceRow) {
-		if (!canApplyCalendarBucketFilters(isoDate, resource)) return;
-
-		const filters = calendarBucketFilterDrafts(isoDate, resource);
-
-		const currentGroups = visibleViewDraftFilterGroups()
-			.filter((group) => group.filters.length > 0)
-			.map((group) => ({
-				logic: group.logic,
-				disabled: group.disabled || undefined,
-				filters: group.filters.map((filter) => ({ ...filter }))
-			}));
-
-		const nextGroups =
-			currentGroups.length === 0
-				? [{ logic: 'all' as ViewFilterLogic, filters }]
-				: currentGroups.length < 5
-					? [...currentGroups, { logic: 'all' as ViewFilterLogic, filters }]
-					: currentGroups.map((group, index) =>
-							index === currentGroups.length - 1
-								? { ...group, filters: [...group.filters, ...filters] }
-								: group
-						);
-
-		setViewDraftFilterGroups(nextGroups);
-		updateViewDraftFilterRootLogic('all');
-		s.appliedCalendarFilterKey = calendarBucketFilterKey(isoDate, resource);
-		toast.success($t('forms.calendarBucketFiltersApplied'));
-	}
-
-	function calendarAgendaGroups(resource: CalendarResourceRow): CalendarGridGroup[] {
-		return resource.groups
-			.map((group) => ({
-				...group,
-				records: group.records.filter((occurrence) => occurrence.spanStart)
-			}))
-			.filter((group) => group.records.length > 0);
-	}
-
-	function calendarAgendaRecordCount(resource: CalendarResourceRow): number {
-		return calendarAgendaGroups(resource).reduce((total, group) => total + group.records.length, 0);
-	}
-
-	function buildGanttTimeline(sourceRecords: FormRecord[]): GanttTimeline {
-		const startField = viewGanttStartField();
-		const endField = viewGanttEndField();
-		const groupField = viewGanttGroupField();
-		const dependencyField = viewGanttDependencyField();
-		const scale = viewGanttScale(selectedView?.config?.gantt_scale);
-
-		if (!startField) {
-			return {
-				startField,
-				endField,
-				groupField,
-				dependencyField,
-				scale,
-				dates: [],
-				lanes: []
-			};
-		}
-
-		const dated = sourceRecords
-			.map((record) => {
-				const start = calendarRecordIsoDate(record, startField);
-				const rawEnd = endField ? calendarRecordIsoDate(record, endField) : null;
-
-				if (!start) return null;
-
-				const end = rawEnd && rawEnd >= start ? rawEnd : start;
-
-				return { record, start, end };
-			})
-			.filter((item): item is { record: FormRecord; start: string; end: string } => Boolean(item));
-
-		if (dated.length === 0) {
-			return {
-				startField,
-				endField,
-				groupField,
-				dependencyField,
-				scale,
-				dates: [],
-				lanes: []
-			};
-		}
-
-		const firstStart = dated
-			.map((item) => item.start)
-			.sort((left, right) => left.localeCompare(right))[0];
-		const maxEnd = dated
-			.map((item) => item.end)
-			.sort((left, right) => right.localeCompare(left))[0];
-		const axisStart = ganttBucketStartIso(firstStart, scale);
-		const lastBucket = ganttBucketStartIso(maxEnd, scale);
-
-		const bucketCount = (() => {
-			if (scale === 'day') {
-				return Math.min(
-					Math.max(isoDayDiff(lastBucket, axisStart) + 1, 7),
-					ganttBucketLimit(scale)
-				);
-			}
-
-			const candidateDates = Array.from({ length: ganttBucketLimit(scale) }, (_, index) =>
-				addGanttBucket(axisStart, scale, index)
-			);
-			const lastIndex = candidateDates.findIndex((date) => date >= lastBucket);
-
-			return Math.max(lastIndex >= 0 ? lastIndex + 1 : ganttBucketLimit(scale), 4);
-		})();
-
-		const axisEnd = addGanttBucket(axisStart, scale, bucketCount - 1);
-		const dates = Array.from({ length: bucketCount }, (_, index) =>
-			addGanttBucket(axisStart, scale, index)
-		);
-
-		const bucketIndex = (date: string) => {
-			const bucket = ganttBucketStartIso(date, scale);
-			const index = dates.indexOf(bucket);
-
-			if (index >= 0) return index;
-
-			return bucket < axisStart ? 0 : dates.length - 1;
-		};
-
-		const laneMap = new Map<string, { key: string; label: string; tasks: GanttTask[] }>();
-
-		const ensureLane = (key: string, label: string) => {
-			if (!laneMap.has(key)) laneMap.set(key, { key, label, tasks: [] });
-
-			return laneMap.get(key);
-		};
-
-		if (groupField?.type === 'single_select' && Array.isArray(groupField.options)) {
-			for (const option of groupField.options) {
-				const label = option.trim();
-
-				if (label) ensureLane(label.toLowerCase(), label);
-			}
-		}
-
-		for (const item of dated) {
-			const label = groupField
-				? recordGroupLabel(item.record, groupField)
-				: $t('forms.ganttUngrouped');
-
-			const key = groupField ? label.toLowerCase() : '__all__';
-			const lane = ensureLane(key, label);
-			const start = item.start < axisStart ? axisStart : item.start;
-			const end = item.end > axisEnd ? axisEnd : item.end;
-			const startOffset = bucketIndex(start);
-			const endOffset = bucketIndex(end);
-
-			lane?.tasks.push({
-				record: item.record,
-				start: item.start,
-				end: item.end,
-				dependencyValue: dependencyField ? recordDisplay(item.record, dependencyField) : '',
-				startOffset,
-				span: Math.max(1, endOffset - startOffset + 1)
-			});
-		}
-
-		return {
-			startField,
-			endField,
-			groupField,
-			dependencyField,
-			scale,
-			dates,
-			lanes: Array.from(laneMap.values())
-				.map((lane) => ({
-					...lane,
-					tasks: lane.tasks.sort(
-						(left, right) =>
-							left.start.localeCompare(right.start) ||
-							left.record.title.localeCompare(right.record.title)
-					)
-				}))
-				.sort((left, right) => left.label.localeCompare(right.label))
-		};
-	}
-
-	function recordsByUpdatedAt(sourceRecords: FormRecord[]): FormRecord[] {
-		return [...sourceRecords].sort(
-			(left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()
-		);
-	}
-
-	function eventsByCreatedAt(sourceEvents: BusinessEvent[]): BusinessEvent[] {
-		return [...sourceEvents].sort(
-			(left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
-		);
-	}
-
-	function eventTypes(sourceEvents: BusinessEvent[]): string[] {
-		return Array.from(
-			new Set(sourceEvents.map((event) => event.event_type).filter(Boolean))
-		).sort();
-	}
-
-	function eventActors(sourceEvents: BusinessEvent[]): string[] {
-		return Array.from(
-			new Set(
-				sourceEvents
-					.map((event) => event.actor_id)
-					.filter((actorId): actorId is string => typeof actorId === 'string' && actorId.length > 0)
-			)
-		).sort();
-	}
-
-	function eventAggregates(sourceEvents: BusinessEvent[]): string[] {
-		return Array.from(
-			new Set(sourceEvents.map((event) => timelineEventAggregateKey(event)))
-		).sort();
-	}
-
-	function filteredTimelineEvents(sourceEvents: BusinessEvent[]): BusinessEvent[] {
-		const eventType = selectedTimelineEventType();
-		const eventActor = selectedTimelineEventActor();
-		const eventAggregate = selectedTimelineEventAggregate();
-		const eventQuery = selectedTimelineEventQuery().toLowerCase();
-		const eventFrom = timelineEventBoundary(selectedTimelineEventFrom());
-		const eventTo = timelineEventBoundary(selectedTimelineEventTo());
-
-		return sourceEvents.filter((event) => {
-			const eventTime = new Date(event.created_at).getTime();
-
-			if (eventType && event.event_type !== eventType) return false;
-			if (eventActor && event.actor_id !== eventActor) return false;
-			if (eventAggregate && timelineEventAggregateKey(event) !== eventAggregate) return false;
-			if (eventQuery && !timelineEventSearchText(event).includes(eventQuery)) return false;
-			if (eventFrom !== null && Number.isFinite(eventTime) && eventTime < eventFrom) return false;
-			if (eventTo !== null && Number.isFinite(eventTime) && eventTime > eventTo) return false;
-
-			return true;
-		});
-	}
-
-	function timelineEventBoundary(value: string): number | null {
-		const trimmed = value.trim();
-
-		if (!trimmed) return null;
-
-		const parsed = new Date(trimmed).getTime();
-
-		return Number.isFinite(parsed) ? parsed : null;
-	}
-
-	function parseViewFilterDrafts(rawFilters: unknown[]): ViewFilterDraft[] {
-		return rawFilters
-			.map((filter): ViewFilterDraft | null => {
-				if (!isRecord(filter) || typeof filter.field !== 'string') return null;
-
-				return {
-					field: filter.field,
-					operator: viewFilterOperator(filter.operator),
-					value: typeof filter.value === 'string' ? filter.value : '',
-					disabled: viewFilterNodeDisabled(filter) ? true : undefined
-				};
-			})
-			.filter((filter): filter is ViewFilterDraft => Boolean(filter))
-			.slice(0, 5);
-	}
-
-	function viewDraftExpressionFromView(view: FormView): Record<string, unknown> | null {
-		return isRecord(view.config?.filter_expression) ? view.config.filter_expression : null;
-	}
-
-	function viewDraftFilterGroupsFromExpression(
-		expression: Record<string, unknown>
-	): ViewFilterGroupDraft[] {
-		const rawChildren = Array.isArray(expression.children)
-			? expression.children
-			: Array.isArray(expression.expressions)
-				? expression.expressions
-				: [];
-
-		const groups = rawChildren
-			.map((child): ViewFilterGroupDraft | null => {
-				if (!isRecord(child)) return null;
-
-				if (typeof child.field === 'string' || isRecord(child.filter)) {
-					const filter = parseViewFilterDrafts([isRecord(child.filter) ? child.filter : child])[0];
-
-					if (filter && viewFilterNodeDisabled(child)) filter.disabled = true;
-
-					return filter
-						? {
-								logic: 'all' as ViewFilterLogic,
-								filters: [filter],
-								disabled: viewFilterNodeDisabled(child) ? true : undefined
-							}
-						: null;
-				}
-
-				const childFilters = Array.isArray(child.children)
-					? child.children
-							.map((item) => {
-								if (!isRecord(item)) return null;
-
-								const filter = isRecord(item.filter) ? item.filter : item;
-
-								if (viewFilterNodeDisabled(item) && !viewFilterNodeDisabled(filter)) {
-									return { ...filter, disabled: true };
-								}
-
-								return filter;
-							})
-							.filter(isRecord)
-					: [];
-
-				const filters = parseViewFilterDrafts(childFilters);
-
-				return filters.length > 0
-					? {
-							logic: viewFilterLogic(child.logic),
-							filters,
-							disabled: viewFilterNodeDisabled(child) ? true : undefined
-						}
-					: null;
-			})
-			.filter((group): group is ViewFilterGroupDraft => Boolean(group))
-			.slice(0, 5);
-
-		if (groups.length > 0) return groups;
-
-		const filter = isRecord(expression.filter) ? expression.filter : expression;
-		const filters = parseViewFilterDrafts([filter]);
-
-		return filters.length > 0 ? [{ logic: 'all', filters }] : [];
-	}
-
-	function viewDraftFilterRootLogicFromView(view: FormView): ViewFilterLogic {
-		const expression = viewDraftExpressionFromView(view);
-
-		return expression ? viewFilterLogic(expression.logic) : 'all';
-	}
-
-	function viewDraftWipLimitsFromView(view: FormView): Record<string, string> {
-		const raw = isRecord(view.config?.wip_limits) ? view.config.wip_limits : {};
-		const limits: Record<string, string> = {};
-
-		for (const [key, value] of Object.entries(raw)) {
-			const limit = typeof value === 'number' ? value : Number(value);
-
-			if (Number.isFinite(limit) && limit >= 0) {
-				limits[key] = String(Math.floor(limit));
-			}
-		}
-
-		return limits;
-	}
-
-	function viewDraftCalendarExceptionDatesFromView(view: FormView): CalendarExceptionDateMap {
-		return calendarExceptionDateMap(view.config?.calendar_exception_dates);
-	}
-
-	function viewDraftFilterGroupsFromView(view: FormView): ViewFilterGroupDraft[] {
-		const expression = viewDraftExpressionFromView(view);
-
-		if (expression) {
-			const groups = viewDraftFilterGroupsFromExpression(expression);
-
-			if (groups.length > 0) return groups;
-		}
-
-		const rawGroups = Array.isArray(view.config?.filter_groups) ? view.config.filter_groups : [];
-
-		const groups = rawGroups
-			.map((group): ViewFilterGroupDraft | null => {
-				if (!isRecord(group) || !Array.isArray(group.filters)) return null;
-
-				const filters = parseViewFilterDrafts(group.filters);
-
-				return filters.length > 0
-					? {
-							logic: viewFilterLogic(group.logic),
-							filters,
-							disabled: viewFilterNodeDisabled(group) ? true : undefined
-						}
-					: null;
-			})
-			.filter((group): group is ViewFilterGroupDraft => Boolean(group))
-			.slice(0, 5);
-
-		if (groups.length > 0) return groups;
-
-		const rawFilters = Array.isArray(view.config?.filters) ? view.config.filters : [];
-		const filters = parseViewFilterDrafts(rawFilters);
-
-		if (filters.length > 0) return [{ logic: 'all', filters }];
-
-		const legacy = viewConfigRecord(view, 'filter');
-
-		if (!legacy || typeof legacy.field !== 'string') return [];
-
-		return [
-			{
-				logic: 'all',
-				filters: [
-					{
-						field: legacy.field,
-						operator: viewFilterOperator(legacy.operator),
-						value: typeof legacy.value === 'string' ? legacy.value : '',
-						disabled: viewFilterNodeDisabled(legacy) ? true : undefined
-					}
-				]
-			}
-		];
-	}
-
-	function syncLegacyViewFilterFields(
-		filterGroups: ViewFilterGroupDraft[]
-	): Pick<typeof s.viewDraft, 'filters' | 'filterField' | 'filterOperator' | 'filterValue'> {
-		const filters = filterGroups[0]?.filters ?? [];
-		const filter = filters[0];
-
-		return {
-			filters,
-			filterField: filter?.field ?? '',
-			filterOperator: filter?.operator ?? 'contains',
-			filterValue: filter?.value ?? ''
-		};
-	}
-
-	function defaultViewColumns(): string[] {
-		return fields
-			.filter((field) => field.visibility?.list !== false)
-			.slice(0, 8)
-			.map((field) => field.key);
-	}
-
-	function resetViewDraft(view: FormView | null = selectedView) {
-		if (view) {
-			const filterGroups = viewDraftFilterGroupsFromView(view);
-			const sort = viewConfigRecord(view, 'sort');
-
-			s.viewDraft = {
-				key: view.key,
-				name: view.name,
-				view_type: view.view_type,
-				columns: viewColumns(view),
-				filterGroups,
-				filterRootLogic: viewDraftFilterRootLogicFromView(view),
-				...syncLegacyViewFilterFields(filterGroups),
-				sortField: typeof sort?.field === 'string' ? sort.field : '',
-				sortDirection: viewSortDirection(sort?.direction),
-				groupBy: viewConfigString(view, 'group_by'),
-				pivotRowField: viewConfigString(view, 'pivot_row_field'),
-				pivotColumnField: viewConfigString(view, 'pivot_column_field'),
-				pivotValueField: viewConfigString(view, 'pivot_value_field'),
-				pivotAggregate: viewPivotAggregate(view.config?.pivot_aggregate),
-				pivotTotals: viewPivotTotalsMode(view.config?.pivot_totals),
-				pivotValueDisplay: viewPivotValueDisplay(view.config?.pivot_value_display),
-				pivotSort: viewPivotSortMode(view.config?.pivot_sort),
-				pivotEmptyBuckets: viewConfigBoolean(view, 'pivot_empty_buckets'),
-				pivotHideZeroBuckets: viewConfigBoolean(view, 'pivot_hide_zero_buckets'),
-				pivotShowCounts: viewConfigBoolean(view, 'pivot_show_counts'),
-				pivotHeatmap: viewConfigBoolean(view, 'pivot_heatmap'),
-				pivotRowLimit: viewPivotRowLimit(view.config?.pivot_row_limit),
-				pivotColumnLimit: viewPivotColumnLimit(view.config?.pivot_column_limit),
-				ganttStartField: viewConfigString(view, 'gantt_start_field'),
-				ganttEndField: viewConfigString(view, 'gantt_end_field'),
-				ganttGroupBy: viewConfigString(view, 'gantt_group_by'),
-				ganttDependencyField: viewConfigString(view, 'gantt_dependency_field'),
-				ganttScale: viewGanttScale(view.config?.gantt_scale),
-				swimlaneBy: viewConfigString(view, 'swimlane_by'),
-				wipLimits: viewDraftWipLimitsFromView(view),
-				dateField: viewConfigString(view, 'date_field'),
-				calendarRange: viewCalendarRange(view.config?.calendar_range),
-				calendarFocusDate: viewCalendarFocusDate(view),
-				calendarRecurrence: viewCalendarRecurrence(view.config?.calendar_recurrence),
-				calendarDayScope: viewCalendarDayScope(view.config?.calendar_day_scope),
-				calendarLayout: viewCalendarLayout(view.config?.calendar_layout),
-				calendarHideEmptyDays: viewConfigBoolean(view, 'calendar_hide_empty_days'),
-				calendarEndField: viewConfigString(view, 'calendar_end_field'),
-				calendarResourceBy: viewConfigString(view, 'calendar_resource_by'),
-				calendarExceptionRecordId: '',
-				calendarExceptionDate: '',
-				calendarExceptionDates: viewDraftCalendarExceptionDatesFromView(view),
-				cardTitleField: viewConfigString(view, 'card_title_field'),
-				cardSubtitleField: viewConfigString(view, 'card_subtitle_field'),
-				cardBadgeField: viewConfigString(view, 'card_badge_field'),
-				cardCoverField: viewConfigString(view, 'card_cover_field'),
-				cardLayout: viewCardLayout(view.config?.card_layout),
-				cardCoverAspect: viewCardCoverAspect(view.config?.card_cover_aspect),
-				cardCoverFit: viewCardCoverFit(view.config?.card_cover_fit),
-				cardCoverPosition: viewCardCoverPosition(view.config?.card_cover_position),
-				cardFieldLimit: viewCardFieldLimit(view.config?.card_field_limit),
-				cardHideEmptyFields: viewConfigBoolean(view, 'card_hide_empty_fields'),
-				cardShowTimestamps: viewConfigBoolean(view, 'card_show_timestamps'),
-				cardShowRecordId: viewConfigBoolean(view, 'card_show_record_id'),
-				cardFieldKeys: viewCardFieldKeys(view),
-				timelineSource: viewTimelineSource(view.config?.timeline_source),
-				timelineEventLayout: timelineEventLayout(view.config?.timeline_event_layout),
-				timelineEventType: viewConfigString(view, 'timeline_event_type'),
-				timelineEventActor: viewConfigString(view, 'timeline_event_actor'),
-				timelineEventAggregate: viewConfigString(view, 'timeline_event_aggregate'),
-				timelineEventQuery: viewConfigString(view, 'timeline_event_query'),
-				timelineEventFrom: viewConfigString(view, 'timeline_event_from'),
-				timelineEventTo: viewConfigString(view, 'timeline_event_to'),
-				timelineTitleField: viewConfigString(view, 'timeline_title_field'),
-				timelineSubtitleField: viewConfigString(view, 'timeline_subtitle_field'),
-				visibility: viewVisibility(view),
-				isDefault: viewIsDefault(view)
-			};
-
-			return;
-		}
-
-		s.viewDraft = {
-			key: '',
-			name: '',
-			view_type: 'grid',
-			columns: defaultViewColumns(),
-			filters: [],
-			filterRootLogic: 'all',
-			filterGroups: [],
-			filterField: '',
-			filterOperator: 'contains',
-			filterValue: '',
-			sortField: '',
-			sortDirection: 'asc',
-			groupBy: '',
-			pivotRowField: '',
-			pivotColumnField: '',
-			pivotValueField: '',
-			pivotAggregate: 'sum',
-			pivotTotals: 'all',
-			pivotValueDisplay: 'value',
-			pivotSort: 'label',
-			pivotEmptyBuckets: false,
-			pivotHideZeroBuckets: false,
-			pivotShowCounts: false,
-			pivotHeatmap: false,
-			pivotRowLimit: 0,
-			pivotColumnLimit: 0,
-			ganttStartField: '',
-			ganttEndField: '',
-			ganttGroupBy: '',
-			ganttDependencyField: '',
-			ganttScale: 'day',
-			swimlaneBy: '',
-			wipLimits: {},
-			dateField: '',
-			calendarRange: 'week',
-			calendarFocusDate: '',
-			calendarRecurrence: 'none',
-			calendarDayScope: 'all',
-			calendarLayout: 'grid',
-			calendarHideEmptyDays: false,
-			calendarEndField: '',
-			calendarResourceBy: '',
-			calendarExceptionRecordId: '',
-			calendarExceptionDate: '',
-			calendarExceptionDates: {},
-			cardTitleField: '',
-			cardSubtitleField: '',
-			cardBadgeField: '',
-			cardCoverField: '',
-			cardLayout: 'standard',
-			cardCoverAspect: 'auto',
-			cardCoverFit: 'cover',
-			cardCoverPosition: 'top',
-			cardFieldLimit: 6,
-			cardHideEmptyFields: false,
-			cardShowTimestamps: false,
-			cardShowRecordId: false,
-			cardFieldKeys: [],
-			timelineSource: 'records',
-			timelineEventLayout: 'summary',
-			timelineEventType: '',
-			timelineEventActor: '',
-			timelineEventAggregate: '',
-			timelineEventQuery: '',
-			timelineEventFrom: '',
-			timelineEventTo: '',
-			timelineTitleField: '',
-			timelineSubtitleField: '',
-			visibility: 'shared',
-			isDefault: false
-		};
-		s.formsSessionViewVersion = selectedView?.updated_at ?? null;
-		cleanFormsGroup('view');
-	}
-
-	function startNewViewDraft(type: FormView['view_type']) {
-		// A new view starts from what is on screen: same filters and sort, the chosen type.
-		s.viewDraft = { ...s.viewDraft, view_type: type };
-		if (type !== 'grid') openLayoutSettings();
-	}
-
-	function setViewDraftColumn(fieldKey: string, checked: boolean) {
-		s.viewDraft = {
-			...s.viewDraft,
-			columns: checked
-				? Array.from(new Set([...s.viewDraft.columns, fieldKey]))
-				: s.viewDraft.columns.filter((key) => key !== fieldKey)
-		};
-	}
-
-	function viewDraftHasColumn(fieldKey: string): boolean {
-		return s.viewDraft.columns.includes(fieldKey);
-	}
-
-	function viewDraftColumnFields(): FormField[] {
-		const listable = fields.filter((field) => field.visibility?.list !== false);
-		const draftColumns =
-			s.viewDraft.columns.length > 0 ? s.viewDraft.columns : defaultViewColumns();
-
-		return orderedFieldsByKeys(
-			listable.filter((field) => draftColumns.includes(field.key)),
-			draftColumns
-		);
-	}
-
-	function viewDraftCardFields(): FormField[] {
-		return orderedFieldsByKeys(viewDraftColumnFields(), s.viewDraft.cardFieldKeys);
-	}
-
-	function validViewDraftCardFieldKeys(): string[] {
-		const draftFields = viewDraftCardFields();
-		const defaultKeys = viewDraftColumnFields().map((field) => field.key);
-		const orderedKeys = draftFields.map((field) => field.key);
-
-		return orderedKeys.some((key, index) => key !== defaultKeys[index]) ? orderedKeys : [];
-	}
-
-	function moveViewDraftCardField(fieldIndex: number, direction: -1 | 1) {
-		const fieldsInOrder = viewDraftCardFields();
-		const targetIndex = fieldIndex + direction;
-
-		if (targetIndex < 0 || targetIndex >= fieldsInOrder.length) return;
-
-		[fieldsInOrder[fieldIndex], fieldsInOrder[targetIndex]] = [
-			fieldsInOrder[targetIndex],
-			fieldsInOrder[fieldIndex]
-		];
-
-		s.viewDraft = {
-			...s.viewDraft,
-			cardFieldKeys: fieldsInOrder.map((field) => field.key)
-		};
-	}
-
-	function setViewDraftFilterGroups(filterGroups: ViewFilterGroupDraft[]) {
-		const nextGroups = filterGroups
-			.map((group) => ({
-				logic: group.logic,
-				filters: group.filters.slice(0, 5),
-				disabled: group.disabled || undefined
-			}))
-			.filter((group) => group.filters.length > 0)
-			.slice(0, 5);
-
-		s.viewDraft = {
-			...s.viewDraft,
-			filterGroups: nextGroups,
-			...syncLegacyViewFilterFields(nextGroups)
-		};
-	}
-
-	function updateViewDraftFilterRootLogic(logic: ViewFilterLogic) {
-		s.viewDraft = { ...s.viewDraft, filterRootLogic: logic };
-	}
-
-	function setViewDraftFilters(filters: ViewFilterDraft[], groupIndex = 0) {
-		const nextFilters = filters.slice(0, 5);
-
-		const nextGroups =
-			s.viewDraft.filterGroups.length > 0
-				? s.viewDraft.filterGroups.map((group) => ({ ...group, filters: [...group.filters] }))
-				: [{ logic: 'all' as ViewFilterLogic, filters: [] }];
-
-		nextGroups[groupIndex] = {
-			logic: nextGroups[groupIndex]?.logic ?? 'all',
-			filters: nextFilters
-		};
-
-		setViewDraftFilterGroups(nextGroups);
-	}
-
-	function updateViewDraftFilterGroupLogic(groupIndex: number, logic: ViewFilterLogic) {
-		const nextGroups = s.viewDraft.filterGroups.map((group, itemIndex) =>
-			itemIndex === groupIndex ? { ...group, logic } : group
-		);
-
-		setViewDraftFilterGroups(nextGroups);
-	}
-
-	function toggleViewDraftFilterGroupDisabled(groupIndex: number) {
-		syncVisibleFilterGroups();
-
-		const nextGroups = visibleViewDraftFilterGroups().map((group, itemIndex) => ({
-			...group,
-			filters: group.filters.map((filter) => ({ ...filter })),
-			disabled: itemIndex === groupIndex ? !group.disabled : group.disabled || undefined
-		}));
-
-		setViewDraftFilterGroups(nextGroups);
-	}
-
-	function addViewDraftFilterGroup() {
-		if (s.viewDraft.filterGroups.length >= 5) return;
-
-		setViewDraftFilterGroups([
-			...s.viewDraft.filterGroups,
-			{
-				logic: 'any',
-				filters: [{ field: '', operator: 'contains', value: '' }]
-			}
-		]);
-	}
-
-	function removeViewDraftFilterGroup(groupIndex: number) {
-		setViewDraftFilterGroups(
-			s.viewDraft.filterGroups.filter((_, itemIndex) => itemIndex !== groupIndex)
-		);
-	}
-
-	function canDuplicateViewDraftFilterGroup(groupIndex: number): boolean {
-		const group = visibleViewDraftFilterGroups()[groupIndex];
-
-		if (!group || group.filters.length === 0) return false;
-
-		return s.viewDraft.filterGroups.length < 5 && !wouldExceedFilterLimit(group.filters.length);
-	}
-
-	function duplicateViewDraftFilterGroup(groupIndex: number) {
-		if (!canDuplicateViewDraftFilterGroup(groupIndex)) return;
-
-		syncVisibleFilterGroups();
-
-		const nextGroups = s.viewDraft.filterGroups.map((group) => ({
-			logic: group.logic,
-			filters: group.filters.map((filter) => ({ ...filter }))
-		}));
-
-		const sourceGroup = nextGroups[groupIndex];
-
-		if (!sourceGroup) return;
-
-		nextGroups.splice(groupIndex + 1, 0, {
-			logic: sourceGroup.logic,
-			filters: sourceGroup.filters.map((filter) => ({ ...filter }))
-		});
-
-		setViewDraftFilterGroups(nextGroups);
-	}
-
-	function canMergeViewDraftFilterGroup(groupIndex: number): boolean {
-		const groups = visibleViewDraftFilterGroups();
-		const sourceGroup = groups[groupIndex];
-		const previousGroup = groups[groupIndex - 1];
-
-		if (groupIndex <= 0 || !sourceGroup || !previousGroup) return false;
-
-		return previousGroup.filters.length + sourceGroup.filters.length <= 5;
-	}
-
-	function mergeViewDraftFilterGroupWithPrevious(groupIndex: number) {
-		if (!canMergeViewDraftFilterGroup(groupIndex)) return;
-
-		const nextGroups = visibleViewDraftFilterGroups().map((group) => ({
-			logic: group.logic,
-			filters: group.filters.map((filter) => ({ ...filter }))
-		}));
-
-		const sourceGroup = nextGroups[groupIndex];
-		const previousGroup = nextGroups[groupIndex - 1];
-
-		if (!sourceGroup || !previousGroup) return;
-
-		previousGroup.filters = [
-			...previousGroup.filters,
-			...sourceGroup.filters.map((filter) => ({ ...filter }))
-		];
-
-		nextGroups.splice(groupIndex, 1);
-		setViewDraftFilterGroups(nextGroups);
-	}
-
-	function moveViewDraftFilterGroup(groupIndex: number, direction: -1 | 1) {
-		const targetIndex = groupIndex + direction;
-
-		if (targetIndex < 0 || targetIndex >= s.viewDraft.filterGroups.length) return;
-
-		const nextGroups = s.viewDraft.filterGroups.map((group) => ({
-			...group,
-			filters: [...group.filters]
-		}));
-
-		[nextGroups[groupIndex], nextGroups[targetIndex]] = [
-			nextGroups[targetIndex],
-			nextGroups[groupIndex]
-		];
-		setViewDraftFilterGroups(nextGroups);
-	}
-
-	function visibleViewDraftFilterGroups(): ViewFilterGroupDraft[] {
-		if (s.viewDraft.filterGroups.length > 0) return s.viewDraft.filterGroups;
-
-		return [{ logic: 'all', filters: s.viewDraft.filters }];
-	}
-
-	function filterLabelSuffix(groupIndex: number, filterIndex: number): string {
-		return groupIndex === 0 ? String(filterIndex + 1) : `${groupIndex + 1}.${filterIndex + 1}`;
-	}
-
-	function hasReachedFilterLimit(): boolean {
-		return s.viewDraft.filterGroups.reduce((count, group) => count + group.filters.length, 0) >= 10;
-	}
-
-	function wouldExceedFilterLimit(extraCount: number): boolean {
-		return (
-			s.viewDraft.filterGroups.reduce((count, group) => count + group.filters.length, 0) +
-				extraCount >
-			10
-		);
-	}
-
-	function syncVisibleFilterGroups() {
-		if (s.viewDraft.filterGroups.length === 0) {
-			setViewDraftFilterGroups([{ logic: 'all', filters: s.viewDraft.filters }]);
-		}
-	}
-
-	function updateViewDraftFilter(index: number, patch: Partial<ViewFilterDraft>, groupIndex = 0) {
-		syncVisibleFilterGroups();
-
-		const sourceGroup = visibleViewDraftFilterGroups()[groupIndex] ?? { logic: 'all', filters: [] };
-		const nextFilters = sourceGroup.filters.map((filter, itemIndex) =>
-			itemIndex === index ? { ...filter, ...patch } : filter
-		);
-
-		setViewDraftFilters(nextFilters, groupIndex);
-	}
-
-	function toggleViewDraftFilterDisabled(groupIndex: number, filterIndex: number) {
-		const sourceGroup = visibleViewDraftFilterGroups()[groupIndex] ?? { logic: 'all', filters: [] };
-		const sourceFilter = sourceGroup.filters[filterIndex];
-
-		if (!sourceFilter) return;
-
-		updateViewDraftFilter(filterIndex, { disabled: !sourceFilter.disabled }, groupIndex);
-	}
-
-	function addViewDraftFilter(groupIndex = 0) {
-		if (hasReachedFilterLimit()) return;
-
-		syncVisibleFilterGroups();
-
-		const sourceGroup = visibleViewDraftFilterGroups()[groupIndex] ?? { logic: 'all', filters: [] };
-
-		setViewDraftFilters(
-			[...sourceGroup.filters, { field: '', operator: 'contains', value: '' }],
-			groupIndex
-		);
-	}
-
-	function removeViewDraftFilter(index: number, groupIndex = 0) {
-		const sourceGroup = visibleViewDraftFilterGroups()[groupIndex] ?? { logic: 'all', filters: [] };
-
-		setViewDraftFilters(
-			sourceGroup.filters.filter((_, itemIndex) => itemIndex !== index),
-			groupIndex
-		);
-	}
-
-	function duplicateViewDraftFilter(groupIndex: number, filterIndex: number) {
-		if (hasReachedFilterLimit()) return;
-
-		syncVisibleFilterGroups();
-
-		const sourceGroup = visibleViewDraftFilterGroups()[groupIndex] ?? { logic: 'all', filters: [] };
-		const sourceFilter = sourceGroup.filters[filterIndex];
-
-		if (!sourceFilter) return;
-
-		const nextFilters = sourceGroup.filters.map((filter) => ({ ...filter }));
-
-		nextFilters.splice(filterIndex + 1, 0, { ...sourceFilter });
-		setViewDraftFilters(nextFilters, groupIndex);
-	}
-
-	function canSplitViewDraftFilterToGroup(groupIndex: number, filterIndex: number): boolean {
-		const sourceGroup = visibleViewDraftFilterGroups()[groupIndex];
-
-		return Boolean(
-			sourceGroup &&
-			sourceGroup.filters[filterIndex] &&
-			sourceGroup.filters.length > 1 &&
-			visibleViewDraftFilterGroups().length < 5
-		);
-	}
-
-	function splitViewDraftFilterToGroup(groupIndex: number, filterIndex: number) {
-		if (!canSplitViewDraftFilterToGroup(groupIndex, filterIndex)) return;
-
-		const nextGroups = visibleViewDraftFilterGroups().map((group) => ({
-			logic: group.logic,
-			filters: group.filters.map((filter) => ({ ...filter }))
-		}));
-
-		const sourceGroup = nextGroups[groupIndex];
-
-		if (!sourceGroup) return;
-
-		const [sourceFilter] = sourceGroup.filters.splice(filterIndex, 1);
-
-		if (!sourceFilter) return;
-
-		nextGroups.splice(groupIndex + 1, 0, {
-			logic: sourceGroup.logic,
-			filters: [{ ...sourceFilter }]
-		});
-		setViewDraftFilterGroups(nextGroups);
-	}
-
-	function moveViewDraftFilter(groupIndex: number, filterIndex: number, direction: -1 | 1) {
-		const sourceGroup = visibleViewDraftFilterGroups()[groupIndex] ?? { logic: 'all', filters: [] };
-		const targetIndex = filterIndex + direction;
-
-		if (targetIndex < 0 || targetIndex >= sourceGroup.filters.length) return;
-
-		const nextFilters = sourceGroup.filters.map((filter) => ({ ...filter }));
-
-		[nextFilters[filterIndex], nextFilters[targetIndex]] = [
-			nextFilters[targetIndex],
-			nextFilters[filterIndex]
-		];
-		setViewDraftFilters(nextFilters, groupIndex);
-	}
-
-	function validViewFilterGroups(): ViewFilterGroupDraft[] {
-		return s.viewDraft.filterGroups
-			.map((group) => ({
-				logic: group.logic,
-				filters: group.filters
-					.filter(
-						(filter) => filter.field && (filter.operator === 'not_empty' || filter.value.trim())
-					)
-					.map((filter) => ({
-						field: filter.field,
-						operator: filter.operator,
-						value: filter.operator === 'not_empty' ? '' : filter.value.trim(),
-						disabled: filter.disabled || undefined
-					})),
-				disabled: group.disabled || undefined
-			}))
-			.filter((group) => group.filters.length > 0);
-	}
-
-	function viewFilterExpressionConfigFromGroups(
-		filterGroups: ViewFilterGroupDraft[]
-	): Record<string, unknown> | null {
-		if (filterGroups.length === 0) return null;
-
-		return {
-			logic: s.viewDraft.filterRootLogic,
-			children: filterGroups.map((group) => ({
-				logic: group.logic,
-				disabled: group.disabled || undefined,
-				children: group.filters.map((filter) => ({
-					disabled: filter.disabled || undefined,
-					filter: {
-						field: filter.field,
-						operator: filter.operator,
-						value: filter.operator === 'not_empty' ? '' : filter.value.trim()
-					}
-				}))
-			}))
-		};
-	}
-
-	function viewDraftKanbanGroupField(): FormField | null {
-		return fieldByKey(s.viewDraft.groupBy);
-	}
-
-	function viewDraftSwimlaneFieldCandidates(): FormField[] {
-		if (s.viewDraft.view_type !== 'kanban') return [];
-
-		return fields.filter(
-			(field) => field.visibility?.list !== false && field.key !== s.viewDraft.groupBy
-		);
-	}
-
-	function validViewDraftSwimlaneBy(): string {
-		if (s.viewDraft.view_type !== 'kanban' || !s.viewDraft.swimlaneBy) return '';
-		if (s.viewDraft.swimlaneBy === s.viewDraft.groupBy) return '';
-
-		return viewDraftSwimlaneFieldCandidates().some((field) => field.key === s.viewDraft.swimlaneBy)
-			? s.viewDraft.swimlaneBy
-			: '';
-	}
-
-	function viewDraftCalendarResourceFieldCandidates(): FormField[] {
-		if (s.viewDraft.view_type !== 'calendar') return [];
-
-		return fields.filter(
-			(field) => field.visibility?.list !== false && field.key !== s.viewDraft.dateField
-		);
-	}
-
-	function viewDraftCalendarEndFieldCandidates(): FormField[] {
-		if (s.viewDraft.view_type !== 'calendar') return [];
-
-		return fields.filter(
-			(field) =>
-				field.visibility?.list !== false &&
-				field.key !== s.viewDraft.dateField &&
-				['date', 'datetime'].includes(field.type ?? 'text')
-		);
-	}
-
-	function validViewDraftCalendarEndField(): string {
-		if (s.viewDraft.view_type !== 'calendar' || !s.viewDraft.calendarEndField) return '';
-		if (s.viewDraft.calendarEndField === s.viewDraft.dateField) return '';
-
-		return viewDraftCalendarEndFieldCandidates().some(
-			(field) => field.key === s.viewDraft.calendarEndField
-		)
-			? s.viewDraft.calendarEndField
-			: '';
-	}
-
-	function validViewDraftCalendarResourceBy(): string {
-		if (s.viewDraft.view_type !== 'calendar' || !s.viewDraft.calendarResourceBy) return '';
-		if (s.viewDraft.calendarResourceBy === s.viewDraft.dateField) return '';
-
-		return viewDraftCalendarResourceFieldCandidates().some(
-			(field) => field.key === s.viewDraft.calendarResourceBy
-		)
-			? s.viewDraft.calendarResourceBy
-			: '';
-	}
-
-	function viewDraftPivotDimensionFieldCandidates(): FormField[] {
-		if (s.viewDraft.view_type !== 'pivot') return [];
-
-		return fields.filter((field) => field.visibility?.list !== false);
-	}
-
-	function viewDraftPivotValueFieldCandidates(): FormField[] {
-		if (s.viewDraft.view_type !== 'pivot') return [];
-
-		return fields.filter(
-			(field) =>
-				field.visibility?.list !== false &&
-				['amount', 'number', 'integer'].includes(field.type ?? 'text')
-		);
-	}
-
-	function validViewDraftPivotRowField(): string {
-		if (s.viewDraft.view_type !== 'pivot' || !s.viewDraft.pivotRowField) return '';
-
-		return viewDraftPivotDimensionFieldCandidates().some(
-			(field) => field.key === s.viewDraft.pivotRowField
-		)
-			? s.viewDraft.pivotRowField
-			: '';
-	}
-
-	function validViewDraftPivotColumnField(): string {
-		if (s.viewDraft.view_type !== 'pivot' || !s.viewDraft.pivotColumnField) return '';
-		if (s.viewDraft.pivotColumnField === s.viewDraft.pivotRowField) return '';
-
-		return viewDraftPivotDimensionFieldCandidates().some(
-			(field) => field.key === s.viewDraft.pivotColumnField
-		)
-			? s.viewDraft.pivotColumnField
-			: '';
-	}
-
-	function validViewDraftPivotValueField(): string {
-		if (s.viewDraft.view_type !== 'pivot' || !s.viewDraft.pivotValueField) return '';
-
-		return viewDraftPivotValueFieldCandidates().some(
-			(field) => field.key === s.viewDraft.pivotValueField
-		)
-			? s.viewDraft.pivotValueField
-			: '';
-	}
-
-	function swapViewDraftPivotAxes() {
-		if (
-			s.viewDraft.view_type !== 'pivot' ||
-			!s.viewDraft.pivotRowField ||
-			!s.viewDraft.pivotColumnField
-		) {
-			return;
-		}
-
-		s.viewDraft = {
-			...s.viewDraft,
-			pivotRowField: s.viewDraft.pivotColumnField,
-			pivotColumnField: s.viewDraft.pivotRowField
-		};
-	}
-
-	function viewDraftGanttDateFieldCandidates(): FormField[] {
-		if (s.viewDraft.view_type !== 'gantt') return [];
-
-		return fields.filter(
-			(field) =>
-				field.visibility?.list !== false && ['date', 'datetime'].includes(field.type ?? 'text')
-		);
-	}
-
-	function viewDraftGanttGroupFieldCandidates(): FormField[] {
-		if (s.viewDraft.view_type !== 'gantt') return [];
-
-		return fields.filter(
-			(field) =>
-				field.visibility?.list !== false &&
-				field.key !== s.viewDraft.ganttStartField &&
-				field.key !== s.viewDraft.ganttEndField
-		);
-	}
-
-	function viewDraftGanttDependencyFieldCandidates(): FormField[] {
-		if (s.viewDraft.view_type !== 'gantt') return [];
-
-		return fields.filter(
-			(field) =>
-				field.visibility?.list !== false &&
-				field.key !== s.viewDraft.ganttStartField &&
-				field.key !== s.viewDraft.ganttEndField &&
-				field.key !== s.viewDraft.ganttGroupBy
-		);
-	}
-
-	function validViewDraftGanttStartField(): string {
-		if (s.viewDraft.view_type !== 'gantt' || !s.viewDraft.ganttStartField) return '';
-
-		return viewDraftGanttDateFieldCandidates().some(
-			(field) => field.key === s.viewDraft.ganttStartField
-		)
-			? s.viewDraft.ganttStartField
-			: '';
-	}
-
-	function validViewDraftGanttEndField(): string {
-		if (s.viewDraft.view_type !== 'gantt' || !s.viewDraft.ganttEndField) return '';
-		if (s.viewDraft.ganttEndField === s.viewDraft.ganttStartField) return '';
-
-		return viewDraftGanttDateFieldCandidates().some(
-			(field) => field.key === s.viewDraft.ganttEndField
-		)
-			? s.viewDraft.ganttEndField
-			: '';
-	}
-
-	function validViewDraftGanttGroupBy(): string {
-		if (s.viewDraft.view_type !== 'gantt' || !s.viewDraft.ganttGroupBy) return '';
-
-		return viewDraftGanttGroupFieldCandidates().some(
-			(field) => field.key === s.viewDraft.ganttGroupBy
-		)
-			? s.viewDraft.ganttGroupBy
-			: '';
-	}
-
-	function validViewDraftGanttDependencyField(): string {
-		if (s.viewDraft.view_type !== 'gantt' || !s.viewDraft.ganttDependencyField) return '';
-
-		return viewDraftGanttDependencyFieldCandidates().some(
-			(field) => field.key === s.viewDraft.ganttDependencyField
-		)
-			? s.viewDraft.ganttDependencyField
-			: '';
-	}
-
-	function validViewDraftCalendarExceptionDates(): CalendarExceptionDateMap {
-		const next = calendarExceptionDateMap(s.viewDraft.calendarExceptionDates);
-		const recordId = s.viewDraft.calendarExceptionRecordId.trim();
-		const date = s.viewDraft.calendarExceptionDate.trim();
-
-		if (recordId && isIsoDate(date)) {
-			next[recordId] = Array.from(new Set([...(next[recordId] ?? []), date])).sort();
-		}
-
-		return next;
-	}
-
-	function calendarExceptionRecordLabel(recordId: string): string {
-		const record = s.records.find((item) => item.id === recordId);
-
-		return record ? record.title : recordId;
-	}
-
-	function viewDraftCalendarExceptionItems(): Array<{
-		recordId: string;
-		date: string;
-		label: string;
-	}> {
-		return Object.entries(validViewDraftCalendarExceptionDates())
-			.flatMap(([recordId, dates]) =>
-				dates.map((date) => ({
-					recordId,
-					date,
-					label: calendarExceptionRecordLabel(recordId)
-				}))
-			)
-			.sort(
-				(left, right) =>
-					left.date.localeCompare(right.date) || left.label.localeCompare(right.label)
-			);
-	}
-
-	function addViewDraftCalendarException() {
-		const recordId = s.viewDraft.calendarExceptionRecordId.trim();
-		const date = s.viewDraft.calendarExceptionDate.trim();
-
-		if (!recordId || !isIsoDate(date)) return;
-
-		const nextDates = new Set(s.viewDraft.calendarExceptionDates[recordId] ?? []);
-
-		nextDates.add(date);
-
-		s.viewDraft = {
-			...s.viewDraft,
-			calendarExceptionDate: '',
-			calendarExceptionDates: {
-				...s.viewDraft.calendarExceptionDates,
-				[recordId]: Array.from(nextDates).sort()
-			}
-		};
-	}
-
-	function removeViewDraftCalendarException(recordId: string, date: string) {
-		const next = { ...s.viewDraft.calendarExceptionDates };
-		const dates = (next[recordId] ?? []).filter((item) => item !== date);
-
-		if (dates.length > 0) {
-			next[recordId] = dates;
-		} else {
-			delete next[recordId];
-		}
-
-		s.viewDraft = { ...s.viewDraft, calendarExceptionDates: next };
-	}
-
-	function viewDraftKanbanWipOptions(): string[] {
-		const field = viewDraftKanbanGroupField();
-
-		if (s.viewDraft.view_type !== 'kanban' || field?.type !== 'single_select') return [];
-
-		return kanbanMoveOptions(field);
-	}
-
-	function setViewDraftWipLimit(option: string, value: string) {
-		const nextLimits = { ...s.viewDraft.wipLimits };
-		const trimmed = value.trim();
-
-		if (!trimmed) {
-			delete nextLimits[option];
-		} else {
-			nextLimits[option] = trimmed;
-		}
-
-		s.viewDraft = { ...s.viewDraft, wipLimits: nextLimits };
-	}
-
-	function validViewDraftWipLimits(): Record<string, number> {
-		const limits: Record<string, number> = {};
-
-		for (const option of viewDraftKanbanWipOptions()) {
-			const raw = s.viewDraft.wipLimits[option];
-
-			if (!raw?.trim()) continue;
-
-			const limit = Number(raw);
-
-			if (Number.isFinite(limit) && limit >= 0) {
-				limits[option] = Math.floor(limit);
-			}
-		}
-
-		return limits;
-	}
-
-	function viewConfigFromDraft(): Record<string, unknown> {
-		const config: Record<string, unknown> = {
-			columns: s.viewDraft.columns.length > 0 ? s.viewDraft.columns : defaultViewColumns(),
-			density: 'compact',
-			visibility: s.viewDraft.visibility
-		};
-
-		const filterGroups = validViewFilterGroups();
-		const filters = filterGroups[0]?.filters ?? [];
-
-		if (filters.length > 0) {
-			const filterExpression = viewFilterExpressionConfigFromGroups(filterGroups);
-
-			if (filterExpression) config.filter_expression = filterExpression;
-
-			config.filter_groups = filterGroups;
-			config.filters = filters;
-			config.filter = filters[0];
-		}
-
-		if (s.viewDraft.sortField) {
-			config.sort = {
-				field: s.viewDraft.sortField,
-				direction: s.viewDraft.sortDirection
-			};
-		}
-
-		if (s.viewDraft.groupBy) config.group_by = s.viewDraft.groupBy;
-
-		const swimlaneBy = validViewDraftSwimlaneBy();
-
-		if (swimlaneBy) config.swimlane_by = swimlaneBy;
-
-		const wipLimits = validViewDraftWipLimits();
-
-		if (Object.keys(wipLimits).length > 0) config.wip_limits = wipLimits;
-		if (s.viewDraft.dateField) config.date_field = s.viewDraft.dateField;
-
-		if (s.viewDraft.view_type === 'pivot') {
-			const pivotRowField = validViewDraftPivotRowField();
-			const pivotColumnField = validViewDraftPivotColumnField();
-			const pivotValueField = validViewDraftPivotValueField();
-
-			if (pivotRowField) config.pivot_row_field = pivotRowField;
-			if (pivotColumnField) config.pivot_column_field = pivotColumnField;
-			if (pivotValueField) config.pivot_value_field = pivotValueField;
-
-			config.pivot_aggregate = s.viewDraft.pivotAggregate;
-			config.pivot_totals = s.viewDraft.pivotTotals;
-			config.pivot_value_display = s.viewDraft.pivotValueDisplay;
-			config.pivot_sort = s.viewDraft.pivotSort;
-
-			if (s.viewDraft.pivotEmptyBuckets) config.pivot_empty_buckets = true;
-			if (s.viewDraft.pivotHideZeroBuckets) config.pivot_hide_zero_buckets = true;
-			if (s.viewDraft.pivotShowCounts) config.pivot_show_counts = true;
-			if (s.viewDraft.pivotHeatmap) config.pivot_heatmap = true;
-			if (s.viewDraft.pivotRowLimit > 0) config.pivot_row_limit = s.viewDraft.pivotRowLimit;
-			if (s.viewDraft.pivotColumnLimit > 0)
-				config.pivot_column_limit = s.viewDraft.pivotColumnLimit;
-		}
-
-		if (s.viewDraft.view_type === 'gantt') {
-			const ganttStartField = validViewDraftGanttStartField();
-			const ganttEndField = validViewDraftGanttEndField();
-			const ganttGroupBy = validViewDraftGanttGroupBy();
-			const ganttDependencyField = validViewDraftGanttDependencyField();
-
-			config.gantt_scale = s.viewDraft.ganttScale;
-
-			if (ganttStartField) config.gantt_start_field = ganttStartField;
-			if (ganttEndField) config.gantt_end_field = ganttEndField;
-			if (ganttGroupBy) config.gantt_group_by = ganttGroupBy;
-			if (ganttDependencyField) config.gantt_dependency_field = ganttDependencyField;
-		}
-
-		if (s.viewDraft.view_type === 'calendar') {
-			config.calendar_range = s.viewDraft.calendarRange;
-
-			if (isIsoDate(s.viewDraft.calendarFocusDate))
-				config.calendar_focus_date = s.viewDraft.calendarFocusDate;
-
-			config.calendar_day_scope = s.viewDraft.calendarDayScope;
-			config.calendar_layout = s.viewDraft.calendarLayout;
-
-			if (s.viewDraft.calendarHideEmptyDays) config.calendar_hide_empty_days = true;
-
-			const calendarEndField = validViewDraftCalendarEndField();
-
-			if (calendarEndField) config.calendar_end_field = calendarEndField;
-
-			if (s.viewDraft.calendarRecurrence !== 'none') {
-				config.calendar_recurrence = s.viewDraft.calendarRecurrence;
-			}
-
-			const calendarResourceBy = validViewDraftCalendarResourceBy();
-
-			if (calendarResourceBy) config.calendar_resource_by = calendarResourceBy;
-
-			const calendarExceptionDates = validViewDraftCalendarExceptionDates();
-
-			if (Object.keys(calendarExceptionDates).length > 0) {
-				config.calendar_exception_dates = calendarExceptionDates;
-			}
-		}
-
-		if (s.viewDraft.view_type === 'card') {
-			if (s.viewDraft.cardTitleField) config.card_title_field = s.viewDraft.cardTitleField;
-
-			if (
-				s.viewDraft.cardSubtitleField &&
-				s.viewDraft.cardSubtitleField !== s.viewDraft.cardTitleField
-			) {
-				config.card_subtitle_field = s.viewDraft.cardSubtitleField;
-			}
-
-			if (
-				s.viewDraft.cardBadgeField &&
-				s.viewDraft.cardBadgeField !== s.viewDraft.cardTitleField &&
-				s.viewDraft.cardBadgeField !== s.viewDraft.cardSubtitleField
-			) {
-				config.card_badge_field = s.viewDraft.cardBadgeField;
-			}
-
-			if (s.viewDraft.cardCoverField) config.card_cover_field = s.viewDraft.cardCoverField;
-			if (s.viewDraft.cardLayout !== 'standard') config.card_layout = s.viewDraft.cardLayout;
-			if (s.viewDraft.cardCoverAspect !== 'auto')
-				config.card_cover_aspect = s.viewDraft.cardCoverAspect;
-			if (s.viewDraft.cardCoverFit !== 'cover') config.card_cover_fit = s.viewDraft.cardCoverFit;
-			if (s.viewDraft.cardCoverPosition !== 'top')
-				config.card_cover_position = s.viewDraft.cardCoverPosition;
-			if (s.viewDraft.cardFieldLimit !== 6) config.card_field_limit = s.viewDraft.cardFieldLimit;
-			if (s.viewDraft.cardHideEmptyFields) config.card_hide_empty_fields = true;
-			if (s.viewDraft.cardShowTimestamps) config.card_show_timestamps = true;
-			if (s.viewDraft.cardShowRecordId) config.card_show_record_id = true;
-
-			const cardFieldKeys = validViewDraftCardFieldKeys();
-
-			if (cardFieldKeys.length > 0) config.card_fields = cardFieldKeys;
-		}
-
-		if (s.viewDraft.view_type === 'timeline') {
-			config.timeline_source = s.viewDraft.timelineSource;
-
-			if (s.viewDraft.timelineSource === 'records' && s.viewDraft.timelineTitleField)
-				config.timeline_title_field = s.viewDraft.timelineTitleField;
-
-			if (
-				s.viewDraft.timelineSource === 'records' &&
-				s.viewDraft.timelineSubtitleField &&
-				s.viewDraft.timelineSubtitleField !== s.viewDraft.timelineTitleField
-			) {
-				config.timeline_subtitle_field = s.viewDraft.timelineSubtitleField;
-			}
-
-			if (s.viewDraft.timelineSource === 'events') {
-				config.timeline_event_layout = s.viewDraft.timelineEventLayout;
-
-				if (s.viewDraft.timelineEventType)
-					config.timeline_event_type = s.viewDraft.timelineEventType;
-				if (s.viewDraft.timelineEventActor)
-					config.timeline_event_actor = s.viewDraft.timelineEventActor;
-				if (s.viewDraft.timelineEventAggregate)
-					config.timeline_event_aggregate = s.viewDraft.timelineEventAggregate;
-				if (s.viewDraft.timelineEventQuery.trim())
-					config.timeline_event_query = s.viewDraft.timelineEventQuery.trim();
-				if (s.viewDraft.timelineEventFrom.trim())
-					config.timeline_event_from = s.viewDraft.timelineEventFrom.trim();
-				if (s.viewDraft.timelineEventTo.trim())
-					config.timeline_event_to = s.viewDraft.timelineEventTo.trim();
-			}
-		}
-
-		config.is_default = s.viewDraft.isDefault;
-
-		return config;
-	}
-
-	function isServerSortable(key: string): boolean {
-		if (['title', 'created_at', 'updated_at'].includes(key)) return true;
-		return SORTABLE_TYPES.has(fieldByKey(key)?.type ?? '');
-	}
-
-	/** The built-in "All records" table: every list field, no filters, server order. */
-	function builtInView(form: UniversalForm): FormView {
-		const { id, workspace_id, project_id, created_at, updated_at } = form;
-		const name = $t('forms.views.allRecords');
-		const columns = parseFields(form.schema)
-			.filter((field) => field.visibility?.list !== false)
-			.map((field) => field.key);
-		return {
-			id: precedence.ALL_RECORDS_VIEW_ID,
-			workspace_id,
-			project_id,
-			form_id: id,
-			key: 'all',
-			name,
-			view_type: 'grid',
-			config: { columns },
-			created_at,
-			updated_at
-		};
-	}
-
-	/** Applies a view (saved or built-in) and brings back this user's working changes to it. */
-	function applyView(viewId: string) {
-		s.selectedViewId = viewId;
-		const view =
-			s.formViews.find((item) => item.id === viewId) ??
-			(selectedForm ? builtInView(selectedForm) : null);
-		if (!view) return;
-		resetViewDraft(view);
-		const config = viewConfigFromDraft();
-		s.viewBaseline = {
-			viewId: view.id,
-			type: s.viewDraft.view_type,
-			key: arrangement.normalizedViewConfig(config),
-			config
-		};
-		const stored = arrangement.readArrangement(currentUserId, s.selectedFormId, view.id);
-		if (!stored) return;
-		if (stored.base_updated_at !== (savedView ? view.updated_at : null)) {
-			arrangement.clearArrangement(currentUserId, s.selectedFormId, view.id);
-			toast.info($t('forms.views.updatedElsewhere', { values: { name: view.name } }));
-			return;
-		}
-		const audience = { visibility: view.config?.visibility, is_default: view.config?.is_default };
-		resetViewDraft({
-			...view,
-			view_type: stored.view_type,
-			config: { ...stored.config, ...audience }
-		});
-	}
-
-	/** Switches the view; `remember` marks an explicit choice (kept per user and form, put in the URL). */
-	function showView(viewId: string, options: { remember: boolean }) {
-		applyView(viewId);
-		s.viewConflict = false;
-		s.resetUndo = null;
-		if (!options.remember) return;
-		precedence.writeRememberedView(currentUserId, s.selectedFormId, viewId);
-		const url = new URL(page.url.href);
-		url.searchParams.set('view', viewId);
-		// eslint-disable-next-line svelte/no-navigation-without-resolve -- same route, query only
-		void goto(url, { replace: true, reset: false });
-	}
-
 	$effect(() => {
-		const view = baseView;
-		const [modified, config, type] = [arrangementModified, draftViewConfig, s.viewDraft.view_type];
-		const [user, formId] = [currentUserId, s.selectedFormId];
+		const view = s.baseView;
+		const [modified, config, type] = [
+			s.arrangementModified,
+			s.draftViewConfig,
+			s.viewDraft.view_type
+		];
+		const [user, formId] = [s.currentUserId, s.selectedFormId];
 		if (!view || !formId || untrack(() => s.viewBaseline.viewId) !== view.id) return;
 		clearTimeout(s.arrangementTimer);
 		s.arrangementTimer = setTimeout(() => {
-			const base = untrack(() => savedView?.updated_at ?? null);
+			const base = untrack(() => s.savedView?.updated_at ?? null);
 			if (!modified) arrangement.clearArrangement(user, formId, view.id);
 			else
 				arrangement.writeArrangement(user, formId, view.id, {
@@ -8128,284 +605,11 @@
 	});
 
 	$effect(() => {
-		const key = JSON.stringify([s.selectedFormId, recordQuery]);
+		const key = JSON.stringify([s.selectedFormId, s.recordQuery]);
 		clearTimeout(s.recordQueryTimer);
 		if (!untrack(() => s.loadedRecordQuery) || key === untrack(() => s.loadedRecordQuery)) return;
 		s.recordQueryTimer = setTimeout(() => void loadRecords(), 300);
 	});
-
-	function resetArrangement() {
-		if (!baseView) return;
-		clearTimeout(s.arrangementTimer);
-		const undo = {
-			base_updated_at: null,
-			view_type: s.viewDraft.view_type,
-			config: draftViewConfig,
-			at: ''
-		};
-		arrangement.clearArrangement(currentUserId, s.selectedFormId, baseView.id);
-		applyView(baseView.id);
-		s.resetUndo = undo;
-		announce($t('forms.views.resetDone'));
-		setTimeout(() => {
-			if (s.resetUndo === undo) s.resetUndo = null;
-		}, 6000);
-	}
-
-	function undoReset() {
-		const undo = s.resetUndo;
-		if (!undo || !baseView) return;
-		s.resetUndo = null;
-		resetViewDraft({ ...baseView, view_type: undo.view_type, config: undo.config });
-	}
-
-	async function writeView(request: Promise<ApiResult<FormView>>): Promise<FormView | null> {
-		s.viewSubmitting = true;
-		const response = await request;
-		s.viewSubmitting = false;
-		if (response.code === 409) s.viewConflict = true;
-		if (response.code !== 0 || !response.data) {
-			if (response.code !== 409) toast.error(response.message);
-			return null;
-		}
-		const view = response.data;
-		const next = s.formViews.some((item) => item.id === view.id)
-			? s.formViews.map((item) => (item.id === view.id ? view : item))
-			: [...s.formViews, view];
-		s.formViews = viewIsDefault(view)
-			? normalizeLocalDefaultViews(next, view.id)
-			: sortViewsByDefault(next);
-		return view;
-	}
-
-	async function saveViewAs(input: { name: string; visibility: 'private' | 'shared' }) {
-		if (!selectedForm || !baseView) return;
-		s.saveViewError = null;
-		const from = baseView.id;
-		const config = { ...draftViewConfig, visibility: input.visibility, is_default: false };
-		const key = arrangement.generateViewKey(input.name);
-		const request = formsApi.createView(selectedForm.id, {
-			key,
-			name: input.name,
-			view_type: s.viewDraft.view_type,
-			config
-		});
-		const saving = await request;
-		if (saving.code !== 0 || !saving.data) {
-			s.saveViewError = saving.message;
-			return;
-		}
-		await writeView(Promise.resolve(saving));
-		arrangement.clearArrangement(currentUserId, s.selectedFormId, from);
-		s.saveViewOpen = false;
-		showView(saving.data.id, { remember: true });
-		announce($t('forms.views.viewSaved'));
-		toast.success($t('forms.views.viewSaved'));
-	}
-
-	/** Updates the saved view: with the working changes, or with a name or audience change only. */
-	async function updateCurrentView(patch?: { name?: string; config?: Record<string, unknown> }) {
-		const view = savedView;
-		if (!view) return;
-		const audience = {
-			visibility: view.config?.visibility ?? 'shared',
-			is_default: viewIsDefault(view)
-		};
-		const body = patch ?? {
-			view_type: s.viewDraft.view_type,
-			config: { ...draftViewConfig, ...audience }
-		};
-		const updated = await writeView(
-			formsApi.updateView(view.id, { ...body, expected_updated_at: view.updated_at })
-		);
-		if (!updated) return;
-		s.viewConflict = false;
-		if (!patch) {
-			arrangement.clearArrangement(currentUserId, s.selectedFormId, view.id);
-			applyView(view.id);
-		}
-		toast.success($t('forms.views.viewUpdated'));
-	}
-
-	async function deleteView() {
-		const view = savedView;
-		if (!view) return;
-		const response = await formsApi.deleteView(view.id);
-		if (response.code !== 0) {
-			toast.error(response.message);
-			return;
-		}
-		s.formViews = s.formViews.filter((item) => item.id !== view.id);
-		arrangement.clearArrangement(currentUserId, s.selectedFormId, view.id);
-		if (precedence.readRememberedView(currentUserId, s.selectedFormId) === view.id)
-			precedence.forgetRememberedView(currentUserId, s.selectedFormId);
-		showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false });
-		toast.success($t('forms.views.viewDeleted'));
-	}
-
-	function openSaveView(name?: string) {
-		s.saveViewError = null;
-		s.saveViewName =
-			name ??
-			arrangement.suggestViewName(
-				baseView ?? { name: '' },
-				draftViewConfig,
-				(key) => {
-					const field = fieldByKey(key);
-					return field
-						? fieldLabel(field)
-						: $t(
-								`forms.views.${key === 'title' ? 'titleField' : key === 'created_at' ? 'createdField' : 'updatedField'}`
-							);
-				},
-				(field) => $t('forms.views.byField', { values: { field } })
-			);
-		s.saveViewOpen = true;
-	}
-
-	function openLayoutSettings() {
-		if (s.panelRecordId) closeRecordPanel(false);
-		s.viewToolsExpanded = true;
-	}
-
-	function setDraftFilters(filters: SimpleFilter[], logic: 'all' | 'any') {
-		const filterGroups = filters.length > 0 ? [{ logic, filters }] : [];
-		s.viewDraft = { ...s.viewDraft, filterGroups, ...syncLegacyViewFilterFields(filterGroups) };
-	}
-
-	// --- record side panel ---------------------------------------------------------------
-	const panelRecord = $derived(
-		s.panelRecordId
-			? (s.records.find((record) => record.id === s.panelRecordId) ??
-					(s.selectedRecord?.id === s.panelRecordId ? s.selectedRecord : null))
-			: null
-	);
-	const panelPosition = $derived(
-		s.panelRecordId ? viewRecords.findIndex((record) => record.id === s.panelRecordId) : -1
-	);
-	const fieldCtx = $derived<FieldDisplayContext>({
-		locale: $locale ?? 'en',
-		formKey: selectedForm?.key ?? '',
-		members: new Map(s.workspaceMembers.map((member) => [member.user_id, member])),
-		attachmentsByField: s.recordAttachments.reduce<Record<string, FormAttachment[]>>(
-			(groups, item) => {
-				if (item.record_id === s.panelRecordId) (groups[item.field_key] ??= []).push(item);
-				return groups;
-			},
-			{}
-		),
-		signedUrls: s.recordAttachmentSignedUrls,
-		relationTitle: (field, id) =>
-			s.relationTargets[field.key]?.find((item) => item.record_id === id)?.display
-	});
-
-	function announce(message: string, delay = 0) {
-		clearTimeout(s.announceTimer);
-		s.announceTimer = setTimeout(() => (s.liveMessage = message), delay);
-	}
-
-	function recordHref(recordId: string): string {
-		return `/workspace/${workspaceId}/projects/${projectId}/forms/records/${recordId}`;
-	}
-
-	function canChangeRecord(record: FormRecord, action: 'record.update' | 'record.delete'): boolean {
-		const effective = s.formPermissions?.effective;
-		if (!effective) return true;
-		return (
-			effective.actions[action] &&
-			(effective.record_scope !== 'owned' || record.created_by === currentUserId)
-		);
-	}
-
-	function setRecordUrl(recordId: string | null, mode: 'push' | 'replace'): Promise<void> {
-		s.recordUrlWrite = s.recordUrlWrite
-			.then(async () => {
-				const url = new URL(page.url.href);
-				url.searchParams.delete('record_id');
-				if (recordId) url.searchParams.set('record', recordId);
-				else url.searchParams.delete('record');
-				if (recordId) url.searchParams.set('form', s.selectedFormId);
-				if (url.href === page.url.href) return;
-				// eslint-disable-next-line svelte/no-navigation-without-resolve -- same route, query only
-				await goto(url, { replace: mode === 'replace', reset: false });
-				if (mode === 'push' && page.url.href === url.href) s.panelHistoryDepth += 1;
-			})
-			.catch((error: unknown) => {
-				// A superseded navigation must not stop later URL writes.
-				console.warn('record URL update was not applied', error);
-			});
-		return s.recordUrlWrite;
-	}
-
-	async function openRecordPanel(
-		target: FormRecord | string,
-		history: 'push' | 'replace' | 'none'
-	) {
-		const id = typeof target === 'string' ? target : target.id;
-		const local =
-			typeof target === 'string' ? (s.records.find((record) => record.id === id) ?? null) : target;
-		s.viewToolsExpanded = false;
-		if (!s.panelRecordId) s.panelWidth = arrangement.readPanelWidth(currentUserId) ?? s.panelWidth;
-		s.panelRecordId = id;
-		s.panelStatus = local ? 'ready' : 'loading';
-		s.panelError = '';
-		s.selectedRecord = local;
-		const index = viewRecords.findIndex((record) => record.id === id);
-		if (index >= 0) s.recordPage = Math.floor(index / recordPageSize) + 1;
-		if (history !== 'none') await setRecordUrl(id, history);
-		if (local && index >= 0)
-			announce(
-				$t('forms.recordPanel.announce', {
-					values: { title: local.title, index: index + 1, total: viewRecords.length }
-				}),
-				300
-			);
-		const started = Date.now();
-		const response = await formsApi.getRecord(id);
-		if (s.panelRecordId !== id) return;
-		const elapsed = Date.now() - started;
-		if (!local && elapsed > 200 && elapsed < 500)
-			await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
-		if (response.code === 0 && response.data && !response.data.archived_at) {
-			s.selectedRecord = response.data;
-			s.panelStatus = 'ready';
-			s.panelDetailsLoading = true;
-			await Promise.all([
-				loadSelectedRecordLinks(),
-				loadSelectedRecordChildren(),
-				loadRecordAttachments(id)
-			]);
-			s.panelDetailsLoading = false;
-		} else if (response.code === 404 || response.data?.archived_at) s.panelStatus = 'missing';
-		else if (!local) {
-			s.panelStatus = response.code === 403 ? 'forbidden' : 'error';
-			s.panelError = response.message;
-		}
-	}
-
-	function closeRecordPanel(restoreFocus = true) {
-		const id = s.panelRecordId;
-		if (!id) return;
-		const index = s.recordGrid?.rowIndex(id) ?? -1;
-		s.panelRecordId = null;
-		s.selectedRecord = null;
-		s.selectedRecordLinks = [];
-		s.selectedRecordChildren = [];
-		announce($t('forms.recordPanel.announceClosed'));
-		void s.recordUrlWrite.then(() => {
-			if (s.panelHistoryDepth > 0) {
-				history.go(-s.panelHistoryDepth);
-				s.panelHistoryDepth = 0;
-			} else void setRecordUrl(null, 'replace');
-		});
-		if (!restoreFocus) return;
-		s.pendingRowFocus = id;
-		void tick().then(() => {
-			if (s.recordGrid && viewRecords.some((record) => record.id === id)) s.recordGrid.focusRow(id);
-			else if (s.recordGrid) s.recordGrid.focusIndex(Math.max(index, 0));
-			else document.querySelector<HTMLElement>(`[data-record-open="${CSS.escape(id)}"]`)?.focus();
-		});
-	}
 
 	afterNavigate(() => {
 		const id = s.pendingRowFocus;
@@ -8414,15 +618,9 @@
 			s.recordGrid?.focusRow(id);
 	});
 
-	function stepRecordPanel(delta: 1 | -1) {
-		const next = viewRecords[panelPosition + delta];
-		if (!next) return;
-		void openRecordPanel(next, 'replace');
-	}
-
 	// Back / Forward open and close the panel; the panel's own writes never reach this branch.
 	$effect(() => {
-		const id = detailUrlRecordId;
+		const id = s.detailUrlRecordId;
 		if (!s.formsSessionReady || s.formsSessionActivating || !s.selectedFormId) return;
 		untrack(() => {
 			if (id && id !== s.panelRecordId) {
@@ -8437,3291 +635,6 @@
 			}
 		});
 	});
-
-	function gridBadges(field: FormField, record: FormRecord | null): GridBadge[] {
-		const prefix = record ? 'grid-cell' : 'grid-header';
-		const value = record ? `${record.id}:${field.key}` : field.key;
-		const badges: GridBadge[] = [];
-		if (!record && memberFieldHidden(field))
-			badges.push({
-				attr: `${prefix}-permission-hidden`,
-				value,
-				label: $t('forms.fieldHiddenBadge'),
-				tone: 'amber'
-			});
-		if (!record && memberFieldLocked(field))
-			badges.push({
-				attr: `${prefix}-permission-locked`,
-				value,
-				label: $t('forms.fieldLockedBadge'),
-				tone: 'slate'
-			});
-		if (record ? recordFieldHiddenByCondition(field, record) : fieldHasConditionalHidden(field))
-			badges.push({
-				attr: `${prefix}-conditional-hidden`,
-				value,
-				label: $t('forms.fieldConditionHiddenBadge'),
-				tone: 'blue'
-			});
-		if (record ? recordFieldReadOnlyByCondition(field, record) : fieldHasConditionalReadOnly(field))
-			badges.push({
-				attr: `${prefix}-conditional-readonly`,
-				value,
-				label: $t('forms.fieldConditionReadOnlyBadge'),
-				tone: 'cyan'
-			});
-		return badges;
-	}
-
-	async function exportCurrentView() {
-		if (!selectedForm) return;
-
-		s.exportingRecords = true;
-
-		const response = await formsApi.exportRecords(selectedForm.id, {
-			view_id: s.selectedViewId || undefined,
-			columns: s.selectedViewId ? undefined : visibleFields.map((field) => field.key),
-			format: 'csv'
-		});
-
-		s.exportingRecords = false;
-
-		if (response.code !== 0 || !response.data || !response.data.csv) {
-			toast.error(response.message || $t('forms.exportFailed'));
-
-			return;
-		}
-
-		const blob = new Blob([response.data.csv], { type: 'text/csv;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = response.data.file_name;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		toast.success($t('forms.recordsExported'));
-	}
-
-	async function exportCurrentViewJson() {
-		if (!selectedForm) return;
-
-		s.exportingRecords = true;
-
-		const response = await formsApi.exportRecords(selectedForm.id, {
-			view_id: s.selectedViewId || undefined,
-			columns: s.selectedViewId ? undefined : visibleFields.map((field) => field.key),
-			format: 'json'
-		});
-
-		s.exportingRecords = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message || $t('forms.exportFailed'));
-
-			return;
-		}
-
-		const blob = new Blob([JSON.stringify(response.data, null, 2)], {
-			type: 'application/json;charset=utf-8'
-		});
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = response.data.file_name;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedCurrentViewJsonRecordCount = response.data.rows.length;
-		toast.success($t('forms.recordsJsonExported'));
-	}
-
-	function exportAttachmentManifest() {
-		if (!selectedForm) return;
-
-		const attachmentFields = fields.filter((field) =>
-			['attachment', 'image'].includes(fieldType(field))
-		);
-
-		const attachments = viewRecords.flatMap((record) =>
-			attachmentFields.flatMap((field) => {
-				const value = record.values?.[field.key];
-				const urls = attachmentManifestUrls(value);
-
-				return urls.map((url) => ({
-					record_id: record.id,
-					record_title: record.title,
-					field_key: field.key,
-					field_label: fieldLabel(field),
-					field_type: fieldType(field),
-					url,
-					file_name: attachmentFileName(url, field),
-					content_type: attachmentContentType(attachmentFileName(url, field), field)
-				}));
-			})
-		);
-
-		const manifest = {
-			form_id: selectedForm.id,
-			form_key: selectedForm.key,
-			view_id: s.selectedViewId || null,
-			view_name: selectedView?.name ?? null,
-			exported_at: new Date().toISOString(),
-			record_count: viewRecords.length,
-			attachment_count: attachments.length,
-			attachments
-		};
-
-		const blob = new Blob([JSON.stringify(manifest, null, 2)], {
-			type: 'application/json;charset=utf-8'
-		});
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-attachment-manifest.json`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedAttachmentManifestCount = attachments.length;
-		toast.success($t('forms.attachmentManifestExported'));
-	}
-
-	async function collectAttachmentBundle(): Promise<AttachmentBundleExport | null> {
-		if (!selectedForm) return null;
-
-		const attachmentFields = fields.filter((field) =>
-			['attachment', 'image'].includes(fieldType(field))
-		);
-		const recordIds = new Set(viewRecords.map((record) => record.id));
-
-		s.exportingRecords = true;
-
-		const metadataResponse = await formsApi.listAttachments(selectedForm.id, { per_page: 200 });
-
-		s.exportingRecords = false;
-
-		if (metadataResponse.code !== 0 || !metadataResponse.data) {
-			toast.error(metadataResponse.message || $t('forms.exportFailed'));
-
-			return null;
-		}
-
-		const metadataAttachments = metadataResponse.data.items.filter(
-			(attachment) =>
-				!attachment.archived_at &&
-				attachment.record_id &&
-				recordIds.has(attachment.record_id) &&
-				attachmentFields.some((field) => field.key === attachment.field_key)
-		);
-
-		const signedEntries = await Promise.all(
-			metadataAttachments.map(async (attachment) => {
-				const response = await formsApi.getAttachmentSignedDownload(attachment.id);
-
-				return [
-					attachment.id,
-					response.code === 0 && response.data?.url ? response.data.url : attachment.url
-				] as const;
-			})
-		);
-
-		const signedUrls = Object.fromEntries(signedEntries);
-
-		const metadataByValue = new Map(
-			metadataAttachments.map((attachment) => [
-				`${attachment.record_id ?? ''}:${attachment.field_key}:${attachment.url}`,
-				attachment
-			])
-		);
-
-		const bundledKeys = new Set<string>();
-
-		const attachments: AttachmentBundleEntry[] = viewRecords.flatMap((record) =>
-			attachmentFields.flatMap((field) => {
-				const value = record.values?.[field.key];
-				const urls = attachmentManifestUrls(value);
-
-				return urls.map((url) => {
-					const metadata = metadataByValue.get(`${record.id}:${field.key}:${url}`);
-					const bundleKey = `${record.id}:${field.key}:${url}`;
-
-					bundledKeys.add(bundleKey);
-
-					return {
-						record_id: record.id,
-						record_title: record.title,
-						field_key: field.key,
-						field_label: fieldLabel(field),
-						field_type: fieldType(field),
-						url,
-						download_url: metadata ? signedUrls[metadata.id] || metadata.url : url,
-						thumbnail_url: metadata?.thumbnail_url ?? null,
-						file_name: metadata?.file_name ?? attachmentFileName(url, field),
-						content_type:
-							metadata?.content_type ||
-							attachmentContentType(metadata?.file_name ?? attachmentFileName(url, field), field),
-						byte_size: metadata?.byte_size ?? 0,
-						storage_key: metadata?.storage_key ?? null,
-						attachment_id: metadata?.id ?? null,
-						source: metadata ? 'metadata' : 'record_value'
-					};
-				});
-			})
-		);
-
-		for (const attachment of metadataAttachments) {
-			const bundleKey = `${attachment.record_id ?? ''}:${attachment.field_key}:${attachment.url}`;
-
-			if (bundledKeys.has(bundleKey)) continue;
-
-			const record = viewRecords.find((item) => item.id === attachment.record_id);
-			const field = attachmentFields.find((item) => item.key === attachment.field_key);
-
-			attachments.push({
-				record_id: attachment.record_id ?? '',
-				record_title: record?.title ?? '',
-				field_key: attachment.field_key,
-				field_label: field ? fieldLabel(field) : attachment.field_key,
-				field_type: field ? fieldType(field) : 'attachment',
-				url: attachment.url,
-				download_url: signedUrls[attachment.id] || attachment.url,
-				thumbnail_url: attachment.thumbnail_url ?? null,
-				file_name: attachment.file_name,
-				content_type: attachment.content_type,
-				byte_size: attachment.byte_size,
-				storage_key: attachment.storage_key,
-				attachment_id: attachment.id,
-				source: 'metadata'
-			});
-		}
-
-		return {
-			form_id: selectedForm.id,
-			form_key: selectedForm.key,
-			view_id: s.selectedViewId || null,
-			view_name: selectedView?.name ?? null,
-			exported_at: new Date().toISOString(),
-			record_count: viewRecords.length,
-			attachment_count: attachments.length,
-			bundle_format: 'attachment-bundle-json-v1',
-			attachments
-		};
-	}
-
-	async function exportAttachmentBundle() {
-		const bundle = await collectAttachmentBundle();
-
-		if (!bundle) return;
-
-		const blob = new Blob([JSON.stringify(bundle, null, 2)], {
-			type: 'application/json;charset=utf-8'
-		});
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${bundle.form_key}-attachment-bundle.json`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedAttachmentBundleCount = bundle.attachments.length;
-		toast.success($t('forms.attachmentBundleExported'));
-	}
-
-	async function exportAttachmentPackage() {
-		if (!selectedForm) return;
-
-		const bundle = await collectAttachmentBundle();
-
-		if (!bundle) return;
-
-		const packagedFiles = await Promise.all(
-			bundle.attachments.map(async (attachment, index) => {
-				const baseName = `${String(index + 1).padStart(3, '0')}-${safeZipSegment(attachment.file_name)}`;
-				const bytes = await fetchAttachmentPackageBytes(attachment);
-
-				if (bytes) {
-					return {
-						file: { path: `files/${baseName}`, data: bytes },
-						manifest: {
-							...attachment,
-							package_path: `files/${baseName}`,
-							package_status: 'included'
-						}
-					};
-				}
-
-				return {
-					file: {
-						path: `links/${baseName}.url.txt`,
-						data: `${attachment.download_url || attachment.url}\n`
-					},
-					manifest: {
-						...attachment,
-						package_path: `links/${baseName}.url.txt`,
-						package_status: 'external_url'
-					}
-				};
-			})
-		);
-
-		const packageManifest = {
-			...bundle,
-			bundle_format: 'attachment-zip-package-v1',
-			file_count: packagedFiles.length,
-			binary_file_count: packagedFiles.filter(
-				(entry) => entry.manifest.package_status === 'included'
-			).length,
-			attachments: packagedFiles.map((entry) => entry.manifest)
-		};
-
-		const zip = createStoredZipBlob([
-			{
-				path: 'manifest.json',
-				data: JSON.stringify(packageManifest, null, 2)
-			},
-			...packagedFiles.map((entry) => entry.file)
-		]);
-
-		const url = URL.createObjectURL(zip);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-attachment-package.zip`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedAttachmentPackageCount = bundle.attachments.length;
-		s.exportedAttachmentPackageFileCount = packagedFiles.length;
-		toast.success($t('forms.attachmentPackageExported'));
-	}
-
-	async function fetchAttachmentPackageBytes(
-		attachment: AttachmentBundleEntry
-	): Promise<Uint8Array | null> {
-		const directUrl = sameOriginUrl(attachment.url);
-		const signedUrl = sameOriginUrl(attachment.download_url);
-
-		for (const candidate of [directUrl, signedUrl].filter(Boolean)) {
-			try {
-				const response = await fetch(candidate, { redirect: 'manual' });
-
-				if (!response.ok) continue;
-
-				return new Uint8Array(await response.arrayBuffer());
-			} catch {
-				continue;
-			}
-		}
-
-		return null;
-	}
-
-	function sameOriginUrl(value: string | null | undefined): string {
-		if (!value) return '';
-
-		try {
-			const url = new URL(value, window.location.origin);
-
-			return url.origin === window.location.origin ? url.toString() : '';
-		} catch {
-			return '';
-		}
-	}
-
-	function safeZipSegment(value: string): string {
-		const safe = value
-			.trim()
-			.replaceAll('\\', '-')
-			.replaceAll('/', '-')
-			.replace(/[^a-zA-Z0-9._-]+/g, '-')
-			.replace(/^-+|-+$/g, '');
-
-		return safe || 'attachment.bin';
-	}
-
-	function createStoredZipBlob(files: ZipFileInput[]): Blob {
-		const encoder = new TextEncoder();
-		const localParts: Uint8Array[] = [];
-		const centralParts: Uint8Array[] = [];
-		let offset = 0;
-
-		for (const file of files) {
-			const nameBytes = encoder.encode(file.path);
-			const dataBytes = typeof file.data === 'string' ? encoder.encode(file.data) : file.data;
-			const crc = crc32(dataBytes);
-			const localHeader = new Uint8Array(30 + nameBytes.length);
-			const localView = new DataView(localHeader.buffer);
-
-			localView.setUint32(0, 0x04034b50, true);
-			localView.setUint16(4, 20, true);
-			localView.setUint16(6, 0, true);
-			localView.setUint16(8, 0, true);
-			localView.setUint16(10, 0, true);
-			localView.setUint16(12, 0, true);
-			localView.setUint32(14, crc, true);
-			localView.setUint32(18, dataBytes.length, true);
-			localView.setUint32(22, dataBytes.length, true);
-			localView.setUint16(26, nameBytes.length, true);
-			localView.setUint16(28, 0, true);
-			localHeader.set(nameBytes, 30);
-			localParts.push(localHeader, dataBytes);
-
-			const centralHeader = new Uint8Array(46 + nameBytes.length);
-			const centralView = new DataView(centralHeader.buffer);
-
-			centralView.setUint32(0, 0x02014b50, true);
-			centralView.setUint16(4, 20, true);
-			centralView.setUint16(6, 20, true);
-			centralView.setUint16(8, 0, true);
-			centralView.setUint16(10, 0, true);
-			centralView.setUint16(12, 0, true);
-			centralView.setUint16(14, 0, true);
-			centralView.setUint32(16, crc, true);
-			centralView.setUint32(20, dataBytes.length, true);
-			centralView.setUint32(24, dataBytes.length, true);
-			centralView.setUint16(28, nameBytes.length, true);
-			centralView.setUint16(30, 0, true);
-			centralView.setUint16(32, 0, true);
-			centralView.setUint16(34, 0, true);
-			centralView.setUint16(36, 0, true);
-			centralView.setUint32(38, 0, true);
-			centralView.setUint32(42, offset, true);
-			centralHeader.set(nameBytes, 46);
-			centralParts.push(centralHeader);
-			offset += localHeader.length + dataBytes.length;
-		}
-
-		const centralOffset = offset;
-		const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
-		const end = new Uint8Array(22);
-		const endView = new DataView(end.buffer);
-
-		endView.setUint32(0, 0x06054b50, true);
-		endView.setUint16(4, 0, true);
-		endView.setUint16(6, 0, true);
-		endView.setUint16(8, files.length, true);
-		endView.setUint16(10, files.length, true);
-		endView.setUint32(12, centralSize, true);
-		endView.setUint32(16, centralOffset, true);
-		endView.setUint16(20, 0, true);
-
-		return new Blob([...localParts, ...centralParts, end].map(zipBlobPart), {
-			type: 'application/zip'
-		});
-	}
-
-	function zipBlobPart(bytes: Uint8Array): ArrayBuffer {
-		const copy = new Uint8Array(bytes.byteLength);
-
-		copy.set(bytes);
-
-		return copy.buffer;
-	}
-
-	const crc32Table = Array.from({ length: 256 }, (_, index) => {
-		let value = index;
-
-		for (let bit = 0; bit < 8; bit += 1) {
-			value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
-		}
-
-		return value >>> 0;
-	});
-
-	function crc32(bytes: Uint8Array): number {
-		let crc = 0xffffffff;
-
-		for (const byte of bytes) {
-			crc = crc32Table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-		}
-
-		return (crc ^ 0xffffffff) >>> 0;
-	}
-
-	function attachmentManifestUrls(value: unknown): string[] {
-		if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
-
-		if (Array.isArray(value)) {
-			return value.flatMap((item) => attachmentManifestUrls(item));
-		}
-
-		if (isRecord(value)) {
-			if (typeof value.url === 'string') return attachmentManifestUrls(value.url);
-			if (typeof value.href === 'string') return attachmentManifestUrls(value.href);
-		}
-
-		return [];
-	}
-
-	function openImportRecords() {
-		s.importText = sampleImportText();
-		s.importRows = [];
-		s.importPreview = null;
-		s.importWizardStep = 'source';
-		s.exportedImportTemplate = false;
-		s.importedImportFileName = '';
-		s.importedImportFileLoaded = false;
-		refreshImportMappingFromText();
-		s.showImportRecords = true;
-	}
-
-	function closeImportRecords() {
-		s.showImportRecords = false;
-		s.importPreview = null;
-		s.importWizardStep = 'source';
-	}
-
-	function resetImportPreviewForSourceChange() {
-		s.importRows = [];
-		s.importPreview = null;
-		s.importWizardStep = 'source';
-	}
-
-	function continueImportFromSource() {
-		refreshImportMappingFromText();
-		s.importPreview = null;
-
-		if (s.importMappingHeaders.length > 0) {
-			s.importWizardStep = 'mapping';
-
-			return;
-		}
-
-		void previewImportRecords();
-	}
-
-	function continueImportFromMapping() {
-		if (s.importMappingHeaders.length > 0 && !s.importMappingApplied) {
-			applyImportMapping();
-		}
-
-		void previewImportRecords();
-	}
-
-	function sampleImportText(): string {
-		if (visibleFields.length === 0) return '[]';
-
-		return importTemplateCsv();
-	}
-
-	function importTemplateCsv(): string {
-		const header = ['Title', ...visibleFields.map((field) => field.key)].map(csvCell).join(',');
-
-		const values = ['', ...visibleFields.map((field) => sampleImportValue(field))]
-			.map(csvCell)
-			.join(',');
-
-		return `${header}\n${values}\n`;
-	}
-
-	function sampleImportValue(field: FormField): string {
-		const type = fieldType(field);
-
-		if (type === 'boolean') return 'true';
-		if (type === 'integer') return '1';
-		if (type === 'number' || type === 'amount') return '1.00';
-		if (type === 'single_select') return fieldOptions(field)[0] ?? '';
-		if (type === 'multi_select') return (fieldOptions(field)[0] ?? '').replaceAll(',', ' ');
-
-		return fieldLabel(field);
-	}
-
-	function exportImportTemplate() {
-		if (!selectedForm) return;
-
-		const csv = importTemplateCsv();
-		const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-
-		anchor.href = url;
-		anchor.download = `${selectedForm.key}-import-template.csv`;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-		URL.revokeObjectURL(url);
-		s.exportedImportTemplate = true;
-		toast.success($t('forms.importTemplateExported'));
-	}
-
-	async function loadImportFile(event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
-
-		if (!file) return;
-
-		try {
-			s.importText = await file.text();
-			resetImportPreviewForSourceChange();
-			s.importedImportFileName = file.name;
-			s.importedImportFileLoaded = true;
-			refreshImportMappingFromText();
-			toast.success($t('forms.importFileLoaded', { values: { name: file.name } }));
-		} catch {
-			toast.error($t('forms.importFileFailed'));
-		} finally {
-			input.value = '';
-		}
-	}
-
-	function refreshImportMappingFromText() {
-		const trimmed = s.importText.trim();
-
-		if (!trimmed || trimmed.startsWith('[')) {
-			resetImportMappingState();
-
-			return;
-		}
-
-		const headers = parseCsvLines(trimmed)[0]?.map((header) => header.trim()) ?? [];
-		const savedTemplate = readImportMappingTemplate(headers);
-
-		s.importMappingHeaders = headers;
-		s.importMappingSelections =
-			savedTemplate?.selections ?? headers.map((header) => defaultImportMappingSelection(header));
-		s.importMappingTransforms = savedTemplate?.transforms ?? headers.map(() => 'trim');
-		s.importMappingApplied = false;
-		s.importMappingTemplateAvailable = Boolean(savedTemplate);
-		s.importMappingTemplateSaved = false;
-		s.importMappingTemplateRestored = Boolean(savedTemplate);
-	}
-
-	function resetImportMappingState() {
-		s.importMappingHeaders = [];
-		s.importMappingSelections = [];
-		s.importMappingTransforms = [];
-		s.importMappingApplied = false;
-		s.importMappingTemplateAvailable = false;
-		s.importMappingTemplateSaved = false;
-		s.importMappingTemplateRestored = false;
-	}
-
-	function defaultImportMappingSelection(header: string): string {
-		if (header.toLowerCase() === 'title' || header === '标题') return '__title';
-
-		return fieldForImportHeader(header)?.key ?? '__skip';
-	}
-
-	function importMappingTemplateKey(headers = s.importMappingHeaders): string {
-		if (!selectedForm || headers.length === 0) return '';
-
-		return `openpr:forms:import-mapping:${selectedForm.id}:${headers.join('\u001f')}`;
-	}
-
-	function isValidImportMappingSelection(selection: string): boolean {
-		return (
-			selection === '__skip' ||
-			selection === '__title' ||
-			fields.some((field) => field.key === selection)
-		);
-	}
-
-	function isValidImportMappingTransform(value: string): value is ImportMappingTransform {
-		return [
-			'none',
-			'trim',
-			'uppercase',
-			'lowercase',
-			'capitalize',
-			'titlecase',
-			'normalize_spaces',
-			'strip_non_digits',
-			'slugify'
-		].includes(value);
-	}
-
-	function readImportMappingTemplate(
-		headers = s.importMappingHeaders
-	): { selections: string[]; transforms: ImportMappingTransform[] } | null {
-		if (typeof window === 'undefined') return null;
-
-		const key = importMappingTemplateKey(headers);
-
-		if (!key) return null;
-
-		try {
-			const raw = window.localStorage.getItem(key);
-
-			if (!raw) return null;
-
-			const parsed = JSON.parse(raw) as unknown;
-
-			if (!isRecord(parsed) || !Array.isArray(parsed.selections)) return null;
-
-			const selections = parsed.selections.filter(
-				(selection): selection is string => typeof selection === 'string'
-			);
-
-			if (selections.length !== headers.length || !selections.every(isValidImportMappingSelection))
-				return null;
-
-			const transforms = Array.isArray(parsed.transforms)
-				? parsed.transforms.filter(
-						(transform): transform is ImportMappingTransform =>
-							typeof transform === 'string' && isValidImportMappingTransform(transform)
-					)
-				: headers.map(() => 'trim' as ImportMappingTransform);
-
-			if (transforms.length !== headers.length) return null;
-
-			return { selections, transforms };
-		} catch {
-			return null;
-		}
-	}
-
-	function saveImportMappingTemplate() {
-		if (typeof window === 'undefined') return;
-
-		const key = importMappingTemplateKey();
-
-		if (!key || s.importMappingHeaders.length === 0) {
-			toast.error($t('forms.importMappingTemplateUnavailable'));
-
-			return;
-		}
-
-		const selections = s.importMappingSelections.map((selection) =>
-			isValidImportMappingSelection(selection) ? selection : '__skip'
-		);
-		const transforms = s.importMappingTransforms.map((transform) =>
-			isValidImportMappingTransform(transform) ? transform : 'trim'
-		);
-
-		window.localStorage.setItem(
-			key,
-			JSON.stringify({
-				form_id: selectedForm?.id,
-				headers: s.importMappingHeaders,
-				selections,
-				transforms,
-				updated_at: new Date().toISOString()
-			})
-		);
-
-		s.importMappingSelections = selections;
-		s.importMappingTransforms = transforms;
-		s.importMappingTemplateAvailable = true;
-		s.importMappingTemplateSaved = true;
-		s.importMappingTemplateRestored = false;
-		toast.success($t('forms.importMappingTemplateSaved'));
-	}
-
-	function restoreImportMappingTemplate() {
-		const savedTemplate = readImportMappingTemplate();
-
-		if (!savedTemplate) {
-			toast.error($t('forms.importMappingTemplateUnavailable'));
-
-			return;
-		}
-
-		s.importMappingSelections = savedTemplate.selections;
-		s.importMappingTransforms = savedTemplate.transforms;
-		s.importMappingApplied = false;
-		s.importMappingTemplateAvailable = true;
-		s.importMappingTemplateRestored = true;
-		toast.success($t('forms.importMappingTemplateRestored'));
-	}
-
-	function applyImportMapping() {
-		const lines = parseCsvLines(s.importText.trim());
-
-		if (lines.length < 2 || s.importMappingHeaders.length === 0) {
-			toast.error($t('forms.importNeedsRows'));
-
-			return;
-		}
-
-		const selectedColumns = s.importMappingSelections
-			.map((selection, index) => ({
-				selection,
-				index,
-				transform: s.importMappingTransforms[index] ?? 'trim'
-			}))
-			.filter((column) => column.selection !== '__skip');
-
-		if (selectedColumns.length === 0) {
-			toast.error($t('forms.importMappingNeedsField'));
-
-			return;
-		}
-
-		const remappedRows = [
-			selectedColumns.map((column) =>
-				column.selection === '__title' ? 'Title' : column.selection
-			),
-			...lines
-				.slice(1)
-				.map((row) =>
-					selectedColumns.map((column) =>
-						applyImportMappingTransform(row[column.index] ?? '', column.transform)
-					)
-				)
-		];
-
-		s.importText = remappedRows.map((row) => row.map(csvCell).join(',')).join('\n');
-		s.importRows = [];
-		s.importPreview = null;
-		s.importMappingApplied = true;
-		s.importWizardStep = 'mapping';
-		toast.success($t('forms.importMappingApplied'));
-	}
-
-	function applyImportMappingTransform(value: string, transform: ImportMappingTransform): string {
-		if (transform === 'none') return value;
-
-		const trimmed = value.trim();
-
-		if (transform === 'uppercase') return trimmed.toUpperCase();
-		if (transform === 'lowercase') return trimmed.toLowerCase();
-		if (transform === 'capitalize') return capitalizeImportValue(trimmed);
-		if (transform === 'titlecase')
-			return trimmed.split(/\s+/).filter(Boolean).map(capitalizeImportValue).join(' ');
-		if (transform === 'normalize_spaces') return trimmed.split(/\s+/).filter(Boolean).join(' ');
-		if (transform === 'strip_non_digits') return trimmed.replace(/\D+/g, '');
-		if (transform === 'slugify') return slugifyImportValue(trimmed);
-
-		return trimmed;
-	}
-
-	function capitalizeImportValue(value: string): string {
-		if (!value) return '';
-
-		return `${value.slice(0, 1).toUpperCase()}${value.slice(1).toLowerCase()}`;
-	}
-
-	function slugifyImportValue(value: string): string {
-		return value
-			.toLowerCase()
-			.replace(/[^a-z0-9]+/g, '-')
-			.replace(/^-+|-+$/g, '');
-	}
-
-	function parseImportRowsFromText(): FormRecordImportRow[] {
-		const trimmed = s.importText.trim();
-
-		if (!trimmed) throw new Error($t('forms.importEmpty'));
-
-		if (trimmed.startsWith('[')) {
-			const parsed = JSON.parse(trimmed) as unknown;
-
-			if (!Array.isArray(parsed)) throw new Error($t('forms.importInvalidJson'));
-
-			return parsed.map((item, index) => normalizeImportItem(item, index + 1));
-		}
-
-		return parseCsvImport(trimmed);
-	}
-
-	function normalizeImportItem(item: unknown, rowNumber: number): FormRecordImportRow {
-		if (!isRecord(item))
-			throw new Error($t('forms.importInvalidRow', { values: { row: rowNumber } }));
-
-		const values = isRecord(item.values) ? item.values : item;
-		const title = typeof item.title === 'string' ? item.title : undefined;
-
-		return {
-			row_number: rowNumber,
-			title,
-			values: values as Record<string, unknown>,
-			source: { type: 'web', origin: 'import' }
-		};
-	}
-
-	function parseCsvImport(text: string): FormRecordImportRow[] {
-		const lines = parseCsvLines(text);
-
-		if (lines.length < 2) throw new Error($t('forms.importNeedsRows'));
-
-		const headers = lines[0].map((header) => header.trim());
-		const rows: FormRecordImportRow[] = [];
-
-		for (let index = 1; index < lines.length; index += 1) {
-			const cells = lines[index];
-
-			if (cells.every((cell) => cell.trim() === '')) continue;
-
-			const values: Record<string, unknown> = {};
-			let title: string | undefined;
-
-			for (let column = 0; column < headers.length; column += 1) {
-				const header = headers[column] ?? '';
-				const raw = cells[column] ?? '';
-
-				if (header.toLowerCase() === 'title' || header === '标题') {
-					title = raw.trim() || undefined;
-
-					continue;
-				}
-
-				const field = fieldForImportHeader(header);
-
-				if (!field) continue;
-
-				const value = importCellValue(field, raw);
-
-				if (value !== undefined) values[field.key] = value;
-			}
-
-			rows.push({
-				row_number: index,
-				title,
-				values,
-				source: { type: 'web', origin: 'import' }
-			});
-		}
-
-		return rows;
-	}
-
-	function parseCsvLines(text: string): string[][] {
-		const rows: string[][] = [];
-		let row: string[] = [];
-		let cell = '';
-		let quoted = false;
-
-		for (let index = 0; index < text.length; index += 1) {
-			const char = text[index];
-			const next = text[index + 1];
-
-			if (quoted) {
-				if (char === '"' && next === '"') {
-					cell += '"';
-					index += 1;
-				} else if (char === '"') {
-					quoted = false;
-				} else {
-					cell += char;
-				}
-
-				continue;
-			}
-
-			if (char === '"') {
-				quoted = true;
-			} else if (char === ',') {
-				row.push(cell);
-				cell = '';
-			} else if (char === '\n') {
-				row.push(cell);
-				rows.push(row);
-				row = [];
-				cell = '';
-			} else if (char !== '\r') {
-				cell += char;
-			}
-		}
-
-		row.push(cell);
-		rows.push(row);
-
-		return rows;
-	}
-
-	function fieldForImportHeader(header: string): FormField | null {
-		const normalized = header.trim();
-
-		if (!normalized) return null;
-
-		return (
-			fields.find(
-				(field) =>
-					field.key === normalized ||
-					fieldLabel(field) === normalized ||
-					field.key.toLowerCase() === normalized.toLowerCase()
-			) ?? null
-		);
-	}
-
-	function importCellValue(field: FormField, raw: string): unknown {
-		const trimmed = raw.trim();
-
-		if (!trimmed) return undefined;
-
-		const type = fieldType(field);
-
-		if (type === 'boolean') return ['true', '1', 'yes', 'y', '是'].includes(trimmed.toLowerCase());
-
-		if (type === 'multi_select') {
-			return trimmed
-				.split(/[;|]/)
-				.map((item) => item.trim())
-				.filter(Boolean);
-		}
-
-		if (['attachment', 'image', 'relation', 'child_table', 'formula'].includes(type)) {
-			return parseJsonish(trimmed);
-		}
-
-		return trimmed;
-	}
-
-	async function previewImportRecords() {
-		if (!selectedForm) return;
-
-		let rows: FormRecordImportRow[];
-
-		try {
-			rows = parseImportRowsFromText();
-		} catch (error) {
-			toast.error(error instanceof Error ? error.message : $t('forms.importFailed'));
-
-			return;
-		}
-
-		s.importPreviewing = true;
-
-		const response = await formsApi.previewImportRecords(selectedForm.id, rows);
-
-		s.importPreviewing = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message || $t('forms.importFailed'));
-
-			return;
-		}
-
-		s.importRows = rows;
-		s.importPreview = response.data;
-		s.importWizardStep = 'preview';
-		toast.success($t('forms.importPreviewReady'));
-	}
-
-	async function commitImportRecords() {
-		if (!selectedForm || s.importRows.length === 0) return;
-
-		s.importingRecords = true;
-
-		const response = await formsApi.importRecords(selectedForm.id, s.importRows);
-
-		s.importingRecords = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message || $t('forms.importFailed'));
-
-			return;
-		}
-
-		s.importPreview = response.data;
-
-		if (response.data.invalid_rows > 0) {
-			s.importWizardStep = 'preview';
-			toast.error($t('forms.importHasInvalidRows'));
-
-			return;
-		}
-
-		s.importWizardStep = 'commit';
-		s.showImportRecords = false;
-		await loadRecords();
-		toast.success($t('forms.recordsImported', { values: { count: response.data.created_count } }));
-	}
-
-	function relationTargetOptions(field: FormField): FormRelationTarget[] {
-		return s.relationTargets[field.key] ?? [];
-	}
-
-	function relationDraftValue(field: FormField): string {
-		const value = s.recordDraft[field.key];
-
-		if (typeof value === 'string') return value;
-		if (isRecord(value) && typeof value.record_id === 'string') return value.record_id;
-
-		return '';
-	}
-
-	function resetFormDraft() {
-		s.formDraft = {
-			key: '',
-			name: '',
-			description: '',
-			title_template: '{id}',
-			schemaText: JSON.stringify({ version: 'openpr.form.schema.v1', fields: [] }, null, 2)
-		};
-
-		s.fieldDrafts = [blankFieldDraft()];
-		s.showAdvancedSchema = false;
-	}
-
-	function normalizeTemplateSchema(schema: Record<string, unknown>): Record<string, unknown> {
-		const fields = Array.isArray(schema.fields)
-			? schema.fields.map((field) => {
-					if (!isRecord(field)) return field;
-
-					return {
-						...field,
-						type: field.type === 'select' ? 'single_select' : field.type
-					};
-				})
-			: [];
-
-		return {
-			...schema,
-			version: typeof schema.version === 'string' ? schema.version : 'openpr.form.schema.v1',
-			fields
-		};
-	}
-
-	function templateFormKey(template: ScenarioTemplate): string {
-		return template.key.replace(/_default$/, '');
-	}
-
-	function templateTitleTemplate(schema: Record<string, unknown>): string {
-		const field = parseFields(schema).find((item) => item.required) ?? parseFields(schema)[0];
-
-		return field ? `{${field.key}}` : '{id}';
-	}
-
-	function applyScenarioTemplate(template: ScenarioTemplate) {
-		const schema = normalizeTemplateSchema(template.field_schema);
-
-		s.formDraft = {
-			key: templateFormKey(template),
-			name: scenarioTemplateName(template, $t),
-			description: scenarioTemplateDescription(template, $t),
-			title_template: templateTitleTemplate(schema),
-			schemaText: JSON.stringify(schema, null, 2)
-		};
-
-		s.fieldDrafts = fieldDraftsFromSchema(schema);
-		s.showAdvancedSchema = false;
-		toast.success($t('forms.templateApplied'));
-	}
-
-	function uniqueTemplateKey(template: ScenarioTemplate): string {
-		const base = templateFormKey(template);
-
-		if (!s.forms.some((form) => form.key === base)) return base;
-
-		return `${base}_${Date.now().toString(36)}`;
-	}
-
-	async function installScenarioTemplate(template: ScenarioTemplate) {
-		s.installingTemplateKey = template.key;
-
-		const schema = normalizeTemplateSchema(template.field_schema);
-
-		const response = await formsApi.createFromTemplate(projectId, {
-			template_key: template.key,
-			key: uniqueTemplateKey(template),
-			name: scenarioTemplateName(template, $t),
-			description: scenarioTemplateDescription(template, $t),
-			title_template: templateTitleTemplate(schema)
-		});
-
-		s.installingTemplateKey = null;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.forms = [response.data, ...s.forms.filter((form) => form.id !== response.data?.id)];
-
-		s.showCreateForm = false;
-		toast.success($t('forms.templateInstalled'));
-		await openForm(response.data.id);
-		s.activeMode = 'design';
-		void loadDesignerSafety(response.data);
-	}
-
-	function fieldDraftsFromSchema(schema: Record<string, unknown>): FieldDraft[] {
-		const parsedFields = parseFields(schema);
-
-		return parsedFields.length > 0
-			? parsedFields.map((field) => ({
-					field_id: field.field_id,
-					key: field.key,
-					label: field.label ?? field.key,
-					type: (field.type ?? 'text') as FormFieldType,
-					required: Boolean(field.required),
-					optionsText: fieldOptions(field).join('\n'),
-					optionColorsText: optionColorsToText(field.option_colors),
-					optionDisabledText: fieldDisabledOptions(field).join('\n'),
-					optionArchivedText: fieldArchivedOptions(field).join('\n'),
-					optionDescriptionsText: optionMetadataToText(field.option_descriptions),
-					optionGroupsText: optionMetadataToText(field.option_groups),
-					currency: field.amount?.currency ?? 'CNY',
-					scale: String(field.amount?.scale ?? 2),
-					placeholder: field.placeholder ?? '',
-					helpText: field.help_text ?? '',
-					defaultValue:
-						field.default_value === undefined || field.default_value === null
-							? ''
-							: typeof field.default_value === 'string'
-								? field.default_value
-								: JSON.stringify(field.default_value),
-					validationMin:
-						field.validation?.min === undefined || field.validation?.min === null
-							? ''
-							: String(field.validation.min),
-					validationMax:
-						field.validation?.max === undefined || field.validation?.max === null
-							? ''
-							: String(field.validation.max),
-					validationPattern: field.validation?.pattern ?? '',
-					validationMaxLength:
-						field.validation?.max_length === undefined || field.validation?.max_length === null
-							? ''
-							: String(field.validation.max_length),
-					listVisible: field.visibility?.list ?? true,
-					detailVisible: field.visibility?.detail ?? true,
-					conditionalHiddenWhenText: fieldConditionToText(field.conditional?.hidden_when),
-					conditionalReadOnlyWhenText: fieldConditionToText(field.conditional?.read_only_when),
-					readOnly: field.policy?.read_only ?? false,
-					formulaOp: field.formula?.op ?? 'add',
-					formulaArgsText: formulaArgsToText(field.formula?.args),
-					formulaScale:
-						field.formula?.scale === undefined || field.formula?.scale === null
-							? '2'
-							: String(field.formula.scale),
-					formulaRelationKey: field.formula?.relation_key ?? '',
-					formulaChildField: field.formula?.field ?? '',
-					relationTargetType: field.relation?.target_type ?? 'form_record',
-					relationFormKey: field.relation?.form_key ?? '',
-					relationKey: field.relation?.relation_key ?? 'related',
-					relationType: field.relation?.relation_type ?? 'relation',
-					relationDisplayField: field.relation?.display_field ?? '',
-					attachmentAcceptText: (field.attachment?.accept ?? []).join('\n'),
-					attachmentMaxSizeMb:
-						field.attachment?.max_size_mb === undefined || field.attachment?.max_size_mb === null
-							? ''
-							: String(field.attachment.max_size_mb),
-					attachmentMultiple: field.attachment?.multiple ?? false,
-					attachmentPreview:
-						field.attachment?.preview ?? field.attachment?.thumbnail ?? field.type === 'image',
-					attachmentThumbnailFormat: field.attachment?.thumbnail_format ?? 'png',
-					attachmentPreviewFormat: field.attachment?.preview_format ?? 'png',
-					attachmentVariantsText: attachmentVariantsToText(field.attachment?.variants),
-					attachmentStoragePolicy: field.attachment?.storage_policy ?? 'local',
-					attachmentRetentionDays:
-						field.attachment?.retention_days === undefined ||
-						field.attachment?.retention_days === null
-							? ''
-							: String(field.attachment.retention_days),
-					attachmentSignedUrlTtlMinutes:
-						field.attachment?.signed_url_ttl_minutes === undefined ||
-						field.attachment?.signed_url_ttl_minutes === null
-							? '10'
-							: String(field.attachment.signed_url_ttl_minutes)
-				}))
-			: [blankFieldDraft()];
-	}
-
-	function buildSchemaFromDrafts(
-		drafts: FieldDraft[] = s.fieldDrafts,
-		syncFormDraft = true
-	): Record<string, unknown> {
-		const fields = drafts
-			.map((field) => ({
-				field_id: field.field_id,
-				key: field.key.trim(),
-				label: field.label.trim(),
-				type: field.type,
-				required: field.required,
-				options: parseOptionsText(field.optionsText),
-				optionColors: parseOptionColorsText(field.optionColorsText),
-				optionDisabled: parseOptionsText(field.optionDisabledText),
-				optionArchived: parseOptionsText(field.optionArchivedText),
-				optionDescriptions: parseOptionMetadataText(field.optionDescriptionsText),
-				optionGroups: parseOptionMetadataText(field.optionGroupsText),
-				currency: field.currency.trim().toUpperCase() || 'CNY',
-				scale: Number.parseInt(field.scale, 10),
-				placeholder: field.placeholder.trim(),
-				helpText: field.helpText.trim(),
-				defaultValue: field.defaultValue.trim(),
-				validationMin: field.validationMin.trim(),
-				validationMax: field.validationMax.trim(),
-				validationPattern: field.validationPattern.trim(),
-				validationMaxLength: field.validationMaxLength.trim(),
-				listVisible: field.listVisible,
-				detailVisible: field.detailVisible,
-				conditionalHiddenWhen: parseFieldConditionText(field.conditionalHiddenWhenText),
-				conditionalReadOnlyWhen: parseFieldConditionText(field.conditionalReadOnlyWhenText),
-				readOnly: field.readOnly,
-				formulaOp: field.formulaOp.trim(),
-				formulaArgs: parseFormulaArgsText(field.formulaArgsText),
-				formulaScale: Number.parseInt(field.formulaScale, 10),
-				formulaRelationKey: field.formulaRelationKey.trim(),
-				formulaChildField: field.formulaChildField.trim(),
-				relationTargetType: field.relationTargetType.trim() || 'form_record',
-				relationFormKey: field.relationFormKey.trim(),
-				relationKey: field.relationKey.trim(),
-				relationType: field.relationType.trim(),
-				relationDisplayField: field.relationDisplayField.trim(),
-				attachmentAccept: parseOptionsText(field.attachmentAcceptText),
-				attachmentMaxSizeMb: Number.parseInt(field.attachmentMaxSizeMb, 10),
-				attachmentMultiple: field.attachmentMultiple,
-				attachmentPreview: field.attachmentPreview,
-				attachmentThumbnailFormat: sanitizeAttachmentDerivativeFormat(
-					field.attachmentThumbnailFormat
-				),
-				attachmentPreviewFormat: sanitizeAttachmentDerivativeFormat(field.attachmentPreviewFormat),
-				attachmentVariants: parseAttachmentVariantsText(field.attachmentVariantsText),
-				attachmentStoragePolicy: field.attachmentStoragePolicy.trim() || 'local',
-				attachmentRetentionDays: Number.parseInt(field.attachmentRetentionDays, 10),
-				attachmentSignedUrlTtlMinutes: Number.parseInt(field.attachmentSignedUrlTtlMinutes, 10)
-			}))
-			.filter((field) => field.key || field.label);
-
-		if (fields.length === 0) {
-			throw new Error($t('forms.fieldRequired', { values: { field: $t('forms.fields') } }));
-		}
-
-		const schemaFields = fields.map((field) => {
-			if (!field.key.match(/^[a-z][a-z0-9_]*$/)) {
-				throw new Error($t('forms.invalidFieldKey'));
-			}
-
-			const schemaField: Record<string, unknown> = {
-				key: field.key,
-				label: field.label || field.key,
-				type: field.type,
-				required: field.required
-			};
-
-			if (field.field_id) schemaField.field_id = field.field_id;
-
-			if (['single_select', 'multi_select'].includes(field.type)) {
-				if (field.options.length === 0) throw new Error($t('forms.optionsRequired'));
-
-				schemaField.options = field.options;
-
-				const optionColors = Object.fromEntries(
-					Object.entries(field.optionColors).filter(
-						([option, color]) => field.options.includes(option) && Boolean(color)
-					)
-				);
-
-				if (Object.keys(optionColors).length > 0) schemaField.option_colors = optionColors;
-
-				const optionDisabled = field.optionDisabled.filter((option) =>
-					field.options.includes(option)
-				);
-
-				if (optionDisabled.length > 0) schemaField.option_disabled = optionDisabled;
-
-				const optionArchived = field.optionArchived.filter((option) =>
-					field.options.includes(option)
-				);
-
-				if (optionArchived.length > 0) schemaField.option_archived = optionArchived;
-
-				const optionDescriptions = Object.fromEntries(
-					Object.entries(field.optionDescriptions).filter(
-						([option, description]) => field.options.includes(option) && Boolean(description)
-					)
-				);
-
-				if (Object.keys(optionDescriptions).length > 0)
-					schemaField.option_descriptions = optionDescriptions;
-
-				const optionGroups = Object.fromEntries(
-					Object.entries(field.optionGroups).filter(
-						([option, group]) => field.options.includes(option) && Boolean(group)
-					)
-				);
-
-				if (Object.keys(optionGroups).length > 0) schemaField.option_groups = optionGroups;
-
-				if (field.defaultValue) {
-					schemaField.default_value = parseSelectDefaultValue(
-						field.defaultValue,
-						field.type,
-						field.options,
-						optionDisabled,
-						optionArchived
-					);
-				}
-			}
-
-			if (field.type === 'amount') {
-				schemaField.amount = {
-					currency: field.currency,
-					scale: Number.isFinite(field.scale) ? Math.min(Math.max(field.scale, 0), 8) : 2
-				};
-			}
-
-			if (field.placeholder) schemaField.placeholder = field.placeholder;
-			if (field.helpText) schemaField.help_text = field.helpText;
-
-			if (field.defaultValue && !['single_select', 'multi_select'].includes(field.type)) {
-				schemaField.default_value = parseFieldDefaultValue(field.defaultValue, field.type);
-			}
-
-			const validation: Record<string, unknown> = {};
-
-			if (field.validationMin) validation.min = parseValidationBoundary(field.validationMin);
-			if (field.validationMax) validation.max = parseValidationBoundary(field.validationMax);
-			if (field.validationPattern) validation.pattern = field.validationPattern;
-
-			if (field.validationMaxLength) {
-				const maxLength = Number.parseInt(field.validationMaxLength, 10);
-
-				if (Number.isFinite(maxLength) && maxLength > 0) validation.max_length = maxLength;
-			}
-
-			if (Object.keys(validation).length > 0) schemaField.validation = validation;
-
-			if (!field.listVisible || !field.detailVisible) {
-				schemaField.visibility = { list: field.listVisible, detail: field.detailVisible };
-			}
-
-			const conditional: Record<string, unknown> = {};
-
-			if (field.conditionalHiddenWhen) conditional.hidden_when = field.conditionalHiddenWhen;
-			if (field.conditionalReadOnlyWhen) conditional.read_only_when = field.conditionalReadOnlyWhen;
-			if (Object.keys(conditional).length > 0) schemaField.conditional = conditional;
-			if (field.readOnly) schemaField.policy = { read_only: true };
-
-			const isFormulaCapableField = ['formula', 'amount', 'number', 'integer'].includes(field.type);
-			const isChildFormula = field.formulaOp.startsWith('child_');
-			const hasChildFormulaConfig = isChildFormula && field.formulaRelationKey;
-			const hasRegularFormulaConfig = !isChildFormula && field.formulaArgs.length > 0;
-
-			if (
-				isFormulaCapableField &&
-				field.formulaOp &&
-				(hasChildFormulaConfig || hasRegularFormulaConfig)
-			) {
-				const formula: Record<string, unknown> = { op: field.formulaOp };
-
-				if (isChildFormula) {
-					formula.relation_key = field.formulaRelationKey;
-
-					if (field.formulaChildField) formula.field = field.formulaChildField;
-				} else {
-					formula.args = field.formulaArgs;
-				}
-
-				if (field.type === 'formula' && Number.isFinite(field.formulaScale)) {
-					formula.scale = Math.min(Math.max(field.formulaScale, 0), 8);
-				}
-
-				schemaField.formula = formula;
-			}
-
-			if (field.type === 'relation' || field.type === 'child_table') {
-				const relation: Record<string, unknown> = {
-					target_type: field.type === 'child_table' ? 'form_record' : field.relationTargetType
-				};
-
-				if (field.relationFormKey) relation.form_key = field.relationFormKey;
-				if (field.relationKey) relation.relation_key = field.relationKey;
-
-				relation.relation_type =
-					field.type === 'child_table' ? 'parent_child' : field.relationType || 'relation';
-
-				if (field.relationDisplayField) relation.display_field = field.relationDisplayField;
-
-				schemaField.relation = relation;
-			}
-
-			if (['attachment', 'image'].includes(field.type)) {
-				const attachment: Record<string, unknown> = {
-					multiple: field.attachmentMultiple,
-					preview: field.attachmentPreview
-				};
-
-				if (field.attachmentThumbnailFormat !== 'png') {
-					attachment.thumbnail_format = field.attachmentThumbnailFormat;
-				}
-
-				if (field.attachmentPreviewFormat !== 'png') {
-					attachment.preview_format = field.attachmentPreviewFormat;
-				}
-
-				if (field.attachmentVariants.length > 0) {
-					attachment.variants = field.attachmentVariants;
-				}
-
-				if (field.attachmentAccept.length > 0) attachment.accept = field.attachmentAccept;
-
-				if (Number.isFinite(field.attachmentMaxSizeMb) && field.attachmentMaxSizeMb > 0) {
-					attachment.max_size_mb = field.attachmentMaxSizeMb;
-				}
-
-				attachment.storage_policy = field.attachmentStoragePolicy;
-
-				if (Number.isFinite(field.attachmentRetentionDays) && field.attachmentRetentionDays > 0) {
-					attachment.retention_days = field.attachmentRetentionDays;
-				}
-
-				if (
-					Number.isFinite(field.attachmentSignedUrlTtlMinutes) &&
-					field.attachmentSignedUrlTtlMinutes > 0
-				) {
-					attachment.signed_url_ttl_minutes = field.attachmentSignedUrlTtlMinutes;
-				}
-
-				if (field.type === 'image') attachment.thumbnail = field.attachmentPreview;
-
-				schemaField.attachment = attachment;
-			}
-
-			return schemaField;
-		});
-
-		const schema = { version: 'openpr.form.schema.v1', fields: schemaFields };
-
-		if (syncFormDraft) s.formDraft.schemaText = JSON.stringify(schema, null, 2);
-
-		return schema;
-	}
-
-	function parseOptionsText(value: string): string[] {
-		return value
-			.split(/[\n,]/)
-			.map((item) => item.trim())
-			.filter(Boolean);
-	}
-
-	function parseOptionColorsText(value: string): Record<string, string> {
-		const colors: Record<string, string> = {};
-
-		for (const line of value.split('\n')) {
-			const trimmed = line.trim();
-
-			if (!trimmed) continue;
-
-			const [rawOption, ...rawColorParts] = trimmed.split(/[:=]/);
-			const option = rawOption?.trim();
-			const color = sanitizeOptionColor(rawColorParts.join(':').trim());
-
-			if (option && color) colors[option] = color;
-		}
-
-		return colors;
-	}
-
-	function parseOptionMetadataText(value: string): Record<string, string> {
-		const metadata: Record<string, string> = {};
-
-		for (const line of value.split('\n')) {
-			const trimmed = line.trim();
-
-			if (!trimmed) continue;
-
-			const separatorIndex = trimmed.search(/[:=]/);
-
-			if (separatorIndex <= 0) continue;
-
-			const option = trimmed.slice(0, separatorIndex).trim();
-			const text = trimmed.slice(separatorIndex + 1).trim();
-
-			if (option && text) metadata[option] = text;
-		}
-
-		return metadata;
-	}
-
-	function optionColorsToText(value: unknown): string {
-		if (!isRecord(value)) return '';
-
-		return Object.entries(value)
-			.filter(
-				(entry): entry is [string, string] =>
-					typeof entry[1] === 'string' && Boolean(sanitizeOptionColor(entry[1]))
-			)
-			.map(([option, color]) => `${option}: ${sanitizeOptionColor(color)}`)
-			.join('\n');
-	}
-
-	function optionMetadataToText(value: unknown): string {
-		if (!isRecord(value)) return '';
-
-		return Object.entries(value)
-			.filter(
-				(entry): entry is [string, string] =>
-					typeof entry[1] === 'string' && Boolean(entry[1].trim())
-			)
-			.map(([option, text]) => `${option}: ${text.trim()}`)
-			.join('\n');
-	}
-
-	function sanitizeAttachmentDerivativeFormat(value: string | undefined | null): string {
-		const normalized = (value ?? '').trim().toLowerCase();
-
-		if (normalized === 'jpg' || normalized === 'image/jpg' || normalized === 'image/jpeg')
-			return 'jpeg';
-		if (normalized === 'jpeg' || normalized === 'png' || normalized === 'webp') return normalized;
-
-		return 'png';
-	}
-
-	function attachmentVariantsToText(value: unknown): string {
-		if (!Array.isArray(value)) return '';
-
-		return value
-			.map((variant) => {
-				if (!isRecord(variant) || typeof variant.kind !== 'string') return '';
-
-				const kind = variant.kind.trim();
-
-				if (!kind) return '';
-
-				const maxDimension =
-					typeof variant.max_dimension === 'number' && Number.isFinite(variant.max_dimension)
-						? String(variant.max_dimension)
-						: '';
-
-				const format =
-					typeof variant.format === 'string'
-						? sanitizeAttachmentDerivativeFormat(variant.format)
-						: 'png';
-
-				return [kind, maxDimension, format].filter(Boolean).join(':');
-			})
-			.filter(Boolean)
-			.join('\n');
-	}
-
-	function parseAttachmentVariantsText(
-		value: string
-	): Array<{ kind: string; max_dimension?: number; format?: string }> {
-		return value
-			.split('\n')
-			.map((line) => line.trim())
-			.filter(Boolean)
-			.map((line) => {
-				const [rawKind, rawMaxDimension = '', rawFormat = ''] = line
-					.split(':')
-					.map((part) => part.trim());
-				const variant: { kind: string; max_dimension?: number; format?: string } = {
-					kind: rawKind.toLowerCase().replace(/[\s.]+/g, '-')
-				};
-				const maxDimension = Number.parseInt(rawMaxDimension, 10);
-
-				if (Number.isFinite(maxDimension) && maxDimension > 0) variant.max_dimension = maxDimension;
-
-				const format = sanitizeAttachmentDerivativeFormat(rawFormat);
-
-				if (format !== 'png') variant.format = format;
-
-				return variant;
-			})
-			.filter((variant) => /^[a-z0-9_-]{1,32}$/.test(variant.kind));
-	}
-
-	function normalizeFieldConditionOperator(value: string): FieldConditionOperator | null {
-		const normalized = value.trim().toLowerCase();
-
-		if (
-			normalized === 'equals' ||
-			normalized === 'eq' ||
-			normalized === '==' ||
-			normalized === '='
-		) {
-			return 'equals';
-		}
-
-		if (
-			normalized === 'not_equals' ||
-			normalized === 'neq' ||
-			normalized === '!=' ||
-			normalized === '<>'
-		) {
-			return 'not_equals';
-		}
-
-		if (normalized === 'contains') return 'contains';
-		if (normalized === 'not_contains' || normalized === 'not-contains') return 'not_contains';
-		if (normalized === 'is_empty' || normalized === 'empty') return 'is_empty';
-		if (normalized === 'not_empty' || normalized === 'exists') return 'not_empty';
-		if (normalized === 'gt' || normalized === '>') return 'gt';
-		if (normalized === 'gte' || normalized === '>=') return 'gte';
-		if (normalized === 'lt' || normalized === '<') return 'lt';
-		if (normalized === 'lte' || normalized === '<=') return 'lte';
-
-		return null;
-	}
-
-	function fieldConditionOperatorNeedsValue(operator: FieldConditionOperator): boolean {
-		return operator !== 'is_empty' && operator !== 'not_empty';
-	}
-
-	function parseFieldConditionLine(value: string): FieldConditionItem | null {
-		const trimmed = value.trim();
-
-		if (!trimmed) return null;
-
-		const notEqualsIndex = trimmed.indexOf('!=');
-
-		if (notEqualsIndex >= 0) {
-			const field = trimmed.slice(0, notEqualsIndex).trim();
-			const conditionValue = trimmed.slice(notEqualsIndex + 2).trim();
-
-			return field && conditionValue
-				? { field, operator: 'not_equals', value: conditionValue }
-				: null;
-		}
-
-		const [operatorField, rawOperator, ...rawOperatorValueParts] = trimmed.split(/\s+/);
-		const operator = normalizeFieldConditionOperator(rawOperator ?? '');
-
-		if (operator && operatorField) {
-			const conditionValue = rawOperatorValueParts.join(' ').trim();
-
-			if (fieldConditionOperatorNeedsValue(operator) && !conditionValue) return null;
-
-			return fieldConditionOperatorNeedsValue(operator)
-				? { field: operatorField, operator, value: conditionValue }
-				: { field: operatorField, operator };
-		}
-
-		const [rawField, ...rawValueParts] = trimmed.split('=');
-		const field = rawField?.trim();
-		const equals = rawValueParts.join('=').trim();
-
-		return rawValueParts.length > 0 && field && equals ? { field, equals } : null;
-	}
-
-	function parseFieldConditionText(value: string): FieldConditionDraft | null {
-		const lines = value
-			.split('\n')
-			.map((line) => line.trim())
-			.filter(Boolean);
-
-		if (lines.length === 0) return null;
-
-		const first = lines[0]?.toLowerCase();
-		const hasLogicPrefix = first === 'all:' || first === 'any:';
-		const logic = hasLogicPrefix ? (first.slice(0, -1) as 'all' | 'any') : 'all';
-		const conditionLines = hasLogicPrefix ? lines.slice(1) : lines;
-		const conditions = conditionLines
-			.map(parseFieldConditionLine)
-			.filter((item): item is FieldConditionItem => Boolean(item));
-
-		if (conditions.length === 0) return null;
-		if (!hasLogicPrefix && conditions.length === 1) return conditions[0];
-
-		return { logic, conditions };
-	}
-
-	function fieldConditionToText(value: unknown): string {
-		if (!isRecord(value)) return '';
-
-		if (Array.isArray(value.conditions)) {
-			const logic = value.logic === 'any' ? 'any' : 'all';
-
-			const lines = value.conditions
-				.filter(isRecord)
-				.map((condition) => {
-					const field = typeof condition.field === 'string' ? condition.field.trim() : '';
-					const equals = typeof condition.equals === 'string' ? condition.equals.trim() : '';
-
-					const operator =
-						typeof condition.operator === 'string'
-							? (normalizeFieldConditionOperator(condition.operator) ?? 'equals')
-							: 'equals';
-
-					const conditionValue =
-						typeof condition.value === 'string' ? condition.value.trim() : equals;
-
-					if (!field || (fieldConditionOperatorNeedsValue(operator) && !conditionValue)) return '';
-					if (operator === 'equals') return `${field}=${conditionValue}`;
-					if (operator === 'not_equals') return `${field}!=${conditionValue}`;
-
-					return fieldConditionOperatorNeedsValue(operator)
-						? `${field} ${operator} ${conditionValue}`
-						: `${field} ${operator}`;
-				})
-				.filter(Boolean);
-
-			return lines.length > 0 ? [`${logic}:`, ...lines].join('\n') : '';
-		}
-
-		const field = typeof value.field === 'string' ? value.field.trim() : '';
-		const equals = typeof value.equals === 'string' ? value.equals.trim() : '';
-
-		const operator =
-			typeof value.operator === 'string'
-				? (normalizeFieldConditionOperator(value.operator) ?? 'equals')
-				: 'equals';
-
-		const conditionValue = typeof value.value === 'string' ? value.value.trim() : equals;
-
-		if (!field || (fieldConditionOperatorNeedsValue(operator) && !conditionValue)) return '';
-		if (operator === 'equals') return `${field}=${conditionValue}`;
-		if (operator === 'not_equals') return `${field}!=${conditionValue}`;
-
-		return fieldConditionOperatorNeedsValue(operator)
-			? `${field} ${operator} ${conditionValue}`
-			: `${field} ${operator}`;
-	}
-
-	function draftConditionValue(draft: Record<string, unknown>, fieldKey: string): string {
-		const value = draft[fieldKey];
-
-		if (Array.isArray(value))
-			return value.filter((item): item is string => typeof item === 'string').join(',');
-
-		if (isRecord(value)) {
-			if (typeof value.record_id === 'string') return value.record_id;
-			if (typeof value.user_id === 'string') return value.user_id;
-			if (typeof value.value === 'string' || typeof value.value === 'number')
-				return String(value.value);
-		}
-
-		if (value === null || value === undefined) return '';
-
-		return String(value);
-	}
-
-	function fieldConditionMatches(condition: unknown, draft: Record<string, unknown>): boolean {
-		if (!isRecord(condition)) return false;
-
-		if (Array.isArray(condition.conditions)) {
-			const checks = condition.conditions
-				.filter(isRecord)
-				.map((item) => fieldConditionMatches(item, draft));
-
-			if (checks.length === 0) return false;
-
-			return condition.logic === 'any' ? checks.some(Boolean) : checks.every(Boolean);
-		}
-
-		const field = typeof condition.field === 'string' ? condition.field.trim() : '';
-
-		const operator =
-			typeof condition.operator === 'string'
-				? (normalizeFieldConditionOperator(condition.operator) ?? 'equals')
-				: 'equals';
-
-		const equals = typeof condition.equals === 'string' ? condition.equals.trim() : '';
-		const conditionValue = typeof condition.value === 'string' ? condition.value.trim() : equals;
-
-		if (!field || (fieldConditionOperatorNeedsValue(operator) && !conditionValue)) return false;
-
-		const draftValue = draftConditionValue(draft, field);
-
-		if (operator === 'equals') return draftValue === conditionValue;
-		if (operator === 'not_equals') return draftValue !== conditionValue;
-		if (operator === 'contains') return draftValue.includes(conditionValue);
-		if (operator === 'not_contains') return !draftValue.includes(conditionValue);
-		if (operator === 'is_empty') return !draftValue.trim();
-		if (operator === 'not_empty') return Boolean(draftValue.trim());
-
-		const actualNumber = Number(draftValue);
-		const expectedNumber = Number(conditionValue);
-
-		if (!Number.isFinite(actualNumber) || !Number.isFinite(expectedNumber)) return false;
-		if (operator === 'gt') return actualNumber > expectedNumber;
-		if (operator === 'gte') return actualNumber >= expectedNumber;
-		if (operator === 'lt') return actualNumber < expectedNumber;
-		if (operator === 'lte') return actualNumber <= expectedNumber;
-
-		return false;
-	}
-
-	function fieldHiddenByCondition(field: FormField, draft: Record<string, unknown>): boolean {
-		return fieldConditionMatches(field.conditional?.hidden_when, draft);
-	}
-
-	function fieldReadOnlyByCondition(field: FormField, draft: Record<string, unknown>): boolean {
-		return (
-			field.policy?.read_only === true ||
-			fieldConditionMatches(field.conditional?.read_only_when, draft)
-		);
-	}
-
-	function formulaArgsToText(args: unknown[] | undefined): string {
-		if (!Array.isArray(args)) return '';
-
-		return args
-			.map((arg) => {
-				if (typeof arg === 'string') return arg;
-				if (isRecord(arg) && typeof arg.field === 'string') return arg.field;
-				if (isRecord(arg) && typeof arg.value === 'string') return arg.value;
-
-				return JSON.stringify(arg);
-			})
-			.join('\n');
-	}
-
-	function parseFormulaArgsText(value: string): unknown[] {
-		return value
-			.split(/[\n,]/)
-			.map((item) => item.trim())
-			.filter(Boolean)
-			.map((item) => {
-				if (item.startsWith('{')) {
-					try {
-						return JSON.parse(item) as unknown;
-					} catch {
-						return item;
-					}
-				}
-
-				return item;
-			});
-	}
-
-	function parseValidationBoundary(value: string): string | number {
-		const numberValue = Number(value);
-
-		return Number.isFinite(numberValue) && value.trim() !== '' ? numberValue : value;
-	}
-
-	function parseFieldDefaultValue(value: string, type: FormFieldType): unknown {
-		const trimmed = value.trim();
-
-		if (trimmed === '') return undefined;
-		if (type === 'boolean') return trimmed === 'true' || trimmed === 'yes' || trimmed === '1';
-
-		if (type === 'integer') {
-			const integerValue = Number.parseInt(trimmed, 10);
-
-			return Number.isFinite(integerValue) ? integerValue : trimmed;
-		}
-
-		if (type === 'number') {
-			const numberValue = Number(trimmed);
-
-			return Number.isFinite(numberValue) ? numberValue : trimmed;
-		}
-
-		if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-			try {
-				return JSON.parse(trimmed) as unknown;
-			} catch {
-				return trimmed;
-			}
-		}
-
-		return trimmed;
-	}
-
-	function parseSelectDefaultValue(
-		value: string,
-		type: FormFieldType,
-		options: string[],
-		disabledOptions: string[],
-		archivedOptions: string[]
-	): unknown {
-		const trimmed = value.trim();
-
-		if (!trimmed) return undefined;
-
-		const values = type === 'multi_select' ? parseDefaultMultiSelectValue(trimmed) : [trimmed];
-
-		for (const item of values) {
-			if (!options.includes(item)) {
-				throw new Error($t('forms.defaultOptionInvalid', { values: { option: item } }));
-			}
-
-			if (disabledOptions.includes(item)) {
-				throw new Error($t('forms.defaultOptionDisabled', { values: { option: item } }));
-			}
-
-			if (archivedOptions.includes(item)) {
-				throw new Error($t('forms.defaultOptionArchived', { values: { option: item } }));
-			}
-		}
-
-		return type === 'multi_select' ? values : values[0];
-	}
-
-	function parseDefaultMultiSelectValue(value: string): string[] {
-		if (value.startsWith('[')) {
-			try {
-				const parsed = JSON.parse(value) as unknown;
-
-				if (Array.isArray(parsed)) {
-					return parsed.filter(
-						(item): item is string => typeof item === 'string' && item.trim().length > 0
-					);
-				}
-			} catch {
-				// Fall through to delimiter parsing so the designer can recover from partial JSON.
-			}
-		}
-
-		return value
-			.split(/[,\n]/)
-			.map((item) => item.trim())
-			.filter(Boolean);
-	}
-
-	function addFieldDraft() {
-		s.fieldDrafts = [...s.fieldDrafts, blankFieldDraft()];
-	}
-
-	function removeFieldDraft(index: number) {
-		s.fieldDrafts =
-			s.fieldDrafts.length > 1
-				? s.fieldDrafts.filter((_, itemIndex) => itemIndex !== index)
-				: [blankFieldDraft()];
-	}
-
-	function syncDesignerDrafts(form: UniversalForm | null = selectedForm) {
-		if (!form) {
-			s.designerFieldDrafts = [];
-			s.designerFieldUsage = [];
-			s.designerFieldDependencies = [];
-			s.designerSyncedFormId = '';
-			s.selectedDesignerFieldIndex = 0;
-
-			return;
-		}
-
-		if (s.designerSyncedFormId === form.id) return;
-
-		s.designerFieldDrafts = fieldDraftsFromSchema(form.schema);
-		s.designerSyncedFormId = form.id;
-		s.selectedDesignerFieldIndex = 0;
-	}
-
-	async function loadDesignerSafety(form: UniversalForm | null = selectedForm) {
-		if (!form) {
-			s.designerFieldUsage = [];
-			s.designerFieldDependencies = [];
-
-			return;
-		}
-
-		s.designerUsageLoading = true;
-
-		const [usageResponse, dependencyResponse] = await Promise.all([
-			formsApi.getFieldUsage(form.id),
-			formsApi.getFieldDependencies(form.id)
-		]);
-
-		s.designerUsageLoading = false;
-
-		if (usageResponse.code !== 0) {
-			s.designerFieldUsage = [];
-			toast.error(usageResponse.message);
-		} else {
-			s.designerFieldUsage = usageResponse.data?.fields ?? [];
-		}
-
-		if (dependencyResponse.code !== 0) {
-			s.designerFieldDependencies = [];
-			toast.error(dependencyResponse.message);
-		} else {
-			s.designerFieldDependencies = dependencyResponse.data?.dependencies ?? [];
-		}
-	}
-
-	function blockingDependenciesForField(field: FieldDraft): FormFieldDependency[] {
-		return s.designerFieldDependencies.filter(
-			(dependency) =>
-				dependency.blocking &&
-				((field.field_id && dependency.field_id === field.field_id) ||
-					dependency.field_key === field.key)
-		);
-	}
-
-	function fieldIdentity(field: { field_id?: string; key: string }): string {
-		return field.field_id || field.key;
-	}
-
-	function usageForSchemaField(field: FormField | FieldDraft): FormFieldUsage | null {
-		return (
-			s.designerFieldUsage.find(
-				(usage) =>
-					(field.field_id && usage.field_id === field.field_id) || usage.field_key === field.key
-			) ?? null
-		);
-	}
-
-	function dependenciesForSchemaField(field: FormField | FieldDraft): FormFieldDependency[] {
-		return s.designerFieldDependencies.filter(
-			(dependency) =>
-				(field.field_id && dependency.field_id === field.field_id) ||
-				dependency.field_key === field.key
-		);
-	}
-
-	function usageCountsForSchemaField(field: FormField | FieldDraft) {
-		const usage = usageForSchemaField(field);
-		const dependencies = dependenciesForSchemaField(field);
-
-		return {
-			valueCount: usage?.value_count ?? 0,
-			indexedCount: usage?.indexed_count ?? 0,
-			dependencyCount: dependencies.length,
-			blockingDependencyCount: dependencies.filter((dependency) => dependency.blocking).length
-		};
-	}
-
-	function collectDesignerSchemaChanges(drafts: FieldDraft[]): DesignerSchemaChange[] {
-		if (!selectedForm) return [];
-
-		const originalFields = parseFields(selectedForm.schema);
-		const draftByIdentity = new Map(
-			drafts.filter((field) => field.key.trim()).map((field) => [fieldIdentity(field), field])
-		);
-		const changes: DesignerSchemaChange[] = [];
-
-		for (const original of originalFields) {
-			const identity = fieldIdentity(original);
-			const draft = draftByIdentity.get(identity);
-			const counts = usageCountsForSchemaField(original);
-
-			if (!draft) {
-				changes.push({
-					kind: 'delete',
-					field_id: original.field_id,
-					fieldKey: original.key,
-					fieldLabel: fieldLabel(original),
-					from: original.key,
-					...counts
-				});
-
-				continue;
-			}
-
-			if (draft.key !== original.key) {
-				changes.push({
-					kind: 'rename',
-					field_id: original.field_id,
-					fieldKey: original.key,
-					fieldLabel: fieldLabel(original),
-					from: original.key,
-					to: draft.key,
-					...counts
-				});
-			}
-
-			const nextType = draft.type ?? 'text';
-			const originalType = original.type ?? 'text';
-
-			if (nextType !== originalType) {
-				changes.push({
-					kind: 'type_change',
-					field_id: original.field_id,
-					fieldKey: original.key,
-					fieldLabel: fieldLabel(original),
-					from: $t(`forms.fieldTypes.${originalType}`),
-					to: $t(`forms.fieldTypes.${nextType}`),
-					...counts
-				});
-			}
-		}
-
-		return changes;
-	}
-
-	function closeDesignerConfirm() {
-		s.designerConfirmOpen = false;
-		s.pendingDesignerSchema = null;
-		s.pendingDesignerChanges = [];
-	}
-
-	function addDesignerField(type: FormFieldType = 'text') {
-		const field = {
-			...blankFieldDraft(),
-			type,
-			key: nextDesignerFieldKey(type),
-			label: $t(`forms.fieldTypes.${type}`)
-		};
-
-		s.designerFieldDrafts = [...s.designerFieldDrafts, field];
-		s.selectedDesignerFieldIndex = s.designerFieldDrafts.length - 1;
-	}
-
-	function nextDesignerFieldKey(type: FormFieldType): string {
-		const base = type.replaceAll('-', '_');
-		const used = new Set(s.designerFieldDrafts.map((field) => field.key));
-		let index = s.designerFieldDrafts.length + 1;
-		let key = `${base}_${index}`;
-
-		while (used.has(key)) {
-			index += 1;
-			key = `${base}_${index}`;
-		}
-
-		return key;
-	}
-
-	function updateDesignerField(index: number, patch: Partial<FieldDraft>) {
-		s.designerFieldDrafts = s.designerFieldDrafts.map((field, itemIndex) =>
-			itemIndex === index ? { ...field, ...patch } : field
-		);
-	}
-
-	function duplicateDesignerField(index: number) {
-		const field = s.designerFieldDrafts[index];
-
-		if (!field) return;
-
-		const duplicate = {
-			...field,
-			field_id: undefined,
-			key: nextDesignerFieldKey(field.type),
-			label: `${field.label || field.key} ${$t('forms.copySuffix')}`
-		};
-
-		s.designerFieldDrafts = [
-			...s.designerFieldDrafts.slice(0, index + 1),
-			duplicate,
-			...s.designerFieldDrafts.slice(index + 1)
-		];
-
-		s.selectedDesignerFieldIndex = index + 1;
-	}
-
-	function removeDesignerField(index: number) {
-		if (s.designerFieldDrafts.length <= 1) return;
-
-		const field = s.designerFieldDrafts[index];
-
-		if (field && blockingDependenciesForField(field).length > 0) {
-			toast.error($t('forms.deleteBlockedByDependencies'));
-
-			return;
-		}
-
-		s.designerFieldDrafts = s.designerFieldDrafts.filter((_, itemIndex) => itemIndex !== index);
-		s.selectedDesignerFieldIndex = Math.max(0, Math.min(index, s.designerFieldDrafts.length - 1));
-	}
-
-	function moveDesignerField(index: number, direction: -1 | 1) {
-		const nextIndex = index + direction;
-
-		if (nextIndex < 0 || nextIndex >= s.designerFieldDrafts.length) return;
-
-		const next = [...s.designerFieldDrafts];
-
-		[next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-		s.designerFieldDrafts = next;
-		s.selectedDesignerFieldIndex = nextIndex;
-	}
-
-	async function saveDesignerSchema() {
-		if (!selectedForm) return;
-
-		let schema: Record<string, unknown>;
-
-		try {
-			schema = buildSchemaFromDrafts(s.designerFieldDrafts, false);
-		} catch (error) {
-			toast.error(error instanceof Error ? error.message : $t('forms.invalidSchema'));
-
-			return;
-		}
-
-		const changes = collectDesignerSchemaChanges(s.designerFieldDrafts);
-
-		if (changes.length > 0) {
-			s.pendingDesignerSchema = schema;
-			s.pendingDesignerChanges = changes;
-			s.designerConfirmOpen = true;
-
-			return;
-		}
-
-		await persistDesignerSchema(schema);
-	}
-
-	async function confirmDesignerSchemaSave() {
-		if (!s.pendingDesignerSchema) return;
-
-		const schema = s.pendingDesignerSchema;
-
-		s.designerConfirmOpen = false;
-		s.pendingDesignerSchema = null;
-		s.pendingDesignerChanges = [];
-		await persistDesignerSchema(schema);
-	}
-
-	async function persistDesignerSchema(schema: Record<string, unknown>) {
-		if (!selectedForm) return;
-
-		s.designerSaving = true;
-
-		const response = await formsApi.update(selectedForm.id, {
-			schema,
-			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
-		});
-
-		s.designerSaving = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
-		s.designerSyncedFormId = '';
-		syncDesignerDrafts(response.data);
-		s.detailHeaderSyncedFingerprint = '';
-		syncDetailHeaderDraft(response.data);
-		s.detailHighlightSyncedFingerprint = '';
-		syncDetailHighlightDraft(response.data);
-		s.detailPageCompositionSyncedFingerprint = '';
-		syncDetailPageCompositionDraft(response.data);
-		s.detailLayoutSectionSyncedFingerprint = '';
-		syncDetailLayoutSectionDrafts(response.data);
-		await loadDesignerSafety(response.data);
-		toast.success($t('forms.designSaved'));
-		await loadRecords();
-	}
-
-	async function saveDetailHeader() {
-		if (!selectedForm) return;
-
-		s.detailHeaderSaving = true;
-
-		const response = await formsApi.update(selectedForm.id, {
-			detail_layout: {
-				...(selectedForm.detail_layout ?? {}),
-				header: {
-					subtitle_field: s.detailHeaderDraft.subtitleField || undefined,
-					badge_field: s.detailHeaderDraft.badgeField || undefined
-				}
-			},
-			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
-		});
-
-		s.detailHeaderSaving = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
-		s.detailHeaderSyncedFingerprint = '';
-		syncDetailHeaderDraft(response.data);
-		toast.success($t('forms.detailHeaderSaved'));
-	}
-
-	async function saveDetailHighlights() {
-		if (!selectedForm) return;
-
-		s.detailHighlightSaving = true;
-
-		const response = await formsApi.update(selectedForm.id, {
-			detail_layout: {
-				...(selectedForm.detail_layout ?? {}),
-				highlights: s.detailHighlightDraft.fields
-			},
-			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
-		});
-
-		s.detailHighlightSaving = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
-		s.detailHighlightSyncedFingerprint = '';
-		syncDetailHighlightDraft(response.data);
-		toast.success($t('forms.detailHighlightsSaved'));
-	}
-
-	async function saveDetailPageComposition() {
-		if (!selectedForm) return;
-
-		s.detailPageCompositionSaving = true;
-
-		const response = await formsApi.update(selectedForm.id, {
-			detail_layout: {
-				...(selectedForm.detail_layout ?? {}),
-				page: {
-					...(isRecord(selectedForm.detail_layout?.page) ? selectedForm.detail_layout.page : {}),
-					widget_region: s.detailPageCompositionDraft.widgetRegion,
-					field_columns: s.detailPageCompositionDraft.fieldColumns
-				}
-			},
-			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
-		});
-
-		s.detailPageCompositionSaving = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
-		s.detailPageCompositionSyncedFingerprint = '';
-		syncDetailPageCompositionDraft(response.data);
-		toast.success($t('forms.detailPageCompositionSaved'));
-	}
-
-	async function saveDetailLayoutSections() {
-		if (!selectedForm) return;
-
-		const sections = detailLayoutSectionPayload(s.detailLayoutSectionDrafts);
-
-		s.detailLayoutSectionSaving = true;
-
-		const response = await formsApi.update(selectedForm.id, {
-			detail_layout: { ...(selectedForm.detail_layout ?? {}), sections },
-			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
-		});
-
-		s.detailLayoutSectionSaving = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
-		s.detailLayoutSectionSyncedFingerprint = '';
-		syncDetailLayoutSectionDrafts(response.data);
-		toast.success($t('forms.detailLayoutSectionsSaved'));
-	}
-
-	async function persistDetailPageWidgets(entries: DetailPageWidgetEntry[]) {
-		if (!selectedForm) return;
-
-		s.detailPageWidgetSaving = true;
-
-		const response = await formsApi.update(selectedForm.id, {
-			detail_layout: {
-				...(selectedForm.detail_layout ?? {}),
-				widgets: detailPageWidgetPayload(entries)
-			},
-			expected_schema_version: s.formsSessionSchemaVersion ?? selectedForm.schema_version
-		});
-
-		s.detailPageWidgetSaving = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		s.forms = s.forms.map((form) => (form.id === response.data?.id ? response.data : form));
-		toast.success($t('forms.detailPageWidgetsSaved'));
-	}
-
-	async function setDetailPageWidgetEnabled(key: DetailPageWidgetKey, enabled: boolean) {
-		const entries = selectedDetailPageWidgetEntries.map((entry) =>
-			entry.key === key ? { ...entry, enabled } : entry
-		);
-
-		await persistDetailPageWidgets(entries);
-	}
-
-	async function setDetailPageWidgetTitle(key: DetailPageWidgetKey, title: string) {
-		const entries = selectedDetailPageWidgetEntries.map((entry) =>
-			entry.key === key ? { ...entry, title } : entry
-		);
-
-		await persistDetailPageWidgets(entries);
-	}
-
-	async function setDetailPageWidgetDescription(key: DetailPageWidgetKey, description: string) {
-		const entries = selectedDetailPageWidgetEntries.map((entry) =>
-			entry.key === key ? { ...entry, description } : entry
-		);
-
-		await persistDetailPageWidgets(entries);
-	}
-
-	async function setDetailPageWidgetEmptyText(key: DetailPageWidgetKey, emptyText: string) {
-		const entries = selectedDetailPageWidgetEntries.map((entry) =>
-			entry.key === key ? { ...entry, emptyText } : entry
-		);
-
-		await persistDetailPageWidgets(entries);
-	}
-
-	async function setDetailPageWidgetShowCount(key: DetailPageWidgetKey, showCount: boolean) {
-		const entries = selectedDetailPageWidgetEntries.map((entry) =>
-			entry.key === key ? { ...entry, showCount } : entry
-		);
-
-		await persistDetailPageWidgets(entries);
-	}
-
-	async function setDetailPageWidgetHideEmpty(key: DetailPageWidgetKey, hideEmpty: boolean) {
-		const entries = selectedDetailPageWidgetEntries.map((entry) =>
-			entry.key === key ? { ...entry, hideEmpty } : entry
-		);
-
-		await persistDetailPageWidgets(entries);
-	}
-
-	async function setDetailPageWidgetCollapsible(key: DetailPageWidgetKey, collapsible: boolean) {
-		const entries = selectedDetailPageWidgetEntries.map((entry) =>
-			entry.key === key
-				? {
-						...entry,
-						collapsible,
-						defaultCollapsed: collapsible ? entry.defaultCollapsed : false
-					}
-				: entry
-		);
-
-		await persistDetailPageWidgets(entries);
-	}
-
-	async function setDetailPageWidgetDefaultCollapsed(
-		key: DetailPageWidgetKey,
-		defaultCollapsed: boolean
-	) {
-		const entries = selectedDetailPageWidgetEntries.map((entry) =>
-			entry.key === key
-				? {
-						...entry,
-						defaultCollapsed: entry.collapsible && defaultCollapsed
-					}
-				: entry
-		);
-
-		await persistDetailPageWidgets(entries);
-	}
-
-	async function setDetailPageWidgetDensity(
-		key: DetailPageWidgetKey,
-		density: DetailPageWidgetDensity
-	) {
-		const entries = selectedDetailPageWidgetEntries.map((entry) =>
-			entry.key === key ? { ...entry, density } : entry
-		);
-
-		await persistDetailPageWidgets(entries);
-	}
-
-	async function setDetailPageWidgetLimit(key: DetailPageWidgetKey, limit: string) {
-		const entries = selectedDetailPageWidgetEntries.map((entry) =>
-			entry.key === key ? { ...entry, limit: detailPageWidgetLimitText(limit) } : entry
-		);
-
-		await persistDetailPageWidgets(entries);
-	}
-
-	async function moveDetailPageWidget(key: DetailPageWidgetKey, direction: -1 | 1) {
-		const entries = [...selectedDetailPageWidgetEntries];
-		const index = entries.findIndex((entry) => entry.key === key);
-		const nextIndex = index + direction;
-
-		if (index < 0 || nextIndex < 0 || nextIndex >= entries.length) return;
-
-		[entries[index], entries[nextIndex]] = [entries[nextIndex], entries[index]];
-		await persistDetailPageWidgets(entries);
-	}
-
-	function setDraftValue(fieldKey: string, value: unknown) {
-		s.recordDraft = { ...s.recordDraft, [fieldKey]: value };
-	}
-
-	function attachmentUrl(field: FormField): string {
-		const value = s.recordDraft[field.key];
-
-		if (typeof value === 'string') return value.trim();
-		if (isRecord(value) && typeof value.url === 'string') return value.url.trim();
-
-		return '';
-	}
-
-	function attachmentPreviewUrl(field: FormField): string {
-		return safeImageUrl(attachmentUrl(field));
-	}
-
-	function attachmentFileName(url: string, field: FormField): string {
-		const cleaned = url.trim();
-
-		if (!cleaned) return field.type === 'image' ? `${field.key}.png` : `${field.key}.bin`;
-
-		try {
-			const parsed = new URL(cleaned);
-			const name = parsed.pathname.split('/').filter(Boolean).pop();
-
-			if (name) return decodeURIComponent(name);
-		} catch {
-			const name = cleaned.split('/').filter(Boolean).pop();
-
-			if (name) return name;
-		}
-
-		return field.type === 'image' ? `${field.key}.png` : `${field.key}.bin`;
-	}
-
-	function attachmentContentType(fileName: string, field: FormField): string {
-		const lower = fileName.toLowerCase();
-
-		if (field.type === 'image') {
-			if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
-			if (lower.endsWith('.webp')) return 'image/webp';
-			if (lower.endsWith('.gif')) return 'image/gif';
-
-			return 'image/png';
-		}
-
-		if (lower.endsWith('.pdf')) return 'application/pdf';
-		if (lower.endsWith('.png')) return 'image/png';
-		if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
-
-		return 'application/octet-stream';
-	}
-
-	function attachmentAcceptAttr(field: FormField): string | undefined {
-		const accept = field.attachment?.accept?.filter(Boolean) ?? [];
-
-		if (accept.length > 0) return accept.join(',');
-
-		return field.type === 'image' ? 'image/*' : undefined;
-	}
-
-	function attachmentStorageName(fileName: string): string {
-		return fileName.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'file';
-	}
-
-	async function uploadFormAttachmentFile(
-		file: File
-	): Promise<{ url: string; filename: string; thumbnail_url?: string } | null> {
-		const formData = new FormData();
-
-		formData.append('file', file);
-
-		const headers = new Headers();
-		const token = apiClient.getToken();
-
-		if (token) headers.set('Authorization', `Bearer ${token}`);
-
-		try {
-			const response = await fetch('/api/v1/upload', { method: 'POST', headers, body: formData });
-
-			const result = (await response.json()) as {
-				code?: number;
-				message?: string;
-				data?: { url?: string; filename?: string; thumbnail_url?: string };
-			};
-
-			if (result.code === 0 && result.data?.url) {
-				return {
-					url: result.data.url,
-					filename: result.data.filename || attachmentStorageName(file.name || 'file'),
-					thumbnail_url: result.data.thumbnail_url
-				};
-			}
-
-			toast.error(result.message || $t('toast.uploadFail'));
-		} catch (_error) {
-			toast.error($t('toast.uploadFail'));
-		}
-
-		return null;
-	}
-
-	function fieldAttachments(fieldKey: string): FormAttachment[] {
-		return s.recordAttachments.filter(
-			(attachment) => attachment.field_key === fieldKey && !attachment.archived_at
-		);
-	}
-
-	function attachmentSignedUrl(attachment: FormAttachment): string {
-		return safeLinkUrl(s.recordAttachmentSignedUrls[attachment.id] || attachment.url);
-	}
-
-	function attachmentThumbnailUrl(attachment: FormAttachment): string {
-		return safeImageUrl(attachment.thumbnail_url || attachment.url);
-	}
-
-	async function loadAttachmentSignedUrls(attachments: FormAttachment[]) {
-		const active = attachments.filter((attachment) => !attachment.archived_at && attachment.url);
-
-		if (active.length === 0) {
-			s.recordAttachmentSignedUrls = {};
-
-			return;
-		}
-
-		const entries = await Promise.all(
-			active.map(async (attachment) => {
-				const response = await formsApi.getAttachmentSignedDownload(attachment.id);
-
-				return response.code === 0 && response.data?.url
-					? [attachment.id, response.data.url]
-					: null;
-			})
-		);
-
-		s.recordAttachmentSignedUrls = Object.fromEntries(
-			entries.filter((entry): entry is [string, string] => Array.isArray(entry))
-		);
-	}
-
-	function selectedRecordAttachmentFields(): FormField[] {
-		return fields.filter((field) => {
-			const type = fieldType(field);
-
-			return ['attachment', 'image'].includes(type) && field.visibility?.detail !== false;
-		});
-	}
-
-	function selectedRecordAttachmentUrls(field: FormField): string[] {
-		if (!s.selectedRecord) return [];
-
-		return attachmentManifestUrls(s.selectedRecord.values[field.key]);
-	}
-
-	function selectedRecordAttachmentValueUrls(field: FormField): string[] {
-		const metadataUrls = new Set(fieldAttachments(field.key).map((attachment) => attachment.url));
-
-		return selectedRecordAttachmentUrls(field).filter((url) => url && !metadataUrls.has(url));
-	}
-
-	function attachmentIsPreviewableImage(attachment: FormAttachment): boolean {
-		return (
-			attachment.content_type?.startsWith('image/') ||
-			/\.(png|jpe?g|webp|gif)$/i.test(attachment.file_name)
-		);
-	}
-
-	function recordValueUrl(value: unknown): string {
-		if (typeof value === 'string') return value;
-		if (isRecord(value) && typeof value.url === 'string') return value.url;
-
-		return '';
-	}
-
-	async function loadRecordAttachments(recordId: string) {
-		if (!selectedForm) return;
-
-		const response = await formsApi.listAttachments(selectedForm.id, {
-			record_id: recordId,
-			per_page: 100
-		});
-
-		if (response.code !== 0) {
-			toast.error(response.message);
-			s.recordAttachments = [];
-
-			return;
-		}
-
-		s.recordAttachments = response.data?.items ?? [];
-		await loadAttachmentSignedUrls(s.recordAttachments);
-	}
-
-	async function syncRecordAttachmentValue(field: FormField, value: string) {
-		if (!s.editingRecordId) return;
-
-		const currentRecord =
-			s.records.find((record) => record.id === s.editingRecordId) ?? s.selectedRecord;
-		const values = { ...(currentRecord?.values ?? s.recordDraft), [field.key]: value };
-		const response = await updateRecordWithVersion(s.editingRecordId, {
-			values,
-			source: { type: 'web', origin: 'attachment' }
-		});
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		replaceLocalRecord(response.data);
-		s.selectedRecord = response.data;
-		s.recordDraft = { ...s.recordDraft, [field.key]: value };
-	}
-
-	async function createAttachmentForField(field: FormField) {
-		if (!selectedForm || !s.editingRecordId) {
-			toast.error($t('forms.attachmentSaveRecordFirst'));
-
-			return;
-		}
-
-		const url = attachmentUrl(field);
-
-		if (!url) {
-			toast.error($t('forms.attachmentUrlRequired'));
-
-			return;
-		}
-
-		if (!safeLinkUrl(url)) {
-			toast.error($t('forms.attachmentUrlUnsafe'));
-
-			return;
-		}
-
-		s.attachmentSubmittingField = field.key;
-
-		const fileName = attachmentFileName(url, field);
-
-		const response = await formsApi.createAttachment(selectedForm.id, {
-			field_key: field.key,
-			record_id: s.editingRecordId,
-			file_name: fileName,
-			content_type: attachmentContentType(fileName, field),
-			byte_size: 0,
-			storage_key: `form-records/${s.editingRecordId}/${field.key}/${Date.now()}-${fileName}`,
-			url
-		});
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-			s.attachmentSubmittingField = null;
-
-			return;
-		}
-
-		s.recordAttachments = [
-			response.data,
-			...s.recordAttachments.filter((item) => item.id !== response.data?.id)
-		];
-
-		await loadAttachmentSignedUrls(s.recordAttachments);
-		await syncRecordAttachmentValue(field, response.data.url);
-		s.attachmentSubmittingField = null;
-		toast.success($t('forms.attachmentLinked'));
-	}
-
-	async function createAttachmentFromLocalFile(field: FormField, event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
-
-		input.value = '';
-
-		if (!file) return;
-
-		if (!selectedForm || !s.editingRecordId) {
-			toast.error($t('forms.attachmentSaveRecordFirst'));
-
-			return;
-		}
-
-		s.attachmentSubmittingField = field.key;
-
-		const storageName = attachmentStorageName(
-			file.name || (field.type === 'image' ? `${field.key}.png` : `${field.key}.bin`)
-		);
-		const uploaded = await uploadFormAttachmentFile(file);
-
-		if (!uploaded) {
-			s.attachmentSubmittingField = null;
-
-			return;
-		}
-
-		const response = await formsApi.createAttachment(selectedForm.id, {
-			field_key: field.key,
-			record_id: s.editingRecordId,
-			file_name: file.name || storageName,
-			content_type: file.type || attachmentContentType(storageName, field),
-			byte_size: file.size,
-			storage_key: `form-records/${s.editingRecordId}/${field.key}/server-upload-${Date.now()}-${uploaded.filename}`,
-			url: uploaded.url,
-			thumbnail_url: uploaded.thumbnail_url
-		});
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-			s.attachmentSubmittingField = null;
-
-			return;
-		}
-
-		s.recordAttachments = [
-			response.data,
-			...s.recordAttachments.filter((item) => item.id !== response.data?.id)
-		];
-
-		await loadAttachmentSignedUrls(s.recordAttachments);
-		await syncRecordAttachmentValue(field, response.data.url);
-		s.attachmentSubmittingField = null;
-		toast.success($t('forms.attachmentLinked'));
-	}
-
-	async function removeAttachment(field: FormField, attachment: FormAttachment) {
-		s.deletingAttachmentId = attachment.id;
-
-		const response = await formsApi.deleteAttachment(attachment.id);
-
-		if (response.code !== 0) {
-			toast.error(response.message);
-			s.deletingAttachmentId = null;
-
-			return;
-		}
-
-		s.recordAttachments = s.recordAttachments.filter((item) => item.id !== attachment.id);
-
-		const remainingSignedUrls = { ...s.recordAttachmentSignedUrls };
-
-		delete remainingSignedUrls[attachment.id];
-		s.recordAttachmentSignedUrls = remainingSignedUrls;
-
-		if (attachment.url?.startsWith('blob:')) {
-			URL.revokeObjectURL(attachment.url);
-		}
-
-		const currentValue = recordValueUrl(s.recordDraft[field.key]);
-
-		if (currentValue === attachment.url) {
-			await syncRecordAttachmentValue(field, '');
-		}
-
-		s.deletingAttachmentId = null;
-		toast.success($t('forms.attachmentRemoved'));
-	}
-
-	function draftArray(fieldKey: string): string[] {
-		const value = s.recordDraft[fieldKey];
-
-		return Array.isArray(value)
-			? value.filter((item): item is string => typeof item === 'string')
-			: [];
-	}
-
-	function isDraftOptionSelected(fieldKey: string, option: string): boolean {
-		return draftArray(fieldKey).includes(option);
-	}
-
-	function toggleDraftOption(fieldKey: string, option: string, checked: boolean) {
-		const current = draftArray(fieldKey);
-
-		setDraftValue(
-			fieldKey,
-			checked
-				? Array.from(new Set([...current, option]))
-				: current.filter((item) => item !== option)
-		);
-	}
-
-	function draftString(fieldKey: string): string {
-		const value = s.recordDraft[fieldKey];
-
-		return typeof value === 'string' ? value : '';
-	}
-
-	function updateChildDraftValue(fieldKey: string, value: unknown) {
-		if (!s.childEditor) return;
-
-		s.childEditor = {
-			...s.childEditor,
-			draft: { ...s.childEditor.draft, [fieldKey]: value }
-		};
-	}
-
-	function updateChildTitle(value: string) {
-		if (!s.childEditor) return;
-
-		s.childEditor = { ...s.childEditor, title: value };
-	}
-
-	function draftArrayFrom(draft: Record<string, unknown>, fieldKey: string): string[] {
-		const value = draft[fieldKey];
-
-		return Array.isArray(value)
-			? value.filter((item): item is string => typeof item === 'string')
-			: [];
-	}
-
-	function draftStringFrom(draft: Record<string, unknown>, fieldKey: string): string {
-		const value = draft[fieldKey];
-
-		return typeof value === 'string' ? value : '';
-	}
-
-	function isChildDraftOptionSelected(fieldKey: string, option: string): boolean {
-		return s.childEditor ? draftArrayFrom(s.childEditor.draft, fieldKey).includes(option) : false;
-	}
-
-	function toggleChildDraftOption(fieldKey: string, option: string, checked: boolean) {
-		if (!s.childEditor) return;
-
-		const current = draftArrayFrom(s.childEditor.draft, fieldKey);
-
-		updateChildDraftValue(
-			fieldKey,
-			checked
-				? Array.from(new Set([...current, option]))
-				: current.filter((item) => item !== option)
-		);
-	}
-
-	function optionDisabledForSingleDraft(field: FormField, option: string): boolean {
-		return (
-			(optionDisabled(field, option) || optionArchived(field, option)) &&
-			draftString(field.key) !== option
-		);
-	}
-
-	function optionDisabledForMultiDraft(field: FormField, option: string): boolean {
-		return (
-			(optionDisabled(field, option) || optionArchived(field, option)) &&
-			!isDraftOptionSelected(field.key, option)
-		);
-	}
-
-	function optionDisabledForChildSingleDraft(field: FormField, option: string): boolean {
-		return (
-			(optionDisabled(field, option) || optionArchived(field, option)) &&
-			(!s.childEditor || draftStringFrom(s.childEditor.draft, field.key) !== option)
-		);
-	}
-
-	function optionDisabledForChildMultiDraft(field: FormField, option: string): boolean {
-		return (
-			(optionDisabled(field, option) || optionArchived(field, option)) &&
-			!isChildDraftOptionSelected(field.key, option)
-		);
-	}
-
-	function signatureImageValue(draft: Record<string, unknown>, fieldKey: string): string {
-		const value = draft[fieldKey];
-
-		if (typeof value !== 'string') return '';
-
-		return value.startsWith('data:image/') ||
-			value.startsWith('/api/v1/uploads/signatures/') ||
-			value.startsWith('/uploads/signatures/')
-			? value
-			: '';
-	}
-
-	function prepareSignatureCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
-		const rect = canvas.getBoundingClientRect();
-		const pixelRatio = window.devicePixelRatio || 1;
-		const width = Math.max(320, Math.round(rect.width || 320));
-		const height = Math.max(96, Math.round(rect.height || 112));
-
-		if (
-			canvas.width !== Math.round(width * pixelRatio) ||
-			canvas.height !== Math.round(height * pixelRatio)
-		) {
-			canvas.width = Math.round(width * pixelRatio);
-			canvas.height = Math.round(height * pixelRatio);
-			canvas.style.height = `${height}px`;
-		}
-
-		const context = canvas.getContext('2d');
-
-		if (!context) return null;
-
-		context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-		context.lineCap = 'round';
-		context.lineJoin = 'round';
-		context.lineWidth = 2;
-		context.strokeStyle = '#0f172a';
-
-		return context;
-	}
-
-	function signaturePoint(
-		event: PointerEvent,
-		canvas: HTMLCanvasElement
-	): { x: number; y: number } {
-		const rect = canvas.getBoundingClientRect();
-
-		return { x: event.clientX - rect.left, y: event.clientY - rect.top };
-	}
-
-	function setSignatureValue(fieldKey: string, scope: SignatureDraftScope, value: string) {
-		if (scope === 'child') {
-			updateChildDraftValue(fieldKey, value);
-		} else {
-			setDraftValue(fieldKey, value);
-		}
-	}
-
-	function captureSignatureCanvas(
-		canvas: HTMLCanvasElement,
-		fieldKey: string,
-		scope: SignatureDraftScope
-	) {
-		setSignatureValue(fieldKey, scope, canvas.toDataURL('image/png'));
-	}
-
-	function startSignatureStroke(
-		event: PointerEvent,
-		fieldKey: string,
-		scope: SignatureDraftScope,
-		readOnly: boolean
-	) {
-		if (readOnly || !(event.currentTarget instanceof HTMLCanvasElement)) return;
-
-		const canvas = event.currentTarget;
-		const context = prepareSignatureCanvas(canvas);
-
-		if (!context) return;
-
-		const point = signaturePoint(event, canvas);
-
-		context.beginPath();
-		context.moveTo(point.x, point.y);
-		s.activeSignatureCanvas = canvas;
-
-		try {
-			canvas.setPointerCapture(event.pointerId);
-		} catch {
-			// Synthetic smoke-test pointer events may not be registered for capture.
-		}
-
-		event.preventDefault();
-		captureSignatureCanvas(canvas, fieldKey, scope);
-	}
-
-	function moveSignatureStroke(
-		event: PointerEvent,
-		fieldKey: string,
-		scope: SignatureDraftScope,
-		readOnly: boolean
-	) {
-		if (readOnly || !(event.currentTarget instanceof HTMLCanvasElement)) return;
-
-		const canvas = event.currentTarget;
-
-		if (s.activeSignatureCanvas !== canvas) return;
-
-		const context = prepareSignatureCanvas(canvas);
-
-		if (!context) return;
-
-		const point = signaturePoint(event, canvas);
-
-		context.lineTo(point.x, point.y);
-		context.stroke();
-		event.preventDefault();
-		captureSignatureCanvas(canvas, fieldKey, scope);
-	}
-
-	function endSignatureStroke(
-		event: PointerEvent,
-		fieldKey: string,
-		scope: SignatureDraftScope,
-		readOnly: boolean
-	) {
-		if (!(event.currentTarget instanceof HTMLCanvasElement)) return;
-
-		const canvas = event.currentTarget;
-
-		if (s.activeSignatureCanvas !== canvas) return;
-
-		s.activeSignatureCanvas = null;
-
-		if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-		if (!readOnly) captureSignatureCanvas(canvas, fieldKey, scope);
-	}
-
-	function clearSignatureCanvas(fieldKey: string, scope: SignatureDraftScope, readOnly: boolean) {
-		if (readOnly) return;
-
-		const attribute = scope === 'child' ? 'data-child-signature-canvas' : 'data-signature-canvas';
-
-		const canvas = document.querySelector<HTMLCanvasElement>(`canvas[${attribute}="${fieldKey}"]`);
-
-		if (canvas) {
-			const context = prepareSignatureCanvas(canvas);
-
-			if (context) {
-				context.save();
-				context.setTransform(1, 0, 0, 1, 0, 0);
-				context.clearRect(0, 0, canvas.width, canvas.height);
-				context.restore();
-			}
-		}
-
-		setSignatureValue(fieldKey, scope, '');
-	}
-
-	function displayValue(value: unknown): string {
-		if (value === null || value === undefined || value === '') return '-';
-		if (typeof value === 'boolean') return value ? $t('forms.yes') : $t('forms.no');
-		if (typeof value === 'string' || typeof value === 'number') return String(value);
-		if (Array.isArray(value)) return value.map(displayValue).join(', ');
-
-		if (isRecord(value)) {
-			if (typeof value.display === 'string') return value.display;
-			if (typeof value.name === 'string') return value.name;
-			if (typeof value.email === 'string') return value.email;
-			if (typeof value.title === 'string') return value.title;
-			if (typeof value.decimal === 'string')
-				return `${value.decimal}${typeof value.currency === 'string' ? ` ${value.currency}` : ''}`;
-			if (typeof value.value === 'number') return String(value.value);
-
-			return JSON.stringify(value);
-		}
-
-		return String(value);
-	}
-
-	function childRecordFields(child: FormChildRecord): FormField[] {
-		const childForm = s.forms.find((form) => form.id === child.record.form_id);
-
-		return childForm
-			? parseFields(childForm.schema).filter((field) => field.visibility?.list !== false)
-			: [];
-	}
-
-	function childRelationKeyForField(field: FormField): string {
-		return field.relation?.relation_key || field.key;
-	}
-
-	function childRecordsForRelationField(field: FormField): FormChildRecord[] {
-		const childForm = childFormForRelationField(field);
-		const relationKey = childRelationKeyForField(field);
-
-		return s.selectedRecordChildren.filter(
-			(child) =>
-				child.relation_key === relationKey && (!childForm || child.record.form_id === childForm.id)
-		);
-	}
-
-	function childGridFieldsForRelationField(field: FormField): FormField[] {
-		const childForm = childFormForRelationField(field);
-
-		return childForm
-			? parseFields(childForm.schema).filter(
-					(childField) => childField.visibility?.list !== false && childField.type !== 'child_table'
-				)
-			: [];
-	}
-
-	function formListFields(form: UniversalForm): FormField[] {
-		return parseFields(form.schema).filter((field) => field.visibility?.list !== false);
-	}
-
-	function formFieldSummary(form: UniversalForm): string {
-		const labels = formListFields(form)
-			.slice(0, 3)
-			.map((field) => fieldLabel(field));
-
-		return labels.length > 0 ? labels.join(' / ') : $t('forms.noFields');
-	}
-
-	function formatDate(value: string): string {
-		return new Date(value).toLocaleString($locale === 'en' ? 'en-US' : 'zh-CN', {
-			year: 'numeric',
-			month: '2-digit',
-			day: '2-digit',
-			hour: '2-digit',
-			minute: '2-digit'
-		});
-	}
-
-	function inputValue(event: Event): string {
-		return event.currentTarget instanceof HTMLInputElement ||
-			event.currentTarget instanceof HTMLTextAreaElement
-			? event.currentTarget.value
-			: '';
-	}
-
-	function selectValue(event: Event): string {
-		return event.currentTarget instanceof HTMLSelectElement ? event.currentTarget.value : '';
-	}
 </script>
 
 {#snippet formsSessionNotice()}
@@ -11821,13 +734,13 @@
 				<a href="/workspace" class="hover:text-fg">{$t('forms.workspace')}</a>
 				<span class="mx-1 text-fg-muted">/</span>
 
-				<a href={`/workspace/${workspaceId}/projects`} class="hover:text-fg"
+				<a href={`/workspace/${s.workspaceId}/projects`} class="hover:text-fg"
 					>{$t('forms.projects')}</a
 				>
 
 				<span class="mx-1 text-fg-muted">/</span>
 
-				<a href={`/workspace/${workspaceId}/projects/${projectId}`} class="hover:text-fg"
+				<a href={`/workspace/${s.workspaceId}/projects/${s.projectId}`} class="hover:text-fg"
 					>{s.project?.name ?? $t('forms.projectFallback')}</a
 				>
 			</div>
@@ -11838,7 +751,7 @@
 		</div>
 
 		<div class="flex flex-wrap gap-2">
-			<ProjectPluginSettingsLink {workspaceId} {projectId} />
+			<ProjectPluginSettingsLink workspaceId={s.workspaceId} projectId={s.projectId} />
 			<Button variant="secondary" onclick={() => loadForms()}>
 				<RefreshCw class="mr-2 h-4 w-4" aria-hidden="true" />
 				{$t('forms.refresh')}
@@ -12136,7 +1049,7 @@
 			</section>
 		{/if}
 
-		{#if s.forms.length > 0 && !selectedForm}
+		{#if s.forms.length > 0 && !s.selectedForm}
 			<section class="rounded-card border border-line bg-raised p-4" data-form-list-home>
 				<div class="mb-4">
 					<div>
@@ -12199,7 +1112,7 @@
 			</section>
 		{/if}
 
-		{#if s.forms.length > 0 && selectedForm}
+		{#if s.forms.length > 0 && s.selectedForm}
 			<section class="space-y-4">
 				{#if s.activeMode === 'data'}
 					<section
@@ -12216,11 +1129,11 @@
 									<span class="rounded-control bg-surface px-2 py-0.5 text-xs text-fg-muted">
 										{#if s.recordsLoading}
 											{$t('common.loading')}
-										{:else if viewRecords.length === s.records.length}
+										{:else if s.viewRecords.length === s.records.length}
 											{$t('forms.rows', { values: { count: s.records.length } })}
 										{:else}
 											{$t('forms.filteredRows', {
-												values: { visible: viewRecords.length, total: s.records.length }
+												values: { visible: s.viewRecords.length, total: s.records.length }
 											})}
 										{/if}
 									</span>
@@ -12248,7 +1161,11 @@
 									{$t('forms.newRecordAction')}
 								</Button>
 
-								<FormPluginToolbar {workspaceId} {projectId} form={selectedForm} />
+								<FormPluginToolbar
+									workspaceId={s.workspaceId}
+									projectId={s.projectId}
+									form={s.selectedForm}
+								/>
 
 								<button
 									type="button"
@@ -12299,7 +1216,9 @@
 								</h3>
 
 								<p class="mt-1 text-sm text-fg-muted">
-									{$t(`forms.modeContext.${s.activeMode}`, { values: { name: selectedForm.name } })}
+									{$t(`forms.modeContext.${s.activeMode}`, {
+										values: { name: s.selectedForm.name }
+									})}
 								</p>
 							</div>
 
@@ -12319,8 +1238,8 @@
 						data-permission-state-summary
 						data-permission-state-mode={s.activeMode}
 						data-permission-state-scope={s.memberRecordScopeDraft}
-						data-permission-state-hidden-fields={memberHiddenFieldLabels.join('|')}
-						data-permission-state-locked-fields={memberLockedFieldLabels.join('|')}
+						data-permission-state-hidden-fields={s.memberHiddenFieldLabels.join('|')}
+						data-permission-state-locked-fields={s.memberLockedFieldLabels.join('|')}
 					>
 						<div class="flex flex-wrap items-center gap-2 text-xs">
 							<span class="inline-flex items-center gap-1 font-medium text-fg">
@@ -12338,13 +1257,13 @@
 							<span
 								class="rounded-control border border-line bg-warning-soft px-2 py-1 text-warning"
 								>{$t('forms.hiddenFieldEffect')}: {permissionFieldList(
-									memberHiddenFieldLabels
+									s.memberHiddenFieldLabels
 								)}</span
 							>
 
 							<span class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
 								>{$t('forms.lockedFieldEffect')}: {permissionFieldList(
-									memberLockedFieldLabels
+									s.memberLockedFieldLabels
 								)}</span
 							>
 						</div>
@@ -12444,13 +1363,13 @@
 
 										<div class="flex gap-3 text-xs text-fg-muted">
 											<span
-												data-field-read-denied-count={fields.filter(
+												data-field-read-denied-count={s.fields.filter(
 													(field) => s.memberFieldReadDraft[field.key] === false
 												).length}
 											>
 												{$t('forms.fieldReadDeniedCount', {
 													values: {
-														count: fields.filter(
+														count: s.fields.filter(
 															(field) => s.memberFieldReadDraft[field.key] === false
 														).length
 													}
@@ -12458,13 +1377,13 @@
 											</span>
 
 											<span
-												data-field-write-denied-count={fields.filter(
+												data-field-write-denied-count={s.fields.filter(
 													(field) => s.memberFieldWriteDraft[field.key] === false
 												).length}
 											>
 												{$t('forms.fieldWriteDeniedCount', {
 													values: {
-														count: fields.filter(
+														count: s.fields.filter(
 															(field) => s.memberFieldWriteDraft[field.key] === false
 														).length
 													}
@@ -12476,7 +1395,7 @@
 									<div class="mt-3 grid gap-2 md:grid-cols-2" data-permission-effect-summary>
 										<div
 											class="rounded-card border border-line bg-warning-soft px-3 py-2"
-											data-permission-effect-hidden-fields={memberHiddenFieldLabels.join('|')}
+											data-permission-effect-hidden-fields={s.memberHiddenFieldLabels.join('|')}
 										>
 											<div class="flex items-center gap-2">
 												<AlertTriangle class="h-4 w-4 text-warning" aria-hidden="true" />
@@ -12487,7 +1406,7 @@
 											</div>
 
 											<p class="mt-1 text-xs text-warning">
-												{permissionFieldList(memberHiddenFieldLabels)}
+												{permissionFieldList(s.memberHiddenFieldLabels)}
 											</p>
 
 											<p class="mt-1 text-xs text-warning">
@@ -12497,7 +1416,7 @@
 
 										<div
 											class="rounded-card border border-line bg-nav px-3 py-2"
-											data-permission-effect-locked-fields={memberLockedFieldLabels.join('|')}
+											data-permission-effect-locked-fields={s.memberLockedFieldLabels.join('|')}
 										>
 											<div class="flex items-center gap-2">
 												<Shield class="h-4 w-4 text-fg-muted" aria-hidden="true" />
@@ -12508,7 +1427,7 @@
 											</div>
 
 											<p class="mt-1 text-xs text-fg">
-												{permissionFieldList(memberLockedFieldLabels)}
+												{permissionFieldList(s.memberLockedFieldLabels)}
 											</p>
 
 											<p class="mt-1 text-xs text-fg-muted">
@@ -12518,7 +1437,7 @@
 									</div>
 
 									<div class="mt-3 grid gap-2">
-										{#each fields as field}
+										{#each s.fields as field}
 											<div
 												class="grid min-h-10 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 rounded-card border border-line px-3 py-2 text-sm text-fg"
 											>
@@ -12606,7 +1525,7 @@
 								type="button"
 								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface"
 								onclick={exportImportTemplate}
-								disabled={!selectedForm || visibleFields.length === 0}
+								disabled={!s.selectedForm || s.visibleFields.length === 0}
 								data-import-template-export
 								data-import-template-exported={s.exportedImportTemplate ? 'true' : undefined}
 							>
@@ -12687,14 +1606,14 @@
 					>
 						{#if s.activeMode === 'design'}
 							<FormDesignerWorkspace
-								form={selectedForm}
+								form={s.selectedForm}
 								fieldDrafts={s.designerFieldDrafts}
 								{fieldTypeOptions}
 								selectedIndex={s.selectedDesignerFieldIndex}
-								selectedFieldUsage={selectedDesignerFieldUsage}
-								selectedFieldDependencies={selectedDesignerFieldDependencies}
-								hiddenFieldKeys={memberHiddenFieldKeys}
-								lockedFieldKeys={memberLockedFieldKeys}
+								selectedFieldUsage={s.selectedDesignerFieldUsage}
+								selectedFieldDependencies={s.selectedDesignerFieldDependencies}
+								hiddenFieldKeys={s.memberHiddenFieldKeys}
+								lockedFieldKeys={s.memberLockedFieldKeys}
 								usageLoading={s.designerUsageLoading}
 								saving={s.designerSaving}
 								onSelectField={(index) => (s.selectedDesignerFieldIndex = index)}
@@ -12732,7 +1651,7 @@
 									'header'
 										? ''
 										: 'hidden'}"
-									data-detail-header-builder={selectedForm?.id ?? ''}
+									data-detail-header-builder={s.selectedForm?.id ?? ''}
 								>
 									<div class="mb-3">
 										<h3 class="text-base font-semibold text-fg">
@@ -12765,7 +1684,7 @@
 											>
 												<option value="">{$t('forms.detailHeaderNoField')}</option>
 
-												{#each detailVisibleFields as field}
+												{#each s.detailVisibleFields as field}
 													<option value={field.key}>{fieldLabel(field)}</option>
 												{/each}
 											</select>
@@ -12791,7 +1710,7 @@
 											>
 												<option value="">{$t('forms.detailHeaderNoField')}</option>
 
-												{#each detailVisibleFields as field}
+												{#each s.detailVisibleFields as field}
 													<option value={field.key}>{fieldLabel(field)}</option>
 												{/each}
 											</select>
@@ -12812,7 +1731,7 @@
 									'highlights'
 										? ''
 										: 'hidden'}"
-									data-detail-highlights-builder={selectedForm?.id ?? ''}
+									data-detail-highlights-builder={s.selectedForm?.id ?? ''}
 								>
 									<div class="mb-3 flex items-start justify-between gap-3">
 										<div>
@@ -12831,7 +1750,7 @@
 									</div>
 
 									<div class="space-y-2">
-										{#each detailVisibleFields as field}
+										{#each s.detailVisibleFields as field}
 											{@const highlightIndex = s.detailHighlightDraft.fields.indexOf(field.key)}
 											{@const isChecked = highlightIndex >= 0}
 
@@ -12920,7 +1839,7 @@
 									'composition'
 										? ''
 										: 'hidden'}"
-									data-detail-page-composition-builder={selectedForm?.id ?? ''}
+									data-detail-page-composition-builder={s.selectedForm?.id ?? ''}
 								>
 									<div class="mb-3">
 										<h3 class="text-base font-semibold text-fg">
@@ -12997,7 +1916,7 @@
 									'sections'
 										? ''
 										: 'hidden'}"
-									data-detail-layout-section-builder={selectedForm?.id ?? ''}
+									data-detail-layout-section-builder={s.selectedForm?.id ?? ''}
 								>
 									<div class="mb-3 flex items-start justify-between gap-3">
 										<div>
@@ -13217,7 +2136,7 @@
 												</div>
 
 												<div class="space-y-1.5">
-													{#each detailVisibleFields as field}
+													{#each s.detailVisibleFields as field}
 														{@const assignedSectionKey = detailLayoutFieldAssignedTo(field.key)}
 														{@const fieldIndex = section.fields.indexOf(field.key)}
 
@@ -13303,7 +2222,7 @@
 									'widgets'
 										? ''
 										: 'hidden'}"
-									data-detail-page-widget-builder={selectedForm?.id ?? ''}
+									data-detail-page-widget-builder={s.selectedForm?.id ?? ''}
 								>
 									<div class="mb-3 flex items-start justify-between gap-3">
 										<div>
@@ -13322,7 +2241,7 @@
 									</div>
 
 									<div class="space-y-2">
-										{#each selectedDetailPageWidgetEntries as widget, index}
+										{#each s.selectedDetailPageWidgetEntries as widget, index}
 											{@const option = detailPageWidgetOption(widget.key)}
 
 											<div
@@ -13564,7 +2483,7 @@
 													<button
 														type="button"
 														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-														disabled={index === selectedDetailPageWidgetEntries.length - 1 ||
+														disabled={index === s.selectedDetailPageWidgetEntries.length - 1 ||
 															s.detailPageWidgetSaving}
 														aria-label={$t('forms.moveWidgetDown')}
 														title={$t('forms.moveWidgetDown')}
@@ -13586,7 +2505,7 @@
 							<div class="flex min-w-0 items-start gap-4" data-record-list-stack>
 								<LayoutSettingsSheet
 									open={s.viewToolsExpanded}
-									viewName={selectedView?.name ?? ''}
+									viewName={s.selectedView?.name ?? ''}
 									onclose={() => (s.viewToolsExpanded = false)}
 								>
 									<section class="w-full" data-view-tools-expanded-panel>
@@ -13929,7 +2848,7 @@
 																>
 																	<option value="">{$t('forms.timelineEventTypeAll')}</option>
 
-																	{#each timelineEventTypes as eventType}
+																	{#each s.timelineEventTypes as eventType}
 																		<option value={eventType}>{eventType}</option>
 																	{/each}
 																</select>
@@ -13952,7 +2871,7 @@
 																>
 																	<option value="">{$t('forms.timelineEventActorAll')}</option>
 
-																	{#each timelineEventActors as actorId}
+																	{#each s.timelineEventActors as actorId}
 																		<option value={actorId}>{actorId}</option>
 																	{/each}
 																</select>
@@ -13975,7 +2894,7 @@
 																>
 																	<option value="">{$t('forms.timelineEventAggregateAll')}</option>
 
-																	{#each timelineEventAggregates as aggregate}
+																	{#each s.timelineEventAggregates as aggregate}
 																		<option value={aggregate}>{aggregate}</option>
 																	{/each}
 																</select>
@@ -14059,7 +2978,7 @@
 																>
 																	<option value="">{$t('forms.recordTitle')}</option>
 
-																	{#each fields.filter((field) => field.visibility?.list !== false) as field}
+																	{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
 																		<option value={field.key}>{fieldLabel(field)}</option>
 																	{/each}
 																</select>
@@ -14082,7 +3001,7 @@
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
-																	{#each fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.timelineTitleField) as field}
+																	{#each s.fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.timelineTitleField) as field}
 																		<option value={field.key}>{fieldLabel(field)}</option>
 																	{/each}
 																</select>
@@ -14595,7 +3514,7 @@
 																				>
 																					<option value="">{$t('forms.viewNoRule')}</option>
 
-																					{#each fields.filter((field) => field.visibility?.list !== false) as field}
+																					{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
 																						<option value={field.key}>{fieldLabel(field)}</option>
 																					{/each}
 																				</select>
@@ -14770,7 +3689,7 @@
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
-																	{#each fields.filter((field) => field.visibility?.list !== false) as field}
+																	{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
 																		<option value={field.key}>{fieldLabel(field)}</option>
 																	{/each}
 																</select>
@@ -14820,7 +3739,7 @@
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
-																	{#each fields.filter((field) => field.visibility?.list !== false) as field}
+																	{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
 																		<option value={field.key}>{fieldLabel(field)}</option>
 																	{/each}
 																</select>
@@ -15338,7 +4257,7 @@
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
-																	{#each fields.filter( (field) => ['date', 'datetime'].includes(field.type ?? 'text') ) as field}
+																	{#each s.fields.filter( (field) => ['date', 'datetime'].includes(field.type ?? 'text') ) as field}
 																		<option value={field.key}>{fieldLabel(field)}</option>
 																	{/each}
 																</select>
@@ -15567,7 +4486,7 @@
 																			>
 																				<option value="">{$t('forms.viewNoRule')}</option>
 
-																				{#each viewRecords as record}
+																				{#each s.viewRecords as record}
 																					<option value={record.id}>{record.title}</option>
 																				{/each}
 																			</select>
@@ -15797,7 +4716,7 @@
 																	>
 																		<option value="">{$t('forms.recordTitle')}</option>
 
-																		{#each fields.filter((field) => field.visibility?.list !== false) as field}
+																		{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
 																			<option value={field.key}>{fieldLabel(field)}</option>
 																		{/each}
 																	</select>
@@ -15823,7 +4742,7 @@
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																		{#each fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.cardTitleField) as field}
+																		{#each s.fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.cardTitleField) as field}
 																			<option value={field.key}>{fieldLabel(field)}</option>
 																		{/each}
 																	</select>
@@ -15845,7 +4764,7 @@
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																		{#each fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.cardTitleField && field.key !== s.viewDraft.cardSubtitleField) as field}
+																		{#each s.fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.cardTitleField && field.key !== s.viewDraft.cardSubtitleField) as field}
 																			<option value={field.key}>{fieldLabel(field)}</option>
 																		{/each}
 																	</select>
@@ -15867,7 +4786,7 @@
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
-																		{#each fields.filter((field) => field.visibility?.list !== false && ['image', 'attachment'].includes(field.type ?? 'text')) as field}
+																		{#each s.fields.filter((field) => field.visibility?.list !== false && ['image', 'attachment'].includes(field.type ?? 'text')) as field}
 																			<option value={field.key}>{fieldLabel(field)}</option>
 																		{/each}
 																	</select>
@@ -16002,7 +4921,7 @@
 													</div>
 
 													<div class="grid gap-2 sm:grid-cols-2">
-														{#each fields.filter((field) => field.visibility?.list !== false) as field}
+														{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
 															<div
 																class="flex items-center gap-2 rounded-card border border-line bg-nav px-3 py-2 text-sm text-fg"
 															>
@@ -16113,11 +5032,11 @@
 													<input
 														class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 														bind:value={s.recordTitle}
-														placeholder={selectedForm.title_template}
+														placeholder={s.selectedForm.title_template}
 													/>
 												</label>
 
-												{#each fields as field}
+												{#each s.fields as field}
 													<label
 														class="space-y-1 {fieldType(field) === 'textarea' ||
 														fieldType(field) === 'rich_text' ||
@@ -16594,26 +5513,28 @@
 								>
 									<ViewBar
 										views={s.formViews}
-										view={savedView}
+										view={s.savedView}
 										currentId={s.selectedViewId}
 										currentType={s.viewDraft.view_type}
-										modified={arrangementModified}
+										modified={s.arrangementModified}
 										can={{
 											manage:
-												!!savedView &&
-												(savedView.config?.visibility === 'private'
-													? savedView.created_by === currentUserId
-													: canDesign),
-											share: canDesign,
-											setDefault: canDesign,
+												!!s.savedView &&
+												(s.savedView.config?.visibility === 'private'
+													? s.savedView.created_by === s.currentUserId
+													: s.canDesign),
+											share: s.canDesign,
+											setDefault: s.canDesign,
 											create: true
 										}}
 										busy={s.viewSubmitting}
 										saveOpen={s.saveViewOpen}
 										saveError={s.saveViewError}
 										suggestedName={s.saveViewName}
-										fields={listableFields}
-										sortableKeys={listableFields.map((field) => field.key).filter(isServerSortable)}
+										fields={s.listableFields}
+										sortableKeys={s.listableFields
+											.map((field) => field.key)
+											.filter(isServerSortable)}
 										filters={(s.viewDraft.filterGroups[0]?.filters ?? []) as SimpleFilter[]}
 										filterLogic={s.viewDraft.filterGroups[0]?.logic ?? 'all'}
 										advancedFilters={s.viewDraft.filterGroups.length > 1 ||
@@ -16625,9 +5546,9 @@
 											? s.viewDraft.columns
 											: defaultViewColumns()}
 										hiddenByPermission={new Set(
-											listableFields.filter(memberFieldHidden).map((field) => field.key)
+											s.listableFields.filter(memberFieldHidden).map((field) => field.key)
 										)}
-										partialNotice={recordQuery.clientFilter &&
+										partialNotice={s.recordQuery.clientFilter &&
 										s.serverRecordTotal > s.records.length
 											? $t('forms.views.partialFilter', {
 													values: { loaded: s.records.length, total: s.serverRecordTotal }
@@ -16641,14 +5562,16 @@
 										onrename={(name) => void updateCurrentView({ name })}
 										onvisibility={(visibility) =>
 											void updateCurrentView({
-												config: { ...savedView?.config, visibility, is_default: false }
+												config: { ...s.savedView?.config, visibility, is_default: false }
 											})}
 										ondefault={(on) =>
-											void updateCurrentView({ config: { ...savedView?.config, is_default: on } })}
+											void updateCurrentView({
+												config: { ...s.savedView?.config, is_default: on }
+											})}
 										onlayout={openLayoutSettings}
 										onduplicate={() =>
 											openSaveView(
-												$t('forms.views.copyName', { values: { name: savedView?.name } })
+												$t('forms.views.copyName', { values: { name: s.savedView?.name } })
 											)}
 										onreset={resetArrangement}
 										onundo={undoReset}
@@ -16694,16 +5617,18 @@
 										</div>
 									{/if}
 
-									{#if focusedRecords.length > 0}
+									{#if s.focusedRecords.length > 0}
 										<div
 											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 py-2 text-sm text-fg-muted"
-											data-record-focus={focusedRecords.map((record) => record.id).join('|')}
+											data-record-focus={s.focusedRecords.map((record) => record.id).join('|')}
 										>
 											<span class="min-w-0 truncate">
-												{#if focusedRecords.length === 1}
-													{$t('forms.focusedRecord')}: {focusedRecords[0].title}
+												{#if s.focusedRecords.length === 1}
+													{$t('forms.focusedRecord')}: {s.focusedRecords[0].title}
 												{:else}
-													{$t('forms.focusedRecords', { values: { count: focusedRecords.length } })}
+													{$t('forms.focusedRecords', {
+														values: { count: s.focusedRecords.length }
+													})}
 												{/if}
 											</span>
 
@@ -16722,28 +5647,28 @@
 
 											{$t('forms.noRecords')}
 										</div>
-									{:else if viewRecords.length === 0}
+									{:else if s.viewRecords.length === 0}
 										<div class="p-8 text-center text-sm text-fg-muted" data-view-empty-filter>
 											<FileText class="mx-auto mb-3 h-8 w-8 text-fg-muted" aria-hidden="true" />
 
 											{$t('forms.noMatchingRecords')}
 										</div>
-									{:else if selectedViewType === 'grid'}
+									{:else if s.selectedViewType === 'grid'}
 										<RecordGrid
 											bind:this={s.recordGrid}
-											records={paginatedViewRecords}
-											fields={visibleFields}
-											ctx={fieldCtx}
+											records={s.paginatedViewRecords}
+											fields={s.visibleFields}
+											ctx={s.fieldCtx}
 											currentId={s.panelRecordId}
 											sort={s.viewDraft.sortField
 												? { field: s.viewDraft.sortField, direction: s.viewDraft.sortDirection }
 												: null}
-											sortableKeys={visibleFields
+											sortableKeys={s.visibleFields
 												.map((field) => field.key)
 												.filter(isServerSortable)}
-											page={normalizedRecordPage}
-											pageCount={recordPageCount}
-											total={viewRecords.length}
+											page={s.normalizedRecordPage}
+											pageCount={s.recordPageCount}
+											total={s.viewRecords.length}
 											deletingId={s.deletingRecordId}
 											{recordHref}
 											headerBadges={(field) => gridBadges(field, null)}
@@ -16765,9 +5690,9 @@
 											ongotopage={goToRecordPage}
 											onannounce={announce}
 										/>
-									{:else if selectedViewType === 'gantt'}
+									{:else if s.selectedViewType === 'gantt'}
 										<div class="overflow-x-auto p-4" data-view-renderer="gantt">
-											{#if !ganttTimeline.startField}
+											{#if !s.ganttTimeline.startField}
 												<div
 													class="rounded-card border border-dashed border-input bg-nav px-4 py-6 text-sm text-fg-muted"
 												>
@@ -16775,105 +5700,105 @@
 												</div>
 											{:else}
 												<div class="mb-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted">
-													<span data-gantt-start-field={ganttTimeline.startField.key}
+													<span data-gantt-start-field={s.ganttTimeline.startField.key}
 														>{$t('forms.ganttStartField')}: {fieldLabel(
-															ganttTimeline.startField
+															s.ganttTimeline.startField
 														)}</span
 													>
 
-													{#if fieldHasConditionalHidden(ganttTimeline.startField)}
+													{#if fieldHasConditionalHidden(s.ganttTimeline.startField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-gantt-start-field-conditional-hidden={ganttTimeline.startField
+															data-gantt-start-field-conditional-hidden={s.ganttTimeline.startField
 																.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
 													{/if}
 
-													{#if fieldHasConditionalReadOnly(ganttTimeline.startField)}
+													{#if fieldHasConditionalReadOnly(s.ganttTimeline.startField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-gantt-start-field-conditional-readonly={ganttTimeline.startField
-																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
+															data-gantt-start-field-conditional-readonly={s.ganttTimeline
+																.startField.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
 													{/if}
 
 													<span>·</span>
 
-													<span data-gantt-end-field={ganttTimeline.endField?.key ?? ''}>
-														{$t('forms.ganttEndField')}: {ganttTimeline.endField
-															? fieldLabel(ganttTimeline.endField)
+													<span data-gantt-end-field={s.ganttTimeline.endField?.key ?? ''}>
+														{$t('forms.ganttEndField')}: {s.ganttTimeline.endField
+															? fieldLabel(s.ganttTimeline.endField)
 															: $t('forms.ganttNoEndField')}
 													</span>
 
-													{#if ganttTimeline.endField && fieldHasConditionalHidden(ganttTimeline.endField)}
+													{#if s.ganttTimeline.endField && fieldHasConditionalHidden(s.ganttTimeline.endField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-gantt-end-field-conditional-hidden={ganttTimeline.endField.key}
+															data-gantt-end-field-conditional-hidden={s.ganttTimeline.endField.key}
 															>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
 													{/if}
 
-													{#if ganttTimeline.endField && fieldHasConditionalReadOnly(ganttTimeline.endField)}
+													{#if s.ganttTimeline.endField && fieldHasConditionalReadOnly(s.ganttTimeline.endField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-gantt-end-field-conditional-readonly={ganttTimeline.endField.key}
-															>{$t('forms.fieldConditionReadOnlyBadge')}</span
+															data-gantt-end-field-conditional-readonly={s.ganttTimeline.endField
+																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
 													{/if}
 
 													<span>·</span>
 
-													<span data-gantt-group-field={ganttTimeline.groupField?.key ?? ''}>
-														{$t('forms.ganttGroupField')}: {ganttTimeline.groupField
-															? fieldLabel(ganttTimeline.groupField)
+													<span data-gantt-group-field={s.ganttTimeline.groupField?.key ?? ''}>
+														{$t('forms.ganttGroupField')}: {s.ganttTimeline.groupField
+															? fieldLabel(s.ganttTimeline.groupField)
 															: $t('forms.ganttUngrouped')}
 													</span>
 
-													{#if ganttTimeline.groupField && fieldHasConditionalHidden(ganttTimeline.groupField)}
+													{#if s.ganttTimeline.groupField && fieldHasConditionalHidden(s.ganttTimeline.groupField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-gantt-group-field-conditional-hidden={ganttTimeline.groupField
+															data-gantt-group-field-conditional-hidden={s.ganttTimeline.groupField
 																.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
 													{/if}
 
-													{#if ganttTimeline.groupField && fieldHasConditionalReadOnly(ganttTimeline.groupField)}
+													{#if s.ganttTimeline.groupField && fieldHasConditionalReadOnly(s.ganttTimeline.groupField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-gantt-group-field-conditional-readonly={ganttTimeline.groupField
-																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
+															data-gantt-group-field-conditional-readonly={s.ganttTimeline
+																.groupField.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
 													{/if}
 
 													<span>·</span>
 
 													<span
-														data-gantt-dependency-field={ganttTimeline.dependencyField?.key ?? ''}
+														data-gantt-dependency-field={s.ganttTimeline.dependencyField?.key ?? ''}
 													>
-														{$t('forms.ganttDependencyField')}: {ganttTimeline.dependencyField
-															? fieldLabel(ganttTimeline.dependencyField)
+														{$t('forms.ganttDependencyField')}: {s.ganttTimeline.dependencyField
+															? fieldLabel(s.ganttTimeline.dependencyField)
 															: $t('forms.viewNoRule')}
 													</span>
 
-													{#if ganttTimeline.dependencyField && fieldHasConditionalHidden(ganttTimeline.dependencyField)}
+													{#if s.ganttTimeline.dependencyField && fieldHasConditionalHidden(s.ganttTimeline.dependencyField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-gantt-dependency-field-conditional-hidden={ganttTimeline
+															data-gantt-dependency-field-conditional-hidden={s.ganttTimeline
 																.dependencyField.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
 													{/if}
 
-													{#if ganttTimeline.dependencyField && fieldHasConditionalReadOnly(ganttTimeline.dependencyField)}
+													{#if s.ganttTimeline.dependencyField && fieldHasConditionalReadOnly(s.ganttTimeline.dependencyField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-gantt-dependency-field-conditional-readonly={ganttTimeline
+															data-gantt-dependency-field-conditional-readonly={s.ganttTimeline
 																.dependencyField.key}
 															>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
 													{/if}
 												</div>
 
-												{#if ganttTimeline.dates.length === 0}
+												{#if s.ganttTimeline.dates.length === 0}
 													<div
 														class="rounded-card border border-dashed border-input bg-nav px-4 py-6 text-sm text-fg-muted"
 													>
@@ -16882,9 +5807,9 @@
 												{:else}
 													<div
 														class="min-w-[980px] rounded-control border border-line bg-raised text-sm"
-														data-gantt-scale={ganttTimeline.scale}
-														data-gantt-start={ganttTimeline.dates[0]}
-														data-gantt-end={ganttTimeline.dates[ganttTimeline.dates.length - 1]}
+														data-gantt-scale={s.ganttTimeline.scale}
+														data-gantt-start={s.ganttTimeline.dates[0]}
+														data-gantt-end={s.ganttTimeline.dates[s.ganttTimeline.dates.length - 1]}
 													>
 														<div
 															class="grid grid-cols-[180px_minmax(0,1fr)] border-b border-line bg-nav"
@@ -16895,9 +5820,9 @@
 
 															<div
 																class="grid divide-x divide-line"
-																style={`grid-template-columns: repeat(${ganttTimeline.dates.length}, minmax(72px, 1fr));`}
+																style={`grid-template-columns: repeat(${s.ganttTimeline.dates.length}, minmax(72px, 1fr));`}
 															>
-																{#each ganttTimeline.dates as date}
+																{#each s.ganttTimeline.dates as date}
 																	<div
 																		class="px-2 py-3 text-center text-xs font-medium text-fg-muted"
 																		data-gantt-date={date}
@@ -16907,13 +5832,13 @@
 																		ondragover={handleGanttDragOver}
 																		ondrop={(event) => handleGanttDrop(event, date)}
 																	>
-																		{ganttDateLabel(date, ganttTimeline.scale)}
+																		{ganttDateLabel(date, s.ganttTimeline.scale)}
 																	</div>
 																{/each}
 															</div>
 														</div>
 
-														{#each ganttTimeline.lanes as lane}
+														{#each s.ganttTimeline.lanes as lane}
 															<div
 																class="border-b border-line last:border-b-0"
 																data-gantt-lane={lane.label}
@@ -16949,40 +5874,40 @@
 																			</div>
 
 																			<div class="mt-1 flex flex-wrap items-center gap-1.5">
-																				{#if recordFieldHiddenByCondition(ganttTimeline.startField, task.record)}
+																				{#if recordFieldHiddenByCondition(s.ganttTimeline.startField, task.record)}
 																					<span
 																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																						data-gantt-task-start-conditional-hidden={`${task.record.id}:${ganttTimeline.startField.key}`}
+																						data-gantt-task-start-conditional-hidden={`${task.record.id}:${s.ganttTimeline.startField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
 																				{/if}
 
-																				{#if recordFieldReadOnlyByCondition(ganttTimeline.startField, task.record)}
+																				{#if recordFieldReadOnlyByCondition(s.ganttTimeline.startField, task.record)}
 																					<span
 																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																						data-gantt-task-start-conditional-readonly={`${task.record.id}:${ganttTimeline.startField.key}`}
+																						data-gantt-task-start-conditional-readonly={`${task.record.id}:${s.ganttTimeline.startField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
 																				{/if}
 
-																				{#if ganttTimeline.endField && recordFieldHiddenByCondition(ganttTimeline.endField, task.record)}
+																				{#if s.ganttTimeline.endField && recordFieldHiddenByCondition(s.ganttTimeline.endField, task.record)}
 																					<span
 																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																						data-gantt-task-end-conditional-hidden={`${task.record.id}:${ganttTimeline.endField.key}`}
+																						data-gantt-task-end-conditional-hidden={`${task.record.id}:${s.ganttTimeline.endField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
 																				{/if}
 
-																				{#if ganttTimeline.endField && recordFieldReadOnlyByCondition(ganttTimeline.endField, task.record)}
+																				{#if s.ganttTimeline.endField && recordFieldReadOnlyByCondition(s.ganttTimeline.endField, task.record)}
 																					<span
 																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																						data-gantt-task-end-conditional-readonly={`${task.record.id}:${ganttTimeline.endField.key}`}
+																						data-gantt-task-end-conditional-readonly={`${task.record.id}:${s.ganttTimeline.endField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
 																				{/if}
 																			</div>
 
-																			{#if ganttTimeline.dependencyField && task.dependencyValue && task.dependencyValue !== '-'}
+																			{#if s.ganttTimeline.dependencyField && task.dependencyValue && task.dependencyValue !== '-'}
 																				<div
 																					class="mt-1 truncate text-xs text-fg-muted"
 																					data-gantt-dependency={task.record.id}
@@ -16991,18 +5916,18 @@
 																				</div>
 																			{/if}
 
-																			{#if ganttTimeline.dependencyField && recordFieldHiddenByCondition(ganttTimeline.dependencyField, task.record)}
+																			{#if s.ganttTimeline.dependencyField && recordFieldHiddenByCondition(s.ganttTimeline.dependencyField, task.record)}
 																				<span
 																					class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																					data-gantt-task-dependency-conditional-hidden={`${task.record.id}:${ganttTimeline.dependencyField.key}`}
+																					data-gantt-task-dependency-conditional-hidden={`${task.record.id}:${s.ganttTimeline.dependencyField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
 																			{/if}
 
-																			{#if ganttTimeline.dependencyField && recordFieldReadOnlyByCondition(ganttTimeline.dependencyField, task.record)}
+																			{#if s.ganttTimeline.dependencyField && recordFieldReadOnlyByCondition(s.ganttTimeline.dependencyField, task.record)}
 																				<span
 																					class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																					data-gantt-task-dependency-conditional-readonly={`${task.record.id}:${ganttTimeline.dependencyField.key}`}
+																					data-gantt-task-dependency-conditional-readonly={`${task.record.id}:${s.ganttTimeline.dependencyField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
 																			{/if}
@@ -17010,7 +5935,7 @@
 
 																		<div
 																			class="grid min-h-14 items-center gap-y-1 px-2"
-																			style={`grid-template-columns: repeat(${ganttTimeline.dates.length}, minmax(72px, 1fr));`}
+																			style={`grid-template-columns: repeat(${s.ganttTimeline.dates.length}, minmax(72px, 1fr));`}
 																		>
 																			<div
 																				class="flex items-center justify-between gap-2 rounded-control bg-success px-3 py-2 text-xs font-semibold text-on-success transition-opacity"
@@ -17033,7 +5958,7 @@
 																			>
 																				<span class="min-w-0 truncate">{task.record.title}</span>
 
-																				{#if ganttTimeline.dependencyField && task.dependencyValue && task.dependencyValue !== '-'}
+																				{#if s.ganttTimeline.dependencyField && task.dependencyValue && task.dependencyValue !== '-'}
 																					<span
 																						class="hidden shrink-0 rounded bg-on-success/15 px-1.5 py-0.5 text-[11px] font-medium text-on-success md:inline"
 																						data-gantt-bar-dependency-label={task.record.id}
@@ -17041,7 +5966,7 @@
 																					>
 																				{/if}
 
-																				{#if ganttTimeline.endField}
+																				{#if s.ganttTimeline.endField}
 																					<button
 																						type="button"
 																						class="shrink-0 rounded bg-on-success/20 px-1.5 py-0.5 text-[11px] leading-none text-on-success hover:bg-on-success/30"
@@ -17064,9 +5989,9 @@
 												{/if}
 											{/if}
 										</div>
-									{:else if selectedViewType === 'pivot'}
+									{:else if s.selectedViewType === 'pivot'}
 										<div class="overflow-x-auto p-4" data-view-renderer="pivot">
-											{#if !pivotTable.rowField || !pivotTable.columnField || !pivotTable.valueField}
+											{#if !s.pivotTable.rowField || !s.pivotTable.columnField || !s.pivotTable.valueField}
 												<div
 													class="rounded-card border border-dashed border-input bg-nav px-4 py-6 text-sm text-fg-muted"
 												>
@@ -17074,164 +5999,164 @@
 												</div>
 											{:else}
 												<div class="mb-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted">
-													<span data-pivot-row-field={pivotTable.rowField.key}
-														>{$t('forms.pivotRowField')}: {fieldLabel(pivotTable.rowField)}</span
+													<span data-pivot-row-field={s.pivotTable.rowField.key}
+														>{$t('forms.pivotRowField')}: {fieldLabel(s.pivotTable.rowField)}</span
 													>
 
-													{#if fieldHasConditionalHidden(pivotTable.rowField)}
+													{#if fieldHasConditionalHidden(s.pivotTable.rowField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-pivot-row-field-conditional-hidden={pivotTable.rowField.key}
+															data-pivot-row-field-conditional-hidden={s.pivotTable.rowField.key}
 															>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
 													{/if}
 
-													{#if fieldHasConditionalReadOnly(pivotTable.rowField)}
+													{#if fieldHasConditionalReadOnly(s.pivotTable.rowField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-pivot-row-field-conditional-readonly={pivotTable.rowField.key}
+															data-pivot-row-field-conditional-readonly={s.pivotTable.rowField.key}
 															>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
 													{/if}
 
 													<span>·</span>
 
-													<span data-pivot-column-field={pivotTable.columnField.key}
+													<span data-pivot-column-field={s.pivotTable.columnField.key}
 														>{$t('forms.pivotColumnField')}: {fieldLabel(
-															pivotTable.columnField
+															s.pivotTable.columnField
 														)}</span
 													>
 
-													{#if fieldHasConditionalHidden(pivotTable.columnField)}
+													{#if fieldHasConditionalHidden(s.pivotTable.columnField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-pivot-column-field-conditional-hidden={pivotTable.columnField
+															data-pivot-column-field-conditional-hidden={s.pivotTable.columnField
 																.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
 													{/if}
 
-													{#if fieldHasConditionalReadOnly(pivotTable.columnField)}
+													{#if fieldHasConditionalReadOnly(s.pivotTable.columnField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-pivot-column-field-conditional-readonly={pivotTable.columnField
+															data-pivot-column-field-conditional-readonly={s.pivotTable.columnField
 																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
 													{/if}
 
 													<span>·</span>
-													<span data-pivot-value-field={pivotTable.valueField.key}
+													<span data-pivot-value-field={s.pivotTable.valueField.key}
 														>{$t('forms.pivotValueField')}: {fieldLabel(
-															pivotTable.valueField
+															s.pivotTable.valueField
 														)}</span
 													>
 
-													{#if fieldHasConditionalHidden(pivotTable.valueField)}
+													{#if fieldHasConditionalHidden(s.pivotTable.valueField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-pivot-value-field-conditional-hidden={pivotTable.valueField.key}
-															>{$t('forms.fieldConditionHiddenBadge')}</span
+															data-pivot-value-field-conditional-hidden={s.pivotTable.valueField
+																.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
 													{/if}
 
-													{#if fieldHasConditionalReadOnly(pivotTable.valueField)}
+													{#if fieldHasConditionalReadOnly(s.pivotTable.valueField)}
 														<span
 															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-															data-pivot-value-field-conditional-readonly={pivotTable.valueField
+															data-pivot-value-field-conditional-readonly={s.pivotTable.valueField
 																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
 													{/if}
 
 													<span>·</span>
 
-													<span data-pivot-aggregate={pivotTable.aggregate}>
-														{$t('forms.pivotAggregate')}: {pivotTable.aggregate === 'count'
+													<span data-pivot-aggregate={s.pivotTable.aggregate}>
+														{$t('forms.pivotAggregate')}: {s.pivotTable.aggregate === 'count'
 															? $t('forms.pivotAggregateCount')
-															: pivotTable.aggregate === 'avg'
+															: s.pivotTable.aggregate === 'avg'
 																? $t('forms.pivotAggregateAvg')
 																: $t('forms.pivotAggregateSum')}
 													</span>
 
 													<span>·</span>
 
-													<span data-pivot-totals={pivotTable.totalsMode}>
-														{$t('forms.pivotTotals')}: {pivotTable.totalsMode === 'rows'
+													<span data-pivot-totals={s.pivotTable.totalsMode}>
+														{$t('forms.pivotTotals')}: {s.pivotTable.totalsMode === 'rows'
 															? $t('forms.pivotTotalsRows')
-															: pivotTable.totalsMode === 'columns'
+															: s.pivotTable.totalsMode === 'columns'
 																? $t('forms.pivotTotalsColumns')
-																: pivotTable.totalsMode === 'none'
+																: s.pivotTable.totalsMode === 'none'
 																	? $t('forms.pivotTotalsNone')
 																	: $t('forms.pivotTotalsAll')}
 													</span>
 
 													<span>·</span>
 
-													<span data-pivot-value-display={pivotTable.valueDisplay}>
-														{$t('forms.pivotValueDisplay')}: {pivotTable.valueDisplay ===
+													<span data-pivot-value-display={s.pivotTable.valueDisplay}>
+														{$t('forms.pivotValueDisplay')}: {s.pivotTable.valueDisplay ===
 														'percent_row'
 															? $t('forms.pivotValueDisplayPercentRow')
-															: pivotTable.valueDisplay === 'percent_column'
+															: s.pivotTable.valueDisplay === 'percent_column'
 																? $t('forms.pivotValueDisplayPercentColumn')
-																: pivotTable.valueDisplay === 'percent_total'
+																: s.pivotTable.valueDisplay === 'percent_total'
 																	? $t('forms.pivotValueDisplayPercentTotal')
 																	: $t('forms.pivotValueDisplayValue')}
 													</span>
 
 													<span>·</span>
 
-													<span data-pivot-sort={pivotTable.sortMode}>
-														{$t('forms.pivotSort')}: {pivotTable.sortMode === 'row_total_desc'
+													<span data-pivot-sort={s.pivotTable.sortMode}>
+														{$t('forms.pivotSort')}: {s.pivotTable.sortMode === 'row_total_desc'
 															? $t('forms.pivotSortRowTotalDesc')
-															: pivotTable.sortMode === 'row_total_asc'
+															: s.pivotTable.sortMode === 'row_total_asc'
 																? $t('forms.pivotSortRowTotalAsc')
-																: pivotTable.sortMode === 'column_total_desc'
+																: s.pivotTable.sortMode === 'column_total_desc'
 																	? $t('forms.pivotSortColumnTotalDesc')
-																	: pivotTable.sortMode === 'column_total_asc'
+																	: s.pivotTable.sortMode === 'column_total_asc'
 																		? $t('forms.pivotSortColumnTotalAsc')
 																		: $t('forms.pivotSortLabel')}
 													</span>
 
 													<span>·</span>
-													<span data-pivot-empty-buckets={pivotTable.emptyBuckets}
-														>{$t('forms.pivotEmptyBuckets')}: {pivotTable.emptyBuckets
+													<span data-pivot-empty-buckets={s.pivotTable.emptyBuckets}
+														>{$t('forms.pivotEmptyBuckets')}: {s.pivotTable.emptyBuckets
 															? $t('forms.yes')
 															: $t('forms.no')}</span
 													>
 													<span>·</span>
 
-													<span data-pivot-hide-zero-buckets={pivotTable.hideZeroBuckets}
-														>{$t('forms.pivotHideZeroBuckets')}: {pivotTable.hideZeroBuckets
+													<span data-pivot-hide-zero-buckets={s.pivotTable.hideZeroBuckets}
+														>{$t('forms.pivotHideZeroBuckets')}: {s.pivotTable.hideZeroBuckets
 															? $t('forms.yes')
 															: $t('forms.no')}</span
 													>
 
 													<span>·</span>
-													<span data-pivot-show-counts={pivotTable.showCounts}
-														>{$t('forms.pivotShowCounts')}: {pivotTable.showCounts
+													<span data-pivot-show-counts={s.pivotTable.showCounts}
+														>{$t('forms.pivotShowCounts')}: {s.pivotTable.showCounts
 															? $t('forms.yes')
 															: $t('forms.no')}</span
 													>
 													<span>·</span>
-													<span data-pivot-heatmap={pivotTable.heatmap}
-														>{$t('forms.pivotHeatmap')}: {pivotTable.heatmap
+													<span data-pivot-heatmap={s.pivotTable.heatmap}
+														>{$t('forms.pivotHeatmap')}: {s.pivotTable.heatmap
 															? $t('forms.yes')
 															: $t('forms.no')}</span
 													>
 													<span>·</span>
 
-													<span data-pivot-row-limit={pivotTable.rowLimit}>
-														{$t('forms.pivotRowLimit')}: {pivotTable.rowLimit > 0
+													<span data-pivot-row-limit={s.pivotTable.rowLimit}>
+														{$t('forms.pivotRowLimit')}: {s.pivotTable.rowLimit > 0
 															? $t('forms.pivotRowLimitValue', {
-																	values: { count: pivotTable.rowLimit }
+																	values: { count: s.pivotTable.rowLimit }
 																})
 															: $t('forms.pivotRowLimitAll')}
 													</span>
 
 													<span>·</span>
 
-													<span data-pivot-column-limit={pivotTable.columnLimit}>
-														{$t('forms.pivotColumnLimit')}: {pivotTable.columnLimit > 0
+													<span data-pivot-column-limit={s.pivotTable.columnLimit}>
+														{$t('forms.pivotColumnLimit')}: {s.pivotTable.columnLimit > 0
 															? $t('forms.pivotColumnLimitValue', {
-																	values: { count: pivotTable.columnLimit }
+																	values: { count: s.pivotTable.columnLimit }
 																})
 															: $t('forms.pivotColumnLimitAll')}
 													</span>
@@ -17270,20 +6195,20 @@
 														<tr>
 															<th class="px-4 py-3 font-medium">
 																<div class="flex flex-wrap items-center gap-1.5">
-																	<span>{fieldLabel(pivotTable.rowField)}</span>
+																	<span>{fieldLabel(s.pivotTable.rowField)}</span>
 
-																	{#if fieldHasConditionalHidden(pivotTable.rowField)}
+																	{#if fieldHasConditionalHidden(s.pivotTable.rowField)}
 																		<span
 																			class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-																			data-pivot-table-row-field-conditional-hidden={pivotTable
+																			data-pivot-table-row-field-conditional-hidden={s.pivotTable
 																				.rowField.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 																		>
 																	{/if}
 
-																	{#if fieldHasConditionalReadOnly(pivotTable.rowField)}
+																	{#if fieldHasConditionalReadOnly(s.pivotTable.rowField)}
 																		<span
 																			class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-																			data-pivot-table-row-field-conditional-readonly={pivotTable
+																			data-pivot-table-row-field-conditional-readonly={s.pivotTable
 																				.rowField.key}
 																			>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																		>
@@ -17291,7 +6216,7 @@
 																</div>
 															</th>
 
-															{#each pivotTable.columns as column}
+															{#each s.pivotTable.columns as column}
 																<th
 																	class="px-4 py-3 text-right font-medium"
 																	data-pivot-column={column.label}
@@ -17299,18 +6224,18 @@
 																	<div class="flex flex-wrap items-center justify-end gap-1.5">
 																		<span>{column.label}</span>
 
-																		{#if recordsFieldHiddenByCondition(pivotTable.columnField, pivotColumnRecords(column))}
+																		{#if recordsFieldHiddenByCondition(s.pivotTable.columnField, pivotColumnRecords(column))}
 																			<span
 																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-																				data-pivot-column-conditional-hidden={`${column.label}:${pivotTable.columnField.key}`}
+																				data-pivot-column-conditional-hidden={`${column.label}:${s.pivotTable.columnField.key}`}
 																				>{$t('forms.fieldConditionHiddenBadge')}</span
 																			>
 																		{/if}
 
-																		{#if recordsFieldReadOnlyByCondition(pivotTable.columnField, pivotColumnRecords(column))}
+																		{#if recordsFieldReadOnlyByCondition(s.pivotTable.columnField, pivotColumnRecords(column))}
 																			<span
 																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-																				data-pivot-column-conditional-readonly={`${column.label}:${pivotTable.columnField.key}`}
+																				data-pivot-column-conditional-readonly={`${column.label}:${s.pivotTable.columnField.key}`}
 																				>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																			>
 																		{/if}
@@ -17318,7 +6243,7 @@
 																</th>
 															{/each}
 
-															{#if pivotShowRowTotals(pivotTable.totalsMode)}
+															{#if pivotShowRowTotals(s.pivotTable.totalsMode)}
 																<th class="px-4 py-3 text-right font-medium"
 																	>{$t('forms.pivotTotal')}</th
 																>
@@ -17327,31 +6252,31 @@
 													</thead>
 
 													<tbody class="divide-y divide-line">
-														{#each pivotTable.rows as row}
+														{#each s.pivotTable.rows as row}
 															<tr class="hover:bg-surface" data-pivot-row={row.label}>
 																<th class="px-4 py-3 text-left font-medium text-fg">
 																	<div class="flex flex-wrap items-center gap-1.5">
 																		<span>{row.label}</span>
 
-																		{#if recordsFieldHiddenByCondition(pivotTable.rowField, pivotRowRecords(row))}
+																		{#if recordsFieldHiddenByCondition(s.pivotTable.rowField, pivotRowRecords(row))}
 																			<span
 																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-																				data-pivot-row-conditional-hidden={`${row.label}:${pivotTable.rowField.key}`}
+																				data-pivot-row-conditional-hidden={`${row.label}:${s.pivotTable.rowField.key}`}
 																				>{$t('forms.fieldConditionHiddenBadge')}</span
 																			>
 																		{/if}
 
-																		{#if recordsFieldReadOnlyByCondition(pivotTable.rowField, pivotRowRecords(row))}
+																		{#if recordsFieldReadOnlyByCondition(s.pivotTable.rowField, pivotRowRecords(row))}
 																			<span
 																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-																				data-pivot-row-conditional-readonly={`${row.label}:${pivotTable.rowField.key}`}
+																				data-pivot-row-conditional-readonly={`${row.label}:${s.pivotTable.rowField.key}`}
 																				>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																			>
 																		{/if}
 																	</div>
 																</th>
 
-																{#each pivotTable.columns as column}
+																{#each s.pivotTable.columns as column}
 																	{@const cellValue = row.cells[column.key] ?? 0}
 
 																	<td
@@ -17361,12 +6286,12 @@
 																		<button
 																			type="button"
 																			class="flex w-full flex-col items-end rounded px-2 py-1 text-right font-medium text-fg hover:bg-surface"
-																			style={pivotCellHeatmapStyle(cellValue, pivotTable)}
+																			style={pivotCellHeatmapStyle(cellValue, s.pivotTable)}
 																			onclick={() => selectPivotDrilldown(row, column)}
 																			data-pivot-cell-button={`${row.label}:${column.label}`}
 																			data-pivot-cell-intensity={pivotCellIntensity(
 																				cellValue,
-																				pivotTable
+																				s.pivotTable
 																			)}
 																		>
 																			<span
@@ -17374,11 +6299,11 @@
 																					cellValue,
 																					row.total,
 																					column.total,
-																					pivotTable
+																					s.pivotTable
 																				)}</span
 																			>
 
-																			{#if pivotTable.showCounts}
+																			{#if s.pivotTable.showCounts}
 																				<span
 																					class="mt-0.5 text-[11px] font-normal text-fg-muted"
 																					data-pivot-cell-count={`${row.label}:${column.label}`}
@@ -17389,18 +6314,18 @@
 																				>
 																			{/if}
 
-																			{#if recordsFieldHiddenByCondition(pivotTable.rowField, pivotCellRecords(row, column))}
+																			{#if recordsFieldHiddenByCondition(s.pivotTable.rowField, pivotCellRecords(row, column))}
 																				<span
 																					class="mt-0.5 rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																					data-pivot-cell-row-conditional-hidden={`${row.label}:${column.label}:${pivotTable.rowField.key}`}
+																					data-pivot-cell-row-conditional-hidden={`${row.label}:${column.label}:${s.pivotTable.rowField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
 																			{/if}
 
-																			{#if recordsFieldReadOnlyByCondition(pivotTable.columnField, pivotCellRecords(row, column))}
+																			{#if recordsFieldReadOnlyByCondition(s.pivotTable.columnField, pivotCellRecords(row, column))}
 																				<span
 																					class="mt-0.5 rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																					data-pivot-cell-column-conditional-readonly={`${row.label}:${column.label}:${pivotTable.columnField.key}`}
+																					data-pivot-cell-column-conditional-readonly={`${row.label}:${column.label}:${s.pivotTable.columnField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
 																			{/if}
@@ -17421,7 +6346,7 @@
 																	</td>
 																{/each}
 
-																{#if pivotShowRowTotals(pivotTable.totalsMode)}
+																{#if pivotShowRowTotals(s.pivotTable.totalsMode)}
 																	<td
 																		class="px-4 py-3 text-right font-semibold text-fg"
 																		data-pivot-row-total={row.label}
@@ -17434,7 +6359,7 @@
 																			>{formatPivotTotalDisplayValue(
 																				row.total,
 																				'row',
-																				pivotTable
+																				s.pivotTable
 																			)}</button
 																		>
 																	</td>
@@ -17443,12 +6368,12 @@
 														{/each}
 													</tbody>
 
-													{#if pivotShowColumnTotals(pivotTable.totalsMode)}
+													{#if pivotShowColumnTotals(s.pivotTable.totalsMode)}
 														<tfoot class="bg-nav text-sm font-semibold text-fg">
 															<tr>
 																<th class="px-4 py-3 text-left">{$t('forms.pivotTotal')}</th>
 
-																{#each pivotTable.columns as column}
+																{#each s.pivotTable.columns as column}
 																	<td
 																		class="px-4 py-3 text-right"
 																		data-pivot-column-total={column.label}
@@ -17461,13 +6386,13 @@
 																			>{formatPivotTotalDisplayValue(
 																				column.total,
 																				'column',
-																				pivotTable
+																				s.pivotTable
 																			)}</button
 																		>
 																	</td>
 																{/each}
 
-																{#if pivotShowRowTotals(pivotTable.totalsMode)}
+																{#if pivotShowRowTotals(s.pivotTable.totalsMode)}
 																	<td class="px-4 py-3 text-right" data-pivot-grand-total>
 																		<button
 																			type="button"
@@ -17475,9 +6400,9 @@
 																			onclick={() => selectPivotDrilldown(null, null)}
 																			data-pivot-grand-total-button
 																			>{formatPivotTotalDisplayValue(
-																				pivotTable.grandTotal,
+																				s.pivotTable.grandTotal,
 																				'grand',
-																				pivotTable
+																				s.pivotTable
 																			)}</button
 																		>
 																	</td>
@@ -17503,7 +6428,7 @@
 														pivotDrilldownKey()
 															? `${s.pivotDrilldown.rowLabel}:${s.pivotDrilldown.columnLabel}`
 															: undefined}
-														data-record-count={pivotDrilldownRecords.length}
+														data-record-count={s.pivotDrilldownRecords.length}
 													>
 														<div class="mb-3 flex items-start justify-between gap-3">
 															<div>
@@ -17516,7 +6441,7 @@
 																		values: {
 																			row: s.pivotDrilldown.rowLabel,
 																			column: s.pivotDrilldown.columnLabel,
-																			count: pivotDrilldownRecords.length
+																			count: s.pivotDrilldownRecords.length
 																		}
 																	})}
 																</p>
@@ -17527,7 +6452,7 @@
 																	type="button"
 																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																	onclick={copyPivotDrilldownRecordIds}
-																	disabled={pivotDrilldownRecords.length === 0}
+																	disabled={s.pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-copy-ids
 																>
 																	<Copy class="h-3.5 w-3.5" aria-hidden="true" />
@@ -17538,7 +6463,7 @@
 																	type="button"
 																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																	onclick={exportPivotDrilldownRecordsCsv}
-																	disabled={pivotDrilldownRecords.length === 0}
+																	disabled={s.pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-export-csv
 																	data-pivot-drilldown-exported={s.exportedPivotDrilldownKey ===
 																	pivotDrilldownKey()
@@ -17568,7 +6493,7 @@
 																	type="button"
 																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																	onclick={focusPivotDrilldownRecords}
-																	disabled={pivotDrilldownRecords.length === 0}
+																	disabled={s.pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-focus
 																>
 																	<TableProperties class="h-3.5 w-3.5" aria-hidden="true" />
@@ -17584,13 +6509,13 @@
 															</div>
 														</div>
 
-														{#if pivotDrilldownRecords.length === 0}
+														{#if s.pivotDrilldownRecords.length === 0}
 															<p class="text-sm text-fg-muted">
 																{$t('forms.pivotDrilldownEmpty')}
 															</p>
 														{:else}
 															<div class="divide-y divide-line">
-																{#each pivotDrilldownRecords as record}
+																{#each s.pivotDrilldownRecords as record}
 																	<div
 																		class="flex items-center justify-between gap-3 py-2"
 																		data-pivot-drilldown-record={record.id}
@@ -17605,34 +6530,34 @@
 																			</div>
 
 																			<div class="mt-1 flex flex-wrap items-center gap-1.5">
-																				{#if recordFieldHiddenByCondition(pivotTable.rowField, record)}
+																				{#if recordFieldHiddenByCondition(s.pivotTable.rowField, record)}
 																					<span
 																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																						data-pivot-drilldown-row-conditional-hidden={`${record.id}:${pivotTable.rowField.key}`}
+																						data-pivot-drilldown-row-conditional-hidden={`${record.id}:${s.pivotTable.rowField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
 																				{/if}
 
-																				{#if recordFieldReadOnlyByCondition(pivotTable.rowField, record)}
+																				{#if recordFieldReadOnlyByCondition(s.pivotTable.rowField, record)}
 																					<span
 																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																						data-pivot-drilldown-row-conditional-readonly={`${record.id}:${pivotTable.rowField.key}`}
+																						data-pivot-drilldown-row-conditional-readonly={`${record.id}:${s.pivotTable.rowField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
 																				{/if}
 
-																				{#if recordFieldHiddenByCondition(pivotTable.columnField, record)}
+																				{#if recordFieldHiddenByCondition(s.pivotTable.columnField, record)}
 																					<span
 																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																						data-pivot-drilldown-column-conditional-hidden={`${record.id}:${pivotTable.columnField.key}`}
+																						data-pivot-drilldown-column-conditional-hidden={`${record.id}:${s.pivotTable.columnField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
 																				{/if}
 
-																				{#if recordFieldReadOnlyByCondition(pivotTable.columnField, record)}
+																				{#if recordFieldReadOnlyByCondition(s.pivotTable.columnField, record)}
 																					<span
 																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																						data-pivot-drilldown-column-conditional-readonly={`${record.id}:${pivotTable.columnField.key}`}
+																						data-pivot-drilldown-column-conditional-readonly={`${record.id}:${s.pivotTable.columnField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
 																				{/if}
@@ -17654,9 +6579,9 @@
 												{/if}
 											{/if}
 										</div>
-									{:else if selectedViewType === 'detail'}
+									{:else if s.selectedViewType === 'detail'}
 										<div class="divide-y divide-line" data-view-renderer="detail">
-											{#each viewRecords as record}
+											{#each s.viewRecords as record}
 												<article class="p-4 hover:bg-surface">
 													<div class="flex items-start justify-between gap-3">
 														<button
@@ -17749,19 +6674,19 @@
 												</article>
 											{/each}
 										</div>
-									{:else if selectedViewType === 'kanban'}
+									{:else if s.selectedViewType === 'kanban'}
 										<div class="overflow-x-auto p-4" data-view-renderer="kanban">
 											<div class="mb-3 text-xs text-fg-muted">
 												{$t('forms.viewGroupBy', {
 													values: {
-														field: kanbanGroupField
-															? fieldLabel(kanbanGroupField)
+														field: s.kanbanGroupField
+															? fieldLabel(s.kanbanGroupField)
 															: $t('forms.recordTitle')
 													}
 												})}
 											</div>
 
-											{#if kanbanGroupField && kanbanMoveOptions(kanbanGroupField).length > 0}
+											{#if s.kanbanGroupField && kanbanMoveOptions(s.kanbanGroupField).length > 0}
 												<div
 													class="mb-3 flex min-w-[760px] flex-wrap items-end gap-2 rounded-control border border-line bg-raised p-2"
 												>
@@ -17776,7 +6701,7 @@
 													<label class="min-w-56 space-y-1">
 														<span class="text-xs font-medium uppercase text-fg-muted"
 															>{$t('forms.kanbanBulkTarget', {
-																values: { field: fieldLabel(kanbanGroupField) }
+																values: { field: fieldLabel(s.kanbanGroupField) }
 															})}</span
 														>
 
@@ -17787,7 +6712,7 @@
 														>
 															<option value="">{$t('forms.viewNoRule')}</option>
 
-															{#each kanbanMoveOptions(kanbanGroupField) as option}
+															{#each kanbanMoveOptions(s.kanbanGroupField) as option}
 																<option value={option}>{option}</option>
 															{/each}
 														</select>
@@ -17816,18 +6741,20 @@
 											<div class="min-w-[760px] space-y-4">
 												{#each kanbanSwimlaneRows() as swimlane}
 													<section
-														class={kanbanSwimlaneField
+														class={s.kanbanSwimlaneField
 															? 'rounded-card border border-line bg-surface p-3'
 															: ''}
-														data-kanban-swimlane={kanbanSwimlaneField ? swimlane.label : undefined}
+														data-kanban-swimlane={s.kanbanSwimlaneField
+															? swimlane.label
+															: undefined}
 														data-record-count={swimlane.records.length}
 													>
-														{#if kanbanSwimlaneField}
+														{#if s.kanbanSwimlaneField}
 															<div class="mb-3 flex items-center justify-between gap-3">
 																<div class="min-w-0">
 																	<div class="text-xs font-medium uppercase text-fg-muted">
 																		{$t('forms.viewSwimlaneBy', {
-																			values: { field: fieldLabel(kanbanSwimlaneField) }
+																			values: { field: fieldLabel(s.kanbanSwimlaneField) }
 																		})}
 																	</div>
 
@@ -17883,7 +6810,7 @@
 																		{#each group.records as record}
 																			<article
 																				class={`rounded-card border border-line bg-raised p-3 transition-opacity ${s.draggingKanbanRecordId === record.id ? 'opacity-60' : ''}`}
-																				draggable={Boolean(kanbanGroupField)}
+																				draggable={Boolean(s.kanbanGroupField)}
 																				data-kanban-card={record.id}
 																				role="listitem"
 																				ondragstart={(event) =>
@@ -17931,7 +6858,7 @@
 																				</div>
 
 																				<div class="mt-2 space-y-1">
-																					{#each cardFields.slice(0, 3) as field}
+																					{#each s.cardFields.slice(0, 3) as field}
 																						<p class="truncate text-xs text-fg-muted">
 																							<span
 																								class="inline-flex items-center gap-1 font-medium"
@@ -17979,22 +6906,23 @@
 																					{/each}
 																				</div>
 
-																				{#if kanbanGroupField && kanbanMoveOptions(kanbanGroupField).length > 0}
+																				{#if s.kanbanGroupField && kanbanMoveOptions(s.kanbanGroupField).length > 0}{@const kanbanField =
+																						s.kanbanGroupField}
 																					<select
 																						value={String(
-																							record.values[kanbanGroupField.key] ?? ''
+																							record.values[s.kanbanGroupField.key] ?? ''
 																						)}
 																						disabled={s.updatingKanbanRecordId === record.id}
-																						aria-label={`${$t('forms.kanbanMoveTo')} ${fieldLabel(kanbanGroupField)}`}
+																						aria-label={`${$t('forms.kanbanMoveTo')} ${fieldLabel(s.kanbanGroupField)}`}
 																						onchange={(event) =>
 																							updateKanbanRecordField(
 																								record,
-																								kanbanGroupField,
+																								kanbanField,
 																								selectValue(event)
 																							)}
 																						class="mt-3 w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 																					>
-																						{#each kanbanMoveOptions(kanbanGroupField) as option}
+																						{#each kanbanMoveOptions(s.kanbanGroupField) as option}
 																							<option value={option}>{option}</option>
 																						{/each}
 																					</select>
@@ -18009,45 +6937,45 @@
 												{/each}
 											</div>
 										</div>
-									{:else if selectedViewType === 'calendar'}
+									{:else if s.selectedViewType === 'calendar'}
 										<div class="overflow-x-auto p-4" data-view-renderer="calendar">
 											<div class="mb-3 flex flex-wrap items-center gap-1.5 text-xs text-fg-muted">
 												{$t('forms.viewDateBy', {
 													values: {
-														field: calendarDateField
-															? fieldLabel(calendarDateField)
+														field: s.calendarDateField
+															? fieldLabel(s.calendarDateField)
 															: $t('forms.updated')
 													}
 												})}
 
-												{#if calendarDateField && memberFieldHidden(calendarDateField)}
+												{#if s.calendarDateField && memberFieldHidden(s.calendarDateField)}
 													<span
 														class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
-														data-calendar-date-field-permission-hidden={calendarDateField.key}
+														data-calendar-date-field-permission-hidden={s.calendarDateField.key}
 														>{$t('forms.fieldHiddenBadge')}</span
 													>
 												{/if}
 
-												{#if calendarDateField && memberFieldLocked(calendarDateField)}
+												{#if s.calendarDateField && memberFieldLocked(s.calendarDateField)}
 													<span
 														class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-														data-calendar-date-field-permission-locked={calendarDateField.key}
+														data-calendar-date-field-permission-locked={s.calendarDateField.key}
 														>{$t('forms.fieldLockedBadge')}</span
 													>
 												{/if}
 
-												{#if calendarDateField && fieldHasConditionalHidden(calendarDateField)}
+												{#if s.calendarDateField && fieldHasConditionalHidden(s.calendarDateField)}
 													<span
 														class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-														data-calendar-date-field-conditional-hidden={calendarDateField.key}
+														data-calendar-date-field-conditional-hidden={s.calendarDateField.key}
 														>{$t('forms.fieldConditionHiddenBadge')}</span
 													>
 												{/if}
 
-												{#if calendarDateField && fieldHasConditionalReadOnly(calendarDateField)}
+												{#if s.calendarDateField && fieldHasConditionalReadOnly(s.calendarDateField)}
 													<span
 														class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-														data-calendar-date-field-conditional-readonly={calendarDateField.key}
+														data-calendar-date-field-conditional-readonly={s.calendarDateField.key}
 														>{$t('forms.fieldConditionReadOnlyBadge')}</span
 													>
 												{/if}
@@ -18056,63 +6984,67 @@
 											<div
 												class="min-w-[980px] space-y-4"
 												data-calendar-range={viewCalendarRange(
-													selectedView?.config?.calendar_range
+													s.selectedView?.config?.calendar_range
 												)}
 												data-calendar-day-scope={viewCalendarDayScope(
-													selectedView?.config?.calendar_day_scope
+													s.selectedView?.config?.calendar_day_scope
 												)}
-												data-calendar-layout={selectedCalendarLayout}
-												data-calendar-hide-empty-days={selectedCalendarHideEmptyDays}
+												data-calendar-layout={s.selectedCalendarLayout}
+												data-calendar-hide-empty-days={s.selectedCalendarHideEmptyDays}
 												data-calendar-focus-date={viewCalendarFocusDate()}
 											>
 												{#each calendarResourceRows() as resource}
 													<section
-														class={calendarResourceField
+														class={s.calendarResourceField
 															? 'rounded-card border border-line bg-surface p-3'
 															: ''}
-														data-calendar-resource={calendarResourceField
+														data-calendar-resource={s.calendarResourceField
 															? resource.label
 															: undefined}
 														data-record-count={resource.records.length}
 													>
-														{#if calendarResourceField}
+														{#if s.calendarResourceField}
 															<div class="mb-3 flex items-center justify-between gap-3">
 																<div class="min-w-0">
 																	<div
 																		class="flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase text-fg-muted"
 																	>
 																		{$t('forms.viewCalendarResourceBy', {
-																			values: { field: fieldLabel(calendarResourceField) }
+																			values: { field: fieldLabel(s.calendarResourceField) }
 																		})}
 
-																		{#if memberFieldHidden(calendarResourceField)}
+																		{#if memberFieldHidden(s.calendarResourceField)}
 																			<span
 																				class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium text-warning"
-																				data-calendar-resource-field-permission-hidden={calendarResourceField.key}
+																				data-calendar-resource-field-permission-hidden={s
+																					.calendarResourceField.key}
 																				>{$t('forms.fieldHiddenBadge')}</span
 																			>
 																		{/if}
 
-																		{#if memberFieldLocked(calendarResourceField)}
+																		{#if memberFieldLocked(s.calendarResourceField)}
 																			<span
 																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-																				data-calendar-resource-field-permission-locked={calendarResourceField.key}
+																				data-calendar-resource-field-permission-locked={s
+																					.calendarResourceField.key}
 																				>{$t('forms.fieldLockedBadge')}</span
 																			>
 																		{/if}
 
-																		{#if fieldHasConditionalHidden(calendarResourceField)}
+																		{#if fieldHasConditionalHidden(s.calendarResourceField)}
 																			<span
 																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-																				data-calendar-resource-field-conditional-hidden={calendarResourceField.key}
+																				data-calendar-resource-field-conditional-hidden={s
+																					.calendarResourceField.key}
 																				>{$t('forms.fieldConditionHiddenBadge')}</span
 																			>
 																		{/if}
 
-																		{#if fieldHasConditionalReadOnly(calendarResourceField)}
+																		{#if fieldHasConditionalReadOnly(s.calendarResourceField)}
 																			<span
 																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-																				data-calendar-resource-field-conditional-readonly={calendarResourceField.key}
+																				data-calendar-resource-field-conditional-readonly={s
+																					.calendarResourceField.key}
 																				>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																			>
 																		{/if}
@@ -18131,10 +7063,10 @@
 															</div>
 														{/if}
 
-														{#if selectedCalendarLayout === 'agenda'}
+														{#if s.selectedCalendarLayout === 'agenda'}
 															<div
 																class="space-y-3"
-																data-calendar-agenda-resource={calendarResourceField
+																data-calendar-agenda-resource={s.calendarResourceField
 																	? resource.label
 																	: '__all__'}
 																data-record-count={calendarAgendaRecordCount(resource)}
@@ -18164,7 +7096,7 @@
 																					)}
 																					aria-label={$t('forms.applyCalendarBucketFilters')}
 																					title={$t('forms.applyCalendarBucketFilters')}
-																					data-calendar-agenda-apply-filters={`${group.date}:${calendarResourceField ? resource.key : '__all__'}`}
+																					data-calendar-agenda-apply-filters={`${group.date}:${s.calendarResourceField ? resource.key : '__all__'}`}
 																					data-calendar-filters-applied={s.appliedCalendarFilterKey ===
 																					calendarBucketFilterKey(group.date, resource)
 																						? 'true'
@@ -18233,23 +7165,23 @@
 																						<span
 																							class="mt-0.5 block truncate text-xs text-fg-muted"
 																						>
-																							{visibleFields[0]
-																								? recordDisplay(record, visibleFields[0])
+																							{s.visibleFields[0]
+																								? recordDisplay(record, s.visibleFields[0])
 																								: record.id.slice(0, 8)}
 																						</span>
 
-																						{#if visibleFields[0] && recordFieldHiddenByCondition(visibleFields[0], record)}
+																						{#if s.visibleFields[0] && recordFieldHiddenByCondition(s.visibleFields[0], record)}
 																							<span
 																								class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																								data-calendar-summary-conditional-hidden={`${record.id}:${visibleFields[0].key}`}
+																								data-calendar-summary-conditional-hidden={`${record.id}:${s.visibleFields[0].key}`}
 																								>{$t('forms.fieldConditionHiddenBadge')}</span
 																							>
 																						{/if}
 
-																						{#if visibleFields[0] && recordFieldReadOnlyByCondition(visibleFields[0], record)}
+																						{#if s.visibleFields[0] && recordFieldReadOnlyByCondition(s.visibleFields[0], record)}
 																							<span
 																								class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																								data-calendar-summary-conditional-readonly={`${record.id}:${visibleFields[0].key}`}
+																								data-calendar-summary-conditional-readonly={`${record.id}:${s.visibleFields[0].key}`}
 																								>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																							>
 																						{/if}
@@ -18334,7 +7266,7 @@
 														{:else}
 															<div
 																class={`grid gap-3 ${
-																	viewCalendarRange(selectedView?.config?.calendar_range) ===
+																	viewCalendarRange(s.selectedView?.config?.calendar_range) ===
 																	'month'
 																		? 'grid-cols-2 md:grid-cols-4 xl:grid-cols-7'
 																		: 'lg:grid-cols-7'
@@ -18368,7 +7300,7 @@
 																					)}
 																					aria-label={$t('forms.applyCalendarBucketFilters')}
 																					title={$t('forms.applyCalendarBucketFilters')}
-																					data-calendar-apply-filters={`${group.date}:${calendarResourceField ? resource.key : '__all__'}`}
+																					data-calendar-apply-filters={`${group.date}:${s.calendarResourceField ? resource.key : '__all__'}`}
 																					data-calendar-filters-applied={s.appliedCalendarFilterKey ===
 																					calendarBucketFilterKey(group.date, resource)
 																						? 'true'
@@ -18391,7 +7323,7 @@
 
 																				<article
 																					class={`rounded-card border border-line bg-raised p-3 transition-opacity ${s.draggingCalendarRecordId === record.id ? 'opacity-60' : ''}`}
-																					draggable={Boolean(calendarDateField) &&
+																					draggable={Boolean(s.calendarDateField) &&
 																						!occurrence.recurring}
 																					data-calendar-card={record.id}
 																					data-calendar-occurrence={occurrence.spanStart
@@ -18431,23 +7363,23 @@
 																							<span
 																								class="mt-0.5 block truncate text-xs text-fg-muted"
 																							>
-																								{visibleFields[0]
-																									? recordDisplay(record, visibleFields[0])
+																								{s.visibleFields[0]
+																									? recordDisplay(record, s.visibleFields[0])
 																									: record.id.slice(0, 8)}
 																							</span>
 
-																							{#if visibleFields[0] && recordFieldHiddenByCondition(visibleFields[0], record)}
+																							{#if s.visibleFields[0] && recordFieldHiddenByCondition(s.visibleFields[0], record)}
 																								<span
 																									class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																									data-calendar-summary-conditional-hidden={`${record.id}:${visibleFields[0].key}`}
+																									data-calendar-summary-conditional-hidden={`${record.id}:${s.visibleFields[0].key}`}
 																									>{$t('forms.fieldConditionHiddenBadge')}</span
 																								>
 																							{/if}
 
-																							{#if visibleFields[0] && recordFieldReadOnlyByCondition(visibleFields[0], record)}
+																							{#if s.visibleFields[0] && recordFieldReadOnlyByCondition(s.visibleFields[0], record)}
 																								<span
 																									class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																									data-calendar-summary-conditional-readonly={`${record.id}:${visibleFields[0].key}`}
+																									data-calendar-summary-conditional-readonly={`${record.id}:${s.visibleFields[0].key}`}
 																									>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																								>
 																							{/if}
@@ -18528,7 +7460,8 @@
 																								>{$t('forms.calendarRecurringOccurrence')}</span
 																							>
 
-																							{#if calendarDateField && ['date', 'datetime'].includes(calendarDateField.type ?? 'text')}
+																							{#if s.calendarDateField && ['date', 'datetime'].includes(s.calendarDateField.type ?? 'text')}{@const calendarField =
+																									s.calendarDateField}
 																								<label class="block space-y-1">
 																									<span
 																										class="text-[11px] font-medium uppercase text-fg-muted"
@@ -18539,7 +7472,7 @@
 																										type="date"
 																										value={calendarDateInputValue(
 																											record,
-																											calendarDateField
+																											s.calendarDateField
 																										)}
 																										disabled={s.updatingCalendarRecordId ===
 																											record.id}
@@ -18548,7 +7481,7 @@
 																										onchange={(event) =>
 																											updateCalendarSeriesDate(
 																												record,
-																												calendarDateField,
+																												calendarField,
 																												inputValue(event)
 																											)}
 																										class="w-full rounded-control border border-input bg-selected px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -18573,26 +7506,28 @@
 																						</div>
 																					{/if}
 
-																					{#if calendarDateField && ['date', 'datetime'].includes(calendarDateField.type ?? 'text') && !occurrence.recurring}
+																					{#if s.calendarDateField && ['date', 'datetime'].includes(s.calendarDateField.type ?? 'text') && !occurrence.recurring}{@const calendarField =
+																							s.calendarDateField}
 																						<input
 																							type="date"
 																							value={calendarDateInputValue(
 																								record,
-																								calendarDateField
+																								s.calendarDateField
 																							)}
 																							disabled={s.updatingCalendarRecordId === record.id}
-																							aria-label={`${$t('forms.calendarSetDate')} ${fieldLabel(calendarDateField)}`}
+																							aria-label={`${$t('forms.calendarSetDate')} ${fieldLabel(s.calendarDateField)}`}
 																							onchange={(event) =>
 																								updateCalendarRecordDate(
 																									record,
-																									calendarDateField,
+																									calendarField,
 																									inputValue(event)
 																								)}
 																							class="mt-3 w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 																						/>
 																					{/if}
 
-																					{#if calendarDateField && calendarEndField && ['date', 'datetime'].includes(calendarEndField.type ?? 'text') && occurrence.startDate === calendarRecordIsoDate(record, calendarDateField)}
+																					{#if s.calendarDateField && s.calendarEndField && ['date', 'datetime'].includes(s.calendarEndField.type ?? 'text') && occurrence.startDate === calendarRecordIsoDate(record, s.calendarDateField)}{@const calendarEnd =
+																							s.calendarEndField}
 																						<label class="mt-3 block space-y-1">
 																							<span
 																								class="text-[11px] font-medium uppercase text-fg-muted"
@@ -18603,7 +7538,7 @@
 																								type="date"
 																								value={calendarDateInputValue(
 																									record,
-																									calendarEndField
+																									s.calendarEndField
 																								)}
 																								disabled={s.updatingCalendarRecordId === record.id}
 																								aria-label={`${$t('forms.calendarEndDate')} ${record.title}`}
@@ -18611,7 +7546,7 @@
 																								onchange={(event) =>
 																									updateCalendarRecordEndDate(
 																										record,
-																										calendarEndField,
+																										calendarEnd,
 																										inputValue(event)
 																									)}
 																								class="w-full rounded-control border border-line bg-success-soft px-2 py-1.5 text-xs text-success disabled:bg-surface disabled:text-fg-muted"
@@ -18629,16 +7564,16 @@
 												{/each}
 											</div>
 										</div>
-									{:else if selectedViewType === 'card'}
+									{:else if s.selectedViewType === 'card'}
 										{#snippet cardRecord(record: FormRecord)}
 											{@const badgeField = viewCardBadgeField()}
 											{@const badge = cardBadge(record)}
 											{@const coverUrl = cardCoverUrl(record)}
 
 											<article
-												class={selectedCardLayout === 'gallery'
+												class={s.selectedCardLayout === 'gallery'
 													? 'overflow-hidden rounded-card border border-line bg-raised ring-1 ring-transparent transition-shadow hover:shadow-md'
-													: selectedCardLayout === 'compact' || selectedCardLayout === 'list'
+													: s.selectedCardLayout === 'compact' || s.selectedCardLayout === 'list'
 														? 'overflow-visible rounded-control border border-line bg-raised'
 														: 'overflow-hidden rounded-card border border-line bg-raised'}
 												data-card-copied={s.copiedCardRecordId === record.id
@@ -18647,58 +7582,59 @@
 												data-card-exported={s.exportedCardRecordId === record.id
 													? record.id
 													: undefined}
-												data-card-compact-row={selectedCardLayout === 'compact'
+												data-card-compact-row={s.selectedCardLayout === 'compact'
 													? record.id
 													: undefined}
-												data-card-list-row={selectedCardLayout === 'list' ? record.id : undefined}
-												data-card-cover-aspect={selectedCardCoverAspect}
-												data-card-cover-fit={selectedCardCoverFit}
-												data-card-cover-position={selectedCardCoverPosition}
+												data-card-list-row={s.selectedCardLayout === 'list' ? record.id : undefined}
+												data-card-cover-aspect={s.selectedCardCoverAspect}
+												data-card-cover-fit={s.selectedCardCoverFit}
+												data-card-cover-position={s.selectedCardCoverPosition}
 											>
-												{#if coverUrl && selectedCardLayout !== 'compact' && selectedCardLayout !== 'list' && selectedCardCoverPosition === 'top'}
+												{#if coverUrl && s.selectedCardLayout !== 'compact' && s.selectedCardLayout !== 'list' && s.selectedCardCoverPosition === 'top'}
 													<img
 														src={coverUrl}
 														alt={cardTitle(record)}
 														class={cardCoverImageClass(
-															selectedCardLayout,
-															selectedCardCoverAspect,
-															selectedCardCoverFit
+															s.selectedCardLayout,
+															s.selectedCardCoverAspect,
+															s.selectedCardCoverFit
 														)}
 														data-card-cover={record.id}
-														data-card-cover-aspect={selectedCardCoverAspect}
-														data-card-cover-fit={selectedCardCoverFit}
-														data-card-cover-position={selectedCardCoverPosition}
+														data-card-cover-aspect={s.selectedCardCoverAspect}
+														data-card-cover-fit={s.selectedCardCoverFit}
+														data-card-cover-position={s.selectedCardCoverPosition}
 													/>
 												{/if}
 
 												<div
-													class={selectedCardLayout === 'compact' || selectedCardLayout === 'list'
+													class={s.selectedCardLayout === 'compact' ||
+													s.selectedCardLayout === 'list'
 														? 'flex items-center justify-between gap-3 px-3 py-2'
-														: selectedCardCoverPosition === 'left' && coverUrl
+														: s.selectedCardCoverPosition === 'left' && coverUrl
 															? 'grid grid-cols-[7rem_minmax(0,1fr)_auto] items-start gap-3 p-4 pb-0'
 															: 'flex items-start justify-between gap-3 p-4 pb-0'}
 												>
-													{#if coverUrl && selectedCardLayout !== 'compact' && selectedCardLayout !== 'list' && selectedCardCoverPosition === 'left'}
+													{#if coverUrl && s.selectedCardLayout !== 'compact' && s.selectedCardLayout !== 'list' && s.selectedCardCoverPosition === 'left'}
 														<img
 															src={coverUrl}
 															alt={cardTitle(record)}
-															class={`h-24 w-28 shrink-0 rounded-control ${cardCoverObjectClass(selectedCardCoverFit)}`}
+															class={`h-24 w-28 shrink-0 rounded-control ${cardCoverObjectClass(s.selectedCardCoverFit)}`}
 															data-card-cover={record.id}
-															data-card-cover-aspect={selectedCardCoverAspect}
-															data-card-cover-fit={selectedCardCoverFit}
-															data-card-cover-position={selectedCardCoverPosition}
+															data-card-cover-aspect={s.selectedCardCoverAspect}
+															data-card-cover-fit={s.selectedCardCoverFit}
+															data-card-cover-position={s.selectedCardCoverPosition}
 														/>
 													{/if}
 
-													{#if coverUrl && selectedCardLayout === 'compact' && selectedCardCoverPosition !== 'hidden'}
+													{#if coverUrl && s.selectedCardLayout === 'compact' && s.selectedCardCoverPosition !== 'hidden'}
 														<img
 															src={coverUrl}
 															alt={cardTitle(record)}
-															class={`h-12 w-12 shrink-0 rounded-control ${cardCoverObjectClass(selectedCardCoverFit)}`}
+															class={`h-12 w-12 shrink-0 rounded-control ${cardCoverObjectClass(s.selectedCardCoverFit)}`}
 															data-card-cover={record.id}
-															data-card-cover-aspect={selectedCardCoverAspect}
-															data-card-cover-fit={selectedCardCoverFit}
-															data-card-cover-position={selectedCardCoverPosition}
+															data-card-cover-aspect={s.selectedCardCoverAspect}
+															data-card-cover-fit={s.selectedCardCoverFit}
+															data-card-cover-position={s.selectedCardCoverPosition}
 														/>
 													{/if}
 
@@ -18709,9 +7645,10 @@
 														aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 													>
 														<span
-															class={selectedCardLayout === 'gallery'
+															class={s.selectedCardLayout === 'gallery'
 																? 'block truncate text-base font-semibold text-fg'
-																: selectedCardLayout === 'compact' || selectedCardLayout === 'list'
+																: s.selectedCardLayout === 'compact' ||
+																	  s.selectedCardLayout === 'list'
 																	? 'block truncate text-sm font-semibold text-fg'
 																	: 'block truncate font-medium text-fg'}
 															data-card-title={record.id}>{cardTitle(record)}</span
@@ -18722,7 +7659,7 @@
 															data-card-subtitle={record.id}>{cardSubtitle(record)}</span
 														>
 
-														{#if selectedCardShowTimestamps}
+														{#if s.selectedCardShowTimestamps}
 															<span
 																class="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-fg-muted"
 																data-card-timestamps={record.id}
@@ -18740,7 +7677,7 @@
 															</span>
 														{/if}
 
-														{#if selectedCardShowRecordId}
+														{#if s.selectedCardShowRecordId}
 															<span
 																class="mt-1 block truncate font-mono text-[11px] text-fg-muted"
 																data-card-record-id={record.id}
@@ -18812,23 +7749,23 @@
 												</div>
 
 												<dl
-													class={selectedCardLayout === 'compact'
+													class={s.selectedCardLayout === 'compact'
 														? 'grid gap-x-4 gap-y-1 border-t border-line px-3 py-2 sm:grid-cols-2 lg:grid-cols-3'
-														: selectedCardLayout === 'list'
+														: s.selectedCardLayout === 'list'
 															? 'grid gap-x-4 gap-y-1 border-t border-line px-3 py-2 sm:grid-cols-3 xl:grid-cols-5'
 															: 'mt-4 space-y-2 px-4'}
 												>
 													{#each cardDisplayFields(record) as field}
 														<div
-															class={selectedCardLayout === 'compact' ||
-															selectedCardLayout === 'list'
+															class={s.selectedCardLayout === 'compact' ||
+															s.selectedCardLayout === 'list'
 																? 'min-w-0 text-xs'
 																: 'grid grid-cols-[7rem_minmax(0,1fr)] gap-3 text-sm'}
 															data-card-field={`${record.id}:${field.key}`}
 														>
 															<dt
-																class={selectedCardLayout === 'compact' ||
-																selectedCardLayout === 'list'
+																class={s.selectedCardLayout === 'compact' ||
+																s.selectedCardLayout === 'list'
 																	? 'flex min-w-0 flex-wrap items-center gap-1 text-[10px] font-medium uppercase text-fg-muted'
 																	: 'flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase text-fg-muted'}
 															>
@@ -18874,9 +7811,9 @@
 													{/each}
 												</dl>
 
-												{#if cardEditableSelectFields.length > 0}
+												{#if s.cardEditableSelectFields.length > 0}
 													<div class="mt-4 space-y-2 border-t border-line px-4 py-3">
-														{#each cardEditableSelectFields as field}
+														{#each s.cardEditableSelectFields as field}
 															<label class="block space-y-1">
 																<span
 																	class="flex flex-wrap items-center gap-1.5 text-xs font-medium text-fg-muted"
@@ -18937,24 +7874,24 @@
 										{/snippet}
 
 										<div
-											class={cardGroupField
+											class={s.cardGroupField
 												? 'space-y-4 p-4'
-												: selectedCardLayout === 'gallery'
+												: s.selectedCardLayout === 'gallery'
 													? 'grid gap-4 p-4 md:grid-cols-2 2xl:grid-cols-4'
-													: selectedCardLayout === 'compact' || selectedCardLayout === 'list'
+													: s.selectedCardLayout === 'compact' || s.selectedCardLayout === 'list'
 														? 'space-y-2 p-4'
 														: 'grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3'}
 											data-view-renderer="card"
-											data-card-layout={selectedCardLayout}
+											data-card-layout={s.selectedCardLayout}
 											data-card-field-limit={viewCardFieldLimit(
-												selectedView?.config?.card_field_limit
+												s.selectedView?.config?.card_field_limit
 											)}
-											data-card-hide-empty-fields={selectedCardHideEmptyFields}
-											data-card-show-record-id={selectedCardShowRecordId}
-											data-card-group-field={cardGroupField?.key}
+											data-card-hide-empty-fields={s.selectedCardHideEmptyFields}
+											data-card-show-record-id={s.selectedCardShowRecordId}
+											data-card-group-field={s.cardGroupField?.key}
 										>
-											{#if cardGroupField}
-												{#each cardGroups as group}
+											{#if s.cardGroupField}
+												{#each s.cardGroups as group}
 													{@const collapsed = cardGroupCollapsed(group)}
 
 													<section
@@ -18975,7 +7912,7 @@
 															<div class="min-w-0">
 																<div class="text-xs font-medium uppercase text-fg-muted">
 																	{$t('forms.viewGroupBy', {
-																		values: { field: fieldLabel(cardGroupField) }
+																		values: { field: fieldLabel(s.cardGroupField) }
 																	})}
 																</div>
 
@@ -18998,7 +7935,7 @@
 																	title={$t('forms.copyCardGroupRecordIds')}
 																	disabled={group.records.length === 0}
 																	onclick={() => copyCardGroupRecordIds(group)}
-																	data-card-group-copy-record-ids={`${cardGroupField?.key ?? '__none__'}:${group.label}`}
+																	data-card-group-copy-record-ids={`${s.cardGroupField?.key ?? '__none__'}:${group.label}`}
 																	><Copy class="h-4 w-4" aria-hidden="true" /></button
 																>
 
@@ -19009,7 +7946,7 @@
 																	title={$t('forms.exportCardGroupRecords')}
 																	disabled={group.records.length === 0}
 																	onclick={() => exportCardGroupRecords(group)}
-																	data-card-group-export-records={`${cardGroupField?.key ?? '__none__'}:${group.label}`}
+																	data-card-group-export-records={`${s.cardGroupField?.key ?? '__none__'}:${group.label}`}
 																	><FileDown class="h-4 w-4" aria-hidden="true" /></button
 																>
 
@@ -19020,7 +7957,7 @@
 																	title={$t('forms.focusCardGroupRecords')}
 																	disabled={group.records.length === 0}
 																	onclick={() => focusCardGroupRecords(group)}
-																	data-card-group-focus-records={`${cardGroupField?.key ?? '__none__'}:${group.label}`}
+																	data-card-group-focus-records={`${s.cardGroupField?.key ?? '__none__'}:${group.label}`}
 																	><TableProperties class="h-4 w-4" aria-hidden="true" /></button
 																>
 
@@ -19031,7 +7968,7 @@
 																	title={$t('forms.applyCardGroupFilter')}
 																	disabled={!canApplyCardGroupFilter(group)}
 																	onclick={() => applyCardGroupFilter(group)}
-																	data-card-group-apply-filter={`${cardGroupField?.key ?? '__none__'}:${group.label}`}
+																	data-card-group-apply-filter={`${s.cardGroupField?.key ?? '__none__'}:${group.label}`}
 																	data-card-group-filter-applied={s.appliedCardGroupFilterKey ===
 																	cardGroupFilterKey(group)
 																		? 'true'
@@ -19068,10 +8005,10 @@
 															</p>
 														{:else}
 															<div
-																class={selectedCardLayout === 'gallery'
+																class={s.selectedCardLayout === 'gallery'
 																	? 'grid gap-4 md:grid-cols-2 2xl:grid-cols-4'
-																	: selectedCardLayout === 'compact' ||
-																		  selectedCardLayout === 'list'
+																	: s.selectedCardLayout === 'compact' ||
+																		  s.selectedCardLayout === 'list'
 																		? 'space-y-2'
 																		: 'grid gap-3 md:grid-cols-2 xl:grid-cols-3'}
 															>
@@ -19083,7 +8020,7 @@
 													</section>
 												{/each}
 											{:else}
-												{#each viewRecords as record}
+												{#each s.viewRecords as record}
 													{@render cardRecord(record)}
 												{/each}
 											{/if}
@@ -19113,7 +8050,7 @@
 													<div class="px-4 py-6 text-sm text-fg-muted">
 														{$t('common.loading')}
 													</div>
-												{:else if timelineEvents.length === 0}
+												{:else if s.timelineEvents.length === 0}
 													<div class="px-4 py-6 text-sm text-fg-muted">
 														{$t('forms.noRecords')}
 													</div>
@@ -19124,7 +8061,7 @@
 													>
 														<div class="min-w-0 text-xs text-fg-muted">
 															{$t('forms.groupRecordCount', {
-																values: { count: timelineEventRows.length }
+																values: { count: s.timelineEventRows.length }
 															})}
 														</div>
 
@@ -19132,8 +8069,8 @@
 															<button
 																type="button"
 																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-																disabled={timelineEventRows.length === 0}
-																onclick={() => copyTimelineEventIds(timelineEventRows)}
+																disabled={s.timelineEventRows.length === 0}
+																onclick={() => copyTimelineEventIds(s.timelineEventRows)}
 																data-timeline-copy-event-ids
 															>
 																<Copy class="h-3.5 w-3.5" aria-hidden="true" />
@@ -19143,9 +8080,9 @@
 															<button
 																type="button"
 																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-																disabled={timelineEventAggregateKeys(timelineEventRows).length ===
+																disabled={timelineEventAggregateKeys(s.timelineEventRows).length ===
 																	0}
-																onclick={() => copyTimelineAggregateIds(timelineEventRows)}
+																onclick={() => copyTimelineAggregateIds(s.timelineEventRows)}
 																data-timeline-copy-aggregate-ids
 															>
 																<Link class="h-3.5 w-3.5" aria-hidden="true" />
@@ -19155,9 +8092,9 @@
 															<button
 																type="button"
 																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-																disabled={timelineEventLinkedRecordIds(timelineEventRows).length ===
-																	0}
-																onclick={() => focusTimelineEventRecords(timelineEventRows)}
+																disabled={timelineEventLinkedRecordIds(s.timelineEventRows)
+																	.length === 0}
+																onclick={() => focusTimelineEventRecords(s.timelineEventRows)}
 																data-timeline-focus-event-records
 															>
 																<TableProperties class="h-3.5 w-3.5" aria-hidden="true" />
@@ -19167,8 +8104,8 @@
 															<button
 																type="button"
 																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-																disabled={timelineEventRows.length === 0}
-																onclick={() => exportTimelineEventsJson(timelineEventRows)}
+																disabled={s.timelineEventRows.length === 0}
+																onclick={() => exportTimelineEventsJson(s.timelineEventRows)}
 																data-timeline-export-events-json
 															>
 																<FileText class="h-3.5 w-3.5" aria-hidden="true" />
@@ -19178,8 +8115,8 @@
 															<button
 																type="button"
 																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-																disabled={timelineEventRows.length === 0}
-																onclick={() => exportTimelineEventsCsv(timelineEventRows)}
+																disabled={s.timelineEventRows.length === 0}
+																onclick={() => exportTimelineEventsCsv(s.timelineEventRows)}
 																data-timeline-export-events-csv
 															>
 																<FileDown class="h-3.5 w-3.5" aria-hidden="true" />
@@ -19188,7 +8125,7 @@
 														</div>
 													</div>
 
-													{#each timelineEventRows as event}
+													{#each s.timelineEventRows as event}
 														{@const linkedRecord = timelineEventRecord(event)}
 														{@const pinned = timelineEventPinned(event)}
 
@@ -19478,7 +8415,7 @@
 													{/each}
 												{/if}
 											{:else}
-												{#each timelineRecords as record}
+												{#each s.timelineRecords as record}
 													<article class="grid grid-cols-[8rem_minmax(0,1fr)] gap-4 px-4 py-3">
 														<div class="text-xs text-fg-muted">
 															{formatDate(record.updated_at)}
@@ -19497,36 +8434,36 @@
 																		data-timeline-title={record.id}>{timelineTitle(record)}</span
 																	>
 
-																	{#if timelineTitlePermissionField}
+																	{#if s.timelineTitlePermissionField}
 																		<span class="mt-1 flex flex-wrap items-center gap-1.5">
-																			{#if memberFieldHidden(timelineTitlePermissionField)}
+																			{#if memberFieldHidden(s.timelineTitlePermissionField)}
 																				<span
 																					class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
-																					data-timeline-title-permission-hidden={`${record.id}:${timelineTitlePermissionField.key}`}
+																					data-timeline-title-permission-hidden={`${record.id}:${s.timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldHiddenBadge')}</span
 																				>
 																			{/if}
 
-																			{#if memberFieldLocked(timelineTitlePermissionField)}
+																			{#if memberFieldLocked(s.timelineTitlePermissionField)}
 																				<span
 																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																					data-timeline-title-permission-locked={`${record.id}:${timelineTitlePermissionField.key}`}
+																					data-timeline-title-permission-locked={`${record.id}:${s.timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldLockedBadge')}</span
 																				>
 																			{/if}
 
-																			{#if recordFieldHiddenByCondition(timelineTitlePermissionField, record)}
+																			{#if recordFieldHiddenByCondition(s.timelineTitlePermissionField, record)}
 																				<span
 																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																					data-timeline-title-conditional-hidden={`${record.id}:${timelineTitlePermissionField.key}`}
+																					data-timeline-title-conditional-hidden={`${record.id}:${s.timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
 																			{/if}
 
-																			{#if recordFieldReadOnlyByCondition(timelineTitlePermissionField, record)}
+																			{#if recordFieldReadOnlyByCondition(s.timelineTitlePermissionField, record)}
 																				<span
 																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																					data-timeline-title-conditional-readonly={`${record.id}:${timelineTitlePermissionField.key}`}
+																					data-timeline-title-conditional-readonly={`${record.id}:${s.timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
 																			{/if}
@@ -19539,36 +8476,36 @@
 																		>{timelineSubtitle(record)}</span
 																	>
 
-																	{#if timelineSubtitlePermissionField}
+																	{#if s.timelineSubtitlePermissionField}
 																		<span class="mt-1 flex flex-wrap items-center gap-1.5">
-																			{#if memberFieldHidden(timelineSubtitlePermissionField)}
+																			{#if memberFieldHidden(s.timelineSubtitlePermissionField)}
 																				<span
 																					class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
-																					data-timeline-subtitle-permission-hidden={`${record.id}:${timelineSubtitlePermissionField.key}`}
+																					data-timeline-subtitle-permission-hidden={`${record.id}:${s.timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldHiddenBadge')}</span
 																				>
 																			{/if}
 
-																			{#if memberFieldLocked(timelineSubtitlePermissionField)}
+																			{#if memberFieldLocked(s.timelineSubtitlePermissionField)}
 																				<span
 																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																					data-timeline-subtitle-permission-locked={`${record.id}:${timelineSubtitlePermissionField.key}`}
+																					data-timeline-subtitle-permission-locked={`${record.id}:${s.timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldLockedBadge')}</span
 																				>
 																			{/if}
 
-																			{#if recordFieldHiddenByCondition(timelineSubtitlePermissionField, record)}
+																			{#if recordFieldHiddenByCondition(s.timelineSubtitlePermissionField, record)}
 																				<span
 																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																					data-timeline-subtitle-conditional-hidden={`${record.id}:${timelineSubtitlePermissionField.key}`}
+																					data-timeline-subtitle-conditional-hidden={`${record.id}:${s.timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
 																			{/if}
 
-																			{#if recordFieldReadOnlyByCondition(timelineSubtitlePermissionField, record)}
+																			{#if recordFieldReadOnlyByCondition(s.timelineSubtitlePermissionField, record)}
 																				<span
 																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-																					data-timeline-subtitle-conditional-readonly={`${record.id}:${timelineSubtitlePermissionField.key}`}
+																					data-timeline-subtitle-conditional-readonly={`${record.id}:${s.timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
 																			{/if}
@@ -19586,9 +8523,9 @@
 																>
 															</div>
 
-															{#if timelineEditableSelectFields.length > 0}
+															{#if s.timelineEditableSelectFields.length > 0}
 																<div class="mt-3 grid gap-2 sm:grid-cols-2">
-																	{#each timelineEditableSelectFields as field}
+																	{#each s.timelineEditableSelectFields as field}
 																		<label class="block space-y-1">
 																			<span
 																				class="flex flex-wrap items-center gap-1.5 text-xs font-medium text-fg-muted"
@@ -19656,28 +8593,28 @@
 										</div>
 									{/if}
 								</section>
-								{#if s.panelRecordId && selectedForm}
+								{#if s.panelRecordId && s.selectedForm}
 									<RecordSidePanel
 										bind:this={s.recordPanel}
 										bind:appsOpen={s.panelAppsOpen}
-										record={panelRecord}
+										record={s.panelRecord}
 										status={s.panelStatus}
 										errorMessage={s.panelError}
-										inView={panelPosition >= 0}
-										form={selectedForm}
-										sections={buildDetailSections(selectedForm, fields, {
+										inView={s.panelPosition >= 0}
+										form={s.selectedForm}
+										sections={buildDetailSections(s.selectedForm, s.fields, {
 											main: $t('forms.detailSectionMain'),
 											other: $t('forms.recordPanel.otherFields')
 										})}
-										header={headerFields(selectedForm, fields)}
-										ctx={fieldCtx}
+										header={headerFields(s.selectedForm, s.fields)}
+										ctx={s.fieldCtx}
 										childTable={(field) => ({
 											rows: childRecordsForRelationField(field),
 											columns: childGridFieldsForRelationField(field)
 										})}
 										detailsLoading={s.panelDetailsLoading}
-										position={panelPosition >= 0
-											? { index: panelPosition + 1, total: viewRecords.length }
+										position={s.panelPosition >= 0
+											? { index: s.panelPosition + 1, total: s.viewRecords.length }
 											: null}
 										fullPageHref={recordHref(s.panelRecordId)}
 										{recordHref}
@@ -19685,10 +8622,10 @@
 										memberName={(id) =>
 											s.workspaceMembers.find((member) => member.user_id === id)?.name ??
 											$t('forms.fieldValue.unknownMember')}
-										canEdit={!!panelRecord && canChangeRecord(panelRecord, 'record.update')}
-										canDelete={!!panelRecord && canChangeRecord(panelRecord, 'record.delete')}
+										canEdit={!!s.panelRecord && canChangeRecord(s.panelRecord, 'record.update')}
+										canDelete={!!s.panelRecord && canChangeRecord(s.panelRecord, 'record.delete')}
 										canRestore={s.lastDeletedRecord?.id === s.panelRecordId}
-										showConfigBadges={canDesign}
+										showConfigBadges={s.canDesign}
 										configBadges={(field) =>
 											[
 												memberFieldHidden(field) && $t('forms.recordPanel.configHidden'),
@@ -19698,24 +8635,24 @@
 											].filter((label): label is string => !!label)}
 										isHiddenByCondition={recordFieldHiddenByCondition}
 										plugins={{
-											workspaceId,
-											projectId,
+											workspaceId: s.workspaceId,
+											projectId: s.projectId,
 											surface: s.recordPluginActions,
-											enabled: selectedForm.project_id === projectId
+											enabled: s.selectedForm.project_id === s.projectId
 										}}
 										width={s.panelWidth}
 										inert={s.recordEditorOpen}
 										onclose={() => closeRecordPanel()}
 										onprev={() => stepRecordPanel(-1)}
 										onnext={() => stepRecordPanel(1)}
-										onedit={() => panelRecord && openRecordEditDrawer(panelRecord)}
-										ondelete={() => panelRecord && void handleDeleteRecord(panelRecord)}
+										onedit={() => s.panelRecord && openRecordEditDrawer(s.panelRecord)}
+										ondelete={() => s.panelRecord && void handleDeleteRecord(s.panelRecord)}
 										onrestore={() => void handleRestoreLastDeletedRecord()}
 										onretry={() => s.panelRecordId && void openRecordPanel(s.panelRecordId, 'none')}
 										onshowall={() => showView(precedence.ALL_RECORDS_VIEW_ID, { remember: false })}
 										onresize={(px) => {
 											s.panelWidth = px;
-											arrangement.writePanelWidth(currentUserId, px);
+											arrangement.writePanelWidth(s.currentUserId, px);
 										}}
 										onopenrelation={(id, sameForm, event) => {
 											if (!sameForm) return;
@@ -19739,7 +8676,7 @@
 							<aside
 								class="rounded-card border border-line bg-raised"
 								data-record-detail-drawer={s.selectedRecord?.id ?? ''}
-								data-record-detail-url-record={detailUrlRecordId}
+								data-record-detail-url-record={s.detailUrlRecordId}
 							>
 								{#if s.selectedRecord}
 									<div class="border-b border-line p-4">
@@ -19761,11 +8698,11 @@
 											</div>
 
 											<div class="flex flex-wrap justify-end gap-2">
-												{#if selectedForm?.key === 'order_line'}
+												{#if s.selectedForm?.key === 'order_line'}
 													<CreatorPluginLink
-														{workspaceId}
-														{projectId}
-														formKey={selectedForm.key}
+														workspaceId={s.workspaceId}
+														projectId={s.projectId}
+														formKey={s.selectedForm.key}
 														slot="form.record.actions"
 													/>
 												{/if}
@@ -19796,12 +8733,12 @@
 										</div>
 									</div>
 
-									{#if s.selectedRecord.project_id === projectId}
-										{#if selectedForm?.key === 'order_line'}
+									{#if s.selectedRecord.project_id === s.projectId}
+										{#if s.selectedForm?.key === 'order_line'}
 											<CreatorPluginLink
-												{workspaceId}
-												{projectId}
-												formKey={selectedForm.key}
+												workspaceId={s.workspaceId}
+												projectId={s.projectId}
+												formKey={s.selectedForm.key}
 												slot="form.record.detail"
 											/>
 										{/if}
@@ -21092,7 +10029,7 @@
 										<div
 											class="mt-4 border-t border-line pt-4"
 											data-record-detail-event-history={s.selectedRecord.id}
-											data-record-detail-event-count={selectedRecordEvents.length}
+											data-record-detail-event-count={s.selectedRecordEvents.length}
 										>
 											<div class="mb-3 flex items-center gap-2">
 												<FileText class="h-4 w-4 text-fg-muted" aria-hidden="true" />
@@ -21103,7 +10040,7 @@
 											</div>
 
 											<div class="space-y-2">
-												{#each selectedRecordEvents.slice(0, 5) as event}
+												{#each s.selectedRecordEvents.slice(0, 5) as event}
 													<details
 														class="rounded-card border border-line px-3 py-2 text-xs"
 														data-record-detail-event={event.id}
@@ -21165,7 +10102,7 @@
 													</details>
 												{/each}
 
-												{#if selectedRecordEvents.length === 0}
+												{#if s.selectedRecordEvents.length === 0}
 													<p
 														class="text-sm text-fg-muted"
 														data-record-detail-event-empty={s.selectedRecord.id}
@@ -21258,7 +10195,7 @@
 							type="button"
 							class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 							onclick={exportImportTemplate}
-							disabled={!selectedForm || visibleFields.length === 0}
+							disabled={!s.selectedForm || s.visibleFields.length === 0}
 							data-import-template-export
 							data-import-template-exported={s.exportedImportTemplate ? 'true' : undefined}
 						>
@@ -21357,7 +10294,7 @@
 								<option value="__skip">{$t('forms.importMappingSkip')}</option>
 								<option value="__title">{$t('forms.recordTitle')}</option>
 
-								{#each fields as field}
+								{#each s.fields as field}
 									<option value={field.key}>{fieldLabel(field)}</option>
 								{/each}
 							</select>
