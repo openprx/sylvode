@@ -4832,9 +4832,11 @@
 
 		if (intensity <= 0) return '';
 
-		const opacity = (0.06 + (intensity / 100) * 0.18).toFixed(3);
+		// A sequential ramp from 6% to 24% of the chart-1 token over the cell's own ground, so it
+		// follows the theme. Proposed formula: the specification defines no ramp token.
+		const share = (6 + (intensity / 100) * 18).toFixed(1);
 
-		return `background-color: rgba(37, 99, 235, ${opacity});`;
+		return `background-color: color-mix(in srgb, var(--rf-chart-1) ${share}%, transparent);`;
 	}
 
 	function viewCalendarRecurrence(value: unknown): ViewCalendarRecurrence {
