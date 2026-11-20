@@ -15,6 +15,7 @@
 		"smoke:project-template": "node scripts/smoke-project-template-wizard.mjs",
 		"smoke:template-work-items": "node scripts/smoke-template-work-items.mjs",
 		"smoke:forms-record-list": "node scripts/smoke-forms-record-list.mjs",
+		"smoke:forms-page-interactions": "node scripts/smoke-forms-page-interactions.mjs",
 		"test:forms-page": "node scripts/run-forms-page-tests.mjs",
 		"forms-split:dom": "node scripts/forms-split/forms-dom-equivalence.mjs",
 		"test:record-values": "bun tests/record-values-roundtrip.test.ts",
