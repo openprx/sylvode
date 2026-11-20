@@ -119,7 +119,7 @@
 	}
 
 	function changeRow(event: Event, id: string, shiftHeld = false) {
-		const on = (event.currentTarget as HTMLInputElement).checked;
+		const on = (event.target as HTMLInputElement).checked;
 		selected = shiftHeld ? setRange(ids, selected, anchorId, id, on) : setRow(selected, id, on);
 		anchorId = id;
 	}
@@ -133,7 +133,7 @@
 		}
 	}
 	function changeAll(event: Event) {
-		selected = setPage(ids, selected, (event.currentTarget as HTMLInputElement).checked);
+		selected = setPage(ids, selected, (event.target as HTMLInputElement).checked);
 		anchorId = null;
 	}
 
@@ -217,16 +217,22 @@
 {/snippet}
 
 {#snippet selectBox(row: T)}
-	<Checkbox
-		checked={selected.has(rowId(row))}
-		aria-label={$t('ui.dataTable.selectRow', { values: { title: titleName(row) } })}
-		onclick={(e) => (shiftOnClick = e.shiftKey)}
+	<!-- Checkbox keeps its own change handler, so the change event is read as it bubbles. -->
+	<span
+		class="box"
+		role="presentation"
 		onchange={(e) => {
 			changeRow(e, rowId(row), shiftOnClick);
 			shiftOnClick = false;
 		}}
-		onkeydown={(e) => rowKeydown(e, rowId(row))}
-	/>
+	>
+		<Checkbox
+			checked={selected.has(rowId(row))}
+			aria-label={$t('ui.dataTable.selectRow', { values: { title: titleName(row) } })}
+			onclick={(e) => (shiftOnClick = e.shiftKey)}
+			onkeydown={(e) => rowKeydown(e, rowId(row))}
+		/>
+	</span>
 {/snippet}
 
 {#snippet stateBlock()}
@@ -259,7 +265,10 @@
 	role="presentation"
 >
 	<div class="sr-only" role="status">
-		{#if selectedCount > 0}{$t('ui.dataTable.selected', { values: { count: selectedCount } })}{/if}
+		{#if selectedCount === 1}{$t('ui.dataTable.selectedOne')}{:else if selectedCount > 1}{$t(
+				'ui.dataTable.selectedMany',
+				{ values: { count: selectedCount } }
+			)}{/if}
 	</div>
 
 	{#if twoLine}
@@ -325,13 +334,14 @@
 					<tr>
 						{#if selectable}
 							<th scope="col" class="check-cell frozen" style:left="0px">
-								<Checkbox
-									checked={header === 'all'}
-									indeterminate={header === 'some'}
-									disabled={ids.length === 0}
-									aria-label={$t('ui.dataTable.selectAll')}
-									onchange={changeAll}
-								/>
+								<span class="box" role="presentation" onchange={changeAll}>
+									<Checkbox
+										checked={header === 'all'}
+										indeterminate={header === 'some'}
+										disabled={ids.length === 0}
+										aria-label={$t('ui.dataTable.selectAll')}
+									/>
+								</span>
 							</th>
 						{/if}
 						{#each columns as column (column.id)}
@@ -474,6 +484,9 @@
 	.end {
 		text-align: end;
 		font-variant-numeric: tabular-nums;
+	}
+	.box {
+		display: contents;
 	}
 	.check-cell {
 		padding: 0 0 0 var(--rf-space-5);
