@@ -1,0 +1,13 @@
+{
+	"ui": {
+		"pageHeader": {
+			"more": "更多操作",
+			"loading": "正在加载",
+			"sampleTitle": "线索",
+			"sampleExport": "导出",
+			"sampleImport": "导入",
+			"sampleNew": "新建记录",
+			"sampleReason": "需要编辑权限才能添加记录"
+		}
+	}
+}
