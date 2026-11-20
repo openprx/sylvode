@@ -423,11 +423,11 @@
 					<li>
 						<details class="relative">
 							<summary
-								class="cursor-pointer rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600"
+								class="cursor-pointer rounded-control border border-input px-3 py-1.5 text-sm"
 								>{$t('plugins.host.more')}</summary
 							>
 							<ul
-								class="absolute left-0 z-20 mt-1 min-w-44 space-y-1 rounded-md border border-slate-300 bg-white p-2 shadow dark:border-slate-600 dark:bg-slate-900"
+								class="absolute left-0 z-20 mt-1 min-w-44 space-y-1 rounded-float border border-overlay-line bg-overlay p-2 shadow-overlay"
 							>
 								{#each detailParts.more as entry (`${entryPluginKey(entry)}:${entry.id}`)}
 									<li>
@@ -453,7 +453,7 @@
 		{#if active}
 			<div
 				id={componentId + '-panel'}
-				class="overflow-hidden rounded-md border border-slate-300 dark:border-slate-600"
+				class="overflow-hidden rounded-card border border-line"
 			>
 				<div class="flex flex-wrap items-center justify-between gap-2 px-3 py-1">
 					<h4 class="text-sm font-medium">
@@ -463,7 +463,7 @@
 						type="button"
 						bind:this={closeButton}
 						onclick={() => close()}
-						class="rounded-md px-2 py-1 text-sm underline"
+						class="rounded-control px-2 py-1 text-sm underline"
 						>{$t('plugins.closePanel')}</button
 					>
 				</div>
@@ -499,7 +499,7 @@
 <dialog
 	bind:this={confirmation}
 	aria-labelledby={`${componentId}-confirm`}
-	class="max-w-md rounded-lg border border-slate-300 bg-white p-5 text-fg shadow-xl backdrop:bg-slate-950/50 dark:border-slate-700 dark:bg-slate-900"
+	class="max-w-md rounded-float border border-overlay-line bg-overlay p-5 text-fg shadow-overlay backdrop:bg-scrim"
 	onclose={() => confirming.settle(false)}
 >
 	<h3 id={`${componentId}-confirm`} class="text-base font-semibold">

@@ -31,10 +31,10 @@
 			{@const Icon = mode.icon}
 			<button
 				type="button"
-				class="inline-flex h-10 items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 {activeMode ===
+				class="inline-flex h-10 items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:text-control {activeMode ===
 				mode.key
-					? 'border-blue-600 text-blue-700 dark:border-blue-300 dark:text-blue-200'
-					: 'border-transparent text-fg-muted hover:border-slate-300 hover:text-fg dark:hover:border-slate-600'}"
+					? 'border-fg text-fg'
+					: 'border-transparent text-fg-muted hover:border-line-strong hover:text-fg'}"
 				aria-current={activeMode === mode.key ? 'page' : undefined}
 				onclick={() => onModeChange?.(mode.key)}
 			>

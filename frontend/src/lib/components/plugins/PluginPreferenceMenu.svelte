@@ -77,7 +77,7 @@
 	<div class="relative inline-block" data-plugin-prefs>
 		<button
 			type="button"
-			class="rounded-md px-2 py-1 text-sm text-fg underline"
+			class="rounded-control px-2 py-1 text-sm text-fg underline"
 			aria-expanded={open}
 			onclick={() => (open = !open)}>{$t('plugins.prefs.menu')}</button
 		>
@@ -85,7 +85,7 @@
 			<div
 				role="group"
 				aria-label={$t('plugins.prefs.menu')}
-				class="absolute right-0 z-30 mt-1 w-80 max-w-[90vw] space-y-3 rounded-md border border-slate-300 bg-white p-3 text-sm text-fg shadow-lg dark:border-slate-600 dark:bg-slate-900"
+				class="absolute right-0 z-30 mt-1 w-80 max-w-[90vw] space-y-3 rounded-float border border-overlay-line bg-overlay p-3 text-sm text-fg shadow-overlay"
 			>
 				{#each slots as group (group.slot)}
 					<section>
@@ -97,7 +97,7 @@
 								{@const up = moveUpPosition(group.entries, item)}
 								{@const down = moveDownPosition(group.entries, item)}
 								<li
-									class="space-y-1 rounded border border-line p-2"
+									class="space-y-1 rounded-card border border-line p-2"
 									data-plugin-pref={itemKey(item)}
 								>
 									<p class="font-medium">
@@ -131,14 +131,14 @@
 										{/if}
 										<button
 											type="button"
-											class="underline disabled:opacity-50"
+											class="underline disabled:text-control"
 											disabled={busy || up === null}
 											onclick={() => up !== null && update(item, { position: up })}
 											>{$t('plugins.prefs.moveUp')}</button
 										>
 										<button
 											type="button"
-											class="underline disabled:opacity-50"
+											class="underline disabled:text-control"
 											disabled={busy || down === null}
 											onclick={() => down !== null && update(item, { position: down })}
 											>{$t('plugins.prefs.moveDown')}</button
@@ -161,7 +161,7 @@
 											step="1"
 											value={effectivePosition(item)}
 											disabled={busy}
-											class="w-16 rounded border border-slate-300 bg-white px-1 py-0.5 dark:border-slate-600 dark:bg-slate-800"
+											class="w-16 rounded-control border border-input bg-field px-1 py-0.5"
 											onchange={(event) => setPosition(item, event.currentTarget.value)}
 										/>
 									</label>

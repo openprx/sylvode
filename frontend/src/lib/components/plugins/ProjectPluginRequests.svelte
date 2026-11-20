@@ -72,7 +72,7 @@
 {#if offered || failed}
 	<section
 		aria-labelledby="plugin-library-requests"
-		class="space-y-3 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+		class="space-y-3 rounded-card border border-line bg-raised p-4"
 	>
 		<h2 id="plugin-library-requests" class="font-semibold">{$t('plugins.library.requests')}</h2>
 		{#if failed}
@@ -106,7 +106,7 @@
 							</Button>
 						</div>
 						{#if selected?.source_id === item.source_id}
-							<div class="space-y-3 border-l-2 border-blue-500 pl-3 text-sm">
+							<div class="space-y-3 border-l-2 border-line-strong pl-3 text-sm">
 								<p>{$t('plugins.library.submittedBy', { values: { owner: item.owner_id } })}</p>
 								<p class="break-all font-mono text-xs">SHA-256 {item.package_sha256}</p>
 								{#if isV3(manifest)}

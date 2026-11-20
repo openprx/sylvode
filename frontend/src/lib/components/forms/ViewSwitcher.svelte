@@ -134,13 +134,13 @@
 	}
 
 	const optionClass =
-		'flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-fg';
+		'flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-start text-sm text-fg';
 </script>
 
 <button
 	type="button"
 	bind:this={button}
-	class="inline-flex h-8 max-w-[18rem] items-center gap-1.5 rounded-md px-2 text-sm font-semibold text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
+	class="inline-flex h-8 max-w-[18rem] items-center gap-1.5 rounded-control px-2 text-sm font-semibold text-fg hover:bg-surface"
 	aria-haspopup="listbox"
 	aria-expanded={open}
 	aria-label={`${$t('forms.views.switcherLabel')}: ${currentName}`}
@@ -152,9 +152,9 @@
 	<CurrentIcon class="h-4 w-4 shrink-0 text-fg-muted" aria-hidden="true" />
 	<span class="max-w-[24ch] truncate">{currentName}</span>
 	{#if modified}
-		<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true"></span>
+		<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
 	{/if}
-	<ChevronDown class="h-3.5 w-3.5 shrink-0 text-slate-500" aria-hidden="true" />
+	<ChevronDown class="h-3.5 w-3.5 shrink-0 text-fg-muted" aria-hidden="true" />
 </button>
 
 <Popover
@@ -169,7 +169,7 @@
 	{#if filterable}
 		<input
 			type="search"
-			class="mb-2 h-8 w-full rounded-md border border-slate-300 bg-white px-2 text-sm dark:border-slate-600 dark:bg-slate-800"
+			class="mb-2 h-8 w-full rounded-control border border-input bg-field px-2 text-sm"
 			placeholder={$t('forms.views.filterViews')}
 			aria-label={$t('forms.views.filterViews')}
 			aria-controls="view-switcher-listbox"
@@ -209,9 +209,7 @@
 					role="option"
 					aria-selected={option.id === currentId}
 					tabindex="-1"
-					class="{optionClass} {index === activeIndex
-						? 'bg-slate-100 dark:bg-slate-800'
-						: 'hover:bg-slate-50 dark:hover:bg-slate-800/60'}"
+					class="{optionClass} {index === activeIndex ? 'bg-selected' : 'hover:bg-surface'}"
 					data-view-option={option.id}
 					onclick={() => choose(option.id)}
 					onmouseenter={() => (activeIndex = index)}
@@ -220,19 +218,16 @@
 					<Icon class="h-4 w-4 shrink-0 text-fg-muted" aria-hidden="true" />
 					<span class="min-w-0 flex-1 truncate" title={option.name}>{option.name}</span>
 					{#if view && viewIsPrivate(view)}
-						<Lock class="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+						<Lock class="h-3.5 w-3.5 shrink-0 text-fg-muted" aria-hidden="true" />
 						<span class="sr-only">{$t('forms.views.privateBadge')}</span>
 					{/if}
 					{#if option.id === defaultId}
-						<span
-							class="rounded bg-slate-100 px-1 text-[10px] font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-200"
+						<span class="rounded-control bg-surface px-1 text-[10px] font-medium text-fg-muted"
 							>{$t('forms.views.defaultBadge')}</span
 						>
 					{/if}
 					<Check
-						class="h-4 w-4 shrink-0 {option.id === currentId
-							? 'text-blue-600 dark:text-blue-400'
-							: 'invisible'}"
+						class="h-4 w-4 shrink-0 {option.id === currentId ? 'text-fg' : 'invisible'}"
 						aria-hidden="true"
 					/>
 				</div>
@@ -247,7 +242,7 @@
 						{@const Icon = VIEW_TYPE_ICONS[type]}
 						<button
 							type="button"
-							class="{optionClass} hover:bg-slate-100 focus-visible:bg-slate-100 dark:hover:bg-slate-800 dark:focus-visible:bg-slate-800"
+							class="{optionClass} hover:bg-surface focus-visible:bg-surface"
 							data-view-new-type={type}
 							onclick={() => {
 								close();
@@ -255,7 +250,7 @@
 								oncreate(type);
 							}}
 						>
-							<Icon class="h-4 w-4 text-slate-500" aria-hidden="true" />
+							<Icon class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 							{$t(`forms.views.types.${type}`)}
 						</button>
 					{/each}
@@ -263,7 +258,7 @@
 			{:else}
 				<button
 					type="button"
-					class="{optionClass} hover:bg-slate-100 focus-visible:bg-slate-100 dark:hover:bg-slate-800 dark:focus-visible:bg-slate-800"
+					class="{optionClass} hover:bg-surface focus-visible:bg-surface"
 					aria-expanded={creating}
 					data-view-new
 					onclick={async () => {
@@ -272,7 +267,7 @@
 						listbox?.parentElement?.querySelector<HTMLElement>('[data-view-new-type]')?.focus();
 					}}
 				>
-					<Plus class="h-4 w-4 text-slate-500" aria-hidden="true" />
+					<Plus class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 					{$t('forms.views.newView')}
 				</button>
 			{/if}

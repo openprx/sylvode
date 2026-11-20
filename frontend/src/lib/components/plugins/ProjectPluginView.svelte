@@ -155,14 +155,14 @@
 			{$t('plugins.host.unavailable')}
 		</h1>
 		<p class="text-sm text-fg-muted">{$t('plugins.host.unavailableHint')}</p>
-		<a href={backHref} class="text-sm text-blue-700 underline dark:text-blue-300"
+		<a href={backHref} class="text-sm text-fg underline"
 			>{$t(from ? 'plugins.host.back' : 'plugins.host.backToProject')}</a
 		>
 	</section>
 {:else}
 	<div class="space-y-4">
 		<div class="flex flex-wrap items-center justify-between gap-2">
-			<a href={backHref} class="text-sm text-blue-700 underline dark:text-blue-300"
+			<a href={backHref} class="text-sm text-fg underline"
 				>{$t(from ? 'plugins.host.back' : 'plugins.host.backToProject')}</a
 			>
 			<PluginPreferenceMenu {projectId} items={discovery.items} />
@@ -177,17 +177,17 @@
 						aria-current={item.key === pluginKey && item.contribution.route === route
 							? 'page'
 							: undefined}
-						class="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 aria-[current=page]:bg-slate-100 aria-[current=page]:font-semibold dark:border-slate-600 dark:hover:bg-slate-800 dark:aria-[current=page]:bg-slate-800"
+						class="rounded-control border border-input px-3 py-1.5 text-sm hover:bg-surface aria-[current=page]:bg-selected aria-[current=page]:font-semibold"
 						>{item.contribution.label}</a
 					>
 				{/each}
 				{#if tabs.more.length}
 					<details class="relative">
-						<summary class="cursor-pointer rounded-md px-2 py-1.5 text-sm underline"
+						<summary class="cursor-pointer rounded-control px-2 py-1.5 text-sm underline"
 							>{$t('plugins.host.more')}</summary
 						>
 						<ul
-							class="absolute z-20 mt-1 min-w-40 space-y-1 rounded-md border border-slate-300 bg-white p-2 text-sm shadow dark:border-slate-600 dark:bg-slate-900"
+							class="absolute z-20 mt-1 min-w-40 space-y-1 rounded-float border border-overlay-line bg-overlay p-2 text-sm shadow-overlay"
 						>
 							{#each tabs.more as item (itemKey(item))}
 								<li>
@@ -218,14 +218,14 @@
 			<button
 				type="button"
 				onclick={retry}
-				class="rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600"
+				class="rounded-control border border-input px-3 py-1.5 text-sm"
 				>{$t('plugins.host.retry')}</button
 			>
 		{/if}
 		{#if opened && transport && context}
 			<!-- One frame per open: a later open never reuses a host that is still being removed. -->
 			{#key opened.token}
-				<div class="overflow-hidden rounded-md border border-slate-300 dark:border-slate-600">
+				<div class="overflow-hidden rounded-card border border-line">
 					<PluginFrameHost
 						html={opened.html}
 						webSha256={opened.item.web_sha256}
