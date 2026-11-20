@@ -19,10 +19,16 @@ name.
   a 200-block page and a 5,000-block page. The few updates that remove or re-type a block
   container, or touch the document root, fall back to an exact check. The same updates are
   refused as before (`editor_model_floor_downgrade`). The semantic snapshot now also yields the
-  floor of the state it read, so the host no longer walks a second time. Two differences affect
-  invalid input only: a base document that fails the current rules is no longer re-checked
-  before the import (the check after the import still rejects an invalid result), and an update
-  that is invalid in several ways at once may report a different first reason.
+  floor of the state it read, so the host no longer walks a second time. The guard never trusts
+  the fields of an operation that a client chooses: every deletion on the top-level block list
+  goes to the exact check, which decides from the document's actual state. Three differences
+  affect invalid or hostile input only: a base document that fails the current rules is no
+  longer re-checked before the import (the check after the import still rejects an invalid
+  result); an update that is invalid in several ways at once may report a different first
+  reason; and the editor document, the structure index and its metadata are read through their
+  typed root containers everywhere, so a second root container with the same name and another
+  type no longer makes the floor check and the page reader disagree (before, such a page could
+  fail the floor check on replay until the next snapshot compaction).
 
 ### Fixed
 
