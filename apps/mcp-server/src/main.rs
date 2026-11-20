@@ -3,9 +3,9 @@
 
 use axum::{
     Extension, Json, Router,
-    extract::{Query, Request, State},
-    http::{StatusCode, header},
-    middleware::{self, Next},
+    extract::{Query, State},
+    http::StatusCode,
+    middleware,
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
@@ -15,9 +15,10 @@ use axum::{
 use clap::{CommandFactory, FromArgMatches};
 use mcp_server::cli::{self, Cli, Commands};
 use mcp_server::client::OpenPrClient;
+use mcp_server::oauth::{self, Caller, InboundAuth};
 use mcp_server::protocol::{self, JsonRpcRequest, JsonRpcResponse};
 use mcp_server::server::McpServer;
-use platform::config::{McpRuntime, McpTransport, Secret};
+use platform::config::{McpRuntime, McpTransport};
 use serde::Deserialize;
 use serde_json::json;
 use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
@@ -25,12 +26,6 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio_stream::{StreamExt, wrappers::UnboundedReceiverStream};
 use uuid::Uuid;
-
-/// Longest inbound caller bot token accepted, in bytes.
-///
-/// A bound on a value that is copied into an outbound header and held for the life of one
-/// request. Comfortably above any real Sylvode bot token, which is tens of bytes.
-const MAX_CALLER_TOKEN_LEN: usize = 8 * 1024;
 
 /// Longest time `serve` keeps answering the requests in flight after SIGTERM/SIGINT.
 ///
@@ -78,8 +73,25 @@ async fn run() -> anyhow::Result<()> {
             let shutdown = Shutdown::install()?;
             match settings.transport {
                 McpTransport::Stdio => run_stdio(client, shutdown).await,
-                McpTransport::Http => run_http(&settings.bind_addr, client, shutdown).await,
-                McpTransport::Sse => run_sse(&settings.bind_addr, client, shutdown).await,
+                // Flow is not delegated in this release: `sva_` tokens are refused with 401.
+                McpTransport::Http => {
+                    run_http(
+                        &settings.bind_addr,
+                        client,
+                        Arc::new(InboundAuth::legacy_only()),
+                        shutdown,
+                    )
+                    .await
+                }
+                McpTransport::Sse => {
+                    run_sse(
+                        &settings.bind_addr,
+                        client,
+                        Arc::new(InboundAuth::legacy_only()),
+                        shutdown,
+                    )
+                    .await
+                }
             }
         }
         Commands::Serve(args) => {
@@ -119,8 +131,35 @@ async fn serve(mcp: &McpRuntime) -> anyhow::Result<()> {
         McpTransport::Stdio => {
             run_stdio(cli::build_client(mcp, Some(cli::configured_bot_token(mcp)?))?, shutdown).await
         }
-        McpTransport::Http => run_http(&mcp.bind_addr, cli::build_client(mcp, None)?, shutdown).await,
-        McpTransport::Sse => run_sse(&mcp.bind_addr, cli::build_client(mcp, None)?, shutdown).await,
+        McpTransport::Http => {
+            // Delegated (OAuth) callers are served on `POST /mcp/rpc` of this transport only.
+            let inbound = match &mcp.oauth {
+                Some(oauth) => InboundAuth::from_runtime(oauth, &mcp.api_url).map_err(anyhow::Error::msg)?,
+                None => InboundAuth::legacy_only(),
+            };
+            run_http(
+                &mcp.bind_addr,
+                cli::build_client(mcp, None)?,
+                Arc::new(inbound),
+                shutdown,
+            )
+            .await
+        }
+        McpTransport::Sse => {
+            if mcp.oauth.is_some() {
+                tracing::warn!(
+                    "[mcp] oauth_* keys are set, but delegated access is served on the http transport only; \
+                     the sse transport refuses delegated tokens"
+                );
+            }
+            run_sse(
+                &mcp.bind_addr,
+                cli::build_client(mcp, None)?,
+                Arc::new(InboundAuth::legacy_only()),
+                shutdown,
+            )
+            .await
+        }
     }
 }
 
@@ -227,85 +266,35 @@ async fn serve_until_shutdown(
     Ok(())
 }
 
-/// The bot token one inbound HTTP/SSE request presented, on its way to the API.
-///
-/// Placed in the request extensions by [`require_caller_token`] and taken back out by the
-/// handler. It exists as its own type so that the handler cannot be written without it: the
-/// extractor for a missing extension rejects the request, so the failure mode of forgetting
-/// the middleware is a refusal, not an anonymous call.
-#[derive(Clone)]
-struct CallerToken(Secret);
-
-/// The token out of an `Authorization: Bearer <token>` header, if it is well formed.
-fn bearer_token(header_value: &str) -> Option<&str> {
-    let (scheme, token) = header_value.split_once(' ')?;
-    if !scheme.eq_ignore_ascii_case("bearer") {
-        return None;
-    }
-    let token = token.trim();
-    if token.is_empty() { None } else { Some(token) }
-}
-
-/// The caller's bot token, if the request carries a usable one.
-///
-/// `to_str` limits the value to visible ASCII, which is also what makes it safe to copy into
-/// an outbound header. The length bound is the only judgement passed on the contents:
-/// whether this token names a real, enabled bot with rights to anything is the API's
-/// question, and a verdict reached here would be a second, weaker authenticator sitting in
-/// front of the real one.
-fn caller_token(headers: &header::HeaderMap) -> Option<Secret> {
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(bearer_token)
-        .filter(|token| token.len() <= MAX_CALLER_TOKEN_LEN)
-        .map(Secret::new)
-}
-
-/// Rejects any inbound request that does not carry a caller bot token, and hands the one it
-/// does carry to the handler.
-///
-/// This is the whole inbound authentication story. There is no shared secret, no
-/// configuration that relaxes it and no anonymous path: a networked MCP request is made as
-/// somebody, or it is not made.
-async fn require_caller_token(mut request: Request, next: Next) -> Response {
-    let Some(token) = caller_token(request.headers()) else {
-        // The rejection names no header value, on either the too-long or the absent branch.
-        tracing::warn!(
-            path = %request.uri().path(),
-            "Rejected an inbound MCP request that carried no usable caller bot token"
-        );
-        return (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, "Bearer")],
-            Json(json!({
-                "error": "Missing Authorization: Bearer <caller credential>. This MCP server forwards the actual caller; Flow-only user scopes require a current global-user access token, and legacy bot calls retain workspace authorization."
-            })),
-        )
-            .into_response();
-    };
-
-    request.extensions_mut().insert(CallerToken(token));
-    next.run(request).await
-}
-
-/// Wraps the data carrying routes in the caller token layer.
+/// Wraps the data carrying routes in the inbound authentication layer
+/// ([`oauth::inbound_auth`]) and adds the routes that stay outside it.
 ///
 /// `/health` stays outside it on purpose: it answers a constant `OK`, reads nothing and
 /// discloses nothing a caller who already completed the TCP handshake does not know, and
-/// orchestrator probes have no bot account to authenticate as.
+/// orchestrator probes have no bot account to authenticate as. The protected resource metadata
+/// document is public by definition (RFC 9728): a client reads it before it holds a token.
 fn serve_router(state: SseState, protected: Router<SseState>) -> Router {
-    Router::new()
-        .merge(protected.route_layer(middleware::from_fn(require_caller_token)))
-        .route("/health", get(health_check))
-        .with_state(state)
+    let mut router = Router::new().merge(protected.route_layer(middleware::from_fn_with_state(
+        Arc::clone(&state.inbound),
+        oauth::inbound_auth,
+    )));
+    if let Some(settings) = state.inbound.settings() {
+        router = router.merge(oauth::well_known_routes(settings));
+    }
+    router.route("/health", get(health_check)).with_state(state)
 }
 
-async fn run_http(bind_addr: &str, client: OpenPrClient, shutdown: Shutdown) -> anyhow::Result<()> {
+async fn run_http(
+    bind_addr: &str,
+    client: OpenPrClient,
+    inbound: Arc<InboundAuth>,
+    shutdown: Shutdown,
+) -> anyhow::Result<()> {
     let sessions: SseSessions = Arc::new(Mutex::new(HashMap::new()));
     let state = SseState {
         client,
         sessions: Arc::clone(&sessions),
+        inbound,
     };
 
     let protected = Router::new()
@@ -331,14 +320,10 @@ const INBOUND_AUTH_DESCRIPTION: &str = "per-request caller bearer credential (Au
 
 async fn handle_jsonrpc(
     State(state): State<SseState>,
-    Extension(caller): Extension<CallerToken>,
+    Extension(caller): Extension<Caller>,
     Json(req): Json<JsonRpcRequest>,
-) -> impl IntoResponse {
-    let server = McpServer::new(state.client.acting_as(caller.0));
-    server.handle_request(req).await.map_or_else(
-        || (StatusCode::ACCEPTED, Json(json!({"status": "accepted"}))),
-        |response| (StatusCode::OK, Json(json!(response))),
-    )
+) -> Response {
+    oauth::handle_rpc(&state.client, &state.inbound, caller, req).await
 }
 
 /// Open SSE streams by session id; each entry is the sender that feeds one `GET /sse` stream.
@@ -348,6 +333,7 @@ type SseSessions = Arc<Mutex<HashMap<String, mpsc::UnboundedSender<SseServerEven
 struct SseState {
     client: OpenPrClient,
     sessions: SseSessions,
+    inbound: Arc<InboundAuth>,
 }
 
 #[derive(Debug)]
@@ -376,11 +362,17 @@ struct MessagesQuery {
     session_id: String,
 }
 
-async fn run_sse(bind_addr: &str, client: OpenPrClient, shutdown: Shutdown) -> anyhow::Result<()> {
+async fn run_sse(
+    bind_addr: &str,
+    client: OpenPrClient,
+    inbound: Arc<InboundAuth>,
+    shutdown: Shutdown,
+) -> anyhow::Result<()> {
     let sessions: SseSessions = Arc::new(Mutex::new(HashMap::new()));
     let state = SseState {
         client,
         sessions: Arc::clone(&sessions),
+        inbound,
     };
 
     let protected = Router::new()
@@ -431,10 +423,18 @@ async fn handle_sse_connect(
 /// caller's stream, and would make the identity outlive the request that proved it.
 async fn handle_sse_message(
     State(state): State<SseState>,
-    Extension(caller): Extension<CallerToken>,
+    Extension(caller): Extension<Caller>,
     Query(query): Query<MessagesQuery>,
     Json(req): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
+    // The inbound layer lets a delegated caller through on `POST /mcp/rpc` only; on this route
+    // there is no other kind of caller than a legacy one, and anything else is refused.
+    let Some(token) = caller.into_legacy() else {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "delegated access is available on POST /mcp/rpc only"})),
+        );
+    };
     let sender = state.sessions.lock().await.get(&query.session_id).cloned();
     let Some(sender) = sender else {
         return (StatusCode::NOT_FOUND, Json(json!({"error": "Unknown SSE session_id"})));
@@ -452,7 +452,7 @@ async fn handle_sse_message(
     // Kept for the log below, because `handle_request` consumes the request. A method name
     // is a protocol constant, never a credential or an argument.
     let method = req.method.clone();
-    let server = McpServer::new(state.client.acting_as(caller.0));
+    let server = McpServer::new(state.client.acting_as(token));
     let response = server.handle_request(req).await;
     let Some(response) = response else {
         return (StatusCode::ACCEPTED, Json(json!({"status": "accepted"})));
@@ -492,83 +492,8 @@ async fn health_check() -> impl IntoResponse {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{MAX_CALLER_TOKEN_LEN, bearer_token, caller_token, header};
-    use platform::config::Secret;
-
-    const TOKEN: &str = "opr_caller_bot_token_example";
-
-    #[test]
-    fn bearer_parsing_accepts_only_a_well_formed_bearer_header() {
-        assert_eq!(bearer_token("Bearer abc"), Some("abc"));
-        assert_eq!(bearer_token("bearer  abc  "), Some("abc"));
-        assert_eq!(bearer_token("BEARER abc"), Some("abc"));
-        assert_eq!(bearer_token("Basic abc"), None);
-        assert_eq!(bearer_token("Bearer "), None);
-        assert_eq!(bearer_token("abc"), None);
-    }
-
-    /// Builds the header map an inbound request would arrive with.
-    fn headers(pairs: &[(header::HeaderName, &str)]) -> header::HeaderMap {
-        let mut map = header::HeaderMap::new();
-        for (name, value) in pairs {
-            match header::HeaderValue::from_str(value) {
-                Ok(value) => {
-                    map.insert(name.clone(), value);
-                }
-                Err(error) => panic!("test header value is not a valid header: {error}"),
-            }
-        }
-        map
-    }
-
-    /// The token the caller presented is the token that is carried onward, byte for byte.
-    /// Trimming, re-casing or otherwise "cleaning" it would hand the API a credential the
-    /// caller never sent.
-    #[test]
-    fn the_callers_token_is_taken_verbatim_from_the_authorization_header() {
-        let extracted = caller_token(&headers(&[(header::AUTHORIZATION, &format!("Bearer {TOKEN}"))]));
-        assert_eq!(extracted.as_ref().map(Secret::expose), Some(TOKEN));
-    }
-
-    /// Every way of not presenting a bot token has to come out the same: no identity, which
-    /// the middleware turns into a 401. A `None` here that became "act as the server" is
-    /// exactly the bug this change exists to remove.
-    #[test]
-    fn a_request_without_a_usable_bearer_token_yields_no_identity() {
-        let too_long = "opr_".to_string() + &"x".repeat(MAX_CALLER_TOKEN_LEN);
-        for map in [
-            headers(&[]),
-            headers(&[(header::AUTHORIZATION, "")]),
-            headers(&[(header::AUTHORIZATION, "Bearer")]),
-            headers(&[(header::AUTHORIZATION, "Bearer   ")]),
-            headers(&[(header::AUTHORIZATION, &format!("Basic {TOKEN}"))]),
-            headers(&[(header::AUTHORIZATION, TOKEN)]),
-            // A different header is not the Authorization header, however suggestive.
-            headers(&[(header::PROXY_AUTHORIZATION, &format!("Bearer {TOKEN}"))]),
-            headers(&[(header::AUTHORIZATION, &format!("Bearer {too_long}"))]),
-        ] {
-            assert!(
-                caller_token(&map).is_none(),
-                "a request with {map:?} was given an identity"
-            );
-        }
-    }
-
-    /// The bound is on the token, not on the whole header, and a token at the limit is
-    /// still served: a cap that rejected legitimate credentials would be an availability
-    /// bug wearing a security hat.
-    #[test]
-    fn a_token_at_the_length_limit_is_still_accepted() {
-        let at_limit = "x".repeat(MAX_CALLER_TOKEN_LEN);
-        let extracted = caller_token(&headers(&[(header::AUTHORIZATION, &format!("Bearer {at_limit}"))]));
-        assert_eq!(extracted.as_ref().map(Secret::expose), Some(at_limit.as_str()));
-    }
-}
-
-#[cfg(test)]
 mod sse_delivery_tests {
-    use super::{CallerToken, MessagesQuery, SseServerEvent, SseState, handle_sse_message};
+    use super::{Caller, InboundAuth, MessagesQuery, SseServerEvent, SseState, handle_sse_message};
     use axum::{
         Extension, Json,
         extract::{Query, State},
@@ -652,10 +577,11 @@ mod sse_delivery_tests {
         let state = SseState {
             client,
             sessions: Arc::clone(&sessions),
+            inbound: Arc::new(InboundAuth::legacy_only()),
         };
         let refusal = handle_sse_message(
             State(state),
-            Extension(CallerToken(Secret::new(CALLER_TOKEN))),
+            Extension(Caller::Legacy(Secret::new(CALLER_TOKEN))),
             Query(MessagesQuery {
                 session_id: session_id.clone(),
             }),

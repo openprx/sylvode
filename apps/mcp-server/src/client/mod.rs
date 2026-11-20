@@ -109,6 +109,13 @@ pub const TRANSPORT_LABEL_CLI_TOOLS_CALL: &str = "cli_tools_call";
 const MCP_TOOL_HEADERS: [&str; 2] = ["X-Sylvode-MCP-Tool", "X-OpenPR-MCP-Tool"];
 const MCP_SURFACE_HEADERS: [&str; 2] = ["X-Sylvode-MCP-Surface", "X-OpenPR-MCP-Surface"];
 
+/// Names the forwarding component on a delegated call (`X-Sylvode-Forwarded-By: mcp-server`).
+const FORWARDED_BY_HEADER: &str = "X-Sylvode-Forwarded-By";
+/// Value of [`FORWARDED_BY_HEADER`].
+pub const FORWARDED_BY_VALUE: &str = "mcp-server";
+/// Carries the internal forwarding credential on a delegated call.
+const FORWARD_AUTH_HEADER: &str = "X-Sylvode-Forward-Auth";
+
 /// The audit label a configured transport is reported under.
 ///
 /// The three labels are a stable wire contract with the API, which stores them verbatim, so
@@ -163,6 +170,13 @@ pub struct OpenPrClient {
     transport_label: &'static str,
     operation_tool_name: Option<String>,
     flow_only: bool,
+    /// The internal forwarding credential, present only on a client acting for a delegated
+    /// (OAuth) caller. Every outbound request of such a client carries it; no other client does.
+    forward_credential: Option<Secret>,
+    /// HTTP client that never follows a redirect. A delegated call carries the forwarding
+    /// credential in a custom header, which a redirect would copy to whatever host the answer
+    /// names, so those calls are made with this client instead of `client`.
+    no_redirect_client: Client,
 }
 
 fn join_query(params: &[String]) -> String {
@@ -251,6 +265,11 @@ impl OpenPrClient {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+        let no_redirect_client = Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
         Ok(Self {
             client,
             base_url: config.base_url,
@@ -259,6 +278,8 @@ impl OpenPrClient {
             transport_label: config.transport_label,
             operation_tool_name: None,
             flow_only: false,
+            forward_credential: None,
+            no_redirect_client,
         })
     }
 
@@ -295,6 +316,32 @@ impl OpenPrClient {
             transport_label: self.transport_label,
             operation_tool_name: self.operation_tool_name.clone(),
             flow_only: self.flow_only,
+            // A legacy caller never carries the forwarding credential, so it cannot obtain the
+            // delegated surface at the API.
+            forward_credential: None,
+            no_redirect_client: self.no_redirect_client.clone(),
+        }
+    }
+
+    /// The same client, speaking to the API for a delegated (OAuth) caller.
+    ///
+    /// `token` is the caller's own MCP-audience access token, forwarded as `Authorization: Bearer`
+    /// together with the internal forwarding credential (deviation D2 of the authorization
+    /// contract). `workspace_id` is the workspace of the token's grant, taken from the token
+    /// context and nowhere else: the configured `[mcp] workspace_id` plays no part. Requests go
+    /// out through a client that does not follow redirects.
+    #[must_use]
+    pub fn acting_as_delegated(&self, token: Secret, workspace_id: &str, forward_credential: Secret) -> Self {
+        Self {
+            client: self.no_redirect_client.clone(),
+            base_url: self.base_url.clone(),
+            credential: Some(token),
+            workspace_id: workspace_id.to_string(),
+            transport_label: self.transport_label,
+            operation_tool_name: self.operation_tool_name.clone(),
+            flow_only: self.flow_only,
+            forward_credential: Some(forward_credential),
+            no_redirect_client: self.no_redirect_client.clone(),
         }
     }
 
@@ -309,6 +356,8 @@ impl OpenPrClient {
             transport_label,
             operation_tool_name: self.operation_tool_name.clone(),
             flow_only: self.flow_only,
+            forward_credential: self.forward_credential.clone(),
+            no_redirect_client: self.no_redirect_client.clone(),
         }
     }
 
@@ -332,6 +381,7 @@ impl OpenPrClient {
     }
 
     pub(crate) fn operation_headers(&self, request: RequestBuilder) -> RequestBuilder {
+        let request = self.forwarding_headers(request);
         let request = MCP_SURFACE_HEADERS
             .iter()
             .fold(request, |request, name| request.header(*name, self.transport_label));
@@ -341,6 +391,25 @@ impl OpenPrClient {
                 .fold(request, |request, name| request.header(*name, tool_name)),
             None => request,
         }
+    }
+
+    /// The forwarding headers of a delegated call; the request unchanged for every other caller.
+    ///
+    /// The credential value is marked sensitive so that no debug output of the request shows it.
+    fn forwarding_headers(&self, request: RequestBuilder) -> RequestBuilder {
+        let Some(credential) = self.forward_credential.as_ref() else {
+            return request;
+        };
+        // The configuration validates the secret's shape; if a value that cannot be a header
+        // still arrives, the request goes out without it and the API refuses the token.
+        let Ok(mut value) = reqwest::header::HeaderValue::from_str(credential.expose()) else {
+            tracing::error!("The forwarding credential cannot be sent as a header value; the API will refuse the call");
+            return request;
+        };
+        value.set_sensitive(true);
+        request
+            .header(FORWARDED_BY_HEADER, FORWARDED_BY_VALUE)
+            .header(FORWARD_AUTH_HEADER, value)
     }
 
     /// Sends an authenticated request and rejects both transport-level failures and
