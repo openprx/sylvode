@@ -52,6 +52,8 @@ mod prose_projection;
 pub mod reserved_roots;
 pub mod semantic;
 #[cfg(test)]
+mod test_alloc;
+#[cfg(test)]
 mod walk_counter;
 
 pub use engine::{CollabEngine, Diff, EngineMetadata, LoroCollabEngine, metadata};
