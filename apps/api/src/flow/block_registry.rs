@@ -1258,6 +1258,9 @@ pub(crate) mod fixtures {
 }
 
 #[cfg(test)]
+mod incremental_tests;
+
+#[cfg(test)]
 #[allow(clippy::indexing_slicing, clippy::print_stderr)]
 mod tests {
     use super::*;
