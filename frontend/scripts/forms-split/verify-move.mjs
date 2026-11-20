@@ -171,7 +171,6 @@ for (const [index, hunk] of hunks.entries()) {
 if (!slotRemoved) fail(`slot line "${slotLine}" was not replaced`);
 for (const tag of declared.route) {
 	const count = seenTags.filter((name) => name === tag).length;
-	if (count !== expectedCount)
-		fail(`tag ${tag} replaces ${count} blocks, expected ${expectedCount}`);
+	if (count !== 1) fail(`tag ${tag} replaces ${count} blocks, expected 1`);
 }
 console.log(`verify-move: ${id} ok (${seenTags.length} blocks, slot replaced)`);
