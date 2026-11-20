@@ -92,7 +92,7 @@
 			{#if overflowing || expanded}
 				<button
 					type="button"
-					class="mt-1 inline-flex min-h-6 items-center rounded text-xs font-medium text-blue-700 hover:underline dark:text-blue-300"
+					class="mt-1 inline-flex min-h-6 items-center rounded-control text-xs font-medium text-fg hover:underline"
 					aria-expanded={expanded}
 					onclick={() => (expanded = !expanded)}
 					>{expanded ? $t('forms.recordPanel.showLess') : $t('forms.recordPanel.showMore')}</button
@@ -124,14 +124,14 @@
 	>
 {:else if display.kind === 'rating'}
 	<span
-		class="inline-flex items-center gap-0.5 text-amber-500 {panel ? 'text-base' : 'text-xs'}"
+		class="inline-flex items-center gap-0.5 text-warning {panel ? 'text-base' : 'text-xs'}"
 		role="img"
 		aria-label={$t('forms.fieldValue.ratingOf', {
 			values: { value: display.value, max: display.max }
 		})}
 	>
 		{#each stars(display.value, display.max) as filled, index (index)}
-			<span aria-hidden="true" class={filled ? '' : 'text-slate-300 dark:text-slate-600'}
+			<span aria-hidden="true" class={filled ? '' : 'text-fg-muted'}
 				>{filled ? '★' : '☆'}</span
 			>
 		{/each}
@@ -143,13 +143,13 @@
 		aria-label={$t('forms.fieldValue.percent', { values: { value: Math.round(display.value) } })}
 	>
 		<span
-			class="relative h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700 {panel
+			class="relative h-1.5 overflow-hidden rounded-full bg-surface {panel
 				? 'w-30'
 				: 'w-12'}"
 			aria-hidden="true"
 		>
 			<span
-				class="absolute inset-y-0 start-0 rounded-full bg-blue-600 dark:bg-blue-400"
+				class="absolute inset-y-0 start-0 rounded-full bg-primary"
 				style={`width:${display.value}%`}
 			></span>
 		</span>
@@ -176,7 +176,7 @@
 			<Check class="h-4 w-4 text-success" aria-hidden="true" />
 			<span>{$t('forms.fieldValue.yes')}</span>
 		{:else}
-			<Minus class="h-4 w-4 text-slate-400" aria-hidden="true" />
+			<Minus class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 			<span>{$t('forms.fieldValue.no')}</span>
 		{/if}
 	</span>
@@ -204,7 +204,7 @@
 {:else if display.kind === 'link'}
 	<a
 		href={display.href}
-		class="break-all text-blue-700 underline-offset-2 hover:underline dark:text-blue-300 {panel
+		class="break-all text-fg underline-offset-2 hover:underline {panel
 			? ''
 			: 'block truncate'}"
 		dir={display.scheme === 'tel' ? 'ltr' : undefined}
@@ -225,7 +225,7 @@
 			{#each display.items as item, index (item.src + index)}
 				<button
 					type="button"
-					class="h-18 w-18 overflow-hidden rounded-md border border-line bg-slate-50 dark:bg-slate-800"
+					class="h-18 w-18 overflow-hidden rounded-control border border-line bg-surface"
 					aria-label={$t('forms.fieldValue.openImage', { values: { index: index + 1 } })}
 					data-field-value-image={index}
 					onclick={(event) => onpreviewimage?.(display.items, index, event.currentTarget)}
@@ -244,7 +244,7 @@
 			<img
 				src={display.items[0].src}
 				alt={display.items[0].alt}
-				class="h-6 w-6 rounded object-cover"
+				class="h-6 w-6 rounded-control object-cover"
 				loading="lazy"
 			/>
 			{#if display.items.length > 1}
@@ -264,7 +264,7 @@
 					{#if item.thumb && !item.blocked}
 						<button
 							type="button"
-							class="h-8 w-8 shrink-0 overflow-hidden rounded border border-line"
+							class="h-8 w-8 shrink-0 overflow-hidden rounded-control border border-line"
 							aria-label={$t('forms.fieldValue.openImage', { values: { index: index + 1 } })}
 							onclick={(event) =>
 								onpreviewimage?.(
@@ -276,7 +276,7 @@
 							<img src={item.thumb} alt="" class="h-full w-full object-cover" loading="lazy" />
 						</button>
 					{:else}
-						<FileText class="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+						<FileText class="h-4 w-4 shrink-0 text-fg-muted" aria-hidden="true" />
 					{/if}
 					<span class="min-w-0 flex-1">
 						<span class="block truncate" title={item.name}>{item.name}</span>
@@ -296,13 +296,13 @@
 							href={item.href}
 							target="_blank"
 							rel="noopener noreferrer"
-							class="inline-flex min-h-6 items-center rounded px-1 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300"
+							class="inline-flex min-h-6 items-center rounded-control px-1 text-xs font-medium text-fg hover:underline"
 							>{$t('forms.fieldValue.open')}</a
 						>
 						<a
 							href={item.download}
 							download={item.name}
-							class="inline-flex min-h-6 items-center rounded px-1 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300"
+							class="inline-flex min-h-6 items-center rounded-control px-1 text-xs font-medium text-fg hover:underline"
 							>{$t('forms.fieldValue.download')}</a
 						>
 					{/if}
@@ -326,7 +326,7 @@
 	{:else if panel}
 		<button
 			type="button"
-			class="rounded-md border border-line bg-white p-1"
+			class="rounded-control border border-line bg-raised p-1"
 			onclick={(event) =>
 				onpreviewimage?.(
 					[
@@ -343,12 +343,12 @@
 			<img
 				src={display.src}
 				alt={$t('forms.fieldValue.signatureAlt', { values: { field: label } })}
-				class="h-16 w-40 bg-white object-contain"
+				class="h-16 w-40 bg-raised object-contain"
 			/>
 		</button>
 	{:else}
 		<span
-			class="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-fg dark:bg-slate-800"
+			class="inline-flex items-center gap-1 rounded-control bg-surface px-1.5 py-0.5 text-xs text-fg"
 		>
 			<PenLine class="h-3 w-3" aria-hidden="true" />
 			{$t('forms.fieldValue.signed')}
@@ -362,7 +362,7 @@
 	{:else}
 		<a
 			href={recordHref?.(display.recordId)}
-			class="inline-flex min-h-6 max-w-full items-center gap-1 rounded-md border border-line px-2 py-0.5 text-sm text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+			class="inline-flex min-h-6 max-w-full items-center gap-1 rounded-control border border-line px-2 py-0.5 text-sm text-fg hover:bg-surface"
 			data-row-ignore
 			data-field-value-relation={display.recordId}
 			onclick={(event) => openRelation(event, display.recordId, display.sameForm)}
