@@ -359,7 +359,7 @@
 	<label class="flex flex-col gap-1 text-sm">
 		<span class="font-medium">{$t(`plugins.creator.field.${field}`)}</span>
 		<input
-			class="rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+			class="rounded-control border border-input bg-transparent px-3 py-2"
 			value={orderDraft[field]}
 			maxlength={field.endsWith('Text') ? 320 : 120}
 			required
@@ -381,7 +381,7 @@
 	<label class="flex flex-col gap-1 text-sm">
 		<span class="font-medium">{$t(`plugins.creatorV3.field.${field}`)}</span>
 		<input
-			class="rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+			class="rounded-control border border-input bg-transparent px-3 py-2"
 			{value}
 			maxlength={max}
 			disabled={building || installing}
@@ -394,7 +394,7 @@
 
 <div class="mx-auto max-w-5xl space-y-5 px-1">
 	<header class="space-y-2">
-		<a href={settingsUrl} class="text-sm text-blue-700 underline dark:text-blue-300"
+		<a href={settingsUrl} class="text-sm text-fg underline"
 			>{$t(personal ? 'plugins.library.title' : 'plugins.projectSettings')}</a
 		>
 		<h1 class="text-2xl font-semibold">{$t('plugins.creator.title')}</h1>
@@ -405,7 +405,7 @@
 	{#if error}
 		<p
 			role="alert"
-			class="rounded border border-red-300 px-3 py-2 text-sm text-danger dark:border-red-700"
+			class="rounded-control border border-danger px-3 py-2 text-sm text-danger"
 		>
 			{$t(error)}
 			{backendMessage}
@@ -414,7 +414,7 @@
 	{#if checking}<p role="status" class="text-sm">{$t('common.loading')}</p>{/if}
 	{#if allowed}
 		<section
-			class="space-y-4 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+			class="space-y-4 rounded-card border border-line bg-raised p-4"
 		>
 			<div class="flex flex-wrap items-center justify-between gap-3">
 				<h2 class="font-semibold">{$t('plugins.creator.draft')}</h2>
@@ -424,7 +424,7 @@
 						value={templateId}
 						disabled={building || installing}
 						onchange={(event) => chooseTemplate(event.currentTarget.value as CreatorTemplateId)}
-						class="rounded border border-slate-300 bg-transparent px-3 py-1 dark:border-slate-700"
+						class="rounded-control border border-input bg-transparent px-3 py-1"
 					>
 						{#each Object.keys(creatorTemplates) as id (id)}
 							<option value={id}>{$t(`plugins.creatorV3.templateName.${id}`)}</option>
@@ -464,7 +464,7 @@
 							{@const item = uiDraft.contributions.find((entry) => entry.slot === slot)}
 							{#if item}
 								<fieldset
-									class="space-y-2 rounded border border-slate-300 p-3 dark:border-slate-700"
+									class="space-y-2 rounded-card border border-line p-3"
 								>
 									<legend class="px-1 text-sm font-medium">{$t(slotLabelKey(slot))}</legend>
 									<label class="flex items-start gap-2 text-sm">
@@ -516,7 +516,7 @@
 							{$t('plugins.creatorV3.needLocation')}
 						</p>{/if}
 					<fieldset
-						class="grid gap-3 rounded border border-slate-300 p-3 sm:grid-cols-2 dark:border-slate-700"
+						class="grid gap-3 rounded-card border border-line p-3 sm:grid-cols-2"
 					>
 						<legend class="px-1 text-sm font-medium">{$t('plugins.creatorV3.reads')}</legend>
 						{@render uiInput(
@@ -543,7 +543,7 @@
 									editUi({
 										presentation: event.currentTarget.value === 'summary' ? 'summary' : 'table'
 									})}
-								class="rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+								class="rounded-control border border-input bg-transparent px-3 py-2"
 							>
 								<option value="table">{$t('plugins.creatorV3.presentation.table')}</option>
 								<option value="summary">{$t('plugins.creatorV3.presentation.summary')}</option>
@@ -568,7 +568,7 @@
 					</p>
 					<div class="grid gap-3 sm:grid-cols-2">
 						{#each recordOrigin === actionSlot ? [actionSlot, detailSlot] : [detailSlot, actionSlot] as slot (slot)}
-							<fieldset class="space-y-2 rounded border border-slate-300 p-3 dark:border-slate-700">
+							<fieldset class="space-y-2 rounded-card border border-line p-3">
 								<legend class="px-1 text-sm font-medium">{$t(`plugins.slot.${slot}`)}</legend>
 								{#each slot === actionSlot ? actions : details as field (field)}{@render fieldEditor(
 										field
@@ -590,7 +590,7 @@
 		</section>
 		{#if bundle}
 			<section
-				class="space-y-3 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+				class="space-y-3 rounded-card border border-line bg-raised p-4"
 			>
 				<h2 class="font-semibold" tabindex="-1" bind:this={reviewStart}>
 					{$t('plugins.creator.review')}
@@ -610,7 +610,7 @@
 						{$t('plugins.creatorV3.slotChoice')}
 						<select
 							bind:value={previewContribution}
-							class="rounded border border-slate-300 bg-transparent px-3 py-1 dark:border-slate-700"
+							class="rounded-control border border-input bg-transparent px-3 py-1"
 						>
 							{#each review.contributions as item (item.id)}
 								<option value={item.id}>{item.label} · {$t(slotLabelKey(item.slot))}</option>
@@ -642,7 +642,7 @@
 						{$t('plugins.creator.previewLocation')}
 						<select
 							bind:value={previewSlot}
-							class="rounded border border-slate-300 bg-transparent px-3 py-1 dark:border-slate-700"
+							class="rounded-control border border-input bg-transparent px-3 py-1"
 						>
 							<option value={detailSlot}>{$t(`plugins.slot.${detailSlot}`)}</option>
 							<option value={actionSlot}>{$t(`plugins.slot.${actionSlot}`)}</option>
@@ -659,7 +659,7 @@
 						/>
 					{/key}
 				{/if}
-				<div class="space-y-2 border-t border-slate-300 pt-3 text-sm dark:border-slate-700">
+				<div class="space-y-2 border-t border-line pt-3 text-sm">
 					<h3 class="font-medium">
 						{bundle.upload.manifest.name} · v{bundle.upload.manifest.version}
 					</h3>
@@ -726,7 +726,7 @@
 					</div>
 					{#if installed}
 						<p role="status">{$t(personal ? 'plugins.library.saved' : 'plugins.installed')}</p>
-						<a href={settingsUrl} class="text-blue-700 underline dark:text-blue-300"
+						<a href={settingsUrl} class="text-fg underline"
 							>{$t(personal ? 'plugins.library.title' : 'plugins.creator.reviewInstalled')}</a
 						>
 					{/if}

@@ -168,7 +168,7 @@
 </script>
 
 <article
-	class="space-y-4 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+	class="space-y-4 rounded-card border border-line bg-raised p-4"
 >
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div class="min-w-0 space-y-1">
@@ -208,7 +208,7 @@
 	{/if}
 
 	{#if open && !item.archived_at && calculator}
-		<form class="space-y-3 border-l-2 border-blue-500 pl-3" onsubmit={preview}>
+		<form class="space-y-3 border-l-2 border-line-strong pl-3" onsubmit={preview}>
 			<div class="grid max-w-lg gap-3 sm:grid-cols-2">
 				<label class="grid gap-1 text-sm">
 					{$t('plugins.library.quantity')}
@@ -223,7 +223,7 @@
 						oninput={() => {
 							amount = undefined;
 						}}
-						class="w-full rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+						class="w-full rounded-control border border-input bg-transparent px-3 py-2"
 					/>
 				</label>
 				<label class="grid gap-1 text-sm">
@@ -239,7 +239,7 @@
 						oninput={() => {
 							amount = undefined;
 						}}
-						class="w-full rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+						class="w-full rounded-control border border-input bg-transparent px-3 py-2"
 					/>
 				</label>
 			</div>
@@ -265,7 +265,7 @@
 					{$t('plugins.creatorV3.slotChoice')}
 					<select
 						bind:value={v3Contribution}
-						class="rounded border border-slate-300 bg-transparent px-3 py-1 dark:border-slate-700"
+						class="rounded-control border border-input bg-transparent px-3 py-1"
 					>
 						{#each v3.contributions as contribution (contribution.id)}
 							<option value={contribution.id}>
@@ -319,7 +319,7 @@
 							{#if project?.can_manage && link.status === 'attached'}
 								<a
 									href={`/workspace/${encodeURIComponent(project.workspace_id)}/projects/${encodeURIComponent(project.id)}/settings/plugins`}
-									class="text-blue-700 underline dark:text-blue-300"
+									class="text-fg underline"
 									>{$t('plugins.library.manageInProject')}</a
 								>
 							{/if}
@@ -375,7 +375,7 @@
 					<select
 						bind:value={projectId}
 						disabled={!!pending}
-						class="w-full rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+						class="w-full rounded-control border border-input bg-transparent px-3 py-2"
 					>
 						<option value="">{$t('plugins.library.chooseProject')}</option>
 						{#each canConnect as project (project.id)}
