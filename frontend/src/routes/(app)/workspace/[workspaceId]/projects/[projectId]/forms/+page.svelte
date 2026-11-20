@@ -12526,7 +12526,7 @@
 {#snippet formsSessionNotice()}
 	{#if formsSessionRefreshFailed}
 		<p
-			class="rounded border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950"
+			class="rounded border border-line bg-warning-soft p-3 text-sm"
 			role="status"
 			data-testid="task-refresh-stale"
 		>
@@ -12535,7 +12535,7 @@
 	{/if}
 	{#if formsSessionRemoteChanged || formsSessionConflict}
 		<section
-			class="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950"
+			class="rounded border border-line bg-warning-soft p-3 text-sm"
 			role="status"
 			data-testid="task-remote-change"
 		>
@@ -12876,7 +12876,7 @@
 								<div class="flex items-end justify-end">
 									<button
 										type="button"
-										class="inline-flex h-9 w-9 items-center justify-center rounded-md text-red-600 hover:bg-red-50 disabled:opacity-40 dark:hover:bg-red-950/30"
+										class="inline-flex h-9 w-9 items-center justify-center rounded-md text-danger hover:bg-danger-soft disabled:opacity-40"
 										disabled={fieldDrafts.length === 1}
 										onclick={() => removeFieldDraft(index)}
 										aria-label={$t('forms.removeField')}
@@ -13188,7 +13188,7 @@
 							>
 
 							<span
-								class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-warning dark:border-amber-900/60 dark:bg-amber-950/30"
+								class="rounded-md border border-line bg-warning-soft px-2 py-1 text-warning"
 								>{$t('forms.hiddenFieldEffect')}: {permissionFieldList(
 									memberHiddenFieldLabels
 								)}</span
@@ -13336,7 +13336,7 @@
 
 									<div class="mt-3 grid gap-2 md:grid-cols-2" data-permission-effect-summary>
 										<div
-											class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/20"
+											class="rounded-md border border-line bg-warning-soft px-3 py-2"
 											data-permission-effect-hidden-fields={memberHiddenFieldLabels.join('|')}
 										>
 											<div class="flex items-center gap-2">
@@ -13350,7 +13350,7 @@
 												</p>
 											</div>
 
-											<p class="mt-1 text-xs text-amber-900 dark:text-amber-100">
+											<p class="mt-1 text-xs text-warning">
 												{permissionFieldList(memberHiddenFieldLabels)}
 											</p>
 
@@ -14014,7 +14014,7 @@
 
 														<button
 															type="button"
-															class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-red-600 hover:bg-red-50 disabled:opacity-40 dark:hover:bg-red-950/30"
+															class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-danger hover:bg-danger-soft disabled:opacity-40"
 															disabled={detailLayoutSectionDrafts.length <= 1 ||
 																detailLayoutSectionSaving}
 															aria-label={$t('forms.removeDetailSection')}
@@ -15354,7 +15354,7 @@
 																<div
 																	class={`space-y-2 rounded-md border border-line bg-raised p-2 ${
 																		group.disabled
-																			? 'opacity-70 ring-1 ring-amber-300 dark:ring-amber-700'
+																			? 'opacity-70 ring-1 ring-warning'
 																			: ''
 																	}`}
 																	data-filter-group-disabled-state={group.disabled
@@ -15493,7 +15493,7 @@
 																		<div
 																			class={`grid gap-2 rounded-md border border-line bg-nav p-2 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_auto_auto_auto_auto_auto_auto] ${
 																				filter.disabled
-																					? 'opacity-70 ring-1 ring-amber-300 dark:ring-amber-700'
+																					? 'opacity-70 ring-1 ring-warning'
 																					: ''
 																			}`}
 																			data-filter-disabled-state={filter.disabled
@@ -16994,7 +16994,7 @@
 
 																{#if memberFieldHidden(field)}
 																	<span
-																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																		class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																		data-view-column-permission-hidden={field.key}
 																		>{$t('forms.fieldHiddenBadge')}</span
 																	>
@@ -17114,12 +17114,12 @@
 															<span>{fieldLabel(field)}</span>
 
 															{#if field.required}
-																<span class="text-red-500">*</span>
+																<span class="text-danger">*</span>
 															{/if}
 
 															{#if memberFieldHidden(field)}
 																<span
-																	class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																	class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[11px] font-medium uppercase text-warning"
 																	data-record-edit-permission-hidden={field.key}
 																	>{$t('forms.fieldHiddenBadge')}</span
 																>
@@ -17645,7 +17645,7 @@
 									/>
 									{#if lastDeletedRecord}
 										<div
-											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-warning-soft px-4 py-2 text-sm text-warning"
 											data-record-restore-banner={lastDeletedRecord.id}
 										>
 											<span
@@ -18002,7 +18002,7 @@
 																			style={`grid-template-columns: repeat(${ganttTimeline.dates.length}, minmax(72px, 1fr));`}
 																		>
 																			<div
-																				class="flex items-center justify-between gap-2 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition-opacity dark:bg-emerald-500"
+																				class="flex items-center justify-between gap-2 rounded-md bg-success px-3 py-2 text-xs font-semibold text-on-success transition-opacity"
 																				style={`grid-column: ${task.startOffset + 1} / span ${task.span};`}
 																				draggable="true"
 																				role="button"
@@ -18024,7 +18024,7 @@
 
 																				{#if ganttTimeline.dependencyField && task.dependencyValue && task.dependencyValue !== '-'}
 																					<span
-																						class="hidden shrink-0 rounded bg-white/15 px-1.5 py-0.5 text-[11px] font-medium text-white/90 md:inline"
+																						class="hidden shrink-0 rounded bg-on-success/15 px-1.5 py-0.5 text-[11px] font-medium text-on-success md:inline"
 																						data-gantt-bar-dependency-label={task.record.id}
 																						>{task.dependencyValue}</span
 																					>
@@ -18033,7 +18033,7 @@
 																				{#if ganttTimeline.endField}
 																					<button
 																						type="button"
-																						class="shrink-0 rounded bg-white/20 px-1.5 py-0.5 text-[11px] leading-none text-white hover:bg-white/30"
+																						class="shrink-0 rounded bg-on-success/20 px-1.5 py-0.5 text-[11px] leading-none text-on-success hover:bg-on-success/30"
 																						onclick={(event) => {
 																							event.stopPropagation();
 																							extendGanttTaskEnd(task);
@@ -18688,7 +18688,7 @@
 
 														<button
 															type="button"
-															class="inline-flex shrink-0 items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+															class="inline-flex shrink-0 items-center rounded-md p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 															disabled={deletingRecordId === record.id}
 															onclick={() => handleDeleteRecord(record)}
 															aria-label={$t('forms.deleteRecord')}
@@ -18869,7 +18869,7 @@
 																<section
 																	class={`rounded-lg border bg-nav transition-colors ${
 																		kanbanColumnWipExceeded(group.label)
-																			? 'border-amber-300 dark:border-amber-700'
+																			? 'border-line'
 																			: 'border-line'
 																	}`}
 																	data-record-count={group.records.length}
@@ -18891,7 +18891,7 @@
 																		<span
 																			class={`rounded px-2 py-0.5 text-xs ${
 																				kanbanColumnWipExceeded(group.label)
-																					? 'bg-amber-100 text-warning dark:bg-amber-950/60'
+																					? 'bg-warning-soft text-warning'
 																					: 'bg-raised text-fg-muted'
 																			}`}
 																			>{kanbanWipLabel(
@@ -18941,7 +18941,7 @@
 
 																					<button
 																						type="button"
-																						class="inline-flex shrink-0 items-center rounded-md p-1 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																						class="inline-flex shrink-0 items-center rounded-md p-1 text-danger hover:bg-danger-soft disabled:opacity-50"
 																						disabled={deletingRecordId === record.id}
 																						onclick={() => handleDeleteRecord(record)}
 																						aria-label={$t('forms.deleteRecord')}
@@ -18964,7 +18964,7 @@
 
 																								{#if memberFieldHidden(field)}
 																									<span
-																										class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																										class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																										data-kanban-card-field-permission-hidden={`${record.id}:${field.key}`}
 																										>{$t('forms.fieldHiddenBadge')}</span
 																									>
@@ -19048,7 +19048,7 @@
 
 												{#if calendarDateField && memberFieldHidden(calendarDateField)}
 													<span
-														class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+														class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 														data-calendar-date-field-permission-hidden={calendarDateField.key}
 														>{$t('forms.fieldHiddenBadge')}</span
 													>
@@ -19113,7 +19113,7 @@
 
 																		{#if memberFieldHidden(calendarResourceField)}
 																			<span
-																				class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-warning dark:bg-amber-950/50"
+																				class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium text-warning"
 																				data-calendar-resource-field-permission-hidden={calendarResourceField.key}
 																				>{$t('forms.fieldHiddenBadge')}</span
 																			>
@@ -19350,7 +19350,7 @@
 
 																						<button
 																							type="button"
-																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-danger hover:bg-danger-soft disabled:opacity-50"
 																							disabled={deletingRecordId === record.id}
 																							onclick={() => handleDeleteRecord(record)}
 																							aria-label={$t('forms.deleteRecord')}
@@ -19544,7 +19544,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																								class="inline-flex items-center rounded-md p-1 text-danger hover:bg-danger-soft disabled:opacity-50"
 																								disabled={deletingRecordId === record.id}
 																								onclick={() => handleDeleteRecord(record)}
 																								aria-label={$t('forms.deleteRecord')}
@@ -19595,7 +19595,7 @@
 
 																					{#if occurrence.spanDays > 1}
 																						<div
-																							class="mt-3 inline-flex max-w-full items-center gap-1 rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+																							class="mt-3 inline-flex max-w-full items-center gap-1 rounded bg-success-soft px-2 py-0.5 text-xs font-medium text-success"
 																						>
 																							<span class="truncate">
 																								{$t('forms.calendarDateSpan', {
@@ -19649,7 +19649,7 @@
 																										calendarEndField,
 																										inputValue(event)
 																									)}
-																								class="w-full rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-xs text-emerald-900 disabled:opacity-50 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-100"
+																								class="w-full rounded-md border border-line bg-success-soft px-2 py-1.5 text-xs text-success disabled:opacity-50"
 																							/>
 																						</label>
 																					{/if}
@@ -19831,7 +19831,7 @@
 
 																<button
 																	type="button"
-																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-danger hover:bg-danger-soft disabled:opacity-50"
 																	disabled={deletingRecordId === record.id}
 																	data-card-action={`${record.id}:delete`}
 																	onclick={() => handleDeleteRecord(record)}
@@ -19869,7 +19869,7 @@
 
 																{#if memberFieldHidden(field)}
 																	<span
-																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-warning dark:bg-amber-950/50"
+																		class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium text-warning"
 																		data-card-field-permission-hidden={`${record.id}:${field.key}`}
 																		>{$t('forms.fieldHiddenBadge')}</span
 																	>
@@ -19920,7 +19920,7 @@
 
 																	{#if memberFieldHidden(field)}
 																		<span
-																			class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																			class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																			data-card-select-permission-hidden={`${record.id}:${field.key}`}
 																			>{$t('forms.fieldHiddenBadge')}</span
 																		>
@@ -20268,7 +20268,7 @@
 
 																		{#if pinned}
 																			<span
-																				class="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-warning dark:bg-amber-950/50"
+																				class="rounded bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning"
 																				>{$t('forms.timelineEventPinnedBadge')}</span
 																			>
 																		{/if}
@@ -20553,7 +20553,7 @@
 																		<span class="mt-1 flex flex-wrap items-center gap-1.5">
 																			{#if memberFieldHidden(timelineTitlePermissionField)}
 																				<span
-																					class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																					class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																					data-timeline-title-permission-hidden={`${record.id}:${timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldHiddenBadge')}</span
 																				>
@@ -20595,7 +20595,7 @@
 																		<span class="mt-1 flex flex-wrap items-center gap-1.5">
 																			{#if memberFieldHidden(timelineSubtitlePermissionField)}
 																				<span
-																					class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																					class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																					data-timeline-subtitle-permission-hidden={`${record.id}:${timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldHiddenBadge')}</span
 																				>
@@ -20630,7 +20630,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex shrink-0 items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																	class="inline-flex shrink-0 items-center rounded-md p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 																	disabled={deletingRecordId === record.id}
 																	onclick={() => handleDeleteRecord(record)}
 																	aria-label={$t('forms.deleteRecord')}
@@ -20649,7 +20649,7 @@
 
 																				{#if memberFieldHidden(field)}
 																					<span
-																						class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																						class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																						data-timeline-select-permission-hidden={`${record.id}:${field.key}`}
 																						>{$t('forms.fieldHiddenBadge')}</span
 																					>
@@ -20919,7 +20919,7 @@
 
 																{#if memberFieldHidden(field)}
 																	<span
-																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-warning dark:bg-amber-950/50"
+																		class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium text-warning"
 																		data-record-detail-permission-hidden={field.key}
 																		>{$t('forms.fieldHiddenBadge')}</span
 																	>
@@ -21064,7 +21064,7 @@
 
 																										<button
 																											type="button"
-																											class="inline-flex items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																											class="inline-flex items-center rounded-md p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 																											disabled={deletingChildRecordId ===
 																												child.record.id}
 																											onclick={() => deleteChildRecord(child)}
@@ -21225,7 +21225,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																								class="inline-flex items-center rounded-md p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 																								disabled={deletingChildRecordId === child.record.id}
 																								onclick={() => deleteChildRecord(child)}
 																								aria-label={$t('forms.deleteChildRecord')}
@@ -21341,7 +21341,7 @@
 																	{fieldLabel(childField)}
 
 																	{#if childField.required}
-																		<span class="text-red-500">*</span>
+																		<span class="text-danger">*</span>
 																	{/if}
 																</span>
 
@@ -21791,7 +21791,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																								class="inline-flex items-center rounded-md p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 																								disabled={deletingChildRecordId === child.record.id}
 																								onclick={() => deleteChildRecord(child)}
 																								aria-label={$t('forms.deleteChildRecord')}
@@ -21888,7 +21888,7 @@
 
 																			<button
 																				type="button"
-																				class="inline-flex items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																				class="inline-flex items-center rounded-md p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 																				disabled={deletingChildRecordId === child.record.id}
 																				onclick={() => deleteChildRecord(child)}
 																				aria-label={$t('forms.deleteChildRecord')}
@@ -22309,7 +22309,7 @@
 					class={current
 						? 'rounded-md border border-line bg-surface p-3 text-fg-muted'
 						: complete
-							? 'rounded-md border border-emerald-200 bg-emerald-50 p-3 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100'
+							? 'rounded-md border border-line bg-success-soft p-3 text-success'
 							: 'rounded-md border border-line bg-raised p-3 text-fg-muted'}
 					data-import-step={step}
 					data-import-step-active={current ? 'true' : undefined}
@@ -22507,23 +22507,23 @@
 						</div>
 
 						<div
-							class="rounded-md border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900/60 dark:bg-emerald-950/30"
+							class="rounded-md border border-line bg-success-soft p-3"
 						>
-							<p class="text-xs text-emerald-700 dark:text-emerald-200">
+							<p class="text-xs text-success">
 								{$t('forms.importValidRows')}
 							</p>
 
-							<p class="mt-1 text-2xl font-semibold text-emerald-800 dark:text-emerald-100">
+							<p class="mt-1 text-2xl font-semibold text-success">
 								{importPreview.valid_rows}
 							</p>
 						</div>
 
 						<div
-							class="rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900/60 dark:bg-red-950/30"
+							class="rounded-md border border-line bg-danger-soft p-3"
 						>
 							<p class="text-xs text-danger">{$t('forms.importInvalidRows')}</p>
 
-							<p class="mt-1 text-2xl font-semibold text-red-800 dark:text-red-100">
+							<p class="mt-1 text-2xl font-semibold text-danger">
 								{importPreview.invalid_rows}
 							</p>
 						</div>
@@ -22569,8 +22569,8 @@
 											<td class="px-3 py-2">
 												<span
 													class={row.valid
-														? 'rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-success dark:bg-emerald-950/40'
-														: 'rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-danger dark:bg-red-950/40'}
+														? 'rounded-full bg-success-soft px-2 py-0.5 text-xs font-medium text-success'
+														: 'rounded-full bg-danger-soft px-2 py-0.5 text-xs font-medium text-danger'}
 													>{row.valid ? $t('forms.importValid') : $t('forms.importInvalid')}</span
 												>
 											</td>
@@ -22594,14 +22594,14 @@
 
 		{#if importWizardStep === 'commit'}
 			<section
-				class="rounded-md border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/30"
+				class="rounded-md border border-line bg-success-soft p-4"
 				data-import-wizard-panel="commit"
 			>
-				<p class="text-sm font-semibold text-emerald-900 dark:text-emerald-100">
+				<p class="text-sm font-semibold text-success">
 					{$t('forms.importReadyToCommit')}
 				</p>
 
-				<p class="mt-1 text-sm text-emerald-700 dark:text-emerald-200">
+				<p class="mt-1 text-sm text-success">
 					{#if importPreview}
 						{$t('forms.importReadyToCommitDescription', {
 							values: { count: importPreview.valid_rows }
@@ -22675,9 +22675,9 @@
 >
 	<div class="space-y-4">
 		<div
-			class="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/30"
+			class="rounded-md border border-line bg-warning-soft p-3"
 		>
-			<div class="flex items-start gap-2 text-sm text-amber-900 dark:text-amber-100">
+			<div class="flex items-start gap-2 text-sm text-warning">
 				<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
 				<p>{$t('forms.schemaChangeConfirmDescription')}</p>
 			</div>
