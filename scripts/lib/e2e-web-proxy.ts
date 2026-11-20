@@ -5,7 +5,11 @@
 // - plain HTTP requests are forwarded with their headers (Host is dropped);
 // - WebSocket upgrades (the Flow collab socket) are bridged to the API's ws:// endpoint and the
 //   browser's Origin header is passed through, because the API checks it against
-//   [flow].collab_allowed_origins.
+//   [flow].collab_allowed_origins;
+// - the delegated event stream (GET /api/v1/oauth/events/stream, server-sent events) is passed
+//   through chunk by chunk, with the per-connection idle timeout switched off (it only sends a
+//   keep-alive comment every 20 s, and Bun's default 10 s idle timeout would cut it), and the
+//   upstream request is dropped when the browser goes away so the API frees the stream's place.
 // Unknown paths fall back to index.html (SPA routing).
 //
 // Inputs (all required): E2E_PROXY_BUILD_DIR, E2E_PROXY_API_ORIGIN (http://host:port),
@@ -25,6 +29,7 @@ const API_ORIGIN = required('E2E_PROXY_API_ORIGIN');
 const PORT = Number(required('E2E_PROXY_PORT'));
 const HOST = process.env.E2E_PROXY_HOST || '127.0.0.1';
 const WS_API_ORIGIN = API_ORIGIN.replace(/^http/, 'ws');
+const EVENT_STREAM_PATH = '/api/v1/oauth/events/stream';
 
 type Frame = string | ArrayBuffer | Uint8Array;
 type SocketData = {
@@ -56,11 +61,18 @@ Bun.serve<SocketData, never>({
 			const headers = new Headers(req.headers);
 			headers.delete('host');
 			headers.set('accept-encoding', 'identity');
+			if (url.pathname === EVENT_STREAM_PATH) {
+				// 0 disables the idle timeout for this connection only.
+				server.timeout(req, 0);
+			}
 			const upstream = await fetch(API_ORIGIN + url.pathname + url.search, {
 				method: req.method,
 				headers,
 				body: req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.arrayBuffer(),
-				redirect: 'manual'
+				redirect: 'manual',
+				// Ends the upstream request when the browser's request ends (an event stream would
+				// otherwise stay open at the API until it is closed from that side).
+				signal: req.signal
 			});
 			const out = new Headers(upstream.headers);
 			out.delete('content-encoding');

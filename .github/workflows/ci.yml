@@ -66,6 +66,9 @@ jobs:
       - name: Web E2E stack script preflight
         run: bash scripts/test-e2e-web-stack.sh
 
+      - name: nginx event stream location
+        run: bash scripts/test-nginx-event-stream-location.sh
+
       # Single-repository form only: the sibling repositories are not checked out here. The
       # five-repository release form runs locally (see CONTRIBUTING, "Brand residue gate").
       - name: Brand residue gate (this repository)
