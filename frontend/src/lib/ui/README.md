@@ -10,7 +10,7 @@ One folder per component, kebab-case, files in PascalCase for components:
 
 ```
 lib/ui/
-  foundations/        shared helpers (focus, focus trap, roving, layers, position, portal, ids, messages)
+  foundations/        shared helpers (focus, focus trap, roving, layers, modal, position, portal, ids, messages, compose, typeahead, plural, visually-hidden)
   button/
     Button.svelte     the component
     button-state.ts   logic that can be tested without a DOM (optional)
@@ -43,6 +43,24 @@ so adding a component never touches a shared export list.
 - Keyboard: only keys a page can own in Chrome and Firefox. No Ctrl or Meta with digits 1-5, Tab, Shift+T, Shift+P or J.
 - Every visible string goes through `$t('ui.<name>.<key>')`. Sample strings in `Gallery.svelte` do too.
 - Logical CSS properties where direction matters (`text-align: start`, `margin-inline-*`).
+- Caller handlers: a primitive that needs its own handler on a native event (`Checkbox` and `Radio` on `change`, `Button` on `click`) runs its own first and then the caller's (`foundations/compose.ts`), so an `onchange` passed to the component is never discarded. Do not put an internal handler after `{...rest}` without composing.
+- Data attributes: `Popover`, `Menu`, `MenuItem` and `StateBlock` pass `data-*` props (`data-testid`, ...) to their element; `testId` on `Popover` and `Menu` stays and sets `data-popover`.
+- Visually hidden text: add `import '../foundations/visually-hidden.css';` and the class `ui-sr-only`. Never write a local `.sr-only` rule.
+- Plural wording: the app's i18n has no ICU plural syntax. A message that depends on a count is a group of keys by plural category (`ui.dataTable.selected.one`, `.other`) read with `plural($t, 'ui.dataTable.selected', count, $locale)` (`foundations/plural.ts`, categories from `Intl.PluralRules`; unknown language falls back to English). The count is passed as `{count}`. Chinese has one form, so `locale.zh.json` defines only `other`; the locale parity test ignores categories a language does not use but requires `other` everywhere. Never write `xOne` and `xMany` keys.
+
+## Forms and the required marking
+
+`form/Field.svelte` wraps any control and prints the label with the marking word; `TextField` and `Textarea` bring their own label, so they take the same two props (`requirement`, `marking`) and show the same word (`ui.form.required` / `ui.form.optional`, through `markingWord`). Both ways exist on purpose: use `TextField` or `Textarea` alone for a plain labelled field, and `Field` around controls that have no label of their own (selects, date fields, custom controls). This duplicates two lines per component and avoids the double label that `Field` around `TextField` would produce. `requirement: 'required'` also sets the native `required` attribute.
+
+## Layers
+
+- `Popover` takes `modal` (sets `aria-modal`), `describedby`, `sheetTitle` and any `data-*` prop for its surface. Below 640px it becomes a bottom sheet (specification 3.6): a 36 by 5 grabber, a centred title (`sheetTitle`, or `label` for a `dialog`), the body, and a full-width outlined Close button when there is a title. A popover without a title shows only the grabber.
+- `Menu` has `header` (non-interactive caption inside the surface) and `describedby`. Items are `MenuItem`: `role` is `menuitem`, `menuitemradio` or `menuitemcheckbox` (with `checked`, which sets `aria-checked` and the leading check), `href` renders a real link (Cmd/Ctrl-click and middle-click open a new browser tab; the menu stays), `trailing` adds content at the end, `keepOpen` leaves the menu open after the handler. Type-ahead: a printable key focuses the next item whose label starts with it; typing quickly extends the prefix, a pause of 500 ms resets it.
+- `Dialog` (and so `DestructiveDialog`) calls `enterModal()` (`foundations/modal.ts`) while open; `ToastRegion` listens and holds new toasts until the last modal closes. Any other layer that must make toasts wait can call `enterModal` too.
+
+## States
+
+`StateBlock` renders the whole `states.*` catalogue (T16): `empty`, `loading`, `noResults`, `noSearchResults`, `offline`, `loadFailed`, `forbidden`, `notFound`, `expired`, `identityChanged`. Parameters: `thing` (plural; `empty`, `loading`, `loadFailed`), `object` (singular; `notFound`), `grantor` and `place` (`forbidden`; `place` is also the target of the `notFound` action), `count` (`noResults`: applied filters, plural sentence; without it no body), `query` (`noSearchResults`). Without `thing` or `object` the generic wording is used. `message` replaces the body for a feature that says more, and `action` supplies the one button (its label defaults per kind). `DataTable` and `SidePanel` use it for their blocking states.
 
 ## Messages
 
@@ -68,7 +86,9 @@ derived tokens can be checked in the nested dark scope.
 - Hover and pressed on filled buttons (primary, danger) are not specified; they mix 12% and 22% of `--rf-bg` into the fill (`color-mix`). Danger-quiet mixes 10% and 18% of `--rf-danger` into `--rf-danger-bg`. Owner to confirm or replace.
 - Focus ring colour: `app.css` base layer sets `outline-color: ring/50` on every element, which overrides the `tokens.css` focus rule; components re-declare the outline, so the global rule is still wrong for old components until Phase 3.
 - A disabled button is a native `disabled` button, so it leaves the tab order; the reason text is visible and linked with `aria-describedby`.
-- Menu has no typeahead yet. Tab inside a menu closes it and returns focus to the trigger.
+- Tab inside a menu closes it and returns focus to the trigger.
+- The tokens `--rf-layout-header-compact`, `--rf-z-toast` and `--rf-leading-metric` are PROPOSED; they are generated into `tokens.css` by `tools/gen_tokens.py` in the design-system folder (never edit the generated file).
+- Popover becomes the sheet by viewport width only (below 640px), not by pointer type; the date picker design says a desktop pointer should never get the sheet at a small width.
 - The tooltip action mounts its component into `document.body` (or the nearest themed container); `describes` decides between `aria-hidden` and `aria-describedby`.
 - Dialog keeps a draft only if the draft lives outside the dialog content, or `keepMounted` is set.
 - Dialog does not make the rest of the page `inert`; the focus trap and the scrim cover keyboard and pointer.

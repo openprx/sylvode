@@ -136,10 +136,14 @@ const active = () =>
 			: null;
 	});
 
-async function tabTo(selector, max = 120) {
+async function tabTo(selector, max = 400) {
+	// Start from the top of the document: the merged gallery has more than 120 tab stops.
 	await page.evaluate(() => {
 		const el = document.activeElement;
 		if (el && el !== document.body) el.blur();
+		document.body.tabIndex = -1;
+		document.body.focus();
+		document.body.removeAttribute('tabindex');
 	});
 	for (let i = 0; i < max; i += 1) {
 		await page.keyboard.press('Tab');

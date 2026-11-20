@@ -127,10 +127,15 @@ const active = () =>
 			: null;
 	});
 
-async function tabTo(selector, max = 80) {
+async function tabTo(selector, max = 400) {
+	// Start from the top of the document: the merged gallery has well over 80 tab stops, and a
+	// wrap-around from the end would enter the page through the browser chrome.
 	await page.evaluate(() => {
 		const el = document.activeElement;
 		if (el && el !== document.body) el.blur();
+		document.body.tabIndex = -1;
+		document.body.focus();
+		document.body.removeAttribute('tabindex');
 	});
 	for (let i = 0; i < max; i += 1) {
 		await page.keyboard.press('Tab');
@@ -138,6 +143,14 @@ async function tabTo(selector, max = 80) {
 		if (hit) return;
 	}
 	throw new Error(`Tab never reached ${selector}`);
+}
+// Tooltips hide on scroll, and Tab scrolls the page when it moves far, so a tooltip check first
+// lets the scroll settle and then moves focus away and back, with the anchor already in view.
+async function tabToSettled(selector) {
+	await tabTo(selector);
+	await page.waitForTimeout(150);
+	await page.keyboard.press('Shift+Tab');
+	await page.keyboard.press('Tab');
 }
 const outline = (selector) =>
 	page.evaluate((s) => {
@@ -364,7 +377,7 @@ await check('popover: focus moves in, Escape closes and returns focus to the tri
 
 // Tooltip.
 await check('tooltip: shows at once on keyboard focus, Escape hides it', async () => {
-	await tabTo('[data-gallery="icon-button:default"] button');
+	await tabToSettled('[data-gallery="icon-button:default"] button');
 	await page.waitForSelector('[role="tooltip"]');
 	const text = await page.locator('[role="tooltip"]').innerText();
 	expect(text.includes('More actions'), text);
@@ -384,7 +397,7 @@ await check('tooltip: not on pointer focus, shown after the hover delay', async 
 await check(
 	'tooltip: describes=true sets aria-describedby, plain tooltip is aria-hidden',
 	async () => {
-		await tabTo('[data-gallery="tooltip:describes"]');
+		await tabToSettled('[data-gallery="tooltip:describes"]');
 		const r = await page.evaluate(() => {
 			const anchor = document.querySelector('[data-gallery="tooltip:describes"]');
 			const tip = document.querySelector('[role="tooltip"]');
