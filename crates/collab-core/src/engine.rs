@@ -201,8 +201,8 @@ fn loro_value_to_json(value: &LoroValue) -> Value {
 }
 
 /// The model-5 marker (`flow_editor_structure_meta.model == "rich_page_v5"`), read by typed
-/// container id. The read registers an empty root on a legacy document; its frontier and semantic
-/// hash are unchanged.
+/// container id. The read registers nothing, on a legacy document or any other: the exported
+/// value, the snapshot bytes and the list of roots are the same afterwards.
 pub(crate) fn model5_marker(doc: &LoroDoc) -> bool {
     matches!(
         crate::editor_structure::root_container(doc, crate::editor_structure::META, ContainerType::Map),
@@ -215,10 +215,12 @@ pub(crate) fn model5_marker(doc: &LoroDoc) -> bool {
 /// Whether some physical block map in `doc.children` has an atom `nodeName`, placed or not.
 /// `Ok(false)` without an editor document.
 pub(crate) fn physical_atoms_present(doc: &LoroDoc) -> Result<bool, CollabError> {
-    let has_editor_doc = matches!(
-        doc.get_map("doc").get("children"),
-        Some(ValueOrContainer::Container(Container::List(_)))
-    );
+    let has_editor_doc = crate::editor_structure::root_map(doc, "doc").is_some_and(|root| {
+        matches!(
+            root.get("children"),
+            Some(ValueOrContainer::Container(Container::List(_)))
+        )
+    });
     if !has_editor_doc {
         return Ok(false);
     }
@@ -557,7 +559,10 @@ impl LoroCollabEngine {
     #[must_use]
     pub fn navigator_order(&self) -> BTreeMap<String, String> {
         let mut values = BTreeMap::new();
-        self.doc.get_map("order").for_each(|id, value| {
+        let Some(order) = crate::editor_structure::root_map(&self.doc, "order") else {
+            return values;
+        };
+        order.for_each(|id, value| {
             if let ValueOrContainer::Value(LoroValue::String(key)) = value {
                 values.insert(id.to_owned(), key.to_string());
             }
@@ -591,10 +596,12 @@ impl LoroCollabEngine {
     /// Whether browser prose owns the document representation, including an empty document.
     #[must_use]
     pub fn has_editor_doc(&self) -> bool {
-        matches!(
-            self.doc.get_map("doc").get("children"),
-            Some(ValueOrContainer::Container(Container::List(_)))
-        )
+        crate::editor_structure::root_map(&self.doc, "doc").is_some_and(|root| {
+            matches!(
+                root.get("children"),
+                Some(ValueOrContainer::Container(Container::List(_)))
+            )
+        })
     }
 
     /// Initialize supported tree-only Page prose on a private candidate. Callers must include
@@ -685,7 +692,7 @@ impl LoroCollabEngine {
     /// Includes tombstoned aliases, so a deleted editor anchor cannot be reused as tree prose.
     #[must_use]
     pub fn has_editor_alias(&self, id: &str) -> bool {
-        self.has_editor_doc() && self.doc.get_map("flow_editor_aliases").get(id).is_some()
+        self.has_editor_doc() && crate::editor_doc_bridge::has_alias_entry(&self.doc, id)
     }
 
     /// Resolve only an attested live editor alias; otherwise preserve the caller's tree ID.
@@ -852,7 +859,7 @@ impl LoroCollabEngine {
             } => {
                 if self.id_to_tree.contains_key(id)
                     || (self.has_editor_doc()
-                        && (self.doc.get_map("flow_editor_aliases").get(id.as_ref()).is_some()
+                        && (crate::editor_doc_bridge::has_alias_entry(&self.doc, id.as_ref())
                             || crate::editor_doc_bridge::resolve_editor_block_id(&self.doc, id).is_some()))
                 {
                     return Err(CollabError::DuplicateNode { id: id.to_string() });
@@ -1307,6 +1314,8 @@ fn encode_frontier_entries(entries: &BTreeMap<u64, i32>) -> Vec<u8> {
 
 #[cfg(test)]
 mod floor_equivalence_tests;
+#[cfg(test)]
+mod read_side_effect_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
