@@ -79,9 +79,7 @@
 </svelte:head>
 
 <div class="mx-auto max-w-7xl space-y-4">
-	<div
-		class="rounded-card border border-line bg-raised p-5"
-	>
+	<div class="rounded-card border border-line bg-raised p-5">
 		<h1 class="text-xl font-semibold text-fg">
 			{$t('governanceExt.auditTitle')}
 		</h1>
@@ -90,9 +88,7 @@
 		</p>
 	</div>
 
-	<div
-		class="grid grid-cols-1 gap-3 rounded-card border border-line bg-raised p-4 md:grid-cols-4"
-	>
+	<div class="grid grid-cols-1 gap-3 rounded-card border border-line bg-raised p-4 md:grid-cols-4">
 		<div>
 			<label for="audit-period-start" class="mb-1 block text-sm text-fg-muted"
 				>{$t('governanceExt.periodStart')}</label
@@ -127,9 +123,7 @@
 		</div>
 	</div>
 
-	<div
-		class="rounded-card border border-line bg-raised p-4"
-	>
+	<div class="rounded-card border border-line bg-raised p-4">
 		{#if loading}
 			<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 		{:else if reports.length === 0}
@@ -178,9 +172,7 @@
 			</div>
 		{/if}
 
-		<div
-			class="mt-4 flex items-center justify-between border-t border-line pt-3 text-sm"
-		>
+		<div class="mt-4 flex items-center justify-between border-t border-line pt-3 text-sm">
 			<p class="text-fg-muted">
 				{$t('governance.pagination', { values: { total, page: pageNum, pages: totalPages || 1 } })}
 			</p>

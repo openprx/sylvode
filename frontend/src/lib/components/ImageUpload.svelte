@@ -106,9 +106,7 @@
 </script>
 
 <div class="space-y-2">
-	<label
-		class="inline-flex cursor-pointer items-center gap-1 text-sm text-fg"
-	>
+	<label class="inline-flex cursor-pointer items-center gap-1 text-sm text-fg">
 		<span class="inline-flex items-center gap-1">
 			<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path
@@ -136,9 +134,7 @@
 	{/if}
 
 	{#if previewUrl}
-		<div
-			class="overflow-hidden rounded-control border border-line bg-surface p-2"
-		>
+		<div class="overflow-hidden rounded-control border border-line bg-surface p-2">
 			{#if isImageUploadMime(previewMimeType)}
 				<img
 					src={previewUrl}

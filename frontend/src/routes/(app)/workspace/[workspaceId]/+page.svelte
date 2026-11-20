@@ -37,8 +37,7 @@
 
 	const linkClass =
 		'inline-flex min-h-11 items-center rounded-control text-sm font-medium text-fg underline';
-	const cardClass =
-		'flex flex-col gap-3 rounded-card border border-line bg-raised p-6';
+	const cardClass = 'flex flex-col gap-3 rounded-card border border-line bg-raised p-6';
 
 	async function load() {
 		view = 'loading';
@@ -101,10 +100,7 @@
 	{:else if workspace}
 		<header class="space-y-2">
 			<div class="flex flex-wrap items-center gap-3">
-				<h1
-					class="text-2xl font-semibold break-words text-fg"
-					data-testid="workspace-home-name"
-				>
+				<h1 class="text-2xl font-semibold break-words text-fg" data-testid="workspace-home-name">
 					{workspace.name}
 				</h1>
 				{#if role}
@@ -135,10 +131,7 @@
 						{$t('workspace.home.projectsTitle')}
 					</h2>
 					{#if !projectsFailed}
-						<span
-							class="text-sm text-fg-muted"
-							data-testid="workspace-home-project-total"
-						>
+						<span class="text-sm text-fg-muted" data-testid="workspace-home-project-total">
 							{$t('workspace.home.projectTotal', { values: { count: projectTotal } })}
 						</span>
 					{/if}

@@ -312,15 +312,11 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-card border border-line bg-raised p-6 text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('workflow.loading')}
 		</div>
 	{:else if workflows.length === 0}
-		<div
-			class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted">
 			{$t('workflow.noWorkflows')}
 		</div>
 	{:else}
@@ -330,9 +326,7 @@
 					<div class="flex items-start justify-between gap-4">
 						<div class="min-w-0 flex-1">
 							<div class="flex items-center gap-2 flex-wrap">
-								<span class="text-lg font-semibold text-fg"
-									>{wf.name}</span
-								>
+								<span class="text-lg font-semibold text-fg">{wf.name}</span>
 								{#if wf.is_system_default}
 									<span
 										class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-surface text-fg"
@@ -399,10 +393,7 @@
 			required
 		/>
 		<div class="space-y-1">
-			<label
-				class="block text-sm font-medium text-fg"
-				for="create-wf-description"
-			>
+			<label class="block text-sm font-medium text-fg" for="create-wf-description">
 				{$t('workflow.description')}
 			</label>
 			<textarea
@@ -438,10 +429,7 @@
 			required
 		/>
 		<div class="space-y-1">
-			<label
-				class="block text-sm font-medium text-fg"
-				for="edit-wf-description"
-			>
+			<label class="block text-sm font-medium text-fg" for="edit-wf-description">
 				{$t('workflow.description')}
 			</label>
 			<textarea
@@ -478,31 +466,23 @@
 					<table class="w-full text-left text-sm">
 						<thead>
 							<tr class="bg-nav">
-								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted w-10"
-								></th>
-								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted w-8"
+								<th class="px-3 py-2 text-xs font-medium uppercase text-fg-muted w-10"></th>
+								<th class="px-3 py-2 text-xs font-medium uppercase text-fg-muted w-8"
 									>{$t('workflow.color')}</th
 								>
-								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
+								<th class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
 									>{$t('workflow.stateKey')}</th
 								>
-								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
+								<th class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
 									>{$t('workflow.displayName')}</th
 								>
-								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
+								<th class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
 									>{$t('workflow.category')}</th
 								>
-								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
+								<th class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
 									>{$t('workflow.flags')}</th
 								>
-								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted text-right"
+								<th class="px-3 py-2 text-xs font-medium uppercase text-fg-muted text-right"
 									>{$t('workflow.actions')}</th
 								>
 							</tr>
@@ -530,8 +510,7 @@
 											style={`background-color: ${state.color ?? '#94a3b8'}`}
 										></span>
 									</td>
-									<td class="px-3 py-2 font-mono text-fg-muted">{state.key}</td
-									>
+									<td class="px-3 py-2 font-mono text-fg-muted">{state.key}</td>
 									<td class="px-3 py-2 text-fg">{state.display_name}</td>
 									<td class="px-3 py-2">
 										{#if state.category === 'done'}
@@ -598,19 +577,14 @@
 					>
 				</div>
 			{:else}
-				<div
-					class="rounded-control border border-line bg-surface p-4 space-y-3"
-				>
+				<div class="rounded-control border border-line bg-surface p-4 space-y-3">
 					<h3 class="text-sm font-semibold text-fg">
 						{editingState ? $t('workflow.editState') : $t('workflow.addState')}
 					</h3>
 					<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 						{#if !editingState}
 							<div class="space-y-1">
-								<label
-									class="block text-sm font-medium text-fg"
-									for="state-key"
-								>
+								<label class="block text-sm font-medium text-fg" for="state-key">
 									{$t('workflow.stateKey')} <span class="text-danger">*</span>
 								</label>
 								<input
@@ -623,10 +597,7 @@
 							</div>
 						{/if}
 						<div class="space-y-1">
-							<label
-								class="block text-sm font-medium text-fg"
-								for="state-display-name"
-							>
+							<label class="block text-sm font-medium text-fg" for="state-display-name">
 								{$t('workflow.displayName')} <span class="text-danger">*</span>
 							</label>
 							<input
@@ -638,10 +609,7 @@
 							/>
 						</div>
 						<div class="space-y-1">
-							<label
-								class="block text-sm font-medium text-fg"
-								for="state-category"
-							>
+							<label class="block text-sm font-medium text-fg" for="state-category">
 								{$t('workflow.category')}
 							</label>
 							<select
@@ -654,10 +622,7 @@
 							</select>
 						</div>
 						<div class="space-y-1">
-							<label
-								class="block text-sm font-medium text-fg"
-								for="state-color"
-							>
+							<label class="block text-sm font-medium text-fg" for="state-color">
 								{$t('workflow.color')}
 							</label>
 							<input
@@ -669,9 +634,7 @@
 						</div>
 					</div>
 					<div class="flex gap-4">
-						<label
-							class="inline-flex items-center gap-2 text-sm text-fg cursor-pointer"
-						>
+						<label class="inline-flex items-center gap-2 text-sm text-fg cursor-pointer">
 							<input
 								type="checkbox"
 								bind:checked={stateForm.is_initial}
@@ -679,9 +642,7 @@
 							/>
 							{$t('workflow.isInitial')}
 						</label>
-						<label
-							class="inline-flex items-center gap-2 text-sm text-fg cursor-pointer"
-						>
+						<label class="inline-flex items-center gap-2 text-sm text-fg cursor-pointer">
 							<input
 								type="checkbox"
 								bind:checked={stateForm.is_terminal}

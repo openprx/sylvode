@@ -370,21 +370,15 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-card border border-line bg-raised p-6 text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('common.loading')}
 		</div>
 	{:else if webhooks.length === 0}
-		<div
-			class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted">
 			{$t('webhook.empty')}
 		</div>
 	{:else}
-		<div
-			class="overflow-hidden rounded-card border border-line bg-raised"
-		>
+		<div class="overflow-hidden rounded-card border border-line bg-raised">
 			<div class="overflow-x-auto">
 				<table class="min-w-full divide-y divide-line">
 					<thead class="bg-nav">
@@ -418,12 +412,8 @@
 					<tbody class="divide-y divide-line bg-raised">
 						{#each webhooks as webhook (webhook.id)}
 							<tr>
-								<td class="max-w-xs px-4 py-3 text-sm text-fg"
-									>{webhook.url}</td
-								>
-								<td class="px-4 py-3 text-sm text-fg-muted"
-									>{webhook.events.join(', ')}</td
-								>
+								<td class="max-w-xs px-4 py-3 text-sm text-fg">{webhook.url}</td>
+								<td class="px-4 py-3 text-sm text-fg-muted">{webhook.events.join(', ')}</td>
 								<td class="px-4 py-3 text-sm text-fg-muted">
 									{#if webhook.bot_user_id}
 										<div
@@ -447,9 +437,7 @@
 										>{(webhook.is_active ?? webhook.active) ? 'active' : 'inactive'}</span
 									>
 								</td>
-								<td class="px-4 py-3 text-sm text-fg-muted"
-									>{formatDate(webhook.created_at)}</td
-								>
+								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(webhook.created_at)}</td>
 								<td class="px-4 py-3 text-right">
 									<div class="flex items-center justify-end gap-3">
 										<button
@@ -501,9 +489,8 @@
 		/>
 		<Input label={$t('webhook.secretOptional')} bind:value={form.secret} />
 		<div>
-			<label
-				class="mb-1 block text-sm font-medium text-fg"
-				for="botUserId">{$t('webhook.linkedBot')}</label
+			<label class="mb-1 block text-sm font-medium text-fg" for="botUserId"
+				>{$t('webhook.linkedBot')}</label
 			>
 			<select
 				id="botUserId"
@@ -526,15 +513,11 @@
 		</label>
 
 		<fieldset>
-			<legend class="mb-2 text-sm font-medium text-fg"
-				>{$t('webhook.eventTypes')}</legend
-			>
+			<legend class="mb-2 text-sm font-medium text-fg">{$t('webhook.eventTypes')}</legend>
 			<div class="space-y-3">
 				{#each WEBHOOK_EVENT_GROUPS as entry (entry.group)}
 					<fieldset data-testid="webhook-event-group" data-group={entry.group}>
-						<legend
-							class="mb-1 text-xs font-semibold uppercase tracking-wider text-fg-muted"
-						>
+						<legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-fg-muted">
 							{$t(webhookEventGroupKey(entry.group))}
 						</legend>
 						<div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
@@ -580,15 +563,11 @@
 >
 	<div class="space-y-4">
 		{#if deliveriesLoading}
-			<div
-				class="rounded-control border border-line p-4 text-sm text-fg-muted"
-			>
+			<div class="rounded-control border border-line p-4 text-sm text-fg-muted">
 				{$t('webhook.loadingDeliveries')}
 			</div>
 		{:else if deliveries.length === 0}
-			<div
-				class="rounded-control border border-line p-4 text-sm text-fg-muted"
-			>
+			<div class="rounded-control border border-line p-4 text-sm text-fg-muted">
 				{$t('webhook.noDeliveries')}
 			</div>
 		{:else}
@@ -621,16 +600,12 @@
 					<tbody class="divide-y divide-line bg-raised">
 						{#each deliveries as delivery (delivery.id)}
 							<tr>
-								<td class="px-3 py-2 text-fg"
-									>{formatDate(delivery.created_at)}</td
-								>
+								<td class="px-3 py-2 text-fg">{formatDate(delivery.created_at)}</td>
 								<td class="px-3 py-2 text-fg">{delivery.event_type}</td>
 								<td class={`px-3 py-2 font-medium ${getDeliveryStatus(delivery).className}`}
 									>{getDeliveryStatus(delivery).label}</td
 								>
-								<td class="px-3 py-2 text-fg"
-									>{formatDuration(delivery.duration_ms)}</td
-								>
+								<td class="px-3 py-2 text-fg">{formatDuration(delivery.duration_ms)}</td>
 								<td class="px-3 py-2 text-right">
 									<button
 										class="text-sm text-fg-muted hover:text-fg transition-colors"
@@ -702,18 +677,14 @@
 			<div class="flex items-center gap-2 border-b border-line pb-2">
 				<button
 					class={`px-3 py-1 text-sm rounded-control transition-colors ${
-						deliveryTab === 'request'
-							? 'bg-selected text-fg'
-							: 'text-fg-muted hover:text-fg'
+						deliveryTab === 'request' ? 'bg-selected text-fg' : 'text-fg-muted hover:text-fg'
 					}`}
 					onclick={() => (deliveryTab = 'request')}>{$t('webhook.request')}</button
 				>
 
 				<button
 					class={`px-3 py-1 text-sm rounded-control transition-colors ${
-						deliveryTab === 'response'
-							? 'bg-selected text-fg'
-							: 'text-fg-muted hover:text-fg'
+						deliveryTab === 'response' ? 'bg-selected text-fg' : 'text-fg-muted hover:text-fg'
 					}`}
 					onclick={() => (deliveryTab = 'response')}>{$t('webhook.response')}</button
 				>

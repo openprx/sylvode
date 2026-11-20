@@ -458,9 +458,7 @@
 			<div class="xl:col-span-3">
 				<Card>
 					<div class="mb-4 flex items-center justify-between">
-						<h3
-							class="flex items-center gap-2 text-lg font-semibold text-fg"
-						>
+						<h3 class="flex items-center gap-2 text-lg font-semibold text-fg">
 							<svg
 								class="h-5 w-5 text-fg-muted"
 								fill="none"
@@ -496,8 +494,7 @@
 										<p class="line-clamp-1 text-sm font-medium text-fg">
 											{issue.title}
 										</p>
-										<span class="text-xs text-fg-muted"
-											>{formatRelativeTime(issue.updated_at)}</span
+										<span class="text-xs text-fg-muted">{formatRelativeTime(issue.updated_at)}</span
 										>
 									</div>
 									<div class="flex flex-wrap items-center gap-2 text-xs">
@@ -518,9 +515,7 @@
 			<div class="xl:col-span-2">
 				<Card>
 					<div class="mb-4 flex items-center justify-between">
-						<h3
-							class="flex items-center gap-2 text-lg font-semibold text-fg"
-						>
+						<h3 class="flex items-center gap-2 text-lg font-semibold text-fg">
 							<svg
 								class="h-5 w-5 text-fg-muted"
 								fill="none"
@@ -672,9 +667,7 @@
 		<p class="text-fg">
 			{$t('workspace.deleteConfirm', { values: { name: deletingWorkspace?.name } })}
 		</p>
-		<div
-			class="rounded-control border bg-danger-soft p-4"
-		>
+		<div class="rounded-control border bg-danger-soft p-4">
 			<p class="inline-flex items-start gap-2 text-sm text-danger">
 				<svg class="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path

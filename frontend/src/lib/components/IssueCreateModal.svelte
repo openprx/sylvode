@@ -344,9 +344,7 @@
 			/>
 
 			{#if scenarioFields.length > 0}
-				<div
-					class="rounded-card border border-line bg-surface p-4"
-				>
+				<div class="rounded-card border border-line bg-surface p-4">
 					<div class="mb-3">
 						<p class="text-sm font-semibold text-fg">
 							{$t('issue.scenarioFields')}
@@ -402,19 +400,14 @@
 
 			<div class="space-y-2">
 				<div class="flex items-center justify-between">
-					<label
-						class="text-sm font-medium text-fg"
-						for="issueDescription">{$t('issue.description')}</label
+					<label class="text-sm font-medium text-fg" for="issueDescription"
+						>{$t('issue.description')}</label
 					>
-					<div
-						class="inline-flex rounded-control border border-line bg-surface p-0.5"
-					>
+					<div class="inline-flex rounded-control border border-line bg-surface p-0.5">
 						<button
 							type="button"
 							class={`rounded px-2 py-1 text-xs ${
-								descriptionTab === 'edit'
-									? 'bg-raised text-fg'
-									: 'text-fg-muted hover:text-fg'
+								descriptionTab === 'edit' ? 'bg-raised text-fg' : 'text-fg-muted hover:text-fg'
 							}`}
 							onclick={() => (descriptionTab = 'edit')}
 						>
@@ -423,9 +416,7 @@
 						<button
 							type="button"
 							class={`rounded px-2 py-1 text-xs ${
-								descriptionTab === 'preview'
-									? 'bg-raised text-fg'
-									: 'text-fg-muted hover:text-fg'
+								descriptionTab === 'preview' ? 'bg-raised text-fg' : 'text-fg-muted hover:text-fg'
 							}`}
 							onclick={() => (descriptionTab = 'preview')}
 						>
@@ -463,9 +454,8 @@
 
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div>
-					<label
-						class="mb-1 block text-sm font-medium text-fg"
-						for="issueStatus">{$t('issue.status')}</label
+					<label class="mb-1 block text-sm font-medium text-fg" for="issueStatus"
+						>{$t('issue.status')}</label
 					>
 					<select
 						id="issueStatus"
@@ -479,9 +469,8 @@
 				</div>
 
 				<div>
-					<label
-						class="mb-1 block text-sm font-medium text-fg"
-						for="issuePriority">{$t('issue.priority')}</label
+					<label class="mb-1 block text-sm font-medium text-fg" for="issuePriority"
+						>{$t('issue.priority')}</label
 					>
 					<select
 						id="issuePriority"
@@ -496,9 +485,8 @@
 				</div>
 
 				<div>
-					<label
-						class="mb-1 block text-sm font-medium text-fg"
-						for="issueAssignee">{$t('issue.assignee')}</label
+					<label class="mb-1 block text-sm font-medium text-fg" for="issueAssignee"
+						>{$t('issue.assignee')}</label
 					>
 					<select
 						id="issueAssignee"
@@ -513,10 +501,7 @@
 				</div>
 
 				<div>
-					<label
-						class="mb-1 block text-sm font-medium text-fg"
-						for="issueSprint">Sprint</label
-					>
+					<label class="mb-1 block text-sm font-medium text-fg" for="issueSprint">Sprint</label>
 					<select
 						id="issueSprint"
 						bind:value={form.sprint_id}
@@ -531,9 +516,7 @@
 			</div>
 
 			<fieldset class="space-y-2">
-				<legend class="block text-sm font-medium text-fg"
-					>{$t('issue.labels')}</legend
-				>
+				<legend class="block text-sm font-medium text-fg">{$t('issue.labels')}</legend>
 				{#if labels.length === 0}
 					<p
 						class="rounded-control border border-dashed border-input bg-surface px-3 py-2 text-sm text-fg-muted"
@@ -541,9 +524,7 @@
 						{$t('issue.noWorkspaceLabels')}
 					</p>
 				{:else}
-					<div
-						class="max-h-36 space-y-1 overflow-y-auto rounded-control border border-line p-2"
-					>
+					<div class="max-h-36 space-y-1 overflow-y-auto rounded-control border border-line p-2">
 						{#each labels as label (label.id)}
 							<label
 								class="flex cursor-pointer items-center justify-between rounded px-2 py-1 text-sm hover:bg-surface"

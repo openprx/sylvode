@@ -278,15 +278,11 @@
 </script>
 
 <div class="mx-auto max-w-7xl space-y-6">
-	<div
-		class="rounded-card border border-line bg-raised p-4 sm:p-5"
-	>
+	<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 		<div class="mb-4 text-sm text-fg-muted">
 			<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
 			<span class="mx-1 text-fg-muted">/</span>
-			<a href="/workspace/{workspaceId}/projects" class="hover:underline"
-				>{$t('project.title')}</a
-			>
+			<a href="/workspace/{workspaceId}/projects" class="hover:underline">{$t('project.title')}</a>
 			<span class="mx-1 text-fg-muted">/</span>
 			<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:underline"
 				>{$t('project.detail')}</a
@@ -310,9 +306,7 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-card border border-line bg-raised p-8 text-center text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-8 text-center text-fg-muted">
 			<div
 				class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-fg border-t-transparent"
 			></div>
@@ -334,17 +328,13 @@
 				{$t('cycles.current')}
 			</h2>
 			{#if activeSprints.length === 0}
-				<div
-					class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted"
-				>
+				<div class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted">
 					{$t('cycles.noActive')}
 				</div>
 			{:else}
 				<div class="space-y-3">
 					{#each activeSprints as sprint (sprint.id)}
-						<div
-							class="rounded-card border border-line bg-raised p-4 sm:p-5"
-						>
+						<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 							<div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
 								<div>
 									<h3 class="text-lg font-semibold text-fg">
@@ -378,12 +368,8 @@
 									}
 								})}
 							/>
-							<div
-								class="mt-4 rounded-control border border-line bg-surface p-3"
-							>
-								<p
-									class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted"
-								>
+							<div class="mt-4 rounded-control border border-line bg-surface p-3">
+								<p class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted">
 									{$t('cycles.linkedIssues', {
 										values: { count: sprintIssues[sprint.id]?.length ?? 0 }
 									})}
@@ -434,17 +420,13 @@
 				{$t('cycles.planned')}
 			</h2>
 			{#if plannedSprints.length === 0}
-				<div
-					class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted"
-				>
+				<div class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted">
 					{$t('cycles.noPlanned')}
 				</div>
 			{:else}
 				<div class="space-y-3">
 					{#each plannedSprints as sprint (sprint.id)}
-						<div
-							class="rounded-card border border-line bg-raised p-4 sm:p-5"
-						>
+						<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 							<div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
 								<div>
 									<h3 class="text-lg font-semibold text-fg">
@@ -468,12 +450,8 @@
 									{$t('cycles.goal')}: {sprint.goal}
 								</p>
 							{/if}
-							<div
-								class="rounded-control border border-line bg-surface p-3"
-							>
-								<p
-									class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted"
-								>
+							<div class="rounded-control border border-line bg-surface p-3">
+								<p class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted">
 									{$t('cycles.linkedIssues', {
 										values: { count: sprintIssues[sprint.id]?.length ?? 0 }
 									})}
@@ -525,18 +503,12 @@
 			{/if}
 		</section>
 
-		<section
-			class="rounded-card border border-line bg-raised p-4 sm:p-5"
-		>
+		<section class="rounded-card border border-line bg-raised p-4 sm:p-5">
 			<details>
-				<summary
-					class="cursor-pointer list-none text-lg font-semibold text-fg"
-				>
+				<summary class="cursor-pointer list-none text-lg font-semibold text-fg">
 					<span class="inline-flex items-center gap-2"
 						>{$t('cycles.completedList')}
-						<span class="text-sm text-fg-muted"
-							>({completedSprints.length})</span
-						></span
+						<span class="text-sm text-fg-muted">({completedSprints.length})</span></span
 					>
 				</summary>
 				<div class="mt-4 space-y-3">
@@ -569,12 +541,8 @@
 										}
 									})}
 								/>
-								<div
-									class="mt-3 rounded-control border border-line bg-surface p-3"
-								>
-									<p
-										class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted"
-									>
+								<div class="mt-3 rounded-control border border-line bg-surface p-3">
+									<p class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted">
 										{$t('cycles.linkedIssues', {
 											values: { count: sprintIssues[sprint.id]?.length ?? 0 }
 										})}
@@ -612,17 +580,13 @@
 
 {#if showCreateModal}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
-		<div
-			class="w-full max-w-lg rounded-float bg-overlay p-6 shadow-overlay"
-		>
+		<div class="w-full max-w-lg rounded-float bg-overlay p-6 shadow-overlay">
 			<h2 class="mb-4 text-lg font-semibold text-fg">
 				{$t('cycles.create')}
 			</h2>
 			<div class="space-y-4">
 				<div>
-					<label
-						for="create-name"
-						class="mb-1 block text-sm font-medium text-fg"
+					<label for="create-name" class="mb-1 block text-sm font-medium text-fg"
 						>{$t('cycles.name')}</label
 					>
 					<input
@@ -634,9 +598,7 @@
 					/>
 				</div>
 				<div>
-					<label
-						for="create-goal"
-						class="mb-1 block text-sm font-medium text-fg"
+					<label for="create-goal" class="mb-1 block text-sm font-medium text-fg"
 						>{$t('cycles.goal')}</label
 					>
 					<textarea
@@ -649,9 +611,7 @@
 				</div>
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 					<div>
-						<label
-							for="create-start-date"
-							class="mb-1 block text-sm font-medium text-fg"
+						<label for="create-start-date" class="mb-1 block text-sm font-medium text-fg"
 							>{$t('cycles.startDate')}</label
 						>
 						<input
@@ -662,9 +622,7 @@
 						/>
 					</div>
 					<div>
-						<label
-							for="create-end-date"
-							class="mb-1 block text-sm font-medium text-fg"
+						<label for="create-end-date" class="mb-1 block text-sm font-medium text-fg"
 							>{$t('cycles.endDate')}</label
 						>
 						<input
@@ -697,17 +655,13 @@
 
 {#if showEditModal}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
-		<div
-			class="w-full max-w-lg rounded-float bg-overlay p-6 shadow-overlay"
-		>
+		<div class="w-full max-w-lg rounded-float bg-overlay p-6 shadow-overlay">
 			<h2 class="mb-4 text-lg font-semibold text-fg">
 				{$t('cycles.edit')}
 			</h2>
 			<div class="space-y-4">
 				<div>
-					<label
-						for="edit-name"
-						class="mb-1 block text-sm font-medium text-fg"
+					<label for="edit-name" class="mb-1 block text-sm font-medium text-fg"
 						>{$t('cycles.name')}</label
 					>
 					<input
@@ -718,9 +672,7 @@
 					/>
 				</div>
 				<div>
-					<label
-						for="edit-goal"
-						class="mb-1 block text-sm font-medium text-fg"
+					<label for="edit-goal" class="mb-1 block text-sm font-medium text-fg"
 						>{$t('cycles.goal')}</label
 					>
 					<textarea
@@ -732,9 +684,7 @@
 				</div>
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 					<div>
-						<label
-							for="edit-start-date"
-							class="mb-1 block text-sm font-medium text-fg"
+						<label for="edit-start-date" class="mb-1 block text-sm font-medium text-fg"
 							>{$t('cycles.startDate')}</label
 						>
 						<input
@@ -745,9 +695,7 @@
 						/>
 					</div>
 					<div>
-						<label
-							for="edit-end-date"
-							class="mb-1 block text-sm font-medium text-fg"
+						<label for="edit-end-date" class="mb-1 block text-sm font-medium text-fg"
 							>{$t('cycles.endDate')}</label
 						>
 						<input

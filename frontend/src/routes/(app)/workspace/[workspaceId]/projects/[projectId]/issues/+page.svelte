@@ -276,15 +276,12 @@
 </script>
 
 <div class="mx-auto max-w-7xl space-y-6">
-	<div
-		class="rounded-card border border-line bg-raised p-4 sm:p-5"
-	>
+	<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 		<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 			<div class="text-sm text-fg-muted">
 				<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
 				<span class="mx-1 text-fg-muted">/</span>
-				<a href="/workspace/{workspaceId}/projects" class="hover:underline"
-					>{$t('project.title')}</a
+				<a href="/workspace/{workspaceId}/projects" class="hover:underline">{$t('project.title')}</a
 				>
 				<span class="mx-1 text-fg-muted">/</span>
 				<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:underline"
@@ -302,9 +299,8 @@
 
 		<div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
 			<div class="xl:col-span-2">
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="keyword">{$t('common.search')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="keyword"
+					>{$t('common.search')}</label
 				>
 				<input
 					id="keyword"
@@ -316,9 +312,8 @@
 				/>
 			</div>
 			<div>
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="statusFilter">{$t('common.status')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="statusFilter"
+					>{$t('common.status')}</label
 				>
 				<select
 					id="statusFilter"
@@ -340,9 +335,8 @@
 				</select>
 			</div>
 			<div>
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="priorityFilter">{$t('common.priority')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="priorityFilter"
+					>{$t('common.priority')}</label
 				>
 				<select
 					id="priorityFilter"
@@ -358,9 +352,8 @@
 				</select>
 			</div>
 			<div>
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="assigneeFilter">{$t('common.assignee')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="assigneeFilter"
+					>{$t('common.assignee')}</label
 				>
 				<select
 					id="assigneeFilter"
@@ -375,9 +368,7 @@
 				</select>
 			</div>
 			<div class="relative" bind:this={labelFilterContainer}>
-				<span
-					id={labelFilterLabelId}
-					class="mb-1 block text-sm font-medium text-fg"
+				<span id={labelFilterLabelId} class="mb-1 block text-sm font-medium text-fg"
 					>{$t('common.label')}</span
 				>
 				<button
@@ -445,9 +436,8 @@
 				{/if}
 			</div>
 			<div>
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="sortBy">{$t('issue.sortBy')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="sortBy"
+					>{$t('issue.sortBy')}</label
 				>
 				<div class="flex gap-2">
 					<select
@@ -475,9 +465,7 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-card border border-line bg-raised p-4"
-		>
+		<div class="rounded-card border border-line bg-raised p-4">
 			<div class="space-y-3">
 				{#each Array(5) as _, index (`skeleton-${index}`)}
 					<div class="h-12 animate-pulse rounded bg-surface"></div>
@@ -485,15 +473,11 @@
 			</div>
 		</div>
 	{:else if issues.length === 0}
-		<div
-			class="rounded-card border border-line bg-raised p-12 text-center text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-12 text-center text-fg-muted">
 			{$t('issue.noMatched')}
 		</div>
 	{:else}
-		<div
-			class="overflow-hidden rounded-card border border-line bg-raised"
-		>
+		<div class="overflow-hidden rounded-card border border-line bg-raised">
 			<div class="hidden overflow-x-auto md:block">
 				<table class="min-w-full divide-y divide-line">
 					<thead class="bg-nav">
@@ -522,10 +506,7 @@
 					</thead>
 					<tbody class="divide-y divide-line bg-raised">
 						{#each issues as issue (issue.id)}
-							<tr
-								class="cursor-pointer hover:bg-surface"
-								onclick={() => goToIssue(issue.id)}
-							>
+							<tr class="cursor-pointer hover:bg-surface" onclick={() => goToIssue(issue.id)}>
 								<td class="px-4 py-3">
 									<div class="space-y-1">
 										<p class="text-sm font-medium text-fg">
@@ -575,10 +556,7 @@
 										<div class="flex items-center gap-2">
 											<Avatar userId={issue.assignee_id} />
 											{#if isBotAssignee(issue.assignee_id)}
-												<BotIcon
-													class="h-3.5 w-3.5 text-fg-muted"
-													title={$t('admin.botBadge')}
-												/>
+												<BotIcon class="h-3.5 w-3.5 text-fg-muted" title={$t('admin.botBadge')} />
 											{/if}
 											<span class="text-xs text-fg-muted"
 												>{memberNameMap[issue.assignee_id] ||
@@ -589,9 +567,7 @@
 										<span class="text-xs text-fg-muted">{$t('common.unassigned')}</span>
 									{/if}
 								</td>
-								<td class="px-4 py-3 text-sm text-fg-muted"
-									>{formatDate(issue.updated_at)}</td
-								>
+								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(issue.updated_at)}</td>
 							</tr>
 						{/each}
 					</tbody>
@@ -651,10 +627,7 @@
 								<div class="flex items-center gap-2">
 									<Avatar userId={issue.assignee_id} />
 									{#if isBotAssignee(issue.assignee_id)}
-										<BotIcon
-											class="h-3.5 w-3.5 text-fg-muted"
-											title={$t('admin.botBadge')}
-										/>
+										<BotIcon class="h-3.5 w-3.5 text-fg-muted" title={$t('admin.botBadge')} />
 									{/if}
 									<span class="text-xs text-fg-muted"
 										>{memberNameMap[issue.assignee_id] || issue.assignee_id.substring(0, 8)}</span

@@ -230,9 +230,7 @@
 </svelte:head>
 
 <div class="mx-auto max-w-6xl space-y-4">
-	<div
-		class="rounded-card border border-line bg-raised p-4"
-	>
+	<div class="rounded-card border border-line bg-raised p-4">
 		<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 			<div>
 				<h1 class="text-xl font-semibold text-fg">
@@ -291,9 +289,7 @@
 						</div>
 
 						{#if statsMap[agent.id]}
-							<div
-								class="mt-3 rounded border border-line bg-surface p-3 text-xs text-fg-muted"
-							>
+							<div class="mt-3 rounded border border-line bg-surface p-3 text-xs text-fg-muted">
 								<div>{$t('aiAgents.statsVotes')}: {statsMap[agent.id].total_votes}</div>
 								<div>{$t('aiAgents.statsComments')}: {statsMap[agent.id].total_comments}</div>
 								<div>
@@ -315,10 +311,7 @@
 							</div>
 						{/if}
 						<div class="mt-2">
-							<a
-								href={`/ai-agents/${agent.id}/learning`}
-								class="text-xs text-fg underline"
-							>
+							<a href={`/ai-agents/${agent.id}/learning`} class="text-xs text-fg underline">
 								{$t('governanceExt.learningEntry')}
 							</a>
 						</div>
@@ -352,9 +345,7 @@
 		<Input label={$t('aiAgents.domainOverridesInput')} bind:value={createForm.domain_overrides} />
 
 		<div>
-			<label
-				for="create-max-level"
-				class="mb-1 block text-sm font-medium text-fg"
+			<label for="create-max-level" class="mb-1 block text-sm font-medium text-fg"
 				>{$t('aiAgents.maxLevel')}</label
 			>
 			<select
@@ -410,9 +401,7 @@
 		<Input label={$t('aiAgents.domainOverridesInput')} bind:value={editForm.domain_overrides} />
 
 		<div>
-			<label
-				for="edit-max-level"
-				class="mb-1 block text-sm font-medium text-fg"
+			<label for="edit-max-level" class="mb-1 block text-sm font-medium text-fg"
 				>{$t('aiAgents.maxLevel')}</label
 			>
 			<select

@@ -630,10 +630,7 @@
 		<div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 			<div>
 				<div class="mb-2 flex items-center gap-3">
-					<span
-						class="rounded bg-surface px-2 py-1 text-sm text-fg-muted"
-						>{project.key}</span
-					>
+					<span class="rounded bg-surface px-2 py-1 text-sm text-fg-muted">{project.key}</span>
 					<h1 class="text-2xl font-semibold text-fg">{project.name}</h1>
 				</div>
 				{#if project.description}
@@ -661,9 +658,7 @@
 		</div>
 
 		<div class="mb-8 grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-			<section
-				class="rounded-card border border-line bg-raised p-5"
-			>
+			<section class="rounded-card border border-line bg-raised p-5">
 				<div class="mb-4">
 					<h2 class="text-lg font-semibold text-fg">
 						{$t('project.projectManagement')}
@@ -709,9 +704,7 @@
 				</div>
 			</section>
 
-			<section
-				class="rounded-card border border-line bg-raised p-5"
-			>
+			<section class="rounded-card border border-line bg-raised p-5">
 				<div class="mb-4">
 					<h2 class="text-lg font-semibold text-fg">
 						{$t('project.businessData')}
@@ -740,9 +733,7 @@
 		<ProjectPluginNav {workspaceId} {projectId} />
 
 		{#if scenarioTemplate}
-			<div
-				class="mb-8 rounded-card border border-line bg-raised p-6"
-			>
+			<div class="mb-8 rounded-card border border-line bg-raised p-6">
 				<div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
 					<div>
 						<p class="text-xs font-medium uppercase tracking-wide text-fg-muted">
@@ -820,9 +811,7 @@
 						</h3>
 						<div class="space-y-2">
 							{#each scenarioRequiredResources.slice(0, 5) as item, index}
-								<div
-									class="rounded-control border border-line px-3 py-2 text-sm text-fg"
-								>
+								<div class="rounded-control border border-line px-3 py-2 text-sm text-fg">
 									{scenarioItemLabel(item, `Resource ${index + 1}`)}
 								</div>
 							{/each}
@@ -831,9 +820,7 @@
 				</div>
 			</div>
 
-			<div
-				class="mb-8 rounded-card border border-line bg-raised p-6"
-			>
+			<div class="mb-8 rounded-card border border-line bg-raised p-6">
 				<div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
 					<div>
 						<h2 class="text-lg font-semibold text-fg">
@@ -867,8 +854,7 @@
 													<h4 class="text-sm font-semibold text-fg">
 														{scenarioItemLabel(role, $t('project.assistant'))}
 													</h4>
-													<span
-														class="rounded bg-surface px-2 py-0.5 text-xs text-fg-muted"
+													<span class="rounded bg-surface px-2 py-0.5 text-xs text-fg-muted"
 														>{scenarioValue(role, 'agent_type', 'assistant')}</span
 													>
 													<span
@@ -895,9 +881,7 @@
 												{#if assistant}
 													{@const draft = assistantDraft(assistant, role)}
 													<div class="mt-3 grid gap-2 sm:grid-cols-3">
-														<label
-															class="block text-xs font-medium text-fg-muted"
-														>
+														<label class="block text-xs font-medium text-fg-muted">
 															{$t('project.provider')}
 															<input
 																class="mt-1 block w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
@@ -912,9 +896,7 @@
 																	)}
 															/>
 														</label>
-														<label
-															class="block text-xs font-medium text-fg-muted"
-														>
+														<label class="block text-xs font-medium text-fg-muted">
 															{$t('project.model')}
 															<input
 																class="mt-1 block w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
@@ -929,9 +911,7 @@
 																	)}
 															/>
 														</label>
-														<label
-															class="block text-xs font-medium text-fg-muted"
-														>
+														<label class="block text-xs font-medium text-fg-muted">
 															{$t('project.apiEndpoint')}
 															<input
 																class="mt-1 block w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
@@ -970,9 +950,7 @@
 			</div>
 		{/if}
 
-		<div
-			class="mb-8 rounded-card border border-line bg-raised p-6"
-		>
+		<div class="mb-8 rounded-card border border-line bg-raised p-6">
 			<div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 				<div>
 					<h2 class="text-lg font-semibold text-fg">
@@ -1009,9 +987,7 @@
 			</div>
 
 			{#if resources.length === 0}
-				<p
-					class="rounded-control border border-dashed border-input p-4 text-sm text-fg-muted"
-				>
+				<p class="rounded-control border border-dashed border-input p-4 text-sm text-fg-muted">
 					{$t('resources.empty')}
 				</p>
 			{:else}
@@ -1019,20 +995,16 @@
 					<table class="min-w-full divide-y divide-line">
 						<thead class="bg-nav">
 							<tr>
-								<th
-									class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
+								<th class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
 									>{$t('resources.kind')}</th
 								>
-								<th
-									class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
+								<th class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
 									>{$t('resources.name')}</th
 								>
-								<th
-									class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
+								<th class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
 									>{$t('resources.locator')}</th
 								>
-								<th
-									class="px-4 py-2 text-right text-xs font-medium uppercase text-fg-muted"
+								<th class="px-4 py-2 text-right text-xs font-medium uppercase text-fg-muted"
 									>{$t('common.actions')}</th
 								>
 							</tr>
@@ -1124,9 +1096,7 @@
 			{/if}
 		</div>
 
-		<div
-			class="rounded-card border border-line bg-raised p-6"
-		>
+		<div class="rounded-card border border-line bg-raised p-6">
 			<h2 class="mb-4 text-lg font-semibold text-fg">
 				{$t('project.recentUpdates')}
 			</h2>
@@ -1141,13 +1111,9 @@
 						>
 							<div class="space-y-1.5">
 								<div class="flex items-center gap-2">
-									<span class="font-mono text-sm text-fg-muted"
-										>{issue.key}</span
-									>
+									<span class="font-mono text-sm text-fg-muted">{issue.key}</span>
 
-									<span class="text-sm font-medium text-fg"
-										>{issue.title}</span
-									>
+									<span class="text-sm font-medium text-fg">{issue.title}</span>
 
 									<span
 										class="ml-auto rounded px-2 py-1 text-xs {issue.status === 'done'
