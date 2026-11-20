@@ -10,6 +10,12 @@ name.
 
 ## [Unreleased]
 
+### Changed
+
+- **Forms page restructured.** The Forms page is split into a state object, controllers, pure
+  modules and components, with unit tests for the modules and a browser smoke for the
+  interactions. Internal refactor, no behaviour change.
+
 ## [0.5.0] - 2026-11-19
 
 ### Added
