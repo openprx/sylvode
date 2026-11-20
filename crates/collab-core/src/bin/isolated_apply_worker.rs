@@ -120,7 +120,10 @@ fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> w
 
     match outcome {
         Ok(result) => match wire::encode_replay_diff_result(&result) {
-            Ok(snapshot) => wire::Outcome::Success { snapshot },
+            Ok(snapshot) => wire::Outcome::Success {
+                snapshot,
+                window_cpu_us: None,
+            },
             Err(error) => wire::Outcome::Rejected(CollabError::OperationFailed {
                 reason: format!("diff result encoding failed: {error}"),
             }),
@@ -266,13 +269,38 @@ fn write_marker_or_exit() {
 /// not just this one test's work. The real armed path is only ever exercised by spawning the
 /// actual compiled worker binary as a subprocess, which `isolation::host`'s own tests do.
 #[cfg(target_os = "linux")]
-fn run_metered(engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngine, wire::Outcome> {
+fn run_metered(engine: LoroCollabEngine, update: &[u8]) -> (Result<LoroCollabEngine, wire::Outcome>, Option<u64>) {
     child_runtime::arm_sigprof();
     alloc::arm();
+    // Telemetry only: two process-CPU clock reads bracket the workload. They do not allocate and
+    // take no part in the verdict or in the `SIGPROF` ceiling.
+    let cpu_before = process_cpu_micros();
     let outcome = metered_workload(engine, update);
+    let cpu_after = process_cpu_micros();
     child_runtime::disarm_sigprof();
     alloc::disarm();
-    outcome
+    let window_cpu_us = match (cpu_before, cpu_after) {
+        (Some(before), Some(after)) => Some(after.saturating_sub(before)),
+        _ => None,
+    };
+    (outcome, window_cpu_us)
+}
+
+/// Process CPU time (user plus system, `CLOCK_PROCESS_CPUTIME_ID`) in microseconds -- the clock
+/// `ITIMER_PROF` and `decode_apply_cpu_ms_max` track. `None` only if the clock cannot be read.
+#[cfg(target_os = "linux")]
+fn process_cpu_micros() -> Option<u64> {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: `&raw mut ts` is a valid, properly aligned out-pointer for a `timespec`;
+    // `CLOCK_PROCESS_CPUTIME_ID` is a clock id supported by every Linux kernel this workspace
+    // targets. No precondition beyond the pointer's validity.
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &raw mut ts) };
+    if rc != 0 {
+        return None;
+    }
+    let secs = u64::try_from(ts.tv_sec).ok()?;
+    let nanos = u64::try_from(ts.tv_nsec).ok()?;
+    secs.checked_mul(1_000_000)?.checked_add(nanos / 1_000)
 }
 
 /// The work that actually runs inside the armed metered window. In every `--release` build (this
@@ -327,9 +355,13 @@ fn decode_apply_and_check(mut engine: LoroCollabEngine, update: &[u8]) -> Result
 /// contract does not ask this ceiling to bound.
 #[cfg(target_os = "linux")]
 fn decode_apply_check_and_export(engine: LoroCollabEngine, update: &[u8]) -> wire::Outcome {
-    match run_metered(engine, update) {
+    let (verdict, window_cpu_us) = run_metered(engine, update);
+    match verdict {
         Ok(accepted) => match accepted.export_snapshot() {
-            Ok(snapshot) => wire::Outcome::Success { snapshot },
+            Ok(snapshot) => wire::Outcome::Success {
+                snapshot,
+                window_cpu_us,
+            },
             Err(err) => wire::Outcome::Rejected(err),
         },
         Err(outcome) => outcome,
@@ -542,9 +574,14 @@ mod tests {
         let update = writer.export_from(&base_frontier).expect("export succeeds");
 
         let outcome = decode_apply_check_and_export(base, &update);
-        let wire::Outcome::Success { snapshot } = outcome else {
+        let wire::Outcome::Success {
+            snapshot,
+            window_cpu_us,
+        } = outcome
+        else {
             panic!("expected Success, a title-only update stays well within every ceiling");
         };
+        assert!(window_cpu_us.is_some(), "the worker reports the window CPU time");
         let reloaded = LoroCollabEngine::load(&snapshot).expect("exported snapshot reloads");
         assert_eq!(reloaded.title().expect("title reads"), "hello");
     }
