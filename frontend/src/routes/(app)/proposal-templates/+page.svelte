@@ -186,29 +186,25 @@
 </svelte:head>
 
 <div class="mx-auto max-w-7xl space-y-4">
-	<div
-		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
-	>
+	<div class="rounded-card border border-line bg-raised p-5">
 		<h1 class="text-xl font-semibold text-fg">
 			{$t('proposalTemplates.title')}
 		</h1>
-		<p class="mt-1 text-sm text-slate-500">{$t('proposalTemplates.subtitle')}</p>
+		<p class="mt-1 text-sm text-fg-muted">{$t('proposalTemplates.subtitle')}</p>
 	</div>
 
 	<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
-		<div
-			class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800 lg:col-span-2"
-		>
+		<div class="rounded-card border border-line bg-raised p-4 lg:col-span-2">
 			<div class="mb-3 flex items-center justify-between gap-3">
 				<div class="flex-1">
-					<label for="proposal-template-project" class="mb-1 block text-sm text-slate-600"
+					<label for="proposal-template-project" class="mb-1 block text-sm text-fg-muted"
 						>{$t('impactReview.project')}</label
 					>
 					<select
 						id="proposal-template-project"
 						bind:value={selectedProjectId}
 						onchange={onProjectChange}
-						class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					>
 						{#each groupedProjects as group}
 							<optgroup label={group.workspaceName}>
@@ -222,44 +218,44 @@
 				<button
 					type="button"
 					onclick={startCreate}
-					class="rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-900"
+					class="rounded-control border border-fg bg-raised px-3 py-2 text-sm hover:bg-surface"
 				>
 					{$t('proposalTemplates.new')}
 				</button>
 			</div>
 
 			{#if loading}
-				<p class="text-sm text-slate-500">{$t('common.loading')}</p>
+				<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 			{:else if templates.length === 0}
-				<p class="text-sm text-slate-500">{$t('proposalTemplates.empty')}</p>
+				<p class="text-sm text-fg-muted">{$t('proposalTemplates.empty')}</p>
 			{:else}
 				<div class="space-y-2">
 					{#each templates as item}
-						<div class="rounded-md border border-slate-200 p-3 dark:border-slate-600">
+						<div class="rounded-control border border-line p-3">
 							<div class="mb-2 flex flex-wrap items-center gap-2">
 								<p class="text-sm font-medium text-fg">{item.name}</p>
-								<span class="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600"
+								<span class="rounded bg-surface px-2 py-0.5 text-xs text-fg-muted"
 									>{item.template_type}</span
 								>
 								{#if item.is_default}
-									<span class="rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700"
+									<span class="rounded bg-surface px-2 py-0.5 text-xs text-fg"
 										>{$t('proposalTemplates.default')}</span
 									>
 								{/if}
 								{#if !item.is_active}
-									<span class="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700"
+									<span class="rounded bg-warning-soft px-2 py-0.5 text-xs text-warning"
 										>{$t('proposalTemplates.inactive')}</span
 									>
 								{/if}
 							</div>
 							{#if item.description}
-								<p class="mb-2 text-xs text-slate-500">{item.description}</p>
+								<p class="mb-2 text-xs text-fg-muted">{item.description}</p>
 							{/if}
 							<div class="flex flex-wrap gap-2">
 								<button
 									type="button"
 									onclick={() => startEdit(item)}
-									class="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-900"
+									class="rounded border border-fg bg-raised px-2 py-1 text-xs hover:bg-surface"
 								>
 									{$t('common.edit')}
 								</button>
@@ -267,7 +263,7 @@
 									<button
 										type="button"
 										onclick={() => setDefault(item)}
-										class="rounded border border-emerald-300 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50"
+										class="rounded border px-2 py-1 text-xs text-success hover:bg-surface"
 									>
 										{$t('proposalTemplates.setDefault')}
 									</button>
@@ -275,7 +271,7 @@
 								<button
 									type="button"
 									onclick={() => removeTemplate(item)}
-									class="rounded border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+									class="rounded border px-2 py-1 text-xs text-danger hover:bg-danger-soft"
 								>
 									{$t('common.delete')}
 								</button>
@@ -286,63 +282,61 @@
 			{/if}
 		</div>
 
-		<div
-			class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
-		>
+		<div class="rounded-card border border-line bg-raised p-4">
 			<h2 class="mb-3 text-sm font-semibold text-fg">
 				{editingId ? $t('proposalTemplates.editTitle') : $t('proposalTemplates.createTitle')}
 			</h2>
 			<div class="space-y-3">
 				<div>
-					<label for="proposal-template-name" class="mb-1 block text-sm text-slate-600"
+					<label for="proposal-template-name" class="mb-1 block text-sm text-fg-muted"
 						>{$t('proposalTemplates.name')}</label
 					>
 					<input
 						id="proposal-template-name"
 						bind:value={formName}
 						type="text"
-						class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					/>
 				</div>
 				<div>
-					<label for="proposal-template-description" class="mb-1 block text-sm text-slate-600"
+					<label for="proposal-template-description" class="mb-1 block text-sm text-fg-muted"
 						>{$t('proposalTemplates.description')}</label
 					>
 					<input
 						id="proposal-template-description"
 						bind:value={formDescription}
 						type="text"
-						class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					/>
 				</div>
 				<div>
-					<label for="proposal-template-type" class="mb-1 block text-sm text-slate-600"
+					<label for="proposal-template-type" class="mb-1 block text-sm text-fg-muted"
 						>{$t('proposalTemplates.templateType')}</label
 					>
 					<input
 						id="proposal-template-type"
 						bind:value={formTemplateType}
 						type="text"
-						class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					/>
 				</div>
 				<div>
-					<label for="proposal-template-content" class="mb-1 block text-sm text-slate-600"
+					<label for="proposal-template-content" class="mb-1 block text-sm text-fg-muted"
 						>{$t('proposalTemplates.content')}</label
 					>
 					<textarea
 						id="proposal-template-content"
 						bind:value={formContentText}
 						rows="12"
-						class="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-600 dark:bg-slate-900"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs"
 					></textarea>
 				</div>
 				<div class="grid grid-cols-2 gap-3">
-					<label class="flex items-center gap-2 text-xs text-slate-600">
+					<label class="flex items-center gap-2 text-xs text-fg-muted">
 						<input type="checkbox" bind:checked={formIsDefault} />
 						{$t('proposalTemplates.default')}
 					</label>
-					<label class="flex items-center gap-2 text-xs text-slate-600">
+					<label class="flex items-center gap-2 text-xs text-fg-muted">
 						<input type="checkbox" bind:checked={formIsActive} />
 						{$t('proposalTemplates.active')}
 					</label>
@@ -351,7 +345,7 @@
 					<button
 						type="button"
 						onclick={submitForm}
-						class="flex-1 rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+						class="flex-1 rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
 						disabled={saving}
 					>
 						{saving ? $t('common.saving') : $t('common.save')}
@@ -359,7 +353,7 @@
 					<button
 						type="button"
 						onclick={resetForm}
-						class="rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-900"
+						class="rounded-control border border-fg bg-raised px-3 py-2 text-sm hover:bg-surface"
 					>
 						{$t('common.cancel')}
 					</button>

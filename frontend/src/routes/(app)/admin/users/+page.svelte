@@ -312,9 +312,7 @@
 		<Button onclick={openCreateModal}>{$t('admin.createUser')}</Button>
 	</div>
 
-	<div
-		class="grid grid-cols-1 gap-3 rounded-lg border border-line bg-white dark:bg-slate-900 p-4 lg:grid-cols-4"
-	>
+	<div class="grid grid-cols-1 gap-3 rounded-card border border-line bg-raised p-4 lg:grid-cols-4">
 		<div class="lg:col-span-2">
 			<Input
 				type="search"
@@ -331,7 +329,7 @@
 			<select
 				id="roleFilter"
 				bind:value={roleFilter}
-				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 			>
 				<option value="all">{$t('issue.all')}</option>
 				<option value="admin">{$t('roles.admin')}</option>
@@ -346,7 +344,7 @@
 			<select
 				id="statusFilter"
 				bind:value={statusFilter}
-				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 			>
 				<option value="all">{$t('issue.all')}</option>
 				<option value="active">{$t('admin.active')}</option>
@@ -356,27 +354,19 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('common.loading')}
 		</div>
 	{:else if filteredUsers.length === 0}
-		<div
-			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-10 text-center text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted">
 			{$t('admin.noMatchedUsers')}
 		</div>
 	{:else}
-		<div
-			class="overflow-hidden rounded-lg border border-line bg-white dark:bg-slate-900"
-		>
+		<div class="overflow-hidden rounded-card border border-line bg-raised">
 			<div class="space-y-3 p-3 md:hidden">
 				{#each filteredUsers as user (user.id)}
 					<div
-						class="rounded-lg border border-line p-4 {isBot(user)
-							? 'bg-cyan-50 dark:bg-cyan-900/20'
-							: 'bg-white dark:bg-slate-900'}"
+						class="rounded-card border border-line p-4 {isBot(user) ? 'bg-surface' : 'bg-raised'}"
 					>
 						<div class="flex items-start justify-between gap-3">
 							<div class="min-w-0">
@@ -384,10 +374,7 @@
 									class="text-sm font-semibold text-fg flex items-center gap-1.5"
 								>
 									{#if isBot(user)}
-										<BotIcon
-											class="h-4 w-4 text-cyan-700 dark:text-cyan-300"
-											title={$t('admin.botBadge')}
-										/>
+										<BotIcon class="h-4 w-4 text-fg-muted" title={$t('admin.botBadge')} />
 									{/if}
 									<span>{user.name}</span>
 								</p>
@@ -402,8 +389,8 @@
 							<span
 								class="inline-flex rounded-full px-2.5 py-1 text-xs font-medium {user.status ===
 								'active'
-									? 'bg-green-100 text-green-700'
-									: 'bg-red-100 text-red-700'}"
+									? 'bg-surface text-fg'
+									: 'bg-danger-soft text-danger'}"
 							>
 								{user.status}
 							</span>
@@ -414,7 +401,7 @@
 							<span>{$t('admin.role')}：{user.role}</span>
 							{#if isBot(user)}
 								<span
-									class="inline-flex rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300"
+									class="inline-flex rounded-full bg-surface px-2 py-0.5 text-xs font-medium text-fg"
 								>
 									{getAgentTypeLabel(user.agent_type)}
 								</span>
@@ -443,7 +430,7 @@
 			</div>
 			<div class="hidden overflow-x-auto md:block">
 				<table class="min-w-full divide-y divide-line">
-					<thead class="bg-slate-50 dark:bg-slate-950">
+					<thead class="bg-nav">
 						<tr>
 							<th
 								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
@@ -471,16 +458,13 @@
 							>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-line bg-white dark:bg-slate-900">
+					<tbody class="divide-y divide-line bg-raised">
 						{#each filteredUsers as user (user.id)}
-							<tr class={isBot(user) ? 'bg-cyan-50/70 dark:bg-cyan-900/10' : ''}>
+							<tr class={isBot(user) ? 'bg-surface' : ''}>
 								<td class="px-4 py-3 text-sm text-fg">
 									<div class="flex items-center gap-1.5">
 										{#if isBot(user)}
-											<BotIcon
-												class="h-4 w-4 text-cyan-700 dark:text-cyan-300"
-												title={$t('admin.botBadge')}
-											/>
+											<BotIcon class="h-4 w-4 text-fg-muted" title={$t('admin.botBadge')} />
 										{/if}
 										<span>{user.name}</span>
 									</div>
@@ -491,7 +475,7 @@
 										<span>{user.role}</span>
 										{#if isBot(user)}
 											<span
-												class="inline-flex rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300"
+												class="inline-flex rounded-full bg-surface px-2 py-0.5 text-xs font-medium text-fg"
 											>
 												{getAgentTypeLabel(user.agent_type)}
 											</span>
@@ -505,8 +489,8 @@
 									<span
 										class="inline-flex rounded-full px-2.5 py-1 text-xs font-medium {user.status ===
 										'active'
-											? 'bg-green-100 text-green-700'
-											: 'bg-red-100 text-red-700'}"
+											? 'bg-surface text-fg'
+											: 'bg-danger-soft text-danger'}"
 									>
 										{user.status}
 									</span>
@@ -556,7 +540,7 @@
 			<select
 				id="entityType"
 				bind:value={entityType}
-				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 			>
 				<option value="human">{$t('admin.human')}</option>
 				<option value="bot">{$t('admin.bot')}</option>
@@ -582,7 +566,7 @@
 				<select
 					id="agentType"
 					bind:value={agentType}
-					class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
 					<option value="openclaw">{$t('agentTypes.openclaw')}</option>
 					<option value="webhook">{$t('agentTypes.webhook')}</option>
@@ -590,7 +574,7 @@
 				</select>
 			</div>
 
-			<div class="space-y-3 rounded-md border border-line p-3">
+			<div class="space-y-3 rounded-control border border-line p-3">
 				<p class="text-sm font-medium text-fg">
 					{$t('admin.agentConfig')}
 				</p>
@@ -669,7 +653,7 @@
 				<select
 					id="editRole"
 					bind:value={editForm.role}
-					class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
 					<option value="user">{$t('roles.user')}</option>
 					<option value="admin">{$t('roles.admin')}</option>
