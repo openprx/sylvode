@@ -775,7 +775,6 @@ location.replace(${JSON.stringify(target)});
 				if (Boolean(left.config?.is_default) === Boolean(right.config?.is_default)) return 0;
 				return left.config?.is_default ? -1 : 1;
 			});
-		listedOrderLineViewIds = visibleViews.map((view) => view.id);
 		json(res, 200, apiResult(visibleViews));
 		return;
 	}
