@@ -98,21 +98,21 @@
 
 	const statusClass: Record<string, string> = {
 		started:
-			'border-amber-300 bg-amber-50 text-warning dark:border-amber-700 dark:bg-amber-950/40',
+			'border-line bg-warning-soft text-warning',
 		completed:
-			'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200',
+			'border-line bg-surface text-fg',
 		failed:
-			'border-red-300 bg-red-50 text-danger dark:border-red-700 dark:bg-red-950/40'
+			'border-line bg-danger-soft text-danger'
 	};
 	const statusFallbackClass =
-		'border-slate-300 bg-slate-50 text-fg dark:border-slate-600 dark:bg-slate-800';
+		'border-line-strong bg-surface text-fg';
 
 	const buttonPrimary =
-		'min-h-[44px] min-w-[44px] rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 motion-safe:transition-colors';
+		'min-h-[44px] min-w-[44px] rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control motion-safe:transition-colors';
 	const buttonSecondary =
-		'min-h-[44px] min-w-[44px] rounded-md border border-slate-300 px-4 text-sm font-medium text-fg hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800';
+		'min-h-[44px] min-w-[44px] rounded-control border border-fg bg-raised px-4 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-control disabled:border-line';
 	const linkClass =
-		'inline-flex min-h-11 items-center break-all text-blue-700 underline-offset-2 hover:underline dark:text-blue-300';
+		'inline-flex min-h-11 items-center break-all text-fg underline-offset-2 underline';
 	const dtClass = 'text-sm text-fg-muted';
 	const ddClass = 'text-sm text-fg';
 	const monoClass = 'break-all font-mono text-xs text-fg';
@@ -304,7 +304,7 @@
 						<ul class="mt-2 space-y-3" data-testid="flow-conversion-targets">
 							{#each snap.targets as target (target.id)}
 								<li
-									class="rounded-md border border-line p-3"
+									class="rounded-card border border-line p-3"
 									data-testid="flow-conversion-target"
 									data-target-id={target.id}
 									data-state={target.state}
