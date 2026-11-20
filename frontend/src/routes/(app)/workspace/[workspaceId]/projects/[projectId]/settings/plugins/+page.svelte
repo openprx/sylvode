@@ -305,20 +305,17 @@
 <div class="mx-auto max-w-5xl space-y-5 px-1">
 	<header class="space-y-2">
 		<a
-			class="text-sm text-blue-700 underline dark:text-blue-300"
+			class="text-sm text-fg underline"
 			href={`/workspace/${workspaceId}/projects/${projectId}/forms`}>{$t('plugins.backToForms')}</a
 		>
 		<h1 class="text-2xl font-semibold">{$t('plugins.projectSettings')}</h1>
-		<a href="/plugins" class="inline-block text-sm text-blue-700 underline dark:text-blue-300">
+		<a href="/plugins" class="inline-block text-sm text-fg underline">
 			{$t('plugins.library.title')}
 		</a>
 	</header>
 
 	{#if error}
-		<p
-			role="alert"
-			class="rounded border border-red-300 px-3 py-2 text-sm text-danger dark:border-red-700"
-		>
+		<p role="alert" class="rounded-control border border-danger px-3 py-2 text-sm text-danger">
 			{$t(error)}{#if backendMessage}
 				{backendMessage}{/if}
 		</p>
@@ -329,9 +326,7 @@
 		{#key projectId}
 			<ProjectPluginRequests {projectId} onApproved={() => load(workspaceId, projectId, scope)} />
 		{/key}
-		<section
-			class="space-y-3 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
-		>
+		<section class="space-y-3 rounded-card border border-line bg-raised p-4">
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<h2 class="font-semibold">{$t('plugins.installPackage')}</h2>
 				<div class="flex flex-wrap items-center gap-2">
@@ -360,7 +355,7 @@
 				class="block max-w-full text-sm"
 			/>
 			{#if candidate}
-				<div class="space-y-2 border-l-2 border-blue-500 pl-3 text-sm">
+				<div class="space-y-2 border-l-2 border-line-strong pl-3 text-sm">
 					<h3 class="font-medium">{candidate.manifest.name} · v{candidate.manifest.version}</h3>
 					<p>{$t('plugins.publisher', { values: { publisher: candidate.manifest.publisher } })}</p>
 					{#if isV3(candidate.manifest)}
@@ -428,9 +423,7 @@
 				{#each packages as item (item.id)}
 					{@const binding = bindings.find((entry) => entry.key === item.manifest.key)}
 					{@const active = binding?.package_id === item.id}
-					<li
-						class="space-y-3 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
-					>
+					<li class="space-y-3 rounded-[var(--radius-sm)] border border-line bg-raised p-4">
 						<div class="flex flex-wrap items-start justify-between gap-2">
 							<div class="min-w-0 space-y-1">
 								<h3 class="font-semibold">{item.manifest.name} · v{item.manifest.version}</h3>
@@ -543,7 +536,7 @@
 							{/if}
 						{/if}
 						{#if selected?.id === item.id}
-							<fieldset class="space-y-2 rounded border border-slate-300 p-3 dark:border-slate-700">
+							<fieldset class="space-y-2 rounded-card border border-line p-3">
 								<legend class="px-1 text-sm font-medium">{$t('plugins.grantAccess')}</legend>
 								{#if isV3(item.manifest)}
 									<p class="text-sm text-fg-muted">

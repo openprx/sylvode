@@ -465,9 +465,9 @@
 	}
 
 	const iconButton =
-		'inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-slate-100 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-slate-800';
+		'inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)] text-fg-muted hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:text-control';
 	const menuItem =
-		'flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-fg hover:bg-slate-100 focus:bg-slate-100 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
+		'flex min-h-8 w-full items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-start text-sm text-fg hover:bg-surface focus:bg-surface';
 </script>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -- links are full record page paths built by the caller -->
@@ -482,12 +482,12 @@
 	aria-busy={status === 'loading' ? 'true' : undefined}
 	{inert}
 	tabindex="-1"
-	class="record-panel flex flex-col border-line bg-white text-fg dark:bg-slate-900 {mode ===
+	class="record-panel flex flex-col border-line bg-raised text-fg {mode ===
 	'sheet'
 		? 'sheet fixed inset-0 z-50'
 		: mode === 'overlay'
-			? 'overlay fixed end-4 top-4 bottom-4 z-40 rounded-lg border shadow-xl dark:ring-1 dark:ring-slate-700'
-			: 'docked sticky top-4 max-h-[calc(100dvh-2rem)] shrink-0 self-start rounded-lg border'}"
+			? 'overlay fixed end-4 top-4 bottom-4 z-40 rounded-float border shadow-overlay'
+			: 'docked sticky top-4 max-h-[calc(100dvh-2rem)] shrink-0 self-start rounded-card border'}"
 	style={mode === 'sheet' ? undefined : `width:${effectiveWidth}px;`}
 	data-record-panel={record?.id ?? ''}
 	data-record-panel-mode={mode}
@@ -513,7 +513,7 @@
 			ondblclick={() => setWidth(PANEL_DEFAULT_WIDTH)}
 		>
 			<span
-				class="h-full w-px bg-transparent group-hover:bg-blue-400 group-focus-visible:w-0.5 group-focus-visible:bg-blue-500"
+				class="h-full w-px bg-transparent group-hover:bg-line-strong group-focus-visible:w-0.5 group-focus-visible:bg-fg"
 			></span>
 		</div>
 	{/if}
@@ -553,7 +553,7 @@
 		{#if canEdit && record && status === 'ready'}
 			<button
 				type="button"
-				class="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-300 px-2.5 text-sm font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+				class="inline-flex h-8 items-center gap-1.5 rounded-control border border-input px-2.5 text-sm font-medium text-fg hover:bg-surface"
 				data-record-panel-edit
 				onclick={onedit}
 			>
@@ -686,7 +686,7 @@
 		{/if}
 		{#if record && !inView && status === 'ready'}
 			<div
-				class="flex flex-wrap items-center gap-2 border-b border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100"
+				class="flex flex-wrap items-center gap-2 border-b border-line bg-surface px-4 py-2 text-sm text-fg"
 				data-record-panel-not-in-view
 			>
 				<span>{$t('forms.recordPanel.notInView')}</span>
@@ -699,7 +699,7 @@
 		{/if}
 		{#if changedElsewhere && status === 'ready'}
 			<div
-				class="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+				class="flex items-center gap-2 border-b border-line bg-warning-soft px-4 py-2 text-sm text-warning"
 			>
 				<span>{$t('forms.recordPanel.updatedElsewhere')}</span>
 				<button
@@ -715,12 +715,12 @@
 
 		{#if status === 'loading' && !record}
 			<div class="skeleton space-y-3 p-4" aria-hidden="true">
-				<div class="h-5 w-2/3 rounded bg-slate-200 dark:bg-slate-700"></div>
-				<div class="h-3 w-1/3 rounded bg-slate-200 dark:bg-slate-700"></div>
+				<div class="h-5 w-2/3 rounded-control bg-surface"></div>
+				<div class="h-3 w-1/3 rounded-control bg-surface"></div>
 				{#each [0, 1, 2, 3, 4, 5] as row (row)}
 					<div class="space-y-1.5 pt-2">
-						<div class="h-2.5 w-20 rounded bg-slate-200 dark:bg-slate-700"></div>
-						<div class="h-3.5 w-1/2 rounded bg-slate-200 dark:bg-slate-700"></div>
+						<div class="h-2.5 w-20 rounded-control bg-surface"></div>
+						<div class="h-3.5 w-1/2 rounded-control bg-surface"></div>
 					</div>
 				{/each}
 			</div>
@@ -735,7 +735,7 @@
 					bind:this={heading}
 					class="flex items-center gap-2 text-base font-semibold"
 				>
-					<AlertTriangle class="h-4 w-4 text-amber-600" aria-hidden="true" />
+					<AlertTriangle class="h-4 w-4 text-warning" aria-hidden="true" />
 					{$t('forms.recordPanel.loadError')}
 				</h2>
 				{#if errorMessage}
@@ -743,7 +743,7 @@
 				{/if}
 				<button
 					type="button"
-					class="inline-flex h-8 items-center rounded-md border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+					class="inline-flex h-8 items-center rounded-control border border-input px-3 text-sm font-medium hover:bg-surface"
 					onclick={onretry}>{$t('forms.recordPanel.retry')}</button
 				>
 			</div>
@@ -755,7 +755,7 @@
 					bind:this={heading}
 					class="flex items-center gap-2 text-base font-semibold"
 				>
-					<Lock class="h-4 w-4 text-slate-500" aria-hidden="true" />
+					<Lock class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 					{$t('forms.recordPanel.forbidden')}
 				</h2>
 			</div>
@@ -767,7 +767,7 @@
 				{#if canRestore}
 					<button
 						type="button"
-						class="inline-flex h-8 items-center rounded-md border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+						class="inline-flex h-8 items-center rounded-control border border-input px-3 text-sm font-medium hover:bg-surface"
 						onclick={onrestore}>{$t('forms.recordPanel.restore')}</button
 					>
 				{/if}
@@ -797,7 +797,7 @@
 								>
 								<button
 									type="button"
-									class="inline-flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+									class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-surface"
 									aria-label={$t('forms.recordPanel.copyIdentifier')}
 									title={$t('forms.recordPanel.copyIdentifier')}
 									onclick={() => void copyValue('identifier', identifier.copy)}
@@ -842,7 +842,7 @@
 
 					{#if header.highlights.length > 0}
 						<dl
-							class="grid gap-x-4 gap-y-3 border-y border-line bg-slate-50 px-4 py-3 dark:bg-slate-800/40 {wide
+							class="grid gap-x-4 gap-y-3 border-y border-line bg-surface px-4 py-3 {wide
 								? 'grid-cols-2'
 								: 'grid-cols-1'}"
 							data-record-panel-highlights
@@ -874,7 +874,7 @@
 							{#if canEdit}
 								<button
 									type="button"
-									class="inline-flex h-8 items-center rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700"
+									class="inline-flex h-8 items-center rounded-control bg-primary px-3 text-sm font-medium text-on-primary"
 									onclick={onedit}>{$t('forms.recordPanel.edit')}</button
 								>
 							{/if}
@@ -924,21 +924,21 @@
 												{fieldLabel(field)}
 												{#if field.type === 'ai_summary'}
 													<span
-														class="ms-1 rounded bg-violet-100 px-1 text-[10px] font-semibold text-violet-700 normal-case dark:bg-violet-950 dark:text-violet-300"
+														class="ms-1 rounded-control bg-surface px-1 text-[10px] font-semibold text-fg normal-case"
 														aria-label={$t('forms.fieldValue.aiGenerated')}
 														title={$t('forms.fieldValue.aiGenerated')}
 														>{$t('forms.fieldValue.aiLabel')}</span
 													>
 												{:else if field.type === 'formula'}
 													<span
-														class="ms-1 font-serif text-slate-400 normal-case italic"
+														class="ms-1 font-serif text-fg-muted normal-case italic"
 														aria-label={$t('forms.fieldValue.calculated')}
 														title={$t('forms.fieldValue.calculated')}>ƒ</span
 													>
 												{/if}
 												{#each badges as badge (badge)}
 													<span
-														class="ms-1 rounded bg-slate-100 px-1 text-[10px] text-fg-muted normal-case dark:bg-slate-800"
+														class="ms-1 rounded-control bg-surface px-1 text-[10px] text-fg-muted normal-case"
 														>{badge}</span
 													>
 												{/each}
@@ -952,7 +952,7 @@
 													{@const table = childTable(field)}
 													{#if detailsLoading && table.rows.length === 0}
 														<div
-															class="skeleton h-4 w-32 rounded bg-slate-200 dark:bg-slate-700"
+															class="skeleton h-4 w-32 rounded-control bg-surface"
 															aria-hidden="true"
 														></div>
 													{:else if table.rows.length === 0}
@@ -964,14 +964,14 @@
 														/>
 													{:else}
 														<div
-															class="overflow-x-auto rounded-md border border-line"
+															class="overflow-x-auto rounded-card border border-line"
 														>
 															<table
 																class="w-full text-xs"
 																data-record-panel-child-table={field.key}
 															>
 																<thead
-																	class="bg-slate-50 text-fg-muted dark:bg-slate-800"
+																	class="bg-nav text-fg-muted"
 																>
 																	<tr>
 																		<th class="px-2 py-1.5 text-start font-medium"
@@ -1008,7 +1008,7 @@
 														{#if table.rows.length > 5}
 															<a
 																href={fullPageHref}
-																class="mt-1 inline-block text-xs text-blue-700 hover:underline dark:text-blue-300"
+																class="mt-1 inline-block text-xs text-fg hover:underline"
 																>{$t('forms.fieldValue.viewAllChildren', {
 																	values: { count: table.rows.length }
 																})}</a
@@ -1030,7 +1030,7 @@
 											{#if copy}
 												<button
 													type="button"
-													class="inline-flex h-7 w-7 items-center justify-center rounded text-slate-500 opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 hover:bg-slate-100 focus:opacity-100 dark:hover:bg-slate-800 {wide
+													class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 hover:bg-surface focus:opacity-100 {wide
 														? ''
 														: 'col-start-2 row-start-1'}"
 													aria-label={$t('forms.recordPanel.copyField', {
@@ -1140,7 +1140,7 @@
 								<span class="truncate font-mono text-xs" dir="ltr">{record.id}</span>
 								<button
 									type="button"
-									class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+									class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-fg-muted hover:bg-surface"
 									aria-label={$t('forms.recordPanel.copyId')}
 									onclick={() => void copyValue('record-id', record?.id ?? null)}
 								>
@@ -1161,7 +1161,7 @@
 {#if preview}
 	{@const item = preview.items[preview.index]}
 	<div
-		class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 p-4"
+		class="fixed inset-0 z-[60] flex items-center justify-center bg-scrim p-4"
 		role="presentation"
 		onclick={(event) => {
 			if (event.target === event.currentTarget) closePreview();
@@ -1180,13 +1180,13 @@
 			<img
 				src={item.full ?? item.src}
 				alt={item.alt}
-				class="max-h-[80dvh] max-w-full rounded bg-white object-contain"
+				class="max-h-[80dvh] max-w-full rounded-control bg-raised object-contain"
 			/>
 			<div class="flex items-center gap-2 text-sm text-white">
 				{#if preview.items.length > 1}
 					<button
 						type="button"
-						class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+						class="inline-flex h-8 w-8 items-center justify-center rounded-control bg-white/10 hover:bg-white/20"
 						aria-label={$t('forms.recordPanel.previewPrevious')}
 						onclick={() =>
 							preview &&
@@ -1202,7 +1202,7 @@
 					>
 					<button
 						type="button"
-						class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+						class="inline-flex h-8 w-8 items-center justify-center rounded-control bg-white/10 hover:bg-white/20"
 						aria-label={$t('forms.recordPanel.previewNext')}
 						onclick={() =>
 							preview &&
@@ -1212,7 +1212,7 @@
 				{/if}
 				<button
 					type="button"
-					class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+					class="inline-flex h-8 w-8 items-center justify-center rounded-control bg-white/10 hover:bg-white/20"
 					aria-label={$t('forms.recordPanel.close')}
 					onclick={closePreview}><X class="h-4 w-4" aria-hidden="true" /></button
 				>

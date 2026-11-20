@@ -22,7 +22,7 @@
 	const hint = $props.id();
 </script>
 
-<fieldset class="space-y-2 rounded border border-slate-300 p-3 dark:border-slate-700" {disabled}>
+<fieldset class="space-y-2 rounded-card border border-line p-3" {disabled}>
 	<legend class="px-1 text-sm font-medium">{$t('plugins.projectLayout')}</legend>
 	<p id={hint} class="text-sm text-fg-muted">
 		{$t('plugins.layoutOrderHint')}
@@ -61,7 +61,7 @@
 						min="0"
 						max="99"
 						step="1"
-						class="w-20 rounded border border-slate-300 bg-transparent px-2 py-1 dark:border-slate-600"
+						class="w-20 rounded-control border border-input bg-transparent px-2 py-1"
 						value={Number.isFinite(placement.position) ? placement.position : ''}
 						aria-label={$t('plugins.layoutOrderFor', { values: { label: contribution.label } })}
 						aria-describedby={hint}

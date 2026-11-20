@@ -188,7 +188,7 @@
 		</div>
 	{:else}
 		{#key shown.attempt}
-			<div class="rounded border border-slate-300 dark:border-slate-600">
+			<div class="rounded-control border border-line">
 				<PluginFrameHost
 					{html}
 					webSha256={spec.webSha256}
@@ -217,7 +217,7 @@
 		src="/plugin-host/frame.html"
 		sandbox="allow-scripts"
 		referrerpolicy="no-referrer"
-		class="block h-72 w-full rounded border border-slate-300 dark:border-slate-600"
+		class="block h-72 w-full rounded-control border border-line"
 		hidden={!ready}
 	></iframe>
 {/if}

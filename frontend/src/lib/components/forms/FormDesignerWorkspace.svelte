@@ -196,7 +196,7 @@
 {#if mobilePanel}
 	<button
 		type="button"
-		class="fixed inset-0 z-30 bg-slate-950/35 md:hidden"
+		class="fixed inset-0 z-30 bg-scrim md:hidden"
 		aria-label="关闭遮罩"
 		onclick={() => {
 			mobilePanel = null;
@@ -232,8 +232,8 @@
 
 	<aside
 		class="{mobilePanel === 'library'
-			? 'fixed inset-x-3 bottom-3 top-20 z-40 flex max-h-[calc(100vh-6rem)] flex-col overflow-hidden shadow-2xl'
-			: 'hidden'} rounded-lg border border-line bg-white dark:bg-slate-900 md:static md:z-auto md:flex md:max-h-none md:flex-col md:overflow-visible md:shadow-none xl:sticky xl:top-4 xl:max-h-[calc(100vh-7rem)] xl:overflow-hidden"
+			? 'fixed inset-x-3 bottom-3 top-20 z-40 flex max-h-[calc(100vh-6rem)] flex-col overflow-hidden shadow-overlay'
+			: 'hidden'} rounded-float border border-overlay-line bg-overlay md:static md:z-auto md:flex md:max-h-none md:flex-col md:overflow-visible md:shadow-none xl:sticky xl:top-4 xl:max-h-[calc(100vh-7rem)] xl:overflow-hidden"
 		data-mobile-field-library-drawer={mobilePanel === 'library' ? 'open' : 'closed'}
 	>
 		<div
@@ -244,7 +244,7 @@
 			</h3>
 			<button
 				type="button"
-				class="rounded-md p-1.5 text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800 md:hidden"
+				class="rounded-control p-1.5 text-fg-muted hover:bg-surface md:hidden"
 				aria-label={$t('common.close')}
 				onclick={() => {
 					mobilePanel = null;
@@ -263,7 +263,7 @@
 						{#each group.types as type}
 							<button
 								type="button"
-								class="flex min-h-10 items-center justify-between gap-2 rounded-md px-3 text-left text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
+								class="flex min-h-10 items-center justify-between gap-2 rounded-control px-3 text-left text-sm text-fg hover:bg-surface"
 								data-field-library-type={type}
 								onclick={() => {
 									onAppendField?.(type);
@@ -272,7 +272,7 @@
 							>
 								<span>{$t(`forms.fieldTypes.${type}`)}</span>
 								<span
-									class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-line text-fg-muted"
+									class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-card border border-line text-fg-muted"
 								>
 									<Plus class="h-4 w-4" aria-hidden="true" />
 								</span>
@@ -285,7 +285,7 @@
 	</aside>
 
 	<section
-		class="min-w-0 rounded-lg border border-line bg-white dark:bg-slate-900"
+		class="min-w-0 rounded-card border border-line bg-raised"
 		data-field-designer-canvas
 	>
 		<div
@@ -304,10 +304,10 @@
 				{$t('forms.saveDesign')}
 			</Button>
 		</div>
-		<div class="min-h-[520px] bg-slate-50 p-4 dark:bg-slate-950/40">
+		<div class="min-h-[520px] bg-surface p-4">
 			{#if fieldDrafts.length === 0}
 				<div
-					class="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900"
+					class="rounded-card border border-dashed border-line bg-raised p-8 text-center"
 				>
 					<p class="text-sm text-fg-muted">{$t('forms.emptyCanvas')}</p>
 				</div>
@@ -317,27 +317,27 @@
 						<div
 							role="button"
 							tabindex="0"
-							class="group grid min-h-16 grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-3 rounded-md border bg-white px-3 py-2 text-left transition-colors dark:bg-slate-900 {index ===
+							class="group grid min-h-16 grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-3 rounded-card border bg-raised px-3 py-2 text-left transition-colors {index ===
 							selectedIndex
-								? 'border-blue-500 ring-2 ring-blue-100 dark:border-blue-300 dark:ring-blue-950'
-								: 'border-line hover:border-slate-300 dark:hover:border-slate-600'}"
+								? 'border-fg ring-2 ring-line'
+								: 'border-line hover:border-line-strong'}"
 							data-designer-field-key={field.key}
 							data-designer-field-type={field.type}
 							onclick={() => onSelectField?.(index)}
 							onkeydown={(event) => handleFieldKeydown(event, index)}
 						>
-							<GripVertical class="h-4 w-4 text-slate-400" aria-hidden="true" />
+							<GripVertical class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 							<span class="min-w-0">
 								<span
 									class="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium text-fg"
 								>
 									<span class="truncate">
 										{field.label || field.key || $t('forms.unnamedField')}
-										{#if field.required}<span class="text-red-500">*</span>{/if}
+										{#if field.required}<span class="text-danger">*</span>{/if}
 									</span>
 									{#if fieldHidden(field)}
 										<span
-											class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+											class="rounded-[var(--radius-sm)] bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 											data-designer-field-permission-hidden={field.key}
 										>
 											{$t('forms.fieldHiddenBadge')}
@@ -345,7 +345,7 @@
 									{/if}
 									{#if fieldLocked(field)}
 										<span
-											class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
+											class="rounded-[var(--radius-sm)] bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 											data-designer-field-permission-locked={field.key}
 										>
 											{$t('forms.fieldLockedBadge')}
@@ -361,7 +361,7 @@
 							<span class="flex items-center gap-1">
 								<button
 									type="button"
-									class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-slate-500 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
+									class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:text-control"
 									disabled={index === 0}
 									onclick={(event) => {
 										event.stopPropagation();
@@ -374,7 +374,7 @@
 								</button>
 								<button
 									type="button"
-									class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-slate-500 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
+									class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:text-control"
 									disabled={index === fieldDrafts.length - 1}
 									onclick={(event) => {
 										event.stopPropagation();
@@ -395,8 +395,8 @@
 
 	<aside
 		class="{mobilePanel === 'inspector'
-			? 'fixed inset-x-3 bottom-3 top-20 z-40 flex max-h-[calc(100vh-6rem)] flex-col overflow-hidden shadow-2xl'
-			: 'hidden'} rounded-lg border border-line bg-white dark:bg-slate-900 md:static md:z-auto md:flex md:max-h-none md:flex-col md:overflow-visible md:shadow-none xl:sticky xl:top-4 xl:max-h-[calc(100vh-7rem)] xl:overflow-hidden"
+			? 'fixed inset-x-3 bottom-3 top-20 z-40 flex max-h-[calc(100vh-6rem)] flex-col overflow-hidden shadow-overlay'
+			: 'hidden'} rounded-float border border-overlay-line bg-overlay md:static md:z-auto md:flex md:max-h-none md:flex-col md:overflow-visible md:shadow-none xl:sticky xl:top-4 xl:max-h-[calc(100vh-7rem)] xl:overflow-hidden"
 		data-mobile-field-inspector-drawer={mobilePanel === 'inspector' ? 'open' : 'closed'}
 	>
 		<div
@@ -414,7 +414,7 @@
 			</div>
 			<button
 				type="button"
-				class="rounded-md p-1.5 text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800 md:hidden"
+				class="rounded-control p-1.5 text-fg-muted hover:bg-surface md:hidden"
 				aria-label={$t('common.close')}
 				onclick={() => {
 					mobilePanel = null;
@@ -429,7 +429,7 @@
 					<div class="flex flex-wrap items-center gap-1.5">
 						{#if selectedFieldHidden}
 							<span
-								class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+								class="rounded-[var(--radius-sm)] bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 								data-designer-property-permission-hidden={selectedField.key}
 							>
 								{$t('forms.fieldHiddenBadge')}
@@ -437,7 +437,7 @@
 						{/if}
 						{#if selectedFieldLocked}
 							<span
-								class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
+								class="rounded-[var(--radius-sm)] bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 								data-designer-property-permission-locked={selectedField.key}
 							>
 								{$t('forms.fieldLockedBadge')}
@@ -450,7 +450,7 @@
 						>{$t('forms.fieldLabel')}</span
 					>
 					<input
-						class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 						value={selectedField.label}
 						oninput={(event) =>
 							updateSelected({
@@ -464,7 +464,7 @@
 						>{$t('forms.fieldKey')}</span
 					>
 					<input
-						class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 						value={selectedField.key}
 						oninput={(event) =>
 							updateSelected({
@@ -478,7 +478,7 @@
 						>{$t('forms.fieldType')}</span
 					>
 					<select
-						class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 						value={selectedField.type}
 						onchange={(event) =>
 							updateSelected({
@@ -496,7 +496,7 @@
 				<label class="flex items-center gap-2 text-sm text-fg">
 					<input
 						type="checkbox"
-						class="h-4 w-4 rounded border-slate-300 text-blue-600"
+						class="h-4 w-4 rounded-control border-input text-fg"
 						checked={selectedField.required}
 						onchange={(event) =>
 							updateSelected({
@@ -514,7 +514,7 @@
 							>{$t('forms.optionList')}</span
 						>
 						<textarea
-							class="min-h-28 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+							class="min-h-28 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 							value={selectedField.optionsText}
 							oninput={(event) =>
 								updateSelected({
@@ -529,7 +529,7 @@
 							>{$t('forms.optionColors')}</span
 						>
 						<textarea
-							class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+							class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs text-fg"
 							value={selectedField.optionColorsText}
 							placeholder={$t('forms.optionColorsPlaceholder')}
 							oninput={(event) =>
@@ -546,7 +546,7 @@
 							>{$t('forms.optionDisabled')}</span
 						>
 						<textarea
-							class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+							class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs text-fg"
 							value={selectedField.optionDisabledText}
 							placeholder={$t('forms.optionDisabledPlaceholder')}
 							oninput={(event) =>
@@ -563,7 +563,7 @@
 							>{$t('forms.optionArchived')}</span
 						>
 						<textarea
-							class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+							class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs text-fg"
 							value={selectedField.optionArchivedText}
 							placeholder={$t('forms.optionArchivedPlaceholder')}
 							oninput={(event) =>
@@ -581,7 +581,7 @@
 							>{$t('forms.optionDescriptions')}</span
 						>
 						<textarea
-							class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+							class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs text-fg"
 							value={selectedField.optionDescriptionsText}
 							placeholder={$t('forms.optionDescriptionsPlaceholder')}
 							oninput={(event) =>
@@ -598,7 +598,7 @@
 							>{$t('forms.optionGroups')}</span
 						>
 						<textarea
-							class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+							class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs text-fg"
 							value={selectedField.optionGroupsText}
 							placeholder={$t('forms.optionGroupsPlaceholder')}
 							oninput={(event) =>
@@ -618,7 +618,7 @@
 								>{$t('forms.currency')}</span
 							>
 							<input
-								class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm uppercase text-fg dark:border-slate-600 dark:bg-slate-800"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm uppercase text-fg"
 								maxlength="3"
 								value={selectedField.currency}
 								oninput={(event) =>
@@ -638,7 +638,7 @@
 								type="number"
 								min="0"
 								max="8"
-								class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 								value={selectedField.scale}
 								oninput={(event) =>
 									updateSelected({
@@ -652,7 +652,7 @@
 					</div>
 				{/if}
 				{#if ['formula', 'amount', 'number', 'integer'].includes(selectedField.type)}
-					<div class="space-y-3 rounded-md border border-line p-3">
+					<div class="space-y-3 rounded-card border border-line p-3">
 						<p class="text-xs font-semibold uppercase text-fg-muted">
 							{$t('forms.formulaConfig')}
 						</p>
@@ -661,7 +661,7 @@
 								>{$t('forms.formulaOp')}</span
 							>
 							<select
-								class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 								value={selectedField.formulaOp}
 								onchange={(event) =>
 									updateSelected({
@@ -692,7 +692,7 @@
 										>{$t('forms.relationKey')}</span
 									>
 									<input
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+										class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 										value={selectedField.formulaRelationKey}
 										oninput={(event) =>
 											updateSelected({
@@ -708,7 +708,7 @@
 										>{$t('forms.childField')}</span
 									>
 									<input
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+										class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 										value={selectedField.formulaChildField}
 										oninput={(event) =>
 											updateSelected({
@@ -726,7 +726,7 @@
 									>{$t('forms.formulaArgs')}</span
 								>
 								<textarea
-									class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 									value={selectedField.formulaArgsText}
 									oninput={(event) =>
 										updateSelected({
@@ -746,7 +746,7 @@
 									type="number"
 									min="0"
 									max="8"
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									value={selectedField.formulaScale}
 									oninput={(event) =>
 										updateSelected({
@@ -761,7 +761,7 @@
 					</div>
 				{/if}
 				{#if selectedField.type === 'relation' || selectedField.type === 'child_table'}
-					<div class="space-y-3 rounded-md border border-line p-3">
+					<div class="space-y-3 rounded-card border border-line p-3">
 						<p class="text-xs font-semibold uppercase text-fg-muted">
 							{$t('forms.relationConfig')}
 						</p>
@@ -771,7 +771,7 @@
 									>{$t('forms.targetForm')}</span
 								>
 								<input
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 									value={selectedField.relationFormKey}
 									oninput={(event) =>
 										updateSelected({
@@ -787,7 +787,7 @@
 									>{$t('forms.relationType')}</span
 								>
 								<select
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									value={selectedField.type === 'child_table'
 										? 'parent_child'
 										: selectedField.relationType}
@@ -812,7 +812,7 @@
 									>{$t('forms.relationKey')}</span
 								>
 								<input
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 									value={selectedField.relationKey}
 									oninput={(event) =>
 										updateSelected({
@@ -828,7 +828,7 @@
 									>{$t('forms.displayField')}</span
 								>
 								<input
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 									value={selectedField.relationDisplayField}
 									oninput={(event) =>
 										updateSelected({
@@ -843,7 +843,7 @@
 					</div>
 				{/if}
 				{#if selectedField.type === 'attachment' || selectedField.type === 'image'}
-					<div class="space-y-3 rounded-md border border-line p-3">
+					<div class="space-y-3 rounded-card border border-line p-3">
 						<p class="text-xs font-semibold uppercase text-fg-muted">
 							{$t('forms.attachmentConfig')}
 						</p>
@@ -852,7 +852,7 @@
 								>{$t('forms.acceptedTypes')}</span
 							>
 							<textarea
-								class="min-h-16 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+								class="min-h-16 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 								value={selectedField.attachmentAcceptText}
 								oninput={(event) =>
 									updateSelected({
@@ -869,7 +869,7 @@
 							<input
 								type="number"
 								min="1"
-								class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 								value={selectedField.attachmentMaxSizeMb}
 								oninput={(event) =>
 									updateSelected({
@@ -884,7 +884,7 @@
 							<label class="flex items-center gap-2 text-sm text-fg">
 								<input
 									type="checkbox"
-									class="h-4 w-4 rounded border-slate-300 text-blue-600"
+									class="h-4 w-4 rounded-control border-input text-fg"
 									checked={selectedField.attachmentMultiple}
 									onchange={(event) =>
 										updateSelected({
@@ -899,7 +899,7 @@
 							<label class="flex items-center gap-2 text-sm text-fg">
 								<input
 									type="checkbox"
-									class="h-4 w-4 rounded border-slate-300 text-blue-600"
+									class="h-4 w-4 rounded-control border-input text-fg"
 									checked={selectedField.attachmentPreview}
 									onchange={(event) =>
 										updateSelected({
@@ -918,7 +918,7 @@
 									>{$t('forms.thumbnailFormat')}</span
 								>
 								<select
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									value={selectedField.attachmentThumbnailFormat}
 									data-attachment-thumbnail-format={selectedField.key}
 									onchange={(event) =>
@@ -939,7 +939,7 @@
 									>{$t('forms.previewFormat')}</span
 								>
 								<select
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									value={selectedField.attachmentPreviewFormat}
 									data-attachment-preview-format={selectedField.key}
 									onchange={(event) =>
@@ -960,7 +960,7 @@
 									>{$t('forms.variantPolicies')}</span
 								>
 								<textarea
-									class="min-h-16 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="min-h-16 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 									value={selectedField.attachmentVariantsText}
 									placeholder={$t('forms.variantPolicyPlaceholder')}
 									data-attachment-variants={selectedField.key}
@@ -977,7 +977,7 @@
 									>{$t('forms.storagePolicy')}</span
 								>
 								<select
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									value={selectedField.attachmentStoragePolicy}
 									data-attachment-storage-policy={selectedField.key}
 									onchange={(event) =>
@@ -1000,7 +1000,7 @@
 								<input
 									type="number"
 									min="1"
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									value={selectedField.attachmentRetentionDays}
 									data-attachment-retention-days={selectedField.key}
 									oninput={(event) =>
@@ -1019,7 +1019,7 @@
 								<input
 									type="number"
 									min="1"
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									value={selectedField.attachmentSignedUrlTtlMinutes}
 									data-attachment-signed-url-ttl={selectedField.key}
 									oninput={(event) =>
@@ -1035,14 +1035,14 @@
 					</div>
 				{/if}
 				<details
-					class="rounded-md border border-line bg-white dark:bg-slate-900"
+					class="rounded-card border border-line bg-raised"
 					data-field-inspector-section="input-behavior"
 				>
 					<summary
 						class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-semibold uppercase text-fg-muted marker:hidden"
 					>
 						<span>{$t('forms.inputBehavior')}</span>
-						<span class="font-normal normal-case text-slate-400 dark:text-slate-500">
+						<span class="font-normal normal-case text-fg-muted">
 							{$t('forms.fieldInspectorAdvanced')}
 						</span>
 					</summary>
@@ -1052,7 +1052,7 @@
 								>{$t('forms.placeholder')}</span
 							>
 							<input
-								class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 								value={selectedField.placeholder}
 								oninput={(event) =>
 									updateSelected({
@@ -1068,7 +1068,7 @@
 								>{$t('forms.helpText')}</span
 							>
 							<textarea
-								class="min-h-16 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+								class="min-h-16 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 								value={selectedField.helpText}
 								oninput={(event) =>
 									updateSelected({
@@ -1083,7 +1083,7 @@
 								>{$t('forms.defaultValue')}</span
 							>
 							<input
-								class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 								value={selectedField.defaultValue}
 								oninput={(event) =>
 									updateSelected({
@@ -1098,7 +1098,7 @@
 							<label class="flex items-center gap-2 text-sm text-fg">
 								<input
 									type="checkbox"
-									class="h-4 w-4 rounded border-slate-300 text-blue-600"
+									class="h-4 w-4 rounded-control border-input text-fg"
 									checked={selectedField.listVisible}
 									onchange={(event) =>
 										updateSelected({
@@ -1113,7 +1113,7 @@
 							<label class="flex items-center gap-2 text-sm text-fg">
 								<input
 									type="checkbox"
-									class="h-4 w-4 rounded border-slate-300 text-blue-600"
+									class="h-4 w-4 rounded-control border-input text-fg"
 									checked={selectedField.detailVisible}
 									onchange={(event) =>
 										updateSelected({
@@ -1130,7 +1130,7 @@
 							>
 								<input
 									type="checkbox"
-									class="h-4 w-4 rounded border-slate-300 text-blue-600"
+									class="h-4 w-4 rounded-control border-input text-fg"
 									checked={selectedField.readOnly}
 									onchange={(event) =>
 										updateSelected({
@@ -1149,7 +1149,7 @@
 									{$t('forms.conditionalHiddenWhen')}
 								</span>
 								<textarea
-									class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 									value={selectedField.conditionalHiddenWhenText}
 									placeholder={$t('forms.conditionalRulePlaceholder')}
 									oninput={(event) =>
@@ -1166,7 +1166,7 @@
 									{$t('forms.conditionalReadOnlyWhen')}
 								</span>
 								<textarea
-									class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 									value={selectedField.conditionalReadOnlyWhenText}
 									placeholder={$t('forms.conditionalRulePlaceholder')}
 									oninput={(event) =>
@@ -1182,14 +1182,14 @@
 					</div>
 				</details>
 				<details
-					class="rounded-md border border-line bg-white dark:bg-slate-900"
+					class="rounded-card border border-line bg-raised"
 					data-field-inspector-section="validation"
 				>
 					<summary
 						class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-semibold uppercase text-fg-muted marker:hidden"
 					>
 						<span>{$t('forms.validationRules')}</span>
-						<span class="font-normal normal-case text-slate-400 dark:text-slate-500">
+						<span class="font-normal normal-case text-fg-muted">
 							{$t('forms.fieldInspectorAdvanced')}
 						</span>
 					</summary>
@@ -1200,7 +1200,7 @@
 									>{$t('forms.minValue')}</span
 								>
 								<input
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									value={selectedField.validationMin}
 									oninput={(event) =>
 										updateSelected({
@@ -1216,7 +1216,7 @@
 									>{$t('forms.maxValue')}</span
 								>
 								<input
-									class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									value={selectedField.validationMax}
 									oninput={(event) =>
 										updateSelected({
@@ -1233,7 +1233,7 @@
 								>{$t('forms.pattern')}</span
 							>
 							<input
-								class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 								value={selectedField.validationPattern}
 								oninput={(event) =>
 									updateSelected({
@@ -1251,7 +1251,7 @@
 							<input
 								type="number"
 								min="1"
-								class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 								value={selectedField.validationMaxLength}
 								oninput={(event) =>
 									updateSelected({
@@ -1270,11 +1270,11 @@
 					data-field-safety-dependencies={selectedDependencyCount}
 					data-field-safety-blocking={selectedBlockingDependencyCount}
 					open={selectedSafetyWarning || usageLoading}
-					class="rounded-md border p-3 text-sm {selectedBlockingDependencyCount > 0
-						? 'border-red-200 bg-red-50 text-danger dark:border-red-900/60 dark:bg-red-950/30'
+					class="rounded-card border p-3 text-sm {selectedBlockingDependencyCount > 0
+						? 'border-danger bg-danger-soft text-danger'
 						: selectedSafetyWarning
-							? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'
-							: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100'}"
+							? 'border-line bg-warning-soft text-warning'
+							: 'border-line bg-success-soft text-success'}"
 				>
 					<summary
 						class="flex cursor-pointer list-none items-center justify-between gap-3 marker:hidden"
@@ -1287,30 +1287,30 @@
 							{/if}
 							<span>{$t('forms.fieldSafetyTitle')}</span>
 						</span>
-						<span class="text-xs opacity-75">
+						<span class="text-xs">
 							{selectedSafetyWarning
 								? $t('forms.fieldInspectorReview')
 								: $t('forms.fieldInspectorClear')}
 						</span>
 					</summary>
 					{#if usageLoading}
-						<p class="mt-2 text-xs opacity-80">{$t('forms.fieldSafetyLoading')}</p>
+						<p class="mt-2 text-xs">{$t('forms.fieldSafetyLoading')}</p>
 					{:else if selectedSafetyWarning}
 						<div class="mt-2 grid grid-cols-2 gap-2 text-xs">
 							<div>
-								<span class="block opacity-70">{$t('forms.valueUsage')}</span>
+								<span class="block">{$t('forms.valueUsage')}</span>
 								<span class="font-mono font-semibold">{selectedValueCount}</span>
 							</div>
 							<div>
-								<span class="block opacity-70">{$t('forms.indexedUsage')}</span>
+								<span class="block">{$t('forms.indexedUsage')}</span>
 								<span class="font-mono font-semibold">{selectedIndexedCount}</span>
 							</div>
 							<div>
-								<span class="block opacity-70">{$t('forms.dependencyUsage')}</span>
+								<span class="block">{$t('forms.dependencyUsage')}</span>
 								<span class="font-mono font-semibold">{selectedDependencyCount}</span>
 							</div>
 							<div>
-								<span class="block opacity-70">{$t('forms.blockingDependencies')}</span>
+								<span class="block">{$t('forms.blockingDependencies')}</span>
 								<span class="font-mono font-semibold">{selectedBlockingDependencyCount}</span>
 							</div>
 						</div>
@@ -1322,13 +1322,13 @@
 										{#if dependency.source_key}
 											<span class="font-mono">/{dependency.source_key}</span>
 										{/if}
-										<span class="opacity-75"> · {dependency.reason}</span>
+										<span> · {dependency.reason}</span>
 									</li>
 								{/each}
 							</ul>
 						{/if}
 					{:else}
-						<p class="mt-2 text-xs opacity-80">{$t('forms.fieldSafetyClear')}</p>
+						<p class="mt-2 text-xs">{$t('forms.fieldSafetyClear')}</p>
 					{/if}
 				</details>
 				<div class="grid gap-2 pt-2">

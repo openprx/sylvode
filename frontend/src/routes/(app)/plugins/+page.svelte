@@ -124,7 +124,7 @@
 	{#if importing}
 		<section
 			aria-label={$t('plugins.library.import')}
-			class="space-y-3 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+			class="space-y-3 rounded-card border border-line bg-raised p-4"
 		>
 			<label class="grid gap-2 text-sm">
 				{$t('plugins.packageFile')}
@@ -136,7 +136,7 @@
 				/>
 			</label>
 			{#if upload}
-				<div class="space-y-2 border-l-2 border-blue-500 pl-3 text-sm">
+				<div class="space-y-2 border-l-2 border-line-strong pl-3 text-sm">
 					<p class="font-medium">{upload.manifest.name} · v{upload.manifest.version}</p>
 					<p>{upload.manifest.key} · {upload.manifest.publisher}</p>
 					{#if isV3(upload.manifest)}
@@ -167,9 +167,7 @@
 	{#if drafts.length}
 		<section aria-labelledby="personal-drafts" class="space-y-2">
 			<h2 id="personal-drafts" class="font-semibold">{$t('plugins.library.drafts')}</h2>
-			<ul
-				class="divide-y divide-line rounded-lg border border-slate-300 bg-white px-4 dark:border-slate-700 dark:bg-slate-900"
-			>
+			<ul class="divide-y divide-line rounded-card border border-line bg-raised px-4">
 				{#each drafts as entry (`${entry.templateId}:${entry.id}`)}
 					<li class="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
 						<span class="break-all"
@@ -180,7 +178,7 @@
 							aria-label={$t('plugins.library.editNamed', {
 								values: { name: entry.draft.name || $t('plugins.library.untitled') }
 							})}
-							class="text-blue-700 underline dark:text-blue-300">{$t('plugins.library.edit')}</a
+							class="text-fg underline">{$t('plugins.library.edit')}</a
 						>
 					</li>
 				{/each}

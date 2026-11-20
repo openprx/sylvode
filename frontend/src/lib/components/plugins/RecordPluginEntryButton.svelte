@@ -19,7 +19,7 @@
 
 <button
 	type="button"
-	class="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+	class="rounded-control border border-input px-3 py-1.5 text-sm hover:bg-surface"
 	data-plugin-contribution={entry.id}
 	aria-expanded={expanded}
 	aria-controls={expanded ? panelId : undefined}

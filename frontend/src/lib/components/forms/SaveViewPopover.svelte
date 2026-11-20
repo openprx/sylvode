@@ -88,9 +88,9 @@
 				bind:value={name}
 				maxlength="80"
 				required
-				class="h-9 w-full rounded-md border bg-white px-2 text-sm dark:bg-slate-800 {message
-					? 'border-red-500'
-					: 'border-slate-300 dark:border-slate-600'}"
+				class="h-9 w-full rounded-control border bg-field px-2 text-sm {message
+					? 'border-danger'
+					: 'border-input'}"
 				aria-invalid={message ? 'true' : undefined}
 				aria-describedby={message ? 'save-view-error' : duplicate ? 'save-view-hint' : undefined}
 				data-save-view-name
@@ -123,7 +123,7 @@
 		<div class="flex justify-end gap-2">
 			<button
 				type="button"
-				class="h-8 rounded-md px-3 text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
+				class="h-8 rounded-control px-3 text-sm text-fg hover:bg-surface"
 				onclick={() => {
 					oncancel();
 					anchor?.focus();
@@ -131,7 +131,7 @@
 			>
 			<button
 				type="submit"
-				class="h-8 rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+				class="h-8 rounded-control bg-primary px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
 				disabled={saving}
 				data-save-view-submit>{$t('common.save')}</button
 			>

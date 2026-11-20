@@ -35,7 +35,7 @@
 
 {#if visible && (discovery.items.length > 0 || canManage?.())}
 	<section
-		class="mb-8 rounded-lg border border-line bg-white p-5 dark:bg-slate-900"
+		class="mb-8 rounded-card border border-line bg-raised p-5"
 		aria-labelledby="project-plugin-nav-title"
 		data-plugin-slot="project.view"
 	>
@@ -57,7 +57,7 @@
 					<li>
 						<a
 							href={href(item)}
-							class="block rounded-md border border-line p-4 transition-colors hover:border-blue-200 hover:bg-blue-50 dark:hover:bg-slate-800"
+							class="block rounded-card border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
 							data-plugin-contribution={item.contribution.id}
 							aria-label={$t('plugins.apps.open', { values: { label: item.contribution.label } })}
 						>
