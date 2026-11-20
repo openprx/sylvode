@@ -23,7 +23,10 @@ PATTERN="${PRIVATE_IPV4}|${TOKEN_LITERAL}"
 EXEMPTIONS=$'apps/api/src/outbound.rs\t            "10.0.0.1",\ttest input: the outbound URL guard must refuse a private address
 frontend/docker-entrypoint.d/10-resolver.sh\t# and per host (podman hands out 10.89.0.1 on one machine and 10.89.3.1 on another), so\texplains why the resolver address is discovered at runtime instead of hard-coded
 apps/webhook/src/config.rs\t            "192.168.1.5:9090",\ttest input: allow_unsigned on a LAN listen address must be refused without the acknowledgement
-apps/webhook/src/config.rs\t            "ws://10.0.0.5:8080/t",\ttest input: a plain ws:// tunnel URL to a private, non-loopback host must be refused without the acknowledgement'
+apps/webhook/src/config.rs\t            "ws://10.0.0.5:8080/t",\ttest input: a plain ws:// tunnel URL to a private, non-loopback host must be refused without the acknowledgement
+apps/api/src/security.rs	        let h = headers(&[("x-forwarded-for", "9.9.9.9, 203.0.113.7, 172.18.0.5")]);	test input: a container-bridge hop must be recognised as trusted by the default trusted-proxy ranges
+apps/api/src/security.rs	            client_ip(&h, Some(peer("172.18.0.2:5555")), &trusted),	test input: a container-bridge peer must be trusted by the default trusted-proxy ranges
+apps/api/src/security.rs	        let h = headers(&[("x-forwarded-for", "127.0.0.2, 172.17.0.1")]);	test input: an all-trusted chain made of loopback and container-bridge addresses covered by the default trusted-proxy ranges'
 
 exempt() {
   local rel=$1 text=$2 e_path e_text e_reason

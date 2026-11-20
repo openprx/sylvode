@@ -119,15 +119,15 @@ mod tests {
         let trusted = default_trusted_proxies();
         let h = headers(&[
             ("x-forwarded-for", "9.9.9.9"),
-            ("x-forwarded-for", "203.0.113.7, 10.0.0.1"),
+            ("x-forwarded-for", "203.0.113.7, 198.51.100.1"),
         ]);
         let custom = [
-            IpCidr::parse("10.0.0.0/8").unwrap(),
+            IpCidr::parse("198.51.100.0/24").unwrap(),
             IpCidr::parse("127.0.0.1").unwrap(),
         ];
         assert_eq!(client_ip(&h, Some(peer("127.0.0.1:1")), &custom), ip("203.0.113.7"));
-        // 10.0.0.1 is not trusted by the default list, so it is the answer there.
-        assert_eq!(client_ip(&h, Some(peer("127.0.0.1:1")), &trusted), ip("10.0.0.1"));
+        // 198.51.100.1 is not trusted by the default list, so it is the answer there.
+        assert_eq!(client_ip(&h, Some(peer("127.0.0.1:1")), &trusted), ip("198.51.100.1"));
     }
 
     #[test]

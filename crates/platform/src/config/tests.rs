@@ -1098,12 +1098,12 @@ fn trusted_proxies_are_validated_and_optional() {
     let absent = parse("[server]\napp_name = \"api\"\n").expect("valid");
     assert!(absent.server.trusted_proxies.is_none());
 
-    let set = parse("[server]\ntrusted_proxies = [\"10.0.0.0/8\", \"::1\"]\n").expect("valid");
+    let set = parse("[server]\ntrusted_proxies = [\"198.51.100.0/24\", \"::1\"]\n").expect("valid");
     let list = set.server.trusted_proxies.expect("present");
     assert_eq!(list.len(), 2);
     assert!(
         list.first()
-            .is_some_and(|block| block.contains("10.9.9.9".parse().unwrap()))
+            .is_some_and(|block| block.contains("198.51.100.9".parse().unwrap()))
     );
 
     let found = issues("[server]\ntrusted_proxies = [\"10.0.0.0/40\", \"nope\"]\n");
