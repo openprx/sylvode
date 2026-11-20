@@ -13,10 +13,13 @@
 //! * every touched unit is evaluated by the same code the full projection uses (`evaluate_block`,
 //!   `evaluate_tree_unit`), and one that the reader rejects is not decided here.
 //!
-//! Incremental evaluation only ever *accepts*. Anything else, whether a limit is reached, a unit is
-//! invalid, a structure changes or the check cannot classify what the update did with certainty,
-//! returns a [`FallbackReason`] and the caller runs today's full computation (`semantic_snapshot`
-//! and `check_snapshot`), so every refusal carries exactly the reason, limit kind and numbers it
+//! Incremental evaluation *accepts*, and refuses only what its exact totals prove: a total (live
+//! blocks, live navigators, live characters) over its limit is refused here with the limit kind,
+//! `observed` and `limit` the full computation reports (see `finish`). Anything else, whether a
+//! depth or a longest text may be over its limit (those two are only bounds), a unit is invalid, a
+//! structure changes or the check cannot classify what the update did with certainty, returns a
+//! [`FallbackReason`] and the caller runs today's full computation (`semantic_snapshot` and
+//! `check_snapshot`), so every refusal carries exactly the reason, limit kind and numbers it
 //! carries today.
 //!
 //! # Which units an update touched
@@ -40,20 +43,99 @@
 //! the base's list (kept in the facts) without the removed blocks and with the inserted ones,
 //! element by element, or the check does not decide.
 //!
-//! Everything whose effect on other units the check does not model falls back: any op on the `doc`
-//! map, the structure meta or the structure tree; a non-map element inserted into the list; any
-//! move or delete in the legacy tree and any create that is not what its id says; a tree node that gets its id after the fact, or two nodes with one
-//! id; a unit whose key collides across the two kinds (a tree id that looks like a container id);
-//! and a base the facts do not describe.
+//! # The soundness condition
+//!
+//! The incremental path is taken only if all of the following hold. Each is enforced by the check
+//! named, and the check falls back (the reason in brackets) when it does not hold or cannot be
+//! established.
+//!
+//! 1. The facts exist and describe the state the import started from (`FactsAbsent`, `StaleFacts`):
+//!    the base has no placement structure, no duplicate logical id, projects, is within every limit,
+//!    and its root list is not longer than [`ROOT_LIST_FALLBACK_LEN`] (`BaseFacts::compute`); the
+//!    facts' version vector equals the import's `before_state`.
+//! 2. The import left nothing pending, and the scan visited every op it added (`Unclassified`).
+//! 3. No op touched the `doc` map, the structure meta or tree, a shadow root, or a tree other than
+//!    the engine's (`GlobalStructure`, `TreeStructure`); no op on the engine tree is anything but
+//!    a create whose target is its own op id (`TreeStructure`); no map op writes or deletes the key
+//!    `logical_id` except in the metadata map of a node the update created (`IdRewritten`); no
+//!    container under a tree node is reached through any other root (`Unclassified`).
+//! 4. Every element inserted into the root list is a map container created by the inserting op
+//!    itself, and no element of another kind was inserted (`UnreadableInsert`).
+//! 5. Every created target is a node the tree did not hold before the import. The two id caches
+//!    together list every node of the base tree, live or deleted, named or not (the load-time
+//!    rebuild visits all of `LoroTree::nodes()`, deleted nodes included, and every later rebuild
+//!    adds what it visits), so a created target found in either is not new, however its ops look: a
+//!    hand-encoded move of a target whose create op the base never saw makes the node exist
+//!    without it (`ResolvedNodeId`). Read from the other side, on the document after the import,
+//!    no created node has a child that the update did not create (`ResolvedNodeId`). No existing
+//!    node got its logical id from the update, and no two nodes claim one id (`ResolvedNodeId`,
+//!    `DuplicateLogicalId`).
+//! 6. The root list is not longer than [`ROOT_LIST_FALLBACK_LEN`] after the import
+//!    (`OversizedList`), so a page cannot grow through this path past what the full path allows.
+//! 7. Every touched container maps to a unit or is unreachable; every touched unit is valid for the
+//!    reader and no key crosses between the two kinds of unit; no existing tree node enters or
+//!    leaves the projection; the alias map is within its limit; no deepest or longest unit is over
+//!    its limit (`Unclassified`, `InvalidUnit`, `KeyCollision`, `PresenceChange`, `AliasLimit`,
+//!    `LimitReached`); and the facts and the delta agree (`Inconsistent`).
+//!
+//! Under that condition, every unit whose evaluation or whose contribution to a total or maximum
+//! can differ from the base is in the touched set, because:
+//!
+//! * **Editor blocks.** A block's contribution (live, characters) and its validity depend only on
+//!   the containers reachable from its own map and on global state that conditions 1, 3 and 7 keep
+//!   fixed (the editor document exists; the alias map is within its limit). A block
+//!   exists only as an element of the root list, a plain list that has no move and no set, whose
+//!   elements are containers created by the op that inserted them (condition 4): an element that
+//!   no insert op names is a base element with its identity unchanged, no removed element comes
+//!   back, and two peers cannot create one id. The elements removed are derived exactly from the
+//!   list after the import against the base's order, or the check falls back. A change to a block
+//!   is an op on a container reachable from it, whose path from the root in the document after the
+//!   import runs through the block (condition 7). So the blocks whose evaluation can differ are
+//!   the inserted ones, the removed ones and the ones some op's container maps to.
+//! * **Legacy tree nodes.** A node's contribution depends on its kind, its text, its
+//!   `content_source`, its key, its deleted state (its own and its ancestors') and its depth (its
+//!   parent chain). Under conditions 3 and 5 the update moves and deletes nothing and writes no
+//!   existing node's key, so no existing node changes parent, ancestors, key or depth; an existing
+//!   node can change only through an op on its own metadata map, which maps to it by path. A created
+//!   node is new, exists only because of its own create op and has no child but created ones
+//!   (condition 5), so it has no earlier state to differ from and nothing existing hangs under it;
+//!   its depth is its parent chain through created nodes and then the base's depth of an existing
+//!   parent, which has not changed. So the nodes whose evaluation can differ are the created ones
+//!   and the ones some op's container maps to. A node without a logical id is not in the projection
+//!   and counts toward nothing.
+//! * **Totals.** Each total is the sum of per-unit contributions, so the total after the update is
+//!   the base's plus the sum, over the touched units, of the contribution now minus the base's
+//!   contribution: exact. Every other unit contributes what it did.
+//! * **Maxima.** The base is within the depth and longest-text limits (a precondition of the
+//!   facts), and every unit that is not touched has the depth and text it had, so a maximum can only
+//!   be over its limit in a touched unit, and each touched unit is checked, the check stopping at
+//!   the first one over. The depth and longest bounds in the report are the larger of the base's
+//!   maximum and the touched units' values, so they are at least the exact maxima.
+//!
+//! # Shapes that take the full path, and the cost of those that do not
+//!
+//! The full computation decides: pages with a placement structure (editor models 4 and 5); a base
+//! with duplicate logical ids or one the projection or the limits do not accept; every legacy tree
+//! move or delete; any op on the `doc` map, the structure containers or a tree other than the
+//! engine's; a created node that already existed; a rewrite of an existing node's logical id; a
+//! root list longer than [`ROOT_LIST_FALLBACK_LEN`]; and every shape condition 7 names.
+//!
+//! "One window does not grow with the page" has one exception that predates this module and is
+//! not changed by it: tree nodes without a logical id. `rebuild_id_cache_for` re-reads every node
+//! the last rebuild saw without an id on every import (an import can still give one), the full
+//! path did the same, and no limit counts such nodes, so a page that holds many of them makes every
+//! window O(those nodes) on either path.
 
 use std::collections::{HashMap, HashSet};
 
-use loro::{Container, ContainerID, ContainerType, Index, JsonListOp, JsonOp, JsonOpContent, JsonTreeOp, TreeID};
+use loro::{
+    Container, ContainerID, ContainerType, Index, JsonListOp, JsonMapOp, JsonOp, JsonOpContent, JsonTreeOp, TreeID,
+};
 
 use crate::engine::{ImportTrace, LoroCollabEngine, TreeUnit};
 use crate::error::CollabError;
 use crate::facts::{BaseFacts, Contribution, UnitFact};
-use crate::limits::{DocumentLimits, check_snapshot};
+use crate::limits::{DocumentLimits, LimitViolation, check_snapshot, check_snapshot_with_depth, max_depth_capped};
 use crate::operation::NodeKind;
 use crate::reserved_roots::{ALIASES, DOC, ENGINE_TREE, META, TREE};
 use crate::semantic::SemanticSnapshot;
@@ -75,6 +157,15 @@ pub mod fault {
         TouchedUnitMissed,
         /// Adds each unit's change to the totals twice.
         DeltaAppliedTwice,
+        /// Takes a created tree node for new although it already existed, and does not look at
+        /// the nodes that hang under a created one.
+        CreatedTargetChecksSkipped,
+        /// Does not fall back for a root list longer than [`super::ROOT_LIST_FALLBACK_LEN`].
+        ListThresholdSkipped,
+        /// Does not fall back when an update writes the logical id of an existing tree node.
+        IdRewriteSkipped,
+        /// Reports a limit refusal with an `observed` value one too high.
+        RefusalOffByOne,
     }
 
     thread_local! {
@@ -129,9 +220,24 @@ pub struct WindowReport {
     pub longest_bound: u64,
 }
 
-/// Why the incremental check did not decide, so that the full computation did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FallbackReason {
+/// Declares [`FallbackReason`] together with the list of all its variants, so a test can demand
+/// that every reason is exercised and a new reason cannot be added without being in the list.
+macro_rules! fallback_reasons {
+    ($($(#[$meta:meta])* $name:ident,)*) => {
+        /// Why the incremental check did not decide, so that the full computation did.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum FallbackReason {
+            $($(#[$meta])* $name,)*
+        }
+
+        impl FallbackReason {
+            /// Every reason, for the test that each one is reached.
+            pub const ALL: &'static [Self] = &[$(Self::$name,)*];
+        }
+    };
+}
+
+fallback_reasons! {
     /// No facts: a base the incremental check does not describe (structured page, duplicate ids,
     /// or a base the projection does not accept).
     FactsAbsent,
@@ -145,9 +251,14 @@ pub enum FallbackReason {
     TreeStructure,
     /// Two tree nodes claim one logical id.
     DuplicateLogicalId,
-    /// An existing tree node got a logical id from this update, or the id caches were rebuilt in
-    /// full.
+    /// An existing tree node got a logical id from this update, a created target already existed
+    /// in the tree (live, deleted or unnamed), a created node has children the update did not
+    /// create, or the id caches were rebuilt in full.
     ResolvedNodeId,
+    /// An update wrote the logical id of a tree node that already existed.
+    IdRewritten,
+    /// The root list is longer than [`ROOT_LIST_FALLBACK_LEN`] elements.
+    OversizedList,
     /// A container could not be mapped to a unit with certainty.
     Unclassified,
     /// A unit's key is, or looks like, a key of the other kind of unit.
@@ -161,7 +272,8 @@ pub enum FallbackReason {
     /// The facts and the update disagree (a count would go negative, or a create names a node the
     /// base already has).
     Inconsistent,
-    /// A limit is reached: the full computation reports it.
+    /// The deepest node or the longest text may be over its limit. Those two values are only
+    /// bounds, so the full computation reports the violation with its exact numbers.
     LimitReached,
 }
 
@@ -193,9 +305,20 @@ pub fn run_window(
             report: Some(report),
             fallback: None,
         }),
-        Err(reason) => {
+        // A total over its limit is exact (the base's fact plus the exact change of the touched
+        // units), and no limit that precedes it can be violated, so the refusal is the full
+        // computation's own, produced without running it.
+        Err(Undecided::Refused(violation)) => {
             #[cfg(test)]
-            crate::walk_counter::record_fallback();
+            crate::walk_counter::record_direct_refusal();
+            Err(CollabError::from(violation))
+        }
+        Err(Undecided::Fallback(reason)) => {
+            #[cfg(test)]
+            {
+                crate::walk_counter::record_fallback();
+                crate::walk_counter::record_fallback_reason(&format!("{reason:?}"));
+            }
             let semantic = engine.semantic_snapshot()?;
             check_snapshot(&semantic, &DocumentLimits::default()).map_err(CollabError::from)?;
             Ok(WindowAccepted {
@@ -218,6 +341,9 @@ pub(crate) struct OpSummary {
     pub(crate) tree_created: Vec<TreeID>,
     /// Every other container an op named (not roots, not `doc.children`).
     containers: HashSet<ContainerID>,
+    /// The containers in which an op wrote or deleted the key `logical_id` of a map: for a tree
+    /// node, its metadata map.
+    logical_id_writes: Vec<ContainerID>,
 }
 
 /// The kinds of op an update carried, as a set.
@@ -263,8 +389,13 @@ impl OpSummary {
                 self.containers.insert(op.container.clone());
             }
             ContainerID::Root { name, container_type } => self.visit_root(peer, op, name, *container_type),
-            ContainerID::Normal { .. } if Some(&op.container) == root_list => self.visit_root_list(op),
+            ContainerID::Normal { .. } if Some(&op.container) == root_list => self.visit_root_list(peer, op),
             ContainerID::Normal { .. } => {
+                if let JsonOpContent::Map(JsonMapOp::Insert { key, .. } | JsonMapOp::Delete { key }) = &op.content
+                    && key == LOGICAL_ID_KEY
+                {
+                    self.logical_id_writes.push(op.container.clone());
+                }
                 self.containers.insert(op.container.clone());
             }
         }
@@ -278,7 +409,11 @@ impl OpSummary {
         match name {
             DOC | META | TREE => self.seen.set(Seen::GLOBAL),
             ALIASES => self.seen.set(Seen::ALIASES),
-            // The navigator order and the title never reach a limit; any other root is not read.
+            // The navigator order and the title never reach a limit; any other root is not read,
+            // except a tree: a tree node's metadata map is named by the node's id alone, so a
+            // node that two trees hold (one of them through a move of a node it never created)
+            // has one metadata map, whichever tree the library reaches it through.
+            _ if kind == ContainerType::Tree && name != ENGINE_TREE => self.seen.set(Seen::TREE_OTHER),
             ENGINE_TREE => match &op.content {
                 JsonOpContent::Tree(JsonTreeOp::Create { target, .. }) if *target == TreeID::new(peer, op.counter) => {
                     self.tree_created.push(*target);
@@ -289,13 +424,23 @@ impl OpSummary {
         }
     }
 
-    fn visit_root_list(&mut self, op: &JsonOp) {
+    fn visit_root_list(&mut self, peer: u64, op: &JsonOp) {
         match &op.content {
             JsonOpContent::List(JsonListOp::Insert { value, .. }) => {
-                for element in value {
+                for (offset, element) in value.iter().enumerate() {
                     match element {
-                        loro::LoroValue::Container(id @ ContainerID::Normal { container_type, .. })
-                            if *container_type == ContainerType::Map =>
+                        // A container inserted into a list is created by the op that inserts it:
+                        // its id is that op's id. An element that names any other container
+                        // would be an existing one, which no unit accounts for.
+                        loro::LoroValue::Container(
+                            id @ ContainerID::Normal {
+                                peer: owner,
+                                counter,
+                                container_type: ContainerType::Map,
+                            },
+                        ) if *owner == peer
+                            && i64::from(*counter)
+                                == i64::from(op.counter).saturating_add(i64::try_from(offset).unwrap_or(i64::MAX)) =>
                         {
                             self.inserted_blocks.push(id.clone());
                         }
@@ -335,6 +480,31 @@ impl Delta {
     }
 }
 
+impl Delta {
+    /// Whether a unit evaluated so far is deeper or longer than its limit. Both values are only
+    /// bounds (the full computation reports their exact numbers), so the check stops at the first
+    /// such unit and leaves the decision to the full computation, before it evaluates any more
+    /// units.
+    const fn over_a_bound(&self, limits: &DocumentLimits) -> bool {
+        self.max_depth > limits.tree_depth_max || self.longest > limits.text_block_chars_max
+    }
+}
+
+/// Why [`check`] did not accept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Undecided {
+    /// The check does not decide; the full computation does.
+    Fallback(FallbackReason),
+    /// A total is over its limit: the refusal, with the numbers the full computation reports.
+    Refused(LimitViolation),
+}
+
+impl From<FallbackReason> for Undecided {
+    fn from(reason: FallbackReason) -> Self {
+        Self::Fallback(reason)
+    }
+}
+
 /// The units an update touched, mapped from its ops.
 #[derive(Debug, Default)]
 struct Touched {
@@ -344,39 +514,66 @@ struct Touched {
 }
 
 const CID_PREFIX: &str = "cid:";
+/// The key of a tree node's metadata map that holds its logical id.
+const LOGICAL_ID_KEY: &str = "logical_id";
 
-/// `Ok(report)` when the update is certainly accepted by the full computation too, and the reason
-/// the check did not decide otherwise.
-fn check(
-    engine: &LoroCollabEngine,
-    facts: Option<&BaseFacts>,
-    trace: &ImportTrace,
-) -> Result<WindowReport, FallbackReason> {
+/// The root list is longer than this many elements, whatever the elements are, and the check does
+/// not decide.
+///
+/// Elements of a kind no reader supports (and prose blocks that are dependency nodes) count toward
+/// no limit and cost O(1) here, but every full projection (the setup's facts, the host's) visits
+/// each of them, and on the full path so did the metered window, which is what stopped such a page
+/// from growing: the window ran out of its CPU budget at about 16,000 elements on the reference
+/// runner. Above this length the update takes that full path again, so the stop is kept. It is
+/// one and a half times `document_block_count_max`: a page at its block limit still has room for
+/// unsupported elements beside its blocks and stays incremental, and the length is below where the
+/// full path stops, so no page that today's window accepts is made to fail. The post-import length
+/// decides, so an update cannot step over it; a base already longer takes no facts at all
+/// ([`BaseFacts::compute`]).
+pub const ROOT_LIST_FALLBACK_LEN: usize = crate::limits::DOCUMENT_BLOCK_COUNT_MAX / 2 * 3;
+
+/// `Ok(report)` when the update is certainly accepted by the full computation too, and otherwise
+/// either the reason the check did not decide or the refusal of a total.
+fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTrace) -> Result<WindowReport, Undecided> {
     let facts = facts.ok_or(FallbackReason::FactsAbsent)?;
     // A causal import never leaves anything pending; if it did, the ops seen are not the update.
     if trace.status.pending.is_some() {
-        return Err(FallbackReason::Unclassified);
+        return Err(FallbackReason::Unclassified.into());
     }
     if facts.state != trace.before_state {
-        return Err(FallbackReason::StaleFacts);
+        return Err(FallbackReason::StaleFacts.into());
     }
     let summary = &trace.summary;
     if !injected!(StructuralFallbackSkipped) {
         if summary.seen.has(Seen::GLOBAL) {
-            return Err(FallbackReason::GlobalStructure);
+            return Err(FallbackReason::GlobalStructure.into());
         }
         if summary.seen.has(Seen::TREE_OTHER) {
-            return Err(FallbackReason::TreeStructure);
+            return Err(FallbackReason::TreeStructure.into());
         }
         if engine.has_duplicate_logical_ids() {
-            return Err(FallbackReason::DuplicateLogicalId);
+            return Err(FallbackReason::DuplicateLogicalId.into());
         }
         if trace.resolved_existing_id {
-            return Err(FallbackReason::ResolvedNodeId);
+            return Err(FallbackReason::ResolvedNodeId.into());
         }
     }
     if summary.seen.has(Seen::UNREADABLE_INSERT) {
-        return Err(FallbackReason::UnreadableInsert);
+        return Err(FallbackReason::UnreadableInsert.into());
+    }
+    if !injected!(ListThresholdSkipped) && engine.root_list_len().is_some_and(|len| len > ROOT_LIST_FALLBACK_LEN) {
+        return Err(FallbackReason::OversizedList.into());
+    }
+    let created: HashSet<TreeID> = summary.tree_created.iter().copied().collect();
+    // The id caches never re-read a node they hold, so a rewritten logical id of an existing node
+    // is not seen by either path. The full computation decides what it always decided.
+    if !injected!(IdRewriteSkipped)
+        && summary
+            .logical_id_writes
+            .iter()
+            .any(|container| !is_meta_of_created(container, &created))
+    {
+        return Err(FallbackReason::IdRewritten.into());
     }
 
     let removed = if summary.seen.has(Seen::ROOT_LIST_DELETED) {
@@ -389,19 +586,29 @@ fn check(
         alias_count_within_limit(engine)?;
     }
 
+    let limits = DocumentLimits::default();
     let mut delta = Delta::default();
     for id in removed.iter().filter(|_| !injected!(RemovedBlocksIgnored)) {
         // A block that left the list contributes nothing now. A tree node with its container id
         // as logical id would be dropped by the projection beside it: not modelled.
         let key = id.to_string();
         if engine.has_logical_id(&key) {
-            return Err(FallbackReason::KeyCollision);
+            return Err(FallbackReason::KeyCollision.into());
         }
         delta.add(None, facts.units.get(key.as_str()));
     }
-    evaluate_blocks(engine, facts, &touched, &mut delta)?;
-    evaluate_tree_nodes(engine, facts, summary, &touched, &mut delta)?;
-    finish(facts, &delta)
+    evaluate_blocks(engine, facts, &touched, &limits, &mut delta)?;
+    evaluate_tree_nodes(engine, facts, &created, &touched, &limits, &mut delta)?;
+    finish(facts, &delta, &limits)
+}
+
+/// Whether `container` is the metadata map of a node in `created`.
+fn is_meta_of_created(container: &ContainerID, created: &HashSet<TreeID>) -> bool {
+    matches!(
+        container,
+        ContainerID::Normal { peer, counter, container_type: ContainerType::Map }
+            if created.contains(&TreeID::new(*peer, *counter))
+    )
 }
 
 /// The blocks of the base that the update removed from `doc.children`.
@@ -495,7 +702,13 @@ fn touched_units(engine: &LoroCollabEngine, summary: &OpSummary) -> Result<Touch
             META | TREE => return Err(FallbackReason::GlobalStructure),
             ALIASES => touched.aliases = true,
             // The navigator order and the title never reach a limit; any other root is not read.
-            _ => {}
+            // A container below a tree node is the metadata map of a node of some tree: if the
+            // library reaches it through a tree this check does not model, it is not mapped.
+            _ => {
+                if path.iter().any(|(_, index)| matches!(index, Index::Node(_))) {
+                    return Err(FallbackReason::Unclassified);
+                }
+            }
         }
     }
     Ok(touched)
@@ -537,6 +750,7 @@ fn evaluate_blocks(
     engine: &LoroCollabEngine,
     facts: &BaseFacts,
     touched: &Touched,
+    limits: &DocumentLimits,
     delta: &mut Delta,
 ) -> Result<(), FallbackReason> {
     let no_aliases = std::collections::BTreeMap::new();
@@ -566,6 +780,9 @@ fn evaluate_blocks(
         };
         let pre = facts.units.get(key.as_str());
         delta.add(post.as_ref(), pre);
+        if delta.over_a_bound(limits) {
+            return Err(FallbackReason::LimitReached);
+        }
     }
     Ok(())
 }
@@ -578,11 +795,19 @@ fn evaluate_blocks(
 fn evaluate_tree_nodes(
     engine: &LoroCollabEngine,
     facts: &BaseFacts,
-    summary: &OpSummary,
+    created: &HashSet<TreeID>,
     touched: &Touched,
+    limits: &DocumentLimits,
     delta: &mut Delta,
 ) -> Result<(), FallbackReason> {
-    let created: HashSet<TreeID> = summary.tree_created.iter().copied().collect();
+    // A created node is new, so it has no children but the ones this update created. The caches
+    // already refused a created target that existed (`rebuild_id_cache_for`); this is the same
+    // condition read from the other side, from the document after the import, and it also covers
+    // nodes that the library only now attaches to a created parent (an earlier op of theirs that
+    // could not apply because the parent was missing).
+    if !injected!(CreatedTargetChecksSkipped) && !engine.created_nodes_adopt_nothing(created) {
+        return Err(FallbackReason::ResolvedNodeId);
+    }
     let mut units: Vec<(TreeUnit, bool)> = Vec::with_capacity(touched.tree_nodes.len());
     for node in &touched.tree_nodes {
         #[cfg(test)]
@@ -624,6 +849,9 @@ fn evaluate_tree_nodes(
             })
         };
         delta.add(post.as_ref(), pre);
+        if delta.over_a_bound(limits) {
+            return Err(FallbackReason::LimitReached);
+        }
     }
     Ok(())
 }
@@ -660,8 +888,14 @@ fn created_unit_fact(
 }
 
 /// Base facts plus the delta, against the limits.
-fn finish(facts: &BaseFacts, delta: &Delta) -> Result<WindowReport, FallbackReason> {
-    let limits = DocumentLimits::default();
+///
+/// The three totals are exact, so a total over its limit is refused here with the limit kind and
+/// the `observed` value the full computation reports, in its precedence (`container_count`, then
+/// `document_block_count`, then `document_text_chars`). The two maxima are only bounds: a unit
+/// beyond either of them has already ended the check (see [`Delta::over_a_bound`]), so when this
+/// runs neither is violated, which is what makes the precedence of the three totals the full
+/// computation's.
+fn finish(facts: &BaseFacts, delta: &Delta, limits: &DocumentLimits) -> Result<WindowReport, Undecided> {
     let total = |base: usize, change: i64| {
         i64::try_from(base)
             .ok()
@@ -672,13 +906,25 @@ fn finish(facts: &BaseFacts, delta: &Delta) -> Result<WindowReport, FallbackReas
     let blocks = total(facts.blocks, delta.share.blocks)?;
     let navigators = total(facts.navigators, delta.share.navigators)?;
     let chars = total(facts.chars, delta.share.chars)?;
-    if delta.max_depth > limits.tree_depth_max
-        || navigators > limits.container_count_max
-        || blocks > limits.document_block_count_max
-        || delta.longest > limits.text_block_chars_max
-        || chars > limits.document_text_chars_max
-    {
-        return Err(FallbackReason::LimitReached);
+    if delta.over_a_bound(limits) {
+        return Err(FallbackReason::LimitReached.into());
+    }
+    let refuse = |limit_kind: &'static str, limit: usize, observed: usize| {
+        let skew = u64::from(injected!(RefusalOffByOne));
+        Undecided::Refused(LimitViolation {
+            limit_kind,
+            limit: limit as u64,
+            observed: observed as u64 + skew,
+        })
+    };
+    if navigators > limits.container_count_max {
+        return Err(refuse("container_count", limits.container_count_max, navigators));
+    }
+    if blocks > limits.document_block_count_max {
+        return Err(refuse("document_block_count", limits.document_block_count_max, blocks));
+    }
+    if chars > limits.document_text_chars_max {
+        return Err(refuse("document_text_chars", limits.document_text_chars_max, chars));
     }
     Ok(WindowReport {
         blocks: blocks as u64,
@@ -723,17 +969,16 @@ pub fn compare_with_projection(report: &WindowReport, projection: &SemanticSnaps
             });
         }
     }
-    let deepest = projection
-        .nodes
-        .keys()
-        .map(|id| crate::limits::depth_of(projection, id))
-        .max()
-        .unwrap_or(0) as u64;
-    if deepest > report.depth_bound {
+    // The depth is computed once, in one linear pass that stops one past the limit, and shared by
+    // the bound check and the limit check below: what the oracle costs does not depend on how
+    // deep a hostile document is.
+    let limits = DocumentLimits::default();
+    let deepest = max_depth_capped(projection, limits.tree_depth_max);
+    if deepest as u64 > report.depth_bound {
         return Err(WindowDivergence {
             field: "depth_bound",
             reported: report.depth_bound,
-            projected: deepest,
+            projected: deepest as u64,
         });
     }
     let longest = live().map(chars).max().unwrap_or(0);
@@ -744,7 +989,7 @@ pub fn compare_with_projection(report: &WindowReport, projection: &SemanticSnaps
             projected: longest,
         });
     }
-    if let Err(violation) = check_snapshot(projection, &DocumentLimits::default()) {
+    if let Err(violation) = check_snapshot_with_depth(projection, &limits, deepest) {
         return Err(WindowDivergence {
             field: violation.limit_kind,
             reported: violation.limit,

@@ -116,6 +116,53 @@ pub(crate) fn depth_of(snapshot: &SemanticSnapshot, id: &NodeId) -> usize {
     depth
 }
 
+/// The depth of the deepest node, in one linear pass, stopping at `cap + 1`: the result is the
+/// exact maximum of [`depth_of`] when that is at most `cap` and `cap + 1` when it is more. Each
+/// node's depth is computed once (a node's depth is its parent's plus one), and a walk that cannot
+/// end (a cycle, which no real snapshot has) counts as over the cap, like [`depth_of`]'s own
+/// defensive result for it.
+pub(crate) fn max_depth_capped(snapshot: &SemanticSnapshot, cap: usize) -> usize {
+    let over = cap.saturating_add(1);
+    let mut known: std::collections::HashMap<&NodeId, usize> =
+        std::collections::HashMap::with_capacity(snapshot.nodes.len());
+    let mut path: Vec<&NodeId> = Vec::new();
+    let mut deepest = 0usize;
+    for start in snapshot.nodes.keys() {
+        if known.contains_key(start) {
+            continue;
+        }
+        path.clear();
+        let mut current = start;
+        // The depth of the node that follows the end of `path`, when the walk stopped at a node
+        // whose depth is known (or at a parent the snapshot does not hold, whose depth is 0).
+        let above = loop {
+            if let Some(depth) = known.get(current) {
+                break Some(*depth);
+            }
+            let Some(node) = snapshot.nodes.get(current) else {
+                break Some(0);
+            };
+            path.push(current);
+            match node.parent.as_ref() {
+                Some(parent) => current = parent,
+                None => break None,
+            }
+            if path.len() > snapshot.nodes.len() {
+                return over;
+            }
+        };
+        let first = above.map_or(0, |above| above.saturating_add(1));
+        for (depth, id) in (first..).zip(path.iter().rev()) {
+            if depth > cap {
+                return over;
+            }
+            known.insert(id, depth);
+            deepest = deepest.max(depth);
+        }
+    }
+    deepest
+}
+
 /// Height of the subtree rooted at `id`, counted as hops down to its deepest live-or-deleted
 /// descendant (0 if `id` has no children). [`check_operation`]'s `MoveNode` branch needs this: a
 /// move changes not only `id`'s own depth but every descendant's depth by the same delta, so the
@@ -343,6 +390,21 @@ pub fn check_snapshot(snapshot: &SemanticSnapshot, limits: &DocumentLimits) -> R
         .map(|id| depth_of(snapshot, id))
         .max()
         .unwrap_or(0);
+    check_snapshot_with_depth(snapshot, limits, max_depth)
+}
+
+/// [`check_snapshot`] with the deepest node's depth already known, so a caller that needs the depth
+/// for something else too computes it once. `max_depth` may be capped at `tree_depth_max + 1`
+/// (see [`max_depth_capped`]): the depth is only reported in a `tree_depth` violation, where the
+/// capped value then stands for "more than the limit".
+///
+/// # Errors
+/// The first violated limit, in the precedence of [`check_snapshot`].
+pub(crate) fn check_snapshot_with_depth(
+    snapshot: &SemanticSnapshot,
+    limits: &DocumentLimits,
+    max_depth: usize,
+) -> Result<(), LimitViolation> {
     if max_depth > limits.tree_depth_max {
         return Err(LimitViolation {
             limit_kind: "tree_depth",
@@ -780,6 +842,75 @@ mod tests {
             properties: BTreeMap::new(),
             deleted: false,
         }
+    }
+
+    /// A deterministic forest with dangling parents and a few deep chains.
+    fn forest(size: usize, seed: u64) -> SemanticSnapshot {
+        let mut state = seed | 1;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut snapshot = SemanticSnapshot::default();
+        for index in 0..size {
+            let parent = match next() % 5 {
+                0 => None,
+                // A parent the snapshot does not hold.
+                1 if index % 7 == 0 => Some(format!("missing{index}")),
+                _ if index == 0 => None,
+                _ => Some(format!("n{}", usize::try_from(next() % (index as u64)).unwrap_or(0))),
+            };
+            snapshot.nodes.insert(
+                NodeId::from(format!("n{index}").as_str()),
+                node(parent.as_deref(), NodeKind::NavigatorNode, ""),
+            );
+        }
+        snapshot
+    }
+
+    #[test]
+    fn capped_depth_equals_the_exact_maximum_up_to_the_cap() {
+        for seed in 1..40 {
+            let snapshot = forest(60 + usize::try_from(seed).unwrap_or(0) * 7, seed);
+            let exact = snapshot
+                .nodes
+                .keys()
+                .map(|id| depth_of(&snapshot, id))
+                .max()
+                .unwrap_or(0);
+            for cap in [0, 1, 2, 3, exact.saturating_sub(1), exact, exact + 1, 1_000] {
+                let capped = max_depth_capped(&snapshot, cap);
+                assert_eq!(capped, exact.min(cap + 1), "seed {seed} cap {cap} exact {exact}");
+            }
+        }
+    }
+
+    #[test]
+    fn capped_depth_of_a_long_chain_is_linear_work_and_stops_at_the_cap() {
+        let mut snapshot = SemanticSnapshot::default();
+        for index in 0..20_000_usize {
+            let parent = (index > 0).then(|| format!("n{}", index - 1));
+            snapshot.nodes.insert(
+                NodeId::from(format!("n{index}").as_str()),
+                node(parent.as_deref(), NodeKind::NavigatorNode, ""),
+            );
+        }
+        assert_eq!(max_depth_capped(&snapshot, 32), 33);
+        assert_eq!(max_depth_capped(&snapshot, 100_000), 19_999);
+    }
+
+    #[test]
+    fn capped_depth_treats_a_cycle_as_over_the_cap() {
+        let mut snapshot = SemanticSnapshot::default();
+        snapshot
+            .nodes
+            .insert(NodeId::from("a"), node(Some("b"), NodeKind::NavigatorNode, ""));
+        snapshot
+            .nodes
+            .insert(NodeId::from("b"), node(Some("a"), NodeKind::NavigatorNode, ""));
+        assert_eq!(max_depth_capped(&snapshot, 32), 33);
     }
 
     #[test]

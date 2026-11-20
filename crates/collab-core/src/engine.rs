@@ -319,6 +319,15 @@ impl LoroCollabEngine {
     /// Reads back every tree node's `logical_id` meta field to (re)populate the local id caches.
     /// Called after construction and after every successful `load`/`import_update`, since remote
     /// peers may have created nodes this replica has never locally indexed before.
+    ///
+    /// Known limitation, older than the incremental window: a node the caches already hold is never
+    /// read again, so an update that rewrites (or deletes) the `logical_id` of an existing node
+    /// leaves the caches, and with them the projection of this engine, on the old id, while an
+    /// engine loaded from the exported snapshot reads the new one. Both engines decide a limit on
+    /// what they see, so the same update can have a different projection in the worker than on the
+    /// host. The incremental window does not decide such an update (`FallbackReason::IdRewritten`);
+    /// the full path keeps its old behaviour. The remedy (re-reading the ids of every node whose
+    /// metadata an import touched, or refusing such writes) is a decision for the owner.
     fn rebuild_id_cache(&mut self) -> Result<(), CollabError> {
         for tree_id in self.tree.nodes() {
             if self.tree_to_id.contains_key(&tree_id) {
@@ -336,10 +345,32 @@ impl LoroCollabEngine {
     /// ones. Cost: O(created + uncached) instead of O(tree).
     ///
     /// Returns whether a node that was not created by this import got its id now (an existing
-    /// node that had none): the id of an existing node is part of what its children and the
-    /// projection key on, so the incremental check does not model it.
+    /// node that had none), or one of the created targets was a node the tree already held: the id
+    /// of an existing node is part of what its children and the projection key on, and an
+    /// existing node that a create "creates" again keeps its subtree, so the incremental check
+    /// does not model either.
+    ///
+    /// The two caches together hold every node of the tree before the import, live or deleted,
+    /// named or not: the load-time rebuild visits all of `LoroTree::nodes()`, which includes the
+    /// deleted ones, and every later rebuild adds what it visits. A created target in either of
+    /// them is therefore not new, whatever the ops that created it look like (a hand-encoded move
+    /// of a target whose create op the base never had makes the node exist without it).
     fn rebuild_id_cache_for(&mut self, created: &[TreeID]) -> Result<bool, CollabError> {
         let created_now: HashSet<TreeID> = created.iter().copied().collect();
+        #[cfg(test)]
+        let checked =
+            crate::window_check::fault::active() != Some(crate::window_check::fault::Fault::CreatedTargetChecksSkipped);
+        #[cfg(not(test))]
+        let checked = true;
+        if checked
+            && created
+                .iter()
+                .any(|id| self.tree_to_id.contains_key(id) || self.uncached_tree_nodes.contains(id))
+        {
+            // The full rebuild decides, as for two claims of one id.
+            self.rebuild_id_cache()?;
+            return Ok(true);
+        }
         let candidates: HashSet<TreeID> = self.uncached_tree_nodes.iter().chain(created).copied().collect();
         // Read first, change nothing: if two nodes would claim one id, the full rebuild decides,
         // since which of them the cache keeps depends on the order they are read in (tree order).
@@ -1217,6 +1248,44 @@ impl LoroCollabEngine {
             .map(Some)
     }
 
+    /// The number of elements of the root block list, of any kind: `None` without an editor
+    /// document. O(1), and it reads no element.
+    pub(crate) fn root_list_len(&self) -> Option<usize> {
+        let root = crate::editor_structure::root_map(&self.doc, crate::reserved_roots::DOC)
+            .ok()
+            .flatten()?;
+        match root.get("children") {
+            Some(ValueOrContainer::Container(Container::List(list))) => Some(list.len()),
+            _ => None,
+        }
+    }
+
+    /// Whether the nodes in `created` have no children but nodes in `created`: every child that a
+    /// created node has now is itself a created node. A node that is not in the tree (its parent
+    /// was missing) has no children to speak of.
+    ///
+    /// Counts instead of listing: the created nodes whose parent is a created node are tallied
+    /// per parent, and each created node must have exactly that many children.
+    pub(crate) fn created_nodes_adopt_nothing(&self, created: &HashSet<TreeID>) -> bool {
+        let mut created_children: HashMap<TreeID, usize> = HashMap::new();
+        for node in created {
+            if !self.tree.contains(*node) {
+                continue;
+            }
+            if let Some(TreeParentId::Node(parent)) = self.tree.parent(*node)
+                && created.contains(&parent)
+            {
+                *created_children.entry(parent).or_default() += 1;
+            }
+        }
+        created.iter().all(|node| {
+            !self.tree.contains(*node)
+                // The library answers `None` for a node that has no children at all.
+                || self.tree.children_num(TreeParentId::Node(*node)).unwrap_or(0)
+                    == created_children.get(node).copied().unwrap_or(0)
+        })
+    }
+
     /// What [`Self::semantic_snapshot`] makes of one legacy tree node, reduced to what the
     /// structural limits read: its key, its parent's key, whether the projection keeps it, whether
     /// it is deleted, its kind and the characters it contributes. `editor_doc` is whether the page
@@ -1503,9 +1572,13 @@ impl LoroCollabEngine {
 
     /// Materialises, ahead of a write, the parts of the *trusted base* that the import of a client
     /// update would otherwise build inside the metered window: the root key index (the first root
-    /// lookup lists the keys of a lazily loaded store), and the decoded state of the three
-    /// containers a block insert touches, the root block list (`doc.children`), the alias map and
-    /// the structure placement tree.
+    /// lookup lists the keys of a lazily loaded store), and the decoded state of the containers a
+    /// block insert touches, the root block list (`doc.children`), the alias map and the structure
+    /// placement tree, and the navigator `order` map. The `order` map is the one container beyond
+    /// the first three that the approved list (root key index, root block list, alias map, placement
+    /// tree) does not name: it is the same kind of work, decoding trusted base container state
+    /// before the timer, a pure function of the base that depends on no update and reaches no
+    /// verdict, and it is decoded here because the projection reads it on every window.
     ///
     /// Loro decodes the full state of every container an import changes, so without this the
     /// first import of a block insert costs O(page); the reads below are the public ones that
