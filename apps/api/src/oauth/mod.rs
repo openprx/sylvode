@@ -8,6 +8,7 @@ pub mod audit;
 pub mod authorize;
 pub mod error;
 pub mod grants;
+pub mod manage;
 pub mod metadata;
 pub mod rate;
 pub mod redirect;
