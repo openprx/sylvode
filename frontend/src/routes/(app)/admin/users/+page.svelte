@@ -6,6 +6,7 @@
 	import { authApi } from '#lib/api/auth.js';
 	import { adminApi, type AdminUser } from '#lib/api/admin.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { isAdminUser } from '#lib/utils/auth.js';
 	import Button from '#lib/components/Button.svelte';
 	import Input from '#lib/components/Input.svelte';
@@ -246,10 +247,19 @@
 		if (actionLoadingUserId) return;
 
 		const actionText = user.status === 'active' ? get(t)('admin.disabled') : get(t)('admin.active');
+		const disabling = user.status === 'active';
+		const values = { email: user.email };
 		if (
-			!confirm(
-				get(t)('admin.toggleStatusConfirm', { values: { action: actionText, email: user.email } })
-			)
+			!(await confirmAction({
+				tone: disabling ? 'destructive' : 'neutral',
+				title: disabling
+					? get(t)('admin.toggleDisableTitle', { values })
+					: get(t)('admin.toggleEnableTitle', { values }),
+				body: disabling ? get(t)('admin.toggleDisableBody') : get(t)('admin.toggleEnableBody'),
+				confirmLabel: disabling
+					? get(t)('admin.toggleDisableAction', { values })
+					: get(t)('admin.toggleEnableAction', { values })
+			}))
 		) {
 			return;
 		}
