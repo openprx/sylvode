@@ -1361,7 +1361,7 @@
 		target.searchParams.set('form', formId);
 		target.searchParams.delete('form_id');
 		if (workbench?.current.userId && !workbench.canOpen(target.href)) {
-			workbench.showLimit();
+			workbench.block(target.href);
 			return;
 		}
 		if (formsSessionActivating === formId) return;
