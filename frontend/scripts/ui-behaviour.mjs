@@ -121,7 +121,7 @@ const active = () =>
 					testid: el.getAttribute('data-testid'),
 					text: (el.textContent || '').trim().slice(0, 40),
 					type: el.getAttribute('type'),
-					inDialog: !!el.closest('[role="dialog"]'),
+					inDialog: !!el.closest('[role="dialog"], [role="alertdialog"]'),
 					inGallery: el.closest('[data-gallery]')?.getAttribute('data-gallery') ?? null
 				}
 			: null;
@@ -279,7 +279,9 @@ await check(
 		await tabTo('[data-testid="dialog-opener"]');
 		await page.keyboard.press('Enter');
 		await page.waitForSelector('[data-testid="dialog-demo"]');
-		await page.waitForFunction(() => document.activeElement?.closest('[role="dialog"]'));
+		await page.waitForFunction(() =>
+			document.activeElement?.closest('[role="dialog"], [role="alertdialog"]')
+		);
 		const first = await active();
 		expect(first.tag === 'input' && first.inDialog, `first focus ${JSON.stringify(first)}`);
 		await page.keyboard.type('draft text');
@@ -317,7 +319,9 @@ await check(
 		await tabTo('[data-testid="destructive-opener"]');
 		await page.keyboard.press('Enter');
 		await page.waitForSelector('[data-testid="destructive-demo"]');
-		await page.waitForFunction(() => document.activeElement?.closest('[role="dialog"]'));
+		await page.waitForFunction(() =>
+			document.activeElement?.closest('[role="dialog"], [role="alertdialog"]')
+		);
 		const first = await active();
 		expect(first.tag === 'button' && first.text === 'Cancel', JSON.stringify(first));
 		await page.keyboard.press('Escape');
