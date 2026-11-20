@@ -1,0 +1,33 @@
+{
+	"ui": {
+		"sidePanel": {
+			"previous": "上一条记录",
+			"next": "下一条记录",
+			"openFull": "打开完整页面",
+			"more": "更多操作",
+			"close": "关闭面板",
+			"resize": "调整面板宽度",
+			"unsaved": "有未保存的更改",
+			"loading": "正在加载",
+			"failed": "无法加载此记录。",
+			"forbidden": "你没有访问此记录的权限，请联系项目管理员。",
+			"missing": "此记录已不存在，可能已被删除。",
+			"changed": "此记录已在别处更改。",
+			"offline": "当前处于离线状态，显示的是已加载的内容。",
+			"retry": "重试",
+			"refresh": "刷新",
+			"sampleIdentifier": "LEAD-128",
+			"sampleTitle": "Northwind 采购订单",
+			"sampleStatus": "进行中",
+			"sampleLabel": "负责人",
+			"sampleValue": "谭梅",
+			"sampleSave": "保存更改",
+			"sampleOpen": "打开面板",
+			"sampleDelete": "删除",
+			"sampleRow": "行",
+			"sampleMenu": "复制",
+			"firstRecord": "已是第一条记录",
+			"lastRecord": "已是最后一条记录"
+		}
+	}
+}
