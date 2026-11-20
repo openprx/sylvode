@@ -17,7 +17,8 @@ fn value(map: &LoroMap, key: &str) -> Option<String> {
     }
 }
 /// The root container `name` of exactly type `kind`, or `None` when no such root exists. Reads by
-/// typed container id and registers nothing. `LoroDoc::get_by_str_path` must not be used for
+/// typed container id. The library registers an empty root of that type on such a read; the
+/// frontier and the semantic hash do not change. `LoroDoc::get_by_str_path` must not be used for
 /// roots: it picks among all roots with that name, of any type, so a second root of another type
 /// could make two readers of one document disagree.
 pub(crate) fn root_container(doc: &LoroDoc, name: &str, kind: ContainerType) -> Option<Container> {
