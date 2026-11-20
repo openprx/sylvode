@@ -1,0 +1,225 @@
+{
+	"oauth": {
+		"scope": {
+			"projects:read": "See projects and their details",
+			"work_items:read": "See work items, comments and labels",
+			"work_items:write": "Create and update work items and add comments (never delete)",
+			"forms:read": "See forms and their records",
+			"forms:write": "Create and update form records (never delete)",
+			"notifications:read": "Receive your notifications from this workspace",
+			"notifications:write": "Mark your notifications as read",
+			"tasks:read": "See agent tasks and their progress",
+			"surfaces:embed": "Show Sylvode views inside {client}",
+			"offline_access": "Stay connected until you disconnect",
+			"unknown": "Access named \"{name}\""
+		},
+		"group": {
+			"read": "Read",
+			"change": "Change",
+			"other": "Other"
+		},
+		"errors": {
+			"generic": "Something went wrong. Try again.",
+			"consent_token_invalid": "This page was out of date and has been refreshed. Review your choices and try again.",
+			"workspace_not_eligible": "This workspace no longer allows connected applications. Choose another workspace.",
+			"invalid_selection": "Your selection is not valid. Check the workspace, the projects and the access, then try again.",
+			"client_not_active": "This application is not available right now.",
+			"rate_limited": "Too many attempts. Wait a moment and try again.",
+			"csrf_origin_mismatch": "The request was refused because it came from another site.",
+			"session_required": "Your session has ended. Sign in again.",
+			"not_found": "This connection no longer exists.",
+			"request_not_found": "This connection request is no longer valid. Start the connection again from the application.",
+			"already_decided": "This connection request was already used. Start the connection again from the application.",
+			"too_many_grants": "You have reached the limit of connections. Disconnect an older one first.",
+			"forbidden": "You do not have permission to do this."
+		},
+		"consent": {
+			"pageTitle": "Connect {client} to Sylvode",
+			"title": "Connect {client} to Sylvode",
+			"loading": "Loading the connection request",
+			"wordmark": "Sylvode",
+			"origin": {
+				"caption": "Requested by",
+				"line": "{client} on this computer",
+				"hint": "Returns to {host} after you decide",
+				"lineDevice": "{client} on {device}",
+				"hintDevice": "The device name was supplied by the application"
+			},
+			"account": {
+				"signedInAs": "Signed in as {name} ({email})",
+				"notYou": "Not you?",
+				"signingOut": "Signing out…"
+			},
+			"workspace": {
+				"legend": "Workspace",
+				"ineligible": "Your workspace administrator does not allow connected applications"
+			},
+			"projects": {
+				"legend": "Projects",
+				"all": "All projects in this workspace, including new ones",
+				"selected": "Only these projects",
+				"pickerLabel": "Projects {client} can reach",
+				"pickerPlaceholder": "Choose projects",
+				"loading": "Loading projects…",
+				"loadFailed": "The projects of this workspace could not be loaded.",
+				"retry": "Retry",
+				"empty": "This workspace has no projects yet. Choose all projects, or pick another workspace."
+			},
+			"access": {
+				"legend": "Access requested",
+				"required": "Required by {client}"
+			},
+			"warning": {
+				"title": "{client} will act as you",
+				"body": "Within the access above, {client} can do what you can do in the chosen projects. It cannot administer the workspace, delete anything, see secrets or start agents. You can disconnect at any time in Settings → Connected applications."
+			},
+			"actions": {
+				"cancel": "Cancel",
+				"allow": "Allow {client}",
+				"connecting": "Connecting…"
+			},
+			"block": {
+				"client_unavailable": "{client} cannot be connected right now",
+				"no_eligible_workspace": "None of your workspaces allows connected applications",
+				"choose_workspace": "Choose a workspace and which projects {client} can reach",
+				"choose_projects": "Choose a workspace and which projects {client} can reach",
+				"choose_selected_projects": "Choose which projects {client} can reach",
+				"projects_loading": "Loading the projects of this workspace",
+				"projects_failed": "The projects could not be loaded",
+				"no_scopes": "Choose at least one kind of access",
+				"scopes_miss_resource": "The chosen access does not cover everything {client} asked for"
+			},
+			"login": {
+				"title": "Sign in to Sylvode to connect {client}",
+				"signIn": "Sign in to Sylvode",
+				"hint": "No Sylvode account? Accounts are created by your Sylvode administrator.",
+				"noAccount": "I don't have a Sylvode account"
+			},
+			"invalid": {
+				"title": "This connection request is not valid",
+				"body": "The application or its return address is not registered with this Sylvode. Nothing was shared."
+			},
+			"expired": {
+				"title": "This connection request has expired",
+				"body": "Start the connection again from {client}."
+			},
+			"expiredGeneric": {
+				"body": "Start the connection again from the application."
+			},
+			"noEligible": {
+				"title": "None of your workspaces allows connected applications",
+				"body": "Ask a workspace administrator to turn connected applications on, then connect again.",
+				"back": "Return to {client}"
+			},
+			"tooMany": {
+				"title": "You already have {max} {client} connections",
+				"body": "Disconnect one of them, then try again.",
+				"deviceUnknown": "Unnamed device",
+				"open": "Open Connected applications",
+				"retry": "Try again"
+			},
+			"done": {
+				"title": "Return to {client} to finish",
+				"body": "You can close this tab once {client} confirms the connection."
+			},
+			"framed": "This page cannot be shown inside another page"
+		},
+		"manage": {
+			"title": "Connected applications",
+			"loading": "Loading connected applications",
+			"loadFailed": "Connected applications could not be loaded.",
+			"retry": "Retry",
+			"disconnect": "Disconnect",
+			"disconnecting": "Disconnecting…",
+			"summary": {
+				"read": "Read",
+				"readWrite": "Read and change"
+			},
+			"projects": {
+				"all": "All projects",
+				"selected": {
+					"one": "{count} project",
+					"other": "{count} projects"
+				}
+			},
+			"value": "{workspace} workspace · {projects} · {used}",
+			"lastUsed": "Last used {time}",
+			"neverUsed": "Not used yet",
+			"justNow": "just now",
+			"details": {
+				"toggle": "Show details for {label}",
+				"access": "Access",
+				"projects": "Projects",
+				"allProjects": "All projects, including new ones",
+				"moreProjects": "and {count} more",
+				"connectedOn": "Connected on",
+				"expires": "Expires",
+				"button": "Details"
+			},
+			"personal": {
+				"description": "Applications you connected to your account. Disconnecting ends their access at once.",
+				"empty": "No applications are connected to your account",
+				"dialogTitle": "Disconnect {label}?",
+				"dialogBody": "{client} will lose access to the {workspace} workspace at once and stop receiving notifications. Your Sylvode data is not changed. You can connect again from {client}.",
+				"confirm": "Disconnect {client}",
+				"done": "{label} was disconnected"
+			},
+			"workspace": {
+				"description": "Applications that members connected to this workspace.",
+				"switch": "Allow members to connect applications such as Ramflux",
+				"switchHint": "Turning this off ends every connection in this workspace.",
+				"turnOffTitle": "Turn off connected applications for {workspace}?",
+				"turnOffBody": {
+					"one": "The 1 active connection in this workspace ends at once and members cannot connect again until you turn this back on.",
+					"other": "All {count} active connections in this workspace end at once and members cannot connect again until you turn this back on."
+				},
+				"turnOffConfirm": "Turn off and disconnect all",
+				"turnOffConfirmNone": "Turn off",
+				"turnedOff": {
+					"one": "Connected applications are off for this workspace. 1 connection was ended.",
+					"other": "Connected applications are off for this workspace. {count} connections were ended."
+				},
+				"turnedOn": "Members can connect applications to this workspace again.",
+				"empty": "No applications are connected in this workspace",
+				"off": "Connected applications are off for this workspace.",
+				"table": "Connected applications in this workspace",
+				"member": "Member",
+				"application": "Application",
+				"projectsColumn": "Projects",
+				"access": "Access",
+				"lastUsedColumn": "Last used",
+				"dialogTitle": "Disconnect {client} for {member}?",
+				"dialogBody": "{client} loses access to this workspace for {member} at once. Their Sylvode data is not changed. They can connect again from {client}.",
+				"confirm": "Disconnect {client}",
+				"done": "{client} was disconnected for {member}",
+				"turnOffBodyNone": "Members cannot connect applications to this workspace again until you turn this back on.",
+				"turnedOffNone": "Connected applications are off for this workspace."
+			},
+			"admin": {
+				"title": "Applications",
+				"description": "Applications registered to connect to this Sylvode.",
+				"empty": "No applications are registered",
+				"active": "Active",
+				"disabled": "Disabled",
+				"connections": {
+					"one": "{count} active connection",
+					"other": "{count} active connections"
+				},
+				"disable": "Disable {client}",
+				"enable": "Enable {client}",
+				"dialogTitle": "Disable {client} for this Sylvode?",
+				"dialogBody": {
+					"one": "The 1 connection ends at once. Nobody can connect {client} until it is enabled again.",
+					"other": "All {count} connections end at once. Nobody can connect {client} until it is enabled again."
+				},
+				"disabledDone": {
+					"one": "{client} was disabled. 1 connection was ended.",
+					"other": "{client} was disabled. {count} connections were ended."
+				},
+				"enabledDone": "{client} was enabled.",
+				"dialogBodyNone": "Nobody can connect {client} until it is enabled again.",
+				"disabledDoneNone": "{client} was disabled."
+			}
+		}
+	}
+}

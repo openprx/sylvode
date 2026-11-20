@@ -1,0 +1,219 @@
+{
+	"oauth": {
+		"scope": {
+			"projects:read": "查看项目及其详情",
+			"work_items:read": "查看工作项、评论和标签",
+			"work_items:write": "创建和更新工作项、添加评论（不能删除）",
+			"forms:read": "查看表单及其记录",
+			"forms:write": "创建和更新表单记录（不能删除）",
+			"notifications:read": "接收你在此工作区的通知",
+			"notifications:write": "将你的通知标记为已读",
+			"tasks:read": "查看智能体任务及其进度",
+			"surfaces:embed": "在 {client} 中显示 Sylvode 视图",
+			"offline_access": "保持连接，直到你断开",
+			"unknown": "名为“{name}”的权限"
+		},
+		"group": {
+			"read": "读取",
+			"change": "修改",
+			"other": "其他"
+		},
+		"errors": {
+			"generic": "出了点问题，请重试。",
+			"consent_token_invalid": "此页面已过期并已刷新。请检查你的选择后重试。",
+			"workspace_not_eligible": "此工作区已不再允许连接外部应用，请选择其他工作区。",
+			"invalid_selection": "你的选择无效。请检查工作区、项目和权限后重试。",
+			"client_not_active": "此应用当前不可用。",
+			"rate_limited": "尝试次数过多，请稍后再试。",
+			"csrf_origin_mismatch": "请求来自其他站点，已被拒绝。",
+			"session_required": "你的登录已结束，请重新登录。",
+			"not_found": "此连接已不存在。",
+			"request_not_found": "此连接请求已失效，请从应用重新发起连接。",
+			"already_decided": "此连接请求已被使用，请从应用重新发起连接。",
+			"too_many_grants": "连接数量已达上限，请先断开较早的连接。",
+			"forbidden": "你没有执行此操作的权限。"
+		},
+		"consent": {
+			"pageTitle": "将 {client} 连接到 Sylvode",
+			"title": "将 {client} 连接到 Sylvode",
+			"loading": "正在加载连接请求",
+			"wordmark": "Sylvode",
+			"origin": {
+				"caption": "请求方",
+				"line": "此电脑上的 {client}",
+				"hint": "确认后返回 {host}",
+				"lineDevice": "{device} 上的 {client}",
+				"hintDevice": "设备名称由应用提供"
+			},
+			"account": {
+				"signedInAs": "当前登录：{name} ({email})",
+				"notYou": "不是你？",
+				"signingOut": "正在退出…"
+			},
+			"workspace": {
+				"legend": "工作区",
+				"ineligible": "工作区管理员不允许连接外部应用"
+			},
+			"projects": {
+				"legend": "项目",
+				"all": "此工作区的所有项目（包括以后新建的）",
+				"selected": "仅以下项目",
+				"pickerLabel": "{client} 可访问的项目",
+				"pickerPlaceholder": "选择项目",
+				"loading": "正在加载项目…",
+				"loadFailed": "无法加载此工作区的项目。",
+				"retry": "重试",
+				"empty": "此工作区还没有项目。请选择全部项目，或选择其他工作区。"
+			},
+			"access": {
+				"legend": "请求的权限",
+				"required": "{client} 必需"
+			},
+			"warning": {
+				"title": "{client} 将以你的身份操作",
+				"body": "在上述权限范围内，{client} 可以在所选项目中执行你能执行的操作。它不能管理工作区、不能删除任何内容、不能查看密钥，也不能启动智能体。你可以随时在“设置 → 已连接的应用”中断开。"
+			},
+			"actions": {
+				"cancel": "取消",
+				"allow": "允许 {client}",
+				"connecting": "正在连接…"
+			},
+			"block": {
+				"client_unavailable": "{client} 当前无法连接",
+				"no_eligible_workspace": "你的工作区均不允许连接外部应用",
+				"choose_workspace": "请选择工作区以及 {client} 可访问的项目",
+				"choose_projects": "请选择工作区以及 {client} 可访问的项目",
+				"choose_selected_projects": "请选择 {client} 可访问的项目",
+				"projects_loading": "正在加载此工作区的项目",
+				"projects_failed": "无法加载项目",
+				"no_scopes": "请至少选择一项权限",
+				"scopes_miss_resource": "所选权限未涵盖 {client} 请求的全部内容"
+			},
+			"login": {
+				"title": "登录 Sylvode 以连接 {client}",
+				"signIn": "登录 Sylvode",
+				"hint": "没有 Sylvode 账号？账号由 Sylvode 管理员创建。",
+				"noAccount": "我没有 Sylvode 账号"
+			},
+			"invalid": {
+				"title": "此连接请求无效",
+				"body": "该应用或其返回地址未在此 Sylvode 注册，未共享任何内容。"
+			},
+			"expired": {
+				"title": "此连接请求已过期",
+				"body": "请从 {client} 重新发起连接。"
+			},
+			"expiredGeneric": {
+				"body": "请从应用重新发起连接。"
+			},
+			"noEligible": {
+				"title": "你的工作区均不允许连接外部应用",
+				"body": "请联系工作区管理员开启已连接的应用，然后重新连接。",
+				"back": "返回 {client}"
+			},
+			"tooMany": {
+				"title": "你已有 {max} 个 {client} 连接",
+				"body": "请断开其中一个，然后重试。",
+				"deviceUnknown": "未命名设备",
+				"open": "打开已连接的应用",
+				"retry": "重试"
+			},
+			"done": {
+				"title": "请返回 {client} 完成连接",
+				"body": "{client} 确认连接后，你可以关闭此标签页。"
+			},
+			"framed": "此页面不能在其他页面中显示"
+		},
+		"manage": {
+			"title": "已连接的应用",
+			"loading": "正在加载已连接的应用",
+			"loadFailed": "无法加载已连接的应用。",
+			"retry": "重试",
+			"disconnect": "断开",
+			"disconnecting": "正在断开…",
+			"summary": {
+				"read": "读取",
+				"readWrite": "读取和修改"
+			},
+			"projects": {
+				"all": "所有项目",
+				"selected": {
+					"other": "{count} 个项目"
+				}
+			},
+			"value": "{workspace} 工作区 · {projects} · {used}",
+			"lastUsed": "{time}使用",
+			"neverUsed": "尚未使用",
+			"justNow": "刚刚",
+			"details": {
+				"toggle": "显示 {label} 的详情",
+				"access": "权限",
+				"projects": "项目",
+				"allProjects": "所有项目（包括以后新建的）",
+				"moreProjects": "另有 {count} 个",
+				"connectedOn": "连接时间",
+				"expires": "到期时间",
+				"button": "详情"
+			},
+			"personal": {
+				"description": "你已连接到账号的应用。断开后其访问权限立即失效。",
+				"empty": "你的账号未连接任何应用",
+				"dialogTitle": "断开{label}？",
+				"dialogBody": "{client} 将立即失去对 {workspace} 工作区的访问，并停止接收通知。你的 Sylvode 数据不会改变。你可以从 {client} 重新连接。",
+				"confirm": "断开 {client}",
+				"done": "已断开{label}"
+			},
+			"workspace": {
+				"description": "成员连接到此工作区的应用。",
+				"switch": "允许成员连接 Ramflux 等应用",
+				"switchHint": "关闭后，此工作区的所有连接都会结束。",
+				"turnOffTitle": "关闭 {workspace} 的已连接应用？",
+				"turnOffBody": {
+					"other": "此工作区的 {count} 个活动连接将立即结束，在你重新开启前成员无法再次连接。"
+				},
+				"turnOffConfirm": "关闭并全部断开",
+				"turnOffConfirmNone": "关闭",
+				"turnedOff": {
+					"other": "已关闭此工作区的已连接应用，已结束 {count} 个连接。"
+				},
+				"turnedOn": "成员可以再次将应用连接到此工作区。",
+				"empty": "此工作区没有已连接的应用",
+				"off": "此工作区已关闭已连接的应用。",
+				"table": "此工作区的已连接应用",
+				"member": "成员",
+				"application": "应用",
+				"projectsColumn": "项目",
+				"access": "权限",
+				"lastUsedColumn": "最近使用",
+				"dialogTitle": "为 {member} 断开 {client}？",
+				"dialogBody": "{client} 将立即失去 {member} 对此工作区的访问。其 Sylvode 数据不会改变，可以从 {client} 重新连接。",
+				"confirm": "断开 {client}",
+				"done": "已为 {member} 断开 {client}",
+				"turnOffBodyNone": "在你重新开启前，成员无法再将应用连接到此工作区。",
+				"turnedOffNone": "已关闭此工作区的已连接应用。"
+			},
+			"admin": {
+				"title": "应用",
+				"description": "已注册、可连接到此 Sylvode 的应用。",
+				"empty": "尚未注册任何应用",
+				"active": "已启用",
+				"disabled": "已停用",
+				"connections": {
+					"other": "{count} 个活动连接"
+				},
+				"disable": "停用 {client}",
+				"enable": "启用 {client}",
+				"dialogTitle": "为此 Sylvode 停用 {client}？",
+				"dialogBody": {
+					"other": "所有 {count} 个连接将立即结束。重新启用前，任何人都无法连接 {client}。"
+				},
+				"disabledDone": {
+					"other": "已停用 {client}，已结束 {count} 个连接。"
+				},
+				"enabledDone": "已启用 {client}。",
+				"dialogBodyNone": "重新启用前，任何人都无法连接 {client}。",
+				"disabledDoneNone": "已停用 {client}。"
+			}
+		}
+	}
+}

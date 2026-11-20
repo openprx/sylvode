@@ -1,11 +1,13 @@
 <script lang="ts">
 	import '#lib/i18n/index.js';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { apiClient } from '#lib/api/client.js';
 	import { authApi } from '#lib/api/auth.js';
 	import { authStore } from '#lib/stores/auth.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { safeReturnTo } from '#lib/oauth/return-to.js';
 	import { t } from 'svelte-i18n';
 
 	let email = '';
@@ -30,7 +32,14 @@
 		} else if (response.data) {
 			authStore.setUser(response.data.user);
 			toast.success($t('auth.loginSuccess'));
-			goto(resolve('/(app)/workspace'));
+			// Only the consent page's own address is accepted as a return target (contract 14.4).
+			const returnTo = safeReturnTo(page.url.searchParams.get('return_to'));
+			if (returnTo) {
+				// eslint-disable-next-line svelte/no-navigation-without-resolve -- validated same-origin path
+				goto(returnTo);
+			} else {
+				goto(resolve('/(app)/workspace'));
+			}
 		}
 
 		loading = false;
