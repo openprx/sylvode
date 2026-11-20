@@ -4952,7 +4952,7 @@ const server = createServer((req, res) => {
 		json(res, 500, { code: 500, message: error.message, data: null });
 	});
 });
-const port = 19580 + Math.floor(Math.random() * 1000);
+const port = Number(process.env.OPENPR_FORMS_UI_PORT) || 19580 + Math.floor(Math.random() * 1000);
 await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 if (serveOnly) {
 	console.log(`SMOKE_SERVER_READY ${port}`);
