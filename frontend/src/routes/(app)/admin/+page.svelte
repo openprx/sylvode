@@ -26,17 +26,17 @@
 		{
 			label: $t('admin.apiService'),
 			value: $t('admin.statusOk'),
-			color: 'text-green-700 bg-green-100'
+			color: 'text-fg bg-surface'
 		},
 		{
 			label: $t('admin.databaseConnection'),
 			value: $t('admin.statusOk'),
-			color: 'text-green-700 bg-green-100'
+			color: 'text-fg bg-surface'
 		},
 		{
 			label: $t('admin.webhookJobs'),
 			value: $t('admin.statusMonitoring'),
-			color: 'text-blue-700 bg-blue-100'
+			color: 'text-fg bg-surface'
 		}
 	]);
 
@@ -115,9 +115,7 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('common.loading')}
 		</div>
 	{:else}
@@ -146,7 +144,7 @@
 			</h2>
 			<div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
 				{#each statusItems as item}
-					<div class="rounded-md border border-line p-3">
+					<div class="rounded-control border border-line p-3">
 						<p class="text-sm text-fg-muted">{item.label}</p>
 						<span
 							class="mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-medium {item.color}"
