@@ -151,11 +151,22 @@
 	});
 
 	// The Apps row needs the project's app count; discovery is retained while the project is open.
-	const openProjectIds = $derived(branches.filter((b) => b.open).map((b) => b.project.id));
+	// A string key, so the effect re-runs only when the set of open projects changes: an array
+	// would be new on every update of the counts and make retain and release loop.
+	const openProjectKey = $derived(
+		branches
+			.filter((b) => b.open)
+			.map((b) => b.project.id)
+			.join('\n')
+	);
 	$effect(() => {
-		const stops = openProjectIds.map((id) => {
+		const stops = (openProjectKey ? openProjectKey.split('\n') : []).map((id) => {
 			const discovery = projectDiscovery(id);
-			const stop = discovery.subscribe((state) => data.setAppsCount(id, appsCountOf(state)));
+			// Untracked: the first call runs inside this effect, and reading the counts there would
+			// make the effect depend on them and restart discovery whenever one changes.
+			const stop = discovery.subscribe((state) =>
+				untrack(() => data.setAppsCount(id, appsCountOf(state)))
+			);
 			const release = discovery.retain();
 			return () => {
 				stop();
