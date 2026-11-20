@@ -526,19 +526,19 @@
 	function statusTone(status: ProposalStatus): string {
 		switch (status) {
 			case 'draft':
-				return 'bg-slate-100 text-slate-700';
+				return 'bg-surface text-fg';
 			case 'open':
-				return 'bg-blue-100 text-blue-700';
+				return 'bg-surface text-fg';
 			case 'voting':
-				return 'bg-amber-100 text-amber-700';
+				return 'bg-warning-soft text-warning';
 			case 'approved':
-				return 'bg-emerald-100 text-emerald-700';
+				return 'bg-surface text-fg';
 			case 'rejected':
-				return 'bg-red-100 text-red-700';
+				return 'bg-danger-soft text-danger';
 			case 'vetoed':
-				return 'bg-rose-100 text-rose-700';
+				return 'bg-danger-soft text-danger';
 			case 'archived':
-				return 'bg-slate-200 text-slate-700';
+				return 'bg-surface text-fg';
 		}
 	}
 
@@ -666,23 +666,21 @@
 
 {#if loading}
 	<div
-		class="mx-auto max-w-6xl rounded-lg border border-line bg-white p-8 text-center text-slate-500 dark:bg-slate-800"
+		class="mx-auto max-w-6xl rounded-card border border-line bg-raised p-8 text-center text-fg-muted"
 	>
 		{$t('governance.loading')}
 	</div>
 {:else if proposal}
 	<div class="mx-auto grid max-w-6xl grid-cols-1 gap-4 lg:grid-cols-3">
 		<div class="space-y-4 lg:col-span-2">
-			<div
-				class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
-			>
+			<div class="rounded-card border border-line bg-raised p-5">
 				<div class="mb-3 flex items-start justify-between gap-3">
 					<h1 class="text-xl font-semibold text-fg">{proposal.title}</h1>
 					<span class={`rounded px-2 py-1 text-xs font-medium ${statusTone(proposal.status)}`}
 						>{statusLabel(proposal.status)}</span
 					>
 				</div>
-				<div class="mb-4 text-sm text-slate-500">
+				<div class="mb-4 text-sm text-fg-muted">
 					{typeLabel(proposal.proposal_type)} · {proposalAuthorName} · {new Date(
 						proposal.created_at
 					).toLocaleString()}
@@ -692,10 +690,10 @@
 						{#each progressStages as stage, idx}
 							<div class="space-y-1">
 								<div
-									class={`h-1.5 rounded ${idx <= stageIndex(proposal.status) ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}
+									class={`h-1.5 rounded ${idx <= stageIndex(proposal.status) ? 'bg-primary' : 'bg-surface'}`}
 								></div>
 								<p
-									class={`text-xs ${idx === stageIndex(proposal.status) ? 'font-medium text-blue-700 dark:text-blue-300' : 'text-slate-500'}`}
+									class={`text-xs ${idx === stageIndex(proposal.status) ? 'font-medium text-fg' : 'text-fg-muted'}`}
 								>
 									{stageLabel(stage, proposal.status)}
 								</p>
@@ -703,7 +701,7 @@
 						{/each}
 					</div>
 					{#if getDeadline(proposal).at}
-						<div class="text-xs text-slate-500">
+						<div class="text-xs text-fg-muted">
 							<p>{getDeadline(proposal).label}: {countdownText(getDeadline(proposal).at)}</p>
 							<p>
 								{$t('governance.deadlineAtLabel')}: {new Date(
@@ -713,23 +711,21 @@
 						</div>
 					{/if}
 				</div>
-				<div class="prose prose-slate max-w-none dark:prose-invert">
+				<div class="prose prose-slate max-w-none">
 					{@html renderMarkdown(proposal.content)}
 				</div>
 			</div>
 
-			<div
-				class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
-			>
+			<div class="rounded-card border border-line bg-raised p-5">
 				<h2 class="mb-3 text-lg font-semibold text-fg">
 					{$t('governance.discussion')}
 				</h2>
 				<div class="space-y-3">
 					{#if comments.length === 0}
-						<p class="text-sm text-slate-500">{$t('governance.noComments')}</p>
+						<p class="text-sm text-fg-muted">{$t('governance.noComments')}</p>
 					{:else}
 						{#each comments as comment}
-							<div class="rounded-md border border-slate-200 p-3 dark:border-slate-600">
+							<div class="rounded-control border border-line p-3">
 								<div class="mb-2 flex items-start gap-3">
 									{#if comment.author_avatar}
 										<img
@@ -739,22 +735,20 @@
 										/>
 									{:else}
 										<div
-											class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-fg dark:bg-slate-700"
+											class="flex h-8 w-8 items-center justify-center rounded-full bg-surface text-xs font-semibold text-fg"
 										>
 											{commentAvatarText(comment)}
 										</div>
 									{/if}
 									<div>
-										<div class="text-xs text-slate-500">
+										<div class="text-xs text-fg-muted">
 											{commentAuthorName(comment)} · {comment.comment_type} · {new Date(
 												comment.created_at
 											).toLocaleString()}
 										</div>
 									</div>
 								</div>
-								<div
-									class="prose prose-sm max-w-none markdown-body text-sm text-fg dark:prose-invert"
-								>
+								<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
 									{@html renderCommentContent(comment.content)}
 								</div>
 							</div>
@@ -764,12 +758,12 @@
 				<div class="relative mt-3 space-y-2">
 					{#if showMentionDropdown && filteredMentionCandidates.length > 0}
 						<div
-							class="absolute bottom-full left-0 z-20 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-line bg-white shadow-lg dark:bg-slate-800"
+							class="absolute bottom-full left-0 z-20 mb-1 max-h-48 w-64 overflow-y-auto rounded-float border border-line bg-overlay shadow-overlay"
 						>
 							{#each filteredMentionCandidates as member (member.id)}
 								<button
 									type="button"
-									class="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+									class="w-full px-3 py-2 text-left text-sm hover:bg-surface"
 									onclick={() => selectMention(member)}
 								>
 									{member.name}
@@ -779,14 +773,12 @@
 					{/if}
 
 					<div
-						class="mb-1 inline-flex overflow-hidden rounded-md border border-slate-300 text-xs dark:border-slate-600"
+						class="mb-1 inline-flex overflow-hidden rounded-control border border-input bg-field text-xs"
 					>
 						<button
 							type="button"
 							class={`px-2 py-1 ${
-								newCommentMode === 'edit'
-									? 'bg-blue-600 text-white'
-									: 'bg-white text-fg-muted dark:bg-slate-900'
+								newCommentMode === 'edit' ? 'bg-primary text-on-primary' : 'bg-raised text-fg-muted'
 							}`}
 							onclick={() => (newCommentMode = 'edit')}>{$t('issue.editMode')}</button
 						>
@@ -795,8 +787,8 @@
 							type="button"
 							class={`px-2 py-1 ${
 								newCommentMode === 'preview'
-									? 'bg-blue-600 text-white'
-									: 'bg-white text-fg-muted dark:bg-slate-900'
+									? 'bg-primary text-on-primary'
+									: 'bg-raised text-fg-muted'
 							}`}
 							onclick={() => (newCommentMode = 'preview')}>{$t('issue.previewMode')}</button
 						>
@@ -807,28 +799,22 @@
 							bind:this={commentTextareaEl}
 							rows="4"
 							placeholder={$t('governance.commentPlaceholder')}
-							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 							oninput={handleNewCommentInput}
 							onpaste={handleCommentPaste}></textarea>
 					{:else}
-						<div
-							class="min-h-24 rounded-md border border-line bg-slate-50 px-3 py-2 dark:bg-slate-900"
-						>
+						<div class="min-h-24 rounded-control border border-line bg-surface px-3 py-2">
 							{#if newComment.trim()}
-								<div
-									class="prose prose-sm max-w-none markdown-body text-sm text-fg dark:prose-invert"
-								>
+								<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
 									{@html renderMarkdown(newComment)}
 								</div>
 							{:else}
-								<p class="text-sm text-slate-400">{$t('issue.noDescriptionPreview')}</p>
+								<p class="text-sm text-fg-muted">{$t('issue.noDescriptionPreview')}</p>
 							{/if}
 						</div>
 					{/if}
 					<div class="flex items-center justify-between">
-						<label
-							class="inline-flex cursor-pointer items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-						>
+						<label class="inline-flex cursor-pointer items-center gap-1 text-sm text-fg underline">
 							<span>{uploadingCommentImage ? $t('search.searching') : $t('issue.uploadImage')}</span
 							>
 							<input
@@ -842,7 +828,7 @@
 						<button
 							type="button"
 							onclick={addComment}
-							class="rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+							class="rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
 							disabled={!newComment.trim()}
 						>
 							{$t('governance.commentSubmit')}
@@ -851,35 +837,30 @@
 				</div>
 			</div>
 
-			<div
-				class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
-			>
+			<div class="rounded-card border border-line bg-raised p-5">
 				<div class="mb-3 flex items-center justify-between gap-3">
 					<h2 class="text-lg font-semibold text-fg">
 						{$t('impactReview.title')}
 					</h2>
-					<a
-						href={`/proposals/${proposal.id}/review`}
-						class="text-sm text-blue-600 hover:underline"
-					>
+					<a href={`/proposals/${proposal.id}/review`} class="text-sm text-fg underline">
 						{$t('impactReview.detailLink')}
 					</a>
 				</div>
 				{#if loadingImpactReview}
-					<p class="text-sm text-slate-500">{$t('common.loading')}</p>
+					<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 				{:else if !impactReviewDetail}
-					<p class="text-sm text-slate-500">{$t('impactReview.notCreated')}</p>
+					<p class="text-sm text-fg-muted">{$t('impactReview.notCreated')}</p>
 					{#if proposal.status === 'approved'}
 						<button
 							type="button"
 							onclick={createImpactReview}
-							class="mt-3 rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+							class="mt-3 rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
 						>
 							{$t('impactReview.create')}
 						</button>
 					{/if}
 				{:else}
-					<div class="mb-3 grid grid-cols-1 gap-2 text-xs text-slate-500 md:grid-cols-4">
+					<div class="mb-3 grid grid-cols-1 gap-2 text-xs text-fg-muted md:grid-cols-4">
 						<p>{$t('impactReview.reviewId')}: {impactReviewDetail.review.id}</p>
 						<p>
 							{$t('impactReview.scheduledAt')}: {impactReviewDetail.review.scheduled_at
@@ -900,13 +881,13 @@
 					<div class="space-y-3">
 						<div class="grid grid-cols-1 gap-3 md:grid-cols-2">
 							<div>
-								<label for="proposal-impact-status" class="mb-1 block text-sm text-slate-600"
+								<label for="proposal-impact-status" class="mb-1 block text-sm text-fg-muted"
 									>{$t('common.status')}</label
 								>
 								<select
 									id="proposal-impact-status"
 									bind:value={impactStatus}
-									class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 								>
 									<option value="pending">{$t('impactReview.status.pending')}</option>
 									<option value="collecting">{$t('impactReview.status.collecting')}</option>
@@ -915,13 +896,13 @@
 								</select>
 							</div>
 							<div>
-								<label for="proposal-impact-rating" class="mb-1 block text-sm text-slate-600"
+								<label for="proposal-impact-rating" class="mb-1 block text-sm text-fg-muted"
 									>{$t('impactReview.rating')}</label
 								>
 								<select
 									id="proposal-impact-rating"
 									bind:value={impactRating}
-									class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 								>
 									<option value="">{`- ${$t('impactReview.ratingAll')} -`}</option>
 									<option value="S">S</option>
@@ -935,43 +916,43 @@
 						<div>
 							<label
 								for="proposal-impact-goal-achievements"
-								class="mb-1 block text-sm text-slate-600"
+								class="mb-1 block text-sm text-fg-muted"
 								>{$t('impactReview.goalAchievements')}</label
 							>
 							<textarea
 								id="proposal-impact-goal-achievements"
 								bind:value={impactGoalAchievementsText}
 								rows="5"
-								class="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-600 dark:bg-slate-900"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs"
 							></textarea>
 						</div>
 						<div>
-							<label for="proposal-impact-achievements" class="mb-1 block text-sm text-slate-600"
+							<label for="proposal-impact-achievements" class="mb-1 block text-sm text-fg-muted"
 								>{$t('impactReview.achievements')}</label
 							>
 							<textarea
 								id="proposal-impact-achievements"
 								bind:value={impactAchievements}
 								rows="3"
-								class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 							></textarea>
 						</div>
 						<div>
-							<label for="proposal-impact-lessons" class="mb-1 block text-sm text-slate-600"
+							<label for="proposal-impact-lessons" class="mb-1 block text-sm text-fg-muted"
 								>{$t('impactReview.lessons')}</label
 							>
 							<textarea
 								id="proposal-impact-lessons"
 								bind:value={impactLessons}
 								rows="3"
-								class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 							></textarea>
 						</div>
 						<div class="flex justify-end">
 							<button
 								type="button"
 								onclick={saveImpactReview}
-								class="rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+								class="rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
 								disabled={impactSaving}
 							>
 								{impactSaving ? $t('common.saving') : $t('common.save')}
@@ -983,9 +964,7 @@
 		</div>
 
 		<div class="space-y-4">
-			<div
-				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<h3 class="mb-3 text-sm font-semibold text-fg">
 					{$t('governance.actions')}
 				</h3>
@@ -993,19 +972,19 @@
 					{#if proposal.status === 'draft' && isAuthor}
 						<a
 							href={`/proposals/${proposal.id}/edit`}
-							class="block w-full rounded-md border border-slate-300 px-3 py-2 text-center text-sm hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-900"
+							class="block w-full rounded-control border border-fg bg-raised px-3 py-2 text-center text-sm hover:bg-surface"
 							>{$t('governance.editDraft')}</a
 						>
 						<button
 							type="button"
 							onclick={actDeleteDraft}
-							class="w-full rounded-md bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700"
+							class="w-full rounded-control bg-danger-soft px-3 py-2 text-sm text-danger"
 							>{$t('governance.deleteDraft')}</button
 						>
 						<button
 							type="button"
 							onclick={actSubmit}
-							class="w-full rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+							class="w-full rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
 							>{$t('governance.submitDiscussion')}</button
 						>
 					{/if}
@@ -1013,41 +992,39 @@
 						<button
 							type="button"
 							onclick={actStartVoting}
-							class="w-full rounded-md bg-amber-600 px-3 py-2 text-sm text-white hover:bg-amber-700"
+							class="w-full rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
 							>{$t('governance.startVoting')}</button
 						>
 					{/if}
 					{#if proposal.status === 'voting'}
-						<p class="text-xs text-slate-500">{$t('governance.votingInProgress')}</p>
+						<p class="text-xs text-fg-muted">{$t('governance.votingInProgress')}</p>
 					{/if}
 					{#if (proposal.status === 'approved' || proposal.status === 'rejected' || proposal.status === 'vetoed') && isAuthor}
 						<button
 							type="button"
 							onclick={actArchive}
-							class="w-full rounded-md bg-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-800"
+							class="w-full rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
 							>{$t('governance.archiveAction')}</button
 						>
 					{/if}
 					{#if proposal.status === 'archived'}
-						<p class="text-xs text-slate-500">{$t('governance.archivedStatus')}</p>
+						<p class="text-xs text-fg-muted">{$t('governance.archivedStatus')}</p>
 					{/if}
 				</div>
 			</div>
 
-			<div
-				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<h3 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governance.voting')}
 				</h3>
 				<div class="mb-2 grid grid-cols-3 gap-2 text-xs">
-					<div class="rounded bg-emerald-50 px-2 py-1 text-emerald-700">
+					<div class="rounded bg-surface px-2 py-1 text-fg">
 						{$t('governance.voteChoice.yes')}: {tally.yes}
 					</div>
-					<div class="rounded bg-red-50 px-2 py-1 text-red-700">
+					<div class="rounded bg-danger-soft px-2 py-1 text-danger">
 						{$t('governance.voteChoice.no')}: {tally.no}
 					</div>
-					<div class="rounded bg-slate-100 px-2 py-1 text-slate-700">
+					<div class="rounded bg-surface px-2 py-1 text-fg">
 						{$t('governance.voteChoice.abstain')}: {tally.abstain}
 					</div>
 				</div>
@@ -1056,51 +1033,49 @@
 						bind:value={voteReason}
 						rows="2"
 						placeholder={$t('governance.voteReasonPlaceholder')}
-						class="mb-2 w-full rounded-md border border-slate-300 px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-900"
+						class="mb-2 w-full rounded-control border border-input bg-field px-2 py-1 text-sm"
 					></textarea>
 					<div class="grid grid-cols-3 gap-2">
 						<button
 							type="button"
 							onclick={() => vote('yes')}
-							class="rounded bg-emerald-600 px-2 py-2 text-xs text-white hover:bg-emerald-700"
+							class="rounded bg-primary px-2 py-2 text-xs text-on-primary"
 							>{$t('governance.voteButton.yes')}</button
 						>
 						<button
 							type="button"
 							onclick={() => vote('no')}
-							class="rounded bg-red-600 px-2 py-2 text-xs text-white hover:bg-red-700"
+							class="rounded bg-danger-soft px-2 py-2 text-xs text-danger"
 							>{$t('governance.voteButton.no')}</button
 						>
 						<button
 							type="button"
 							onclick={() => vote('abstain')}
-							class="rounded bg-slate-600 px-2 py-2 text-xs text-white hover:bg-slate-700"
+							class="rounded bg-surface px-2 py-2 text-xs text-fg"
 							>{$t('governance.voteButton.abstain')}</button
 						>
 					</div>
 					<button
 						type="button"
 						onclick={withdrawVote}
-						class="mt-2 w-full rounded border border-slate-300 px-2 py-2 text-xs text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-900"
+						class="mt-2 w-full rounded border border-fg bg-raised px-2 py-2 text-xs text-fg hover:bg-surface"
 						>{$t('governance.withdrawVote')}</button
 					>
 				{:else}
-					<p class="text-xs text-slate-500">{$t('governance.votingOnlyHint')}</p>
+					<p class="text-xs text-fg-muted">{$t('governance.votingOnlyHint')}</p>
 				{/if}
 			</div>
 
-			<div
-				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<h3 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governance.issueLinks')}
 				</h3>
 				<div class="space-y-2">
 					{#if links.length === 0}
-						<p class="text-xs text-slate-500">{$t('governance.noIssueLinks')}</p>
+						<p class="text-xs text-fg-muted">{$t('governance.noIssueLinks')}</p>
 					{:else}
 						{#each links as link}
-							<div class="rounded border border-slate-200 px-2 py-1 text-xs dark:border-slate-600">
+							<div class="rounded border border-line px-2 py-1 text-xs">
 								#{link.issue_id.slice(0, 8)} · {link.issue_title} · {link.issue_state}
 							</div>
 						{/each}
@@ -1113,28 +1088,28 @@
 								bind:value={issueSearch}
 								onkeydown={(e) => e.key === 'Enter' && searchIssues()}
 								placeholder={$t('governance.searchIssuePlaceholder')}
-								class="w-full rounded-md border border-slate-300 px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-900"
+								class="w-full rounded-control border border-input bg-field px-2 py-1 text-xs"
 							/>
 							<button
 								type="button"
 								onclick={searchIssues}
-								class="rounded-md bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700"
+								class="rounded-control bg-primary px-3 py-1 text-xs text-on-primary"
 								>{$t('common.search')}</button
 							>
 						</div>
 						{#if searchingIssues}
-							<p class="text-xs text-slate-500">{$t('governance.searchingIssues')}</p>
+							<p class="text-xs text-fg-muted">{$t('governance.searchingIssues')}</p>
 						{:else if issueResults.length > 0}
 							<div class="space-y-1">
 								{#each issueResults as issue}
 									<div
-										class="flex items-center justify-between rounded border border-slate-200 px-2 py-1 text-xs dark:border-slate-600"
+										class="flex items-center justify-between rounded border border-line px-2 py-1 text-xs"
 									>
 										<span class="truncate pr-2">{issue.title} · {issue.state}</span>
 										<button
 											type="button"
 											onclick={() => linkIssue(issue.id)}
-											class="rounded bg-slate-800 px-2 py-1 text-white hover:bg-slate-900"
+											class="rounded bg-primary px-2 py-1 text-on-primary"
 											>{$t('governance.select')}</button
 										>
 									</div>
@@ -1145,9 +1120,7 @@
 				{/if}
 			</div>
 
-			<div
-				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<h3 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governance.decisions.title')}
 				</h3>
@@ -1156,25 +1129,25 @@
 						{$t('governance.decisions.linkedDecision', { values: { id: decisionId } })}
 					</p>
 				{:else}
-					<p class="text-xs text-slate-500">{$t('governance.decisions.none')}</p>
+					<p class="text-xs text-fg-muted">{$t('governance.decisions.none')}</p>
 				{/if}
 				<div class="mt-3 flex flex-wrap gap-2">
 					<a
 						href={`/proposals/${proposal.id}/review`}
-						class="inline-flex rounded-md border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-900"
+						class="inline-flex rounded-control border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface"
 					>
 						{$t('impactReview.detailLink')}
 					</a>
 					<a
 						href={`/proposals/${proposal.id}/veto`}
-						class="inline-flex rounded-md border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-900"
+						class="inline-flex rounded-control border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface"
 					>
 						{$t('vetoDetail.title')}
 					</a>
 				</div>
 				<a
 					href={`/proposals/${proposal.id}/chain`}
-					class="mt-3 inline-block text-xs text-blue-600 hover:underline"
+					class="mt-3 inline-block text-xs text-fg underline"
 				>
 					{$t('governanceExt.viewChain')}
 				</a>
@@ -1191,7 +1164,8 @@
 	}
 
 	:global(.markdown-body .comment-mention) {
-		color: #2563eb;
+		color: var(--rf-text);
+		text-decoration: underline;
 		font-weight: 600;
 	}
 </style>
