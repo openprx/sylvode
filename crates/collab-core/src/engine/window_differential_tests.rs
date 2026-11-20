@@ -1233,8 +1233,11 @@ fn hostile_and_boundary_shapes_report_their_path() {
         .flat_map(|family| family.cases.iter())
         .collect();
     let paths = run_parallel(&cases, &|_, case| {
+        walk_counter::reset();
         let decided = decide(&Incremental::WORKER, case);
+        let fell_back = walk_counter::window_counts().fallbacks > 0;
         match (&decided.observed.decision, decided.observed.report, decided.fallback) {
+            (Decision::Refuse(_), _, _) if fell_back => "refused by the full computation after a fallback".to_owned(),
             (Decision::Refuse(_), _, _) => "refused by the import".to_owned(),
             (Decision::Accept, Some(_), _) => "incremental accept".to_owned(),
             (Decision::Accept, None, Some(reason)) => format!("accept after fallback {reason:?}"),
