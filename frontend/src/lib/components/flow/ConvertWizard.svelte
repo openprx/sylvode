@@ -180,11 +180,11 @@
 	}
 
 	const buttonPrimary =
-		'min-h-[44px] min-w-[44px] rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 motion-safe:transition-colors';
+		'min-h-[44px] min-w-[44px] rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control motion-safe:transition-colors';
 	const buttonSecondary =
-		'min-h-[44px] min-w-[44px] rounded-md border border-slate-300 px-4 text-sm font-medium text-fg hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800';
+		'min-h-[44px] min-w-[44px] rounded-control border border-fg bg-raised px-4 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-control disabled:border-line';
 	const fieldClass =
-		'mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
+		'mt-1 block min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm';
 	const labelClass = 'block text-sm font-medium text-fg';
 	const dtClass = 'text-fg-muted';
 	const ddClass = 'text-fg';
@@ -208,7 +208,7 @@
 				<p class="mt-6 text-sm text-fg-muted">{$t('common.loading')}</p>
 			{:else if snap.sourceState === 'unsupported'}
 				<div
-					class="mt-6 rounded-md border border-line p-6 text-center"
+					class="mt-6 rounded-card border border-line p-6 text-center"
 					data-testid="flow-convert-unsupported"
 				>
 					<h3 class="text-base font-semibold text-fg">
@@ -220,7 +220,7 @@
 				</div>
 			{:else if snap.sourceState === 'not_found'}
 				<div
-					class="mt-6 rounded-md border border-line p-6 text-center"
+					class="mt-6 rounded-card border border-line p-6 text-center"
 					data-testid="flow-convert-not-found"
 				>
 					<h3 class="text-base font-semibold text-fg">
@@ -246,9 +246,9 @@
 							<li class="flex-1">
 								<button
 									type="button"
-									class="flex min-h-11 w-full items-center gap-2 rounded-md border px-3 text-left text-sm disabled:cursor-not-allowed {index ===
+									class="flex min-h-11 w-full items-center gap-2 rounded-control border px-3 text-left text-sm disabled:cursor-not-allowed {index ===
 									stepIndex
-										? 'border-blue-500 bg-blue-50 font-semibold text-blue-800 dark:bg-blue-950/40 dark:text-blue-200'
+										? 'border-fg bg-selected font-semibold text-fg'
 										: 'border-line text-fg-muted'}"
 									aria-current={index === stepIndex ? 'step' : undefined}
 									disabled={index > stepIndex || snap.previewState === 'running' || snap.committing}
@@ -304,7 +304,7 @@
 								</div>
 							</dl>
 							<div
-								class="rounded-md bg-slate-50 p-4 text-sm text-fg dark:bg-slate-800"
+								class="rounded-card bg-surface p-4 text-sm text-fg"
 							>
 								<p class="font-medium">{$t('flow.bridge.convert.ownership.title')}</p>
 								<ul class="mt-2 list-disc space-y-1 pl-5">
@@ -521,7 +521,7 @@
 
 							{#if snap.repreviewedAfter}
 								<p
-									class="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+									class="rounded-card border border-line bg-warning-soft p-4 text-sm text-fg"
 									role="status"
 									data-testid="flow-convert-repreviewed"
 									data-reason={snap.repreviewedAfter}
@@ -532,7 +532,7 @@
 
 							{#if snap.previewFailure}
 								<div
-									class="space-y-3 rounded-md border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40"
+									class="space-y-3 rounded-card border border-line bg-danger-soft p-4"
 									role="alert"
 									data-testid="flow-convert-preview-error"
 									data-kind={snap.previewFailure.kind}
@@ -568,11 +568,11 @@
 							{#if snap.preview}
 								{#if snap.expired}
 									<div
-										class="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/40"
+										class="space-y-3 rounded-card border border-line bg-warning-soft p-4"
 										role="alert"
 										data-testid="flow-convert-expired"
 									>
-										<p class="text-sm text-amber-900 dark:text-amber-100">
+										<p class="text-sm text-fg">
 											{$t('flow.bridge.convert.preview.expired')}
 										</p>
 										<button type="button" class={buttonSecondary} onclick={rePreview}>
@@ -712,11 +712,11 @@
 
 							{#if snap.expired}
 								<div
-									class="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/40"
+									class="space-y-3 rounded-card border border-line bg-warning-soft p-4"
 									role="alert"
 									data-testid="flow-convert-commit-expired"
 								>
-									<p class="text-sm text-amber-900 dark:text-amber-100">
+									<p class="text-sm text-fg">
 										{$t('flow.bridge.convert.commit.expired')}
 									</p>
 									<button
@@ -751,7 +751,7 @@
 
 							{#if snap.commitFailure}
 								<div
-									class="space-y-3 rounded-md border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40"
+									class="space-y-3 rounded-card border border-line bg-danger-soft p-4"
 									role="alert"
 									data-testid="flow-convert-commit-error"
 									data-kind={snap.commitFailure.kind}

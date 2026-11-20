@@ -56,11 +56,11 @@
 	}
 
 	const actionClass =
-		'min-h-11 rounded-md border px-3 text-sm font-medium disabled:opacity-50';
+		'min-h-11 rounded-control border px-3 text-sm font-medium disabled:text-control disabled:hover:bg-transparent';
 </script>
 
 <section
-	class="rounded-lg border border-line bg-white p-4 sm:p-6 dark:bg-slate-900"
+	class="rounded-card border border-line bg-raised p-4 sm:p-6"
 	aria-labelledby="flow-ops-integrity-heading"
 	data-testid="flow-ops-integrity"
 >
@@ -74,7 +74,7 @@
 			</h2>
 			{#if integrity}
 				<span
-					class={`rounded-full px-3 py-1 text-xs font-semibold ${integrity.status === 'healthy' ? 'bg-emerald-100 text-success dark:bg-emerald-950/50' : 'bg-red-100 text-danger dark:bg-red-950/50'}`}
+					class={`rounded-full px-3 py-1 text-xs font-semibold ${integrity.status === 'healthy' ? 'bg-surface text-fg' : 'bg-danger-soft text-danger'}`}
 					data-testid="flow-ops-integrity-status"
 				>
 					{$t(statusKey(INTEGRITY_STATUS_KEYS, integrity.status))}
@@ -84,7 +84,7 @@
 		<label class="flex items-center gap-2 text-sm text-fg">
 			<span>{$t('flow.operations.integrity.limit')}</span>
 			<select
-				class="min-h-11 rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-800"
+				class="min-h-11 rounded-control border border-input bg-field px-3 text-sm"
 				value={String(limit)}
 				disabled={busy}
 				onchange={changeLimit}
@@ -206,7 +206,7 @@
 								<div class="flex flex-wrap gap-2">
 									<button
 										type="button"
-										class={`${actionClass} border-slate-300 dark:border-slate-600`}
+										class={`${actionClass} border-line-strong`}
 										disabled={busy}
 										onclick={() => onoperate('verify', row.documentId, head)}
 									>
@@ -214,7 +214,7 @@
 									</button>
 									<button
 										type="button"
-										class={`${actionClass} border-amber-400 text-warning dark:border-amber-700`}
+										class={`${actionClass} border-warning text-warning`}
 										disabled={busy}
 										onclick={() => onoperate('compact', row.documentId, head)}
 									>
@@ -222,7 +222,7 @@
 									</button>
 									<button
 										type="button"
-										class={`${actionClass} border-amber-400 text-warning dark:border-amber-700`}
+										class={`${actionClass} border-warning text-warning`}
 										disabled={busy}
 										onclick={() => onoperate('rebuild', row.objectId, head)}
 									>
@@ -238,7 +238,7 @@
 				{#each rows as row (row.documentId)}
 					{@const head = row.status === 'ok' ? row.headSeq : null}
 					<li
-						class="rounded-md border border-line p-3 text-sm"
+						class="rounded-card border border-line p-3 text-sm"
 						data-status={row.status}
 					>
 						<p class="break-all font-mono text-xs">{row.documentId}</p>
@@ -260,7 +260,7 @@
 						<div class="mt-2 flex flex-wrap gap-2">
 							<button
 								type="button"
-								class={`${actionClass} border-slate-300 dark:border-slate-600`}
+								class={`${actionClass} border-line-strong`}
 								disabled={busy}
 								onclick={() => onoperate('verify', row.documentId, head)}
 							>
@@ -268,7 +268,7 @@
 							</button>
 							<button
 								type="button"
-								class={`${actionClass} border-amber-400 text-warning dark:border-amber-700`}
+								class={`${actionClass} border-warning text-warning`}
 								disabled={busy}
 								onclick={() => onoperate('compact', row.documentId, head)}
 							>
@@ -276,7 +276,7 @@
 							</button>
 							<button
 								type="button"
-								class={`${actionClass} border-amber-400 text-warning dark:border-amber-700`}
+								class={`${actionClass} border-warning text-warning`}
 								disabled={busy}
 								onclick={() => onoperate('rebuild', row.objectId, head)}
 							>
@@ -295,7 +295,7 @@
 			>
 				<button
 					type="button"
-					class="min-h-11 rounded-md border border-slate-300 px-4 text-sm disabled:opacity-50 dark:border-slate-600"
+					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
 					disabled={busy || !hasPrevious}
 					data-testid="flow-ops-integrity-pager-previous"
 					onclick={onprevious}
@@ -307,7 +307,7 @@
 				</span>
 				<button
 					type="button"
-					class="min-h-11 rounded-md border border-slate-300 px-4 text-sm disabled:opacity-50 dark:border-slate-600"
+					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
 					disabled={busy || !hasNext}
 					data-testid="flow-ops-integrity-pager-next"
 					onclick={onnext}
@@ -335,7 +335,7 @@
 				</label>
 				<input
 					id="flow-ops-manual-document"
-					class="mt-1 block min-h-11 w-full rounded-md border border-slate-300 px-3 font-mono text-sm dark:border-slate-600 dark:bg-slate-800"
+					class="mt-1 block min-h-11 w-full rounded-control border border-input px-3 font-mono text-sm bg-field"
 					autocomplete="off"
 					spellcheck="false"
 					bind:value={manualDocument}
@@ -349,7 +349,7 @@
 				<div class="mt-2 flex flex-wrap gap-2">
 					<button
 						type="button"
-						class={`${actionClass} border-slate-300 dark:border-slate-600`}
+						class={`${actionClass} border-line-strong`}
 						disabled={busy || !documentValid}
 						onclick={() => onoperate('verify', manualDocument.trim(), null)}
 					>
@@ -357,7 +357,7 @@
 					</button>
 					<button
 						type="button"
-						class={`${actionClass} border-amber-400 text-warning dark:border-amber-700`}
+						class={`${actionClass} border-warning text-warning`}
 						disabled={busy || !documentValid}
 						onclick={() => onoperate('compact', manualDocument.trim(), null)}
 					>
@@ -374,7 +374,7 @@
 				</label>
 				<input
 					id="flow-ops-manual-object"
-					class="mt-1 block min-h-11 w-full rounded-md border border-slate-300 px-3 font-mono text-sm dark:border-slate-600 dark:bg-slate-800"
+					class="mt-1 block min-h-11 w-full rounded-control border border-input px-3 font-mono text-sm bg-field"
 					autocomplete="off"
 					spellcheck="false"
 					bind:value={manualObject}
@@ -388,7 +388,7 @@
 				<div class="mt-2 flex flex-wrap gap-2">
 					<button
 						type="button"
-						class={`${actionClass} border-amber-400 text-warning dark:border-amber-700`}
+						class={`${actionClass} border-warning text-warning`}
 						disabled={busy || !objectValid}
 						onclick={() => onoperate('rebuild', manualObject.trim(), null)}
 					>

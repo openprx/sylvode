@@ -166,11 +166,7 @@
 			</dd>
 		{/if}
 		{#each receiptRows(receipt) as row (row.field)}
-			<dt
-				class={row.labelKey
-					? 'text-fg-muted'
-					: 'font-mono text-xs text-fg-muted'}
-			>
+			<dt class={row.labelKey ? 'text-fg-muted' : 'font-mono text-xs text-fg-muted'}>
 				{row.labelKey ? $t(row.labelKey) : row.field}
 			</dt>
 			<dd class="break-all font-mono text-xs" data-field={row.field}>{row.value}</dd>
@@ -189,7 +185,7 @@
 		{/if}
 		{#each changes as change, index (index)}
 			<div
-				class="mt-2 rounded-md border border-line p-2"
+				class="mt-2 rounded-card border border-line p-2"
 				data-testid={`${testid}-change`}
 				data-kind={change.kind}
 				data-changed={String(change.changed)}
@@ -263,18 +259,13 @@
 						? $t('flow.operations.drawer.targetObject')
 						: $t('flow.operations.drawer.targetDocument')}
 				</p>
-				<p
-					class="break-all font-mono text-fg"
-					data-testid="flow-ops-drawer-target"
-				>
+				<p class="break-all font-mono text-fg" data-testid="flow-ops-drawer-target">
 					{snap.targetId}
 				</p>
 			</div>
 
 			{#if snap.kind === 'verify'}
-				<label
-					class="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-fg"
-				>
+				<label class="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-fg">
 					<input
 						type="checkbox"
 						class="h-5 w-5"
@@ -287,16 +278,13 @@
 			{/if}
 
 			<div>
-				<label
-					for="flow-ops-expected-head"
-					class="block text-sm font-medium text-fg"
-				>
+				<label for="flow-ops-expected-head" class="block text-sm font-medium text-fg">
 					{$t('flow.operations.drawer.expectedHead')}
 				</label>
 				<input
 					id="flow-ops-expected-head"
 					inputmode="numeric"
-					class="mt-1 block min-h-11 w-full rounded-md border border-slate-300 px-3 font-mono text-sm dark:border-slate-600 dark:bg-slate-800"
+					class="mt-1 block min-h-11 w-full rounded-control border border-input px-3 font-mono text-sm bg-field"
 					value={snap.expectedHeadText}
 					disabled={snap.busy || snap.closed || snap.executed !== null}
 					aria-describedby="flow-ops-expected-head-hint"
@@ -316,7 +304,7 @@
 			{#if snap.executed === null}
 				<button
 					type="button"
-					class="min-h-11 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+					class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
 					disabled={!snap.canDryRun}
 					onclick={dryRun}
 					data-testid="flow-ops-drawer-dry-run"
@@ -331,7 +319,7 @@
 
 			{#if snap.failure}
 				<div
-					class="flex flex-col gap-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-danger sm:flex-row sm:items-center sm:justify-between dark:border-red-900 dark:bg-red-950/30"
+					class="flex flex-col gap-3 rounded-card border border-line bg-danger-soft p-3 text-sm text-danger sm:flex-row sm:items-center sm:justify-between"
 					role="alert"
 					data-testid="flow-ops-drawer-error"
 				>
@@ -344,7 +332,7 @@
 					{#if snap.retry === 'dry_run'}
 						<button
 							type="button"
-							class="min-h-11 rounded-md border border-red-300 px-4 text-sm font-medium dark:border-red-700"
+							class="min-h-11 rounded-control border border-danger px-4 text-sm font-medium"
 							onclick={dryRun}
 						>
 							{$t('flow.operations.retry')}
@@ -352,7 +340,7 @@
 					{:else if snap.retry === 'execute'}
 						<button
 							type="button"
-							class="min-h-11 rounded-md border border-red-300 px-4 text-sm font-medium dark:border-red-700"
+							class="min-h-11 rounded-control border border-danger px-4 text-sm font-medium"
 							onclick={execute}
 						>
 							{$t('flow.operations.retry')}
@@ -362,9 +350,7 @@
 			{/if}
 
 			{#if snap.preview && snap.executed === null}
-				<div
-					class="rounded-md border border-line bg-slate-50 p-3 dark:bg-slate-800/50"
-				>
+				<div class="rounded-card border border-line bg-surface p-3">
 					<h3 class="text-sm font-semibold text-fg">
 						{$t('flow.operations.drawer.previewHeading')}
 					</h3>
@@ -376,17 +362,14 @@
 
 				{#if snap.kind !== 'verify'}
 					<div>
-						<label
-							for="flow-ops-confirm"
-							class="block text-sm font-medium text-fg"
-						>
+						<label for="flow-ops-confirm" class="block text-sm font-medium text-fg">
 							{snap.kind === 'rebuild'
 								? $t('flow.operations.drawer.confirmLabelObject')
 								: $t('flow.operations.drawer.confirmLabelDocument')}
 						</label>
 						<input
 							id="flow-ops-confirm"
-							class="mt-1 block min-h-11 w-full rounded-md border border-slate-300 px-3 font-mono text-sm dark:border-slate-600 dark:bg-slate-800"
+							class="mt-1 block min-h-11 w-full rounded-control border border-input px-3 font-mono text-sm bg-field"
 							autocomplete="off"
 							spellcheck="false"
 							value={snap.confirmText}
@@ -401,7 +384,7 @@
 					</div>
 					<button
 						type="button"
-						class="min-h-11 rounded-md bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+						class="min-h-11 rounded-control bg-danger-soft px-4 text-sm font-medium text-danger disabled:bg-surface disabled:text-control"
 						disabled={!snap.canExecute}
 						onclick={execute}
 						data-testid="flow-ops-drawer-execute"
@@ -416,10 +399,8 @@
 			{/if}
 
 			{#if snap.executed}
-				<div
-					class="rounded-md border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-800 dark:bg-emerald-950/30"
-				>
-					<h3 class="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+				<div class="rounded-card border border-line bg-success-soft p-3">
+					<h3 class="text-sm font-semibold text-fg">
 						{$t('flow.operations.drawer.executedHeading')}
 					</h3>
 					<p class="mt-1 text-xs text-success">
