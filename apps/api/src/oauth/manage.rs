@@ -19,19 +19,16 @@
 //!
 //! # Lock order
 //!
-//! A revocation first locks the unredeemed authorization codes and the live tokens of the grants
-//! it ends, then the grant rows (inside `grants::revoke_*`). The token endpoint locks its code or
-//! refresh token row first and touches the grant after, so both sides take their locks in the
-//! same order and neither can wait for the other. Locking the codes and tokens also makes a
-//! redemption that is in flight finish before the revocation reads the token rows, and one that
-//! starts later find the grant revoked, so no token is issued after the revocation committed.
-//! The consent decision locks the user row (`FOR SHARE`), then the user's grants; a hook that
-//! changes the user row (password, `is_active`) holds that row exclusively before it locks
-//! anything else, which is the same direction.
+//! Every revocation, here and in the hooks, goes through `grants::revoke_*`, which locks the
+//! grant rows it ends first, then their unredeemed codes, then their live tokens, in a stable
+//! order inside each family. The token endpoint locks the grant it serves first as well, then the
+//! code or refresh token it redeems, so the grant row serializes everything that issues or revokes
+//! tokens of one grant and no retry of a deadlock victim is needed. The consent decision and the
+//! hooks lock the state rows they depend on (client, user, workspace, member, setting) before any
+//! of that; the full order is in `docs/runbooks/oauth-authorization-server.md`.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::{
     Extension, Router,
@@ -58,7 +55,6 @@ use super::error::no_store_headers;
 use super::grants::{self, Actor, RevokeReason};
 use super::rate;
 use super::token::{json_response, not_found, parse_form, user_agent};
-use crate::error::{DbFailureClass, classify_db_failure};
 use crate::routes::auth::{extract_bearer_token, extract_cookie_token};
 
 pub const USER_APPS_PATH: &str = "/api/v1/me/connected-apps";
@@ -76,8 +72,6 @@ const MAX_OFFSET: i64 = 10_000;
 const MAX_LISTED_PROJECTS: i64 = 100;
 const MAX_CLIENTS_LISTED: i64 = 100;
 const MAX_BODY_BYTES: usize = 1024;
-const MAX_ATTEMPTS: u32 = 3;
-const RETRY_PAUSE: Duration = Duration::from_millis(50);
 
 // ---------------------------------------------------------------------------------------------
 // Errors
@@ -90,18 +84,11 @@ pub struct ManageError {
     status: StatusCode,
     code: &'static str,
     message: &'static str,
-    /// The database reported a failure a second attempt can get past (a deadlock, a lock timeout).
-    transient: bool,
 }
 
 impl ManageError {
     const fn new(status: StatusCode, code: &'static str, message: &'static str) -> Self {
-        Self {
-            status,
-            code,
-            message,
-            transient: false,
-        }
+        Self { status, code, message }
     }
 
     const fn unauthorized() -> Self {
@@ -137,10 +124,7 @@ impl ManageError {
 impl From<DbErr> for ManageError {
     fn from(error: DbErr) -> Self {
         tracing::error!(error = %error, "oauth management database error");
-        Self {
-            transient: classify_db_failure(&error) == DbFailureClass::Transient,
-            ..Self::internal()
-        }
+        Self::internal()
     }
 }
 
@@ -325,89 +309,9 @@ async fn in_tx<T>(
     }
 }
 
-/// Runs a whole transaction again when the database aborted it as a deadlock victim or a lock
-/// timeout. Every transaction run through here is safe to repeat: a revocation is idempotent and
-/// a setting is written, not incremented.
-async fn retrying<T, F, Fut>(mut attempt: F) -> Result<T, ManageError>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<T, ManageError>>,
-{
-    let mut tries = 1;
-    loop {
-        match attempt().await {
-            Err(error) if error.transient && tries < MAX_ATTEMPTS => {
-                tries += 1;
-                tokio::time::sleep(RETRY_PAUSE).await;
-            }
-            other => return other,
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------------------------
 // Revocation with the lock order of the module comment
 // ---------------------------------------------------------------------------------------------
-
-/// What a revocation reaches.
-enum Target<'a> {
-    Grant(Uuid),
-    User(Uuid),
-    UserWorkspace(Uuid, Uuid),
-    Workspace(Uuid),
-    Client(&'a str),
-}
-
-/// The statements that lock the unredeemed codes and the live tokens of the active grants a
-/// filter selects, in a stable order. The filter is a literal chosen below, never built from input.
-macro_rules! lock_statements {
-    ($filter:literal) => {
-        (
-            concat!(
-                "SELECT c.code_hash FROM oauth_authorization_codes c WHERE c.consumed_at IS NULL AND c.grant_id IN \
-                 (SELECT g.id FROM oauth_grants g WHERE g.status = 'active' AND ",
-                $filter,
-                ") ORDER BY c.code_hash FOR UPDATE"
-            ),
-            concat!(
-                "SELECT t.id FROM oauth_tokens t WHERE t.revoked_at IS NULL AND t.grant_id IN \
-                 (SELECT g.id FROM oauth_grants g WHERE g.status = 'active' AND ",
-                $filter,
-                ") ORDER BY t.id FOR UPDATE"
-            ),
-        )
-    };
-}
-
-async fn lock_artifacts(tx: &DatabaseTransaction, target: &Target<'_>) -> Result<(), DbErr> {
-    let (codes, tokens, values): (&str, &str, Vec<sea_orm::Value>) = match target {
-        Target::Grant(id) => {
-            let (codes, tokens) = lock_statements!("g.id = $1");
-            (codes, tokens, vec![(*id).into()])
-        }
-        Target::User(user) => {
-            let (codes, tokens) = lock_statements!("g.user_id = $1");
-            (codes, tokens, vec![(*user).into()])
-        }
-        Target::UserWorkspace(user, workspace) => {
-            let (codes, tokens) = lock_statements!("g.user_id = $1 AND g.workspace_id = $2");
-            (codes, tokens, vec![(*user).into(), (*workspace).into()])
-        }
-        Target::Workspace(workspace) => {
-            let (codes, tokens) = lock_statements!("g.workspace_id = $1");
-            (codes, tokens, vec![(*workspace).into()])
-        }
-        Target::Client(client) => {
-            let (codes, tokens) = lock_statements!("g.client_id = $1");
-            (codes, tokens, vec![(*client).into()])
-        }
-    };
-    for sql in [codes, tokens] {
-        tx.execute(Statement::from_sql_and_values(DbBackend::Postgres, sql, values.clone()))
-            .await?;
-    }
-    Ok(())
-}
 
 fn log_revoked(ids: &[Uuid], reason: RevokeReason) {
     for id in ids {
@@ -422,7 +326,6 @@ async fn revoke_one(
     reason: RevokeReason,
     actor: Actor,
 ) -> Result<bool, DbErr> {
-    lock_artifacts(tx, &Target::Grant(grant_id)).await?;
     let revoked = grants::revoke_grant(tx, grant_id, reason, actor).await?;
     if revoked {
         log_revoked(&[grant_id], reason);
@@ -438,7 +341,6 @@ pub async fn revoke_user_grants(
     reason: RevokeReason,
     actor: Actor,
 ) -> Result<Vec<Uuid>, DbErr> {
-    lock_artifacts(tx, &Target::User(user_id)).await?;
     let ids = grants::revoke_all_user_grants(tx, user_id, reason, actor).await?;
     log_revoked(&ids, reason);
     Ok(ids)
@@ -453,7 +355,6 @@ pub async fn revoke_user_workspace_grants(
     reason: RevokeReason,
     actor: Actor,
 ) -> Result<Vec<Uuid>, DbErr> {
-    lock_artifacts(tx, &Target::UserWorkspace(user_id, workspace_id)).await?;
     let ids = grants::revoke_user_workspace_grants(tx, user_id, workspace_id, reason, actor).await?;
     log_revoked(&ids, reason);
     Ok(ids)
@@ -466,7 +367,6 @@ pub async fn revoke_workspace_grants(
     reason: RevokeReason,
     actor: Actor,
 ) -> Result<Vec<Uuid>, DbErr> {
-    lock_artifacts(tx, &Target::Workspace(workspace_id)).await?;
     let ids = grants::revoke_workspace_grants(tx, workspace_id, reason, actor).await?;
     log_revoked(&ids, reason);
     Ok(ids)
@@ -479,7 +379,6 @@ pub async fn revoke_client_grants(
     reason: RevokeReason,
     actor: Actor,
 ) -> Result<Vec<Uuid>, DbErr> {
-    lock_artifacts(tx, &Target::Client(client_id)).await?;
     let ids = grants::revoke_client_grants(tx, client_id, reason, actor).await?;
     log_revoked(&ids, reason);
     Ok(ids)
@@ -710,25 +609,23 @@ async fn disconnect_own(
     Path(grant_id): Path<String>,
 ) -> Result<Response, ManageError> {
     let grant_id = uuid_or_not_found(&grant_id)?;
-    retrying(|| {
-        in_tx(&state.db, async |tx| {
-            // Someone else's grant, a revoked one and an unknown id are all the same answer.
-            let found = tx
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "SELECT id FROM oauth_grants WHERE id = $1 AND user_id = $2 AND status = 'active' \
-                 AND expires_at > now()",
-                    vec![grant_id.into(), session.user_id.into()],
-                ))
-                .await?;
-            if found.is_none() {
-                return Err(ManageError::not_found());
-            }
-            if !revoke_one(tx, grant_id, RevokeReason::UserRevoked, Actor::User(session.user_id)).await? {
-                return Err(ManageError::not_found());
-            }
-            Ok(())
-        })
+    in_tx(&state.db, async |tx| {
+        // Someone else's grant, a revoked one and an unknown id are all the same answer.
+        let found = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM oauth_grants WHERE id = $1 AND user_id = $2 AND status = 'active' \
+             AND expires_at > now()",
+                vec![grant_id.into(), session.user_id.into()],
+            ))
+            .await?;
+        if found.is_none() {
+            return Err(ManageError::not_found());
+        }
+        if !revoke_one(tx, grant_id, RevokeReason::UserRevoked, Actor::User(session.user_id)).await? {
+            return Err(ManageError::not_found());
+        }
+        Ok(())
     })
     .await?;
     Ok(success(&json!({"grant_id": grant_id, "revoked": true})))
@@ -788,32 +685,30 @@ async fn disconnect_in_workspace(
     let workspace_id = uuid_or_not_found(&workspace_id)?;
     require_workspace_admin(&state.db, &session, workspace_id).await?;
     let grant_id = uuid_or_not_found(&grant_id)?;
-    retrying(|| {
-        in_tx(&state.db, async |tx| {
-            // A grant of another workspace is not found here, whoever owns it.
-            let found = tx
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "SELECT id FROM oauth_grants WHERE id = $1 AND workspace_id = $2 AND status = 'active' \
-                 AND expires_at > now()",
-                    vec![grant_id.into(), workspace_id.into()],
-                ))
-                .await?;
-            if found.is_none() {
-                return Err(ManageError::not_found());
-            }
-            if !revoke_one(
-                tx,
-                grant_id,
-                RevokeReason::WorkspaceAdminRevoked,
-                Actor::User(session.user_id),
-            )
-            .await?
-            {
-                return Err(ManageError::not_found());
-            }
-            Ok(())
-        })
+    in_tx(&state.db, async |tx| {
+        // A grant of another workspace is not found here, whoever owns it.
+        let found = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM oauth_grants WHERE id = $1 AND workspace_id = $2 AND status = 'active' \
+             AND expires_at > now()",
+                vec![grant_id.into(), workspace_id.into()],
+            ))
+            .await?;
+        if found.is_none() {
+            return Err(ManageError::not_found());
+        }
+        if !revoke_one(
+            tx,
+            grant_id,
+            RevokeReason::WorkspaceAdminRevoked,
+            Actor::User(session.user_id),
+        )
+        .await?
+        {
+            return Err(ManageError::not_found());
+        }
+        Ok(())
     })
     .await?;
     Ok(success(&json!({"grant_id": grant_id, "revoked": true})))
@@ -861,42 +756,43 @@ async fn put_settings(
     require_workspace_admin(&state.db, &session, workspace_id).await?;
     let body: SettingsBody = json_body(&headers, &body)?;
     let allow = body.allow_connected_apps;
-    let revoked = retrying(|| {
-        in_tx(&state.db, async |tx| {
-            // The role is checked again under the transaction, so a demotion that committed
-            // after the first check is honoured.
-            require_workspace_admin(tx, &session, workspace_id).await?;
-            tx.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "INSERT INTO workspace_delegation_settings (workspace_id, allow_connected_apps, updated_by, updated_at) \
-                 VALUES ($1, $2, $3, now()) \
-                 ON CONFLICT (workspace_id) DO UPDATE SET allow_connected_apps = EXCLUDED.allow_connected_apps, \
-                   updated_by = EXCLUDED.updated_by, updated_at = now()",
-                vec![workspace_id.into(), allow.into(), session.user_id.into()],
-            ))
-            .await?;
-            let revoked = if allow {
-                Vec::new()
-            } else {
-                revoke_workspace_grants(
-                    tx,
-                    workspace_id,
-                    RevokeReason::WorkspaceDisabled,
-                    Actor::User(session.user_id),
-                )
-                .await?
-            };
-            audit::write(
+    let revoked = in_tx(&state.db, async |tx| {
+        // The role is checked again under the transaction, so a demotion that committed
+        // after the first check is honoured.
+        require_workspace_admin(tx, &session, workspace_id).await?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO workspace_delegation_settings (workspace_id, allow_connected_apps, updated_by, updated_at) \
+             VALUES ($1, $2, $3, now()) \
+             ON CONFLICT (workspace_id) DO UPDATE SET allow_connected_apps = EXCLUDED.allow_connected_apps, \
+               updated_by = EXCLUDED.updated_by, updated_at = now()",
+            vec![workspace_id.into(), allow.into(), session.user_id.into()],
+        ))
+        .await?;
+        let revoked = if allow {
+            Vec::new()
+        } else {
+            revoke_workspace_grants(
                 tx,
-                &session
-                    .record(AuditEvent::WorkspaceSettingChanged)
-                    .with_workspace(workspace_id)
-                    .with_detail("allow_connected_apps", DetailValue::Flag(allow))
-                    .with_detail("revoked_grants", DetailValue::Count(i64::try_from(revoked.len()).unwrap_or(i64::MAX))),
+                workspace_id,
+                RevokeReason::WorkspaceDisabled,
+                Actor::User(session.user_id),
             )
-            .await?;
-            Ok(revoked.len())
-        })
+            .await?
+        };
+        audit::write(
+            tx,
+            &session
+                .record(AuditEvent::WorkspaceSettingChanged)
+                .with_workspace(workspace_id)
+                .with_detail("allow_connected_apps", DetailValue::Flag(allow))
+                .with_detail(
+                    "revoked_grants",
+                    DetailValue::Count(i64::try_from(revoked.len()).unwrap_or(i64::MAX)),
+                ),
+        )
+        .await?;
+        Ok(revoked.len())
     })
     .await?;
     Ok(success(
@@ -984,54 +880,52 @@ async fn patch_client(
         "disabled" => ("disabled", true),
         _ => return Err(ManageError::invalid("status must be active or disabled")),
     };
-    let revoked = retrying(|| {
-        in_tx(&state.db, async |tx| {
-            let current = StatusRow::find_by_statement(Statement::from_sql_and_values(
+    let revoked = in_tx(&state.db, async |tx| {
+        let current = StatusRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM oauth_clients WHERE client_id = $1 FOR NO KEY UPDATE",
+            vec![client_id.clone().into()],
+        ))
+        .one(tx)
+        .await?
+        .ok_or_else(ManageError::not_found)?;
+        let changed = current.status != status;
+        if changed {
+            tx.execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT status FROM oauth_clients WHERE client_id = $1 FOR NO KEY UPDATE",
-                vec![client_id.clone().into()],
+                "UPDATE oauth_clients SET status = $2, status_changed_by = $3, status_changed_at = now(), \
+                 updated_at = now() WHERE client_id = $1",
+                vec![client_id.clone().into(), status.into(), session.user_id.into()],
             ))
-            .one(tx)
-            .await?
-            .ok_or_else(ManageError::not_found)?;
-            let changed = current.status != status;
-            if changed {
-                tx.execute(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "UPDATE oauth_clients SET status = $2, status_changed_by = $3, status_changed_at = now(), \
-                     updated_at = now() WHERE client_id = $1",
-                    vec![client_id.clone().into(), status.into(), session.user_id.into()],
-                ))
-                .await?;
-            }
-            // Disabling always sweeps, also when the client was already disabled: a connection
-            // that raced the first sweep is ended by the second.
-            let revoked = if disabling {
-                revoke_client_grants(
-                    tx,
-                    &client_id,
-                    RevokeReason::ClientDisabled,
-                    Actor::User(session.user_id),
-                )
-                .await?
-            } else {
-                Vec::new()
-            };
-            audit::write(
-                tx,
-                &session
-                    .record(AuditEvent::ClientStatusChanged)
-                    .with_client(&client_id)
-                    .with_detail("status", DetailValue::Code(status))
-                    .with_detail("changed", DetailValue::Flag(changed))
-                    .with_detail(
-                        "revoked_grants",
-                        DetailValue::Count(i64::try_from(revoked.len()).unwrap_or(i64::MAX)),
-                    ),
-            )
             .await?;
-            Ok(revoked.len())
-        })
+        }
+        // Disabling always sweeps, also when the client was already disabled: a connection
+        // that raced the first sweep is ended by the second.
+        let revoked = if disabling {
+            revoke_client_grants(
+                tx,
+                &client_id,
+                RevokeReason::ClientDisabled,
+                Actor::User(session.user_id),
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+        audit::write(
+            tx,
+            &session
+                .record(AuditEvent::ClientStatusChanged)
+                .with_client(&client_id)
+                .with_detail("status", DetailValue::Code(status))
+                .with_detail("changed", DetailValue::Flag(changed))
+                .with_detail(
+                    "revoked_grants",
+                    DetailValue::Count(i64::try_from(revoked.len()).unwrap_or(i64::MAX)),
+                ),
+        )
+        .await?;
+        Ok(revoked.len())
     })
     .await?;
     Ok(success(

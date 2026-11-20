@@ -245,20 +245,42 @@ pub(super) struct ClientRow {
     pub allowed_resources: Vec<String>,
 }
 
-/// An active client by id, or `None` for an unknown or disabled one.
-pub(super) async fn load_active_client<C: ConnectionTrait>(
+const CLIENT_SQL: &str = "SELECT client_id, display_name, description, status, redirect_uris, allowed_scopes, \
+     allowed_resources FROM oauth_clients WHERE client_id = $1";
+const CLIENT_SQL_SHARED: &str = "SELECT client_id, display_name, description, status, redirect_uris, allowed_scopes, \
+     allowed_resources FROM oauth_clients WHERE client_id = $1 FOR SHARE";
+
+async fn load_client<C: ConnectionTrait>(
     conn: &C,
     client_id: &str,
+    sql: &'static str,
 ) -> Result<Option<ClientRow>, DbErr> {
     let row = ClientRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT client_id, display_name, description, status, redirect_uris, allowed_scopes, allowed_resources \
-         FROM oauth_clients WHERE client_id = $1",
+        sql,
         vec![client_id.into()],
     ))
     .one(conn)
     .await?;
     Ok(row.filter(|row| row.status == "active"))
+}
+
+/// An active client by id, or `None` for an unknown or disabled one.
+pub(super) async fn load_active_client<C: ConnectionTrait>(
+    conn: &C,
+    client_id: &str,
+) -> Result<Option<ClientRow>, DbErr> {
+    load_client(conn, client_id, CLIENT_SQL).await
+}
+
+/// Like [`load_active_client`], and keeps the client row share-locked until the transaction ends,
+/// so disabling the client (which updates the row before it sweeps the client's grants) waits for
+/// a consent in flight, and a consent that starts after it sees the client disabled.
+pub(super) async fn load_active_client_shared<C: ConnectionTrait>(
+    conn: &C,
+    client_id: &str,
+) -> Result<Option<ClientRow>, DbErr> {
+    load_client(conn, client_id, CLIENT_SQL_SHARED).await
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -271,6 +293,8 @@ struct Failure {
     error: OAuthError,
     commit: bool,
     audit: Option<Box<AuditRecord>>,
+    /// A grant to end in this transaction, which commits with it.
+    revoke: Option<(Uuid, RevokeReason)>,
 }
 
 impl From<DbErr> for Failure {
@@ -279,6 +303,7 @@ impl From<DbErr> for Failure {
             error: db_error(&error),
             commit: false,
             audit: None,
+            revoke: None,
         }
     }
 }
@@ -292,6 +317,26 @@ async fn finish<T>(
         Ok(value) => {
             tx.commit().await.map_err(|error| db_error(&error))?;
             Ok(value)
+        }
+        Err(failure) if failure.revoke.is_some() => {
+            // The grant row is already held (it is locked first), so ending the grant here is in
+            // the lock order; the revocation and the audit row commit together.
+            if let Some((grant_id, reason)) = failure.revoke {
+                let ended = async {
+                    revoke_grant(&tx, grant_id, reason, Actor::System).await?;
+                    if let Some(record) = &failure.audit {
+                        audit::write(&tx, record).await?;
+                    }
+                    Ok::<(), sea_orm::DbErr>(())
+                }
+                .await;
+                if let Err(error) = ended {
+                    tracing::error!(error = %error, "oauth grant revocation failed");
+                    return Err(OAuthError::server_error());
+                }
+            }
+            tx.commit().await.map_err(|error| db_error(&error))?;
+            Err(failure.error)
         }
         Err(failure) if failure.commit => {
             if let Some(record) = &failure.audit
@@ -349,6 +394,7 @@ impl Ctx<'_> {
             error,
             commit: false,
             audit: boxed(self.rejected(reason)),
+            revoke: None,
         }
     }
 
@@ -357,6 +403,7 @@ impl Ctx<'_> {
             error,
             commit: false,
             audit: boxed(grant.annotate(self.rejected(reason))),
+            revoke: None,
         }
     }
 }
@@ -443,10 +490,15 @@ impl GrantState {
             error: OAuthError::server_error(),
             commit: false,
             audit: None,
+            revoke: None,
         })
     }
 }
 
+/// Locks the grant row (`FOR NO KEY UPDATE`) and reads its live state. This is the first lock a
+/// redemption takes (lock order: grant, then the code or refresh token row): a revocation that
+/// committed before the lock was granted is seen as `revoked`, and one that starts later waits
+/// for this transaction and then revokes whatever it issued.
 async fn load_grant_state(tx: &DatabaseTransaction, grant_id: Uuid) -> Result<Option<GrantState>, DbErr> {
     GrantState::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -464,7 +516,8 @@ async fn load_grant_state(tx: &DatabaseTransaction, grant_id: Uuid) -> Result<Op
          JOIN users u ON u.id = g.user_id \
          LEFT JOIN workspace_members m ON m.workspace_id = g.workspace_id AND m.user_id = g.user_id \
          LEFT JOIN workspace_delegation_settings s ON s.workspace_id = g.workspace_id \
-         WHERE g.id = $1",
+         WHERE g.id = $1 \
+         FOR NO KEY UPDATE OF g",
         vec![grant_id.into()],
     ))
     .one(tx)
@@ -473,22 +526,12 @@ async fn load_grant_state(tx: &DatabaseTransaction, grant_id: Uuid) -> Result<Op
 
 /// Applies a live-state failure: revokes the grant when it is still active (committing that) and
 /// answers `invalid_grant`.
-async fn state_failure(
-    tx: &DatabaseTransaction,
-    ctx: &Ctx<'_>,
-    grant: &GrantState,
-    revoke: Option<RevokeReason>,
-    reason: &'static str,
-) -> Failure {
-    if let Some(revoke) = revoke
-        && let Err(error) = revoke_grant(tx, grant.grant_id, revoke, Actor::System).await
-    {
-        return Failure::from(error);
-    }
+fn state_failure(ctx: &Ctx<'_>, grant: &GrantState, revoke: Option<RevokeReason>, reason: &'static str) -> Failure {
     Failure {
         error: invalid_grant(),
-        commit: revoke.is_some(),
+        commit: false,
         audit: boxed(grant.annotate(ctx.rejected(reason))),
+        revoke: revoke.map(|reason| (grant.grant_id, reason)),
     }
 }
 
@@ -512,6 +555,7 @@ fn mint_failure<T>(result: Result<T, super::tokens::TokenError>) -> Result<T, Fa
             error: OAuthError::server_error(),
             commit: false,
             audit: None,
+            revoke: None,
         }
     })
 }
@@ -650,7 +694,6 @@ struct CodeParams<'a> {
 #[derive(Debug, FromQueryResult)]
 #[allow(clippy::struct_field_names, reason = "the fields are the columns of the row")]
 struct CodeRow {
-    grant_id: Uuid,
     code_client_id: String,
     redirect_uri: String,
     code_challenge: String,
@@ -722,13 +765,32 @@ async fn count_code_failure(
                 .annotate(ctx.rejected(reason))
                 .with_detail("failures", DetailValue::Count(i64::from(count))),
         ),
+        revoke: None,
     }
 }
 
+/// The grant a code or refresh token belongs to, read without a lock so the grant can be locked
+/// first.
+#[derive(Debug, FromQueryResult)]
+struct GrantRef {
+    grant_id: Uuid,
+}
+
 async fn redeem_code(tx: &DatabaseTransaction, ctx: &Ctx<'_>, params: &CodeParams<'_>) -> Result<Issued, Failure> {
+    let grant_ref = GrantRef::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT grant_id FROM oauth_authorization_codes WHERE code_hash = $1",
+        vec![params.code_hash.into()],
+    ))
+    .one(tx)
+    .await?
+    .ok_or_else(|| ctx.fail(invalid_grant(), "unknown_code"))?;
+    let grant = load_grant_state(tx, grant_ref.grant_id)
+        .await?
+        .ok_or_else(|| ctx.fail(invalid_grant(), "unknown_code"))?;
     let row = CodeRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT grant_id, client_id AS code_client_id, redirect_uri, code_challenge, resources AS code_resources, \
+        "SELECT client_id AS code_client_id, redirect_uri, code_challenge, resources AS code_resources, \
                 (expires_at > now()) AS code_live, (consumed_at IS NOT NULL) AS code_consumed \
          FROM oauth_authorization_codes WHERE code_hash = $1 FOR UPDATE",
         vec![params.code_hash.into()],
@@ -736,28 +798,25 @@ async fn redeem_code(tx: &DatabaseTransaction, ctx: &Ctx<'_>, params: &CodeParam
     .one(tx)
     .await?
     .ok_or_else(|| ctx.fail(invalid_grant(), "unknown_code"))?;
-    let grant = load_grant_state(tx, row.grant_id)
-        .await?
-        .ok_or_else(|| ctx.fail(invalid_grant(), "unknown_code"))?;
 
     if row.code_client_id != ctx.client_id {
         return Err(ctx.fail_for_grant(invalid_grant(), "client_mismatch", &grant));
     }
     if row.code_consumed {
         // A second redemption of a code: whatever was issued from it is no longer safe.
-        revoke_grant(tx, grant.grant_id, RevokeReason::CodeReplay, Actor::System).await?;
         tracing::warn!(grant_id = %grant.grant_id, "authorization code replay; grant revoked");
         return Err(Failure {
             error: invalid_grant(),
-            commit: true,
+            commit: false,
             audit: boxed(grant.annotate(ctx.record(AuditEvent::CodeReplay))),
+            revoke: Some((grant.grant_id, RevokeReason::CodeReplay)),
         });
     }
     if !row.code_live {
         return Err(ctx.fail_for_grant(invalid_grant(), "code_expired", &grant));
     }
     if let Some((revoke, reason)) = grant.failure() {
-        return Err(state_failure(tx, ctx, &grant, revoke, reason).await);
+        return Err(state_failure(ctx, &grant, revoke, reason));
     }
     if row.redirect_uri != params.redirect_uri {
         return Err(count_code_failure(tx, ctx, params, &grant, "redirect_mismatch").await);
@@ -821,7 +880,6 @@ struct RefreshParams<'a> {
 #[allow(clippy::struct_field_names, reason = "the fields are the columns of the row")]
 struct RefreshRow {
     token_id: Uuid,
-    grant_id: Uuid,
     token_client_id: String,
     token_consumed: bool,
     token_revoked: bool,
@@ -833,9 +891,20 @@ async fn redeem_refresh(
     ctx: &Ctx<'_>,
     params: &RefreshParams<'_>,
 ) -> Result<Issued, Failure> {
+    let grant_ref = GrantRef::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT grant_id FROM oauth_tokens WHERE token_hash = $1 AND kind = 'refresh'",
+        vec![params.token_hash.into()],
+    ))
+    .one(tx)
+    .await?
+    .ok_or_else(|| ctx.fail(invalid_grant(), "unknown_refresh_token"))?;
+    let grant = load_grant_state(tx, grant_ref.grant_id)
+        .await?
+        .ok_or_else(|| ctx.fail(invalid_grant(), "unknown_refresh_token"))?;
     let row = RefreshRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id AS token_id, grant_id, client_id AS token_client_id, (consumed_at IS NOT NULL) AS token_consumed, \
+        "SELECT id AS token_id, client_id AS token_client_id, (consumed_at IS NOT NULL) AS token_consumed, \
                 (revoked_at IS NOT NULL) AS token_revoked, (expires_at > now()) AS token_live \
          FROM oauth_tokens WHERE token_hash = $1 AND kind = 'refresh' FOR UPDATE",
         vec![params.token_hash.into()],
@@ -843,25 +912,22 @@ async fn redeem_refresh(
     .one(tx)
     .await?
     .ok_or_else(|| ctx.fail(invalid_grant(), "unknown_refresh_token"))?;
-    let grant = load_grant_state(tx, row.grant_id)
-        .await?
-        .ok_or_else(|| ctx.fail(invalid_grant(), "unknown_refresh_token"))?;
 
     if row.token_client_id != ctx.client_id {
         return Err(ctx.fail_for_grant(invalid_grant(), "client_mismatch", &grant));
     }
     if row.token_consumed {
         // A rotated refresh token came back: someone holds a copy. End the whole grant.
-        revoke_grant(tx, grant.grant_id, RevokeReason::RefreshReuse, Actor::System).await?;
         tracing::warn!(grant_id = %grant.grant_id, "refresh token reuse detected; grant revoked");
         return Err(Failure {
             error: invalid_grant(),
-            commit: true,
+            commit: false,
             audit: boxed(
                 grant
                     .annotate(ctx.record(AuditEvent::RefreshReuseDetected))
                     .with_token(row.token_id),
             ),
+            revoke: Some((grant.grant_id, RevokeReason::RefreshReuse)),
         });
     }
     if let Err(error) = rate::enforce(ctx.db, RateBucket::TokenGrant, &RateKey::from_id(grant.grant_id)).await {
@@ -869,16 +935,22 @@ async fn redeem_refresh(
             error: rate_error(error),
             commit: false,
             audit: boxed(grant.annotate(ctx.rejected("rate_limited"))),
+            revoke: None,
         });
     }
     if row.token_revoked {
         return Err(ctx.fail_for_grant(invalid_grant(), "token_revoked", &grant));
     }
     if !row.token_live {
-        return Err(state_failure(tx, ctx, &grant, Some(RevokeReason::Expired), "refresh_token_expired").await);
+        return Err(state_failure(
+            ctx,
+            &grant,
+            Some(RevokeReason::Expired),
+            "refresh_token_expired",
+        ));
     }
     if let Some((revoke, reason)) = grant.failure() {
-        return Err(state_failure(tx, ctx, &grant, revoke, reason).await);
+        return Err(state_failure(ctx, &grant, revoke, reason));
     }
     if !grant
         .grant_resources

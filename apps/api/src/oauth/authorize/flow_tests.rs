@@ -879,7 +879,8 @@ async fn a_user_who_is_not_eligible_still_gets_the_consent_data_with_the_reason(
     let person = h.member();
     exec(
         h.db(),
-        "INSERT INTO workspace_delegation_settings (workspace_id, allow_connected_apps) VALUES ($1, false)",
+        "INSERT INTO workspace_delegation_settings (workspace_id, allow_connected_apps) VALUES ($1, false) \
+         ON CONFLICT (workspace_id) DO UPDATE SET allow_connected_apps = false",
         vec![h.tenant.workspace_id.into()],
     )
     .await;
@@ -1216,7 +1217,8 @@ async fn invalid_selections_are_refused_and_create_nothing() {
         .assert_flow_error(403, "workspace_not_eligible");
     exec(
         h.db(),
-        "INSERT INTO workspace_delegation_settings (workspace_id, allow_connected_apps) VALUES ($1, false)",
+        "INSERT INTO workspace_delegation_settings (workspace_id, allow_connected_apps) VALUES ($1, false) \
+         ON CONFLICT (workspace_id) DO UPDATE SET allow_connected_apps = false",
         vec![ws.into()],
     )
     .await;
@@ -1839,7 +1841,8 @@ async fn code_state_checks() {
         (
             "workspace off",
             "INSERT INTO workspace_delegation_settings (workspace_id, allow_connected_apps) \
-             SELECT id, false FROM workspaces",
+             SELECT id, false FROM workspaces \
+             ON CONFLICT (workspace_id) DO UPDATE SET allow_connected_apps = false",
             "workspace_disabled",
         ),
     ] {
@@ -2172,7 +2175,8 @@ async fn refresh_stops_when_the_live_state_of_the_grant_fails() {
         ),
         (
             "workspace off",
-            "INSERT INTO workspace_delegation_settings (workspace_id, allow_connected_apps) SELECT id, false FROM workspaces",
+            "INSERT INTO workspace_delegation_settings (workspace_id, allow_connected_apps) SELECT id, false FROM workspaces \
+             ON CONFLICT (workspace_id) DO UPDATE SET allow_connected_apps = false",
             "workspace_disabled",
         ),
         (

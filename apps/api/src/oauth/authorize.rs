@@ -39,8 +39,8 @@ use super::redirect::{display_host, matches_registered, with_query};
 use super::revoke;
 use super::scopes::{Scope, ScopeSet, TokenResource};
 use super::token::{
-    self, ClientRow, db_error, is_valid_code_challenge, json_response, load_active_client, not_found, rate_error,
-    read_request, refuse_query, resource_of, user_agent,
+    self, ClientRow, db_error, is_valid_code_challenge, json_response, load_active_client, load_active_client_shared,
+    not_found, rate_error, read_request, refuse_query, resource_of, user_agent,
 };
 use super::tokens::{Lifetimes, TokenKind, hash_secret, is_well_formed, mint, secrets_equal};
 use crate::routes::auth::{extract_bearer_token, extract_cookie_token};
@@ -1054,7 +1054,7 @@ async fn decide_signed_in(
         }
         return Err(consent_failure().into());
     }
-    let client = load_active_client(tx, &stored.client_id)
+    let client = load_active_client_shared(tx, &stored.client_id)
         .await?
         .ok_or_else(|| FlowError::forbidden("client_not_active", "the application is not available"))?;
 
@@ -1192,16 +1192,47 @@ async fn allow(
     if standing.is_none_or(|row| row.session_version != session.version) {
         return Err(FlowError::new(StatusCode::UNAUTHORIZED, "session_required", "sign in to continue").into());
     }
-    let membership = MembershipRow::find_by_statement(Statement::from_sql_and_values(
+    // The membership row and the workspace setting are share-locked until this transaction ends:
+    // removing the member or switching connected applications off updates its row first and
+    // sweeps the workspace's grants after, so it either waits for this consent and then revokes
+    // the grant created here, or commits first and this consent finds it refused.
+    // The workspace row comes first among these three: removing a member advances the
+    // workspace's authorization epoch (a `FOR UPDATE` on this row) before it locks the member
+    // row, and the grant insert below needs a key share of it.
+    IdRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT COALESCE(s.allow_connected_apps, true) AS allowed \
-         FROM workspace_members m LEFT JOIN workspace_delegation_settings s ON s.workspace_id = m.workspace_id \
-         WHERE m.workspace_id = $1 AND m.user_id = $2",
+        "SELECT id FROM workspaces WHERE id = $1 FOR KEY SHARE",
+        vec![selection.workspace_id.into()],
+    ))
+    .one(tx)
+    .await?;
+    let member = IdRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT user_id AS id FROM workspace_members WHERE workspace_id = $1 AND user_id = $2 FOR SHARE",
         vec![selection.workspace_id.into(), session.user_id.into()],
     ))
     .one(tx)
     .await?;
-    if !membership.is_some_and(|row| row.allowed) {
+    if member.is_none() {
+        return Err(FlowError::forbidden("workspace_not_eligible", "the workspace cannot be connected").into());
+    }
+    // No settings row means allowed, and there is nothing to lock then: write the default row
+    // (what "no row" means) so that a concurrent switch-off has to wait for this transaction.
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workspace_delegation_settings (workspace_id) VALUES ($1) ON CONFLICT (workspace_id) DO NOTHING",
+        vec![selection.workspace_id.into()],
+    ))
+    .await?;
+    let setting = MembershipRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT allow_connected_apps AS allowed FROM workspace_delegation_settings \
+         WHERE workspace_id = $1 FOR SHARE",
+        vec![selection.workspace_id.into()],
+    ))
+    .one(tx)
+    .await?;
+    if !setting.is_some_and(|row| row.allowed) {
         return Err(FlowError::forbidden("workspace_not_eligible", "the workspace cannot be connected").into());
     }
     if !selection.all_projects {
@@ -1333,7 +1364,10 @@ async fn allow(
 
 /// Ends, with reason `expired`, the grants of this user and client that never received a token
 /// and whose code has run out, or whose own lifetime is over, so abandoned consents do not count
-/// against the limit.
+/// against the limit. The candidates are read without a lock and each is then ended through
+/// `revoke_grant`, which takes the locks in the order the token endpoint takes them (codes,
+/// tokens, grant); locking the grant rows here first would run against that order. A candidate
+/// has no token and no live code, so nothing can start redeeming it in between.
 async fn sweep_unredeemed(tx: &DatabaseTransaction, user_id: Uuid, client_id: &str) -> Result<(), DbErr> {
     let stale = IdRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -1343,7 +1377,7 @@ async fn sweep_unredeemed(tx: &DatabaseTransaction, user_id: Uuid, client_id: &s
                 NOT EXISTS (SELECT 1 FROM oauth_tokens t WHERE t.grant_id = g.id) \
                 AND NOT EXISTS (SELECT 1 FROM oauth_authorization_codes c \
                                 WHERE c.grant_id = g.id AND c.expires_at > now() AND c.consumed_at IS NULL))) \
-         ORDER BY g.id FOR UPDATE OF g",
+         ORDER BY g.id",
         vec![user_id.into(), client_id.into()],
     ))
     .all(tx)
