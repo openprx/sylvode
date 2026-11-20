@@ -1707,7 +1707,7 @@ contains "tracker matrix defines tested status boundary" "$TRACKER_PATH" '`已�
 contains "tracker matrix defines accepted status boundary" "$TRACKER_PATH" '`已验收` 只能在用户侧 runbook、Manual Acceptance Signoff、finalizer、strict delivery-state、delivery-bundle 全部通过后写入'
 contains "tracker matrix marks manual acceptance pending" "$TRACKER_PATH" "| 用户侧人工验收 | 验收人按 runbook 实际操作并签收 7 行 Manual Acceptance Signoff |"
 contains "tracker matrix uses real generic webhook smoke" "$TRACKER_PATH" "scripts/smoke-webhook-generic-consumer.sh"
-contains "tracker matrix uses real forms browser smoke command" "$TRACKER_PATH" "cd frontend && bun run smoke:forms-ui"
+contains "tracker matrix uses real forms browser smoke command" "$TRACKER_PATH" "cd frontend && bun run smoke:forms-page-interactions"
 contains "tracker matrix uses real restaurant browser smoke command" "$TRACKER_PATH" "cd frontend && bun run smoke:restaurant-ordering"
 not_contains "tracker matrix does not reference retired webhook smoke name" "$TRACKER_PATH" "scripts/smoke-universal-forms-webhook-consumer.sh"
 not_contains "tracker matrix does not reference missing frontend smoke script" "$TRACKER_PATH" "scripts/smoke-frontend-forms.sh"

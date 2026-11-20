@@ -1,0 +1,43 @@
+{
+	"shell": {
+		"palette": {
+			"title": "搜索与命令",
+			"placeholder": "搜索或输入命令",
+			"results": "结果",
+			"hint": "↑ ↓ 选择 · Enter 打开 · Esc 返回",
+			"searching": "正在搜索…",
+			"none": "没有结果。",
+			"count": "{count} 个结果",
+			"seeAll": "查看“{query}”的全部结果",
+			"untitled": "无标题",
+			"comment": "评论",
+			"allWorkspaces": "全部工作区",
+			"verbOpen": "打开",
+			"verbSwitch": "切换",
+			"verbApply": "应用",
+			"verbSignOut": "退出",
+			"switchWorkspace": "切换到工作区 {name}",
+			"switchPersonal": "切换到个人",
+			"theme": {
+				"light": "主题：浅色",
+				"dark": "主题：深色",
+				"system": "主题：跟随系统"
+			},
+			"language": "语言：{name}",
+			"pinCurrent": "将当前页面固定到导航栏",
+			"editNavigation": "编辑导航",
+			"openSettings": "打开设置",
+			"signOut": "退出登录",
+			"groups": {
+				"goto": "前往",
+				"recent": "最近",
+				"projects": "项目",
+				"forms": "表单",
+				"flow": "Flow 页面",
+				"issues": "事项与评论",
+				"actions": "操作",
+				"results": "更多"
+			}
+		}
+	}
+}

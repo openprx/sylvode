@@ -35,7 +35,7 @@
 	let openPageLink = $state<HTMLAnchorElement | null>(null);
 	const id = $props.id();
 	const action =
-		'min-h-11 rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800';
+		'min-h-11 rounded-control border border-fg bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted disabled:border-line';
 
 	async function prepareExport() {
 		if (pending || !exportReady) return;
@@ -133,7 +133,7 @@
 {#snippet summary(packageData: PortablePagePackagePreview)}
 	<p class="break-words font-medium">{packageData.title}</p>
 	<div class="space-y-2">
-		<p class="text-xs text-slate-600 dark:text-slate-300">
+		<p class="text-xs text-fg-muted">
 			{$t('flow.portablePackage.contents', {
 				values: {
 					blocks: String(packageData.block_count),
@@ -143,8 +143,8 @@
 			})}
 		</p>
 		{#if packageData.blocks.some((block) => block.text)}
-			<details class="rounded border border-slate-200 p-2 dark:border-slate-700">
-				<summary class="cursor-pointer focus-visible:outline-blue-500">
+			<details class="rounded border border-line p-2">
+				<summary class="cursor-pointer">
 					{$t('flow.portablePackage.body')}
 				</summary>
 				<div class="mt-2 max-h-56 space-y-1 overflow-auto">
@@ -160,7 +160,7 @@
 				{#each packageData.assets as media, index (index)}
 					<li class="break-words">
 						{media.filename}
-						<span class="text-xs text-slate-600 dark:text-slate-300">
+						<span class="text-xs text-fg-muted">
 							({$t('flow.package.bytes', { values: { n: media.size.toLocaleString() } })})
 						</span>
 					</li>
@@ -175,10 +175,10 @@
 	class="space-y-3 text-sm"
 	data-testid="flow-portable-page-package"
 >
-	<h2 id={`${id}-heading`} class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+	<h2 id={`${id}-heading`} class="text-sm font-semibold text-fg">
 		{$t('flow.portablePackage.heading')}
 	</h2>
-	<p class="text-xs text-slate-600 dark:text-slate-300">{$t('flow.portablePackage.scope')}</p>
+	<p class="text-xs text-fg-muted">{$t('flow.portablePackage.scope')}</p>
 	<button
 		type="button"
 		class={action}
@@ -188,17 +188,17 @@
 		data-testid="flow-portable-prepare">{$t('flow.portablePackage.prepare')}</button
 	>
 	{#if !exportReady}
-		<p id={`${id}-sync`} class="text-xs text-slate-600 dark:text-slate-300">
+		<p id={`${id}-sync`} class="text-xs text-fg-muted">
 			{$t('flow.portablePackage.waitForSync')}
 		</p>
 	{/if}
 	{#if pending === 'export'}<p role="status">{$t('flow.portablePackage.preparing')}</p>{/if}
-	{#if exportError}<p class="text-red-700 dark:text-red-300" role="alert">
+	{#if exportError}<p class="text-danger" role="alert">
 			{$t(exportError)}
 		</p>{/if}
 	{#if exported}
 		<div
-			class="space-y-2 rounded-md border border-slate-200 p-3 dark:border-slate-700"
+			class="space-y-2 rounded-card border border-line p-3"
 			data-testid="flow-portable-export-review"
 		>
 			<h3 class="font-medium">{$t('flow.portablePackage.exportReview')}</h3>
@@ -213,7 +213,7 @@
 		</div>
 	{/if}
 	{#if canImport}
-		<div class="space-y-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+		<div class="space-y-2 border-t border-line pt-3">
 			<label class="block space-y-1">
 				<span class="block font-medium">{$t('flow.portablePackage.selectFile')}</span>
 				<input
@@ -222,24 +222,20 @@
 					disabled={!!pending}
 					onchange={chooseFile}
 					data-testid="flow-portable-file"
-					class="block w-full min-w-0 text-sm focus-visible:outline-blue-500 file:mr-2 file:min-h-11 file:rounded file:border-0 file:bg-slate-100 file:px-2 dark:file:bg-slate-800 dark:file:text-white"
+					class="block w-full min-w-0 text-sm file:mr-2 file:min-h-11 file:rounded file:border-0 file:bg-surface file:px-2"
 					aria-describedby={`${id}-destination`}
 				/>
 			</label>
-			<p id={`${id}-destination`} class="text-xs text-slate-600 dark:text-slate-300">
+			<p id={`${id}-destination`} class="text-xs text-fg-muted">
 				{$t('flow.portablePackage.destination')}
 			</p>
 			{#if pending === 'read'}<p role="status">{$t('flow.portablePackage.reading')}</p>{/if}
 			{#if imported}
 				<div
-					class="space-y-2 rounded-md border border-slate-200 p-3 dark:border-slate-700"
+					class="space-y-2 rounded-card border border-line p-3"
 					data-testid="flow-portable-import-review"
 				>
-					<h3
-						bind:this={reviewHeading}
-						tabindex="-1"
-						class="break-words font-medium focus-visible:outline-blue-500"
-					>
+					<h3 bind:this={reviewHeading} tabindex="-1" class="break-words font-medium">
 						{$t('flow.portablePackage.importReview', { values: { name: imported.file.name } })}
 					</h3>
 					{@render summary(imported.preview)}
@@ -257,7 +253,7 @@
 				</div>
 			{/if}
 			{#if pending === 'import'}<p role="status">{$t('flow.portablePackage.creating')}</p>{/if}
-			{#if importError}<p class="text-red-700 dark:text-red-300" role="alert">
+			{#if importError}<p class="text-danger" role="alert">
 					{$t(importError)}
 				</p>{/if}
 			{#if targetId}
@@ -265,7 +261,7 @@
 				<a
 					bind:this={openPageLink}
 					data-testid="flow-portable-open"
-					class="inline-block py-2 text-blue-700 underline focus-visible:outline-blue-500 dark:text-blue-300"
+					class="inline-block py-2 text-fg underline"
 					href={page.params.workspaceId
 						? resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
 								workspaceId: page.params.workspaceId,
@@ -278,7 +274,7 @@
 			{/if}
 		</div>
 	{:else}
-		<p class="text-xs text-slate-600 dark:text-slate-300">
+		<p class="text-xs text-fg-muted">
 			{$t('flow.portablePackage.editRequired')}
 		</p>
 	{/if}

@@ -1,0 +1,53 @@
+{
+	"shell": {
+		"destinations": {
+			"home": "首页",
+			"projects": "项目",
+			"flow": "Flow",
+			"agents": "智能体",
+			"governance": "治理",
+			"settings": "设置",
+			"flowUnavailablePersonal": "你的账号暂不可使用 Flow。",
+			"flowUnavailableWorkspace": "此工作区未开启 Flow。"
+		},
+		"sections": {
+			"groups": {
+				"account": "账号",
+				"workspace": "工作区",
+				"instance": "实例",
+				"project": "项目设置"
+			},
+			"chooseWorkspace": "选择工作区…",
+			"profile": "个人资料与外观",
+			"plugins": "我的插件",
+			"flowPackages": "Flow 数据包",
+			"general": "常规",
+			"members": "成员与机器人",
+			"webhooks": "Webhook",
+			"workflows": "工作流",
+			"flow": "Flow",
+			"dashboard": "仪表盘",
+			"users": "用户",
+			"system": "系统",
+			"projectPlugins": "插件"
+		},
+		"pageTitle": {
+			"agents": "Sylvode - 智能体",
+			"projectApps": "Sylvode - 应用"
+		},
+		"shortcuts": {
+			"full": "导航栏最多放 8 个快捷方式，请先移除一个。",
+			"unavailable": "你已无法访问"
+		},
+		"projectNav": {
+			"overview": "概览",
+			"issues": "事项",
+			"board": "看板",
+			"cycles": "迭代",
+			"forms": "表单",
+			"allForms": "全部表单",
+			"apps": "应用",
+			"settings": "设置"
+		}
+	}
+}

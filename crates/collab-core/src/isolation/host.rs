@@ -217,7 +217,13 @@ fn run_isolated_apply(
         .map_err(|err| IsolatedApplyError::HostFailure(format!("response payload invalid: {err}")))?;
 
     match outcome {
-        Outcome::Success { snapshot } => Ok(IsolatedApplySuccess { snapshot }),
+        Outcome::Success {
+            snapshot,
+            window_cpu_us,
+        } => Ok(IsolatedApplySuccess {
+            snapshot,
+            window_cpu_us,
+        }),
         Outcome::Rejected(err) => Err(IsolatedApplyError::Collab(err)),
     }
 }

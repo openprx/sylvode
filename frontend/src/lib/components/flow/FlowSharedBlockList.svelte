@@ -134,7 +134,7 @@
 </script>
 
 {#if enabled}<section
-		class="mt-6 rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900"
+		class="mt-6 rounded-card border border-line bg-raised p-5"
 		aria-label={$t('flow.shared.sharedHere')}
 		data-testid="flow-shared-target-list"
 	>
@@ -144,24 +144,24 @@
 				>{$t('flow.shared.refresh')}</button
 			>
 		</div>
-		<p class="mb-3 text-xs text-slate-500">{$t('flow.shared.targetBoundary')}</p>
-		{#if failed}<p role="alert" class="mb-3 text-sm text-red-600">
+		<p class="mb-3 text-xs text-fg-muted">{$t('flow.shared.targetBoundary')}</p>
+		{#if failed}<p role="alert" class="mb-3 text-sm text-danger">
 				{$t('flow.shared.targetListFailed')}
 			</p>{/if}
-		{#if loading && !items.length}<p role="status" class="text-sm text-slate-500">
+		{#if loading && !items.length}<p role="status" class="text-sm text-fg-muted">
 				{$t('common.loading')}
-			</p>{:else if !items.length}<p class="text-sm text-slate-500">
+			</p>{:else if !items.length}<p class="text-sm text-fg-muted">
 				{$t('flow.shared.noSharedHere')}
 			</p>{/if}
 		<ul class="space-y-3">
 			{#each items.slice(0, limit) as item (item.share_id)}<li
-					class="rounded border border-slate-200 p-3 dark:border-slate-700"
+					class="rounded border border-line p-3"
 					data-share-id={item.share_id}
 				>
 					<!-- href resolves the app route and appends only target UUID query parameters. -->
 					<!-- eslint-disable svelte/no-navigation-without-resolve -->
 					<a
-						class="block rounded focus-visible:outline-2 focus-visible:outline-blue-500"
+						class="block rounded"
 						href={resolve('/(app)/shared-blocks/[shareId]', { shareId: item.share_id }) +
 							'?' +
 							new SvelteURLSearchParams({
@@ -189,7 +189,7 @@
 					>
 					<!-- eslint-enable svelte/no-navigation-without-resolve -->
 					{#if admin}<div class="mt-2 text-xs">
-							{#if confirmRemove === item.share_id}<p class="mb-2 text-amber-700">
+							{#if confirmRemove === item.share_id}<p class="mb-2 text-warning">
 									{$t('flow.shared.removeTargetWarning')}
 								</p>
 								<button
@@ -204,7 +204,7 @@
 									onclick={() => (confirmRemove = null)}>{$t('common.cancel')}</button
 								>{:else}<button
 									type="button"
-									class="text-slate-500 underline"
+									class="text-fg-muted underline"
 									disabled={!!removing}
 									onclick={() => (confirmRemove = item.share_id)}
 									>{$t('flow.shared.removeTarget')}</button
@@ -225,7 +225,7 @@
 				}}
 			>
 				<summary class="cursor-pointer text-sm">{$t('flow.shared.manageTargetPlacements')}</summary>
-				<p class="mt-2 text-xs text-slate-500">{$t('flow.shared.metadataOnly')}</p>
+				<p class="mt-2 text-xs text-fg-muted">{$t('flow.shared.metadataOnly')}</p>
 				<ul class="mt-3 space-y-2">
 					{#each management as item (item.placement_id)}<li
 							class="rounded border p-3 text-sm"
@@ -245,10 +245,10 @@
 									class="me-3 underline"
 									href={resolve('/(app)/shared-blocks/[shareId]', { shareId: item.share_id })}
 									>{$t('flow.shared.openAudienceView')}</a
-								>{:else}<p class="text-xs text-slate-500">
+								>{:else}<p class="text-xs text-fg-muted">
 									{$t('flow.shared.noContentGrant')}
 								</p>{/if}
-							{#if confirmRemove === item.share_id}<p class="mt-2 text-xs text-amber-700">
+							{#if confirmRemove === item.share_id}<p class="mt-2 text-xs text-warning">
 									{$t('flow.shared.removeTargetWarning')}
 								</p>
 								<button

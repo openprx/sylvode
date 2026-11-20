@@ -183,7 +183,7 @@
 		{#each layout.inline as item (itemKey(item))}
 			<button
 				type="button"
-				class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-blue-600 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+				class="inline-flex h-8 items-center rounded-control border border-input px-2.5 text-xs font-medium text-fg hover:bg-surface"
 				data-plugin-contribution={item.contribution.id}
 				aria-expanded={active ? itemKey(active) === itemKey(item) : false}
 				aria-controls={active && itemKey(active) === itemKey(item) ? drawerId : undefined}
@@ -194,11 +194,11 @@
 		{#if layout.more.length}
 			<details class="relative">
 				<summary
-					class="inline-flex h-8 cursor-pointer items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium dark:border-slate-700"
+					class="inline-flex h-8 cursor-pointer items-center rounded-control border border-input px-2.5 text-xs font-medium"
 					>{$t('plugins.host.more')}</summary
 				>
 				<ul
-					class="absolute right-0 z-20 mt-1 min-w-44 space-y-1 rounded-md border border-slate-300 bg-white p-2 text-sm shadow dark:border-slate-600 dark:bg-slate-900"
+					class="absolute right-0 z-20 mt-1 min-w-44 space-y-1 rounded-float border border-overlay-line bg-overlay p-2 text-sm shadow-overlay"
 				>
 					{#each layout.more as item (itemKey(item))}
 						<li>
@@ -220,7 +220,7 @@
 		<PluginPreferenceMenu {projectId} items={discovery.items} />
 		<CreatorPluginLink {workspaceId} {projectId} slot="form.list.toolbar" formKey={form.key} />
 		{#if notice && phase === 'closed'}
-			<span class="text-xs text-slate-600 dark:text-slate-300" role="status">{$t(notice)}</span>
+			<span class="text-xs text-fg-muted" role="status">{$t(notice)}</span>
 		{/if}
 	</div>
 {/if}
@@ -231,24 +231,24 @@
 		role="dialog"
 		tabindex="-1"
 		aria-label={$t('plugins.host.openDrawer', { values: { label: active.contribution.label } })}
-		class="fixed inset-y-0 right-0 z-40 flex w-full max-w-xl flex-col border-l border-slate-300 bg-white text-slate-900 shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+		class="fixed inset-y-0 right-0 z-40 flex w-full max-w-xl flex-col border-l border-overlay-line bg-overlay text-fg shadow-overlay"
 		onkeydown={onKeydown}
 	>
 		<div
-			class="flex items-center justify-between gap-2 border-b border-slate-200 p-3 dark:border-slate-700"
+			class="flex items-center justify-between gap-2 border-b border-line p-3"
 		>
 			<h3 class="text-sm font-semibold">{active.name} · {active.contribution.label}</h3>
 			<button
 				type="button"
 				bind:this={closeButton}
 				onclick={() => closeDrawer()}
-				class="rounded-md px-2 py-1 text-sm underline focus-visible:outline-blue-600"
+				class="rounded-control px-2 py-1 text-sm underline"
 				>{$t('plugins.host.closeDrawer')}</button
 			>
 		</div>
 		<div class="min-h-0 flex-1 overflow-auto">
 			{#if phase === 'loading'}
-				<p class="p-3 text-sm text-slate-600 dark:text-slate-300" role="status">
+				<p class="p-3 text-sm text-fg-muted" role="status">
 					{$t('plugins.host.loading')}
 				</p>
 			{/if}

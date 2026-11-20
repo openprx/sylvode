@@ -1,44 +1,17 @@
-// Toast 通知状态管理
-import { writable } from 'svelte/store';
+// The old toast store, kept as a thin router so its ~500 call sites do not change.
+//
+// Errors and warnings are inline messages in the current page's tip slot; successes and plain
+// information become toasts in the app toast region (`lib/ui/toast`). The display duration passed
+// by old callers is ignored: the toast region owns timing.
+/* eslint-disable @typescript-eslint/no-unused-vars -- `_duration` keeps old call sites compiling */
+import { appToasts } from '#lib/ui/toast/app-toasts.js';
+import { showError, showWarning } from '#lib/surface/feedback.svelte.js';
 
-export interface Toast {
-	id: string;
-	type: 'success' | 'error' | 'info' | 'warning';
-	message: string;
-	duration?: number;
-}
-
-function createToastStore() {
-	const { subscribe, update } = writable<Toast[]>([]);
-
-	function addToast(toast: Omit<Toast, 'id'>) {
-		const id = Math.random().toString(36).substring(7);
-		const newToast: Toast = { ...toast, id };
-
-		update((toasts) => [...toasts, newToast]);
-
-		const duration = toast.duration || 3000;
-		setTimeout(() => {
-			removeToast(id);
-		}, duration);
-
-		return id;
-	}
-
-	function removeToast(id: string) {
-		update((toasts) => toasts.filter((t) => t.id !== id));
-	}
-
-	return {
-		subscribe,
-		success: (message: string, duration?: number) =>
-			addToast({ type: 'success', message, duration }),
-		error: (message: string, duration?: number) => addToast({ type: 'error', message, duration }),
-		info: (message: string, duration?: number) => addToast({ type: 'info', message, duration }),
-		warning: (message: string, duration?: number) =>
-			addToast({ type: 'warning', message, duration }),
-		remove: removeToast
-	};
-}
-
-export const toast = createToastStore();
+export const toast = {
+	success: (message: string, _duration?: number) =>
+		appToasts.show({ message, tone: 'success', key: `success:${message}` }),
+	info: (message: string, _duration?: number) =>
+		appToasts.show({ message, tone: 'neutral', key: `info:${message}` }),
+	error: (message: string, _duration?: number) => showError(message),
+	warning: (message: string, _duration?: number) => showWarning(message)
+};
