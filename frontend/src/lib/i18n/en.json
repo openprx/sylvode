@@ -52,8 +52,6 @@
 		"webhook": "Webhook",
 		"connections": "Operation Records",
 		"workspaceSettings": "Workspace Settings",
-		"logout": "Logout",
-		"toggleSidebar": "Toggle sidebar",
 		"currentWorkspace": "Current Workspace",
 		"governanceProposals": "Governance Proposals",
 		"impactReviews": "Impact Reviews",

@@ -27,6 +27,8 @@
 		currentPage: Shortcut | null;
 		/** Neutral confirmation for "Restore default navigation". */
 		confirmRestore: () => Promise<boolean>;
+		/** Whether the shortcut editor is open; the palette's "Edit navigation" sets it. */
+		editorOpen?: boolean;
 	}
 
 	let {
@@ -36,12 +38,12 @@
 		account,
 		shortcuts,
 		currentPage,
-		confirmRestore
+		confirmRestore,
+		editorOpen = $bindable(false)
 	}: Props = $props();
 
 	const SettingsGlyph = glyphFor('settings');
 	let group = $state<HTMLElement | null>(null);
-	let editorOpen = $state(false);
 	let editorButton = $state<HTMLElement | null>(null);
 	let accountOpen = $state(false);
 	let accountButton = $state<HTMLElement | null>(null);
