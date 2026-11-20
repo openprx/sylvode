@@ -19,8 +19,14 @@
 		"recordPageSize",
 		"SORTABLE_TYPES"
 	],
-	"instanceConstants": ["recordPluginActions", "formsSessionLatch"],
-	"creationConstants": ["workbench", "recordEditorAction"],
+	"instanceConstants": [
+		"recordPluginActions",
+		"formsSessionLatch"
+	],
+	"creationConstants": [
+		"workbench",
+		"recordEditorAction"
+	],
 	"earlyPure": {
 		"blankFieldDraft": "designer-schema",
 		"defaultPermissionActions": "permission-drafts"
@@ -3138,7 +3144,9 @@
 				"resetUndo",
 				"viewSubmitting"
 			],
-			"view-draft": ["viewDraft"],
+			"view-draft": [
+				"viewDraft"
+			],
 			"create-form": [
 				"formSubmitting",
 				"installingTemplateKey",
@@ -3175,7 +3183,11 @@
 				"exportedAttachmentPackageCount",
 				"exportedAttachmentPackageFileCount"
 			],
-			"importer": ["showImportRecords", "importPreviewing", "importingRecords"],
+			"importer": [
+				"showImportRecords",
+				"importPreviewing",
+				"importingRecords"
+			],
 			"route": [
 				"loading",
 				"formsSessionReady",
@@ -3193,18 +3205,127 @@
 			]
 		},
 		"patterns": [
-			["^formsSession", "session"],
-			["Kanban", "view-kanban"],
-			["Calendar|ScheduleKey", "view-calendar"],
-			["Gantt", "view-gantt"],
-			["Timeline", "view-timeline"],
-			["Pivot", "view-pivot"],
-			["FilterExpression", "filter-expression-export"],
-			["Card", "view-cards"],
-			["^detail(Page|Layout|Header|Highlight)", "detail-layout-editor"],
-			["^(import|exportedImport)", "importer"],
-			["^(designer|pendingDesigner)", "designer"],
-			["^selectedRecord", "loaders"]
+			[
+				"^formsSession",
+				"session"
+			],
+			[
+				"Kanban",
+				"view-kanban"
+			],
+			[
+				"Calendar|ScheduleKey",
+				"view-calendar"
+			],
+			[
+				"Gantt",
+				"view-gantt"
+			],
+			[
+				"Timeline",
+				"view-timeline"
+			],
+			[
+				"Pivot",
+				"view-pivot"
+			],
+			[
+				"FilterExpression",
+				"filter-expression-export"
+			],
+			[
+				"Card",
+				"view-cards"
+			],
+			[
+				"^detail(Page|Layout|Header|Highlight)",
+				"detail-layout-editor"
+			],
+			[
+				"^(import|exportedImport)",
+				"importer"
+			],
+			[
+				"^(designer|pendingDesigner)",
+				"designer"
+			],
+			[
+				"^selectedRecord",
+				"loaders"
+			]
 		]
-	}
+	},
+	"moduleConstants": {
+		"crc32Table": {
+			"module": "zip",
+			"line": 9666
+		}
+	},
+	"controllerOrder": [
+		"session",
+		"loaders",
+		"records",
+		"recordPanel",
+		"recordDetail",
+		"attachments",
+		"createForm",
+		"designer",
+		"detailLayoutEditor",
+		"detailLayoutSave",
+		"permissions",
+		"views",
+		"viewRecords",
+		"viewDraft",
+		"viewDraftFields",
+		"viewDraftFilters",
+		"filterExpressionExport",
+		"viewPivot",
+		"viewKanban",
+		"viewCalendar",
+		"viewGantt",
+		"viewTimeline",
+		"viewCards",
+		"exporter",
+		"importer"
+	],
+	"closureCaptures": {
+		"_note": "A derived read inside a closure loses TypeScript narrowing once it becomes a property access. The derived is read once into a local of the same name immediately before the statement that holds the closure (the closure runs synchronously inside that statement).",
+		"units": {
+			"loadRelationTargets": [
+				"selectedForm"
+			],
+			"kanbanBulkMoveAllowed": [
+				"kanbanGroupField"
+			],
+			"kanbanColumnRecordCount": [
+				"kanbanGroupField"
+			]
+		}
+	},
+	"markupCaptures": [
+		{
+			"test": "kanbanGroupField && kanbanMoveOptions(kanbanGroupField).length > 0",
+			"occurrence": 2,
+			"derived": "kanbanGroupField",
+			"local": "kanbanField"
+		},
+		{
+			"test": "calendarDateField && ['date', 'datetime'].includes(calendarDateField.type ?? 'text')",
+			"occurrence": 1,
+			"derived": "calendarDateField",
+			"local": "calendarField"
+		},
+		{
+			"test": "calendarDateField && ['date', 'datetime'].includes(calendarDateField.type ?? 'text') && !occurrence.recurring",
+			"occurrence": 1,
+			"derived": "calendarDateField",
+			"local": "calendarField"
+		},
+		{
+			"test": "calendarDateField && calendarEndField && ['date', 'datetime'].includes(calendarEndField.type ?? 'text') && occurrence.startDate === calendarRecordIsoDate(record, calendarDateField)",
+			"occurrence": 1,
+			"derived": "calendarEndField",
+			"local": "calendarEnd"
+		}
+	]
 }
