@@ -5,8 +5,10 @@
 //! validation, grant revocation, audit records, rate limiting and the metadata documents.
 
 pub mod audit;
+pub mod delegated;
 pub mod error;
 pub mod grants;
+pub mod internal;
 pub mod metadata;
 pub mod rate;
 pub mod router;
@@ -16,6 +18,8 @@ pub mod validate;
 
 #[cfg(test)]
 mod db_tests;
+#[cfg(test)]
+mod delegated_tests;
 #[cfg(test)]
 mod hygiene_tests;
 #[cfg(test)]

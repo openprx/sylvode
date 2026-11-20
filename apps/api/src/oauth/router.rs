@@ -6,9 +6,11 @@
 use axum::Router;
 use platform::app::AppState;
 
-use super::metadata;
+use super::{delegated, metadata};
 
 /// Routes that exist for every deployment. Without `[oauth] issuer` they answer 404.
-pub fn routes(_state: &AppState) -> Router<AppState> {
-    Router::new().merge(metadata::routes(crate::config::runtime().oauth.clone()))
+pub fn routes(state: &AppState) -> Router<AppState> {
+    Router::new()
+        .merge(metadata::routes(crate::config::runtime().oauth.clone()))
+        .merge(delegated::routes(state))
 }
