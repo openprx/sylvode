@@ -200,16 +200,19 @@ What the server does for a delegated caller:
 - **Tools.** `tools/list` shows only the tools the token's scopes allow; `tools/call` for a
   tool outside them answers `403` with `WWW-Authenticate: Bearer error="insufficient_scope",
   scope="...", resource_metadata="..."` and a JSON-RPC error `-32001`. The first release
-  exposes **read tools only** (projects, work items and their comments and labels, forms and
-  records): `projects:read` (`projects.list`, `projects.get`, `context.get_project`),
-  `work_items:read` (`work_items.list`, `.get`, `.get_by_identifier`, `.search`,
-  `.list_labels`, `comments.list`, `labels.list_by_project`) and `forms:read` (`forms.list`,
-  `.get`, `.schema_summary`, `form_views.list`, `form_records.list`, `.get`, `.children`). A
-  `:write` scope implies its `:read` scope but unlocks no tool that changes data. Every other
-  tool, including anything that writes, deletes, administers, imports or exports, or dispatches
-  an agent, is refused with JSON-RPC error `-32002` (`tool not available to connected
-  applications`) whatever the scopes say; a tool that is not in the table of
-  `src/oauth_scopes.rs` is refused too. `resources/read` serves the static guides only.
+  exposes **eight read tools only**: `projects:read` (`projects.list`, `projects.get`,
+  `context.get_project`) and `work_items:read` (`work_items.list`, `.get`,
+  `.get_by_identifier`, `.list_labels`, `comments.list`). A `:write` scope implies its `:read`
+  scope but unlocks no tool that changes data. Every other tool is refused with JSON-RPC error
+  `-32002` (`tool not available to connected applications`) whatever the scopes say: anything
+  that writes, deletes, administers, imports or exports, or dispatches an agent, and the read
+  tools whose API routes are not on the API's delegated allow-list, which would only fail
+  closed (`work_items.search`, `labels.list_by_project`, and the forms and form-record reads).
+  They stay available to bot and user tokens. A tool that is not in the table of
+  `src/oauth_scopes.rs` is refused too. `resources/read` serves the static guides only. A test
+  (`every_tool_available_to_delegated_callers_calls_a_route_the_api_allows_for_its_scope`)
+  calls every delegated tool against a recording API and checks that the route it really calls
+  is on the API's allow-list for the tool's scope.
 - **Forwarding (deviation from the MCP authorization specification).** The specification says an
   MCP server must not pass through the token it received. This server forwards the caller's
   MCP-audience token to the Sylvode API together with an internal forwarding credential

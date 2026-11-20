@@ -31,17 +31,8 @@ pub const SCOPED_TOOLS: &[(&str, Scope)] = &[
     ("work_items.list", Scope::WorkItemsRead),
     ("work_items.get", Scope::WorkItemsRead),
     ("work_items.get_by_identifier", Scope::WorkItemsRead),
-    ("work_items.search", Scope::WorkItemsRead),
     ("work_items.list_labels", Scope::WorkItemsRead),
     ("comments.list", Scope::WorkItemsRead),
-    ("labels.list_by_project", Scope::WorkItemsRead),
-    ("forms.list", Scope::FormsRead),
-    ("forms.get", Scope::FormsRead),
-    ("forms.schema_summary", Scope::FormsRead),
-    ("form_views.list", Scope::FormsRead),
-    ("form_records.list", Scope::FormsRead),
-    ("form_records.get", Scope::FormsRead),
-    ("form_records.children", Scope::FormsRead),
 ];
 
 /// Registered tools that no delegated caller may use.
@@ -51,6 +42,18 @@ pub const SCOPED_TOOLS: &[(&str, Scope)] = &[
 /// plugins, Flow and anything else outside the first release's read surface. The last two names
 /// belong to the Flow-only registry, which delegated callers cannot reach at all.
 pub const WITHHELD_TOOLS: &[&str] = &[
+    // Read tools whose API routes are not on the delegated allow-list, so they could only fail
+    // closed: search is not scoped to a grant's projects, the project label list is bot-only, and
+    // the form routes decide permissions through paths that do not read the grant.
+    "work_items.search",
+    "labels.list_by_project",
+    "forms.list",
+    "forms.get",
+    "forms.schema_summary",
+    "form_views.list",
+    "form_records.list",
+    "form_records.get",
+    "form_records.children",
     "work_items.create",
     "work_items.update",
     "work_items.add_label",
@@ -268,8 +271,8 @@ mod tests {
 
     #[test]
     fn the_first_release_exposes_exactly_these_totals() {
-        assert_eq!(SCOPED_TOOLS.len(), 17);
-        assert_eq!(WITHHELD_TOOLS.len(), 139);
+        assert_eq!(SCOPED_TOOLS.len(), 8);
+        assert_eq!(WITHHELD_TOOLS.len(), 148);
         // The main registry (154 tools) is fully covered; the two extra names are Flow-only.
         assert_eq!(crate::tools::get_all_tool_definitions().len(), 154);
         assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 154 + 2);
@@ -368,10 +371,10 @@ mod tests {
             names(ScopeSet::from_scopes(&[Scope::ProjectsRead])),
             ["projects.list", "projects.get", "context.get_project"]
         );
-        assert_eq!(names(ScopeSet::all()).len(), 17);
+        assert_eq!(names(ScopeSet::all()).len(), 8);
         // Write scopes imply their read scope.
-        assert_eq!(names(ScopeSet::from_scopes(&[Scope::FormsWrite])).len(), 7);
-        assert_eq!(names(ScopeSet::from_scopes(&[Scope::WorkItemsWrite])).len(), 7);
+        assert!(names(ScopeSet::from_scopes(&[Scope::FormsWrite])).is_empty());
+        assert_eq!(names(ScopeSet::from_scopes(&[Scope::WorkItemsWrite])).len(), 5);
         // Scopes that belong to the API only unlock nothing here.
         assert!(names(ScopeSet::from_scopes(&[Scope::NotificationsRead, Scope::TasksRead])).is_empty());
     }
