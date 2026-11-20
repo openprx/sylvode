@@ -41,6 +41,7 @@
 		type UiViewDraft
 	} from '#lib/plugins/creator/ui-view-template.js';
 	import { slotLabelKey } from '#lib/plugins/layout-v3.js';
+	import { focusReviewStart } from '#lib/plugins/creator/review-focus.js';
 
 	type CreatorScope =
 		| { kind: 'personal'; draftId: string }
@@ -319,7 +320,7 @@
 				? (output.upload.manifest.contributions[0]?.id ?? '')
 				: '';
 			await tick();
-			reviewStart?.focus();
+			focusReviewStart(reviewStart);
 		} catch {
 			if (buildRevision === revision && mine === scope) error = 'plugins.creator.buildFailed';
 		} finally {
