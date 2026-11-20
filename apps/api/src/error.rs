@@ -856,6 +856,13 @@ impl ApiError {
         matches!(self, Self::Database(_))
     }
 
+    /// Whether this error is the untyped internal failure. Lets typed call sites branch on it
+    /// without naming the legacy variant.
+    #[must_use]
+    pub const fn is_internal_failure(&self) -> bool {
+        matches!(self, Self::Internal)
+    }
+
     pub fn unauthenticated(message: impl Into<String>) -> Self {
         Self::typed(ApiErrorKind::Unauthenticated, message)
     }
