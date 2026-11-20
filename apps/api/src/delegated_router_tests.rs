@@ -894,6 +894,7 @@ fn scope_names(required: Required) -> Vec<&'static str> {
 
 #[tokio::test]
 async fn each_allowed_route_works_with_its_scope_and_is_refused_without_it() {
+    let _streams = STREAM_PROCESS_LOCK.lock().await;
     let Some(w) = World::new("deleg_scopes").await else {
         return;
     };
@@ -909,7 +910,18 @@ async fn each_allowed_route_works_with_its_scope_and_is_refused_without_it() {
         let reply = w
             .send(entry.method, &uri, Some(&session.token), &[], body.as_ref())
             .await;
-        assert_ok(&reply, &label);
+        if entry.pattern == "/api/v1/oauth/events/stream" {
+            // The one route that does not answer with the API's envelope: it opens a stream.
+            assert_eq!(reply.status, StatusCode::OK, "{label}");
+            assert!(
+                reply
+                    .header("content-type")
+                    .is_some_and(|value| value.starts_with("text/event-stream")),
+                "{label}"
+            );
+        } else {
+            assert_ok(&reply, &label);
+        }
 
         // Without it: 403 insufficient_scope, naming the full set the route needs, with the
         // protected-resource metadata in the challenge. Nothing was written.
@@ -1193,6 +1205,9 @@ async fn a_grant_for_one_workspace_and_one_project_reaches_nothing_else() {
         );
     }
 
+    // A grant's request budget is a burst of 60: a fresh grant with the same selection for each
+    // part keeps this test from measuring the rate limit (how fast the machine happens to be).
+    let selected = w.session(w.alice, w.ws1, &[w.p1], ALL_API_SCOPES).await;
     // Writes outside the grant are refused before the handler: nothing changes.
     let comments_before = count(&w.db, "SELECT COUNT(*) AS n FROM comments", vec![]).await;
     let items_before = count(&w.db, "SELECT COUNT(*) AS n FROM work_items", vec![]).await;
@@ -1275,6 +1290,7 @@ async fn a_grant_for_one_workspace_and_one_project_reaches_nothing_else() {
     assert_ok(&created, "create inside the grant");
 
     // Notifications: only the user's own, of the grant's workspace, of the grant's projects.
+    let selected = w.session(w.alice, w.ws1, &[w.p1], ALL_API_SCOPES).await;
     let notifications = w.get(&selected, "/api/v1/notifications").await;
     assert_ok(&notifications, "notifications");
     assert_eq!(
