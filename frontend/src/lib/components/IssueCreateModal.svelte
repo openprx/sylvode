@@ -321,11 +321,11 @@
 <Modal bind:open title={$t('issue.create')} maxWidthClass="max-w-2xl">
 	{#if loadingOptions}
 		<div class="space-y-3">
-			<div class="h-10 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800"></div>
-			<div class="h-56 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800"></div>
+			<div class="h-10 animate-pulse rounded-control bg-surface"></div>
+			<div class="h-56 animate-pulse rounded-control bg-surface"></div>
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-				<div class="h-10 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800"></div>
-				<div class="h-10 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800"></div>
+				<div class="h-10 animate-pulse rounded-control bg-surface"></div>
+				<div class="h-10 animate-pulse rounded-control bg-surface"></div>
 			</div>
 		</div>
 	{:else}
@@ -345,7 +345,7 @@
 
 			{#if scenarioFields.length > 0}
 				<div
-					class="rounded-lg border border-line bg-slate-50 p-4 dark:bg-slate-950"
+					class="rounded-card border border-line bg-surface p-4"
 				>
 					<div class="mb-3">
 						<p class="text-sm font-semibold text-fg">
@@ -370,7 +370,7 @@
 										value={scenarioFieldValues[field.key] ?? ''}
 										onchange={(event) =>
 											setScenarioFieldValue(field.key, event.currentTarget.value)}
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+										class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									>
 										<option value="">{$t('issue.selectPlaceholder')}</option>
 										{#each field.options as option}
@@ -383,7 +383,7 @@
 										value={scenarioFieldValues[field.key] ?? ''}
 										oninput={(event) => setScenarioFieldValue(field.key, event.currentTarget.value)}
 										rows="3"
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:placeholder-slate-500"
+										class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 									></textarea>
 								{:else}
 									<input
@@ -391,7 +391,7 @@
 										value={scenarioFieldValues[field.key] ?? ''}
 										oninput={(event) => setScenarioFieldValue(field.key, event.currentTarget.value)}
 										type={field.type === 'number' || field.type === 'date' ? field.type : 'text'}
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:placeholder-slate-500"
+										class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 									/>
 								{/if}
 							</div>
@@ -407,14 +407,14 @@
 						for="issueDescription">{$t('issue.description')}</label
 					>
 					<div
-						class="inline-flex rounded-md border border-line bg-slate-50 dark:bg-slate-950 p-0.5"
+						class="inline-flex rounded-control border border-line bg-surface p-0.5"
 					>
 						<button
 							type="button"
 							class={`rounded px-2 py-1 text-xs ${
 								descriptionTab === 'edit'
-									? 'bg-white dark:bg-slate-900 text-fg'
-									: 'text-fg-muted hover:text-slate-700'
+									? 'bg-raised text-fg'
+									: 'text-fg-muted hover:text-fg'
 							}`}
 							onclick={() => (descriptionTab = 'edit')}
 						>
@@ -424,8 +424,8 @@
 							type="button"
 							class={`rounded px-2 py-1 text-xs ${
 								descriptionTab === 'preview'
-									? 'bg-white dark:bg-slate-900 text-fg'
-									: 'text-fg-muted hover:text-slate-700'
+									? 'bg-raised text-fg'
+									: 'text-fg-muted hover:text-fg'
 							}`}
 							onclick={() => (descriptionTab = 'preview')}
 						>
@@ -438,7 +438,7 @@
 					<textarea
 						id="issueDescription"
 						bind:value={form.description}
-						class="min-h-[220px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:placeholder-slate-500"
+						class="min-h-[220px] w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 						placeholder={$t('issue.descriptionPlaceholder')}
 						onpaste={handleDescriptionPaste}></textarea>
 					<FileUpload
@@ -450,12 +450,12 @@
 					/>
 				{:else}
 					<div
-						class="markdown-body dark:prose-invert min-h-[220px] rounded-md border border-line bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm text-fg"
+						class="markdown-body min-h-[220px] rounded-control border border-line bg-surface px-3 py-2 text-sm text-fg"
 					>
 						{#if form.description.trim()}
 							{@html renderMarkdown(form.description)}
 						{:else}
-							<p class="text-slate-400">{$t('issue.noDescriptionPreview')}</p>
+							<p class="text-fg-muted">{$t('issue.noDescriptionPreview')}</p>
 						{/if}
 					</div>
 				{/if}
@@ -470,7 +470,7 @@
 					<select
 						id="issueStatus"
 						bind:value={form.status}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					>
 						{#each statusSelectOptions as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
@@ -486,7 +486,7 @@
 					<select
 						id="issuePriority"
 						bind:value={form.priority}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					>
 						<option value="low">{$t('issue.low')}</option>
 						<option value="medium">{$t('issue.medium')}</option>
@@ -503,7 +503,7 @@
 					<select
 						id="issueAssignee"
 						bind:value={form.assignee_id}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					>
 						<option value="">{$t('common.unassigned')}</option>
 						{#each members as member (member.user_id)}
@@ -520,7 +520,7 @@
 					<select
 						id="issueSprint"
 						bind:value={form.sprint_id}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					>
 						<option value="">{$t('issue.noSprint')}</option>
 						{#each sprints as sprint (sprint.id)}
@@ -536,17 +536,17 @@
 				>
 				{#if labels.length === 0}
 					<p
-						class="rounded-md border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm text-fg-muted"
+						class="rounded-control border border-dashed border-input bg-surface px-3 py-2 text-sm text-fg-muted"
 					>
 						{$t('issue.noWorkspaceLabels')}
 					</p>
 				{:else}
 					<div
-						class="max-h-36 space-y-1 overflow-y-auto rounded-md border border-line p-2"
+						class="max-h-36 space-y-1 overflow-y-auto rounded-control border border-line p-2"
 					>
 						{#each labels as label (label.id)}
 							<label
-								class="flex cursor-pointer items-center justify-between rounded px-2 py-1 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+								class="flex cursor-pointer items-center justify-between rounded px-2 py-1 text-sm hover:bg-surface"
 							>
 								<div class="flex items-center gap-2">
 									<input
@@ -584,7 +584,7 @@
 	}
 
 	:global(.markdown-body code) {
-		background: #e2e8f0;
+		background: var(--rf-surface);
 		border-radius: 0.25rem;
 		padding: 0.125rem 0.25rem;
 	}

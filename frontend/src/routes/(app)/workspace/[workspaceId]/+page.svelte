@@ -36,9 +36,9 @@
 	const cards = $derived(workspaceHomeCards($flowFeatureStore[workspaceId] === true, isAdmin));
 
 	const linkClass =
-		'inline-flex min-h-11 items-center rounded-md text-sm font-medium text-blue-700 hover:underline dark:text-blue-300';
+		'inline-flex min-h-11 items-center rounded-control text-sm font-medium text-fg underline';
 	const cardClass =
-		'flex flex-col gap-3 rounded-lg border border-line bg-white p-6 dark:bg-slate-800';
+		'flex flex-col gap-3 rounded-card border border-line bg-raised p-6';
 
 	async function load() {
 		view = 'loading';
@@ -64,7 +64,7 @@
 <div class="mx-auto max-w-6xl space-y-6">
 	{#if view === 'loading'}
 		<div
-			class="rounded-lg border border-line bg-white p-6 text-fg-muted dark:bg-slate-900"
+			class="rounded-card border border-line bg-raised p-6 text-fg-muted"
 			role="status"
 			aria-live="polite"
 		>
@@ -86,13 +86,13 @@
 		</div>
 	{:else if view === 'failed'}
 		<div
-			class="flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 p-6 text-danger dark:border-red-500/40 dark:bg-red-500/20"
+			class="flex flex-col gap-3 rounded-card border bg-danger-soft p-6 text-danger"
 			role="alert"
 		>
 			<p>{$t('workspace.home.loadFailed')}</p>
 			<button
 				type="button"
-				class="min-h-11 self-start rounded-md border border-red-300 px-4 text-sm font-medium dark:border-red-700"
+				class="min-h-11 self-start rounded-control border px-4 text-sm font-medium"
 				onclick={() => void load()}
 			>
 				{$t('common.retry')}
@@ -109,7 +109,7 @@
 				</h1>
 				{#if role}
 					<span
-						class="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/40 dark:bg-blue-500/20 dark:text-blue-300"
+						class="rounded-full border bg-surface px-2.5 py-0.5 text-xs font-medium text-fg"
 						data-testid="workspace-home-role"
 					>
 						<span class="sr-only">{$t('workspace.home.roleLabel')}: </span>{$t(`roles.${role}`)}

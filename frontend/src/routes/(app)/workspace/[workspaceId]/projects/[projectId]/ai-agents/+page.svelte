@@ -223,14 +223,14 @@
 
 <div class="mx-auto max-w-6xl space-y-4">
 	<div
-		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
+		class="rounded-card border border-line bg-raised p-4"
 	>
 		<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 			<div>
 				<h1 class="text-xl font-semibold text-fg">
 					{$t('aiAgents.title')}
 				</h1>
-				<p class="text-sm text-slate-500">
+				<p class="text-sm text-fg-muted">
 					{$t('aiAgents.subtitle', { values: { project: projectName || projectId } })}
 				</p>
 			</div>
@@ -240,23 +240,23 @@
 		</div>
 
 		{#if loading}
-			<div class="py-8 text-center text-slate-500">{$t('common.loading')}</div>
+			<div class="py-8 text-center text-fg-muted">{$t('common.loading')}</div>
 		{:else if agents.length === 0}
-			<div class="py-8 text-center text-slate-500">{$t('aiAgents.empty')}</div>
+			<div class="py-8 text-center text-fg-muted">{$t('aiAgents.empty')}</div>
 		{:else}
 			<div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
 				{#each agents as agent (agent.id)}
-					<div class="rounded-lg border border-line p-4">
+					<div class="rounded-card border border-line p-4">
 						<div class="flex items-center justify-between gap-3">
 							<div>
 								<div class="flex items-center gap-2">
 									<span class="text-lg">🤖</span>
 									<h2 class="font-semibold text-fg">{agent.name}</h2>
 								</div>
-								<p class="text-xs text-slate-500">{agent.id}</p>
+								<p class="text-xs text-fg-muted">{agent.id}</p>
 							</div>
 							<span
-								class={`rounded px-2 py-0.5 text-xs ${agent.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}
+								class={`rounded px-2 py-0.5 text-xs ${agent.is_active ? 'bg-success-soft text-success' : 'bg-surface text-fg'}`}
 								>{agent.is_active ? $t('aiAgents.active') : $t('aiAgents.inactive')}</span
 							>
 						</div>
@@ -268,15 +268,15 @@
 							<div>{$t('aiAgents.reasonMinLength')}: {agent.reason_min_length}</div>
 						</div>
 
-						<div class="mt-3 text-xs text-slate-500">
+						<div class="mt-3 text-xs text-fg-muted">
 							{$t('aiAgents.capabilities')}: {agent.capabilities.join(', ') || '-'}
 						</div>
-						<div class="mt-2 text-xs text-slate-500">
+						<div class="mt-2 text-xs text-fg-muted">
 							{$t('aiAgents.domainOverrides')}: {agent.domain_overrides
 								? JSON.stringify(agent.domain_overrides)
 								: $t('aiAgents.autoByTrust')}
 						</div>
-						<div class="mt-2 text-xs text-slate-500">
+						<div class="mt-2 text-xs text-fg-muted">
 							{$t('aiAgents.canVetoHumanConsensus')}: {agent.can_veto_human_consensus
 								? $t('common.confirm')
 								: $t('common.cancel')}
@@ -284,7 +284,7 @@
 
 						{#if statsMap[agent.id]}
 							<div
-								class="mt-3 rounded border border-line bg-slate-50 p-3 text-xs text-fg-muted dark:bg-slate-800"
+								class="mt-3 rounded border border-line bg-surface p-3 text-xs text-fg-muted"
 							>
 								<div>{$t('aiAgents.statsVotes')}: {statsMap[agent.id].total_votes}</div>
 								<div>{$t('aiAgents.statsComments')}: {statsMap[agent.id].total_comments}</div>
@@ -309,7 +309,7 @@
 						<div class="mt-2">
 							<a
 								href={`/ai-agents/${agent.id}/learning`}
-								class="text-xs text-blue-600 hover:underline"
+								class="text-xs text-fg underline"
 							>
 								{$t('governanceExt.learningEntry')}
 							</a>
@@ -352,7 +352,7 @@
 			<select
 				id="create-max-level"
 				bind:value={createForm.max_domain_level}
-				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 			>
 				<option value="observer">{levelLabel('observer')}</option>
 				<option value="advisor">{levelLabel('advisor')}</option>
@@ -410,7 +410,7 @@
 			<select
 				id="edit-max-level"
 				bind:value={editForm.max_domain_level}
-				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 			>
 				<option value="observer">{levelLabel('observer')}</option>
 				<option value="advisor">{levelLabel('advisor')}</option>
