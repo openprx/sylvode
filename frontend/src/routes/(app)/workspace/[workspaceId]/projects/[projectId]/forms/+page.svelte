@@ -555,7 +555,6 @@
 	let eventsLoading = $state(false);
 	let recordCommentsLoading = $state(false);
 	let formSubmitting = $state(false);
-	let duplicatingForm = $state(false);
 	let installingTemplateKey = $state<string | null>(null);
 	let viewSubmitting = $state(false);
 	let exportingRecords = $state(false);
@@ -915,7 +914,6 @@
 	const ganttTimeline = $derived.by(() => buildGanttTimeline(viewRecords));
 	const calendarDateField = $derived.by(() => viewDateField());
 	const calendarEndField = $derived.by(() => viewCalendarEndField());
-	const calendarGroups = $derived.by(() => groupRecordsByDate(viewRecords, calendarDateField));
 	const calendarGridGroups = $derived.by(() =>
 		groupRecordsByCalendarGrid(viewRecords, calendarDateField)
 	);
@@ -941,9 +939,6 @@
 
 	const timelineTitlePermissionField = $derived.by(() => viewTimelineTitleField());
 	const timelineSubtitlePermissionField = $derived.by(() => viewTimelineSubtitleField());
-	const aggregateFields = $derived(
-		fields.filter((field) => ['amount', 'number', 'integer'].includes(field.type ?? 'text'))
-	);
 	const selectedDesignerField = $derived(designerFieldDrafts[selectedDesignerFieldIndex] ?? null);
 
 	const selectedDesignerFieldUsage = $derived(
@@ -1901,28 +1896,6 @@
 		showCreateForm = false;
 		resetFormDraft();
 		toast.success($t('forms.formCreated'));
-		await openForm(response.data.id);
-		activeMode = 'design';
-		void loadDesignerSafety(response.data);
-	}
-
-	async function duplicateSelectedForm() {
-		if (!selectedForm) return;
-
-		duplicatingForm = true;
-
-		const response = await formsApi.duplicate(selectedForm.id);
-
-		duplicatingForm = false;
-
-		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
-
-			return;
-		}
-
-		forms = [response.data, ...forms];
-		toast.success($t('forms.formDuplicated'));
 		await openForm(response.data.id);
 		activeMode = 'design';
 		void loadDesignerSafety(response.data);
@@ -3259,15 +3232,6 @@
 		cancelEditRecord();
 	}
 
-	const FOCUSABLE_SELECTOR =
-		'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-	function focusableElementsIn(container: HTMLElement): HTMLElement[] {
-		return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-			(element) => element.offsetParent !== null || element === document.activeElement
-		);
-	}
-
 	/** Task-local editor: navigation chrome stays reachable; do not trap Tab globally. */
 	function handleGlobalKeydown(event: KeyboardEvent) {
 		if (!recordEditorOpen || !recordEditorPanel?.contains(document.activeElement)) return;
@@ -3299,17 +3263,6 @@
 		} else {
 			recordAttachments = [];
 		}
-	}
-
-	async function openPrintJob(record: FormRecord) {
-		if (printJobForm && selectedFormId !== printJobForm.id) {
-			selectedFormId = printJobForm.id;
-			records = printJobs;
-		}
-
-		editingRecordId = null;
-		selectedRecord = record;
-		await Promise.all([loadSelectedRecordLinks(), loadSelectedRecordChildren()]);
 	}
 
 	function defaultPermissionActions(): Record<FormPermissionAction, boolean> {
@@ -5335,10 +5288,6 @@
 		});
 	}
 
-	function viewDraftFilterExpressionMatchCount(): number | null {
-		return viewDraftFilterExpressionRecords()?.length ?? null;
-	}
-
 	function viewDraftFilterExpressionRecordIdsText(records: FormRecord[] | null): string {
 		return records?.map((record) => record.id).join('\n') ?? '';
 	}
@@ -7030,19 +6979,6 @@
 		return value;
 	}
 
-	function recordDateBucket(record: FormRecord, field: FormField | null): string {
-		const raw = recordDateSource(record, field);
-		const date = new Date(raw);
-
-		if (Number.isNaN(date.getTime())) return $t('forms.noDate');
-
-		return date.toLocaleDateString($locale === 'en' ? 'en-US' : 'zh-CN', {
-			year: 'numeric',
-			month: '2-digit',
-			day: '2-digit'
-		});
-	}
-
 	function groupRecordsByField(
 		sourceRecords: FormRecord[],
 		field: FormField | null
@@ -7103,26 +7039,6 @@
 				groups: kanbanGroups
 			}
 		];
-	}
-
-	function groupRecordsByDate(
-		sourceRecords: FormRecord[],
-		field: FormField | null
-	): Array<{ key: string; label: string; records: FormRecord[] }> {
-		const groups = new Map<string, { key: string; label: string; records: FormRecord[] }>();
-
-		for (const record of sourceRecordsByDate(sourceRecords, field)) {
-			const label = recordDateBucket(record, field);
-			const existing = groups.get(label);
-
-			if (existing) {
-				existing.records.push(record);
-			} else {
-				groups.set(label, { key: label, label, records: [record] });
-			}
-		}
-
-		return Array.from(groups.values());
 	}
 
 	function groupRecordsByCalendarGrid(
@@ -7471,15 +7387,6 @@
 				}))
 				.sort((left, right) => left.label.localeCompare(right.label))
 		};
-	}
-
-	function sourceRecordsByDate(sourceRecords: FormRecord[], field: FormField | null): FormRecord[] {
-		return [...sourceRecords].sort((left, right) => {
-			const leftTime = new Date(recordDateSource(left, field)).getTime();
-			const rightTime = new Date(recordDateSource(right, field)).getTime();
-
-			return (Number.isNaN(leftTime) ? 0 : leftTime) - (Number.isNaN(rightTime) ? 0 : rightTime);
-		});
 	}
 
 	function recordsByUpdatedAt(sourceRecords: FormRecord[]): FormRecord[] {
@@ -12468,19 +12375,6 @@
 		}
 
 		return String(value);
-	}
-
-	function displayAggregate(field: FormField): string {
-		const aggregate = aggregates[field.key];
-		const decimal = aggregate?.decimal ?? '0';
-
-		if (field.type === 'amount') {
-			const currency = aggregate?.currency ?? field.amount?.currency ?? '';
-
-			return currency ? `${decimal} ${currency}` : decimal;
-		}
-
-		return decimal;
 	}
 
 	function childRecordFields(child: FormChildRecord): FormField[] {
