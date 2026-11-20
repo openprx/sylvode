@@ -1,6 +1,9 @@
 //! Native tree placement index over immutable physical editor block containers.
 use crate::CollabError;
-use loro::{Container, ContainerTrait, LoroDoc, LoroMap, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer};
+use loro::{
+    Container, ContainerID, ContainerTrait, ContainerType, LoroDoc, LoroMap, LoroTree, LoroValue, TreeID, TreeParentId,
+    ValueOrContainer,
+};
 use std::collections::BTreeSet;
 pub const TREE: &str = "flow_editor_structure";
 pub const META: &str = "flow_editor_structure_meta";
@@ -13,8 +16,15 @@ fn value(map: &LoroMap, key: &str) -> Option<String> {
         _ => None,
     }
 }
+/// The root container `name` of exactly type `kind`, or `None` when no such root exists. Reads by
+/// typed container id and registers nothing. `LoroDoc::get_by_str_path` must not be used for
+/// roots: it picks among all roots with that name, of any type, so a second root of another type
+/// could make two readers of one document disagree.
+pub(crate) fn root_container(doc: &LoroDoc, name: &str, kind: ContainerType) -> Option<Container> {
+    doc.get_container(ContainerID::new_root(name, kind))
+}
 pub fn physical(doc: &LoroDoc) -> Result<Vec<LoroMap>, CollabError> {
-    let Some(ValueOrContainer::Container(Container::Map(root))) = doc.get_by_str_path("doc") else {
+    let Some(Container::Map(root)) = root_container(doc, "doc", ContainerType::Map) else {
         return Err(invalid("editor_doc_required"));
     };
     let Some(ValueOrContainer::Container(Container::List(list))) = root.get("children") else {
@@ -28,7 +38,7 @@ pub fn physical(doc: &LoroDoc) -> Result<Vec<LoroMap>, CollabError> {
         .collect()
 }
 pub fn ready(doc: &LoroDoc) -> bool {
-    let Some(ValueOrContainer::Container(Container::Map(meta))) = doc.get_by_str_path(META) else {
+    let Some(Container::Map(meta)) = root_container(doc, META, ContainerType::Map) else {
         return false;
     };
     matches!(
@@ -37,7 +47,7 @@ pub fn ready(doc: &LoroDoc) -> bool {
     )
 }
 fn tree(doc: &LoroDoc) -> Result<LoroTree, CollabError> {
-    let Some(ValueOrContainer::Container(Container::Tree(tree))) = doc.get_by_str_path(TREE) else {
+    let Some(Container::Tree(tree)) = root_container(doc, TREE, ContainerType::Tree) else {
         return Err(invalid("editor_structure_missing_tree"));
     };
     tree.enable_fractional_index(0);
@@ -149,8 +159,8 @@ pub fn initialize(doc: &LoroDoc) -> Result<bool, CollabError> {
         placements(doc)?;
         return Ok(false);
     }
-    if doc.get_by_str_path(TREE).is_some_and(|value| match value {
-        ValueOrContainer::Container(Container::Tree(tree)) => !tree.roots().is_empty(),
+    if root_container(doc, TREE, ContainerType::Tree).is_some_and(|value| match value {
+        Container::Tree(tree) => !tree.roots().is_empty(),
         _ => true,
     }) {
         return Err(invalid("editor_structure_partial_initialization"));

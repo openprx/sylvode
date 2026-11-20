@@ -331,8 +331,11 @@ pub type LegacyIdsAndBlocks = (Vec<String>, Vec<EditorBlock>, FloorFacts);
 /// placement error, then its first per-block error.
 ///
 /// The returned [`FloorFacts`] equal what the floor walk derives (`physical_atoms_present` and
-/// [`editor_model_signals`]) whenever this succeeds: the walk visits the same physical maps and
-/// the same current blocks and fails on the same defects.
+/// [`editor_model_signals`]) whenever this succeeds, because both read the same root containers
+/// (by typed id) and the same physical maps and current blocks. The reverse does not hold: this
+/// pass can fail where the walk succeeds, for example on an unplaced block map without
+/// `nodeName` on a structured page, which the walk skips and this reader rejects. Nothing is
+/// derived from a failed pass.
 pub fn legacy_ids_and_editor_blocks(doc: &LoroDoc) -> Result<Option<LegacyIdsAndBlocks>, CollabError> {
     #[cfg(test)]
     crate::walk_counter::record_block_read();

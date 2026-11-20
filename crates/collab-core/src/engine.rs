@@ -21,8 +21,8 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use loro::{
-    Container, Frontiers, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer,
-    VersionVector,
+    Container, ContainerType, Frontiers, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, TreeID, TreeParentId,
+    ValueOrContainer, VersionVector,
 };
 use serde_json::{Map as JsonMap, Number, Value};
 
@@ -205,8 +205,8 @@ fn loro_value_to_json(value: &LoroValue) -> Value {
 /// path.
 pub(crate) fn model5_marker(doc: &LoroDoc) -> bool {
     matches!(
-        doc.get_by_str_path(crate::editor_structure::META),
-        Some(ValueOrContainer::Container(Container::Map(meta)))
+        crate::editor_structure::root_container(doc, crate::editor_structure::META, ContainerType::Map),
+        Some(Container::Map(meta))
             if matches!(meta.get("model"), Some(ValueOrContainer::Value(LoroValue::String(model)))
                 if model.as_ref() == "rich_page_v5")
     )
@@ -931,8 +931,11 @@ impl LoroCollabEngine {
     /// [`Self::semantic_snapshot`] together with [`Self::minimum_editor_model`], derived from the
     /// block pass the projection already makes instead of a second walk.
     ///
-    /// The floor equals `compute_minimum_editor_model()` whenever both succeed, and a document the
-    /// walk rejects makes the projection fail too. On success the memo is filled under the same
+    /// The floor equals `compute_minimum_editor_model()` whenever both succeed. The converse does
+    /// not hold: the projection reads more than the walk does, so it can fail on a document the
+    /// walk accepts (for example an unplaced block map without `nodeName` on a structured page).
+    /// Nothing is memoized in that case, and callers treat a failed projection as a refusal. On
+    /// success the memo is filled under the same
     /// rules as `minimum_editor_model` (no pending local transaction, keyed to the current state
     /// frontier), so later readers of the same state cost no walk. Nothing is memoized on error.
     ///
@@ -1124,12 +1127,14 @@ impl LoroCollabEngine {
     /// on both states) for every update, provided the base document is valid. Floor >= 5 is the
     /// model-5 marker or a physical atom block map; the marker is read before and after in O(1)
     /// and the imported ops are scanned in O(update) (see `floor_guard`). Only an update that
-    /// removes or re-types a pre-existing block map, or touches the `doc` map, falls back to a
+    /// deletes from the top-level block list (whatever ids it names), re-types a pre-existing block
+    /// map, or touches the `doc` map falls back to a
     /// narrow scan of `doc.children` and, if still undecided, a read of the pre-import state.
     fn import_guarded(&mut self, update: &[u8], causal: bool) -> Result<Diff, CollabError> {
         InputLimits::default().validate_update(update)?;
         let prior_m5 = model5_marker(&self.doc);
         let before_frontiers = self.doc.state_frontiers();
+        let before_ops = self.doc.oplog_vv();
         self.invalidate_editor_model_floor();
         let before = self.doc.state_vv();
         let status = self.doc.import(update).map_err(|e| CollabError::DecodeFailed {
@@ -1141,7 +1146,7 @@ impl LoroCollabEngine {
         }
         let after = self.doc.state_vv();
         self.rebuild_id_cache()?;
-        self.enforce_floor_ratchet(prior_m5, &status, &before_frontiers)?;
+        self.enforce_floor_ratchet(prior_m5, &before_ops, &before_frontiers)?;
         Ok(Diff {
             changed: before != after,
         })
@@ -1152,7 +1157,7 @@ impl LoroCollabEngine {
     fn enforce_floor_ratchet(
         &self,
         prior_m5: bool,
-        status: &loro::ImportStatus,
+        before_ops: &VersionVector,
         before: &Frontiers,
     ) -> Result<(), CollabError> {
         use crate::floor_guard::RemovalScan;
@@ -1167,7 +1172,7 @@ impl LoroCollabEngine {
             crate::walk_counter::record_narrow_atom_scan();
             physical_atoms_present(&self.doc)
         };
-        match (prior_m5, crate::floor_guard::removal_scan(&self.doc, status)) {
+        match (prior_m5, crate::floor_guard::removal_scan(&self.doc, before_ops)) {
             // No block map that could hold the physical-atom signal up was removed or re-typed,
             // and the marker was not set before: if the signal was set before it still is.
             (false, RemovalScan::None) => Ok(()),
